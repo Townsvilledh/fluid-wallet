@@ -30,10 +30,18 @@ depend on the addresses being set.
    `feeBps` at deploy and accounts the fee 60/40 on-chain
    (`feeTreasury` / `feeDripbot` counters) so the split can never be
    skewed; the keeper sweeps and settles in BTC via Lightning.
-2. **OGO ERA (game):** the game has its OWN fee split too — tournament
-   entry rake / marketplace fees follow the identical 60/40 rule and
-   the identical BTC-Lightning settlement, accounted separately from
-   wallet fees so both streams stay auditable.
+2. **OGO ERA (game):** the game has its OWN fee split (set 2026-11-06),
+   deliberately player-first — most of the game's fees go back to
+   players, all settled in BTC over Lightning:
+   - **40% → Ethuram (treasury)**
+   - **20% → Top-100 pool** (leaderboard players)
+   - **20% → Session lottery** (drawn among the other active players
+     in that session)
+   - **20% → Weekly active-referral rewards**
+   Implemented as `GAME_FEE_SPLIT` + `splitGameFee` in the wallet core.
+   Who qualifies (top-100 standings, lottery draw, referral tally) is
+   computed by the keeper (DripBot) from the game's published activity
+   data; the percentages and settlement rail are fixed here.
 3. **Future in-app swaps:** same rule when they land.
 
 ## What Fluid never does

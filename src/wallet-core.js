@@ -330,6 +330,24 @@ export function splitFee(amount) {
   const dripbot = Math.floor((a * FEE_SPLIT.dripbot.share) / 100);
   return { treasury: a - dripbot, dripbot };
 }
+// OGO ERA has its OWN fee split (set by Ethuram 2026-11-06), different
+// from the wallet split: the game gives most of its fees back to players.
+// 40% treasury / 20% top-100 leaderboard pool / 20% session lottery for
+// the remaining active players / 20% weekly active-referral rewards.
+// All settled in BTC (Lightning), like every Fluid split. Distribution
+// (who is top-100, lottery draw, referral tally) is keeper work — DripBot
+// runs it from the game's published activity data.
+export const GAME_FEE_SPLIT = {
+  currency: "BTC", rail: "lightning",
+  treasury: 40, top100: 20, sessionLottery: 20, weeklyReferrals: 20,
+};
+export function splitGameFee(amount) {
+  const a = Math.floor(Number(amount));
+  const top100 = Math.floor((a * GAME_FEE_SPLIT.top100) / 100);
+  const sessionLottery = Math.floor((a * GAME_FEE_SPLIT.sessionLottery) / 100);
+  const weeklyReferrals = Math.floor((a * GAME_FEE_SPLIT.weeklyReferrals) / 100);
+  return { treasury: a - top100 - sessionLottery - weeklyReferrals, top100, sessionLottery, weeklyReferrals };
+}
 /** Cheapest-route ranking for ramps, by documented typical fees.
  *  The provider always shows the final live quote before the user pays;
  *  Fluid's job is to put the typically-cheapest route first. */

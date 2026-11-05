@@ -204,6 +204,13 @@ The Companion SBT is the bridge: teammate, coach, passport, inventory
 and financial identity in one soulbound object you own, that levels up
 by playing, and that earns real RAIN you can spend.
 
+## GAME FEES — THE SPLIT (set 2026-11-06)
+Tournament rake and any game fees split four ways, settled in BTC over
+Lightning (see `docs/FEES.md`): 40% treasury (Ethuram), 20% top-100
+leaderboard pool, 20% session lottery for the session's other active
+players, 20% weekly active-referral rewards. The game gives most of its
+fees back to the people playing it — that's the belonging engine.
+
 ## BUILD ORDER (wallet-first, agreed)
 - [x] Fluid wallet v2 with Play tab (live, open source)
 - [x] Companion contract with headline stat fields (Sui Move)
