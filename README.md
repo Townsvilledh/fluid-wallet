@@ -1,27 +1,31 @@
-# ⚽ Fluid
+# 💧 Fluid
 
-**Your money, only you control.**
+**Every chain. One wallet. Yours alone.**
 
-Fluid is a simple, seamless, open-source, **non-custodial** Web3 wallet. No company, no accounts, no forms, no servers — just software and routes. If Fluid disappears tomorrow, your funds don't: your seed phrase works in any BIP39 wallet.
+Fluid is a global, open-source, **non-custodial** wallet and one-stop shop for blockchain: 15 EVM chains & L2s, Bitcoin, and Lightning from a single seed phrase, with global buy/cash-out routing — plus **OGO ERA**, the street-football game whose rewards (RAIN) and soulbound Companion live in this same wallet. No company accounts, no forms, no servers. If Fluid disappears tomorrow, your funds don't: your seed phrase works in any BIP39 wallet.
 
-Built for Nigeria first (cash out straight to a Nigerian bank), usable anywhere.
+**Live:** https://townsvilledh.github.io/fluid-wallet/
 
 ## Features
 
 - **Create or import** a wallet with a standard BIP39 seed phrase (12 words)
 - **Encrypted on-device vault** — the standard Ethereum keystore format (scrypt + AES), password-protected, stored only in your browser. Keys never leave your device unencrypted
-- **6 networks, one address** — Ethereum, BNB Chain, Base, Polygon, Arbitrum, plus Sepolia testnet for safe practice
-- **Balances** for the native coin + USDC + USDT on every mainnet
+- **15 EVM networks, one address** — Ethereum, BNB Chain, Base, Arbitrum, OP Mainnet, Polygon, Avalanche, zkSync Era, Linea, Scroll, Mantle, Gnosis, Celo, Fuse, plus Sepolia testnet
+- **Bitcoin from the same seed** — BIP84 native SegWit address, balance, receive QR, and signed sends (mempool.space fees), cross-validated against bitcoinjs-lib
+- **Lightning** — pay invoices through your own WebLN wallet (e.g. Alby); Fluid never custodies Lightning funds
+- **Total USD hero balance** (live prices), Phantom-style app shell: bottom tabs, sheets, thumb-reach actions
+- **Balances** for the native coin + USDC + USDT where listed
 - **Send with a human-readable confirmation** — "Send 0.05 BNB to 0x… on BNB Chain. Network fee about 0.000105 BNB. Confirm?" — never a blind hex blob
 - **Receive** by address or QR code
-- **Cash out to a Nigerian bank** via Fonbnk's consumer widget (you verify with Fonbnk; they pay your bank directly; Fluid never touches fiat and needs no partner agreement)
+- **Global buy & cash-out routing** — MoonPay, Ramp Network and Transak (180+ countries) plus Fonbnk for Nigeria (bank & airtime). You verify with the provider; they settle fiat directly; Fluid never touches fiat and needs no partner agreement
+- **⚽ OGO ERA built in** — a Play tab in the wallet: the street-football game, soulbound Companion progression, and RAIN claims that land here. See `docs/OGO-ERA.md`
 - **Backup** as a downloadable encrypted keystore file; seed reveal is password-gated
 - **Recovery tool included** (`tools/recovery.html`) — split your seed 2-of-4 (Shamir) across device / cloud / guardian / email, and recover from any 2, fully offline
 
 ## Quick start
 
 ### Option A — zero install
-Download `fluid-wallet.html` from `dist/` (or build it) and open it in any browser. It's one self-contained file (~412 KB). For real use, save it and open it **offline**.
+Download `fluid-wallet.html` from `dist/` (or build it) and open it in any browser. It's one self-contained file (~632 KB). For real use, save it and open it **offline**.
 
 ### Option B — developers
 ```bash

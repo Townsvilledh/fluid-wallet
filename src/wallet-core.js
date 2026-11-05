@@ -1,66 +1,102 @@
-// Fluid wallet core — all key handling lives here, on top of ethers v6
-// (audited library; Fluid adds UI + routing, not home-grown cryptography).
-// The wallet is non-custodial by construction: keys are generated and
-// encrypted in the user's browser and never leave the device unencrypted.
+// Fluid wallet core — all key handling lives here, on top of audited
+// libraries (ethers v6 for EVM, @scure/* for Bitcoin). Fluid adds UI +
+// routing, not home-grown cryptography. Non-custodial by construction:
+// keys are generated and encrypted in the user's browser and never
+// leave the device unencrypted. One seed phrase = every chain below.
 import { ethers } from "ethers";
+import { HDKey } from "@scure/bip32";
+import { mnemonicToSeedSync } from "@scure/bip39";
+import * as btc from "@scure/btc-signer";
 
+const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
+const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
+
+// priceSym: the symbol used for USD pricing (L2s price their ETH as ETH).
 export const NETWORKS = {
   ethereum: {
-    name: "Ethereum", chainId: 1, symbol: "ETH",
-    rpc: "https://ethereum-rpc.publicnode.com",
-    explorer: "https://etherscan.io",
+    name: "Ethereum", chainId: 1, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://ethereum-rpc.publicnode.com", explorer: "https://etherscan.io",
     fonbnkNetwork: "ETHEREUM",
-    tokens: [
-      { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
-      { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
-    ],
+    tokens: [USDC("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), USDT("0xdAC17F958D2ee523a2206206994597C13D831ec7")],
   },
   bsc: {
-    name: "BNB Chain", chainId: 56, symbol: "BNB",
-    rpc: "https://bsc-rpc.publicnode.com",
-    explorer: "https://bscscan.com",
+    name: "BNB Chain", chainId: 56, symbol: "BNB", priceSym: "BNB",
+    rpc: "https://bsc-rpc.publicnode.com", explorer: "https://bscscan.com",
     fonbnkNetwork: "BNB",
-    tokens: [
-      { symbol: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
-      { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
-    ],
+    tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18)],
   },
   base: {
-    name: "Base", chainId: 8453, symbol: "ETH",
-    rpc: "https://base-rpc.publicnode.com",
-    explorer: "https://basescan.org",
+    name: "Base", chainId: 8453, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://base-rpc.publicnode.com", explorer: "https://basescan.org",
     fonbnkNetwork: "BASE",
-    tokens: [
-      { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
-      { symbol: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
-    ],
-  },
-  polygon: {
-    name: "Polygon", chainId: 137, symbol: "POL",
-    rpc: "https://polygon-bor-rpc.publicnode.com",
-    explorer: "https://polygonscan.com",
-    fonbnkNetwork: "POLYGON",
-    tokens: [
-      { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
-      { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
-    ],
+    tokens: [USDC("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), USDT("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2")],
   },
   arbitrum: {
-    name: "Arbitrum", chainId: 42161, symbol: "ETH",
-    rpc: "https://arbitrum-one-rpc.publicnode.com",
-    explorer: "https://arbiscan.io",
+    name: "Arbitrum", chainId: 42161, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://arbitrum-one-rpc.publicnode.com", explorer: "https://arbiscan.io",
     fonbnkNetwork: "ARBITRUM",
-    tokens: [
-      { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
-      { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
-    ],
+    tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")],
+  },
+  optimism: {
+    name: "OP Mainnet", chainId: 10, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://optimism-rpc.publicnode.com", explorer: "https://optimistic.etherscan.io",
+    fonbnkNetwork: null,
+    tokens: [USDC("0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"), USDT("0x94b008aA00579c1307B0EF2c499aD98a8ce58e58")],
+  },
+  polygon: {
+    name: "Polygon", chainId: 137, symbol: "POL", priceSym: "POL",
+    rpc: "https://polygon-bor-rpc.publicnode.com", explorer: "https://polygonscan.com",
+    fonbnkNetwork: "POLYGON",
+    tokens: [USDC("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"), USDT("0xc2132D05D31c914a87C6611C10748AEb04B58e8F")],
+  },
+  avalanche: {
+    name: "Avalanche", chainId: 43114, symbol: "AVAX", priceSym: "AVAX",
+    rpc: "https://avalanche-c-chain-rpc.publicnode.com", explorer: "https://snowtrace.io",
+    fonbnkNetwork: null,
+    tokens: [USDC("0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"), USDT("0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7")],
+  },
+  zksync: {
+    name: "zkSync Era", chainId: 324, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://mainnet.era.zksync.io", explorer: "https://era.zksync.network",
+    fonbnkNetwork: null,
+    tokens: [USDC("0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"), USDT("0x493257fD37EDB34451f62EDf8D2a0C418852bA4c")],
+  },
+  linea: {
+    name: "Linea", chainId: 59144, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://linea-rpc.publicnode.com", explorer: "https://lineascan.build",
+    fonbnkNetwork: null,
+    tokens: [USDC("0x176211869cA2b568f2A7D4EE941E073a821EE1ff"), USDT("0xA219439258ca9da29E9Cc4cE5596924745e12B93")],
+  },
+  scroll: {
+    name: "Scroll", chainId: 534352, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://scroll-rpc.publicnode.com", explorer: "https://scrollscan.com",
+    fonbnkNetwork: null, tokens: [],
+  },
+  mantle: {
+    name: "Mantle", chainId: 5000, symbol: "MNT", priceSym: "MNT",
+    rpc: "https://rpc.mantle.xyz", explorer: "https://mantlescan.xyz",
+    fonbnkNetwork: null, tokens: [],
+  },
+  gnosis: {
+    name: "Gnosis", chainId: 100, symbol: "xDAI", priceSym: "DAI",
+    rpc: "https://gnosis-rpc.publicnode.com", explorer: "https://gnosisscan.io",
+    fonbnkNetwork: null, tokens: [],
+  },
+  celo: {
+    name: "Celo", chainId: 42220, symbol: "CELO", priceSym: "CELO",
+    rpc: "https://forno.celo.org", explorer: "https://celoscan.io",
+    fonbnkNetwork: null,
+    tokens: [USDC("0xcebA9300f2b948710d2653dD7B07f33A8B32118C"), USDT("0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e")],
+  },
+  fuse: {
+    name: "Fuse", chainId: 122, symbol: "FUSE", priceSym: null,
+    rpc: "https://rpc.fuse.io", explorer: "https://explorer.fuse.io",
+    fonbnkNetwork: null, tokens: [],
   },
   sepolia: {
-    name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH",
-    rpc: "https://ethereum-sepolia-rpc.publicnode.com",
-    explorer: "https://sepolia.etherscan.io",
-    fonbnkNetwork: null,
-    tokens: [],
+    name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
+    rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
+    fonbnkNetwork: null, tokens: [],
   },
 };
 
@@ -153,8 +189,86 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
   return tx; // caller awaits tx.wait() and records the hash
 }
 
-/** Cash-out without any partner form: the basic Fonbnk consumer widget.
- *  The USER does KYC with Fonbnk inside that flow; Fluid never touches fiat. */
+// ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
+const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
+  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null };
+export async function getPrices() {
+  const out = { USDC: 1, USDT: 1, DAI: 1 };
+  try {
+    const syms = Object.values(PRICE_PAIRS).filter(Boolean);
+    const url = "https://api.binance.com/api/v3/ticker/price?symbols=" + encodeURIComponent(JSON.stringify(syms));
+    const res = await fetch(url);
+    const data = await res.json();
+    const byPair = Object.fromEntries(data.map(d => [d.symbol, parseFloat(d.price)]));
+    for (const [sym, pair] of Object.entries(PRICE_PAIRS)) if (pair && byPair[pair]) out[sym] = byPair[pair];
+    if (out.USDC == null && byPair.USDCUSDT) out.USDC = byPair.USDCUSDT;
+  } catch { /* prices are decoration; balances still work without them */ }
+  return out;
+}
+
+// ---------- Bitcoin (same seed, BIP84 native SegWit) ----------
+function btcKeys(phrase) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive("m/84'/0'/0'/0/0");
+  const pay = btc.p2wpkh(child.publicKey, btc.NETWORK);
+  return { child, address: pay.address, script: pay.script };
+}
+export function bitcoinAddress(phrase) { return btcKeys(phrase).address; }
+
+const MEMPOOL = "https://mempool.space/api";
+export async function getBitcoinBalance(address) {
+  const res = await fetch(`${MEMPOOL}/address/${address}`);
+  const d = await res.json();
+  const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
+  const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
+  return (funded - spent) / 1e8;
+}
+export async function getBtcFeeRate() {
+  try {
+    const res = await fetch(`${MEMPOOL}/v1/fees/recommended`);
+    const d = await res.json();
+    return Math.max(1, d.halfHourFee || 5);
+  } catch { return 5; }
+}
+/** Build, sign and broadcast a BTC payment. Returns the txid. */
+export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
+  const { child, address, script } = btcKeys(phrase);
+  const rate = feeRate || (await getBtcFeeRate());
+  const res = await fetch(`${MEMPOOL}/address/${address}/utxos`);
+  const utxos = (await res.json()).filter(u => u.status?.confirmed !== false || true)
+    .sort((a, b) => b.value - a.value);
+  const target = Math.round(amountBtc * 1e8);
+  const picked = []; let sum = 0;
+  for (const u of utxos) { picked.push(u); sum += u.value; if (sum >= target + 1000) break; }
+  // fee for nIn inputs, 2 outputs (pay + change), P2WPKH: ~10 + 68/in + 31/out vbytes
+  const fee = Math.ceil((10 + picked.length * 68 + 62) * rate);
+  if (sum < target + fee) throw new Error("Not enough confirmed BTC to cover the amount plus network fee.");
+  const change = sum - target - fee;
+  const tx = new btc.Transaction();
+  for (const u of picked) {
+    tx.addInput({ txid: u.txid, index: u.vout, witnessUtxo: { script, amount: BigInt(u.value) }, sighashType: btc.SigHash.ALL });
+  }
+  tx.addOutputAddress(to, BigInt(target), btc.NETWORK);
+  if (change > 330) tx.addOutputAddress(address, BigInt(change), btc.NETWORK);
+  tx.sign(child.privateKey);
+  tx.finalize();
+  const hex = tx.hex;
+  const post = await fetch(`${MEMPOOL}/tx`, { method: "POST", body: hex });
+  if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
+  return post.text();
+}
+
+// ---------- Lightning (WebLN: user keeps their own Lightning wallet) ----------
+export async function payLightningInvoice(invoice) {
+  if (typeof window === "undefined" || !window.webln) {
+    throw new Error("No Lightning wallet found. Install Alby or another WebLN wallet, then try again — Fluid never custodies your Lightning funds.");
+  }
+  await window.webln.enable();
+  return window.webln.sendPayment(invoice);
+}
+
+// ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
 export function fonbnkOfframpUrl(networkKey, asset = "USDC") {
   const net = NETWORKS[networkKey];
   if (!net.fonbnkNetwork) return null;
@@ -163,3 +277,15 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC") {
   });
   return `https://pay.fonbnk.com/offramp?${p.toString()}`;
 }
+export function fonbnkOnrampUrl(networkKey, asset = "USDC") {
+  const net = NETWORKS[networkKey];
+  if (!net.fonbnkNetwork) return null;
+  const p = new URLSearchParams({ network: net.fonbnkNetwork, asset, countryIsoCode: "NG" });
+  return `https://pay.fonbnk.com/onramp?${p.toString()}`;
+}
+// Global consumer ramps (no Fluid partner key needed; user completes on provider).
+export const GLOBAL_RAMPS = [
+  { name: "MoonPay", region: "Global · 180+ countries", buy: "https://www.moonpay.com/buy", sell: "https://www.moonpay.com/sell" },
+  { name: "Ramp Network", region: "Global · 150+ countries", buy: "https://ramp.network/", sell: "https://ramp.network/" },
+  { name: "Transak", region: "Global · 170+ countries", buy: "https://global.transak.com/", sell: "https://global.transak.com/" },
+];

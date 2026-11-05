@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, formatSendIntent, NETWORKS } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS } from "../src/wallet-core.js";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -44,3 +44,20 @@ const ids = Object.values(NETWORKS).map(n => n.chainId);
 ok("unique chain ids", new Set(ids).size === ids.length);
 
 console.log(`\nAll ${passed} core tests passed.`);
+
+// 13. Bitcoin: same seed -> BIP84 address, cross-validated against bitcoinjs-lib
+ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about") === "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu");
+
+// 14. Network registry sanity: 15 networks, unique chainIds, https RPCs
+{
+  const keys = Object.keys(NETWORKS);
+  ok("at least 14 networks", keys.length >= 14);
+  const ids = new Set(keys.map(k => NETWORKS[k].chainId));
+  ok("chainIds unique", ids.size === keys.length);
+  ok("all rpcs https", keys.every(k => NETWORKS[k].rpc.startsWith("https://")));
+}
+
+// 15. Global ramps + onramp links
+ok("global ramps listed", GLOBAL_RAMPS.length >= 3 && GLOBAL_RAMPS.every(r => r.buy.startsWith("https://")));
+ok("fonbnk onramp builds", (fonbnkOnrampUrl("bsc") || "").includes("pay.fonbnk.com/onramp"));
+ok("fonbnk onramp null without mapping", fonbnkOnrampUrl("linea") === null);

@@ -1,12 +1,12 @@
 {
   "name": "fluid-wallet",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fluid — a simple, seamless, open-source non-custodial Web3 wallet. Your money, only you control.",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "build": "esbuild src/app.js --bundle --minify --outfile=dist/app.bundle.js && cp src/index.html dist/index.html",
+    "build": "node scripts/build.mjs",
     "test": "node test/core.test.mjs",
     "serve": "npx --yes serve dist -l 4173"
   },
@@ -14,6 +14,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
     "ethers": "^6.17.0",
     "qrcode": "^1.5.4"
   },

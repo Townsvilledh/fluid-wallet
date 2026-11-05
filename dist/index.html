@@ -1,121 +1,199 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fluid — your money, only you control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fluid — every chain, one wallet</title>
+<meta name="description" content="Fluid: an open-source, non-custodial wallet for every chain — EVM L1s & L2s, Bitcoin and Lightning — with global on/off-ramps and OGO ERA play-to-earn built in.">
 <style>
-  :root{--bg:#0b1220;--card:#111a2e;--line:#24314f;--txt:#e8eefc;--mut:#9fb0d0;--acc:#22c55e;--warn:#f59e0b;--bad:#ef4444}
-  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
-  .wrap{max-width:560px;margin:0 auto;padding:18px 14px 60px}
-  h1{font-size:25px;margin:6px 0 2px} h2{font-size:17px;margin:0 0 8px} p,li{line-height:1.5;color:var(--mut)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
-  label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
-  input,textarea,select{width:100%;background:#0b1220;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px;font-size:15px}
-  button{background:var(--acc);color:#04140a;border:0;border-radius:9px;padding:12px 15px;font-weight:700;font-size:15px;cursor:pointer;margin:8px 6px 0 0}
-  button.sec{background:#1e2c4a;color:var(--txt)} button.danger{background:#3a1420;color:#fda4af}
-  .hidden{display:none} .msg{font-size:14px;min-height:18px} .msg.err{color:var(--bad)} .msg.ok{color:var(--acc)}
-  .bal{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:15px}
-  .bal b{font-variant-numeric:tabular-nums} .mono{word-break:break-all;font-family:ui-monospace,monospace;font-size:13px;color:#cfe3ff}
-  .seed{font-size:17px;line-height:1.7;background:#0b1220;border:1px dashed var(--warn);border-radius:9px;padding:12px;color:#fde68a}
-  .hist{font-size:13px;color:var(--mut);padding:4px 0} a{color:#7dd3fc}
-  .warnbox{border-color:var(--warn);background:#221a08} .warnbox p{color:#fcd9a0}
-  .row{display:flex;gap:8px;align-items:center} .row select{flex:1}
+  :root{ --bg:#07090f; --panel:#0e1220; --panel2:#141a2e; --line:#1f2742; --txt:#eef1ff; --dim:#8b93b8;
+         --acc:#5b8cff; --acc2:#9d6bff; --good:#2fd08c; --bad:#ff6b7a; --r:18px; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{ margin:0; background:radial-gradient(1200px 600px at 50% -10%, #16204a 0%, var(--bg) 55%);
+        color:var(--txt); font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .phone{ max-width:430px; margin:0 auto; min-height:100dvh; padding:18px 16px 96px; position:relative; }
+  .hidden{ display:none !important; }
+  h1.logo{ font-size:30px; margin:6px 0 2px; letter-spacing:-.5px; }
+  h1.logo span{ background:linear-gradient(90deg,var(--acc),var(--acc2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tag{ color:var(--dim); margin:0 0 14px; font-size:14px; }
+  .card{ background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--line); border-radius:var(--r); padding:16px; margin:12px 0; }
+  input,select,textarea{ width:100%; background:#0a0e1a; color:var(--txt); border:1px solid var(--line);
+        border-radius:12px; padding:13px; font-size:16px; margin:6px 0; }
+  button{ font: inherit; cursor:pointer; border:0; }
+  .btn{ width:100%; padding:14px; border-radius:14px; background:linear-gradient(90deg,var(--acc),var(--acc2)); color:#fff; font-weight:700; margin:8px 0; }
+  .btn.ghost{ background:var(--panel2); color:var(--txt); border:1px solid var(--line); font-weight:600; }
+  .btn.danger{ background:none; color:var(--bad); border:1px solid #3a1d26; }
+  .msg{ min-height:18px; font-size:14px; } .msg.err{ color:var(--bad);} .msg.ok{ color:var(--good);}
+  .seed{ font-family:ui-monospace,monospace; background:#0a0e1a; border:1px dashed var(--acc); border-radius:12px; padding:12px; word-break:break-word; }
+  .hero{ text-align:center; padding:22px 16px 8px; }
+  .hero .net{ display:inline-flex; gap:6px; align-items:center; background:var(--panel2); border:1px solid var(--line);
+        color:var(--txt); border-radius:999px; padding:7px 14px; font-size:13px; font-weight:600; }
+  .hero .total{ font-size:44px; font-weight:800; letter-spacing:-1px; margin:12px 0 2px; }
+  .hero .sub{ color:var(--dim); font-size:13px; }
+  .addr{ color:var(--dim); font-size:13px; cursor:pointer; }
+  .actions{ display:flex; justify-content:space-around; padding:10px 4px 2px; }
+  .act{ display:flex; flex-direction:column; align-items:center; gap:6px; background:none; color:var(--txt); font-size:12px; font-weight:600; }
+  .act .ic{ width:52px; height:52px; border-radius:50%; background:linear-gradient(135deg,var(--acc),var(--acc2));
+        display:grid; place-items:center; font-size:22px; box-shadow:0 6px 18px rgba(91,140,255,.35); }
+  .row{ display:flex; align-items:center; gap:12px; padding:13px 6px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .row:last-child{ border-bottom:0; }
+  .coin{ width:42px; height:42px; border-radius:50%; display:grid; place-items:center; font-weight:800; color:#fff; flex:0 0 auto; }
+  .row .grow{ flex:1; min-width:0; } .row .amt{ text-align:right; }
+  .row b{ font-size:16px; } .row small{ color:var(--dim); display:block; font-size:12px; }
+  .tabs{ position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:min(430px,100%);
+        background:rgba(10,13,24,.92); backdrop-filter:blur(10px); border-top:1px solid var(--line);
+        display:flex; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); z-index:30; }
+  .tab{ flex:1; background:none; color:var(--dim); font-size:11px; font-weight:700; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 0; }
+  .tab .ti{ font-size:20px; } .tab.on{ color:var(--txt); }
+  .scrim{ position:fixed; inset:0; background:rgba(2,4,10,.65); z-index:40; }
+  .sheet{ position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:min(430px,100%); max-height:86dvh; overflow:auto;
+        background:var(--panel); border:1px solid var(--line); border-radius:22px 22px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom)); z-index:41; }
+  .sheet h3{ margin:2px 0 10px; font-size:19px; }
+  .x{ float:right; background:var(--panel2); color:var(--txt); width:34px; height:34px; border-radius:50%; font-size:16px; }
+  .qr{ display:block; margin:10px auto; background:#fff; border-radius:14px; padding:8px; width:196px; }
+  .mono{ font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; color:var(--dim); }
+  .netitem{ display:flex; justify-content:space-between; width:100%; text-align:left; background:none; color:var(--txt);
+        padding:14px 4px; border-bottom:1px solid var(--line); font-size:16px; font-weight:600; }
+  .pill{ font-size:11px; background:#1c2a1e; color:var(--good); border-radius:999px; padding:3px 9px; font-weight:700; }
+  .pill.soon{ background:#2a2140; color:#c9a8ff; }
+  .game{ background:linear-gradient(135deg,#14351f,#0e2a3a 60%,#241a4d); border:1px solid #2b4a35; }
+  .hist{ padding:10px 2px; border-bottom:1px solid var(--line); font-size:14px; } .hist a{ color:var(--acc); }
+  footer{ color:var(--dim); font-size:12px; text-align:center; margin:18px 0 4px; }
+  a{ color:var(--acc); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>⚽ Fluid</h1>
-  <p>Your money, only you control. A simple, open-source, non-custodial Web3 wallet. Keys are created and encrypted <b>in this browser</b> — Fluid has no server and can never touch your funds.</p>
+<div class="phone">
 
-  <div class="card warnbox">
-    <p style="margin:0"><b>Open-source prototype.</b> Built on the audited ethers.js library, but the app itself is unaudited. Start on <b>Sepolia testnet</b> or with small amounts, back up your seed, and verify the code — it's all on GitHub.</p>
-  </div>
+  <!-- ONBOARDING -->
+  <section id="onboard">
+    <h1 class="logo">💧 <span>Fluid</span></h1>
+    <p class="tag">Every chain. One wallet. Yours alone.<br>
+    15 EVM chains &amp; L2s · Bitcoin · Lightning · global buy &amp; cash-out · OGO ERA built in.</p>
 
-  <!-- Onboarding -->
-  <div id="onboard">
-    <div id="unlockBox" class="card hidden">
-      <h2>Welcome back</h2>
-      <label>Password</label>
-      <input type="password" id="unlockPw" autocomplete="current-password">
-      <button id="unlockBtn">Unlock wallet</button>
+    <div class="card hidden" id="unlockBox">
+      <h3 style="margin-top:0">Welcome back</h3>
+      <input id="unlockPw" type="password" placeholder="Wallet password" autocomplete="current-password">
+      <button class="btn" id="unlockBtn">Unlock Fluid</button>
     </div>
 
-    <div id="createBox" class="card">
-      <h2>Create or import a wallet</h2>
-      <label>Set a password (encrypts the wallet on this device)</label>
-      <input type="password" id="createPw" autocomplete="new-password">
-      <label>Confirm password</label>
-      <input type="password" id="createPw2" autocomplete="new-password">
-      <button id="createBtn">Create new wallet</button>
-      <div id="seedBox" class="hidden">
-        <label>⚠️ Your seed phrase — write it down on paper, in order. Anyone with it owns your money. Fluid can never recover it for you.</label>
+    <div class="card" id="createBox">
+      <h3 style="margin-top:0">Create or import</h3>
+      <input id="createPw" type="password" placeholder="Set a password (8+ characters)" autocomplete="new-password">
+      <input id="createPw2" type="password" placeholder="Repeat password" autocomplete="new-password">
+      <button class="btn" id="createBtn">Create new wallet</button>
+      <div class="hidden" id="seedBox">
+        <p>⚠️ Write these 12 words down on paper, in order. They ARE the wallet — on every chain. Anyone with them has your money; nobody can recover them for you.</p>
         <div class="seed" id="seedOut"></div>
-        <button id="seedDoneBtn">I've written it down — open my wallet</button>
+        <label style="display:block;margin:12px 0"><input type="checkbox" id="seedCheck" style="width:auto"> I wrote my seed phrase down</label>
+        <button class="btn" id="seedDoneBtn">Enter Fluid →</button>
       </div>
-      <hr style="border-color:var(--line);margin:16px 0">
-      <label>Or import an existing seed phrase (12/24 words)</label>
-      <textarea id="importPhrase" rows="2" autocomplete="off" spellcheck="false"></textarea>
-      <button class="sec" id="importBtn">Import wallet</button>
+      <hr style="border-color:var(--line)">
+      <textarea id="importPhrase" rows="2" placeholder="Import instead: paste a 12/24-word seed phrase"></textarea>
+      <button class="btn ghost" id="importBtn">Import wallet</button>
+      <p class="tag" style="margin-top:10px">Same phrase, every chain — this address is identical on all EVM networks, and it also derives your Bitcoin address.</p>
     </div>
-    <p class="msg" id="onboardMsg"></p>
+    <p class="msg err" id="onboardMsg"></p>
+    <p class="tag">Open source (MIT) · non-custodial · keys never leave this device unencrypted.<br>
+    Prototype: use small amounts until independently audited.</p>
+  </section>
+
+  <!-- APP -->
+  <section id="app" class="hidden">
+    <!-- WALLET TAB -->
+    <div id="tab-wallet">
+      <div class="hero">
+        <button class="net" id="netBtn">BNB Chain ▾</button>
+        <div class="total" id="totalUsd">$0.00</div>
+        <div class="sub" id="totalSub">on this network + Bitcoin</div>
+        <div class="addr" id="addrText" title="Tap to copy"></div>
+      </div>
+      <div class="actions">
+        <button class="act" id="actSend"><span class="ic">↑</span>Send</button>
+        <button class="act" id="actReceive"><span class="ic">↓</span>Receive</button>
+        <button class="act" id="actBuy"><span class="ic">＋</span>Buy</button>
+        <button class="act" id="actCash"><span class="ic">🏦</span>Cash out</button>
+      </div>
+      <div class="card" style="padding:4px 16px">
+        <div id="assetList">Loading assets…</div>
+      </div>
+      <button class="row" id="lightningRow" style="width:100%;background:none;color:var(--txt);text-align:left;border:0">
+        <span class="coin" style="background:#f7931a">⚡</span>
+        <span class="grow"><b>Bitcoin Lightning</b><small>Pay invoices via your own Lightning wallet (WebLN)</small></span>
+        <span>›</span>
+      </button>
+      <div class="card game">
+        <b>⚽ OGO ERA</b> <span class="pill soon">IN DEVELOPMENT</span>
+        <p class="tag" style="color:#cfe6d4;margin:8px 0">Lagos street football, on-chain. Play matches, grow your Companion, earn RAIN — claimed straight into this wallet.</p>
+        <button class="btn ghost" id="playJump">See how it works →</button>
+      </div>
+    </div>
+
+    <!-- PLAY TAB -->
+    <div id="tab-play" class="hidden">
+      <h2 style="margin:8px 0">⚽ OGO ERA</h2>
+      <p class="tag">The game that onboards the world into Fluid. Street football energy, real ownership.</p>
+      <div class="card game">
+        <h3 style="margin-top:0">How it works</h3>
+        <p>1. <b>Play.</b> Fast street-football matches — phone-first, Lagos pitch energy, players everywhere.</p>
+        <p>2. <b>Grow your Companion.</b> Your soulbound Companion NFT levels up with your match stats. It can never be sold or taken — it is <i>you</i> in the game.</p>
+        <p>3. <b>Earn RAIN.</b> Match rewards and tournament drops accrue as RAIN. Claim with one tap — it lands in this Fluid wallet, on-chain, yours.</p>
+        <p>4. <b>Spend it anywhere.</b> RAIN sits beside your BTC, ETH and stablecoins — send it, or cash out to a bank in 180+ countries.</p>
+      </div>
+      <div class="card">
+        <b>Status: wallet-first</b>
+        <p class="tag" style="margin:6px 0">The claim plumbing is being built BEFORE the game launches: RAIN drops use signed Merkle proofs (you claim directly; Fluid never custodies rewards), and the Companion contract already lives in the open-source repo, ready for Sui testnet.</p>
+        <button class="btn" id="notifyBtn">🔔 Notify me at launch</button>
+        <p class="msg ok" id="notifyMsg"></p>
+      </div>
+      <div class="card">
+        <b>Also in the hub (roadmap)</b>
+        <p class="tag" style="margin:6px 0">UBI &amp; community currencies — GoodDollar, World, Circles — claimed and held right here alongside everything else.</p>
+      </div>
+    </div>
+
+    <!-- ACTIVITY TAB -->
+    <div id="tab-activity" class="hidden">
+      <h2 style="margin:8px 0">Activity</h2>
+      <div class="card" style="padding:4px 16px"><div id="history">No sends yet from this browser.</div></div>
+    </div>
+
+    <!-- MORE TAB -->
+    <div id="tab-more" class="hidden">
+      <h2 style="margin:8px 0">Settings &amp; safety</h2>
+      <div class="card">
+        <button class="btn ghost" id="refreshBtn">↻ Refresh balances</button>
+        <button class="btn ghost" id="backupBtn">⬇ Download encrypted backup</button>
+        <button class="btn ghost" id="showSeedBtn">👁 Reveal seed phrase</button>
+        <button class="btn ghost" id="lockBtn">🔒 Lock wallet</button>
+        <button class="btn danger" id="wipeBtn">Remove wallet from this browser</button>
+      </div>
+      <div class="card">
+        <b>Offline recovery tool</b>
+        <p class="tag" style="margin:6px 0">Split your seed into 2-of-4 Shamir shards — any 2 recover it, 1 alone is useless. Run it offline.</p>
+        <a href="recovery.html" target="_blank" rel="noopener">Open the recovery tool ↗</a>
+      </div>
+      <p class="tag">Fluid is free, open source (MIT) and non-custodial. Fluid can never touch, freeze or recover your funds — by design.</p>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab on" data-tab="wallet"><span class="ti">💧</span>Wallet</button>
+      <button class="tab" data-tab="play"><span class="ti">⚽</span>Play</button>
+      <button class="tab" data-tab="activity"><span class="ti">🕘</span>Activity</button>
+      <button class="tab" data-tab="more"><span class="ti">⚙️</span>More</button>
+    </nav>
+  </section>
+
+  <!-- SHEETS -->
+  <div id="sheetRoot" class="hidden">
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet">
+      <button class="x" id="sheetX">✕</button>
+      <div id="sheetBody"></div>
+    </div>
   </div>
 
-  <!-- Main wallet -->
-  <div id="walletMain" class="hidden">
-    <div class="card">
-      <div class="row">
-        <select id="networkSel">
-          <option value="ethereum">Ethereum</option>
-          <option value="bsc" selected>BNB Chain</option>
-          <option value="base">Base</option>
-          <option value="polygon">Polygon</option>
-          <option value="arbitrum">Arbitrum</option>
-          <option value="sepolia">Sepolia (testnet)</option>
-        </select>
-        <button class="sec" id="refreshBtn">↻</button>
-        <button class="sec" id="lockBtn">Lock</button>
-      </div>
-      <label>Your address (same on every chain)</label>
-      <div class="mono" id="addrText"></div>
-      <button class="sec" id="copyAddr">Copy address</button>
-      <h2 style="margin-top:16px">Balances</h2>
-      <div id="balances">…</div>
-      <img id="qrImg" alt="Receive QR" width="180" height="180" style="margin-top:12px;border-radius:9px;background:#fff;padding:4px">
-      <p style="font-size:13px">Show this QR / address to receive funds on the selected network.</p>
-      <button id="cashoutBtn">💸 Cash out to a Nigerian bank (via Fonbnk)</button>
-      <p style="font-size:12px">Cash-out runs through Fonbnk's own widget — you verify with them, they pay your bank directly. Fluid never holds your money. No Fluid account or partner form involved.</p>
-    </div>
-
-    <div class="card">
-      <h2>Send</h2>
-      <label>Token</label>
-      <select id="sendToken"></select>
-      <label>To (wallet address)</label>
-      <input id="sendTo" placeholder="0x…" autocomplete="off" spellcheck="false">
-      <label>Amount</label>
-      <input id="sendAmount" inputmode="decimal" placeholder="0.01">
-      <button id="reviewSendBtn">Review send</button>
-      <div id="intentBox" class="hidden">
-        <p id="intentText" style="color:var(--txt)"></p>
-        <button id="confirmSendBtn">Confirm &amp; send</button>
-        <button class="sec" id="cancelSendBtn">Cancel</button>
-      </div>
-      <p class="msg" id="sendMsg"></p>
-      <h2 style="margin-top:14px">Recent sends (this browser)</h2>
-      <div id="history"></div>
-    </div>
-
-    <div class="card">
-      <h2>Backup &amp; safety</h2>
-      <button class="sec" id="backupBtn">Download encrypted backup (keystore)</button>
-      <button class="sec" id="showSeedBtn">Show seed phrase</button>
-      <button class="danger" id="wipeBtn">Remove wallet from this browser</button>
-      <p style="font-size:13px">Recovery without Fluid: import your seed into MetaMask / Trust Wallet / any BIP39 wallet, or use the Fluid 2-of-4 recovery tool. If Fluid disappears tomorrow, your funds don't.</p>
-    </div>
-  </div>
-
-  <p style="font-size:12px">Fluid is free and open source (MIT). No accounts, no tracking, no server. Verify: view source / GitHub.</p>
+  <footer>Fluid · open source · <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a></footer>
 </div>
 <script src="app.bundle.js"></script>
 </body>

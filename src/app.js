@@ -1,59 +1,218 @@
-// Fluid wallet — browser UI. Keys live only in memory while unlocked;
+// Fluid v2 — app-shell UI. Keys live only in memory while unlocked;
 // the only thing persisted is the standard encrypted keystore JSON.
 import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword,
-  getBalances, estimateSend, executeSend, formatSendIntent, fonbnkOfframpUrl,
+  getBalances, estimateSend, executeSend, formatSendIntent,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, getPrices,
+  bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
 const HISTORY_KEY = "fluid_history_v1";
+const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
+  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461" };
+const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
-let wallet = null;          // ethers wallet, memory only
-let networkKey = "bsc";     // default: cheap, and where Ethuram already operates
-let balances = [];
-let pendingSend = null;
+let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
-function msg(id, text, ok = false) { const e = $(id); e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); }
+function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
+function openSheet(html) { $("sheetBody").innerHTML = html; show("sheetRoot"); }
+function closeSheet() { show("sheetRoot", false); }
+$("sheetX").onclick = closeSheet; $("scrim").onclick = closeSheet;
 
+// ---------- tabs ----------
+function goTab(name) {
+  for (const t of ["wallet", "play", "activity", "more"]) show("tab-" + t, t === name);
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+}
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => goTab(b.dataset.tab));
+$("playJump").onclick = () => goTab("play");
+$("notifyBtn").onclick = () => {
+  localStorage.setItem("fluid_ogo_notify", "1");
+  msg("notifyMsg", "You're on the list — on this device. Launch news will also be posted in the GitHub repo.", true);
+};
+
+// ---------- gate ----------
 function refreshGate() {
   const hasVault = !!localStorage.getItem(VAULT_KEY);
   show("onboard", !wallet);
   show("unlockBox", hasVault && !wallet);
   show("createBox", !hasVault && !wallet);
-  show("walletMain", !!wallet);
+  show("app", !!wallet);
   if (wallet) renderMain();
 }
 
 async function renderMain() {
-  $("addrText").textContent = wallet.address;
-  const sel = $("networkSel");
-  sel.value = networkKey;
-  $("balances").innerHTML = "Loading balances…";
+  $("addrText").textContent = wallet.address.slice(0, 8) + "…" + wallet.address.slice(-6) + " ⧉ tap to copy";
+  $("addrText").onclick = () => navigator.clipboard.writeText(wallet.address);
+  $("netBtn").textContent = NETWORKS[networkKey].name + " ▾";
+  try { prices = await getPrices(); } catch { prices = {}; }
+  // Bitcoin first (all chains, one wallet)
+  btcAddr = bitcoinAddress(wallet.mnemonic.phrase);
+  getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
+  $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await getBalances(wallet, networkKey);
-    $("balances").innerHTML = balances.map(b =>
-      `<div class="bal"><span>${b.symbol}</span><b>${Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 6 })}</b></div>`).join("");
-    const sendSel = $("sendToken");
-    sendSel.innerHTML = balances.map((b, i) =>
-      `<option value="${i}">${b.symbol} — ${Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 6 })}</option>`).join("");
-  } catch (e) {
-    $("balances").innerHTML = "Could not load balances (RPC busy — tap refresh).";
-  }
+  } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
+  paintAssets();
   renderHistory();
-  const url = fonbnkOfframpUrl(networkKey);
-  show("cashoutBtn", !!url);
-  if (url) $("cashoutBtn").onclick = () => window.open(url, "_blank");
-  QRCode.toDataURL(wallet.address, { width: 180, margin: 1 })
-    .then(u => { $("qrImg").src = u; }).catch(() => {});
 }
 
+function heroTotal() {
+  const net = NETWORKS[networkKey];
+  let t = btcBal * (prices.BTC || 0);
+  for (const b of balances) {
+    const p = b.address ? (prices[b.symbol] ?? null) : (prices[net.priceSym] ?? null);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  return t;
+}
+
+function paintAssets() {
+  $("totalUsd").textContent = usd(heroTotal());
+  const net = NETWORKS[networkKey];
+  const rows = [];
+  rows.push(`<div class="row" id="btcRow">
+      <span class="coin" style="background:${COIN_COLORS.BTC}">₿</span>
+      <span class="grow"><b>Bitcoin</b><small>Native SegWit · all networks' wallet</small></span>
+      <span class="amt"><b>${fmt(btcBal, 8)}</b><small>${usd(btcBal * (prices.BTC || 0))}</small></span></div>`);
+  for (const b of balances) {
+    const p = b.address ? prices[b.symbol] : prices[net.priceSym];
+    rows.push(`<div class="row">
+      <span class="coin" style="background:${COIN_COLORS[b.symbol] || "#3b4a7a"}">${b.symbol.slice(0, 1)}</span>
+      <span class="grow"><b>${b.symbol}</b><small>${net.name}</small></span>
+      <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
+  }
+  $("assetList").innerHTML = rows.join("");
+  $("btcRow").onclick = openBtcSheet;
+}
+
+// ---------- network sheet ----------
+$("netBtn").onclick = () => {
+  openSheet(`<h3>Choose network</h3>` + Object.entries(NETWORKS).map(([k, n]) =>
+    `<button class="netitem" data-net="${k}"><span>${n.name}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`).join(""));
+  document.querySelectorAll("[data-net]").forEach(b => b.onclick = () => { networkKey = b.dataset.net; closeSheet(); renderMain(); });
+};
+
+// ---------- receive ----------
+function qr(el, text) { QRCode.toDataURL(text, { width: 180, margin: 1 }).then(u => { const i = $(el); if (i) i.src = u; }).catch(() => {}); }
+$("actReceive").onclick = () => {
+  openSheet(`<h3>Receive</h3>
+    <p class="tag">EVM address — the same on all 15 networks:</p>
+    <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
+    <button class="btn ghost" onclick="navigator.clipboard.writeText('${wallet.address}')">Copy EVM address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Bitcoin address:</p>
+    <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
+    <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>`);
+  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr);
+  $("cpBtc").onclick = () => navigator.clipboard.writeText(btcAddr);
+};
+
+// ---------- send (EVM) ----------
+$("actSend").onclick = () => {
+  openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
+    <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.symbol} — ${fmt(b.amount)}</option>`).join("")}</select>
+    <input id="sTo" placeholder="Recipient 0x… address">
+    <input id="sAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="sReview">Review send</button>
+    <div id="sIntent" class="hidden">
+      <p class="seed" id="sIntentText"></p>
+      <button class="btn" id="sConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="sMsg"></p>
+    <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
+  $("sReview").onclick = async () => {
+    const to = $("sTo").value.trim(), amount = $("sAmt").value.trim(), b = balances[Number($("sToken").value)];
+    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", "Enter an amount.");
+    if (Number(amount) > Number(b.amount)) return msg("sMsg", "Amount is more than your balance.");
+    try {
+      msg("sMsg", "Estimating fee…", true);
+      const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
+      pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol };
+      $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6) });
+      show("sIntent"); msg("sMsg", "");
+    } catch (e) { msg("sMsg", "Could not estimate: " + (e.shortMessage || e.message)); }
+  };
+  $("sConfirm").onclick = async () => {
+    if (!pendingSend) return;
+    try {
+      msg("sMsg", "Sending…", true);
+      const tx = await executeSend(wallet, networkKey, pendingSend);
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: tx.hash, amount: pendingSend.amount, symbol: pendingSend.symbol, to: pendingSend.to, explorer: NETWORKS[networkKey].explorer, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingSend = null; closeSheet(); renderMain();
+    } catch (e) { msg("sMsg", "Send failed: " + (e.shortMessage || e.message)); }
+  };
+};
+
+// ---------- Bitcoin sheet ----------
+function openBtcSheet() {
+  openSheet(`<h3>Bitcoin</h3>
+    <p><b>${fmt(btcBal, 8)} BTC</b> · ${usd(btcBal * (prices.BTC || 0))}</p>
+    <img class="qr" id="qrBtc2"><p class="mono">${btcAddr}</p>
+    <button class="btn ghost" id="cpBtc2">Copy address</button>
+    <hr style="border-color:var(--line)">
+    <h3>Send BTC</h3>
+    <input id="bTo" placeholder="Recipient bc1… address">
+    <input id="bAmt" inputmode="decimal" placeholder="Amount in BTC">
+    <button class="btn" id="bSend">Review &amp; send BTC</button>
+    <p class="msg err" id="bMsg"></p>
+    <p class="tag">Fee uses the current recommended network rate (mempool.space). Sends are final.</p>`);
+  qr("qrBtc2", btcAddr);
+  $("cpBtc2").onclick = () => navigator.clipboard.writeText(btcAddr);
+  $("bSend").onclick = async () => {
+    const to = $("bTo").value.trim(), amount = Number($("bAmt").value);
+    if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
+    if (!confirm(`Send ${amount} BTC to ${to}? Network fee will be added at the current rate.`)) return;
+    try {
+      msg("bMsg", "Building, signing and broadcasting…", true);
+      const txid = await sendBitcoin(wallet.mnemonic.phrase, { to, amountBtc: amount });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount, symbol: "BTC", to, explorer: "https://mempool.space", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      msg("bMsg", "Broadcast ✓ txid " + txid.slice(0, 16) + "…", true);
+      renderMain();
+    } catch (e) { msg("bMsg", e.message); }
+  };
+}
+
+// ---------- Lightning ----------
+$("lightningRow").onclick = () => {
+  openSheet(`<h3>⚡ Lightning payment</h3>
+    <p class="tag">Fluid never custodies Lightning funds. Paste an invoice — your own WebLN wallet (e.g. Alby) pays it.</p>
+    <textarea id="lnInv" rows="3" placeholder="lnbc… invoice"></textarea>
+    <button class="btn" id="lnPay">Pay invoice</button>
+    <p class="msg err" id="lnMsg"></p>`);
+  $("lnPay").onclick = async () => {
+    try { await payLightningInvoice($("lnInv").value.trim()); msg("lnMsg", "Paid ✓", true); }
+    catch (e) { msg("lnMsg", e.message); }
+  };
+};
+
+// ---------- ramps ----------
+function rampSheet(mode) {
+  const fonbnk = mode === "buy" ? fonbnkOnrampUrl(networkKey) : fonbnkOfframpUrl(networkKey);
+  const list = GLOBAL_RAMPS.map(r =>
+    `<button class="netitem" onclick="window.open('${mode === "buy" ? r.buy : r.sell}','_blank')"><span>${r.name}</span><small style="color:var(--dim)">${r.region}</small></button>`).join("");
+  openSheet(`<h3>${mode === "buy" ? "Buy crypto" : "Cash out to bank"}</h3>
+    <p class="tag">You complete ${mode === "buy" ? "purchase" : "sale"} with the provider (they handle KYC &amp; fiat). Fluid never touches your bank money.</p>
+    ${list}
+    ${fonbnk ? `<button class="netitem" onclick="window.open('${fonbnk}','_blank')"><span>Fonbnk</span><small style="color:var(--dim)">Nigeria · bank &amp; airtime</small></button>` : ""}`);
+}
+$("actBuy").onclick = () => rampSheet("buy");
+$("actCash").onclick = () => rampSheet("sell");
+
+// ---------- activity ----------
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
   $("history").innerHTML = h.length
-    ? h.map(x => `<div class="hist">Sent ${x.amount} ${x.symbol} → ${x.to.slice(0, 8)}… · <a target="_blank" href="${x.explorer}/tx/${x.hash}">view ↗</a></div>`).join("")
+    ? h.map(x => `<div class="hist">Sent ${x.amount} ${x.symbol} → ${String(x.to).slice(0, 10)}… · <a target="_blank" rel="noopener" href="${x.explorer}/tx/${x.hash}">view ↗</a></div>`).join("")
     : "No sends yet from this browser.";
 }
 
@@ -69,11 +228,11 @@ $("createBtn").onclick = async () => {
   show("seedBox");
   msg("onboardMsg", "Wallet created. Write the seed down, tick the box, then continue.", true);
   $("seedDoneBtn").onclick = async () => {
+    if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
     wallet = await unlockVault(v.keystore, pw);
     refreshGate();
   };
 };
-
 $("importBtn").onclick = async () => {
   const pw = $("createPw").value;
   if (!validatePassword(pw)) return msg("onboardMsg", "Set a password (8+ characters) above first.");
@@ -85,60 +244,20 @@ $("importBtn").onclick = async () => {
     refreshGate();
   } catch (e) { msg("onboardMsg", e.message); }
 };
-
 $("unlockBtn").onclick = async () => {
-  try {
-    wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value);
-    refreshGate();
-  } catch (e) { msg("onboardMsg", e.message); }
+  try { wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value); refreshGate(); }
+  catch (e) { msg("onboardMsg", e.message); }
 };
 
-// ---------- main actions ----------
-$("networkSel").onchange = (e) => { networkKey = e.target.value; renderMain(); };
+// ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
 $("lockBtn").onclick = () => { wallet = null; pendingSend = null; refreshGate(); };
-$("copyAddr").onclick = () => navigator.clipboard.writeText(wallet.address);
-
-$("reviewSendBtn").onclick = async () => {
-  const to = $("sendTo").value.trim();
-  const amount = $("sendAmount").value.trim();
-  const b = balances[Number($("sendToken").value)];
-  if (!b || !amount || Number(amount) <= 0) return msg("sendMsg", "Enter an amount.");
-  if (Number(amount) > Number(b.amount)) return msg("sendMsg", "Amount is more than your balance.");
-  try {
-    msg("sendMsg", "Estimating fee…", true);
-    const token = b.address ? b : null;
-    const fee = await estimateSend(wallet, networkKey, { to, amount, token });
-    pendingSend = { to, amount, token, symbol: b.symbol };
-    $("intentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6) });
-    show("intentBox");
-    msg("sendMsg", "");
-  } catch (e) { msg("sendMsg", "Could not estimate: " + (e.shortMessage || e.message)); }
-};
-
-$("confirmSendBtn").onclick = async () => {
-  if (!pendingSend) return;
-  try {
-    msg("sendMsg", "Sending… approve nothing else, just wait for the network.", true);
-    const tx = await executeSend(wallet, networkKey, pendingSend);
-    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-    h.unshift({ hash: tx.hash, amount: pendingSend.amount, symbol: pendingSend.symbol, to: pendingSend.to, explorer: NETWORKS[networkKey].explorer, at: Date.now() });
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-    show("intentBox", false);
-    msg("sendMsg", "Sent ✓ Tx: " + tx.hash.slice(0, 18) + "…", true);
-    pendingSend = null;
-    renderMain();
-  } catch (e) { msg("sendMsg", "Send failed: " + (e.shortMessage || e.message)); }
-};
-$("cancelSendBtn").onclick = () => { pendingSend = null; show("intentBox", false); };
-
 $("backupBtn").onclick = () => {
   const blob = new Blob([localStorage.getItem(VAULT_KEY)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = "fluid-keystore-backup.json"; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
-
 $("showSeedBtn").onclick = async () => {
   const pw = prompt("Re-enter your password to reveal the seed phrase:");
   if (!pw) return;
@@ -147,7 +266,6 @@ $("showSeedBtn").onclick = async () => {
     alert("Your seed phrase (never share it, never type it into a website):\n\n" + w.mnemonic.phrase);
   } catch { alert("Wrong password."); }
 };
-
 $("wipeBtn").onclick = () => {
   if (!confirm("Remove this wallet from this browser? You can only get it back with your seed phrase / keystore backup. Funds on-chain are NOT deleted.")) return;
   localStorage.removeItem(VAULT_KEY); wallet = null; refreshGate();
