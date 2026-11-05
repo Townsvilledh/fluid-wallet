@@ -6,7 +6,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -202,12 +202,28 @@ function openBtcSheet() {
 $("lightningRow").onclick = () => {
   openSheet(`<h3>⚡ Lightning payment</h3>
     <p class="tag">Fluid never custodies Lightning funds. Paste an invoice — your own WebLN wallet (e.g. Alby) pays it.</p>
-    <textarea id="lnInv" rows="3" placeholder="lnbc… invoice"></textarea>
-    <button class="btn" id="lnPay">Pay invoice</button>
+    <textarea id="lnInv" rows="3" placeholder="lnbc… invoice — or a Fluid name / Lightning address"></textarea>
+    <input id="lnSats" inputmode="numeric" placeholder="Sats (only for name / Lightning address)">
+    <button class="btn" id="lnPay">Pay</button>
     <p class="msg err" id="lnMsg"></p>`);
   $("lnPay").onclick = async () => {
-    try { await payLightningInvoice($("lnInv").value.trim()); msg("lnMsg", "Paid ✓", true); }
-    catch (e) { msg("lnMsg", e.message); }
+    try {
+      let target = $("lnInv").value.trim(), invoice = target;
+      if (!target.toLowerCase().startsWith("lnbc")) {
+        const sats = Number($("lnSats").value);
+        if (!sats || sats <= 0) return msg("lnMsg", "Enter the sats amount for a name / Lightning address.");
+        let lnAddr = target;
+        if (!target.includes("@")) {
+          const hit = await resolveFluidName(target).catch(() => null);
+          if (!hit || !hit.ln) return msg("lnMsg", "That Fluid name has no Lightning address in the registry.");
+          lnAddr = hit.ln;
+        }
+        msg("lnMsg", "Getting invoice for " + lnAddr + "…", true);
+        invoice = await lightningInvoiceForAddress(lnAddr, sats);
+      }
+      await payLightningInvoice(invoice);
+      msg("lnMsg", "Paid ✓", true);
+    } catch (e) { msg("lnMsg", e.message); }
   };
 };
 
@@ -269,7 +285,7 @@ $("claimNameBtn").onclick = async () => {
   const existing = await resolveFluidName(name).catch(() => null);
   if (existing) return msg("nameMsg", "That name is already claimed. Try another.");
   localStorage.setItem("fluid_name", name);
-  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase));
+  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null);
   $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
   show("claimBox");
   msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);

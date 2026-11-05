@@ -276,9 +276,30 @@ export function normalizeFluidName(input) {
   s = s.replace(/^@/, "").replace(/@fluid\.is-a\.dev$/, "").replace(/\.fluid\.is-a\.dev$/, "");
   return s;
 }
-export function buildNameEntry(name, evm, btc) {
+/** A name resolves to the wallet's KEYS (addresses) on every family:
+ *  `evm` is one address valid on ALL 15 EVM chains/L2s for ANY token
+ *  (native, USDC, USDT, any ERC-20), `btc` is the Bitcoin key, and `ln`
+ *  is an optional Lightning address for invoice-less Lightning sends.
+ *  New families (sui, sol) get added as fields — old entries keep working. */
+export function buildNameEntry(name, evm, btc, ln = null) {
   if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
-  return { [name]: { evm, btc } };
+  const entry = { evm, btc };
+  if (ln) entry.ln = ln;
+  return { [name]: entry };
+}
+/** Fetch a Lightning invoice for a Lightning address (LNURL-pay, LUD-16).
+ *  Returns a BOLT11 invoice the user's own WebLN wallet then pays. */
+export async function lightningInvoiceForAddress(lnAddress, sats) {
+  const m = /^([^@\s]+)@([^@\s]+)$/.exec(String(lnAddress || "").trim());
+  if (!m) throw new Error("That is not a Lightning address (name@domain).");
+  const meta = await (await fetch(`https://${m[2]}/.well-known/lnurlp/${m[1]}`)).json();
+  if (!meta.callback || meta.tag !== "payRequest") throw new Error("That Lightning address does not support LNURL-pay.");
+  const amountMsat = Math.round(sats * 1000);
+  if (amountMsat < (meta.minSendable || 0) || amountMsat > (meta.maxSendable || Infinity))
+    throw new Error("Amount is outside that address's accepted range.");
+  const inv = await (await fetch(`${meta.callback}${meta.callback.includes("?") ? "&" : "?"}amount=${amountMsat}`)).json();
+  if (!inv.pr) throw new Error("Could not get an invoice from that Lightning address.");
+  return inv.pr;
 }
 export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
   const name = normalizeFluidName(input);
