@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.DS_Store
+# Never commit keys, keystores or seeds — Fluid is non-custodial, act like it.
+*.keystore*
+fluid-keystore-backup.json
+*wallet.json
+*.enc
+.env*
