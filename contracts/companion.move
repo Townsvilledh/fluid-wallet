@@ -27,6 +27,18 @@ public struct Companion has key {
     level: u64,
     model_hash: vector<u8>, // hash of the open-source base model, e.g. b"ipfs://base_model_v1"
     wallet_addr: address,
+    // Headline public stats as first-class fields (bible: lending apps read
+    // finance_score, education apps read lessons_completed, UBI reads
+    // games_played — cheap direct reads, no dynamic-field lookup needed).
+    // Everything else (traits, achievements-as-counters) uses dynamic fields.
+    games_played: u64,
+    goals: u64,
+    assists: u64,
+    nutmegs: u64,
+    saves_coached: u64,
+    lessons_completed: u64,
+    rains_claimed: u64,
+    finance_score: u64, // 0..100, public badge — private finance data NEVER on-chain
 }
 
 public struct CompanionMinted has copy, drop {
@@ -57,6 +69,14 @@ public fun mint(name: vector<u8>, model_hash: vector<u8>, clock: &Clock, ctx: &m
         level: 1,
         model_hash,
         wallet_addr: sender,
+        games_played: 0,
+        goals: 0,
+        assists: 0,
+        nutmegs: 0,
+        saves_coached: 0,
+        lessons_completed: 0,
+        rains_claimed: 0,
+        finance_score: 0,
     };
     event::emit(CompanionMinted { companion_id: object::id(&companion), owner: sender });
     // transfer (not public_transfer) — the only move this object ever makes.
@@ -88,5 +108,34 @@ public fun get_stat(companion: &Companion, key: vector<u8>): u64 {
     if (df::exists_(&companion.id, key)) *df::borrow(&companion.id, key) else 0
 }
 
+/// Record one finished match atomically (called via the user's signed
+/// level_up/stat intent after a game — the game server can never call this).
+public fun record_match(
+    companion: &mut Companion,
+    goals: u64, assists: u64, nutmegs: u64, ctx: &TxContext,
+) {
+    assert!(companion.owner == ctx.sender(), 0); // ENotOwner
+    companion.games_played = companion.games_played + 1;
+    companion.goals = companion.goals + goals;
+    companion.assists = companion.assists + assists;
+    companion.nutmegs = companion.nutmegs + nutmegs;
+}
+
+/// RAIN claimed through the Easter-egg claim flow — cumulative counter.
+public fun record_rain_claim(companion: &mut Companion, amount: u64, ctx: &TxContext) {
+    assert!(companion.owner == ctx.sender(), 0); // ENotOwner
+    companion.rains_claimed = companion.rains_claimed + amount;
+}
+
+/// Finance score is a 0..100 public badge derived on-device from private
+/// data; only the score itself is published, never the underlying data.
+public fun set_finance_score(companion: &mut Companion, score: u64, ctx: &TxContext) {
+    assert!(companion.owner == ctx.sender(), 0); // ENotOwner
+    assert!(score <= 100, 1); // EScoreOutOfRange
+    companion.finance_score = score;
+}
+
 public fun level(companion: &Companion): u64 { companion.level }
 public fun owner(companion: &Companion): address { companion.owner }
+public fun finance_score(companion: &Companion): u64 { companion.finance_score }
+public fun games_played(companion: &Companion): u64 { companion.games_played }
