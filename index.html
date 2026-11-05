@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluid — your money, only you control</title>
+<style>
+  :root{--bg:#0b1220;--card:#111a2e;--line:#24314f;--txt:#e8eefc;--mut:#9fb0d0;--acc:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  .wrap{max-width:560px;margin:0 auto;padding:18px 14px 60px}
+  h1{font-size:25px;margin:6px 0 2px} h2{font-size:17px;margin:0 0 8px} p,li{line-height:1.5;color:var(--mut)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
+  label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+  input,textarea,select{width:100%;background:#0b1220;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px;font-size:15px}
+  button{background:var(--acc);color:#04140a;border:0;border-radius:9px;padding:12px 15px;font-weight:700;font-size:15px;cursor:pointer;margin:8px 6px 0 0}
+  button.sec{background:#1e2c4a;color:var(--txt)} button.danger{background:#3a1420;color:#fda4af}
+  .hidden{display:none} .msg{font-size:14px;min-height:18px} .msg.err{color:var(--bad)} .msg.ok{color:var(--acc)}
+  .bal{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:15px}
+  .bal b{font-variant-numeric:tabular-nums} .mono{word-break:break-all;font-family:ui-monospace,monospace;font-size:13px;color:#cfe3ff}
+  .seed{font-size:17px;line-height:1.7;background:#0b1220;border:1px dashed var(--warn);border-radius:9px;padding:12px;color:#fde68a}
+  .hist{font-size:13px;color:var(--mut);padding:4px 0} a{color:#7dd3fc}
+  .warnbox{border-color:var(--warn);background:#221a08} .warnbox p{color:#fcd9a0}
+  .row{display:flex;gap:8px;align-items:center} .row select{flex:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚽ Fluid</h1>
+  <p>Your money, only you control. A simple, open-source, non-custodial Web3 wallet. Keys are created and encrypted <b>in this browser</b> — Fluid has no server and can never touch your funds.</p>
+
+  <div class="card warnbox">
+    <p style="margin:0"><b>Open-source prototype.</b> Built on the audited ethers.js library, but the app itself is unaudited. Start on <b>Sepolia testnet</b> or with small amounts, back up your seed, and verify the code — it's all on GitHub.</p>
+  </div>
+
+  <!-- Onboarding -->
+  <div id="onboard">
+    <div id="unlockBox" class="card hidden">
+      <h2>Welcome back</h2>
+      <label>Password</label>
+      <input type="password" id="unlockPw" autocomplete="current-password">
+      <button id="unlockBtn">Unlock wallet</button>
+    </div>
+
+    <div id="createBox" class="card">
+      <h2>Create or import a wallet</h2>
+      <label>Set a password (encrypts the wallet on this device)</label>
+      <input type="password" id="createPw" autocomplete="new-password">
+      <label>Confirm password</label>
+      <input type="password" id="createPw2" autocomplete="new-password">
+      <button id="createBtn">Create new wallet</button>
+      <div id="seedBox" class="hidden">
+        <label>⚠️ Your seed phrase — write it down on paper, in order. Anyone with it owns your money. Fluid can never recover it for you.</label>
+        <div class="seed" id="seedOut"></div>
+        <button id="seedDoneBtn">I've written it down — open my wallet</button>
+      </div>
+      <hr style="border-color:var(--line);margin:16px 0">
+      <label>Or import an existing seed phrase (12/24 words)</label>
+      <textarea id="importPhrase" rows="2" autocomplete="off" spellcheck="false"></textarea>
+      <button class="sec" id="importBtn">Import wallet</button>
+    </div>
+    <p class="msg" id="onboardMsg"></p>
+  </div>
+
+  <!-- Main wallet -->
+  <div id="walletMain" class="hidden">
+    <div class="card">
+      <div class="row">
+        <select id="networkSel">
+          <option value="ethereum">Ethereum</option>
+          <option value="bsc" selected>BNB Chain</option>
+          <option value="base">Base</option>
+          <option value="polygon">Polygon</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="sepolia">Sepolia (testnet)</option>
+        </select>
+        <button class="sec" id="refreshBtn">↻</button>
+        <button class="sec" id="lockBtn">Lock</button>
+      </div>
+      <label>Your address (same on every chain)</label>
+      <div class="mono" id="addrText"></div>
+      <button class="sec" id="copyAddr">Copy address</button>
+      <h2 style="margin-top:16px">Balances</h2>
+      <div id="balances">…</div>
+      <img id="qrImg" alt="Receive QR" width="180" height="180" style="margin-top:12px;border-radius:9px;background:#fff;padding:4px">
+      <p style="font-size:13px">Show this QR / address to receive funds on the selected network.</p>
+      <button id="cashoutBtn">💸 Cash out to a Nigerian bank (via Fonbnk)</button>
+      <p style="font-size:12px">Cash-out runs through Fonbnk's own widget — you verify with them, they pay your bank directly. Fluid never holds your money. No Fluid account or partner form involved.</p>
+    </div>
+
+    <div class="card">
+      <h2>Send</h2>
+      <label>Token</label>
+      <select id="sendToken"></select>
+      <label>To (wallet address)</label>
+      <input id="sendTo" placeholder="0x…" autocomplete="off" spellcheck="false">
+      <label>Amount</label>
+      <input id="sendAmount" inputmode="decimal" placeholder="0.01">
+      <button id="reviewSendBtn">Review send</button>
+      <div id="intentBox" class="hidden">
+        <p id="intentText" style="color:var(--txt)"></p>
+        <button id="confirmSendBtn">Confirm &amp; send</button>
+        <button class="sec" id="cancelSendBtn">Cancel</button>
+      </div>
+      <p class="msg" id="sendMsg"></p>
+      <h2 style="margin-top:14px">Recent sends (this browser)</h2>
+      <div id="history"></div>
+    </div>
+
+    <div class="card">
+      <h2>Backup &amp; safety</h2>
+      <button class="sec" id="backupBtn">Download encrypted backup (keystore)</button>
+      <button class="sec" id="showSeedBtn">Show seed phrase</button>
+      <button class="danger" id="wipeBtn">Remove wallet from this browser</button>
+      <p style="font-size:13px">Recovery without Fluid: import your seed into MetaMask / Trust Wallet / any BIP39 wallet, or use the Fluid 2-of-4 recovery tool. If Fluid disappears tomorrow, your funds don't.</p>
+    </div>
+  </div>
+
+  <p style="font-size:12px">Fluid is free and open source (MIT). No accounts, no tracking, no server. Verify: view source / GitHub.</p>
+</div>
+<script src="app.bundle.js"></script>
+</body>
+</html>
