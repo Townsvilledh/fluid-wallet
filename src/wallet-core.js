@@ -269,18 +269,43 @@ export async function payLightningInvoice(invoice) {
 }
 
 // ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
-export function fonbnkOfframpUrl(networkKey, asset = "USDC") {
+// Local-currency rails: pick a country, Fluid builds the provider link with
+// that country's ISO code so the user deposits/withdraws in THEIR currency
+// (NGN, KES, GHS, ZAR, USD, EUR...). Fonbnk covers the African corridors
+// below (bank + mobile money inside its widget); the global providers
+// cover 150-180+ countries each. Fluid never touches the fiat itself.
+export const RAMP_COUNTRIES = [
+  { code: "NG", name: "Nigeria · NGN", fonbnk: true },
+  { code: "KE", name: "Kenya · KES", fonbnk: true },
+  { code: "GH", name: "Ghana · GHS", fonbnk: true },
+  { code: "ZA", name: "South Africa · ZAR", fonbnk: true },
+  { code: "UG", name: "Uganda · UGX", fonbnk: true },
+  { code: "TZ", name: "Tanzania · TZS", fonbnk: true },
+  { code: "CM", name: "Cameroon · XAF", fonbnk: true },
+  { code: "SN", name: "Senegal · XOF", fonbnk: true },
+  { code: "CI", name: "Côte d'Ivoire · XOF", fonbnk: true },
+  { code: "ZM", name: "Zambia · ZMW", fonbnk: true },
+  { code: "US", name: "United States · USD", fonbnk: false },
+  { code: "GB", name: "United Kingdom · GBP", fonbnk: false },
+  { code: "DE", name: "Germany · EUR", fonbnk: false },
+  { code: "IN", name: "India · INR", fonbnk: false },
+  { code: "BR", name: "Brazil · BRL", fonbnk: false },
+  { code: "PH", name: "Philippines · PHP", fonbnk: false },
+  { code: "ID", name: "Indonesia · IDR", fonbnk: false },
+  { code: "MX", name: "Mexico · MXN", fonbnk: false },
+];
+export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
   const net = NETWORKS[networkKey];
   if (!net.fonbnkNetwork) return null;
   const p = new URLSearchParams({
-    network: net.fonbnkNetwork, asset, paymentChannel: "bank", countryIsoCode: "NG",
+    network: net.fonbnkNetwork, asset, paymentChannel: "bank", countryIsoCode: country,
   });
   return `https://pay.fonbnk.com/offramp?${p.toString()}`;
 }
-export function fonbnkOnrampUrl(networkKey, asset = "USDC") {
+export function fonbnkOnrampUrl(networkKey, asset = "USDC", country = "NG") {
   const net = NETWORKS[networkKey];
   if (!net.fonbnkNetwork) return null;
-  const p = new URLSearchParams({ network: net.fonbnkNetwork, asset, countryIsoCode: "NG" });
+  const p = new URLSearchParams({ network: net.fonbnkNetwork, asset, countryIsoCode: country });
   return `https://pay.fonbnk.com/onramp?${p.toString()}`;
 }
 // Global consumer ramps (no Fluid partner key needed; user completes on provider).

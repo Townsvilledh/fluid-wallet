@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
 } from "./wallet-core.js";
 
@@ -195,15 +195,30 @@ $("lightningRow").onclick = () => {
   };
 };
 
-// ---------- ramps ----------
+// ---------- ramps (local currency, country-aware) ----------
 function rampSheet(mode) {
-  const fonbnk = mode === "buy" ? fonbnkOnrampUrl(networkKey) : fonbnkOfframpUrl(networkKey);
-  const list = GLOBAL_RAMPS.map(r =>
-    `<button class="netitem" onclick="window.open('${mode === "buy" ? r.buy : r.sell}','_blank')"><span>${r.name}</span><small style="color:var(--dim)">${r.region}</small></button>`).join("");
-  openSheet(`<h3>${mode === "buy" ? "Buy crypto" : "Cash out to bank"}</h3>
-    <p class="tag">You complete ${mode === "buy" ? "purchase" : "sale"} with the provider (they handle KYC &amp; fiat). Fluid never touches your bank money.</p>
-    ${list}
-    ${fonbnk ? `<button class="netitem" onclick="window.open('${fonbnk}','_blank')"><span>Fonbnk</span><small style="color:var(--dim)">Nigeria · bank &amp; airtime</small></button>` : ""}`);
+  const country = localStorage.getItem("fluid_country") || "NG";
+  const ctry = RAMP_COUNTRIES.find(c => c.code === country) || RAMP_COUNTRIES[0];
+  openSheet(`<h3>${mode === "buy" ? "Deposit local currency → crypto" : "Withdraw crypto → local currency"}</h3>
+    <p class="tag">Pick your country and coin. You complete the ${mode === "buy" ? "purchase" : "sale"} with the provider in your own currency (they handle KYC &amp; fiat) — Fluid never touches your bank money.</p>
+    <label class="tag">Country / currency</label>
+    <select id="rCountry">${RAMP_COUNTRIES.map(c => `<option value="${c.code}" ${c.code === country ? "selected" : ""}>${c.name}</option>`).join("")}</select>
+    <label class="tag">Coin (on ${NETWORKS[networkKey].name})</label>
+    <select id="rAsset"><option>USDC</option><option>USDT</option></select>
+    <div id="rList"></div>`);
+  const paint = () => {
+    const code = $("rCountry").value, asset = $("rAsset").value;
+    localStorage.setItem("fluid_country", code);
+    const c = RAMP_COUNTRIES.find(x => x.code === code);
+    const fonbnk = c.fonbnk
+      ? (mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, code) : fonbnkOfframpUrl(networkKey, asset, code)) : null;
+    $("rList").innerHTML =
+      GLOBAL_RAMPS.map(r =>
+        `<button class="netitem" onclick="window.open('${mode === "buy" ? r.buy : r.sell}','_blank')"><span>${r.name}</span><small style="color:var(--dim)">${r.region}</small></button>`).join("") +
+      (fonbnk ? `<button class="netitem" onclick="window.open('${fonbnk}','_blank')"><span>Fonbnk</span><small style="color:var(--dim)">${c.name} · bank &amp; mobile money</small></button>` : "") +
+      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[networkKey].name} — switch network (e.g. BNB Chain or Base) to use it, or use a global provider above.</p>` : "");
+  };
+  $("rCountry").onchange = paint; $("rAsset").onchange = paint; paint();
 }
 $("actBuy").onclick = () => rampSheet("buy");
 $("actCash").onclick = () => rampSheet("sell");

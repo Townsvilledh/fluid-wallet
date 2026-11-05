@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES } from "../src/wallet-core.js";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -61,3 +61,8 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 ok("global ramps listed", GLOBAL_RAMPS.length >= 3 && GLOBAL_RAMPS.every(r => r.buy.startsWith("https://")));
 ok("fonbnk onramp builds", (fonbnkOnrampUrl("bsc") || "").includes("pay.fonbnk.com/onramp"));
 ok("fonbnk onramp null without mapping", fonbnkOnrampUrl("linea") === null);
+
+// 16. Local-currency rails: country-aware Fonbnk links + country table
+ok("fonbnk KE onramp", (fonbnkOnrampUrl("bsc", "USDC", "KE") || "").includes("countryIsoCode=KE"));
+ok("fonbnk GH offramp USDT", (fonbnkOfframpUrl("base", "USDT", "GH") || "").includes("asset=USDT"));
+ok("ramp countries include NG+US", RAMP_COUNTRIES.some(c => c.code === "NG" && c.fonbnk) && RAMP_COUNTRIES.some(c => c.code === "US"));
