@@ -5,6 +5,7 @@ mkdirSync("dist", { recursive: true });
 await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js" });
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
+copyFileSync("names.json", "dist/names.json");
 const html = readFileSync("src/index.html", "utf8");
 const js = readFileSync("dist/app.bundle.js", "utf8");
 const single = html.replace('<script src="app.bundle.js"></script>', () => "<script>" + js.replace(/<\/script>/g, "<\\/script>") + "</script>");

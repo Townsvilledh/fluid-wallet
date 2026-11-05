@@ -259,6 +259,37 @@ export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
   return post.text();
 }
 
+// ---------- Fluid Names: usernames that resolve under the Fluid domain ----------
+// Your name is `you.fluid.is-a.dev`. The registry is a public JSON file in
+// the open-source repo (names.json, served from the wallet site itself) —
+// no server, no company database. Anyone can verify a name -> address
+// mapping; only the repo (via signed GitHub commits/PRs) can publish one,
+// and a future version moves this to an on-chain registry.
+export const FLUID_DOMAIN = "fluid.is-a.dev";
+export const NAMES_REGISTRY_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
+export function validateFluidName(name) {
+  return /^[a-z][a-z0-9_]{2,19}$/.test(name || "");
+}
+/** Accept "kemi", "@kemi", "kemi.fluid.is-a.dev", "kemi@fluid.is-a.dev". */
+export function normalizeFluidName(input) {
+  let s = String(input || "").trim().toLowerCase();
+  s = s.replace(/^@/, "").replace(/@fluid\.is-a\.dev$/, "").replace(/\.fluid\.is-a\.dev$/, "");
+  return s;
+}
+export function buildNameEntry(name, evm, btc) {
+  if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+  return { [name]: { evm, btc } };
+}
+export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
+  const name = normalizeFluidName(input);
+  if (!validateFluidName(name)) return null;
+  const res = await fetch(registryUrl, { cache: "no-store" });
+  if (!res.ok) return null;
+  const reg = await res.json();
+  const entry = reg[name];
+  return entry ? { name, ...entry } : null;
+}
+
 // ---------- Lightning (WebLN: user keeps their own Lightning wallet) ----------
 export async function payLightningInvoice(invoice) {
   if (typeof window === "undefined" || !window.webln) {

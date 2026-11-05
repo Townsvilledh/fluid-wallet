@@ -6,6 +6,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -48,6 +49,8 @@ function refreshGate() {
 
 async function renderMain() {
   $("addrText").textContent = wallet.address.slice(0, 8) + "…" + wallet.address.slice(-6) + " ⧉ tap to copy";
+  const myName = localStorage.getItem("fluid_name");
+  $("nameText").textContent = myName ? "@" + myName + " · " + myName + "." + FLUID_DOMAIN : "";
   $("addrText").onclick = () => navigator.clipboard.writeText(wallet.address);
   $("netBtn").textContent = NETWORKS[networkKey].name + " ▾";
   try { prices = await getPrices(); } catch { prices = {}; }
@@ -117,7 +120,7 @@ $("actReceive").onclick = () => {
 $("actSend").onclick = () => {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.symbol} — ${fmt(b.amount)}</option>`).join("")}</select>
-    <input id="sTo" placeholder="Recipient 0x… address">
+    <input id="sTo" placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="sReview">Review send</button>
     <div id="sIntent" class="hidden">
@@ -127,7 +130,14 @@ $("actSend").onclick = () => {
     <p class="msg err" id="sMsg"></p>
     <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
   $("sReview").onclick = async () => {
-    const to = $("sTo").value.trim(), amount = $("sAmt").value.trim(), b = balances[Number($("sToken").value)];
+    let to = $("sTo").value.trim();
+    const amount = $("sAmt").value.trim(), b = balances[Number($("sToken").value)];
+    if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) {
+      msg("sMsg", "Resolving Fluid name…", true);
+      const hit = await resolveFluidName(to).catch(() => null);
+      if (!hit || !hit.evm) return msg("sMsg", "That Fluid name is not in the registry yet.");
+      to = hit.evm; msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
+    }
     if (!b || !amount || Number(amount) <= 0) return msg("sMsg", "Enter an amount.");
     if (Number(amount) > Number(b.amount)) return msg("sMsg", "Amount is more than your balance.");
     try {
@@ -159,7 +169,7 @@ function openBtcSheet() {
     <button class="btn ghost" id="cpBtc2">Copy address</button>
     <hr style="border-color:var(--line)">
     <h3>Send BTC</h3>
-    <input id="bTo" placeholder="Recipient bc1… address">
+    <input id="bTo" placeholder="Recipient bc1… address or Fluid name">
     <input id="bAmt" inputmode="decimal" placeholder="Amount in BTC">
     <button class="btn" id="bSend">Review &amp; send BTC</button>
     <p class="msg err" id="bMsg"></p>
@@ -167,7 +177,13 @@ function openBtcSheet() {
   qr("qrBtc2", btcAddr);
   $("cpBtc2").onclick = () => navigator.clipboard.writeText(btcAddr);
   $("bSend").onclick = async () => {
-    const to = $("bTo").value.trim(), amount = Number($("bAmt").value);
+    let to = $("bTo").value.trim();
+    const amount = Number($("bAmt").value);
+    if (to && !to.startsWith("bc1")) {
+      const hit = await resolveFluidName(to).catch(() => null);
+      if (!hit || !hit.btc) return msg("bMsg", "That Fluid name has no Bitcoin address in the registry.");
+      to = hit.btc;
+    }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
     if (!confirm(`Send ${amount} BTC to ${to}? Network fee will be added at the current rate.`)) return;
     try {
@@ -245,7 +261,24 @@ $("createBtn").onclick = async () => {
   $("seedDoneBtn").onclick = async () => {
     if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
     wallet = await unlockVault(v.keystore, pw);
-    refreshGate();
+    // ---------- Fluid name claim ----------
+$("claimNameBtn").onclick = async () => {
+  const name = normalizeFluidName($("nameInput").value);
+  if (!validateFluidName(name)) return msg("nameMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+  msg("nameMsg", "Checking the registry…", true);
+  const existing = await resolveFluidName(name).catch(() => null);
+  if (existing) return msg("nameMsg", "That name is already claimed. Try another.");
+  localStorage.setItem("fluid_name", name);
+  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase));
+  $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
+  show("claimBox");
+  msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
+  renderMain();
+};
+$("copyEntryBtn").onclick = () => navigator.clipboard.writeText($("nameEntry").textContent);
+if (localStorage.getItem("fluid_name")) $("namePreview").textContent = localStorage.getItem("fluid_name") + "." + FLUID_DOMAIN;
+
+refreshGate();
   };
 };
 $("importBtn").onclick = async () => {
