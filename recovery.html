@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluid — Offline Recovery Core (Phase 1 Prototype)</title>
+<style>
+  :root{--bg:#0b1220;--card:#111a2e;--line:#24314f;--txt:#e8eefc;--mut:#9fb0d0;--acc:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  .wrap{max-width:880px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:26px;margin:8px 0 4px} h2{font-size:19px;margin:0 0 10px} p,li{line-height:1.5;color:var(--mut)} b,strong{color:var(--txt)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  .warn{border-color:var(--warn);background:#221a08} .warn p{color:#fcd9a0}
+  label{display:block;font-size:13px;color:var(--mut);margin:12px 0 5px}
+  textarea,input{width:100%;background:#0b1220;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px;font-size:15px}
+  textarea{min-height:74px;resize:vertical}
+  button{background:var(--acc);color:#04140a;border:0;border-radius:9px;padding:12px 16px;font-weight:700;font-size:15px;cursor:pointer;margin:8px 6px 0 0}
+  button.sec{background:#1e2c4a;color:var(--txt)} button:disabled{opacity:.5}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.row{grid-template-columns:1fr}}
+  .tabs{display:flex;gap:8px;margin:16px 0 0} .tabs button{background:#1e2c4a;color:var(--txt)} .tabs button.on{background:var(--acc);color:#04140a}
+  .ok{color:var(--acc)} .err{color:var(--bad)} .small{font-size:13px} code{background:#0b1220;padding:1px 5px;border-radius:5px;color:#cfe3ff}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚽ Fluid — Recovery Core</h1>
+  <p>Phase 1 prototype of <code>recover.fluid.ng</code>: split a BIP39 seed into <strong>2-of-4 Shamir shards</strong>, encrypt each shard with its <strong>own password</strong>, and recover the seed from <strong>any 2 shards</strong>. 100% client-side. No server calls. Works from <code>file://</code> offline.</p>
+
+  <div class="card warn">
+    <h2>⚠️ Throwaway seeds ONLY</h2>
+    <p>This is <strong>unaudited prototype crypto</strong> built to prove the recovery flow. Do <strong>never</strong> use it with a wallet that holds real money. Test it, break it, and only trust a future audited release.</p>
+    <p class="small">Honest design notes (fixes to the original spec):<br>
+    • Secure Enclave / StrongBox <strong>cannot</strong> store a BIP39 seed — they hold non-exportable P-256 keys only. In the real app the seed exists in memory only during split/recovery (then zeroized), and a key-encryption-key stays in the enclave.<br>
+    • Cloud and email shards use <strong>different passwords</strong> here — one shared password would let anyone with your cloud + inbox rebuild your wallet.<br>
+    • This prototype derives keys with PBKDF2-SHA256 (600,000 rounds, WebCrypto) + AES-256-GCM because Argon2id needs a large WASM library. The production spec calls for Argon2id (libsodium) — treat that swap as required before any real use.</p>
+  </div>
+
+  <div class="tabs">
+    <button id="tabCreate" class="on" onclick="showTab('create')">1 · Create shards</button>
+    <button id="tabRecover" onclick="showTab('recover')">2 · Recover from 2 shards</button>
+  </div>
+
+  <div id="paneCreate" class="card">
+    <h2>Create 2-of-4 shards</h2>
+    <label>Your 12 or 24-word BIP39 seed phrase (test seed only)</label>
+    <textarea id="mnemonic" placeholder="word word word …" autocomplete="off" spellcheck="false"></textarea>
+    <button class="sec" onclick="genTest()">Generate a throwaway test seed</button>
+    <button class="sec" onclick="validateMnemonicUI()">Check it is valid BIP39</button>
+    <span id="validMsg" class="small"></span>
+
+    <div class="row">
+      <div><label>Shard A · Device — password</label><input type="password" id="pwA" autocomplete="new-password"></div>
+      <div><label>Shard B · Cloud — Password A</label><input type="password" id="pwB" autocomplete="new-password"></div>
+      <div><label>Shard C · Guardian — password (share with guardian separately)</label><input type="password" id="pwC" autocomplete="new-password"></div>
+      <div><label>Shard D · Email — Password B (must differ from Cloud)</label><input type="password" id="pwD" autocomplete="new-password"></div>
+    </div>
+    <p class="small">Minimum 8 characters each. Fluid never sees any of these. Losing a password loses that shard — any other 2 shards still recover you.</p>
+    <button onclick="createShards()">Split &amp; download 4 encrypted shards</button>
+    <p id="createMsg" class="small"></p>
+    <p class="small">Where each file goes: <code>device.enc</code> stays on the phone · <code>cloud.enc</code> → your iCloud/Google Drive <code>/Fluid/Backup/</code> · <code>guardian.enc</code> → send to your guardian · <code>email.enc</code> → email it to your recovery address.</p>
+  </div>
+
+  <div id="paneRecover" class="card hidden">
+    <h2>Recover from any 2 shards</h2>
+    <p class="small">This is also the “Fluid company is dead” flow: this file + any 2 shards + their passwords rebuilds the seed with no Fluid server anywhere. Import the result into BlueWallet (BTC), MetaMask (EVM) or Sui Wallet.</p>
+    <div class="row">
+      <div><label>Shard file 1 (.enc)</label><input type="file" id="file1" accept=".enc,.json,.txt"><label>Its password</label><input type="password" id="rpw1"></div>
+      <div><label>Shard file 2 (.enc)</label><input type="file" id="file2" accept=".enc,.json,.txt"><label>Its password</label><input type="password" id="rpw2"></div>
+    </div>
+    <button onclick="recoverSeed()">Reconstruct my seed</button>
+    <p id="recoverMsg" class="small"></p>
+    <label>Recovered seed phrase</label>
+    <textarea id="recovered" readonly placeholder="Nothing yet"></textarea>
+    <p class="small">Check it somewhere safe, then close this page. Never paste a real seed into any website version of a tool like this — only into a downloaded copy running offline.</p>
+  </div>
+
+  <div class="card">
+    <h2>How it works</h2>
+    <ul>
+      <li>Each byte of the seed is split with a random polynomial over GF(256): <code>f(x) = byte + a·x</code>. Shards are the points x = 1, 2, 3, 4. Any 2 points rebuild the line; 1 point reveals nothing.</li>
+      <li>Each shard JSON is encrypted separately (random salt + IV, PBKDF2-SHA256 600k, AES-256-GCM with authentication — a wrong password fails loudly, never silently).</li>
+      <li>All four files share a random wallet ID so recovery can refuse shards from two different wallets.</li>
+    </ul>
+  </div>
+  <p class="small">Fluid Phase 1 · Built 2026-11-05 · Prototype — not audited, not for real funds.</p>
+</div>
+
+<script>
+"use strict";
+const WORDS = "abandon,ability,able,about,above,absent,absorb,abstract,absurd,abuse,access,accident,account,accuse,achieve,acid,acoustic,acquire,across,act,action,actor,actress,actual,adapt,add,addict,address,adjust,admit,adult,advance,advice,aerobic,affair,afford,afraid,again,age,agent,agree,ahead,aim,air,airport,aisle,alarm,album,alcohol,alert,alien,all,alley,allow,almost,alone,alpha,already,also,alter,always,amateur,amazing,among,amount,amused,analyst,anchor,ancient,anger,angle,angry,animal,ankle,announce,annual,another,answer,antenna,antique,anxiety,any,apart,apology,appear,apple,approve,april,arch,arctic,area,arena,argue,arm,armed,armor,army,around,arrange,arrest,arrive,arrow,art,artefact,artist,artwork,ask,aspect,assault,asset,assist,assume,asthma,athlete,atom,attack,attend,attitude,attract,auction,audit,august,aunt,author,auto,autumn,average,avocado,avoid,awake,aware,away,awesome,awful,awkward,axis,baby,bachelor,bacon,badge,bag,balance,balcony,ball,bamboo,banana,banner,bar,barely,bargain,barrel,base,basic,basket,battle,beach,bean,beauty,because,become,beef,before,begin,behave,behind,believe,below,belt,bench,benefit,best,betray,better,between,beyond,bicycle,bid,bike,bind,biology,bird,birth,bitter,black,blade,blame,blanket,blast,bleak,bless,blind,blood,blossom,blouse,blue,blur,blush,board,boat,body,boil,bomb,bone,bonus,book,boost,border,boring,borrow,boss,bottom,bounce,box,boy,bracket,brain,brand,brass,brave,bread,breeze,brick,bridge,brief,bright,bring,brisk,broccoli,broken,bronze,broom,brother,brown,brush,bubble,buddy,budget,buffalo,build,bulb,bulk,bullet,bundle,bunker,burden,burger,burst,bus,business,busy,butter,buyer,buzz,cabbage,cabin,cable,cactus,cage,cake,call,calm,camera,camp,can,canal,cancel,candy,cannon,canoe,canvas,canyon,capable,capital,captain,car,carbon,card,cargo,carpet,carry,cart,case,cash,casino,castle,casual,cat,catalog,catch,category,cattle,caught,cause,caution,cave,ceiling,celery,cement,census,century,cereal,certain,chair,chalk,champion,change,chaos,chapter,charge,chase,chat,cheap,check,cheese,chef,cherry,chest,chicken,chief,child,chimney,choice,choose,chronic,chuckle,chunk,churn,cigar,cinnamon,circle,citizen,city,civil,claim,clap,clarify,claw,clay,clean,clerk,clever,click,client,cliff,climb,clinic,clip,clock,clog,close,cloth,cloud,clown,club,clump,cluster,clutch,coach,coast,coconut,code,coffee,coil,coin,collect,color,column,combine,come,comfort,comic,common,company,concert,conduct,confirm,congress,connect,consider,control,convince,cook,cool,copper,copy,coral,core,corn,correct,cost,cotton,couch,country,couple,course,cousin,cover,coyote,crack,cradle,craft,cram,crane,crash,crater,crawl,crazy,cream,credit,creek,crew,cricket,crime,crisp,critic,crop,cross,crouch,crowd,crucial,cruel,cruise,crumble,crunch,crush,cry,crystal,cube,culture,cup,cupboard,curious,current,curtain,curve,cushion,custom,cute,cycle,dad,damage,damp,dance,danger,daring,dash,daughter,dawn,day,deal,debate,debris,decade,december,decide,decline,decorate,decrease,deer,defense,define,defy,degree,delay,deliver,demand,demise,denial,dentist,deny,depart,depend,deposit,depth,deputy,derive,describe,desert,design,desk,despair,destroy,detail,detect,develop,device,devote,diagram,dial,diamond,diary,dice,diesel,diet,differ,digital,dignity,dilemma,dinner,dinosaur,direct,dirt,disagree,discover,disease,dish,dismiss,disorder,display,distance,divert,divide,divorce,dizzy,doctor,document,dog,doll,dolphin,domain,donate,donkey,donor,door,dose,double,dove,draft,dragon,drama,drastic,draw,dream,dress,drift,drill,drink,drip,drive,drop,drum,dry,duck,dumb,dune,during,dust,dutch,duty,dwarf,dynamic,eager,eagle,early,earn,earth,easily,east,easy,echo,ecology,economy,edge,edit,educate,effort,egg,eight,either,elbow,elder,electric,elegant,element,elephant,elevator,elite,else,embark,embody,embrace,emerge,emotion,employ,empower,empty,enable,enact,end,endless,endorse,enemy,energy,enforce,engage,engine,enhance,enjoy,enlist,enough,enrich,enroll,ensure,enter,entire,entry,envelope,episode,equal,equip,era,erase,erode,erosion,error,erupt,escape,essay,essence,estate,eternal,ethics,evidence,evil,evoke,evolve,exact,example,excess,exchange,excite,exclude,excuse,execute,exercise,exhaust,exhibit,exile,exist,exit,exotic,expand,expect,expire,explain,expose,express,extend,extra,eye,eyebrow,fabric,face,faculty,fade,faint,faith,fall,false,fame,family,famous,fan,fancy,fantasy,farm,fashion,fat,fatal,father,fatigue,fault,favorite,feature,february,federal,fee,feed,feel,female,fence,festival,fetch,fever,few,fiber,fiction,field,figure,file,film,filter,final,find,fine,finger,finish,fire,firm,first,fiscal,fish,fit,fitness,fix,flag,flame,flash,flat,flavor,flee,flight,flip,float,flock,floor,flower,fluid,flush,fly,foam,focus,fog,foil,fold,follow,food,foot,force,forest,forget,fork,fortune,forum,forward,fossil,foster,found,fox,fragile,frame,frequent,fresh,friend,fringe,frog,front,frost,frown,frozen,fruit,fuel,fun,funny,furnace,fury,future,gadget,gain,galaxy,gallery,game,gap,garage,garbage,garden,garlic,garment,gas,gasp,gate,gather,gauge,gaze,general,genius,genre,gentle,genuine,gesture,ghost,giant,gift,giggle,ginger,giraffe,girl,give,glad,glance,glare,glass,glide,glimpse,globe,gloom,glory,glove,glow,glue,goat,goddess,gold,good,goose,gorilla,gospel,gossip,govern,gown,grab,grace,grain,grant,grape,grass,gravity,great,green,grid,grief,grit,grocery,group,grow,grunt,guard,guess,guide,guilt,guitar,gun,gym,habit,hair,half,hammer,hamster,hand,happy,harbor,hard,harsh,harvest,hat,have,hawk,hazard,head,health,heart,heavy,hedgehog,height,hello,helmet,help,hen,hero,hidden,high,hill,hint,hip,hire,history,hobby,hockey,hold,hole,holiday,hollow,home,honey,hood,hope,horn,horror,horse,hospital,host,hotel,hour,hover,hub,huge,human,humble,humor,hundred,hungry,hunt,hurdle,hurry,hurt,husband,hybrid,ice,icon,idea,identify,idle,ignore,ill,illegal,illness,image,imitate,immense,immune,impact,impose,improve,impulse,inch,include,income,increase,index,indicate,indoor,industry,infant,inflict,inform,inhale,inherit,initial,inject,injury,inmate,inner,innocent,input,inquiry,insane,insect,inside,inspire,install,intact,interest,into,invest,invite,involve,iron,island,isolate,issue,item,ivory,jacket,jaguar,jar,jazz,jealous,jeans,jelly,jewel,job,join,joke,journey,joy,judge,juice,jump,jungle,junior,junk,just,kangaroo,keen,keep,ketchup,key,kick,kid,kidney,kind,kingdom,kiss,kit,kitchen,kite,kitten,kiwi,knee,knife,knock,know,lab,label,labor,ladder,lady,lake,lamp,language,laptop,large,later,latin,laugh,laundry,lava,law,lawn,lawsuit,layer,lazy,leader,leaf,learn,leave,lecture,left,leg,legal,legend,leisure,lemon,lend,length,lens,leopard,lesson,letter,level,liar,liberty,library,license,life,lift,light,like,limb,limit,link,lion,liquid,list,little,live,lizard,load,loan,lobster,local,lock,logic,lonely,long,loop,lottery,loud,lounge,love,loyal,lucky,luggage,lumber,lunar,lunch,luxury,lyrics,machine,mad,magic,magnet,maid,mail,main,major,make,mammal,man,manage,mandate,mango,mansion,manual,maple,marble,march,margin,marine,market,marriage,mask,mass,master,match,material,math,matrix,matter,maximum,maze,meadow,mean,measure,meat,mechanic,medal,media,melody,melt,member,memory,mention,menu,mercy,merge,merit,merry,mesh,message,metal,method,middle,midnight,milk,million,mimic,mind,minimum,minor,minute,miracle,mirror,misery,miss,mistake,mix,mixed,mixture,mobile,model,modify,mom,moment,monitor,monkey,monster,month,moon,moral,more,morning,mosquito,mother,motion,motor,mountain,mouse,move,movie,much,muffin,mule,multiply,muscle,museum,mushroom,music,must,mutual,myself,mystery,myth,naive,name,napkin,narrow,nasty,nation,nature,near,neck,need,negative,neglect,neither,nephew,nerve,nest,net,network,neutral,never,news,next,nice,night,noble,noise,nominee,noodle,normal,north,nose,notable,note,nothing,notice,novel,now,nuclear,number,nurse,nut,oak,obey,object,oblige,obscure,observe,obtain,obvious,occur,ocean,october,odor,off,offer,office,often,oil,okay,old,olive,olympic,omit,once,one,onion,online,only,open,opera,opinion,oppose,option,orange,orbit,orchard,order,ordinary,organ,orient,original,orphan,ostrich,other,outdoor,outer,output,outside,oval,oven,over,own,owner,oxygen,oyster,ozone,pact,paddle,page,pair,palace,palm,panda,panel,panic,panther,paper,parade,parent,park,parrot,party,pass,patch,path,patient,patrol,pattern,pause,pave,payment,peace,peanut,pear,peasant,pelican,pen,penalty,pencil,people,pepper,perfect,permit,person,pet,phone,photo,phrase,physical,piano,picnic,picture,piece,pig,pigeon,pill,pilot,pink,pioneer,pipe,pistol,pitch,pizza,place,planet,plastic,plate,play,please,pledge,pluck,plug,plunge,poem,poet,point,polar,pole,police,pond,pony,pool,popular,portion,position,possible,post,potato,pottery,poverty,powder,power,practice,praise,predict,prefer,prepare,present,pretty,prevent,price,pride,primary,print,priority,prison,private,prize,problem,process,produce,profit,program,project,promote,proof,property,prosper,protect,proud,provide,public,pudding,pull,pulp,pulse,pumpkin,punch,pupil,puppy,purchase,purity,purpose,purse,push,put,puzzle,pyramid,quality,quantum,quarter,question,quick,quit,quiz,quote,rabbit,raccoon,race,rack,radar,radio,rail,rain,raise,rally,ramp,ranch,random,range,rapid,rare,rate,rather,raven,raw,razor,ready,real,reason,rebel,rebuild,recall,receive,recipe,record,recycle,reduce,reflect,reform,refuse,region,regret,regular,reject,relax,release,relief,rely,remain,remember,remind,remove,render,renew,rent,reopen,repair,repeat,replace,report,require,rescue,resemble,resist,resource,response,result,retire,retreat,return,reunion,reveal,review,reward,rhythm,rib,ribbon,rice,rich,ride,ridge,rifle,right,rigid,ring,riot,ripple,risk,ritual,rival,river,road,roast,robot,robust,rocket,romance,roof,rookie,room,rose,rotate,rough,round,route,royal,rubber,rude,rug,rule,run,runway,rural,sad,saddle,sadness,safe,sail,salad,salmon,salon,salt,salute,same,sample,sand,satisfy,satoshi,sauce,sausage,save,say,scale,scan,scare,scatter,scene,scheme,school,science,scissors,scorpion,scout,scrap,screen,script,scrub,sea,search,season,seat,second,secret,section,security,seed,seek,segment,select,sell,seminar,senior,sense,sentence,series,service,session,settle,setup,seven,shadow,shaft,shallow,share,shed,shell,sheriff,shield,shift,shine,ship,shiver,shock,shoe,shoot,shop,short,shoulder,shove,shrimp,shrug,shuffle,shy,sibling,sick,side,siege,sight,sign,silent,silk,silly,silver,similar,simple,since,sing,siren,sister,situate,six,size,skate,sketch,ski,skill,skin,skirt,skull,slab,slam,sleep,slender,slice,slide,slight,slim,slogan,slot,slow,slush,small,smart,smile,smoke,smooth,snack,snake,snap,sniff,snow,soap,soccer,social,sock,soda,soft,solar,soldier,solid,solution,solve,someone,song,soon,sorry,sort,soul,sound,soup,source,south,space,spare,spatial,spawn,speak,special,speed,spell,spend,sphere,spice,spider,spike,spin,spirit,split,spoil,sponsor,spoon,sport,spot,spray,spread,spring,spy,square,squeeze,squirrel,stable,stadium,staff,stage,stairs,stamp,stand,start,state,stay,steak,steel,stem,step,stereo,stick,still,sting,stock,stomach,stone,stool,story,stove,strategy,street,strike,strong,struggle,student,stuff,stumble,style,subject,submit,subway,success,such,sudden,suffer,sugar,suggest,suit,summer,sun,sunny,sunset,super,supply,supreme,sure,surface,surge,surprise,surround,survey,suspect,sustain,swallow,swamp,swap,swarm,swear,sweet,swift,swim,swing,switch,sword,symbol,symptom,syrup,system,table,tackle,tag,tail,talent,talk,tank,tape,target,task,taste,tattoo,taxi,teach,team,tell,ten,tenant,tennis,tent,term,test,text,thank,that,theme,then,theory,there,they,thing,this,thought,three,thrive,throw,thumb,thunder,ticket,tide,tiger,tilt,timber,time,tiny,tip,tired,tissue,title,toast,tobacco,today,toddler,toe,together,toilet,token,tomato,tomorrow,tone,tongue,tonight,tool,tooth,top,topic,topple,torch,tornado,tortoise,toss,total,tourist,toward,tower,town,toy,track,trade,traffic,tragic,train,transfer,trap,trash,travel,tray,treat,tree,trend,trial,tribe,trick,trigger,trim,trip,trophy,trouble,truck,true,truly,trumpet,trust,truth,try,tube,tuition,tumble,tuna,tunnel,turkey,turn,turtle,twelve,twenty,twice,twin,twist,two,type,typical,ugly,umbrella,unable,unaware,uncle,uncover,under,undo,unfair,unfold,unhappy,uniform,unique,unit,universe,unknown,unlock,until,unusual,unveil,update,upgrade,uphold,upon,upper,upset,urban,urge,usage,use,used,useful,useless,usual,utility,vacant,vacuum,vague,valid,valley,valve,van,vanish,vapor,various,vast,vault,vehicle,velvet,vendor,venture,venue,verb,verify,version,very,vessel,veteran,viable,vibrant,vicious,victory,video,view,village,vintage,violin,virtual,virus,visa,visit,visual,vital,vivid,vocal,voice,void,volcano,volume,vote,voyage,wage,wagon,wait,walk,wall,walnut,want,warfare,warm,warrior,wash,wasp,waste,water,wave,way,wealth,weapon,wear,weasel,weather,web,wedding,weekend,weird,welcome,west,wet,whale,what,wheat,wheel,when,where,whip,whisper,wide,width,wife,wild,will,win,window,wine,wing,wink,winner,winter,wire,wisdom,wise,wish,witness,wolf,woman,wonder,wood,wool,word,work,world,worry,worth,wrap,wreck,wrestle,wrist,write,wrong,yard,year,yellow,you,young,youth,zebra,zero,zone,zoo".split(",");
+const wordSet = new Set(WORDS);
+
+/* ---------- GF(256), polynomial 0x11d, generator 3 ---------- */
+function gfMul(a,b){let p=0;for(let i=0;i<8;i++){if(b&1)p^=a;const hi=a&0x80;a=(a<<1)&0xff;if(hi)a^=0x1d;b>>=1;}return p;}
+/* NOTE: for polynomial 0x11d the element 3 is NOT a generator (its order is 51), so
+   log/exp tables built from it silently corrupt reconstruction. Use brute-force
+   inverses instead — division here only ever involves tiny shard x-values. */
+const GF_INV=new Array(256).fill(0);
+(function(){for(let a=1;a<256;a++)for(let b=1;b<256;b++)if(gfMul(a,b)===1){GF_INV[a]=b;break;}})();
+function gfDiv(a,b){if(a===0)return 0;if(b===0)throw new Error("GF div by zero");return gfMul(a,GF_INV[b]);}
+
+/* ---------- Shamir 2-of-4 ---------- */
+function splitSecret(secretBytes){
+  const shards=[[],[],[],[]]; // x = 1..4
+  const rnd=new Uint8Array(secretBytes.length); crypto.getRandomValues(rnd);
+  for(let i=0;i<secretBytes.length;i++){
+    const a1=rnd[i];
+    for(let x=1;x<=4;x++) shards[x-1].push(secretBytes[i] ^ gfMul(a1,x));
+  }
+  return shards.map((y,idx)=>({x:idx+1,y:Uint8Array.from(y)}));
+}
+function combine2(s1,s2){
+  if(s1.x===s2.x) throw new Error("Two copies of the same shard — you need two different shards.");
+  const out=new Uint8Array(s1.y.length);
+  const L1=gfDiv(s2.x, s2.x ^ s1.x), L2=gfDiv(s1.x, s1.x ^ s2.x);
+  for(let i=0;i<out.length;i++) out[i]=gfMul(s1.y[i],L1) ^ gfMul(s2.y[i],L2);
+  return out;
+}
+
+/* ---------- Base64 helpers ---------- */
+const b64e=b=>btoa(String.fromCharCode(...b));
+const b64d=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+
+/* ---------- Encrypt / decrypt a shard ---------- */
+async function deriveKey(password,salt){
+  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:600000,hash:"SHA-256"},base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function encryptShard(payload,password){
+  const salt=new Uint8Array(16); crypto.getRandomValues(salt);
+  const iv=new Uint8Array(12); crypto.getRandomValues(iv);
+  const key=await deriveKey(password,salt);
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(payload)));
+  return {fluid_backup:1,kind:"fluid-shard",shard:payload.label,kdf:"PBKDF2-SHA256/600000 (prototype — production: Argon2id)",cipher:"AES-256-GCM",salt:b64e(salt),iv:b64e(iv),data:b64e(new Uint8Array(ct))};
+}
+async function decryptShard(fileObj,password){
+  if(fileObj.fluid_backup!==1||fileObj.kind!=="fluid-shard") throw new Error("That file is not a Fluid shard.");
+  const key=await deriveKey(password,b64d(fileObj.salt));
+  let pt;
+  try{ pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:b64d(fileObj.iv)},key,b64d(fileObj.data)); }
+  catch(e){ throw new Error("Wrong password for the "+fileObj.shard+" shard (or file corrupted)."); }
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+/* ---------- BIP39 validate + test-seed generation ---------- */
+async function sha256(buf){return new Uint8Array(await crypto.subtle.digest("SHA-256",buf));}
+async function mnemonicValid(m){
+  const words=m.trim().toLowerCase().split(/\s+/);
+  if(![12,15,18,21,24].includes(words.length)) return false;
+  if(words.some(w=>!wordSet.has(w))) return false;
+  const bits=words.map(w=>WORDS.indexOf(w).toString(2).padStart(11,"0")).join("");
+  const entLen=bits.length*32/33, entBits=bits.slice(0,entLen), csBits=bits.slice(entLen);
+  const ent=new Uint8Array(entLen/8); for(let i=0;i<ent.length;i++) ent[i]=parseInt(entBits.slice(i*8,i*8+8),2);
+  const hash=await sha256(ent);
+  const expect=hash[0].toString(2).padStart(8,"0").slice(0,csBits.length);
+  return expect===csBits;
+}
+async function validateMnemonicUI(){
+  const el=document.getElementById("validMsg"), m=document.getElementById("mnemonic").value;
+  const ok=await mnemonicValid(m);
+  el.textContent= ok? " ✓ Valid BIP39 (wordlist + checksum pass)" : " ✗ Not valid BIP39 — check words, count (12/24) and spelling";
+  el.className="small "+(ok?"ok":"err");
+}
+async function genTest(){
+  const ent=new Uint8Array(16); crypto.getRandomValues(ent);
+  const hash=await sha256(ent);
+  let bits=""; ent.forEach(b=>bits+=b.toString(2).padStart(8,"0")); bits+=(hash[0]>>4).toString(2).padStart(4,"0");
+  const words=[]; for(let i=0;i<12;i++) words.push(WORDS[parseInt(bits.slice(i*11,i*11+11),2)]);
+  document.getElementById("mnemonic").value=words.join(" ");
+  document.getElementById("validMsg").textContent=" Test seed generated — throwaway only, never fund it.";
+}
+
+/* ---------- Create flow ---------- */
+function download(name,text){
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type:"application/json"})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+async function createShards(){
+  const msg=document.getElementById("createMsg"); msg.className="small";
+  const m=document.getElementById("mnemonic").value.trim().toLowerCase().replace(/\s+/g," ");
+  const pw={A:document.getElementById("pwA").value,B:document.getElementById("pwB").value,C:document.getElementById("pwC").value,D:document.getElementById("pwD").value};
+  try{
+    if(!(await mnemonicValid(m))) throw new Error("Seed phrase is not valid BIP39. Fix it before splitting — a bad split of a bad seed recovers nothing.");
+    for(const k of ["A","B","C","D"]) if(pw[k].length<8) throw new Error("Password for shard "+k+" needs at least 8 characters.");
+    if(pw.B===pw.D) throw new Error("Cloud and Email passwords must be different — that separation is the whole point of the fix.");
+    msg.textContent="Encrypting… (key derivation takes a few seconds)";
+    const wid=b64e((()=>{const r=new Uint8Array(8);crypto.getRandomValues(r);return r;})());
+    const parts=splitSecret(new TextEncoder().encode(m));
+    const labels={A:"device",B:"cloud",C:"guardian",D:"email"};
+    for(const k of ["A","B","C","D"]){
+      const payload={wallet:wid,label:labels[k],x:parts[{A:0,B:1,C:2,D:3}[k]].x,y:b64e(parts[{A:0,B:1,C:2,D:3}[k]].y),threshold:2,total:4,created:new Date().toISOString()};
+      const enc=await encryptShard(payload,pw[k]);
+      download("fluid_"+labels[k]+".enc",JSON.stringify(enc,null,2));
+    }
+    msg.textContent="✓ Done — 4 encrypted shards downloaded. Store them in 4 different places. Any 2 + their passwords recover the seed."; msg.className="small ok";
+  }catch(e){ msg.textContent="✗ "+e.message; msg.className="small err"; }
+}
+
+/* ---------- Recover flow ---------- */
+async function readFile(id){const f=document.getElementById(id).files[0]; if(!f) throw new Error("Pick both shard files."); return JSON.parse(await f.text());}
+async function recoverSeed(){
+  const msg=document.getElementById("recoverMsg"); msg.className="small";
+  try{
+    msg.textContent="Decrypting…";
+    const p1=await decryptShard(await readFile("file1"),document.getElementById("rpw1").value);
+    const p2=await decryptShard(await readFile("file2"),document.getElementById("rpw2").value);
+    if(p1.wallet!==p2.wallet) throw new Error("These shards belong to two different wallets. Recovery refused.");
+    const seed=new TextDecoder().decode(combine2({x:p1.x,y:b64d(p1.y)},{x:p2.x,y:b64d(p2.y)}));
+    if(!(await mnemonicValid(seed))) throw new Error("Shards combined but the result is not a valid BIP39 seed — wrong files or a damaged shard.");
+    document.getElementById("recovered").value=seed;
+    msg.textContent="✓ Recovered from the "+p1.label+" + "+p2.label+" shards, and the BIP39 checksum passes."; msg.className="small ok";
+  }catch(e){ msg.textContent="✗ "+e.message; msg.className="small err"; }
+}
+
+/* ---------- Tabs ---------- */
+function showTab(t){
+  document.getElementById("paneCreate").classList.toggle("hidden",t!=="create");
+  document.getElementById("paneRecover").classList.toggle("hidden",t!=="recover");
+  document.getElementById("tabCreate").classList.toggle("on",t==="create");
+  document.getElementById("tabRecover").classList.toggle("on",t==="recover");
+}
+</script>
+</body>
+</html>
