@@ -311,6 +311,39 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
   return entry ? { name, ...entry } : null;
 }
 
+// ---------- Platform fees: cheapest-route principle + 60/40 split, settled in BTC over Lightning ----------
+// Fluid's own fees (RAIN claim fee, OGO ERA game rake, future swap fee) are
+// split 60% to Ethuram's treasury and 40% to DripBot — and ALL settlement
+// is in Bitcoin over the Lightning Network: fees accrue wherever they are
+// collected, a keeper (DripBot) sweeps them, converts to BTC and pays both
+// Lightning addresses. Lightning addresses are filled in when provided;
+// the split math never waits on them.
+export const FEE_SPLIT = {
+  currency: "BTC", rail: "lightning",
+  treasury: { share: 60, label: "Ethuram (treasury)", evmWallet: "0x7d0e382D1267C38EE5d5Ce806018d93da241750e", lnAddress: null },
+  dripbot: { share: 40, label: "DripBot", x: "@bitcoinornatin", lnAddress: null },
+};
+/** Split an integer amount (sats, or any smallest unit) 60/40.
+ *  Rounding remainder goes to the treasury so nothing is ever lost. */
+export function splitFee(amount) {
+  const a = Math.floor(Number(amount));
+  const dripbot = Math.floor((a * FEE_SPLIT.dripbot.share) / 100);
+  return { treasury: a - dripbot, dripbot };
+}
+/** Cheapest-route ranking for ramps, by documented typical fees.
+ *  The provider always shows the final live quote before the user pays;
+ *  Fluid's job is to put the typically-cheapest route first. */
+const RAMP_FEE_PROFILE = {
+  "Fonbnk": { score: 1, note: "flat ~$0.12 fee (documented) — usually cheapest locally" },
+  "Ramp Network": { score: 2, note: "low % fees, often ~0.5-1.5%" },
+  "Transak": { score: 3, note: "typically ~0.5-3.5% + network fee" },
+  "MoonPay": { score: 4, note: "typically ~1-4.5% depending on payment method" },
+};
+export function rankRoutes(routes) {
+  return routes.map(r => ({ ...r, ...(RAMP_FEE_PROFILE[r.name] || { score: 9, note: "" }) }))
+    .sort((a, b) => a.score - b.score);
+}
+
 // ---------- Lightning (WebLN: user keeps their own Lightning wallet) ----------
 export async function payLightningInvoice(invoice) {
   if (typeof window === "undefined" || !window.webln) {

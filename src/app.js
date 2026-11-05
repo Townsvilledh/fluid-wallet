@@ -6,7 +6,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -244,10 +244,13 @@ function rampSheet(mode) {
     const c = RAMP_COUNTRIES.find(x => x.code === code);
     const fonbnk = c.fonbnk
       ? (mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, code) : fonbnkOfframpUrl(networkKey, asset, code)) : null;
+    const routes = GLOBAL_RAMPS.map(r => ({ name: r.name, url: mode === "buy" ? r.buy : r.sell, region: r.region }));
+    if (fonbnk) routes.push({ name: "Fonbnk", url: fonbnk, region: c.name + " · bank & mobile money" });
+    const ranked = rankRoutes(routes);
     $("rList").innerHTML =
-      GLOBAL_RAMPS.map(r =>
-        `<button class="netitem" onclick="window.open('${mode === "buy" ? r.buy : r.sell}','_blank')"><span>${r.name}</span><small style="color:var(--dim)">${r.region}</small></button>`).join("") +
-      (fonbnk ? `<button class="netitem" onclick="window.open('${fonbnk}','_blank')"><span>Fonbnk</span><small style="color:var(--dim)">${c.name} · bank &amp; mobile money</small></button>` : "") +
+      `<p class="tag" style="margin-top:10px">⚡ Sorted cheapest-route first (typical fees from provider docs — the provider shows your final quote before you pay).</p>` +
+      ranked.map((r, i) =>
+        `<button class="netitem" onclick="window.open('${r.url}','_blank')"><span>${r.name} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${r.note || r.region}</small></button>`).join("") +
       (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[networkKey].name} — switch network (e.g. BNB Chain or Base) to use it, or use a global provider above.</p>` : "");
   };
   $("rCountry").onchange = paint; $("rAsset").onchange = paint; paint();
