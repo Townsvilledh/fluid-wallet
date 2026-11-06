@@ -268,10 +268,24 @@ function renderHistory() {
 }
 
 // ---------- onboarding ----------
+let pendingName = null;
+$("createName").addEventListener("input", () => {
+  const n = normalizeFluidName($("createName").value);
+  $("createNamePreview").textContent = (n || "you") + "." + FLUID_DOMAIN;
+});
 $("createBtn").onclick = async () => {
   const pw = $("createPw").value;
   if (!validatePassword(pw)) return msg("onboardMsg", "Password needs at least 8 characters.");
   if (pw !== $("createPw2").value) return msg("onboardMsg", "Passwords do not match.");
+  // Username is chosen FIRST, at creation (set by design): validate it and
+  // check the public registry before any wallet exists.
+  const wantName = normalizeFluidName($("createName").value);
+  if (!wantName) return msg("onboardMsg", "Pick your Fluid username first — it's your name on every chain.");
+  if (!validateFluidName(wantName)) return msg("onboardMsg", "Username must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+  msg("onboardMsg", "Checking your username…", true);
+  const taken = await resolveFluidName(wantName).catch(() => null);
+  if (taken) return msg("onboardMsg", "That username is already claimed. Try another.");
+  pendingName = wantName;
   msg("onboardMsg", "Creating your wallet… (encrypting takes a few seconds)", true);
   const v = await createVault(pw);
   localStorage.setItem(VAULT_KEY, v.keystore);
@@ -281,6 +295,20 @@ $("createBtn").onclick = async () => {
   $("seedDoneBtn").onclick = async () => {
     if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
     wallet = await unlockVault(v.keystore, pw);
+    if (pendingName) {
+      localStorage.setItem("fluid_name", pendingName);
+      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null);
+      const entryText = JSON.stringify(entry).slice(1, -1) + ",";
+      const claimed = pendingName; pendingName = null;
+      setTimeout(() => {
+        openSheet(`<h3 style="margin:4px 0">Your name: ${claimed}.${FLUID_DOMAIN}</h3>
+          <p class="tag">Claimed with your wallet and saved on this device. One last step so EVERY Fluid wallet can resolve you: publish this entry into <b>names.json</b> in the GitHub repo.</p>
+          <div class="seed" style="font-size:12px">${entryText}</div>
+          <button class="btn" id="sheetCopyEntry">Copy entry</button>
+          <a class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>`);
+        $("sheetCopyEntry").onclick = () => navigator.clipboard.writeText(entryText);
+      }, 400);
+    }
     // ---------- Fluid name claim ----------
 $("claimNameBtn").onclick = async () => {
   const name = normalizeFluidName($("nameInput").value);
