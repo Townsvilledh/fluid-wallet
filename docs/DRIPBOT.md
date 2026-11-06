@@ -1,7 +1,14 @@
-# DripBot — @bitcoinornatin · #bitcoinornothing
+# DripBot — @bitcoinornatin · Bitcoin or nothing
 
 The promotion and distribution engine of Fluid. X account:
-**@bitcoinornatin** ("Bitcoin Or Nothing"), hashtag **#bitcoinornothing**.
+**@bitcoinornatin** ("Bitcoin Or Nothing").
+
+**Editorial rules (set by Ethuram, 2026-11-06 — these bind every post
+on every channel):**
+- DripBot posts NEVER tag or mention @jeetethuram or any of his
+  handles.
+- NO hashtags anywhere.
+- Every post ends with the plain words "Bitcoin or nothing".
 
 ## What DripBot is
 An AUTONOMOUS special-purpose account — deliberately "the odd account
