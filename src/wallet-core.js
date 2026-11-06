@@ -2878,19 +2878,15 @@ export function splitGameFee(amount) {
   const weeklyReferrals = Math.floor((a * GAME_FEE_SPLIT.weeklyReferrals) / 100);
   return { treasury: a - top100 - sessionLottery - weeklyReferrals, top100, sessionLottery, weeklyReferrals };
 }
-/** Cheapest-route ranking for ramps, by documented typical fees.
- *  The provider always shows the final live quote before the user pays;
- *  Fluid's job is to put the typically-cheapest route first. */
-const RAMP_FEE_PROFILE = {
-  "Mt Pelerin": { score: 1, note: "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" },
-  "Paybis": { score: 2, note: "Bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address" },
-  "Guardarian": { score: 3, note: "~1.6% built into the rate · No account — paste your Fluid address in their checkout" },
-  "Fonbnk": { score: 4, note: "Bank & mobile money · fees shown in their quote before you pay" },
-  "Mercuryo": { score: 5, note: "Buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card" },
-};
+/** Ramp ranking is by MEASURED effective price against the market rate,
+ *  per country — never by headline fee % (price research, 6 Nov 2026:
+ *  the global card ramps hide their markup in the FX rate; the worst
+ *  measured +106% and another +66% over market in Nigeria while quoting
+ *  small "fees"). The per-country assembly lives with the ramp links
+ *  below (rampRoutesFor + RAMP_COUNTRY_PLAN); routes carry an explicit
+ *  rank, and rankRoutes just honours it for legacy callers. */
 export function rankRoutes(routes) {
-  return routes.map(r => ({ ...r, ...(RAMP_FEE_PROFILE[r.name] || { score: 9, note: "" }) }))
-    .sort((a, b) => a.score - b.score);
+  return routes.map(r => ({ ...r })).sort((a, b) => (a.rank ?? 9) - (b.rank ?? 9));
 }
 
 // ---------- Lightning (WebLN: user keeps their own Lightning wallet) ----------
@@ -3396,12 +3392,118 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
   const p = new URLSearchParams({ ssc: asset, sdc: fiat });
   return `https://www.mtpelerin.com/${slugs.sell}?${p.toString()}`;
 }
-// Global consumer ramps (no Fluid partner key needed; user completes on provider).
-export const GLOBAL_RAMPS = [
-  { name: "Guardarian", region: "Global · 170+ countries", buy: "https://guardarian.com/", sell: "https://guardarian.com/" },
-  { name: "Paybis", region: "Global · 180+ countries", buy: "https://paybis.com/", sell: "https://paybis.com/" },
-  { name: "Mercuryo", region: "Global · 150+ countries", buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
-];
+// ---------- Per-country ramp plan: ranked on MEASURED price ----------
+// Evidence base: price research of 6 Nov 2026 (benchmarks: USD/NGN
+// mid-market ₦1,374, P2P street ₦1,376–1,380; KES 129.91; GHS 11.66;
+// ZAR 16.51). Rules the plan encodes:
+//  - The CHEAPEST badge appears ONLY where price evidence exists for
+//    that country, and only on the cheapest IN-SHEET route there.
+//    (Noblocks is a link-out to a separate app, never an in-Fluid route,
+//    so it is never badged — its note states its measured price.)
+//  - One launch provider is GONE everywhere: its only measured
+//    corridor was Nigeria at +106% over market and it publishes no
+//    rates anywhere, so no corridor can carry it on price evidence.
+//  - Paybis is kept only where it measured at the market rate
+//    (BR/MX/IN/ZA/PH/EUR/GBP converters ≈ spot, 6 Nov). For Nigeria it
+//    measured +66% BEFORE fees — removed. For the US its evidence is a
+//    dated ~5%-all-in card screenshot, so it stays unbadged there.
+//  - Mercuryo is removed for Nigeria (its NGN rate is published
+//    nowhere and could not be verified) and stays elsewhere only as an
+//    unbadged secondary whose note says its price is not verified.
+//  - Paychant stays out: its guest widget returned 502, then 404.
+// Direct consumer links whose URL doesn't depend on the selection
+// (Fonbnk and Mt Pelerin links are built per selection above).
+export const RAMP_STATIC_LINKS = {
+  "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
+  "Mercuryo": { buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
+  "Noblocks": { buy: "https://noblocks.xyz/", sell: "https://noblocks.xyz/" },
+};
+const RAMP_DEFAULT_NOTES = {
+  "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
+  "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
+  "Mercuryo": "Price not verified — published fees: buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card",
+  "Noblocks": "Cheapest measured on 6 Nov · separate app — opens outside Fluid · pay by bank transfer",
+  "Fonbnk": "Priced off the local market — check the quote before you pay",
+};
+// Ordered provider list per country: [name, { badge, note }]. Order IS
+// the ranking (cheapest measured first); badge/note override the
+// provider defaults above.
+export const RAMP_COUNTRY_PLAN = {
+  NG: [
+    ["Fonbnk", { badge: true, note: "Priced off the local market — about ₦1,39x–₦1,40x per $ on 6 Nov (market ₦1,374) · you see the price before their login + ID check" }],
+    ["Noblocks", {}],
+  ],
+  KE: [
+    ["Fonbnk", { badge: true, note: "Priced off the local market — measured ≈+1.6% over the official rate on 6 Nov · you see the price before their login + ID check" }],
+    ["Noblocks", {}],
+    ["Mercuryo", {}],
+  ],
+  GH: [
+    ["Fonbnk", { badge: true, note: "Priced off the local market — about ₵12 per $ on 6 Nov, inside the local bureau range · you see the price before their login + ID check" }],
+    ["Mercuryo", {}],
+  ],
+  ZA: [
+    ["Mt Pelerin", { badge: true }],
+    ["Fonbnk", { note: "Pricier than market in South Africa (≈+9% on 6 Nov) — compare the quote before you pay" }],
+    ["Paybis", {}],
+    ["Mercuryo", {}],
+  ],
+  UG: [["Fonbnk", {}], ["Mercuryo", {}]],
+  TZ: [["Fonbnk", {}], ["Mercuryo", {}]],
+  CM: [["Fonbnk", {}], ["Mercuryo", {}]],
+  SN: [["Fonbnk", {}], ["Mercuryo", {}]],
+  CI: [["Fonbnk", {}], ["Mercuryo", {}]],
+  ZM: [["Fonbnk", {}], ["Mercuryo", {}]],
+  US: [
+    ["Mt Pelerin", { badge: true }],
+    ["Paybis", { note: "Card purchases cost ~5% all-in (measured 1 Nov) · free email account + quick ID check — paste your Fluid address" }],
+    ["Mercuryo", {}],
+  ],
+  GB: [["Mt Pelerin", { badge: true }], ["Paybis", {}], ["Mercuryo", {}]],
+  DE: [["Mt Pelerin", { badge: true }], ["Paybis", {}], ["Mercuryo", {}]],
+  IN: [["Paybis", { badge: true }], ["Mercuryo", {}]],
+  BR: [["Paybis", { badge: true }], ["Mercuryo", {}]],
+  PH: [["Paybis", { badge: true }], ["Mercuryo", {}]],
+  ID: [
+    ["Paybis", { note: "Price not yet verified for Indonesia — check the final quote before you pay · free email account + quick ID check" }],
+    ["Mercuryo", {}],
+  ],
+  MX: [["Mt Pelerin", { badge: true }], ["Paybis", {}], ["Mercuryo", {}]],
+};
+/** Assemble the ramp sheet's routes for one country + mode + network +
+ *  asset, in ranked order. Each route: { name, url, note, badge,
+ *  external, rank }. A Fonbnk row whose network Fonbnk doesn't ride is
+ *  omitted and reported via fonbnkNetworkMissing so the sheet can say
+ *  why; mtpUnavailable mirrors the Mt Pelerin fiat gate for the sheet's
+ *  honest "not available for this currency" line. */
+export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
+  const c = RAMP_COUNTRIES.find(x => x.code === countryCode) || RAMP_COUNTRIES[0];
+  const plan = RAMP_COUNTRY_PLAN[c.code] || [];
+  const routes = [];
+  let fonbnkNetworkMissing = false;
+  for (const [name, opts] of plan) {
+    let url = null;
+    if (name === "Fonbnk") {
+      url = mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, c.code) : fonbnkOfframpUrl(networkKey, asset, c.code);
+      if (!url) { fonbnkNetworkMissing = true; continue; }
+    } else if (name === "Mt Pelerin") {
+      url = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
+      if (!url) continue;
+    } else {
+      const links = RAMP_STATIC_LINKS[name];
+      if (!links) continue;
+      url = mode === "buy" ? links.buy : links.sell;
+    }
+    routes.push({
+      name, url,
+      note: opts.note || RAMP_DEFAULT_NOTES[name] || "",
+      badge: !!opts.badge,
+      external: name === "Noblocks",
+      rank: routes.length,
+    });
+  }
+  return { country: c, routes, fonbnkNetworkMissing, mtpUnavailable: !MTPELERIN_FIATS.includes(c.fiat) };
+}
 
 // ---------- Agentic wallets ----------
 // An agent wallet is a SEPARATE account derived from the owner's seed at a

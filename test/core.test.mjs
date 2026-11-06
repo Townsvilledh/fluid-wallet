@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -101,11 +101,19 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
   ok("all rpcs https", keys.every(k => NETWORKS[k].rpc.startsWith("https://")));
 }
 
-// 15. Global ramps + onramp links
-ok("global ramps listed", GLOBAL_RAMPS.length >= 3 && GLOBAL_RAMPS.every(r => r.buy.startsWith("https://")));
-ok("global ramps are the new lineup", ["Guardarian", "Paybis", "Mercuryo"].every(n => GLOBAL_RAMPS.some(r => r.name === n)));
-ok("removed providers stay removed", !GLOBAL_RAMPS.some(r => ["MoonPay", "Ramp Network", "Transak", "Paychant"].includes(r.name))
-  && GLOBAL_RAMPS.every(r => !/moonpay|transak|ramp\.network|paychant/i.test(r.buy + r.sell)));
+// 15. Global ramps + onramp links (per-country, price-ranked model)
+ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
+ok("static links are the kept providers", ["Paybis", "Mercuryo", "Noblocks"].every(n => RAMP_STATIC_LINKS[n])
+  && RAMP_STATIC_LINKS["Noblocks"].buy === "https://noblocks.xyz/");
+ok("removed providers stay removed", (() => {
+  // Sweep every country × mode: no removed provider may appear by name
+  // or URL — incl. the +106%-in-Nigeria provider dropped in this build.
+  const banned = /guardarian|moonpay|transak|ramp\.network|paychant/i;
+  return RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
+    const { routes } = rampRoutesFor(c.code, m, "bsc", "USDC");
+    return routes.every(r => !banned.test(r.name) && !banned.test(r.url));
+  }));
+})());
 // Fonbnk buy = widget ROOT (the old /onramp path is a dead route in the app)
 ok("fonbnk onramp builds at root", (fonbnkOnrampUrl("bsc") || "").startsWith("https://pay.fonbnk.com/?")
   && (fonbnkOnrampUrl("bsc") || "").includes("countryIsoCode=NG") && !(fonbnkOnrampUrl("bsc") || "").includes("/onramp"));
@@ -128,6 +136,64 @@ ok("mtpelerin buy USDC/USD", mtpelerinBuyUrl("USDC", "USD") === "https://www.mtp
 ok("mtpelerin sell USDC/GBP", mtpelerinSellUrl("USDC", "GBP") === "https://www.mtpelerin.com/sell-usdc?ssc=USDC&sdc=GBP");
 ok("mtpelerin null for unsupported fiat", mtpelerinBuyUrl("USDT", "NGN") === null && mtpelerinSellUrl("USDC", "KES") === null);
 ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
+
+// 16c. Per-country ramp assembly: ranked on MEASURED price (6 Nov 2026)
+{
+  const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
+  const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
+
+  // Nigeria: Fonbnk leads badged, Noblocks link-out second; the two
+  // global card ramps measured +66%/unverifiable for NGN are absent.
+  ok("NG lineup is Fonbnk+Noblocks", JSON.stringify(names("NG")) === JSON.stringify(["Fonbnk", "Noblocks"])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk", "Noblocks"]));
+  ok("NG badges Fonbnk only", JSON.stringify(badged("NG")) === JSON.stringify(["Fonbnk"]));
+  ok("NG has no Paybis or Mercuryo", !names("NG").includes("Paybis") && !names("NG").includes("Mercuryo"));
+  const ngRoutes = rampRoutesFor("NG", "buy", "bsc", "USDC").routes;
+  ok("NG Noblocks is an external link-out", ngRoutes[1].external === true && ngRoutes[1].url === "https://noblocks.xyz/" && ngRoutes[1].badge === false);
+  ok("NG Fonbnk note carries the measured rate", ngRoutes[0].note.includes("₦1,374") && ngRoutes[0].url.startsWith("https://pay.fonbnk.com/?"));
+
+  // Kenya: Fonbnk badged, Noblocks second, Mercuryo last.
+  ok("KE lineup", JSON.stringify(names("KE")) === JSON.stringify(["Fonbnk", "Noblocks", "Mercuryo"])
+    && JSON.stringify(badged("KE")) === JSON.stringify(["Fonbnk"]));
+
+  // South Africa: Mt Pelerin outranks Fonbnk on price and takes the
+  // badge; Fonbnk stays but carries the +9% warning, never the badge.
+  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Fonbnk", "Paybis", "Mercuryo"]));
+  ok("ZA badges Mt Pelerin, not Fonbnk", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"]));
+  const zaFonbnk = rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.find(r => r.name === "Fonbnk");
+  ok("ZA Fonbnk note warns +9%", zaFonbnk.badge === false && zaFonbnk.note.includes("+9%"));
+
+  // US: Mt Pelerin badged; Paybis kept unbadged with the ~5% card note.
+  ok("US lineup + badge", JSON.stringify(names("US")) === JSON.stringify(["Mt Pelerin", "Paybis", "Mercuryo"])
+    && JSON.stringify(badged("US")) === JSON.stringify(["Mt Pelerin"]));
+  ok("US Paybis note is the dated card figure", rampRoutesFor("US", "buy", "bsc", "USDC").routes[1].note.includes("~5% all-in"));
+
+  // Brazil: Paybis measured at market — kept, badged, ahead of Mercuryo.
+  ok("BR lineup + badge", JSON.stringify(names("BR")) === JSON.stringify(["Paybis", "Mercuryo"])
+    && JSON.stringify(badged("BR")) === JSON.stringify(["Paybis"]));
+
+  // Indonesia: nothing measured for anyone — Paybis listed, NO badge
+  // anywhere, and its note says the price is not yet verified.
+  ok("ID has no badge at all", badged("ID").length === 0 && badged("ID", "sell").length === 0);
+  ok("ID Paybis note says unverified", rampRoutesFor("ID", "buy", "bsc", "USDC").routes[0].note.includes("not yet verified for Indonesia"));
+
+  // Global invariants over all 18 countries × buy/sell: at most one
+  // badge per sheet, a badge only ever sits on the first route, every
+  // URL is https, and every plan country assembles at least one route.
+  ok("plan covers all ramp countries", RAMP_COUNTRIES.every(c => Array.isArray(RAMP_COUNTRY_PLAN[c.code]) && RAMP_COUNTRY_PLAN[c.code].length >= 1));
+  ok("badge invariants hold everywhere", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
+    const { routes } = rampRoutesFor(c.code, m, "bsc", "USDT");
+    const b = routes.filter(r => r.badge);
+    return routes.length >= 1 && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
+      && routes.every(r => r.url.startsWith("https://"));
+  })));
+  // Unmeasured Fonbnk corridors carry no badge (no price evidence).
+  ok("unmeasured corridors are unbadged", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code => badged(code).length === 0
+    && rampRoutesFor(code, "buy", "bsc", "USDC").routes[0].note.includes("check the quote")));
+  // Fonbnk on a network it doesn't ride: row omitted, flag raised.
+  ok("fonbnk network gap is flagged", (() => { const r = rampRoutesFor("NG", "buy", "linea", "USDC");
+    return r.fonbnkNetworkMissing === true && !r.routes.some(x => x.name === "Fonbnk"); })());
+}
 
 // 17. Fluid Names
 ok("fluid name valid", validateFluidName("ethuram") && validateFluidName("kemi_2"));
@@ -154,8 +220,8 @@ ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { b
 ok("split 60/40", (() => { const s = splitFee(1000); return s.treasury === 600 && s.dripbot === 400; })());
 ok("split remainder to treasury", (() => { const s = splitFee(101); return s.treasury + s.dripbot === 101 && s.treasury === 61; })());
 ok("split config is BTC lightning", FEE_SPLIT.currency === "BTC" && FEE_SPLIT.rail === "lightning" && FEE_SPLIT.dripbot.x === "@bitcoinornatin");
-ok("cheapest route first", rankRoutes([{ name: "Mercuryo" }, { name: "Fonbnk" }, { name: "Mt Pelerin" }])[0].name === "Mt Pelerin"
-  && rankRoutes([{ name: "Mercuryo" }, { name: "Guardarian" }])[0].name === "Guardarian");
+ok("cheapest route first", rankRoutes([{ name: "B", rank: 2 }, { name: "A", rank: 1 }, { name: "C" }])[0].name === "A"
+  && rankRoutes([{ name: "B", rank: 2 }, { name: "A", rank: 1 }]).map(r => r.name).join("") === "AB");
 
 // 20. OGO ERA game fee split 40/20/20/20, all BTC Lightning
 ok("game split sums to 100", GAME_FEE_SPLIT.treasury + GAME_FEE_SPLIT.top100 + GAME_FEE_SPLIT.sessionLottery + GAME_FEE_SPLIT.weeklyReferrals === 100);

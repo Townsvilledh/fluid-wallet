@@ -72,6 +72,12 @@
   .mono{ font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; color:var(--dim); }
   .netitem{ display:flex; justify-content:space-between; width:100%; text-align:left; background:none; color:var(--txt);
         padding:14px 4px; border-bottom:1px solid var(--line); font-size:16px; font-weight:600; }
+  /* Ramp rows stack: provider name (+ badge) on its own line, the price
+     note beneath it in smaller text — the old side-by-side flex squeezed
+     name and note together on narrow screens. */
+  .rampitem{ flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:4px; }
+  .rampname{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .rampnote{ color:var(--dim); font-size:13px; font-weight:400; line-height:1.45; }
   .pill{ font-size:11px; background:#1c2a1e; color:var(--good); border-radius:999px; padding:3px 9px; font-weight:700; }
   .pill.soon{ background:#2a2140; color:#c9a8ff; }
   .game{ background:linear-gradient(135deg,#14351f,#0e2a3a 60%,#241a4d); border:1px solid #2b4a35; }

@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -26,7 +26,7 @@ import {
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn,
   looksLikePoison, looksLikePoisonText, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
@@ -2202,22 +2202,19 @@ function rampSheet(mode) {
     const code = $("rCountry").value, asset = $("rAsset").value, netKey = $("rNet").value;
     localStorage.setItem("fluid_country", code);
     $("rAssetLabel").textContent = `Coin (on ${NETWORKS[netKey].name})`;
-    const c = RAMP_COUNTRIES.find(x => x.code === code);
-    const fonbnk = c.fonbnk
-      ? (mode === "buy" ? fonbnkOnrampUrl(netKey, asset, code) : fonbnkOfframpUrl(netKey, asset, code)) : null;
-    const mtp = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
-    const routes = GLOBAL_RAMPS.map(r => ({ name: r.name, url: mode === "buy" ? r.buy : r.sell, region: r.region }));
-    if (fonbnk) routes.push({ name: "Fonbnk", url: fonbnk, region: c.name + " · bank & mobile money" });
-    if (mtp) routes.push({ name: "Mt Pelerin", url: mtp, region: "Bank transfer · " + c.fiat });
-    const ranked = rankRoutes(routes);
+    // Per-country lineup ranked on MEASURED price vs the market rate
+    // (rampRoutesFor in wallet-core). The CHEAPEST badge comes from the
+    // plan's price evidence, not from list position alone.
+    const { country: c, routes, fonbnkNetworkMissing, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
     $("rList").innerHTML =
-      `<p class="tag" style="margin-top:10px">⚡ Sorted cheapest-route first (typical fees from provider docs — the provider shows your final quote before you pay).</p>` +
-      ranked.map((r, i) =>
+      `<p class="tag" style="margin-top:10px">⚡ Sorted by real measured price against the market rate (price check 6 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
+      routes.map(r =>
         // No inline onclick (the CSP forbids inline handlers): the URL
         // rides in a data attribute and is opened by the bound listener.
-        `<button class="netitem" data-ramp-url="${esc(r.url)}"><span>${esc(r.name)} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${esc(r.note || r.region || "")}</small></button>`).join("") +
-      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use a global provider instead.</p>` : "") +
-      (!mtp ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
+        // Name + badge on their own line, note beneath (stacked layout).
+        `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
+      (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
+      (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
   };
   $("rCountry").onchange = paint; $("rAsset").onchange = paint; $("rNet").onchange = paint; paint();
