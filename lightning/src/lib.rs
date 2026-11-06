@@ -260,7 +260,75 @@ pub type RouterT = DefaultRouter<
     ProbabilisticScoringFeeParameters,
     Scorer,
 >;
-pub type MessageRouterT = DefaultMessageRouter<Arc<Graph>, Arc<HostLogger>, Arc<Km>>;
+/// Fluid's onion-message router. `find_path` delegates to LDK's
+/// DefaultMessageRouter unchanged. `create_blinded_paths` deliberately
+/// diverges in ONE bounded way: the default router only builds offer
+/// paths through peers that already appear in the gossip graph (or when
+/// there is exactly one peer), which strands a light-client wallet whose
+/// graph may not yet contain its own LSP. Fluid instead builds padded
+/// blinded paths through the user's OWN connected channel peers — the
+/// peers the offers flow already vetted (connected, onion-message
+/// capable, with a usable channel). It never introduces strangers from
+/// the graph. See docs/LIGHTNING.md.
+pub struct FluidMessageRouter {
+    inner: Arc<DefaultMessageRouter<Arc<Graph>, Arc<HostLogger>, Arc<Km>>>,
+    entropy: Arc<Km>,
+}
+impl lightning::onion_message::messenger::MessageRouter for FluidMessageRouter {
+    fn find_path(
+        &self, sender: bitcoin::secp256k1::PublicKey, peers: Vec<bitcoin::secp256k1::PublicKey>,
+        destination: lightning::onion_message::messenger::Destination,
+    ) -> Result<lightning::onion_message::messenger::OnionMessagePath, ()> {
+        use lightning::onion_message::messenger::MessageRouter as _;
+        self.inner.find_path(sender, peers, destination)
+    }
+    fn create_blinded_paths<T: bitcoin::secp256k1::Signing + bitcoin::secp256k1::Verification>(
+        &self, recipient: bitcoin::secp256k1::PublicKey,
+        local_node_receive_key: lightning::sign::ReceiveAuthKey,
+        context: lightning::blinded_path::message::MessageContext,
+        peers: Vec<lightning::blinded_path::message::MessageForwardNode>,
+        secp_ctx: &bitcoin::secp256k1::Secp256k1<T>,
+    ) -> Result<Vec<lightning::blinded_path::message::BlindedMessagePath>, ()> {
+        if peers.is_empty() {
+            return Err(());
+        }
+        // Paths are built one per peer (max 3, like the default), each
+        // padded with dummy hops to the same total length (4) the
+        // default produces. One special case first: if the recipient
+        // is itself one of our connected peers, the canonical one-hop
+        // path (introduction node = the recipient, no intermediate
+        // hops) leads the list — it is the one path whose first hop is
+        // deliverable by construction, and several LDK call sites use
+        // only the first path (e.g. reply paths on responses).
+        let mut out = Vec::new();
+        if peers.iter().any(|p| p.node_id == recipient) {
+            out.push(lightning::blinded_path::message::BlindedMessagePath::one_hop(
+                recipient,
+                local_node_receive_key,
+                context.clone(),
+                &*self.entropy,
+                secp_ctx,
+            ));
+        }
+        for peer in peers.iter().take(3) {
+            let hop = lightning::blinded_path::message::MessageForwardNode {
+                node_id: peer.node_id,
+                short_channel_id: None,
+            };
+            out.push(lightning::blinded_path::message::BlindedMessagePath::new_with_dummy_hops(
+                &[hop],
+                recipient,
+                2,
+                local_node_receive_key,
+                context.clone(),
+                &*self.entropy,
+                secp_ctx,
+            ));
+        }
+        Ok(out)
+    }
+}
+pub type MessageRouterT = FluidMessageRouter;
 pub type ChainMonitorT = ChainMonitor<
     Signer,
     Arc<HostFilter>,
@@ -491,7 +559,10 @@ impl NodeInner {
             scorer.clone(),
             ProbabilisticScoringFeeParameters::default(),
         ));
-        let message_router = Arc::new(DefaultMessageRouter::new(graph.clone(), keys_manager.clone()));
+        let message_router = Arc::new(FluidMessageRouter {
+            inner: Arc::new(DefaultMessageRouter::new(graph.clone(), keys_manager.clone())),
+            entropy: keys_manager.clone(),
+        });
         let chain_monitor = Arc::new(ChainMonitor::new(
             Some(filter.clone()),
             broadcaster.clone(),
@@ -916,6 +987,19 @@ impl NodeInner {
         Ok(conn_id)
     }
 
+    /// Register an inbound connection (the host accepted a socket).
+    /// Returns the connection id the host should use for it.
+    pub fn accept_peer(self: &Arc<Self>) -> Result<u32, String> {
+        let conn_id = self.next_conn.fetch_add(1, Ordering::Relaxed);
+        let outbound = Arc::new(Mutex::new(Vec::new()));
+        let descriptor = ConnDesc { id: conn_id, host: self.host.clone(), outbound: outbound.clone() };
+        self.conns.lock().unwrap().insert(conn_id, outbound);
+        self.peer_manager
+            .new_inbound_connection(descriptor, None)
+            .map_err(|_| "peer manager refused the inbound connection".to_string())?;
+        Ok(conn_id)
+    }
+
     pub fn take_outbound(&self, conn_id: u32) -> Vec<u8> {
         match self.conns.lock().unwrap().get(&conn_id) {
             Some(buf) => std::mem::take(&mut *buf.lock().unwrap()),
@@ -951,6 +1035,10 @@ impl NodeInner {
 
     pub fn process_events(&self) {
         let handler = self.handler();
+        // Received HTLCs sit in a pending queue until this runs: it is
+        // what peels onions, forwards payments, and generates
+        // PaymentClaimable for payments addressed to us.
+        self.channel_manager.process_pending_htlc_forwards();
         self.channel_manager.process_pending_events(&handler);
         self.chain_monitor.process_pending_events(&handler);
         self.peer_manager.process_events();
@@ -962,6 +1050,10 @@ impl NodeInner {
 
     pub fn timer_tick(&self) {
         self.peer_manager.timer_tick_occurred();
+        // The channel manager's own tick drives BOLT 12 offers-flow
+        // retries and the async-payments static-invoice request cycle;
+        // without it an async-receive offer never becomes ready.
+        self.channel_manager.timer_tick_occurred();
         self.process_events();
     }
 
@@ -1140,7 +1232,12 @@ impl NodeInner {
             Network::Regtest => Currency::Regtest,
             _ => Currency::Bitcoin,
         };
+        let node_pubkey = self
+            .keys_manager
+            .get_node_id(Recipient::Node)
+            .map_err(|_| "node id unavailable".to_string())?;
         let mut builder = InvoiceBuilder::new(currency)
+            .payee_pub_key(node_pubkey)
             .description(description.to_string())
             .payment_hash(bitcoin::hashes::sha256::Hash::from_byte_array(payment_hash.0))
             .payment_secret(payment_secret)
@@ -1247,7 +1344,13 @@ impl NodeInner {
         let mut builder = self
             .channel_manager
             .create_offer_builder()
-            .map_err(|e| format!("offer builder failed: {e:?}"))?;
+            .map_err(|e| {
+                if format!("{e:?}").contains("MissingPaths") {
+                    "an offer needs blinded paths through a connected channel peer — connect to your peer/LSP first".to_string()
+                } else {
+                    format!("offer builder failed: {e:?}")
+                }
+            })?;
         builder = builder.description(description.to_string());
         if let Some(a) = amount_msat {
             builder = builder.amount_msats(a);
@@ -1481,6 +1584,9 @@ mod wasm_host {
         }
         pub fn connect_peer(&self, pubkey: &str, host: &str, port: u16) -> Result<u32, JsValue> {
             self.inner.connect_peer(pubkey, host, port).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn accept_peer(&self) -> Result<u32, JsValue> {
+            self.inner.accept_peer().map_err(|e| JsValue::from_str(&e))
         }
         pub fn take_outbound(&self, conn_id: u32) -> Vec<u8> {
             self.inner.take_outbound(conn_id)
