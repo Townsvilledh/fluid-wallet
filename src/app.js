@@ -88,7 +88,10 @@ async function renderMain() {
   getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
   $("assetList").innerHTML = "Loading assets…";
   try {
-    balances = await getBalances(wallet, networkKey);
+    balances = await Promise.race([
+      getBalances(wallet, networkKey),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("balance load timed out")), 20000)),
+    ]);
   } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
   paintAssets();
   renderHistory();
@@ -170,8 +173,9 @@ $("actSend").onclick = () => {
       to = hit.evm; sendName = hit.name;
       msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
     }
-    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", "Enter an amount.");
-    if (Number(amount) > Number(b.amount)) return msg("sMsg", "Amount is more than your balance.");
+    const resolvedNote = sendName ? sendName + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "… · " : "";
+    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", resolvedNote + "Enter an amount.");
+    if (Number(amount) > Number(b.amount)) return msg("sMsg", resolvedNote + "Amount is more than your balance.");
     try {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
@@ -520,17 +524,33 @@ $("backupBtn").onclick = () => {
   a.href = URL.createObjectURL(blob); a.download = "fluid-keystore-backup.json"; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
-$("showSeedBtn").onclick = async () => {
-  const pw = prompt("Re-enter your password to reveal the seed phrase:");
-  if (!pw) return;
-  try {
-    const w = await unlockVault(localStorage.getItem(VAULT_KEY), pw);
-    alert("Your seed phrase (never share it, never type it into a website):\n\n" + w.mnemonic.phrase);
-  } catch { alert("Wrong password."); }
+$("showSeedBtn").onclick = () => {
+  openSheet(`<h3>Reveal seed phrase</h3>
+    <p class="tag">Your seed phrase controls everything. Never share it, never type it into a website, and make sure nobody is looking at your screen.</p>
+    <input id="seedPw" type="password" placeholder="Wallet password" autocomplete="current-password">
+    <button class="btn" id="seedRevealGo">Reveal</button>
+    <div id="seedRevealOut"></div>
+    <p class="msg err" id="seedRevealMsg"></p>`);
+  $("seedRevealGo").onclick = async () => {
+    const pw = $("seedPw").value;
+    if (!pw) return msg("seedRevealMsg", "Enter your password.");
+    try {
+      const w = await unlockVault(localStorage.getItem(VAULT_KEY), pw);
+      $("seedRevealOut").innerHTML = `<p class="seed" style="margin-top:10px">${w.mnemonic.phrase}</p>`;
+      msg("seedRevealMsg", "");
+    } catch { msg("seedRevealMsg", "Wrong password."); }
+  };
 };
 $("wipeBtn").onclick = () => {
-  if (!confirm("Remove this wallet from this browser? You can only get it back with your seed phrase / keystore backup. Funds on-chain are NOT deleted.")) return;
-  localStorage.removeItem(VAULT_KEY); wallet = null; refreshGate();
+  openSheet(`<h3>Remove wallet from this browser?</h3>
+    <p class="tag">You can only get it back with your seed phrase or keystore backup. Funds on-chain are NOT deleted — this only removes the wallet from this device.</p>
+    <button class="btn" id="wipeGo" style="background:#b3261e">Remove wallet</button>
+    <button class="btn ghost" id="wipeCancel">Keep my wallet</button>`);
+  $("wipeCancel").onclick = () => closeSheet();
+  $("wipeGo").onclick = () => {
+    localStorage.removeItem(VAULT_KEY); localStorage.removeItem("fluid_name");
+    wallet = null; pendingSend = null; closeSheet(); refreshGate();
+  };
 };
 
 refreshGate();
