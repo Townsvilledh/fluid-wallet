@@ -8,6 +8,7 @@ import {
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -25,6 +26,33 @@ function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = t
 function openSheet(html) { $("sheetBody").innerHTML = html; show("sheetRoot"); }
 function closeSheet() { show("sheetRoot", false); }
 $("sheetX").onclick = closeSheet; $("scrim").onclick = closeSheet;
+
+// ---------- copy (one path for the whole app) ----------
+// Async Clipboard API where the browser allows it, textarea + execCommand
+// fallback where it does not (older Android WebViews silently reject the
+// promise, which used to make copy buttons look dead). ALWAYS gives
+// visible feedback on the element that was tapped.
+async function copyText(text, el) {
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch { /* fall back below */ }
+  if (!done) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      done = document.execCommand("copy");
+      ta.remove();
+    } catch { done = false; }
+  }
+  if (el) {
+    const old = el.textContent;
+    el.textContent = done ? "Copied ✓" : "Copy failed — long-press the text to copy";
+    setTimeout(() => { el.textContent = old; }, 1500);
+  }
+  return done;
+}
 
 // ---------- tabs ----------
 function goTab(name) {
@@ -52,7 +80,7 @@ async function renderMain() {
   $("addrText").textContent = wallet.address.slice(0, 8) + "…" + wallet.address.slice(-6) + " ⧉ tap to copy";
   const myName = localStorage.getItem("fluid_name");
   $("nameText").textContent = myName ? "@" + myName + " · " + myName + "." + FLUID_DOMAIN : "";
-  $("addrText").onclick = () => navigator.clipboard.writeText(wallet.address);
+  $("addrText").onclick = () => copyText(wallet.address, $("addrText"));
   $("netBtn").textContent = NETWORKS[networkKey].name + " ▾";
   try { prices = await getPrices(); } catch { prices = {}; }
   // Bitcoin first (all chains, one wallet)
@@ -108,13 +136,14 @@ $("actReceive").onclick = () => {
   openSheet(`<h3>Receive</h3>
     <p class="tag">EVM address — the same on all 15 networks:</p>
     <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
-    <button class="btn ghost" onclick="navigator.clipboard.writeText('${wallet.address}')">Copy EVM address</button>
+    <button class="btn ghost" id="cpEvm">Copy EVM address</button>
     <hr style="border-color:var(--line)">
     <p class="tag">Bitcoin address:</p>
     <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
     <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr);
-  $("cpBtc").onclick = () => navigator.clipboard.writeText(btcAddr);
+  $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
+  $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
 };
 
 // ---------- send (EVM) ----------
@@ -132,20 +161,22 @@ $("actSend").onclick = () => {
     <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
   $("sReview").onclick = async () => {
     let to = $("sTo").value.trim();
+    let sendName = null;
     const amount = $("sAmt").value.trim(), b = balances[Number($("sToken").value)];
     if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) {
       msg("sMsg", "Resolving Fluid name…", true);
       const hit = await resolveFluidName(to).catch(() => null);
       if (!hit || !hit.evm) return msg("sMsg", "That Fluid name is not in the registry yet.");
-      to = hit.evm; msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
+      to = hit.evm; sendName = hit.name;
+      msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
     }
     if (!b || !amount || Number(amount) <= 0) return msg("sMsg", "Enter an amount.");
     if (Number(amount) > Number(b.amount)) return msg("sMsg", "Amount is more than your balance.");
     try {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
-      pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol };
-      $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6) });
+      pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol, name: sendName };
+      $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6), name: sendName });
       show("sIntent"); msg("sMsg", "");
     } catch (e) { msg("sMsg", "Could not estimate: " + (e.shortMessage || e.message)); }
   };
@@ -176,17 +207,19 @@ function openBtcSheet() {
     <p class="msg err" id="bMsg"></p>
     <p class="tag">Fee uses the current recommended network rate (mempool.space). Sends are final.</p>`);
   qr("qrBtc2", btcAddr);
-  $("cpBtc2").onclick = () => navigator.clipboard.writeText(btcAddr);
+  $("cpBtc2").onclick = () => copyText(btcAddr, $("cpBtc2"));
   $("bSend").onclick = async () => {
     let to = $("bTo").value.trim();
+    let sendName = null;
     const amount = Number($("bAmt").value);
     if (to && !to.startsWith("bc1")) {
       const hit = await resolveFluidName(to).catch(() => null);
       if (!hit || !hit.btc) return msg("bMsg", "That Fluid name has no Bitcoin address in the registry.");
-      to = hit.btc;
+      to = hit.btc; sendName = hit.name;
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
-    if (!confirm(`Send ${amount} BTC to ${to}? Network fee will be added at the current rate.`)) return;
+    const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to.slice(0, 10)}…${to.slice(-6)})` : to;
+    if (!confirm(`Send ${amount} BTC to ${dest}? Network fee will be added at the current rate.`)) return;
     try {
       msg("bMsg", "Building, signing and broadcasting…", true);
       const txid = await sendBitcoin(wallet.mnemonic.phrase, { to, amountBtc: amount });
@@ -259,6 +292,132 @@ function rampSheet(mode) {
 $("actBuy").onclick = () => rampSheet("buy");
 $("actCash").onclick = () => rampSheet("sell");
 
+// ---------- swap (LI.FI routes: same-chain + cross-chain) ----------
+let pendingSwap = null;
+function swapTokenList(netKey) {
+  const net = NETWORKS[netKey];
+  return [{ symbol: net.symbol, address: LIFI_NATIVE_TOKEN, decimals: 18, native: true },
+          ...(net.tokens || []).map(t => ({ ...t, native: false }))];
+}
+function swapRouteName(route) {
+  const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
+  return names.join(" → ") || "LI.FI route";
+}
+function swapDurationText(sec) {
+  if (!Number.isFinite(sec)) return "time varies";
+  return sec < 90 ? `~${Math.max(1, Math.round(sec))} sec` : `~${Math.round(sec / 60)} min`;
+}
+$("actSwap").onclick = () => {
+  pendingSwap = null;
+  const swapNets = Object.keys(NETWORKS).filter(k => k !== "sepolia");
+  const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("");
+  const fromKey0 = networkKey === "sepolia" ? "bsc" : networkKey;
+  const toKey0 = fromKey0 === "base" ? "bsc" : "base";
+  openSheet(`<h3>Swap</h3>
+    <p class="tag">One search across every Fluid chain (routes by LI.FI). Cheapest = most received after fees; you approve the exact sentence before anything is signed.</p>
+    <label class="tag">From</label>
+    <div style="display:flex;gap:8px">
+      <select id="wFromNet" style="flex:1.2">${netOpts(fromKey0)}</select>
+      <select id="wFromTok" style="flex:1"></select>
+    </div>
+    <input id="wAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn ghost" id="wFlip">⇅ Flip</button>
+    <label class="tag">To</label>
+    <div style="display:flex;gap:8px">
+      <select id="wToNet" style="flex:1.2">${netOpts(toKey0)}</select>
+      <select id="wToTok" style="flex:1"></select>
+    </div>
+    <button class="btn" id="wRoutes">Get routes</button>
+    <div id="wList"></div>
+    <div id="wConfirm" class="hidden">
+      <p class="seed" id="wIntentText"></p>
+      <button class="btn" id="wDo">Confirm &amp; swap</button>
+    </div>
+    <p class="msg err" id="wMsg"></p>`);
+  const fillToks = (netSel, tokSel, wantNative) => {
+    const toks = swapTokenList($(netSel).value);
+    $(tokSel).innerHTML = toks.map((t, i) => `<option value="${i}">${t.symbol}</option>`).join("");
+    if (!wantNative) {
+      const si = toks.findIndex(t => !t.native);
+      if (si > 0) $(tokSel).value = String(si);
+    }
+  };
+  fillToks("wFromNet", "wFromTok", true);
+  fillToks("wToNet", "wToTok", false);
+  $("wFromNet").onchange = () => fillToks("wFromNet", "wFromTok", true);
+  $("wToNet").onchange = () => fillToks("wToNet", "wToTok", false);
+  $("wFlip").onclick = () => {
+    const fn = $("wFromNet").value, ft = $("wFromTok").value, tn = $("wToNet").value, tt = $("wToTok").value;
+    $("wFromNet").value = tn; fillToks("wFromNet", "wFromTok", true); $("wFromTok").value = tt;
+    $("wToNet").value = fn; fillToks("wToNet", "wToTok", false); $("wToTok").value = ft;
+    show("wConfirm", false); $("wList").innerHTML = ""; msg("wMsg", "");
+  };
+  $("wRoutes").onclick = async () => {
+    const fromKey = $("wFromNet").value, toKey = $("wToNet").value;
+    const fromTok = swapTokenList(fromKey)[Number($("wFromTok").value)];
+    const toTok = swapTokenList(toKey)[Number($("wToTok").value)];
+    const amount = $("wAmt").value.trim();
+    show("wConfirm", false); pendingSwap = null;
+    if (!fromTok || !toTok || !amount || Number(amount) <= 0) return msg("wMsg", "Enter an amount to swap.");
+    if (fromKey === toKey && fromTok.address.toLowerCase() === toTok.address.toLowerCase())
+      return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
+    try {
+      msg("wMsg", "Checking your balance…", true);
+      const bals = await getBalances(wallet, fromKey);
+      const mine = bals.find(b => fromTok.native ? !b.address : (b.address || "").toLowerCase() === fromTok.address.toLowerCase());
+      if (!mine || Number(amount) > Number(mine.amount))
+        return msg("wMsg", `Not enough ${fromTok.symbol} on ${NETWORKS[fromKey].name} (you have ${mine ? fmt(mine.amount) : "0"}).`);
+      msg("wMsg", "Searching routes across chains…", true);
+      const routes = await getSwapRoutes({
+        fromChainKey: fromKey, toChainKey: toKey,
+        fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
+        fromAmount: swapAmountToRaw(amount, fromTok.decimals),
+        fromAddress: wallet.address,
+      });
+      if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
+      const ranked = rankSwapRoutes(routes).slice(0, 3);
+      msg("wMsg", "");
+      $("wList").innerHTML = ranked.map((r, i) => {
+        const ex = swapRouteExecutable(r);
+        const badges = `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
+        const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
+        return `<button class="netitem" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
+            <span>${badges}${recv} ${toTok.symbol}<br><small style="color:var(--dim)">${swapRouteName(r)} · ${swapDurationText(r.durationSec)} · fees ≈ ${usd(r.gasCostUSD)}</small></span>
+            <span>${usd(r.toAmountUSD)}</span></button>
+          ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${ex.reason}</p>`}`;
+      }).join("");
+      document.querySelectorAll("[data-route]").forEach(b => b.onclick = () => {
+        if (b.disabled) return;
+        const r = ranked[Number(b.dataset.route)];
+        pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        $("wIntentText").textContent = formatSwapIntent({
+          fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
+          toAmount: fmt(swapRawToAmount(r.toAmount, toTok.decimals)), toSymbol: toTok.symbol, toNetKey: toKey,
+          toolName: swapRouteName(r), feeUsd: r.gasCostUSD, durationSec: r.durationSec,
+        });
+        show("wConfirm"); msg("wMsg", "");
+      });
+    } catch (e) { msg("wMsg", "Route search failed: " + (e.shortMessage || e.message)); }
+  };
+  $("wDo").onclick = async () => {
+    if (!pendingSwap) return;
+    const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
+    const btn = $("wDo"); btn.disabled = true;
+    try {
+      const hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: wallet.address, explorer: NETWORKS[fromKey].explorer, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingSwap = null; show("wConfirm", false);
+      msg("wMsg", fromKey === toKey
+        ? `Swap done ✓ tx ${hashes[hashes.length - 1].slice(0, 16)}…`
+        : `Swap sent ✓ — your ${toTok.symbol} will arrive on ${NETWORKS[toKey].name} via the bridge shortly. First tx ${hashes[0].slice(0, 16)}…`, true);
+      renderMain();
+    } catch (e) { msg("wMsg", "Swap failed: " + (e.shortMessage || e.message)); }
+    btn.disabled = false;
+  };
+};
+
 // ---------- activity ----------
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -306,27 +465,10 @@ $("createBtn").onclick = async () => {
           <div class="seed" style="font-size:12px">${entryText}</div>
           <button class="btn" id="sheetCopyEntry">Copy entry</button>
           <a class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>`);
-        $("sheetCopyEntry").onclick = () => navigator.clipboard.writeText(entryText);
+        $("sheetCopyEntry").onclick = () => copyText(entryText, $("sheetCopyEntry"));
       }, 400);
     }
-    // ---------- Fluid name claim ----------
-$("claimNameBtn").onclick = async () => {
-  const name = normalizeFluidName($("nameInput").value);
-  if (!validateFluidName(name)) return msg("nameMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
-  msg("nameMsg", "Checking the registry…", true);
-  const existing = await resolveFluidName(name).catch(() => null);
-  if (existing) return msg("nameMsg", "That name is already claimed. Try another.");
-  localStorage.setItem("fluid_name", name);
-  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null);
-  $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
-  show("claimBox");
-  msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
-  renderMain();
-};
-$("copyEntryBtn").onclick = () => navigator.clipboard.writeText($("nameEntry").textContent);
-if (localStorage.getItem("fluid_name")) $("namePreview").textContent = localStorage.getItem("fluid_name") + "." + FLUID_DOMAIN;
-
-refreshGate();
+    refreshGate();
   };
 };
 $("importBtn").onclick = async () => {
@@ -344,6 +486,27 @@ $("unlockBtn").onclick = async () => {
   try { wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value); refreshGate(); }
   catch (e) { msg("onboardMsg", e.message); }
 };
+
+// ---------- Fluid name claim ----------
+// Top level on purpose: this wiring used to live inside the seedDoneBtn
+// click handler, so the Claim button was dead for anyone who unlocked an
+// existing wallet instead of creating a fresh one in the same session.
+$("claimNameBtn").onclick = async () => {
+  if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
+  const name = normalizeFluidName($("nameInput").value);
+  if (!validateFluidName(name)) return msg("nameMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+  msg("nameMsg", "Checking the registry…", true);
+  const existing = await resolveFluidName(name).catch(() => null);
+  if (existing) return msg("nameMsg", "That name is already claimed. Try another.");
+  localStorage.setItem("fluid_name", name);
+  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null);
+  $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
+  show("claimBox");
+  msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
+  renderMain();
+};
+$("copyEntryBtn").onclick = () => copyText($("nameEntry").textContent, $("copyEntryBtn"));
+if (localStorage.getItem("fluid_name")) $("namePreview").textContent = localStorage.getItem("fluid_name") + "." + FLUID_DOMAIN;
 
 // ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
@@ -406,7 +569,7 @@ $("createAgentBtn").onclick = () => {
   show("agentBox");
   msg("agentMsg", `Agent wallet created for ${name} — separate account, full chain access, no KYC, no ramps.`, true);
 };
-$("copyAgentBtn").onclick = () => navigator.clipboard?.writeText($("agentDescriptor").textContent);
+$("copyAgentBtn").onclick = () => copyText($("agentDescriptor").textContent, $("copyAgentBtn"));
 renderAgents();
 
 // The agent-facing API. An agent (script, bot, another app on this device)

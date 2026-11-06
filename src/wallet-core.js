@@ -153,9 +153,13 @@ export async function getBalances(wallet, networkKey) {
 
 /** The signer principle from the Fluid spec: the user approves a sentence,
  *  never a hex blob. Returns the intent text + the tx the wallet would send. */
-export function formatSendIntent({ amount, symbol, to, networkKey, feeNative }) {
+export function formatSendIntent({ amount, symbol, to, networkKey, feeNative, name }) {
   const net = NETWORKS[networkKey];
-  return `Send ${amount} ${symbol} to ${to} on ${net.name}. ` +
+  // When the recipient was given as a Fluid name, the confirmation must
+  // show BOTH the name the user typed and the address it resolved to —
+  // the sender confirms the resolution, not just the lookup.
+  const dest = name ? `${name}.${FLUID_DOMAIN} (${to.slice(0, 6)}…${to.slice(-4)})` : to;
+  return `Send ${amount} ${symbol} to ${dest} on ${net.name}. ` +
          `Network fee about ${feeNative} ${net.symbol}. Confirm?`;
 }
 
@@ -493,4 +497,181 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
   const tx = await aw.sendTransaction({ to, value: ethers.parseEther(String(amountNative)) });
   await tx.wait();
   return tx;
+}
+
+// ---------- Swaps (LI.FI aggregator: one search across every chain) ----------
+// Fluid does not run its own DEX. A swap is a route search at LI.FI
+// (public API, no key): same-chain DEX swaps and cross-chain bridge+swap
+// routes come back together, Fluid ranks them cheapest (best net USD
+// received after gas) and fastest, shows the user a plain sentence, and
+// only then signs — step by step, from the user's own wallet, on the
+// source chain. Bridge delivery on the destination chain is automatic
+// once the source steps are mined. No Fluid server, no Fluid custody.
+export const LIFI_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
+const LIFI_API = "https://li.quest/v1";
+
+export function swapAmountToRaw(amount, decimals) { return ethers.parseUnits(String(amount), decimals).toString(); }
+export function swapRawToAmount(raw, decimals) { return ethers.formatUnits(raw ?? "0", decimals); }
+
+/** Wrap a /quote step (LI.FI's single recommended route) in route shape
+ *  so ranking and execution treat both endpoints identically. */
+function quoteStepToRoute(step) {
+  const e = step.estimate || {};
+  return {
+    id: step.id, type: step.type,
+    fromChainId: step.action?.fromChainId, toChainId: step.action?.toChainId,
+    fromAmount: step.action?.fromAmount, fromToken: step.action?.fromToken, toToken: step.action?.toToken,
+    toAmount: e.toAmount, toAmountMin: e.toAmountMin, toAmountUSD: e.toAmountUSD, fromAmountUSD: e.fromAmountUSD,
+    gasCostUSD: (e.gasCosts || []).reduce((s, g) => s + Number(g.amountUSD || 0), 0),
+    executionDuration: e.executionDuration,
+    steps: [step],
+  };
+}
+
+/** Ask LI.FI for routes. fromAmount is the RAW integer amount (string)
+ *  in the from-token's smallest unit. Primary path is POST /v1/routes
+ *  (several competing routes). That endpoint can be very slow, so on a
+ *  timeout or empty answer Fluid falls back to GET /v1/quote, which
+ *  returns the single recommended route as one executable step. */
+export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress }) {
+  const from = NETWORKS[fromChainKey], to = NETWORKS[toChainKey];
+  if (!from || !to) throw new Error("Unknown network in swap.");
+  try {
+    const res = await fetch(`${LIFI_API}/routes`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({
+        fromChainId: from.chainId, toChainId: to.chainId,
+        fromTokenAddress, toTokenAddress,
+        fromAmount: String(fromAmount), fromAddress, toAddress: fromAddress,
+        options: { integrator: "fluid-wallet", order: "RECOMMENDED" },
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.routes?.length) return data.routes;
+    }
+  } catch { /* slow or unavailable — fall back to /quote below */ }
+  const q = new URLSearchParams({
+    fromChain: from.chainId, toChain: to.chainId,
+    fromToken: fromTokenAddress, toToken: toTokenAddress,
+    fromAmount: String(fromAmount), fromAddress,
+  });
+  const res = await fetch(`${LIFI_API}/quote?${q.toString()}`);
+  const step = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("Route search failed: " + (step.message || ("HTTP " + res.status)));
+  return [quoteStepToRoute(step)];
+}
+
+function swapRouteGasUsd(route) {
+  const direct = Number(route?.gasCostUSD);
+  if (Number.isFinite(direct) && route?.gasCostUSD != null && route?.gasCostUSD !== "") return direct;
+  let sum = 0;
+  for (const s of route?.steps || []) for (const g of s.estimate?.gasCosts || []) sum += Number(g.amountUSD || 0);
+  return sum;
+}
+function swapRouteDurationSec(route) {
+  const direct = Number(route?.executionDuration);
+  if (route?.executionDuration != null && Number.isFinite(direct)) return direct;
+  let sum = 0, seen = false;
+  for (const s of route?.steps || []) {
+    const d = Number(s.estimate?.executionDuration);
+    if (Number.isFinite(d)) { sum += d; seen = true; }
+  }
+  return seen ? sum : Infinity;
+}
+/** Pure ranking: annotate each route with netUsd (what you receive in
+ *  USD minus gas in USD), durationSec, and cheapest / fastest flags, and
+ *  sort best-value first. Input routes are NOT mutated. */
+export function rankSwapRoutes(routes) {
+  const scored = (routes || []).map(r => {
+    const gas = swapRouteGasUsd(r);
+    const out = Number(r?.toAmountUSD);
+    return {
+      ...r,
+      gasCostUSD: gas,
+      netUsd: (Number.isFinite(out) ? out : 0) - gas,
+      durationSec: swapRouteDurationSec(r),
+      cheapest: false, fastest: false,
+    };
+  });
+  if (scored.length) {
+    let best = scored[0];
+    for (const r of scored) if (r.netUsd > best.netUsd || (r.netUsd === best.netUsd && r.durationSec < best.durationSec)) best = r;
+    best.cheapest = true;
+    let fast = scored[0];
+    for (const r of scored) if (r.durationSec < fast.durationSec || (r.durationSec === fast.durationSec && r.netUsd > fast.netUsd)) fast = r;
+    fast.fastest = true;
+  }
+  return scored.sort((a, b) => (b.netUsd - a.netUsd) || (a.durationSec - b.durationSec));
+}
+
+/** The steps of a route Fluid can actually sign: those carrying a
+ *  transactionRequest for the route's source chain. Bridge waiting is
+ *  not a step — only signature steps are returned. */
+export function swapExecutableSteps(route) {
+  const cid = (v) => { try { return Number(BigInt(v)); } catch { return NaN; } };
+  return (route?.steps || []).filter(s =>
+    s.transactionRequest && (s.transactionRequest.chainId == null || cid(s.transactionRequest.chainId) === Number(route.fromChainId)));
+}
+export function swapRouteExecutable(route) {
+  const steps = swapExecutableSteps(route);
+  return steps.length
+    ? { ok: true, steps }
+    : { ok: false, reason: "This route needs steps Fluid can't sign yet — pick another route." };
+}
+
+const SWAP_ERC20 = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+];
+/** Execute a chosen route: approve the from-token where a step needs it,
+ *  then send each signable step's transaction in order from the user's
+ *  wallet on the source chain, awaiting each receipt. Returns tx hashes.
+ *  onProgress receives human sentences for the UI. */
+export async function executeSwapRoute(wallet, route, onProgress = () => {}) {
+  const fromKey = Object.keys(NETWORKS).find(k => NETWORKS[k].chainId === Number(route?.fromChainId));
+  if (!fromKey) throw new Error("Swap source chain is not a Fluid network.");
+  const { ok, steps, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const provider = providerFor(fromKey);
+  const signer = wallet.connect(provider);
+  const hashes = [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i], tr = step.transactionRequest;
+    const fromToken = step.action?.fromToken;
+    const isNative = !fromToken?.address || /^0x0{40}$/i.test(fromToken.address);
+    if (!isNative && step.action?.fromAmount) {
+      const need = BigInt(step.action.fromAmount);
+      const spender = step.estimate?.approvalAddress || tr.to;
+      const c = new ethers.Contract(fromToken.address, SWAP_ERC20, signer);
+      if ((await c.allowance(wallet.address, spender)) < need) {
+        onProgress(`Approving ${fromToken.symbol || "token"} for the route (one-time permission)…`);
+        const atx = await c.approve(spender, need);
+        await atx.wait();
+      }
+    }
+    onProgress(`Signing step ${i + 1} of ${steps.length}…`);
+    const txReq = { to: tr.to, data: tr.data || "0x", value: tr.value != null ? BigInt(tr.value) : 0n };
+    if (tr.gasLimit != null) { try { txReq.gasLimit = BigInt(tr.gasLimit); } catch { /* let the node estimate */ } }
+    const tx = await signer.sendTransaction(txReq);
+    hashes.push(tx.hash);
+    onProgress(`Step ${i + 1} sent — waiting for it to mine…`);
+    await tx.wait();
+  }
+  return hashes;
+}
+
+/** The swap version of the signer principle: a sentence, never a blob. */
+export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount, toSymbol, toNetKey, toolName, feeUsd, durationSec }) {
+  const f = NETWORKS[fromNetKey], t = NETWORKS[toNetKey];
+  const secs = Math.max(1, Math.round(Number(durationSec) || 0));
+  const when = Number.isFinite(durationSec)
+    ? (durationSec < 90 ? ` Funds should arrive in about ${secs} second${secs === 1 ? "" : "s"}.`
+                        : ` Funds should arrive in about ${Math.round(durationSec / 60)} minutes.`)
+    : "";
+  const fee = Number(feeUsd || 0);
+  const feeText = fee > 0 && fee < 0.01 ? "under $0.01" : "$" + fee.toFixed(2);
+  return `Swap ${fromAmount} ${fromSymbol} on ${f.name} for about ${toAmount} ${toSymbol} on ${t.name} via ${toolName}. ` +
+         `Route + network fees about ${feeText}.${when} Confirm?`;
 }
