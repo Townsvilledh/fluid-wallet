@@ -45,9 +45,15 @@ let bchAddr = null, bchBal = 0;
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
-function openSheet(html) { $("sheetBody").innerHTML = html; show("sheetRoot"); }
-function closeSheet() { show("sheetRoot", false); }
+function openSheet(html) { fireSheetCloseHook(); $("sheetBody").innerHTML = html; show("sheetRoot"); }
+function closeSheet() { fireSheetCloseHook(); show("sheetRoot", false); }
 $("sheetX").onclick = closeSheet; $("scrim").onclick = closeSheet;
+// One-shot hook fired when the current sheet goes away — via the X, the
+// scrim, closeSheet(), or being replaced by another sheet. Promise-based
+// sheets (the agent-transfer approval) register one so a dismissal settles
+// the promise as "no" instead of leaving the caller hanging forever.
+let sheetCloseHook = null;
+function fireSheetCloseHook() { const h = sheetCloseHook; sheetCloseHook = null; if (h) { try { h(); } catch { /* a hook must never break the UI */ } } }
 
 // ---------- copy (one path for the whole app) ----------
 // Async Clipboard API where the browser allows it, textarea + execCommand
@@ -1263,6 +1269,37 @@ $("createAgentBtn").onclick = () => {
 $("copyAgentBtn").onclick = () => copyText($("agentDescriptor").textContent, $("copyAgentBtn"));
 renderAgents();
 
+// Owner approval for an agent transfer, as an in-app sheet — never a native
+// dialog: those get swallowed in some phone webviews, which for a security
+// approval both looks broken and trains blind tapping elsewhere. The full
+// intent is on screen BEFORE any button: agent, amount, the destination
+// address in full (never truncated — this is a security surface), network,
+// and the policy check result. Resolves true ONLY on an explicit Approve
+// tap; Reject, the X, the scrim, or the sheet being replaced by another
+// sheet all resolve false, so the agent's promise never hangs.
+function askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday }) {
+  return new Promise((resolve) => {
+    const settle = (v) => { sheetCloseHook = null; closeSheet(); resolve(v); };
+    const policyLine = price
+      ? `✅ <b>Policy check passed</b> — value ≈ ${usd(usdAmt)}; caps $${a.policy.perTxCapUsd} per transfer and $${a.policy.dailyCapUsd} per day (this agent has spent ${usd(spentToday)} today).`
+      : `⚠️ <b>Price unknown</b> — the dollar policy caps could not be checked for this transfer. Check the amount and destination extra carefully.`;
+    openSheet(`<h3>🤖 Agent transfer request</h3>
+      <p class="tag">An agent is asking to spend from its own agent wallet. Nothing moves unless you tap Approve.</p>
+      <p><b>Agent:</b> ${a.name} <span class="tag">(agent #${a.index})</span></p>
+      <p><b>Send:</b> ${amt} ${net.symbol} on ${net.name}</p>
+      <p><b>To — full destination address:</b></p>
+      <p class="mono" style="word-break:break-all">${to}</p>
+      <p><b>From — the agent's wallet:</b></p>
+      <p class="mono" style="word-break:break-all">${a.keys.evm}</p>
+      <p>${policyLine}</p>
+      <button class="btn" id="agentApprove">Approve &amp; sign with the AGENT wallet</button>
+      <button class="btn ghost" id="agentReject">Reject</button>`);
+    sheetCloseHook = () => resolve(false); // dismissed without a decision = rejected
+    $("agentApprove").onclick = () => settle(true);
+    $("agentReject").onclick = () => settle(false);
+  });
+}
+
 // The agent-facing API. An agent (script, bot, another app on this device)
 // can READ public info and REQUEST a transfer. It can never sign: every
 // request pops a human-readable approval to the owner, policy caps are
@@ -1284,7 +1321,7 @@ window.FluidAgent = {
     const usdAmt = price ? amt * price : 0;
     const gate = checkAgentPolicy(a.policy, price ? usdAmt : 0.0001, agentSpentToday(a.index));
     if (price && !gate.ok) throw new Error("Policy blocked: " + gate.reason);
-    const ok = confirm(`🤖 Agent "${a.name}" requests a transfer:\n\nSend ${amt} ${net.symbol} on ${net.name}\nTo: ${to}\n${price ? "Value ≈ " + usd(usdAmt) + ` (caps: $${a.policy.perTxCapUsd}/tx, $${a.policy.dailyCapUsd}/day)` : "(price unknown — check carefully)"}\n\nApprove and sign with the AGENT wallet?`);
+    const ok = await askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday: agentSpentToday(a.index) });
     if (!ok) throw new Error("Owner declined.");
     const tx = await sendFromAgent(wallet.mnemonic.phrase, a.index, netKey, to, amt);
     if (price) recordAgentSpend(a.index, usdAmt);
