@@ -7,6 +7,9 @@ await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: 
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");
+copyFileSync("public/robots.txt", "dist/robots.txt");
+copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
+copyFileSync("public/og-image.png", "dist/og-image.png");
 // Cache-bust the bundle: stamp dist/index.html with app.bundle.js?v=<hash> so
 // every deploy is a new URL and browsers never sit on a stale bundle.
 const bundleHash = createHash("sha256").update(readFileSync("dist/app.bundle.js")).digest("hex").slice(0, 10);
