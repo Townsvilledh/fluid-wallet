@@ -9,11 +9,13 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
+  looksLikePoison, revokeApproval,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
 const HISTORY_KEY = "fluid_history_v1";
+const APPROVALS_KEY = "fluid_approvals_v1";
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -176,15 +178,25 @@ $("actSend").onclick = () => {
       msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
     }
     const resolvedNote = sendName ? sendName + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "… · " : "";
-    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", resolvedNote + "Enter an amount.");
-    if (Number(amount) > Number(b.amount)) return msg("sMsg", resolvedNote + "Amount is more than your balance.");
+    // Address-poisoning check (raw addresses only — Fluid names are verified
+    // against the registry): warn if the recipient imitates an address the
+    // user knows (own address or a past recipient). Never a hard block.
+    let poisonNote = "";
+    if (!sendName && /^0x[0-9a-fA-F]{40}$/.test(to)) {
+      const known = [wallet.address, ...JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").map(x => x.to).filter(Boolean)];
+      const look = looksLikePoison(to, known);
+      if (look) poisonNote = `⚠ This address starts and ends like ${look.slice(0, 6)}…${look.slice(-4)} which you've used before, but it is NOT the same address — this is how address-poisoning scams work. Double-check every character.`;
+    }
+    const warnPrefix = poisonNote ? poisonNote + " " : "";
+    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", warnPrefix + resolvedNote + "Enter an amount.");
+    if (Number(amount) > Number(b.amount)) return msg("sMsg", warnPrefix + resolvedNote + "Amount is more than your balance.");
     try {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
       pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol, name: sendName };
       $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6), name: sendName });
-      show("sIntent"); msg("sMsg", "");
-    } catch (e) { msg("sMsg", "Could not estimate: " + (e.shortMessage || e.message)); }
+      show("sIntent"); msg("sMsg", poisonNote);
+    } catch (e) { msg("sMsg", warnPrefix + "Could not estimate: " + (e.shortMessage || e.message)); }
   };
   $("sConfirm").onclick = async () => {
     if (!pendingSend) return;
@@ -413,7 +425,13 @@ $("actSwap").onclick = () => {
     const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
     const btn = $("wDo"); btn.disabled = true;
     try {
-      const hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+      const hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+        // Keep a device record of every approval Fluid makes, so the user
+        // can review and revoke them later (More → Token approvals).
+        const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+        list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: rec.tokenSymbol, spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+        localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+      });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: wallet.address, explorer: NETWORKS[fromKey].explorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
@@ -519,7 +537,73 @@ if (localStorage.getItem("fluid_name")) $("namePreview").textContent = localStor
 
 // ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
-$("lockBtn").onclick = () => { wallet = null; pendingSend = null; refreshGate(); };
+function lockWallet() { wallet = null; pendingSend = null; refreshGate(); }
+$("lockBtn").onclick = lockWallet;
+
+// ---------- auto-lock ----------
+// Keys live only in memory while unlocked. After 5 minutes without
+// interaction — or 5 minutes spent hidden — Fluid locks itself, so an
+// unattended, unlocked wallet is never left sitting open.
+const AUTOLOCK_MS = 5 * 60 * 1000;
+let lastActivity = Date.now(), hiddenAt = null;
+addEventListener("pointerdown", () => { lastActivity = Date.now(); }, { passive: true });
+addEventListener("keydown", () => { lastActivity = Date.now(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (hiddenAt != null && Date.now() - hiddenAt > AUTOLOCK_MS && wallet) lockWallet();
+  hiddenAt = null;
+});
+setInterval(() => { if (wallet && Date.now() - lastActivity > AUTOLOCK_MS) lockWallet(); }, 30 * 1000);
+
+// ---------- token approvals ----------
+// Every approval Fluid makes for a swap is recorded on this device; this
+// screen lists them for the current network and can revoke each one
+// (an on-chain approve(spender, 0)).
+function loadApprovals() { try { return JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]"); } catch { return []; } }
+$("approvalsBtn").onclick = () => {
+  let pendingRevoke = null;
+  openSheet(`<h3>Token approvals</h3>
+    <p class="tag">Approvals Fluid made for swaps from this device. Revoking sets the permission back to zero.</p>
+    <div id="apList"></div>
+    <div id="apConfirm"></div>
+    <p class="msg err" id="apMsg"></p>`);
+  const emptyNote = `<p class="tag">No approvals recorded — swaps approve the exact amount needed, and they'll appear here.</p>`;
+  const paint = () => {
+    const mine = loadApprovals().map((a, i) => ({ ...a, _i: i })).filter(a => a.chainKey === networkKey);
+    $("apList").innerHTML = mine.length ? mine.map(a => `
+      <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span><b>${a.tokenSymbol || "Token"}</b> · ${fmt(a.amount)}<br><small style="color:var(--dim)">spender ${a.spender.slice(0, 6)}…${a.spender.slice(-4)} · ${new Date(a.at).toLocaleDateString()}</small></span>
+        <button class="btn ghost" data-revoke="${a._i}" style="width:auto;padding:6px 12px">Revoke</button>
+      </div>`).join("") : emptyNote;
+    document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = () => {
+      const list = loadApprovals(); const a = list[Number(b.dataset.revoke)]; if (!a) return;
+      pendingRevoke = Number(b.dataset.revoke);
+      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">Revoke the ${a.tokenSymbol || "token"} approval for spender ${a.spender.slice(0, 6)}…${a.spender.slice(-4)} on ${NETWORKS[a.chainKey].name}? This sends an on-chain transaction setting the permission to zero (a network fee applies). The swap that used it already finished — revoking breaks nothing.</p>
+        <button class="btn" id="apRevokeGo">Revoke approval</button>`;
+      msg("apMsg", "");
+      $("apRevokeGo").onclick = async () => {
+        const cur = loadApprovals(); const rec = cur[pendingRevoke]; if (!rec) return;
+        const btn = $("apRevokeGo"); btn.disabled = true;
+        try {
+          msg("apMsg", "Sending revoke transaction…", true);
+          await revokeApproval(wallet, rec.chainKey, rec.token, rec.spender);
+          cur.splice(pendingRevoke, 1);
+          localStorage.setItem(APPROVALS_KEY, JSON.stringify(cur));
+          pendingRevoke = null; $("apConfirm").innerHTML = "";
+          msg("apMsg", "Revoked ✓ — that spender can no longer move this token.", true);
+          paint();
+        } catch (e) { msg("apMsg", "Revoke failed: " + (e.shortMessage || e.message)); btn.disabled = false; }
+      };
+    });
+  };
+  paint();
+};
+
+// ---------- build stamp ----------
+// dist pages carry <meta name="fluid-build"> with the bundle hash; showing
+// it lets anyone verify the running code matches the open-source build.
+const buildMeta = document.querySelector('meta[name="fluid-build"]');
+if (buildMeta && buildMeta.content) $("buildStamp").textContent = buildMeta.content;
 $("backupBtn").onclick = () => {
   const blob = new Blob([localStorage.getItem(VAULT_KEY)], { type: "application/json" });
   const a = document.createElement("a");

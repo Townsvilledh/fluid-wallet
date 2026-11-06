@@ -11,7 +11,9 @@ copyFileSync("names.json", "dist/names.json");
 // every deploy is a new URL and browsers never sit on a stale bundle.
 const bundleHash = createHash("sha256").update(readFileSync("dist/app.bundle.js")).digest("hex").slice(0, 10);
 const distHtml = readFileSync("dist/index.html", "utf8");
-writeFileSync("dist/index.html", distHtml.replace('<script src="app.bundle.js"></script>', `<script src="app.bundle.js?v=${bundleHash}"></script>`));
+writeFileSync("dist/index.html", distHtml
+  .replace('<script src="app.bundle.js"></script>', `<script src="app.bundle.js?v=${bundleHash}"></script>`)
+  .replace("</head>", `<meta name="fluid-build" content="${bundleHash}"></head>`));
 const html = readFileSync("src/index.html", "utf8");
 const js = readFileSync("dist/app.bundle.js", "utf8");
 const single = html.replace('<script src="app.bundle.js"></script>', () => "<script>" + js.replace(/<\/script>/g, "<\\/script>") + "</script>");

@@ -628,8 +628,11 @@ const SWAP_ERC20 = [
 /** Execute a chosen route: approve the from-token where a step needs it,
  *  then send each signable step's transaction in order from the user's
  *  wallet on the source chain, awaiting each receipt. Returns tx hashes.
- *  onProgress receives human sentences for the UI. */
-export async function executeSwapRoute(wallet, route, onProgress = () => {}) {
+ *  onProgress receives human sentences for the UI. Approvals are for the
+ *  EXACT amount the step needs — never unlimited — and every approval is
+ *  reported through the optional onApprove callback so the app layer can
+ *  keep a record the user can later review and revoke. */
+export async function executeSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
   const fromKey = Object.keys(NETWORKS).find(k => NETWORKS[k].chainId === Number(route?.fromChainId));
   if (!fromKey) throw new Error("Swap source chain is not a Fluid network.");
   const { ok, steps, reason } = swapRouteExecutable(route);
@@ -646,9 +649,12 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}) {
       const spender = step.estimate?.approvalAddress || tr.to;
       const c = new ethers.Contract(fromToken.address, SWAP_ERC20, signer);
       if ((await c.allowance(wallet.address, spender)) < need) {
-        onProgress(`Approving ${fromToken.symbol || "token"} for the route (one-time permission)…`);
+        onProgress(`Approving ${fromToken.symbol || "token"} for the route (exact amount only)…`);
         const atx = await c.approve(spender, need);
         await atx.wait();
+        try {
+          onApprove({ chainKey: fromKey, token: fromToken.address, tokenSymbol: fromToken.symbol || null, spender, amount: need.toString(), decimals: fromToken.decimals ?? null, at: Date.now() });
+        } catch { /* recording an approval must never break a swap */ }
       }
     }
     onProgress(`Signing step ${i + 1} of ${steps.length}…`);
@@ -660,6 +666,33 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}) {
     await tx.wait();
   }
   return hashes;
+}
+
+/** Revoke a token approval: set the spender's allowance back to zero. */
+export async function revokeApproval(wallet, chainKey, tokenAddress, spender) {
+  if (!NETWORKS[chainKey]) throw new Error("Unknown network.");
+  const signer = wallet.connect(providerFor(chainKey));
+  const c = new ethers.Contract(tokenAddress, SWAP_ERC20, signer);
+  const tx = await c.approve(spender, 0n);
+  await tx.wait();
+  return tx.hash;
+}
+
+/** Address-poisoning defence: scammers generate addresses that share the
+ *  first and last few characters with one you already use, then dust you
+ *  from them hoping you'll copy the wrong one out of your history. Returns
+ *  the known address the recipient imitates (same first 4 AND last 4 hex
+ *  chars, case-insensitive, but NOT the same address), otherwise null. */
+export function looksLikePoison(recipient, knownAddresses) {
+  const norm = (a) => String(a || "").trim().toLowerCase();
+  const r = norm(recipient);
+  if (!/^0x[0-9a-f]{40}$/.test(r)) return null;
+  for (const k of knownAddresses || []) {
+    const known = norm(k);
+    if (!/^0x[0-9a-f]{40}$/.test(known) || known === r) continue;
+    if (known.slice(0, 6) === r.slice(0, 6) && known.slice(-4) === r.slice(-4)) return k;
+  }
+  return null;
 }
 
 /** The swap version of the signer principle: a sentence, never a blob. */

@@ -170,6 +170,7 @@
         <button class="btn ghost" id="backupBtn">⬇ Download encrypted backup</button>
         <button class="btn ghost" id="showSeedBtn">👁 Reveal seed phrase</button>
         <button class="btn ghost" id="lockBtn">🔒 Lock wallet</button>
+        <button class="btn ghost" id="approvalsBtn">🛡 Token approvals</button>
         <button class="btn danger" id="wipeBtn">Remove wallet from this browser</button>
       </div>
       <div class="card">
@@ -203,6 +204,11 @@
         <b>Offline recovery tool</b>
         <p class="tag" style="margin:6px 0">Split your seed into 2-of-4 Shamir shards — any 2 recover it, 1 alone is useless. Run it offline.</p>
         <a href="recovery.html" target="_blank" rel="noopener">Open the recovery tool ↗</a>
+      </div>
+      <div class="card">
+        <p class="tag" style="margin:0">Auto-lock: on (5 min idle)</p>
+        <p class="tag" style="margin:6px 0 0">Build <span class="mono" id="buildStamp">dev</span> · <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet ↗</a></p>
+        <p class="tag" style="margin:6px 0 0">This wallet proves its own build: the stamp must match the bundle the page loaded.</p>
       </div>
       <p class="tag">Fluid is free, open source (MIT) and non-custodial. Fluid can never touch, freeze or recover your funds — by design.</p>
     </div>
