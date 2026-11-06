@@ -22,6 +22,8 @@ import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAd
   algoAddressFromPhrase, algoAddressFromSeed, algoSeedFromSeed, algoAddressFromPubkey, algoAddressDecode, isValidAlgorandAddress, algoMicroToAlgo, algoAlgoToMicro, formatAlgoSendIntent, ALGO_USDC, ALGO_USDC_ASA,
   xrplAddressFromPhrase, xrplAddressFromPubkey, xrplAddressDecode, isValidXrplAddress, xrplDropsToXrp, xrplXrpToDrops, xrplCurrencyLabel, xrplSignPayment, formatXrplSendIntent, XRPL_USDC, XRPL_USDC_ISSUER,
   dotAddressFromPhrase, isValidDotAddress, dotPlanckToDot, dotDotToPlanck, formatDotSendIntent, DOT_TOKENS } from "../src/wallet-core.js";
+import { aptosAddressFromPhrase, aptosAddressFromSeed, aptosSeedFromSeed, isValidAptosAddress, normalizeAptosAddress, aptosOctasToApt, aptosAptToOctas, aptosAmountToRaw, aptosBuildRawTransaction, aptosSigningMessage, aptosSignRawTransaction, aptosPublicKeyFromPhrase, formatAptosSendIntent, APTOS_TOKENS, APTOS_COIN_TYPE } from "../src/wallet-core.js";
+import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
 import { contractAddress as tonContractAddress, beginCell as tonBeginCell, storeMessageRelaxed as tonStoreMessageRelaxed, internal as tonInternalMsg, Address as TonAddr } from "@ton/core";
@@ -1060,6 +1062,67 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("polkadot: intent is human-readable", dotIntent.includes("Send 2 DOT") && dotIntent.includes("on Polkadot Asset Hub")
     && dotIntent.includes("Network fee ≈ 0.00012 DOT") && dotIntent.includes("Confirm?"));
   ok("polkadot: no swap chain registered", swapChainOf("polkadot") === null);
+}
+
+// 35. Phase 5 — Aptos (SLIP-0010 Ed25519, coin type 637, Petra path).
+// Derivation, the hand-rolled BCS and the signing were cross-checked
+// against @aptos-labs/ts-sdk as a scratch verifier (NOT a dependency):
+// the SDK's Account.fromDerivationPath produces the address pinned
+// below, its RawTransaction/EntryFunction BCS is byte-identical to
+// aptosBuildRawTransaction's output for the fixed inputs used here
+// (APT coin::transfer, USDt FA transfer, lzUSDC coin::transfer), the
+// SDK verifies our signature over the signing message, and the full
+// signed transaction is byte-identical. End-to-end on devnet, a
+// transfer built and signed by this code executed successfully
+// (tx 0xf1e9f1fa…fb4). A completed mainnet send remains
+// undemonstrated (standing rule).
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const ABANDON_APTOS = "0xeb663b681209e7087d681c5d3eed12aaa8e1915e7c87794542c3f96e94b3d3bf";
+  const RECIP = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+  const hexOf = (u8) => Buffer.from(u8).toString("hex");
+  ok("aptos: address from phrase (Petra path, SDK cross-checked)", aptosAddressFromPhrase(ABANDON) === ABANDON_APTOS);
+  ok("aptos: address from seed agrees", aptosAddressFromSeed(mnemonicToSeedSync(ABANDON)) === ABANDON_APTOS);
+  {
+    // Independent recompute of the address rule itself: SHA3-256 of
+    // (pubkey || 0x00), with the pubkey taken from noble directly.
+    const pub = ed25519.getPublicKey(aptosSeedFromSeed(mnemonicToSeedSync(ABANDON)));
+    ok("aptos: address = sha3-256(pubkey || 0x00)", "0x" + hexOf(nobleSha3_256(Uint8Array.from([...pub, 0x00]))) === ABANDON_APTOS);
+    ok("aptos: public key helper agrees", aptosPublicKeyFromPhrase(ABANDON) === "0x" + hexOf(pub));
+  }
+  ok("aptos: address validation", isValidAptosAddress(ABANDON_APTOS) && isValidAptosAddress("0x1")
+    && normalizeAptosAddress("0x1") === "0x0000000000000000000000000000000000000000000000000000000000000001"
+    && !isValidAptosAddress("hello") && !isValidAptosAddress("") && !isValidAptosAddress(null)
+    && !isValidAptosAddress("0x" + "ab".repeat(33)));
+  ok("aptos: unit conversions", aptosAptToOctas("1.5") === 150000000n && aptosOctasToApt(150000000n) === "1.5"
+    && aptosOctasToApt(1n) === "0.00000001" && aptosAmountToRaw("2.5", 6) === 2500000n);
+  ok("aptos: verified assets are the issuer-confirmed pair", APTOS_COIN_TYPE === "0x1::aptos_coin::AptosCoin"
+    && APTOS_TOKENS[0].symbol === "USDC" && APTOS_TOKENS[0].address === "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b"
+    && APTOS_TOKENS[0].standard === "fa" && APTOS_TOKENS[0].decimals === 6
+    && APTOS_TOKENS[1].symbol === "USDT" && APTOS_TOKENS[1].address === "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b"
+    && APTOS_TOKENS[1].standard === "fa" && APTOS_TOKENS[1].decimals === 6);
+  const FIXED = { sender: ABANDON_APTOS, sequenceNumber: 7n, to: RECIP, maxGasAmount: 5432n, gasUnitPrice: 100n, expirationTimestampSecs: 1893456000n, chainId: 1 };
+  const PIN_APT_RAW = "eb663b681209e7087d681c5d3eed12aaa8e1915e7c87794542c3f96e94b3d3bf070000000000000002000000000000000000000000000000000000000000000000000000000000000104636f696e087472616e73666572010700000000000000000000000000000000000000000000000000000000000000010a6170746f735f636f696e094170746f73436f696e0002201234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef084e61bc00000000003815000000000000640000000000000080d8db700000000001";
+  const PIN_APT_SIGNED = "eb663b681209e7087d681c5d3eed12aaa8e1915e7c87794542c3f96e94b3d3bf070000000000000002000000000000000000000000000000000000000000000000000000000000000104636f696e087472616e73666572010700000000000000000000000000000000000000000000000000000000000000010a6170746f735f636f696e094170746f73436f696e0002201234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef084e61bc00000000003815000000000000640000000000000080d8db7000000000010020a686f0309ab80312979606cfccc10ea2740147ae6888351488d11c46f08fbf6040bd042fd18722542fce96e6150dead933d44af3f0a9b0cf97ce43583577a0ab1bce203a6655e4a036bfc91699cb2ea182b5ea81caf8950b0ded894b0603f1f605";
+  const PIN_USDT_RAW = "eb663b681209e7087d681c5d3eed12aaa8e1915e7c87794542c3f96e94b3d3bf0700000000000000020000000000000000000000000000000000000000000000000000000000000001167072696d6172795f66756e6769626c655f73746f7265087472616e73666572010700000000000000000000000000000000000000000000000000000000000000010e66756e6769626c655f6173736574084d65746164617461000320357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b201234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef08a0252600000000003815000000000000640000000000000080d8db700000000001";
+  const rawApt = aptosBuildRawTransaction({ ...FIXED, amountRaw: 12345678n, token: null });
+  ok("aptos: APT transfer BCS byte-identical to the SDK's", hexOf(rawApt) === PIN_APT_RAW);
+  const rawUsdt = aptosBuildRawTransaction({ ...FIXED, amountRaw: 2500000n, token: APTOS_TOKENS[1] });
+  ok("aptos: USDt FA transfer BCS byte-identical to the SDK's", hexOf(rawUsdt) === PIN_USDT_RAW);
+  const signed = aptosSignRawTransaction(ABANDON, rawApt);
+  ok("aptos: signed transaction byte-identical to the SDK's", hexOf(signed.signedBytes) === PIN_APT_SIGNED);
+  {
+    const pub = ed25519.getPublicKey(aptosSeedFromSeed(mnemonicToSeedSync(ABANDON)));
+    const sigBytes = Buffer.from(signed.signature.slice(2), "hex");
+    ok("aptos: signature verifies over the signing message (noble)",
+      ed25519.verify(sigBytes, aptosSigningMessage(rawApt), pub));
+    ok("aptos: signing message carries the sha3-256 domain prefix",
+      hexOf(aptosSigningMessage(rawApt).slice(0, 32)) === hexOf(nobleSha3_256(new TextEncoder().encode("APTOS::RawTransaction"))));
+  }
+  const aptosIntent = formatAptosSendIntent({ amount: "2", symbol: "APT", to: RECIP, feeApt: "0.00000107" });
+  ok("aptos: intent is human-readable", aptosIntent.includes("Send 2 APT") && aptosIntent.includes("on Aptos")
+    && aptosIntent.includes("Network fee ≈ 0.00000107 APT") && aptosIntent.includes("Confirm?"));
+  ok("aptos: no swap chain registered", swapChainOf("aptos") === null);
 }
 
 console.log(`\n${passed} checks passed`);

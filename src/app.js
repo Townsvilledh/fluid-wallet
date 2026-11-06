@@ -20,6 +20,7 @@ import {
   algoAddressFromPhrase, getAlgorandAccount, sendAlgorand, isValidAlgorandAddress, formatAlgoSendIntent, algoSendPlan, ALGO_EXPLORER, ALGO_USDC,
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
+  aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
@@ -42,7 +43,7 @@ const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
-  TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a",
+  TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
@@ -57,6 +58,7 @@ let nearAddr = null, nearBalances = [], nearExists = null, nearLoadFailed = fals
 let algoAddr = null, algoBalances = [], algoFunded = null, algoLoadFailed = false;
 let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
 let dotAddr = null, dotBalances = [], dotExists = null, dotLoadFailed = false;
+let aptosAddr = null, aptosBalances = [], aptosExists = null, aptosLoadFailed = false, aptosScanFailed = false;
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
@@ -199,7 +201,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub + Aptos";
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
     .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -269,6 +271,18 @@ async function renderMain() {
   getDotAccount(dotAddr)
     .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; paintAssets(); })
     .catch(() => { dotLoadFailed = true; paintAssets(); });
+  // Aptos (Phase 5): SLIP-0010 Ed25519 branch (coin type 637, the
+  // Petra path) of the same seed. The account read reports existence
+  // honestly — an address the chain has never seen is "not yet
+  // created", not a fake zero — and a failed read keeps the
+  // placeholder rows plus a note.
+  aptosAddr = aptosAddressFromPhrase(wallet.mnemonic.phrase);
+  aptosBalances = [{ symbol: "APT", name: "Aptos", amount: "0", address: null, decimals: 8, verified: true },
+                   ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
+  aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
+  getAptosAccount(aptosAddr)
+    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; paintAssets(); })
+    .catch(() => { aptosLoadFailed = true; paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -343,6 +357,10 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of dotBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of aptosBalances) {
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -495,6 +513,17 @@ function paintAssets() {
     rows.push(otherGroupHtml("polkadot", sp.other, render));
     if (dotLoadFailed) rows.push(`<p class="tag">Polkadot Asset Hub balances couldn't be loaded right now.</p>`);
   }
+  // Aptos family rows (Phase 5; tap a row to send on Aptos)
+  if (aptosBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Aptos</p>`);
+    const sp = splitRows(aptosBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `Aptos${b.address ? (b.standard === "coin" ? " · Coin" : " · Fungible asset") : ""}`, `data-aptos="${aptosBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("aptos", sp.other, render));
+    if (aptosExists === false) rows.push(`<p class="tag">Account not yet created — it is created when it first receives APT.</p>`);
+    if (aptosScanFailed) rows.push(`<p class="tag">Full token scan unavailable — showing main Aptos tokens only.</p>`);
+    if (aptosLoadFailed) rows.push(`<p class="tag">Aptos balances couldn't be loaded right now.</p>`);
+  }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
   // shows "unavailable", never a fake zero.
@@ -564,6 +593,10 @@ function paintAssets() {
   document.querySelectorAll("[data-dot]").forEach(r => r.onclick = () => {
     const b = dotBalances[Number(r.dataset.dot)];
     if (b) openDotSheet(b);
+  });
+  document.querySelectorAll("[data-aptos]").forEach(r => r.onclick = () => {
+    const b = aptosBalances[Number(r.dataset.aptos)];
+    if (b) openAptosSheet(b);
   });
   document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
@@ -876,6 +909,11 @@ $("actReceive").onclick = () => {
     <img class="qr" id="qrDot"><p class="mono">${dotAddr}</p>
     <button class="btn ghost" id="cpDot">Copy Polkadot address</button>
     <hr style="border-color:var(--line)">
+    <p class="tag">Aptos address (APT, USDC, USDt and other Aptos assets):</p>
+    <img class="qr" id="qrAptos"><p class="mono">${aptosAddr}</p>
+    <button class="btn ghost" id="cpAptos">Copy Aptos address</button>
+    ${aptosExists === false ? `<p class="tag">This account isn't created yet — it is created when it first receives APT.</p>` : ""}
+    <hr style="border-color:var(--line)">
     <p class="tag">Litecoin address:</p>
     <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
     <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
@@ -892,7 +930,7 @@ $("actReceive").onclick = () => {
     ${cosmosHtml}`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
   qr("qrSui", suiAddr); qr("qrStellar", stellarAddr);
-  qr("qrTon", tonAddr); qr("qrNear", nearAddr); qr("qrAlgo", algoAddr); qr("qrXrp", xrpAddr); qr("qrDot", dotAddr);
+  qr("qrTon", tonAddr); qr("qrNear", nearAddr); qr("qrAlgo", algoAddr); qr("qrXrp", xrpAddr); qr("qrDot", dotAddr); qr("qrAptos", aptosAddr);
   qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
@@ -905,6 +943,7 @@ $("actReceive").onclick = () => {
   $("cpAlgo").onclick = () => copyText(algoAddr, $("cpAlgo"));
   $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp"));
   $("cpDot").onclick = () => copyText(dotAddr, $("cpDot"));
+  $("cpAptos").onclick = () => copyText(aptosAddr, $("cpAptos"));
   $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
   $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
   $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
@@ -1523,6 +1562,62 @@ function openDotSheet(tok) {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingDot = null; closeSheet(); renderMain();
     } catch (e) { msg("dtMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Aptos sheet (Phase 5) ----------
+// Review runs the chain's own simulation of the exact call
+// (aptosSendPlan) so the intent sentence quotes the network's fee
+// estimate; sendAptos re-plans fresh and re-enforces balances in
+// code before signing locally.
+function openAptosSheet(tok) {
+  if (aptosExists === false) {
+    openSheet(`<h3>Aptos</h3>
+      <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${aptosAddr}</span></p>
+      <p class="tag">Your Aptos account doesn't exist on-chain yet — an account is created when it first receives APT. Receive some APT at this address first; then you can send.</p>`);
+    return;
+  }
+  let pendingAptos = null;
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on Aptos</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${aptosAddr}</span></p>
+    ${tok.address ? `<p class="tag">Asset <span class="mono">${esc(tok.address)}</span></p>` : ""}
+    <input id="apTo" placeholder="Recipient Aptos address (0x…)" autocapitalize="none">
+    <input id="apAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="apReview">Review send</button>
+    <div id="apIntent" class="hidden">
+      <p class="seed" id="apIntentText"></p>
+      <button class="btn" id="apConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="apMsg"></p>
+    <p class="tag">Fees are paid in APT and are tiny — the amount in the sentence above is the network's own simulation of this exact send. Sends are final.</p>`);
+  $("apReview").onclick = async () => {
+    const to = $("apTo").value.trim(), amount = $("apAmt").value.trim();
+    if (!isValidAptosAddress(to)) return msg("apMsg", "That is not a valid Aptos address.");
+    if (!amount || Number(amount) <= 0) return msg("apMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("apMsg", "Amount is more than your balance.");
+    try {
+      msg("apMsg", "Simulating on the network…", true);
+      const plan = await aptosSendPlan(aptosAddr, { to, amountRaw: aptosAmountToRaw(amount, tok.decimals ?? 8), token: tokenArg, publicKey: aptosPublicKeyFromPhrase(wallet.mnemonic.phrase) });
+      if (!plan.exists) return msg("apMsg", "Your Aptos account doesn't exist on-chain yet — receive some APT first, then you can send.");
+      if (!plan.simSuccess) return msg("apMsg", "The network says this send would fail: " + (plan.simStatus || "simulation failed"));
+      pendingAptos = { to, amount };
+      $("apIntentText").textContent = formatAptosSendIntent({ amount, symbol: tok.symbol, to, feeApt: aptosOctasToApt(plan.estimatedFeeOctas) })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("apIntent"); msg("apMsg", "");
+    } catch (e) { msg("apMsg", "Could not simulate the send: " + e.message); }
+  };
+  $("apConfirm").onclick = async () => {
+    if (!pendingAptos) return;
+    try {
+      msg("apMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendAptos(wallet.mnemonic.phrase, { to: pendingAptos.to, amount: pendingAptos.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingAptos.amount, symbol: tok.symbol, to: pendingAptos.to,
+        link: `${APTOS_EXPLORER}/transaction/${hash}`, explorer: APTOS_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingAptos = null; closeSheet(); renderMain();
+    } catch (e) { msg("apMsg", "Send failed: " + e.message); }
   };
 }
 

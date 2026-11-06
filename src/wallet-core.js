@@ -17,7 +17,7 @@ import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp
 import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256, sha512, sha512_256 } from "@noble/hashes/sha2.js";
-import { keccak_256 } from "@noble/hashes/sha3.js";
+import { keccak_256, sha3_256 } from "@noble/hashes/sha3.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -248,7 +248,7 @@ const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLU
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
-  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT" };
+  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -262,7 +262,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -4648,4 +4648,480 @@ export async function sendDot(phrase, { to, amount, token = null }) {
     }
   }
   return dotSubmit(tx, pair);
+}
+
+// ---------- Aptos (SLIP-0010 Ed25519 branch, coin type 637) ----------
+// Aptos keys are Ed25519 — the same curve branch as Solana/Sui — at the
+// Petra-standard path m/44'/637'/0'/0'/0'. The account address is NOT
+// the public key: it is SHA3-256(pubkey || 0x00), the 0x00 being the
+// single-signer Ed25519 scheme byte. Same seed phrase, same backup.
+//
+// Everything transactional here is HAND-ROLLED (a small BCS writer —
+// no @aptos-labs/ts-sdk in the bundle) and was validated against that
+// SDK as an independent checker before shipping (2026-11-06):
+//   - derivation + address match the SDK's Account.fromDerivationPath
+//     exactly (test phrase → 0xeb663b…3d3bf, pinned in tests);
+//   - for identical inputs, the hand-rolled raw transaction BCS, the
+//     signing message (SHA3-256("APTOS::RawTransaction") || raw BCS),
+//     and the FULL signed transaction are BYTE-IDENTICAL to the SDK's
+//     for an APT coin::transfer, a USDt fungible-asset transfer and a
+//     legacy-coin transfer (pinned in tests);
+//   - the SDK verifies our noble signature over its own signing
+//     message;
+//   - END-TO-END on devnet: the faucet created the derived account
+//     (its on-chain authentication key IS our derived address), and a
+//     transfer built + signed by this exact code path executed
+//     successfully (tx 0xf1e9f1fa…fb4, "Executed successfully").
+// Two live facts shape the code below: (1) the Aptos Labs public
+// gateway REFUSES the BCS submission content type (HTTP 415), so
+// sends submit the equivalent JSON form — the node canonicalizes it
+// to the same BCS bytes the signature covers, which is exactly what
+// the devnet execution proved; (2) APT itself has migrated to the
+// fungible-asset standard — the legacy CoinStore resource no longer
+// exists even for 0x1 — so the APT balance is read through the
+// 0x1::coin::balance VIEW (which understands the migration), with the
+// CoinStore read kept only as a fallback.
+// Swaps: LI.FI's live chain list (checked 2026-11-06) has NO Aptos
+// entry at all — Aptos ships with no swap entries (the Stellar
+// precedent), pinned by a test.
+export const APTOS_EXPLORER = "https://aptoscan.com";
+export const APTOS_COIN_TYPE = "0x1::aptos_coin::AptosCoin";
+const APTOS_NODE = "https://fullnode.mainnet.aptoslabs.com/v1";
+const APTOS_INDEXER = "https://api.mainnet.aptoslabs.com/v1/graphql";
+const APTOS_CHAIN_ID = 1;
+export const APTOS_TOKENS = [
+  // Circle's NATIVE USDC on Aptos — an FA (metadata object address).
+  // Verified on-chain 2026-11-06: the Metadata resource at this
+  // address reads name "USDC", symbol "USDC", 6 decimals, project_uri
+  // circle.com/usdc, live supply ≈293M; Circle's own docs name this
+  // exact address as the native issue (the LayerZero-bridged lzUSDC
+  // coin below is a different asset and is labelled as such).
+  { symbol: "USDC", name: "USDC", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", decimals: 6, standard: "fa" },
+  // Tether's native USDt on Aptos — also an FA. Verified on-chain
+  // 2026-11-06: Metadata reads name "Tether USD", symbol "USDt",
+  // 6 decimals, project_uri tether.to, live supply ≈630M; Tether's
+  // own developer docs name this exact metadata address. The row
+  // symbol is "USDT" (the symbol every price source uses); the
+  // on-chain symbol "USDt" is preserved in the name.
+  { symbol: "USDT", name: "Tether USD (USDt)", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", decimals: 6, standard: "fa" },
+];
+const APTOS_FA_METADATA_TYPE = "0x1::fungible_asset::Metadata";
+const APTOS_APT_FA_METADATA = "0x000000000000000000000000000000000000000000000000000000000000000a";
+// LayerZero-bridged USDC (a legacy coin, NOT Circle-issued — Circle's
+// migration guide says so explicitly). If a wallet holds it, the
+// indexer discovery surfaces it under this honest label, never as
+// plain "USDC".
+const APTOS_LZ_USDC_COIN_TYPE = "0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDC";
+const APTOS_DUMMY_SIGNATURE = "0x" + "00".repeat(64); // simulate-only; the endpoint rejects real signatures
+
+/** The wallet's Aptos private seed: BIP39 seed → m/44'/637'/0'/0'/0'. */
+export function aptosSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 637, 0, 0, 0]).key;
+}
+/** Aptos address (0x + 64 hex) for a raw BIP39 seed. */
+export function aptosAddressFromSeed(seed) {
+  const pub = ed25519.getPublicKey(aptosSeedFromSeed(seed));
+  return "0x" + hex.encode(sha3_256(Uint8Array.from([...pub, 0x00])));
+}
+/** The Aptos address of the wallet's main account (Petra path). */
+export function aptosAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return aptosAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** Canonical Aptos address form: 0x + 64 lowercase hex (Aptos itself
+ *  accepts and displays short forms like "0x1"). */
+export function normalizeAptosAddress(address) {
+  const s = String(address || "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,64}$/.test(s)) return null;
+  return "0x" + s.slice(2).padStart(64, "0");
+}
+/** A valid Aptos address: 0x-prefixed hex of at most 32 bytes. */
+export function isValidAptosAddress(address) {
+  return normalizeAptosAddress(address) !== null;
+}
+export function aptosOctasToApt(octas) { return ethers.formatUnits(BigInt(octas), 8); }
+export function aptosAptToOctas(amount) { return ethers.parseUnits(String(amount), 8); }
+/** Human amount → raw smallest units for any Aptos asset (exact
+ *  decimal math via ethers — never float multiplication). */
+export function aptosAmountToRaw(amount, decimals = 8) { return ethers.parseUnits(String(amount), decimals); }
+
+async function aptosRest(path, { method = "GET", body = null } = {}) {
+  const res = await fetch(APTOS_NODE + path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => null);
+  return { status: res.status, ok: res.ok, data };
+}
+/** One fullnode view call; returns the result array. Throws on any
+ *  non-200 (a missing account/resource is a chain answer, and the
+ *  caller decides what it means). */
+async function aptosView(fn, typeArguments, args) {
+  const r = await aptosRest("/view", { method: "POST", body: { function: fn, type_arguments: typeArguments, arguments: args } });
+  if (!r.ok || !Array.isArray(r.data)) {
+    throw new Error("Aptos view " + fn + " failed (HTTP " + r.status + ").");
+  }
+  return r.data;
+}
+/** Raw balance (smallest unit, string) of one asset for one owner,
+ *  read from the fullnode alone: APT and legacy coins through
+ *  coin::balance, fungible assets through the primary store. */
+export async function aptosAssetBalanceRaw(owner, token = null) {
+  const who = normalizeAptosAddress(owner);
+  if (!token || token.standard === "coin") {
+    const out = await aptosView("0x1::coin::balance", [token ? token.address : APTOS_COIN_TYPE], [who]);
+    return String(out[0] ?? "0");
+  }
+  const out = await aptosView("0x1::primary_fungible_store::balance", [APTOS_FA_METADATA_TYPE], [who, token.address]);
+  return String(out[0] ?? "0");
+}
+/** The account's APT balance in octas (string). View first (the
+ *  post-migration truth), legacy CoinStore resource as fallback. */
+async function aptosAptBalanceRaw(owner) {
+  try { return await aptosAssetBalanceRaw(owner, null); } catch { /* fall through to the legacy read */ }
+  const r = await aptosRest(`/accounts/${owner}/resource/0x1::coin::CoinStore%3C0x1::aptos_coin::AptosCoin%3E`);
+  if (r.ok && r.data && r.data.data && r.data.data.coin) return String(r.data.data.coin.amount ?? "0");
+  throw new Error("Aptos balance lookup failed (HTTP " + r.status + ").");
+}
+/** Every positive balance the Aptos Indexer reports for the owner
+ *  (keyless GraphQL, verified live 2026-11-06), each with the asset's
+ *  own on-chain metadata joined in: {asset_type, amount,
+ *  token_standard ("v1" legacy coin | "v2" fungible asset), metadata
+ *  {name, symbol, decimals}}. Throws when the indexer doesn't answer —
+ *  callers degrade to the fullnode-only reads, never to fake zeros. */
+async function aptosIndexerBalances(owner) {
+  const query = `query { current_fungible_asset_balances(where: {owner_address: {_eq: ${JSON.stringify(owner)}}, amount: {_gt: 0}}, limit: 100) { asset_type amount token_standard metadata { name symbol decimals } } }`;
+  const res = await fetch(APTOS_INDEXER, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }), signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error("Aptos indexer error (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  if (!data || data.errors || !data.data) throw new Error("Aptos indexer returned an unreadable reply.");
+  return data.data.current_fungible_asset_balances || [];
+}
+/** Does this address have an on-chain account? The current fullnode
+ *  SYNTHESIZES a default /accounts answer for any address (sequence 0,
+ *  auth key = the address itself, HTTP 200 — verified live
+ *  2026-11-06), so existence is read from the resources list: a
+ *  created account always carries its 0x1::account::Account resource;
+ *  an uncreated one has an empty list. */
+async function aptosAccountExists(owner) {
+  const r = await aptosRest(`/accounts/${owner}/resources`);
+  if (!r.ok || !Array.isArray(r.data)) throw new Error("Aptos account lookup failed (HTTP " + r.status + ").");
+  return r.data.some(x => x && x.type === "0x1::account::Account");
+}
+/** The Aptos account read, shaped like the other families' account
+ *  reads: { exists, balances, scanFailed }. An address the chain has
+ *  never seen is a STATE — exists:false, zero rows, painted honestly
+ *  as "not yet created" (the Stellar precedent) — never an error.
+ *  Rows: native APT first (fullnode view read), the curated USDC/USDT
+ *  (always present), then every other asset the indexer reports, with
+ *  the bridged lzUSDC explicitly labelled. When the indexer is down,
+ *  the curated balances still come from the fullnode (scanFailed). */
+export async function getAptosAccount(address) {
+  if (!isValidAptosAddress(address)) throw new Error("That is not a valid Aptos address.");
+  const owner = normalizeAptosAddress(address);
+  if (!(await aptosAccountExists(owner))) {
+    return {
+      exists: false, scanFailed: false,
+      balances: [
+        { symbol: "APT", name: "Aptos", amount: "0", address: null, decimals: 8, verified: true },
+        ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true })),
+      ],
+    };
+  }
+  const aptRaw = await aptosAptBalanceRaw(owner);
+  const rows = [{ symbol: "APT", name: "Aptos", amount: aptosOctasToApt(aptRaw), address: null, decimals: 8, verified: true }];
+  let discovered = null;
+  try { discovered = await aptosIndexerBalances(owner); } catch { discovered = null; }
+  const heldByType = new Map();
+  if (discovered) for (const d of discovered) heldByType.set(String(d.asset_type).toLowerCase(), d);
+  for (const t of APTOS_TOKENS) {
+    const hit = heldByType.get(t.address.toLowerCase());
+    let raw = hit ? String(hit.amount ?? "0") : null;
+    if (raw === null && discovered === null) {
+      // Indexer down: read the curated balance from the fullnode so
+      // the row is real, not a placeholder zero.
+      try { raw = await aptosAssetBalanceRaw(owner, t); } catch { raw = "0"; }
+    }
+    rows.push({ ...t, amount: ethers.formatUnits(BigInt(raw ?? "0"), t.decimals), verified: true });
+    heldByType.delete(t.address.toLowerCase());
+  }
+  heldByType.delete(APTOS_COIN_TYPE.toLowerCase());
+  heldByType.delete(APTOS_APT_FA_METADATA);
+  const others = [...heldByType.values()].filter(d => { try { return BigInt(d.amount) > 0n; } catch { return false; } });
+  if (others.length) {
+    const meta = new Map();
+    for (const d of others) {
+      const m = d.metadata || {};
+      const isLzUsdc = String(d.asset_type).toLowerCase() === APTOS_LZ_USDC_COIN_TYPE.toLowerCase();
+      meta.set(d.asset_type, {
+        symbol: isLzUsdc ? "lzUSDC" : (m.symbol || "COIN"),
+        name: isLzUsdc ? "LayerZero Bridged USDC" : (m.name || m.symbol || "Unknown asset"),
+        decimals: m.decimals != null ? m.decimals : 8,
+        standard: d.token_standard === "v1" ? "coin" : "fa",
+        priceUsd: null,
+      });
+    }
+    try {
+      const dex = await getDexScreenerTokenInfo("aptos", others.map(d => d.asset_type));
+      for (const d of others) {
+        const info = dex.get(d.asset_type);
+        if (info && info.priceUsd != null) meta.get(d.asset_type).priceUsd = info.priceUsd;
+      }
+    } catch { /* prices are decoration; rows stay unpriced */ }
+    for (const d of others) {
+      const mm = meta.get(d.asset_type);
+      rows.push({ symbol: mm.symbol, name: mm.name, amount: ethers.formatUnits(BigInt(d.amount), mm.decimals),
+                  address: d.asset_type, decimals: mm.decimals, standard: mm.standard,
+                  verified: false, priceUsd: mm.priceUsd ?? null });
+    }
+  }
+  return { exists: true, balances: rows, scanFailed: discovered === null };
+}
+
+// ----- Aptos transactions: hand-rolled BCS (SDK-validated, above) -----
+/** Minimal BCS writer — exactly the subset Aptos raw transactions
+ *  need: u8/u64, ULEB128, length-prefixed bytes/strings, addresses. */
+class AptosBcs {
+  constructor() { this.parts = []; }
+  push(u8) { this.parts.push(Uint8Array.from(u8)); return this; }
+  u8(v) { return this.push([v & 0xff]); }
+  u64(v) { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v), true); return this.push(b); }
+  uleb(v) { let n = BigInt(v); const out = []; do { let byte = Number(n & 0x7fn); n >>= 7n; if (n) byte |= 0x80; out.push(byte); } while (n); return this.push(out); }
+  bytes(u8) { this.uleb(u8.length); return this.push(u8); }
+  str(s) { return this.bytes(new TextEncoder().encode(s)); }
+  addr(a) {
+    const h = String(a).replace(/^0x/, "").padStart(64, "0");
+    const b = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) b[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+    return this.push(b);
+  }
+  done() {
+    const out = new Uint8Array(this.parts.reduce((s, p) => s + p.length, 0));
+    let o = 0; for (const p of this.parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+}
+/** Write one TypeTag parsed from its string form ("0x1::a::B",
+ *  "vector<0x1::a::B>", generics nested) into the writer. The
+ *  plain-struct paths are the ones pinned byte-for-byte against the
+ *  SDK in tests; generic arguments recurse through aptosTypeTagBytes. */
+function aptosWriteTypeTag(b, tag) {
+  const { bytes, next } = aptosTypeTagBytes(String(tag), 0);
+  if (next !== String(tag).length) throw new Error("Cannot encode Aptos type: " + tag);
+  b.push(bytes);
+  return b;
+}
+/** Parse one TypeTag starting at index `from` in `tag`, returning its
+ *  BCS bytes and the index just past it (helper for aptosWriteTypeTag's
+ *  generic arguments). */
+function aptosTypeTagBytes(tag, from) {
+  const b = new AptosBcs();
+  let i = from;
+  if (tag.startsWith("vector<", i)) {
+    b.u8(6); const inner = aptosTypeTagBytes(tag, i + "vector<".length);
+    b.push(inner.bytes); i = inner.next + 1; // consume '>'
+    return { bytes: b.done(), next: i };
+  }
+  for (const [word, code] of [["bool", 0], ["u8", 1], ["u64", 2], ["u128", 3], ["address", 4], ["signer", 5]]) {
+    if (tag.startsWith(word, i) && !/[a-z0-9_]/i.test(tag[i + word.length] || "")) { b.u8(code); return { bytes: b.done(), next: i + word.length }; }
+  }
+  const m = /^(0x[0-9a-fA-F]{1,64})::([A-Za-z0-9_]+)::([A-Za-z0-9_]+)/.exec(tag.slice(i));
+  if (!m) throw new Error("Cannot encode Aptos type: " + tag);
+  b.u8(7); b.addr(m[1]); b.str(m[2]); b.str(m[3]); i += m[0].length;
+  const args = [];
+  if (tag[i] === "<") {
+    i++;
+    for (;;) {
+      const inner = aptosTypeTagBytes(tag, i);
+      args.push(inner.bytes); i = inner.next;
+      if (tag[i] === ",") { i++; while (tag[i] === " ") i++; continue; }
+      if (tag[i] === ">") { i++; break; }
+      throw new Error("Cannot encode Aptos type: " + tag);
+    }
+  }
+  b.uleb(args.length); for (const a of args) b.push(a);
+  return { bytes: b.done(), next: i };
+}
+/** The entry-function call a transfer uses, for a balance row:
+ *  native APT and legacy coins go through 0x1::coin::transfer<T>;
+ *  fungible assets through 0x1::primary_fungible_store::transfer
+ *  (type argument = the Metadata struct, per the SDK's own FA
+ *  transfer). Returns {fn, typeArguments, argumentsFor(to, raw)} in
+ *  the JSON spelling the node accepts, plus the BCS spelling the
+ *  signer covers — two renderings of ONE call. */
+function aptosTransferCall(token, to, rawAmount) {
+  const amt = String(rawAmount);
+  if (!token || token.standard === "coin") {
+    const coinType = token ? token.address : APTOS_COIN_TYPE;
+    return {
+      fn: "0x1::coin::transfer", module: ["0x1", "coin", "transfer"], typeArguments: [coinType],
+      jsonArguments: [to, amt],
+      bcsArguments: [new AptosBcs().addr(to).done(), new AptosBcs().u64(rawAmount).done()],
+    };
+  }
+  return {
+    fn: "0x1::primary_fungible_store::transfer", module: ["0x1", "primary_fungible_store", "transfer"],
+    typeArguments: [APTOS_FA_METADATA_TYPE],
+    jsonArguments: [token.address, to, amt],
+    bcsArguments: [new AptosBcs().addr(token.address).done(), new AptosBcs().addr(to).done(), new AptosBcs().u64(rawAmount).done()],
+  };
+}
+/** Build the raw transaction BCS for a transfer. Exported for the
+ *  tests, which pin its bytes against the SDK-validated vectors. */
+export function aptosBuildRawTransaction({ sender, sequenceNumber, to, amountRaw, token = null, maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId = APTOS_CHAIN_ID }) {
+  const call = aptosTransferCall(token, to, amountRaw);
+  const b = new AptosBcs();
+  b.addr(sender); b.u64(sequenceNumber);
+  b.u8(2); // TransactionPayload variant: EntryFunction
+  b.addr(call.module[0]); b.str(call.module[1]); b.str(call.module[2]);
+  b.uleb(call.typeArguments.length);
+  for (const t of call.typeArguments) aptosWriteTypeTag(b, t);
+  b.uleb(call.bcsArguments.length);
+  for (const a of call.bcsArguments) b.bytes(a);
+  b.u64(maxGasAmount); b.u64(gasUnitPrice); b.u64(expirationTimestampSecs); b.u8(chainId);
+  return b.done();
+}
+/** The Aptos signing message: SHA3-256 of the domain separator
+ *  "APTOS::RawTransaction", prepended to the raw transaction BCS. */
+export function aptosSigningMessage(rawBytes) {
+  const prefix = sha3_256(new TextEncoder().encode("APTOS::RawTransaction"));
+  const out = new Uint8Array(prefix.length + rawBytes.length);
+  out.set(prefix); out.set(rawBytes, prefix.length);
+  return out;
+}
+/** Sign raw transaction bytes with the wallet's Aptos key (locally,
+ *  noble Ed25519). Returns the full signed-transaction BCS plus the
+ *  hex parts the JSON submission form needs. */
+export function aptosSignRawTransaction(phrase, rawBytes) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const seedKey = aptosSeedFromSeed(mnemonicToSeedSync(clean));
+  const pub = ed25519.getPublicKey(seedKey);
+  const signature = ed25519.sign(aptosSigningMessage(rawBytes), seedKey);
+  const b = new AptosBcs();
+  b.push(rawBytes);
+  b.u8(0); // TransactionAuthenticator variant: Ed25519
+  b.bytes(pub); b.bytes(signature);
+  return { signedBytes: b.done(), publicKey: "0x" + hex.encode(pub), signature: "0x" + hex.encode(signature) };
+}
+/** The JSON transaction body (simulate + submit share it; only the
+ *  signature differs — simulate REQUIRES a dummy signature, the
+ *  endpoint rejects real ones with "must not have a valid signature"). */
+function aptosTxJson({ sender, sequenceNumber, to, amountRaw, token, maxGasAmount, gasUnitPrice, expirationTimestampSecs, signature, publicKey }) {
+  const call = aptosTransferCall(token, to, amountRaw);
+  return {
+    sender, sequence_number: String(sequenceNumber),
+    max_gas_amount: String(maxGasAmount), gas_unit_price: String(gasUnitPrice),
+    expiration_timestamp_secs: String(expirationTimestampSecs),
+    payload: { type: "entry_function_payload", function: call.fn, type_arguments: call.typeArguments, arguments: call.jsonArguments },
+    signature: { type: "ed25519_signature", public_key: publicKey, signature },
+  };
+}
+/** The wallet's Aptos public key (0x hex) — simulation needs it:
+ *  the endpoint skips signature verification but DOES check that the
+ *  public key hashes to the account's authentication key (verified
+ *  live: a zero key simulates as INVALID_AUTH_KEY; the real key
+ *  simulates the identical call successfully). */
+export function aptosPublicKeyFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return "0x" + hex.encode(ed25519.getPublicKey(aptosSeedFromSeed(mnemonicToSeedSync(clean))));
+}
+/** Pre-flight a send: account existence, the chain's own gas estimate
+ *  (simulate with a dummy signature — the node's simulation of THIS
+ *  exact call), and the fee it implies. The intent sentence quotes
+ *  estimatedFeeOctas; the send re-runs the plan fresh and enforces
+ *  the worst-case fee before signing. `publicKey` is the sender's
+ *  (see aptosPublicKeyFromPhrase) — required for the simulation. */
+export async function aptosSendPlan(fromAddress, { to, amountRaw = 1n, token = null, publicKey = null } = {}) {
+  const from = normalizeAptosAddress(fromAddress);
+  if (!(await aptosAccountExists(from))) return { exists: false };
+  const acct = await aptosRest(`/accounts/${from}`);
+  if (!acct.ok || !acct.data) throw new Error("Aptos account lookup failed (HTTP " + acct.status + ").");
+  if (!publicKey) throw new Error("Aptos planning needs the sender's public key.");
+  const sequenceNumber = String(acct.data.sequence_number ?? "0");
+  const gasRes = await aptosRest("/estimate_gas_price");
+  const gasUnitPrice = BigInt((gasRes.data && gasRes.data.gas_estimate) ?? 100);
+  const expirationTimestampSecs = Math.floor(Date.now() / 1000) + 600;
+  const sim = await aptosRest("/transactions/simulate", { method: "POST", body: aptosTxJson({
+    sender: from, sequenceNumber, to: normalizeAptosAddress(to) || to, amountRaw, token,
+    maxGasAmount: 20000n, gasUnitPrice, expirationTimestampSecs,
+    signature: APTOS_DUMMY_SIGNATURE, publicKey,
+  }) });
+  const s0 = Array.isArray(sim.data) ? sim.data[0] : null;
+  if (!s0) throw new Error("Aptos simulation didn't answer (HTTP " + sim.status + ").");
+  const gasUsed = BigInt(s0.gas_used || 0);
+  const maxGasAmount = gasUsed * 3n / 2n + 100n;
+  return {
+    exists: true, sequenceNumber, gasUnitPrice: gasUnitPrice.toString(),
+    maxGasAmount: maxGasAmount.toString(), expirationTimestampSecs,
+    estimatedFeeOctas: (gasUsed * gasUnitPrice).toString(),
+    simSuccess: !!s0.success, simStatus: String(s0.vm_status || ""),
+  };
+}
+/** The signer principle, Aptos edition: a sentence, never a blob. */
+export function formatAptosSendIntent({ amount, symbol, to, feeApt }) {
+  let s = `Send ${amount} ${symbol} to ${to} on Aptos.`;
+  if (feeApt != null) s += ` Network fee ≈ ${feeApt} APT.`;
+  return s + " Confirm?";
+}
+/** Build, sign (locally) and submit a transfer. `token` is null for
+ *  native APT, otherwise a balance row ({address, decimals,
+ *  standard}). Submission is the JSON form (the gateway refuses BCS
+ *  content — see the family note); the signature covers the local
+ *  BCS, which the node canonicalizes identically. Returns {hash}. */
+export async function sendAptos(phrase, { to, amount, token = null }) {
+  if (!isValidAptosAddress(to)) throw new Error("That is not a valid Aptos address.");
+  const recipient = normalizeAptosAddress(to);
+  const from = aptosAddressFromPhrase(phrase);
+  const decimals = token ? (token.decimals ?? 8) : 8;
+  const rawAmount = ethers.parseUnits(String(amount), decimals);
+  if (rawAmount <= 0n) throw new Error("Enter an amount.");
+  const plan = await aptosSendPlan(from, { to: recipient, amountRaw: rawAmount, token, publicKey: aptosPublicKeyFromPhrase(phrase) });
+  if (!plan.exists) {
+    throw new Error("Your Aptos account doesn't exist on-chain yet — an account is created when it first receives APT. Receive some APT at this address first, then you can send.");
+  }
+  if (!plan.simSuccess) {
+    throw new Error("The network says this send would fail: " + (plan.simStatus || "simulation failed"));
+  }
+  const feeWorst = BigInt(plan.maxGasAmount) * BigInt(plan.gasUnitPrice);
+  const aptRaw = BigInt(await aptosAptBalanceRaw(from));
+  if (!token) {
+    if (rawAmount + feeWorst > aptRaw) throw new Error("Not enough APT to cover the amount plus the network fee.");
+  } else {
+    const held = BigInt(await aptosAssetBalanceRaw(from, token));
+    if (held < rawAmount) throw new Error(`Not enough ${token.symbol} on Aptos (you have ${ethers.formatUnits(held, decimals)}).`);
+    if (feeWorst > aptRaw) throw new Error("Not enough APT to pay the network fee for this send.");
+  }
+  const raw = aptosBuildRawTransaction({
+    sender: from, sequenceNumber: BigInt(plan.sequenceNumber), to: recipient, amountRaw: rawAmount, token,
+    maxGasAmount: BigInt(plan.maxGasAmount), gasUnitPrice: BigInt(plan.gasUnitPrice),
+    expirationTimestampSecs: BigInt(plan.expirationTimestampSecs), chainId: APTOS_CHAIN_ID,
+  });
+  const signed = aptosSignRawTransaction(phrase, raw);
+  const sub = await aptosRest("/transactions", { method: "POST", body: aptosTxJson({
+    sender: from, sequenceNumber: plan.sequenceNumber, to: recipient, amountRaw: rawAmount, token,
+    maxGasAmount: BigInt(plan.maxGasAmount), gasUnitPrice: BigInt(plan.gasUnitPrice),
+    expirationTimestampSecs: plan.expirationTimestampSecs,
+    signature: signed.signature, publicKey: signed.publicKey,
+  }) });
+  if (!(sub.status === 202 || sub.status === 200) || !sub.data || !sub.data.hash) {
+    const why = (sub.data && sub.data.message) || ("HTTP " + sub.status);
+    throw new Error("Aptos rejected the transaction: " + why);
+  }
+  const hash = sub.data.hash;
+  // Poll for the committed result (bounded): success returns, a
+  // failed execution throws its vm_status, and a still-pending tx
+  // returns its hash — the send DID leave the wallet either way.
+  for (let i = 0; i < 15; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const chk = await aptosRest(`/transactions/by_hash/${hash}`);
+    const tx = chk.data;
+    if (tx && tx.success === true) return { hash };
+    if (tx && tx.success === false) throw new Error("Aptos rejected the transaction: " + (tx.vm_status || "execution failed"));
+  }
+  return { hash, pending: true };
 }
