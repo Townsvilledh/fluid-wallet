@@ -1,5 +1,6 @@
 // Fluid v2 — app-shell UI. Keys live only in memory while unlocked;
 // the only thing persisted is the standard encrypted keystore JSON.
+import "./buffer-shim.js"; // must stay first: @solana/web3.js needs Buffer
 import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword,
@@ -7,6 +8,7 @@ import {
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
   tronAddressFromPhrase, getTronBalances, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
+  solanaAddressFromPhrase, getSolanaBalances, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
@@ -24,12 +26,13 @@ const CHAINS_KEY = "fluid_chains_v1";
 const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
-  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029" };
+  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
 let tronAddr = null, tronBalances = [];
+let solAddr = null, solBalances = [];
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
@@ -104,8 +107,15 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Tron";
+  $("totalSub").textContent = "on this network + Bitcoin + Tron + Solana";
   getTronBalances(tronAddr).then(rows => { tronBalances = rows; paintAssets(); }).catch(() => paintAssets());
+  // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
+  // Ed25519 branch of the same seed, its own rows, painted with zero
+  // placeholders until the RPC answers.
+  solAddr = solanaAddressFromPhrase(wallet.mnemonic.phrase);
+  solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
+                 ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  getSolanaBalances(solAddr).then(rows => { solBalances = rows; paintAssets(); }).catch(() => paintAssets());
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
@@ -126,6 +136,10 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of tronBalances) {
+    const p = prices[b.symbol] ?? null;
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of solBalances) {
     const p = prices[b.symbol] ?? null;
     if (p != null) t += Number(b.amount) * p;
   }
@@ -158,11 +172,26 @@ function paintAssets() {
         <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
     });
   }
+  // Solana family rows (tap a row to send on Solana)
+  if (solBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Solana</p>`);
+    solBalances.forEach((b, i) => {
+      const p = prices[b.symbol];
+      rows.push(`<div class="row" data-sol="${i}">
+        <span class="coin" style="background:${COIN_COLORS[b.symbol] || "#3b4a7a"}">${b.symbol.slice(0, 1)}</span>
+        <span class="grow"><b>${b.symbol}</b><small>Solana${b.address ? " · SPL" : ""}</small></span>
+        <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
+    });
+  }
   $("assetList").innerHTML = rows.join("");
   $("btcRow").onclick = openBtcSheet;
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
     if (b) openTronSheet(b);
+  });
+  document.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
+    const b = solBalances[Number(r.dataset.sol)];
+    if (b) openSolanaSheet(b);
   });
 }
 
@@ -286,11 +315,16 @@ $("actReceive").onclick = () => {
     <hr style="border-color:var(--line)">
     <p class="tag">Tron address (TRX and TRC20 tokens):</p>
     <img class="qr" id="qrTron"><p class="mono">${tronAddr}</p>
-    <button class="btn ghost" id="cpTron">Copy Tron address</button>`);
-  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr);
+    <button class="btn ghost" id="cpTron">Copy Tron address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Solana address (SOL and SPL tokens):</p>
+    <img class="qr" id="qrSol"><p class="mono">${solAddr}</p>
+    <button class="btn ghost" id="cpSol">Copy Solana address</button>`);
+  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
   $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
+  $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
 };
 
 // ---------- send (EVM) ----------
@@ -434,6 +468,55 @@ function openTronSheet(tok) {
   };
 }
 
+// ---------- Solana sheet ----------
+// Mirrors the Tron sheet: review → human-readable sentence → confirm.
+// Transactions are built and signed locally by sendSolana; only the
+// finished bytes touch the network.
+function openSolanaSheet(tok) {
+  let pendingSol = null;
+  openSheet(`<h3>Send ${tok.symbol} on Solana</h3>
+    <p><b>${fmt(tok.amount)} ${tok.symbol}</b> · from <span class="mono">${solAddr}</span></p>
+    <input id="oTo" placeholder="Recipient Solana address" autocapitalize="none">
+    <input id="oAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="oReview">Review send</button>
+    <div id="oIntent" class="hidden">
+      <p class="seed" id="oIntentText"></p>
+      <button class="btn" id="oConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="oMsg"></p>
+    <p class="tag">${tok.address
+      ? "Token sends pay a small SOL fee. If the recipient has no " + tok.symbol + " account yet, one is created for them and you pay about 0.002 SOL rent for it — the review sentence tells you when that applies."
+      : "A Solana account must always keep at least 0.00089 SOL (the rent-exempt minimum) or be emptied completely — sends that would strand less than that are blocked. Sends are final."}</p>`);
+  $("oReview").onclick = async () => {
+    const to = $("oTo").value.trim(), amount = $("oAmt").value.trim();
+    if (!isValidSolanaAddress(to)) return msg("oMsg", "That is not a valid Solana address.");
+    if (!amount || Number(amount) <= 0) return msg("oMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("oMsg", "Amount is more than your balance.");
+    try {
+      msg("oMsg", "Checking the recipient…", true);
+      const plan = tok.address ? await solanaSendPlan(solAddr, { to, token: tok }) : { createsAta: false };
+      pendingSol = { to, amount };
+      $("oIntentText").textContent = formatSolanaSendIntent({ amount, symbol: tok.symbol, to, createsAta: plan.createsAta });
+      show("oIntent"); msg("oMsg", "");
+    } catch (e) { msg("oMsg", "Could not check the recipient: " + e.message); }
+  };
+  $("oConfirm").onclick = async () => {
+    if (!pendingSol) return;
+    try {
+      msg("oMsg", "Signing locally and broadcasting…", true);
+      const { hash } = await sendSolana(wallet.mnemonic.phrase, {
+        to: pendingSol.to, amount: pendingSol.amount,
+        token: tok.address ? { address: tok.address, decimals: tok.decimals } : null,
+      });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingSol.amount, symbol: tok.symbol, to: pendingSol.to,
+        link: `${SOLANA_EXPLORER}/tx/${hash}`, explorer: SOLANA_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingSol = null; closeSheet(); renderMain();
+    } catch (e) { msg("oMsg", "Send failed: " + e.message); }
+  };
+}
+
 // ---------- Lightning ----------
 $("lightningRow").onclick = () => {
   openSheet(`<h3>⚡ Lightning payment</h3>
@@ -502,13 +585,19 @@ $("actCash").onclick = () => rampSheet("sell");
 
 // ---------- swap (LI.FI routes: same-chain + cross-chain) ----------
 let pendingSwap = null;
-const swapChainName = (k) => (k === "tron" ? "Tron" : NETWORKS[k].name);
+const swapChainName = (k) => (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name);
 function swapTokenList(netKey) {
   if (netKey === "tron") {
     // LI.FI addresses Tron tokens by their base58 T-address; the native
     // TRX entry is LI.FI's T-form zero address (see core).
     return [{ symbol: "TRX", address: TRON_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
             ...TRON_TOKENS.map(t => ({ ...t, native: false }))];
+  }
+  if (netKey === "solana") {
+    // LI.FI addresses Solana tokens by mint; native SOL is the System
+    // Program id (see core).
+    return [{ symbol: "SOL", address: SOLANA_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
+            ...SOLANA_TOKENS.map(t => ({ ...t, native: false }))];
   }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: LIFI_NATIVE_TOKEN, decimals: 18, native: true },
@@ -524,7 +613,7 @@ function swapDurationText(sec) {
 }
 $("actSwap").onclick = () => {
   pendingSwap = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana"];
   const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
   const fromKey0 = networkKey === "sepolia" ? "bsc" : networkKey;
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
@@ -594,17 +683,20 @@ $("actSwap").onclick = () => {
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
     try {
       msg("wMsg", "Checking your balance…", true);
-      const bals = fromKey === "tron" ? await getTronBalances(tronAddr) : await getBalances(wallet, fromKey);
+      const bals = fromKey === "tron" ? await getTronBalances(tronAddr)
+        : fromKey === "solana" ? await getSolanaBalances(solAddr)
+        : await getBalances(wallet, fromKey);
       const mine = bals.find(b => fromTok.native ? !b.address : (b.address || "").toLowerCase() === fromTok.address.toLowerCase());
       if (!mine || Number(amount) > Number(mine.amount))
         return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${mine ? fmt(mine.amount) : "0"}).`);
       msg("wMsg", "Searching routes across chains…", true);
+      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : wallet.address);
       const routes = await getSwapRoutes({
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
         fromAmount: swapAmountToRaw(amount, fromTok.decimals),
-        fromAddress: fromKey === "tron" ? tronAddr : wallet.address,
-        toAddress: toKey === "tron" ? tronAddr : wallet.address,
+        fromAddress: addrOf(fromKey),
+        toAddress: addrOf(toKey),
       });
       if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
       const ranked = rankSwapRoutes(routes).slice(0, 3);
@@ -636,15 +728,24 @@ $("actSwap").onclick = () => {
     const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
     const btn = $("wDo"); btn.disabled = true;
     try {
-      const hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
-        // Keep a device record of every approval Fluid makes, so the user
-        // can review and revoke them later (More → Token approvals).
-        const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
-        list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: rec.tokenSymbol, spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
-        localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
-      });
+      let hashes, srcExplorer, srcLink;
+      if (fromKey === "solana") {
+        hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
+        srcExplorer = SOLANA_EXPLORER;
+        srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+      } else {
+        hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+          // Keep a device record of every approval Fluid makes, so the user
+          // can review and revoke them later (More → Token approvals).
+          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: rec.tokenSymbol, spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+        });
+        srcExplorer = NETWORKS[fromKey].explorer;
+      }
+      const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: wallet.address, explorer: NETWORKS[fromKey].explorer, at: Date.now() });
+      h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingSwap = null; show("wConfirm", false);
       msg("wMsg", fromKey === toKey

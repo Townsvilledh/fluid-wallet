@@ -7,7 +7,15 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58check } from "@scure/base";
+import { base58, base58check, base64 } from "@scure/base";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha512 } from "@noble/hashes/sha2.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import {
+  Keypair as SolKeypair, PublicKey as SolPublicKey, SystemProgram as SolSystemProgram,
+  Transaction as SolTransaction, TransactionInstruction as SolTxInstruction,
+  VersionedTransaction as SolVersionedTransaction,
+} from "@solana/web3.js";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -207,7 +215,7 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
-  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT" };
+  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -221,7 +229,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -450,6 +458,224 @@ export async function sendTron(wallet, { to, amount, token = null }) {
     throw new Error("Tron network rejected the transaction: " + tronErrorText(cast && (cast.message || cast.code)));
   }
   return { hash: tx.txID, txid: tx.txID };
+}
+
+// ---------- Solana (SLIP-0010 Ed25519 branch of the same BIP39 seed) ----------
+// Solana keys are Ed25519 — they cannot come from the secp256k1 BIP32
+// tree the EVM and Bitcoin accounts use. The standard derivation is
+// SLIP-0010: HMAC-SHA512, hardened-only, from the raw BIP39 seed, at the
+// Phantom/Solflare path m/44'/501'/0'/0'. The derived 32 bytes are the
+// Ed25519 seed; the public key IS the address, Base58-encoded. Same seed
+// phrase, same backup — a different curve branch of it. The derivation
+// below is pinned to the official SLIP-0010 test vectors (see tests) and
+// was cross-checked against the independent ed25519-hd-key reference
+// implementation, @solana/web3.js and OpenSSL — all four agree.
+const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
+export const SOLANA_EXPLORER = "https://solscan.io";
+export const SOLANA_TOKENS = [
+  { symbol: "USDC", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6 },
+  { symbol: "USDT", address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", decimals: 6 },
+];
+const SOLANA_PROGRAMS = {
+  token: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  ata: "ATokenzQdBNbLqTsPfnjz8TQzkCcePRF57yyESLRbJG",
+};
+// Rent-exempt minimums (lamports): a 0-byte account must hold 890,880 or
+// exactly 0 — anything in between is not a valid account state; a token
+// account (165 bytes) costs 2,039,280, paid by whoever creates it.
+export const SOLANA_RENT_EXEMPT_LAMPORTS = 890880;
+export const SOLANA_ATA_RENT_LAMPORTS = 2039280;
+const SOLANA_BASE_FEE_LAMPORTS = 5000n; // per signature
+
+/** SLIP-0010 master + hardened child derivation for Ed25519. `indices`
+ *  are the plain path indices (44, 501, …); every step is hardened here,
+ *  the only mode SLIP-0010 defines for this curve. Returns the derived
+ *  {key, chainCode} (32 bytes each). */
+export function deriveSlip10Ed25519(seed, indices = []) {
+  let I = hmac(sha512, new TextEncoder().encode("ed25519 seed"), seed);
+  let key = I.slice(0, 32), chainCode = I.slice(32);
+  for (const idx of indices) {
+    const data = new Uint8Array(1 + 32 + 4);
+    data.set(key, 1); // data = 0x00 || key || ser32(hardened index)
+    new DataView(data.buffer).setUint32(33, (idx | 0x80000000) >>> 0, false);
+    I = hmac(sha512, chainCode, data);
+    key = I.slice(0, 32); chainCode = I.slice(32);
+  }
+  return { key, chainCode };
+}
+/** The wallet's Solana private seed: BIP39 seed → m/44'/501'/0'/0'. */
+export function solanaSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 501, 0, 0]).key;
+}
+function solanaKeypair(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return SolKeypair.fromSeed(solanaSeedFromSeed(mnemonicToSeedSync(clean)));
+}
+/** Solana address (Base58 public key) for a raw BIP39 seed. */
+export function solanaAddressFromSeed(seed) {
+  return base58.encode(ed25519.getPublicKey(solanaSeedFromSeed(seed)));
+}
+/** The Solana address of the wallet's main account (Phantom path). */
+export function solanaAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return solanaAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** A valid Solana address: Base58 that decodes to exactly 32 bytes. */
+export function isValidSolanaAddress(address) {
+  try {
+    return base58.decode(String(address || "").trim()).length === 32;
+  } catch { return false; }
+}
+export function solLamportsToSol(lamports) { return ethers.formatUnits(BigInt(lamports), 9); }
+export function solSolToLamports(amount) { return ethers.parseUnits(String(amount), 9); }
+
+async function solanaRpc(method, params) {
+  const res = await fetch(SOLANA_RPC, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error("Solana network error (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Solana returned an unreadable reply.");
+  if (data.error) throw new Error("Solana rejected the request: " + (data.error.message || "unknown error"));
+  return data.result;
+}
+/** Solana balances shaped like getBalances(): native SOL first (address
+ *  null), then the SPL tokens. A failed token read degrades to that
+ *  token's zero — it never fails the whole lookup. */
+export async function getSolanaBalances(address) {
+  if (!isValidSolanaAddress(address)) throw new Error("That is not a valid Solana address.");
+  const out = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 }];
+  const bal = await solanaRpc("getBalance", [address]);
+  out[0].amount = solLamportsToSol((bal && bal.value) ?? 0); // no account on-chain yet = 0
+  for (const t of SOLANA_TOKENS) {
+    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
+    try {
+      const r = await solanaRpc("getTokenAccountsByOwner", [address, { mint: t.address }, { encoding: "jsonParsed" }]);
+      let sum = 0n;
+      for (const acc of (r && r.value) || []) {
+        const amt = acc?.account?.data?.parsed?.info?.tokenAmount?.amount;
+        if (amt != null) sum += BigInt(amt);
+      }
+      row.amount = ethers.formatUnits(sum, t.decimals);
+    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
+    out.push(row);
+  }
+  return out;
+}
+/** The associated token account (ATA) address for an owner + mint: a
+ *  program-derived address, computed locally — no RPC needed. */
+export function solanaAtaAddress(ownerAddress, mintAddress) {
+  const [pda] = SolPublicKey.findProgramAddressSync(
+    [new SolPublicKey(ownerAddress).toBuffer(),
+     new SolPublicKey(SOLANA_PROGRAMS.token).toBuffer(),
+     new SolPublicKey(mintAddress).toBuffer()],
+    new SolPublicKey(SOLANA_PROGRAMS.ata));
+  return pda.toBase58();
+}
+async function solanaAccountExists(address) {
+  const r = await solanaRpc("getAccountInfo", [address, { encoding: "base64" }]);
+  return !!(r && r.value);
+}
+/** Would sending this token to `to` need a new token account created
+ *  (sender-paid rent)? Drives both the pre-confirm plan and the send. */
+export async function solanaSendPlan(fromAddress, { to, token = null } = {}) {
+  if (!token) return { createsAta: false, ataRentLamports: 0 };
+  const exists = await solanaAccountExists(solanaAtaAddress(to, token.address));
+  return { createsAta: !exists, ataRentLamports: exists ? 0 : SOLANA_ATA_RENT_LAMPORTS };
+}
+/** The signer principle, Solana edition: a sentence, never a blob. */
+export function formatSolanaSendIntent({ amount, symbol, to, createsAta = false }) {
+  return `Send ${amount} ${symbol} to ${to} on Solana.` +
+    (createsAta ? ` This also creates the recipient's ${symbol} account — you pay about ${solLamportsToSol(SOLANA_ATA_RENT_LAMPORTS)} SOL rent for it (it comes back if they ever close the account).` : "") +
+    " Confirm?";
+}
+function solanaCreateAtaInstruction(payer, ataAddress, ownerAddress, mintAddress) {
+  // createIdempotent (data [1]): succeeds whether or not the account
+  // appeared since the plan was checked — no race can strand the send.
+  return new SolTxInstruction({
+    programId: new SolPublicKey(SOLANA_PROGRAMS.ata),
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: new SolPublicKey(ataAddress), isSigner: false, isWritable: true },
+      { pubkey: new SolPublicKey(ownerAddress), isSigner: false, isWritable: false },
+      { pubkey: new SolPublicKey(mintAddress), isSigner: false, isWritable: false },
+      { pubkey: SolSystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: new SolPublicKey(SOLANA_PROGRAMS.token), isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([1]),
+  });
+}
+function solanaSplTransferInstruction(sourceAta, destAta, owner, rawAmount) {
+  const data = Buffer.alloc(9);
+  data[0] = 3; // SPL Token "Transfer"
+  data.writeBigUInt64LE(BigInt(rawAmount), 1);
+  return new SolTxInstruction({
+    programId: new SolPublicKey(SOLANA_PROGRAMS.token),
+    keys: [
+      { pubkey: sourceAta, isSigner: false, isWritable: true },
+      { pubkey: destAta, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
+async function solanaBroadcast(serializedBytes, what) {
+  try {
+    // The JSON-RPC method is "sendTransaction" (sendRawTransaction is
+    // only the web3.js client-side name for it).
+    return await solanaRpc("sendTransaction", [base64.encode(serializedBytes), { encoding: "base64", skipPreflight: false, preflightCommitment: "processed" }]);
+  } catch (e) {
+    if (/blockhash/i.test(e.message)) throw new Error(`${what} expired before it could be sent (stale blockhash) — please try again so a fresh one is fetched.`);
+    throw e;
+  }
+}
+/** Build, sign (locally) and broadcast a SOL transfer or an SPL token
+ *  transfer. `token` is null for native SOL, otherwise a SOLANA_TOKENS
+ *  {address, decimals}. Returns {hash, createsAta}. */
+export async function sendSolana(phrase, { to, amount, token = null }) {
+  if (!isValidSolanaAddress(to)) throw new Error("That is not a valid Solana address.");
+  const kp = solanaKeypair(phrase);
+  const from = kp.publicKey;
+  const fromAddr = from.toBase58();
+  const balance = BigInt((await solanaRpc("getBalance", [fromAddr]))?.value ?? 0);
+  const { blockhash } = (await solanaRpc("getLatestBlockhash", [])).value;
+  const tx = new SolTransaction({ feePayer: from, recentBlockhash: blockhash });
+  let createsAta = false;
+  if (!token) {
+    const lamports = solSolToLamports(amount);
+    if (lamports <= 0n) throw new Error("Enter an amount.");
+    const remaining = balance - lamports - SOLANA_BASE_FEE_LAMPORTS;
+    if (remaining < 0n) throw new Error("Not enough SOL to cover the amount plus the network fee.");
+    if (remaining > 0n && remaining < BigInt(SOLANA_RENT_EXEMPT_LAMPORTS)) {
+      throw new Error(`That would leave ${solLamportsToSol(remaining)} SOL behind — below Solana's rent-exempt minimum of ${solLamportsToSol(SOLANA_RENT_EXEMPT_LAMPORTS)} SOL, so the network would reject it. Send a little less, or everything but the fee.`);
+    }
+    tx.add(SolSystemProgram.transfer({ fromPubkey: from, toPubkey: new SolPublicKey(to), lamports }));
+  } else {
+    const raw = ethers.parseUnits(String(amount), token.decimals ?? 6);
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    const fromAta = solanaAtaAddress(fromAddr, token.address);
+    let held = 0n;
+    try {
+      const tb = await solanaRpc("getTokenAccountBalance", [fromAta]);
+      held = BigInt(tb?.value?.amount ?? 0);
+    } catch { held = 0n; } // no token account yet = holds none
+    if (held < raw) throw new Error(`Not enough ${token.symbol} on Solana (you have ${ethers.formatUnits(held, token.decimals ?? 6)}).`);
+    const plan = await solanaSendPlan(fromAddr, { to, token });
+    createsAta = plan.createsAta;
+    const solNeeded = SOLANA_BASE_FEE_LAMPORTS + BigInt(plan.ataRentLamports);
+    if (balance < solNeeded) {
+      throw new Error(createsAta
+        ? `Not enough SOL for the fee plus the recipient's token-account rent (about ${solLamportsToSol(solNeeded)} SOL needed).`
+        : "Not enough SOL to pay the network fee for this token send.");
+    }
+    if (createsAta) tx.add(solanaCreateAtaInstruction(from, solanaAtaAddress(to, token.address), to, token.address));
+    tx.add(solanaSplTransferInstruction(new SolPublicKey(fromAta), new SolPublicKey(solanaAtaAddress(to, token.address)), from, raw));
+  }
+  tx.sign(kp);
+  const signature = await solanaBroadcast(tx.serialize(), "That send");
+  return { hash: signature, createsAta };
 }
 
 // ---------- Fluid Names: usernames that resolve under the Fluid domain ----------
@@ -691,10 +917,15 @@ const LIFI_API = "https://li.quest/v1";
 // its "native token" is the T-form of the zero address, NOT the EVM one.
 export const TRON_LIFI_CHAIN_ID = 728126428;
 export const TRON_SWAP_NATIVE_TOKEN = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
+// Solana (chainType SVM on LI.FI) is addressed by Base58 pubkeys there;
+// its "native token" is the System Program id, per LI.FI's chain list.
+export const SOLANA_LIFI_CHAIN_ID = 1151111081099710;
+export const SOLANA_SWAP_NATIVE_TOKEN = "11111111111111111111111111111111";
 /** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
- *  a non-EVM family key ("tron"). Null when the key is unknown. */
+ *  a non-EVM family key ("tron", "solana"). Null when the key is unknown. */
 export function swapChainOf(chainKey) {
   if (chainKey === "tron") return { chainId: TRON_LIFI_CHAIN_ID, name: "Tron" };
+  if (chainKey === "solana") return { chainId: SOLANA_LIFI_CHAIN_ID, name: "Solana" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -804,9 +1035,30 @@ export function swapExecutableSteps(route) {
   return (route?.steps || []).filter(s =>
     s.transactionRequest && (s.transactionRequest.chainId == null || cid(s.transactionRequest.chainId) === Number(route.fromChainId)));
 }
+/** The SVM steps of a Solana-sourced route: LI.FI does not return an
+ *  EVM transactionRequest for them — it returns a ready-to-sign
+ *  serialized Solana transaction as base64 in transactionRequest.data
+ *  (svmTransactionVersion 0 = a v0 VersionedTransaction; absent = a
+ *  legacy transaction). Verified against live LI.FI quotes 2026-11-06:
+ *  the payload deserializes with @solana/web3.js and carries exactly
+ *  one signature slot — the user's. */
+export function solanaSwapSteps(route) {
+  if (Number(route?.fromChainId) !== SOLANA_LIFI_CHAIN_ID) return [];
+  return (route?.steps || []).filter(s =>
+    s.transactionRequest && typeof s.transactionRequest.data === "string" && s.transactionRequest.data.length > 0);
+}
 export function swapRouteExecutable(route) {
+  // Solana-sourced routes are signable since Phase 1b: the step payload
+  // is a serialized transaction Fluid deserializes, signs with the
+  // wallet's Solana key and broadcasts — see executeSolanaSwapRoute.
+  if (Number(route?.fromChainId) === SOLANA_LIFI_CHAIN_ID) {
+    const steps = solanaSwapSteps(route);
+    return steps.length
+      ? { ok: true, svm: true, steps }
+      : { ok: false, reason: "This route's Solana steps carry no signable transaction — pick another route." };
+  }
   // Fluid signs with an EVM key on EVM chains. Routes sourced from a
-  // non-EVM family (Tron, and later Solana/Sui/…) may carry steps, but
+  // non-EVM family (Tron, and later Sui/…) may carry steps, but
   // their signatures are a different scheme — they stay unexecutable
   // here until that family's signer lands, never faked.
   const evmIds = new Set(Object.values(NETWORKS).map(n => n.chainId));
@@ -817,6 +1069,41 @@ export function swapRouteExecutable(route) {
   return steps.length
     ? { ok: true, steps }
     : { ok: false, reason: "This route needs steps Fluid can't sign yet — pick another route." };
+}
+
+/** Execute a Solana-sourced swap route: for each SVM step, deserialize
+ *  LI.FI's transaction, verify it was built for THIS wallet (its fee
+ *  payer must be the wallet's Solana address — never sign a transaction
+ *  addressed to someone else's account), sign with the wallet's Solana
+ *  key and broadcast. Returns the transaction signatures. */
+export async function executeSolanaSwapRoute(phrase, route, onProgress = () => {}) {
+  const { ok, svm, steps, reason } = swapRouteExecutable(route);
+  if (!ok || !svm) throw new Error(reason || "That route does not start on Solana.");
+  const kp = solanaKeypair(phrase);
+  const myAddr = kp.publicKey.toBase58();
+  const hashes = [];
+  for (let i = 0; i < steps.length; i++) {
+    const tr = steps[i].transactionRequest;
+    const raw = base64.decode(tr.data);
+    onProgress(`Signing Solana step ${i + 1} of ${steps.length}…`);
+    let serialized;
+    if (tr.svmTransactionVersion != null) {
+      const vtx = SolVersionedTransaction.deserialize(raw);
+      const payer = vtx.message.staticAccountKeys[0];
+      if (!payer || payer.toBase58() !== myAddr) throw new Error("That Solana route was built for a different account — refusing to sign it.");
+      vtx.sign([kp]);
+      serialized = vtx.serialize();
+    } else {
+      const tx = SolTransaction.from(raw);
+      if (tx.feePayer && tx.feePayer.toBase58() !== myAddr) throw new Error("That Solana route was built for a different account — refusing to sign it.");
+      tx.partialSign(kp);
+      serialized = tx.serialize();
+    }
+    const sig = await solanaBroadcast(serialized, "That route");
+    hashes.push(sig);
+    onProgress(`Solana step ${i + 1} sent ✓`);
+  }
+  return hashes;
 }
 
 const SWAP_ERC20 = [
