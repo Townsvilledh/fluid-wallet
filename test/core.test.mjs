@@ -1812,4 +1812,32 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("rt-f07: milli-bitcoin denominations convert exactly", assertBolt11Amount(fakeInvoice("lnbc1m"), 100000000) === true);
 }
 
+// ---------- red-team F-09: name-registry entry validation ----------
+// Registry entries are fetched JSON: their fields flowed into send
+// sheets raw. Every field is now shape-validated at the trust
+// boundary; invalid fields drop, and an entry with nothing valid left
+// is treated as unregistered.
+{
+  const { sanitizeNameEntry, resolveFluidName } = await import("../src/wallet-core.js");
+  const EVM = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+  const BTC = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+  ok("rt-f09: a fully valid entry passes through intact",
+    JSON.stringify(sanitizeNameEntry({ evm: EVM, btc: BTC, ln: "satoshi@example.com" }))
+    === JSON.stringify({ evm: EVM, btc: BTC, ln: "satoshi@example.com" }));
+  ok("rt-f09: garbage fields are dropped, valid ones kept",
+    JSON.stringify(sanitizeNameEntry({ evm: "not-an-address", btc: BTC, ln: "no-at-sign" }))
+    === JSON.stringify({ btc: BTC }));
+  ok("rt-f09: an entry with no valid field is null",
+    sanitizeNameEntry({ evm: "0x123", btc: "hello", ln: "x" }) === null && sanitizeNameEntry(null) === null && sanitizeNameEntry("str") === null);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ hostile: { evm: "javascript:alert(1)", btc: "drop table", ln: "a@b" } }) });
+  try {
+    ok("rt-f09: a hostile registry entry resolves as unregistered", (await resolveFluidName("hostile")) === null);
+  } finally { globalThis.fetch = realFetch; }
+  const mixed = { goodname: { evm: EVM, btc: "garbage-btc" } };
+  const found = findNameForAddresses(mixed, { evm: EVM });
+  ok("rt-f09: reverse lookup keeps the valid field, drops the garbage one",
+    !!found && found.name === "goodname" && found.evm === EVM && found.btc === undefined);
+}
+
 console.log(`\n${passed} checks passed`);

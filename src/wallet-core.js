@@ -2325,13 +2325,27 @@ export function assertBolt11Amount(invoice, amountMsat) {
   }
   return true;
 }
+/* RED-TEAM 2026-11-06 (Finding H): registry entries were trusted raw —
+ * a malformed or hostile entry (the registry is a fetched JSON file)
+ * flowed straight into the send sheets. Validate every field's shape
+ * here, at the trust boundary; fields that don't parse as the address
+ * type they claim to be are dropped, and an entry with no valid field
+ * left is treated as unregistered. */
+export function sanitizeNameEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const out = {};
+  if (typeof entry.evm === "string" && /^0x[0-9a-fA-F]{40}$/.test(entry.evm.trim())) out.evm = entry.evm.trim();
+  if (typeof entry.btc === "string" && /^(bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/.test(entry.btc.trim())) out.btc = entry.btc.trim();
+  if (typeof entry.ln === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry.ln.trim())) out.ln = entry.ln.trim();
+  return Object.keys(out).length ? out : null;
+}
 export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
   const name = normalizeFluidName(input);
   if (!validateFluidName(name)) return null;
   const res = await fetch(registryUrl, { cache: "no-store" });
   if (!res.ok) return null;
   const reg = await res.json();
-  const entry = reg[name];
+  const entry = sanitizeNameEntry(reg[name]);
   return entry ? { name, ...entry } : null;
 }
 /** Fetch the whole name registry (null on any failure). */
@@ -2349,9 +2363,10 @@ export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
 export function findNameForAddresses(registry, { evm = null, btc = null } = {}) {
   if (!registry || typeof registry !== "object") return null;
   const evmLc = evm ? String(evm).toLowerCase() : null;
-  for (const [name, entry] of Object.entries(registry)) {
+  for (const [name, rawEntry] of Object.entries(registry)) {
+    const entry = sanitizeNameEntry(rawEntry);
     if (!entry) continue;
-    if (evmLc && entry.evm && String(entry.evm).toLowerCase() === evmLc) return { name, ...entry };
+    if (evmLc && entry.evm && entry.evm.toLowerCase() === evmLc) return { name, ...entry };
     if (btc && entry.btc && entry.btc === btc) return { name, ...entry };
   }
   return null;
