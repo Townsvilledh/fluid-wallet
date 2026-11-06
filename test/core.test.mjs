@@ -8,6 +8,11 @@ import { Keypair as SolKeypair, PublicKey as SolPublicKey } from "@solana/web3.j
 import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_LIFI_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { blake2b } from "@noble/hashes/blake2.js";
+import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent } from "../src/wallet-core.js";
+import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
+import { Slip10RawIndex } from "@cosmjs/crypto";
+import { HDKey } from "@scure/bip32";
+import { bech32 } from "@scure/base";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -507,4 +512,79 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     swapRouteExecutable(suiRoute).ok === false && /Sui/.test(swapRouteExecutable(suiRoute).reason) && /can't sign/.test(swapRouteExecutable(suiRoute).reason));
   const intoSui = { fromChainId: 56, toChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
   ok("sui: routes INTO Sui from an EVM chain stay executable", swapRouteExecutable(intoSui).ok === true && swapRouteExecutable(intoSui).steps.length === 1);
+}
+
+// 32. Phase 3a — Cosmos (one secp256k1 account, coin type 118,
+// m/44'/118'/0'/0/0, seven chains differing only in bech32 prefix).
+// Vectors for the canonical abandon…about seed: the account bytes were
+// computed with Fluid's @scure derivation and cross-checked live
+// during the build against both @cosmjs (below, re-asserted) and live
+// chain reads (the Hub address holds 3 uatom and the Sei address 1050
+// usei of third-party dust at the well-known test addresses, read back
+// through both the public REST and a StargateClient over RPC).
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const VECTORS = {
+    cosmoshub: "cosmos19rl4cm2hmr8afy4kldpxz3fka4jguq0auqdal4", osmosis: "osmo19rl4cm2hmr8afy4kldpxz3fka4jguq0a5m7df8",
+    noble: "noble19rl4cm2hmr8afy4kldpxz3fka4jguq0a5rc48m", celestia: "celestia19rl4cm2hmr8afy4kldpxz3fka4jguq0ad2ud9c",
+    injective: "inj19rl4cm2hmr8afy4kldpxz3fka4jguq0akf6edd", sei: "sei19rl4cm2hmr8afy4kldpxz3fka4jguq0a3vute5",
+    dydx: "dydx19rl4cm2hmr8afy4kldpxz3fka4jguq0a4erelz",
+  };
+  const addrs = cosmosAddresses(ABANDON);
+  for (const [key, addr] of Object.entries(VECTORS)) {
+    ok(`cosmos: ${key} address vector`, addrs[key] === addr && cosmosAddress(ABANDON, key) === addr);
+  }
+  // The family's whole point: identical account bytes under every prefix
+  {
+    const hashes = Object.values(addrs).map(a => {
+      const dec = bech32.decode(a);
+      return Buffer.from(bech32.fromWords(dec.words)).toString("hex");
+    });
+    ok("cosmos: same account bytes on all seven chains",
+      hashes.every(h => h === "28ff5c6d57d8cfd492b6fb42614536ed648e01fd"));
+  }
+  // Cross-check against @cosmjs derivation, two prefixes (the brief's bar)
+  const HD = [Slip10RawIndex.hardened(44), Slip10RawIndex.hardened(118), Slip10RawIndex.hardened(0), Slip10RawIndex.normal(0), Slip10RawIndex.normal(0)]; // m/44'/118'/0'/0/0
+  for (const prefix of ["cosmos", "osmo"]) {
+    const w = await DirectSecp256k1HdWallet.fromMnemonic(ABANDON, { prefix, hdPaths: [HD] });
+    const [acc] = await w.getAccounts();
+    const key = prefix === "cosmos" ? "cosmoshub" : "osmosis";
+    ok(`cosmos: @cosmjs derivation agrees (${prefix})`, acc.address === addrs[key]);
+  }
+  // The signer sendCosmos actually uses — CosmJS built FROM Fluid's key
+  {
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON));
+    const child = root.derive("m/44'/118'/0'/0/0");
+    const w = await DirectSecp256k1Wallet.fromKey(child.privateKey, "cosmos");
+    const [acc] = await w.getAccounts();
+    ok("cosmos: DirectSecp256k1Wallet from Fluid's key gives Fluid's address", acc.address === addrs.cosmoshub);
+    ok("cosmos: signer pubkey is Fluid's derived pubkey", Buffer.from(acc.pubkey).toString("hex") === Buffer.from(child.publicKey).toString("hex"));
+  }
+  // Chain table pins — every value verified against the chain registry
+  // (chain ids, prefixes, denoms, decimals) before shipping.
+  ok("cosmos: seven chains", COSMOS_CHAINS.length === 7);
+  ok("cosmos: chain ids", COSMOS_CHAINS.map(c => c.chainId).join(",") === "cosmoshub-4,osmosis-1,noble-1,celestia,injective-1,pacific-1,dydx-mainnet-1");
+  ok("cosmos: denoms", COSMOS_CHAINS.map(c => c.denom).join(",") === "uatom,uosmo,uusdc,utia,inj,usei,adydx");
+  ok("cosmos: decimals (INJ and DYDX are 18, the rest 6)", COSMOS_CHAINS.map(c => c.decimals).join(",") === "6,6,6,6,18,6,18");
+  ok("cosmos: noble asset is USDC (uusdc — also its fee token)",
+    cosmosChain("noble").symbol === "USDC" && cosmosChain("noble").denom === "uusdc" && cosmosChain("noble").gasPrice === "0.1uusdc");
+  ok("cosmos: Injective sends disabled (EthAccount), the other six enabled",
+    cosmosChain("injective").sendEnabled === false && COSMOS_CHAINS.filter(c => c.key !== "injective").every(c => c.sendEnabled !== false));
+  ok("cosmos: unknown chain resolves to null", cosmosChain("nope") === null);
+
+  // Address validation is per-chain: right prefix + checksum + payload
+  ok("cosmos: own addresses validate", COSMOS_CHAINS.every(c => isValidCosmosAddress(addrs[c.key], c.key)));
+  ok("cosmos: cross-chain prefixes refused", !isValidCosmosAddress(addrs.cosmoshub, "osmosis") && !isValidCosmosAddress(addrs.osmosis, "cosmoshub")
+    && !isValidCosmosAddress(addrs.injective, "sei"));
+  ok("cosmos: other families and garbage refused", !isValidCosmosAddress("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu", "cosmoshub")
+    && !isValidCosmosAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "cosmoshub")
+    && !isValidCosmosAddress("cosmos1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", "cosmoshub") // plausible shape, bad checksum
+    && !isValidCosmosAddress("hello", "cosmoshub") && !isValidCosmosAddress("", "cosmoshub") && !isValidCosmosAddress(null, "cosmoshub"));
+
+  const ci = formatCosmosSendIntent({ amount: "1.5", symbol: "ATOM", to: VECTORS.cosmoshub, chainName: "Cosmos Hub", feeAmount: "0.0035", feeSymbol: "ATOM" });
+  ok("cosmos: intent is human-readable", ci.includes("Send 1.5 ATOM") && ci.includes("on Cosmos Hub") && ci.includes("fee about 0.0035 ATOM") && ci.includes("Confirm?"));
+
+  // Cosmos is honestly ABSENT from the LI.FI swap universe (LI.FI has
+  // no Cosmos-SDK chains) — no dead swap options are offered.
+  ok("cosmos: not a LI.FI swap chain", swapChainOf("cosmoshub") === null && swapChainOf("osmosis") === null);
 }

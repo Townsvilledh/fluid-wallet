@@ -13,6 +13,7 @@ import {
   tronAddressFromPhrase, getTronBalances, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
+  cosmosAddresses, getCosmosBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
@@ -31,7 +32,8 @@ const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
-  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351" };
+  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351",
+  ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
@@ -42,6 +44,7 @@ let suiAddr = null, suiBalances = [];
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
+let cosmosAddrs = {}, cosmosRows = [];
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
@@ -122,7 +125,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Cosmos (7 chains)";
   getTronBalances(tronAddr).then(rows => { tronBalances = rows; paintAssets(); }).catch(() => paintAssets());
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
@@ -147,6 +150,15 @@ async function renderMain() {
   getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; paintAssets(); }).catch(() => paintAssets());
   bchAddr = bitcoinCashAddress(wallet.mnemonic.phrase);
   getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; paintAssets(); }).catch(() => paintAssets());
+  // Cosmos (Phase 3a): ONE account on seven chains — the same account
+  // bytes under seven bech32 prefixes. Rows start as "unavailable"
+  // (amount null) and fill in per chain as the public REST endpoints
+  // answer; a chain that never answers keeps the honest null instead
+  // of a fake zero (the DOGE precedent).
+  cosmosAddrs = cosmosAddresses(wallet.mnemonic.phrase);
+  cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
+  paintAssets();
+  getCosmosBalances(wallet.mnemonic.phrase).then(rows => { cosmosRows = rows; paintAssets(); }).catch(() => paintAssets());
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
@@ -178,6 +190,11 @@ function heroTotal() {
   for (const b of suiBalances) {
     const p = prices[b.symbol] ?? null;
     if (p != null) t += Number(b.amount) * p;
+  }
+  for (const r of cosmosRows) {
+    if (r.amount == null) continue; // unavailable is not zero — it is unknown, and stays out of the total
+    const p = prices[r.symbol] ?? null;
+    if (p != null) t += Number(r.amount) * p;
   }
   return t;
 }
@@ -230,6 +247,21 @@ function paintAssets() {
         <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
     });
   }
+  // Cosmos family rows (Phase 3a): one account, seven chains — a row
+  // per chain showing that chain's native asset. An unavailable read
+  // shows "unavailable", never a fake zero.
+  if (cosmosRows.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Cosmos — one account, seven chains</p>`);
+    cosmosRows.forEach((r) => {
+      const p = prices[r.symbol];
+      rows.push(`<div class="row" data-cosmos="${r.key}">
+        <span class="coin" style="background:${COIN_COLORS[r.symbol] || "#3b4a7a"}">${r.symbol.slice(0, 1)}</span>
+        <span class="grow"><b>${r.symbol}</b><small>${r.name}${r.sendEnabled === false ? " · receive & balance only" : ""}</small></span>
+        <span class="amt">${r.amount == null
+          ? `<b>—</b><small>unavailable</small>`
+          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`);
+    });
+  }
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
   rows.push(`<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`);
   rows.push(`<div class="row" data-ltc="1">
@@ -260,6 +292,10 @@ function paintAssets() {
   document.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
     const b = suiBalances[Number(r.dataset.sui)];
     if (b) openSuiSheet(b);
+  });
+  document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
+    const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
+    if (row) openCosmosSheet(row);
   });
 }
 
@@ -372,6 +408,14 @@ $("netBtn").onclick = () => {
 // ---------- receive ----------
 function qr(el, text) { QRCode.toDataURL(text, { width: 180, margin: 1 }).then(u => { const i = $(el); if (i) i.src = u; }).catch(() => {}); }
 $("actReceive").onclick = () => {
+  // Cosmos: one account under seven prefixes — all seven addresses are
+  // listed with copy buttons; each chain's QR lives in that chain's own
+  // sheet (tap its row in the asset list).
+  const cosmosHtml = COSMOS_CHAINS.map(c => `
+    <hr style="border-color:var(--line)">
+    <p class="tag">${c.name} address (${c.symbol}):</p>
+    <p class="mono">${cosmosAddrs[c.key]}</p>
+    <button class="btn ghost" data-cpcosmos="${c.key}">Copy ${c.name} address</button>`).join("");
   openSheet(`<h3>Receive</h3>
     <p class="tag">EVM address — the same on all 15 networks:</p>
     <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
@@ -403,7 +447,10 @@ $("actReceive").onclick = () => {
     <hr style="border-color:var(--line)">
     <p class="tag">Bitcoin Cash address:</p>
     <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
-    <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>`);
+    <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Cosmos addresses — the SAME account on seven chains; only the prefix differs. Send each coin only on its own chain.</p>
+    ${cosmosHtml}`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
   qr("qrSui", suiAddr);
   qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
@@ -415,6 +462,7 @@ $("actReceive").onclick = () => {
   $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
   $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
   $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
+  document.querySelectorAll("[data-cpcosmos]").forEach(b => b.onclick = () => copyText(cosmosAddrs[b.dataset.cpcosmos], b));
 };
 
 // ---------- send (EVM) ----------
@@ -772,6 +820,79 @@ function openDogeSheet() {
     <p class="tag">Sending is off for now: no public Dogecoin service lets Fluid broadcast a transaction it built and signed itself, and Fluid won't hand your transaction to a server to build. Receiving and balances work normally. Note: Dogecoin treats outputs under ${DOGE_MIN_OUTPUT} DOGE as dust — senders should keep amounts above that.</p>`);
   qr("qrDoge2", dogeAddr);
   $("cpDoge2").onclick = () => copyText(dogeAddr, $("cpDoge2"));
+}
+
+// ---------- Cosmos sheet ----------
+// One sheet per Cosmos chain (tap its row): balance, QR + copy for the
+// chain's prefixed address, and a MsgSend form in the established
+// review → intent sentence → confirm pattern. The fee in the sentence
+// is a live simulation at the chain's registry gas price, and the
+// confirmed send broadcasts with exactly that fee. Two honest limits,
+// stated in the sheet itself: Injective sends are disabled (EthAccount
+// signature format — see wallet-core), and swaps from Cosmos chains
+// aren't available yet (LI.FI carries no Cosmos chains; Skip Go's
+// routes hide the swap inside an opaque transfer memo).
+function openCosmosSheet(row) {
+  const chain = row; // COSMOS_CHAINS entry + { address, amount|null }
+  let pendingCosmos = null;
+  const balLine = chain.amount == null
+    ? `<p><b>Balance unavailable right now</b> — ${chain.name}'s public API didn't answer. Receiving still works; sending needs a live balance read first.</p>`
+    : `<p><b>${fmt(chain.amount)} ${chain.symbol}</b> · ${usd(Number(chain.amount) * (prices[chain.symbol] || 0))}</p>`;
+  const sendBlock = chain.sendEnabled === false
+    ? `<h3>Send ${chain.symbol}</h3>
+       <button class="btn" disabled style="opacity:.45">Sending not available yet</button>
+       <p class="tag">Sending is off for now: Injective accounts sign with a different key format (EthAccount) than the rest of Cosmos, and Fluid's Cosmos signer can't produce it yet. Receiving and balances work normally.</p>`
+    : `<h3>Send ${chain.symbol}</h3>
+       <input id="kTo" placeholder="Recipient ${chain.prefix}1… address" autocapitalize="none">
+       <input id="kAmt" inputmode="decimal" placeholder="Amount">
+       <button class="btn" id="kReview">Review send</button>
+       <div id="kIntent" class="hidden">
+         <p class="seed" id="kIntentText"></p>
+         <button class="btn" id="kConfirm">Confirm &amp; send</button>
+       </div>
+       <p class="msg err" id="kMsg"></p>
+       <p class="tag">Fees are paid in ${chain.symbol} at ${chain.name}'s going gas price and are estimated live before you confirm. Sends are final.</p>`;
+  openSheet(`<h3>${chain.name}</h3>
+    ${balLine}
+    <img class="qr" id="qrCosmos"><p class="mono">${chain.address}</p>
+    <button class="btn ghost" id="cpCosmos">Copy address</button>
+    <p class="tag">This is the same account you hold on every Cosmos chain — only the prefix changes (${COSMOS_CHAINS.map(c => c.prefix + "1…").join(", ")}).</p>
+    <hr style="border-color:var(--line)">
+    ${sendBlock}
+    <hr style="border-color:var(--line)">
+    <p class="tag">Swaps from Cosmos chains aren't available yet — Fluid can send ${chain.symbol} anywhere on ${chain.name}, but swapping it cross-chain isn't wired.</p>`);
+  qr("qrCosmos", chain.address);
+  $("cpCosmos").onclick = () => copyText(chain.address, $("cpCosmos"));
+  if (chain.sendEnabled === false) return;
+  $("kReview").onclick = async () => {
+    const to = $("kTo").value.trim(), amount = $("kAmt").value.trim();
+    if (!isValidCosmosAddress(to, chain.key)) return msg("kMsg", `That is not a valid ${chain.name} address (it starts with ${chain.prefix}1).`);
+    if (!amount || Number(amount) <= 0) return msg("kMsg", "Enter an amount.");
+    if (chain.amount == null) return msg("kMsg", "Balance is unavailable right now — try again when the network answers.");
+    if (Number(amount) > Number(chain.amount)) return msg("kMsg", "Amount is more than your balance.");
+    try {
+      msg("kMsg", "Estimating fee…", true);
+      const est = await estimateCosmosFee(wallet.mnemonic.phrase, chain.key, { to, amount });
+      pendingCosmos = { to, amount, fee: est.fee };
+      $("kIntentText").textContent = formatCosmosSendIntent({
+        amount, symbol: chain.symbol, to, chainName: chain.name,
+        feeAmount: Number(est.feeText).toFixed(6), feeSymbol: est.feeSymbol });
+      show("kIntent"); msg("kMsg", "");
+    } catch (e) { msg("kMsg", "Could not estimate the fee: " + e.message); }
+  };
+  $("kConfirm").onclick = async () => {
+    if (!pendingCosmos) return;
+    try {
+      msg("kMsg", "Signing locally and broadcasting…", true);
+      const { hash } = await sendCosmos(wallet.mnemonic.phrase, chain.key, {
+        to: pendingCosmos.to, amount: pendingCosmos.amount, fee: pendingCosmos.fee });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingCosmos.amount, symbol: chain.symbol, to: pendingCosmos.to,
+        link: `${chain.explorer}/txs/${hash}`, explorer: chain.explorer, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingCosmos = null; closeSheet(); renderMain();
+    } catch (e) { msg("kMsg", "Send failed: " + e.message); }
+  };
 }
 
 // ---------- Lightning ----------

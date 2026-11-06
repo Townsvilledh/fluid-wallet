@@ -7,7 +7,9 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58, base58check, base64, hex } from "@scure/base";
+import { base58, base58check, base64, bech32, hex } from "@scure/base";
+import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
+import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { blake2b } from "@noble/hashes/blake2.js";
@@ -222,7 +224,8 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
-  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT" };
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT",
+  ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -236,7 +239,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -1147,6 +1150,171 @@ export async function sendSui(phrase, { to, amount, token = null }) {
     throw new Error("Sui rejected the transaction: " + (res.effects.status.error || status));
   }
   return { hash: res.digest };
+}
+
+// ---------- Cosmos (one secp256k1 account, seven chains) ----------
+// The Cosmos family is the inverse of the EVM universe: instead of many
+// chains sharing one ADDRESS, seven Cosmos SDK chains share one ACCOUNT
+// — the same hash160 account bytes from the same BIP44 branch
+// (coin type 118, m/44'/118'/0'/0/0) — and differ only in the bech32
+// prefix printed in front of them (cosmos1…, osmo1…, noble1…). One seed
+// phrase, one backup, seven chains. Derivation is Fluid's own (@scure,
+// the same stack as the Bitcoin branch) and was cross-checked against
+// @cosmjs DirectSecp256k1HdWallet for two prefixes before shipping
+// (see tests); sends hand that very key to CosmJS as a
+// DirectSecp256k1Wallet, so the signer is built FROM Fluid's derived
+// key, never from a second derivation.
+// Denoms, chain ids, prefixes and average gas prices were verified
+// 2026-11-06 against the chain registry (github.com/cosmos/chain-registry)
+// and live endpoint reads; INJ and DYDX use 18-decimal base denoms
+// (inj, adydx), the rest 6. Endpoints: cosmos.directory public REST for
+// balance reads (all seven verified live), cosmos.directory RPC for
+// signing clients — except Sei, whose directory RPC was down (HTTP 502)
+// at build time, so Sei sends ride the Sei team's own rpc.sei-apis.com
+// (verified live, POST included).
+// Injective is the family's DOGE: receive + live balance work, sending
+// is disabled with the reason shown. Injective accounts are
+// /injective.types.v1beta1.EthAccount and expect signatures over the
+// /injective.crypto.v1beta1.ethsecp256k1.PubKey type (both verified
+// live against a validator account) — the stock CosmJS signer emits
+// the Cosmos pubkey type, which Injective's ante handler does not
+// accept, so a working Injective signer is a separate build, not a
+// config flag.
+// Swaps: LI.FI carries NO Cosmos-SDK chains (its chainTypes are
+// EVM/SVM/TVM/MVM/UTXO only — checked live), and Skip Go, while it
+// answers keyless and returns real routes, packs the actual swap into
+// an opaque wasm memo inside an IBC transfer — a blob, not a sentence
+// a user can approve — so Cosmos-source swap execution is NOT wired;
+// the chain sheets say so plainly.
+export const COSMOS_CHAINS = [
+  { key: "cosmoshub", name: "Cosmos Hub", chainId: "cosmoshub-4", prefix: "cosmos", denom: "uatom", symbol: "ATOM", decimals: 6, gasPrice: "0.025uatom",
+    rest: "https://rest.cosmos.directory/cosmoshub", rpc: "https://rpc.cosmos.directory/cosmoshub", explorer: "https://www.mintscan.io/cosmos" },
+  { key: "osmosis", name: "Osmosis", chainId: "osmosis-1", prefix: "osmo", denom: "uosmo", symbol: "OSMO", decimals: 6, gasPrice: "0.1uosmo",
+    rest: "https://rest.cosmos.directory/osmosis", rpc: "https://rpc.cosmos.directory/osmosis", explorer: "https://www.mintscan.io/osmosis" },
+  // Noble is the Cosmos home of native USDC: its fee token IS uusdc
+  // (chain registry fee_tokens, verified live), so the family's asset
+  // on Noble is USDC itself and fees are paid in it too.
+  { key: "noble", name: "Noble", chainId: "noble-1", prefix: "noble", denom: "uusdc", symbol: "USDC", decimals: 6, gasPrice: "0.1uusdc",
+    rest: "https://rest.cosmos.directory/noble", rpc: "https://rpc.cosmos.directory/noble", explorer: "https://www.mintscan.io/noble" },
+  { key: "celestia", name: "Celestia", chainId: "celestia", prefix: "celestia", denom: "utia", symbol: "TIA", decimals: 6, gasPrice: "0.02utia",
+    rest: "https://rest.cosmos.directory/celestia", rpc: "https://rpc.cosmos.directory/celestia", explorer: "https://www.mintscan.io/celestia" },
+  { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", sendEnabled: false,
+    rest: "https://rest.cosmos.directory/injective", rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
+  { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei",
+    rest: "https://rest.cosmos.directory/sei", rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
+  { key: "dydx", name: "dYdX", chainId: "dydx-mainnet-1", prefix: "dydx", denom: "adydx", symbol: "DYDX", decimals: 18, gasPrice: "12500000000adydx",
+    rest: "https://rest.cosmos.directory/dydx", rpc: "https://rpc.cosmos.directory/dydx", explorer: "https://www.mintscan.io/dydx" },
+];
+export function cosmosChain(chainKey) {
+  return COSMOS_CHAINS.find(c => c.key === chainKey) || null;
+}
+function cosmosKeys(phrase) {
+  const seed = mnemonicToSeedSync(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive("m/44'/118'/0'/0/0");
+  return { child, accountBytes: ripemd160(sha256(child.publicKey)) }; // hash160 of the compressed pubkey
+}
+/** The wallet's address on one Cosmos chain (bech32 of the shared
+ *  account bytes under that chain's prefix). */
+export function cosmosAddress(phrase, chainKey) {
+  const chain = cosmosChain(chainKey);
+  if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
+  const { accountBytes } = cosmosKeys(phrase);
+  return bech32.encode(chain.prefix, bech32.toWords(accountBytes));
+}
+/** Every Cosmos address of this wallet: { chainKey: address }. */
+export function cosmosAddresses(phrase) {
+  const { accountBytes } = cosmosKeys(phrase);
+  const words = bech32.toWords(accountBytes);
+  return Object.fromEntries(COSMOS_CHAINS.map(c => [c.key, bech32.encode(c.prefix, words)]));
+}
+/** A valid address FOR THIS CHAIN: right bech32 prefix, valid checksum,
+ *  20-byte (account) or 32-byte (contract) payload. */
+export function isValidCosmosAddress(address, chainKey) {
+  const chain = cosmosChain(chainKey);
+  if (!chain) return false;
+  try {
+    const dec = bech32.decode(String(address || "").trim());
+    if (dec.prefix !== chain.prefix) return false;
+    const bytes = bech32.fromWords(dec.words);
+    return bytes.length === 20 || bytes.length === 32;
+  } catch { return false; }
+}
+/** One chain's native balance via its public REST (bank module),
+ *  formatted in the display unit. THROWS when the read fails — callers
+ *  that paint rows use getCosmosBalances, which degrades per chain. */
+export async function getCosmosBalance(chainKey, address) {
+  const chain = cosmosChain(chainKey);
+  if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
+  const res = await fetch(`${chain.rest}/cosmos/bank/v1beta1/balances/${address}`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`${chain.name} balance lookup failed (HTTP ${res.status}).`);
+  const data = await res.json().catch(() => null);
+  if (!data || !Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
+  const hit = data.balances.find(b => b.denom === chain.denom);
+  return ethers.formatUnits(BigInt(hit ? hit.amount : "0"), chain.decimals);
+}
+/** All seven balances, one entry per chain, fault-tolerant per chain:
+ *  a chain whose read fails reports amount: null (the UI shows
+ *  "unavailable", never a fake zero — the DOGE precedent), and this
+ *  function itself never throws. */
+export async function getCosmosBalances(phrase) {
+  const addrs = cosmosAddresses(phrase);
+  return Promise.all(COSMOS_CHAINS.map(async (chain) => {
+    let amount = null;
+    try { amount = await getCosmosBalance(chain.key, addrs[chain.key]); } catch { /* this chain stays null */ }
+    return { ...chain, address: addrs[chain.key], amount };
+  }));
+}
+/** The signer principle, Cosmos edition: a sentence, never a blob. */
+export function formatCosmosSendIntent({ amount, symbol, to, chainName, feeAmount, feeSymbol }) {
+  return `Send ${amount} ${symbol} to ${to} on ${chainName}. ` +
+         `Network fee about ${feeAmount} ${feeSymbol}. Confirm?`;
+}
+function cosmosMsgSend(chain, from, to, rawAmount) {
+  return { typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+           value: { fromAddress: from, toAddress: to, amount: [{ denom: chain.denom, amount: rawAmount }] } };
+}
+async function cosmosSignerClient(phrase, chain) {
+  const { child } = cosmosKeys(phrase);
+  const signer = await DirectSecp256k1Wallet.fromKey(child.privateKey, chain.prefix);
+  return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice) });
+}
+/** Simulate a MsgSend and price the fee at the chain's registry
+ *  average gas price (CosmJS "auto" math: simulated gas × 1.4).
+ *  Returns { fee: {amount: [{denom, amount}], gas}, feeText } where
+ *  feeText is the display-unit fee for the intent sentence. */
+export async function estimateCosmosFee(phrase, chainKey, { to, amount }) {
+  const chain = cosmosChain(chainKey);
+  if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
+  const from = cosmosAddress(phrase, chainKey);
+  const raw = ethers.parseUnits(String(amount), chain.decimals).toString();
+  const client = await cosmosSignerClient(phrase, chain);
+  try {
+    const gasUsed = await client.simulate(from, [cosmosMsgSend(chain, from, to, raw)], "");
+    const fee = calculateFee(Math.round(gasUsed * 1.4), GasPrice.fromString(chain.gasPrice));
+    const coin = fee.amount[0] || { denom: chain.denom, amount: "0" };
+    return { fee, feeText: ethers.formatUnits(BigInt(coin.amount), chain.decimals), feeSymbol: chain.symbol };
+  } finally { client.disconnect(); }
+}
+/** Build, sign (locally — CosmJS signing with Fluid's derived key) and
+ *  broadcast a bank MsgSend of the chain's native asset. Pass the fee
+ *  object from estimateCosmosFee to broadcast exactly what the user
+ *  approved; without one the fee is computed at broadcast time.
+ *  Returns { hash }. */
+export async function sendCosmos(phrase, chainKey, { to, amount, fee = null }) {
+  const chain = cosmosChain(chainKey);
+  if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
+  if (chain.sendEnabled === false) throw new Error(`Sending on ${chain.name} is not available yet.`);
+  if (!isValidCosmosAddress(to, chainKey)) throw new Error(`That is not a valid ${chain.name} address (it starts with ${chain.prefix}1).`);
+  const raw = ethers.parseUnits(String(amount), chain.decimals);
+  if (raw <= 0n) throw new Error("Enter an amount.");
+  const from = cosmosAddress(phrase, chainKey);
+  const client = await cosmosSignerClient(phrase, chain);
+  try {
+    const result = await client.signAndBroadcast(from, [cosmosMsgSend(chain, from, to, raw.toString())], fee || "auto", "");
+    assertIsDeliverTxSuccess(result);
+    return { hash: result.transactionHash };
+  } finally { client.disconnect(); }
 }
 
 // ---------- Fluid Names: usernames that resolve under the Fluid domain ----------
