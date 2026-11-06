@@ -2299,7 +2299,31 @@ export async function lightningInvoiceForAddress(lnAddress, sats) {
     throw new Error("Amount is outside that address's accepted range.");
   const inv = await (await fetch(`${meta.callback}${meta.callback.includes("?") ? "&" : "?"}amount=${amountMsat}`)).json();
   if (!inv.pr) throw new Error("Could not get an invoice from that Lightning address.");
+  assertBolt11Amount(inv.pr, amountMsat);
   return inv.pr;
+}
+/* RED-TEAM 2026-11-06 (Finding G): the invoice an LNURL server returns
+ * was handed to the payer completely unchecked — a hostile or buggy
+ * server could return an unparseable string, or worse, an invoice for a
+ * DIFFERENT amount than the user typed. Verify before it goes anywhere:
+ * the string must be a checksum-valid bech32 BOLT11 invoice, and the
+ * amount encoded in its human-readable part must equal the requested
+ * amount exactly. (Amount-less invoices are refused for a payment that
+ * named an amount.) */
+export function assertBolt11Amount(invoice, amountMsat) {
+  let dec;
+  try { dec = bech32.decode(String(invoice || "").trim().toLowerCase(), 4000); }
+  catch { throw new Error("The Lightning service returned an invalid invoice — refusing to use it."); }
+  const m = /^ln(?:bc|tb|bcrt)(\d+)?([munp])?$/.exec(dec.prefix);
+  if (!m) throw new Error("The Lightning service returned an invalid invoice — refusing to use it.");
+  if (!m[1]) throw new Error("The Lightning service returned an amount-less invoice for a fixed-amount payment — refusing to use it.");
+  const MULT = { "": [100000000000n, 1n], m: [100000000n, 1n], u: [100000n, 1n], n: [100n, 1n], p: [1n, 10n] };
+  const [num, den] = MULT[m[2] || ""];
+  const raw = BigInt(m[1]) * num;
+  if (raw % den !== 0n || raw / den !== BigInt(amountMsat)) {
+    throw new Error("The invoice amount does not match the amount you entered — refusing to use it.");
+  }
+  return true;
 }
 export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
   const name = normalizeFluidName(input);

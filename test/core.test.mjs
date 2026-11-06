@@ -1794,4 +1794,22 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("rt-f06: a token with only dust pairs stays unpriced", !parseDexScreenerPairs(dustOnly, "bsc", [TOK]).has(TOK));
 }
 
+// ---------- red-team F-07: LNURL invoice verification ----------
+// The invoice an LNURL server returned was handed to the payer
+// unchecked — a hostile or buggy server could substitute an invoice
+// for a different amount. The invoice must now be checksum-valid
+// BOLT11 whose encoded amount equals the requested amount exactly.
+{
+  const { assertBolt11Amount } = await import("../src/wallet-core.js");
+  const fakeInvoice = (prefix) => bech32.encode(prefix, new Array(120).fill(0), 4000);
+  ok("rt-f07: exact-amount invoice passes", assertBolt11Amount(fakeInvoice("lnbc1000n"), 100000) === true);
+  assert.throws(() => assertBolt11Amount(fakeInvoice("lnbc2500n"), 100000), /does not match/);
+  ok("rt-f07: wrong-amount invoice is refused", true);
+  assert.throws(() => assertBolt11Amount(fakeInvoice("lnbc"), 100000), /amount-less/);
+  ok("rt-f07: amount-less invoice is refused for a fixed-amount payment", true);
+  assert.throws(() => assertBolt11Amount("lnbc9999999999xnotarealinvoice", 100000), /invalid invoice/);
+  ok("rt-f07: garbage invoice string is refused", true);
+  ok("rt-f07: milli-bitcoin denominations convert exactly", assertBolt11Amount(fakeInvoice("lnbc1m"), 100000000) === true);
+}
+
 console.log(`\n${passed} checks passed`);
