@@ -2330,14 +2330,14 @@ $("actSwap").onclick = () => {
         toAddress: addrOf(toKey),
       });
       if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
-      const ranked = rankSwapRoutes(routes).slice(0, 3);
+      const ranked = rankSwapRoutes(routes, Number(toTok.priceUSD) || null).slice(0, 3);
       msg("wMsg", "");
       $("wList").innerHTML = ranked.map((r, i) => {
         const ex = swapRouteExecutable(r);
         const badges = `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="netitem" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · fees ≈ ${usd(r.gasCostUSD)}</small></span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · fees ≈ ${usd(r.gasCostUSD)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small></span>
             <span>${usd(r.toAmountUSD)}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");

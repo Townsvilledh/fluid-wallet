@@ -1840,4 +1840,24 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     !!found && found.name === "goodname" && found.evm === EVM && found.btc === undefined);
 }
 
+// ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------
+// Ranking trusted LI.FI's own toAmountUSD: a route delivering half
+// the tokens could take the CHEAPEST badge by lying about its dollar
+// value. With an independently sourced receive-token price, a route
+// whose claimed USD disagrees with amount × price by >20% is ranked
+// by the corrected value, flagged, and cannot take the badge.
+{
+  const liar = { id: "liar", toAmount: "50000000", toToken: { decimals: 6 }, toAmountUSD: "1000.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
+  const honest = { id: "honest", toAmount: "99000000", toToken: { decimals: 6 }, toAmountUSD: "99.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
+  const ranked = rankSwapRoutes([liar, honest], 1);
+  ok("rt-f08: the lying route is flagged as a USD mismatch", ranked.find(r => r.id === "liar").usdMismatch === true);
+  ok("rt-f08: the lying route is ranked by its corrected value", ranked[0].id === "honest" && ranked.find(r => r.id === "liar").netUsd === 49);
+  ok("rt-f08: the lying route cannot take the CHEAPEST badge",
+    ranked.find(r => r.id === "honest").cheapest === true && ranked.find(r => r.id === "liar").cheapest === false);
+  ok("rt-f08: honest routes are unflagged", ranked.find(r => r.id === "honest").usdMismatch === false);
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("rt-f08: the app passes its independently sourced token price",
+    appSrc.includes("rankSwapRoutes(routes, Number(toTok.priceUSD)") && appSrc.includes("usdMismatch"));
+}
+
 console.log(`\n${passed} checks passed`);

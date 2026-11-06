@@ -2653,22 +2653,40 @@ function swapRouteDurationSec(route) {
 /** Pure ranking: annotate each route with netUsd (what you receive in
  *  USD minus gas in USD), durationSec, and cheapest / fastest flags, and
  *  sort best-value first. Input routes are NOT mutated. */
-export function rankSwapRoutes(routes) {
+export function rankSwapRoutes(routes, toTokenPriceUsd = null) {
   const scored = (routes || []).map(r => {
     const gas = swapRouteGasUsd(r);
     const out = Number(r?.toAmountUSD);
+    let netUsd = (Number.isFinite(out) ? out : 0) - gas;
+    let usdMismatch = false;
+    // RED-TEAM 2026-11-06 (Finding I): ranking and the CHEAPEST badge
+    // trusted LI.FI's own toAmountUSD — a route delivering HALF the
+    // tokens could badge itself cheapest by lying about the dollar
+    // figure. When the caller supplies an independently sourced price
+    // for the receive token, cross-check: a route whose claimed USD
+    // value disagrees with amount × price by >20% is ranked by the
+    // CORRECTED value, flagged, and cannot take the CHEAPEST badge.
+    if (toTokenPriceUsd > 0 && r?.toAmount != null && r?.toToken?.decimals != null) {
+      const expected = Number(swapRawToAmount(r.toAmount, r.toToken.decimals)) * toTokenPriceUsd;
+      if (expected > 0 && (!Number.isFinite(out) || Math.abs(out - expected) / expected > 0.2)) {
+        usdMismatch = true;
+        netUsd = expected - gas;
+      }
+    }
     return {
       ...r,
       gasCostUSD: gas,
-      netUsd: (Number.isFinite(out) ? out : 0) - gas,
+      netUsd,
+      usdMismatch,
       durationSec: swapRouteDurationSec(r),
       cheapest: false, fastest: false,
     };
   });
   if (scored.length) {
-    let best = scored[0];
-    for (const r of scored) if (r.netUsd > best.netUsd || (r.netUsd === best.netUsd && r.durationSec < best.durationSec)) best = r;
-    best.cheapest = true;
+    const honest = scored.filter(r => !r.usdMismatch);
+    let best = honest[0] || null;
+    for (const r of honest) if (!best || r.netUsd > best.netUsd || (r.netUsd === best.netUsd && r.durationSec < best.durationSec)) best = r;
+    if (best) best.cheapest = true;
     let fast = scored[0];
     for (const r of scored) if (r.durationSec < fast.durationSec || (r.durationSec === fast.durationSec && r.netUsd > fast.netUsd)) fast = r;
     fast.fastest = true;
