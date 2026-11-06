@@ -1596,4 +1596,31 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     appSrc.includes("fluidStorageKeysToWipe(allKeys)") && !appSrc.includes('localStorage.removeItem(VAULT_KEY); localStorage.removeItem("fluid_name")'));
 }
 
+// ---------- agent runtime send serialisation (security audit M6) ----------
+// The daily-cap race: check-then-send must be atomic within the process.
+// The queue primitive is tested directly (strict order, max concurrency
+// 1, a rejected task doesn't jam the queue); the reservation is pinned
+// by source inspection.
+{
+  const { createSendQueue } = await import("../agent/fluid-agent.mjs");
+  const enqueue = createSendQueue();
+  const order = []; let active = 0, maxActive = 0;
+  const task = (id, ms) => async () => {
+    active++; maxActive = Math.max(maxActive, active);
+    await new Promise(r => setTimeout(r, ms));
+    order.push(id); active--;
+    if (id === 2) throw new Error("boom");
+    return id;
+  };
+  const results = await Promise.allSettled([enqueue(task(1, 30)), enqueue(task(2, 5)), enqueue(task(3, 5))]);
+  ok("m6: queued sends run strictly one at a time, in order",
+    maxActive === 1 && order.join(",") === "1,2,3");
+  ok("m6: a failed send rejects its caller but not the queue",
+    results[0].status === "fulfilled" && results[1].status === "rejected" && results[2].status === "fulfilled");
+  const agentSrc = readFileSync(new URL("../agent/fluid-agent.mjs", import.meta.url), "utf8");
+  ok("m6: send() is routed through the queue and reserves before broadcast",
+    agentSrc.includes("send: (args) => enqueueSend(() => sendLocked(args))")
+    && agentSrc.indexOf("RESERVE the spend on disk BEFORE broadcasting") < agentSrc.indexOf("sendTransaction"));
+}
+
 console.log(`\n${passed} checks passed`);

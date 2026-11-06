@@ -9,6 +9,13 @@
 //   controls the wallet. Fund it ONLY with what it is allowed to spend.
 // - Spending caps live in the descriptor policy and are enforced in send()
 //   BEFORE signing (checkAgentPolicy). Over-cap sends throw, always.
+// - Sends are SERIALISED through an in-process queue and the daily spend
+//   is RESERVED on disk before broadcast (audit M6): the cap check, the
+//   reservation and the broadcast are atomic within the process, so two
+//   concurrent send() calls can no longer both pass the daily cap on
+//   the same stale spend figure. A failed broadcast releases its
+//   reservation; a crash after reservation can only over-count the day
+//   (the safe direction — the cap bites early, never late).
 // - Seed exists in plaintext only in memory during a run; on disk it is only
 //   ever the standard encrypted keystore JSON + a 0600 secret file.
 //
@@ -31,6 +38,18 @@ import { NETWORKS, bitcoinAddress, getBitcoinBalance, getPrices, checkAgentPolic
 
 const KS = "keystore.json", DESC = "descriptor.json", SECRET = ".secret", SPEND = "spend.json";
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** A minimal in-process send queue: tasks run one at a time, in the
+ *  order they were enqueued; a rejected task never jams the queue.
+ *  Exported for tests — the serialisation is the M6 fix, not a detail. */
+export function createSendQueue() {
+  let tail = Promise.resolve();
+  return (task) => {
+    const run = tail.then(() => task());
+    tail = run.then(() => {}, () => {});
+    return run;
+  };
+}
 
 export async function createAgentWallet({ name, dir, password, policy } = {}) {
   if (!name || String(name).trim().length < 2) throw new Error("Agent name required (2+ characters).");
@@ -62,6 +81,37 @@ export async function openAgent({ dir, password } = {}) {
   const spendPath = join(dir, SPEND);
   const loadSpend = () => { try { return JSON.parse(readFileSync(spendPath, "utf8")); } catch { return {}; } };
   const spentToday = () => loadSpend()[today()] || 0;
+  const enqueueSend = createSendQueue();
+  // The send itself — only ever run inside the queue, so the sequence
+  // price → cap-check → reserve → broadcast → (release on failure) is
+  // atomic with respect to every other send in this process.
+  const sendLocked = async ({ network = "bsc", to, amount } = {}) => {
+    const net = NETWORKS[network]; if (!net) throw new Error("Unknown network: " + network);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(String(to || ""))) throw new Error("Invalid destination address.");
+    const amt = Number(amount); if (!(amt > 0)) throw new Error("Amount must be positive.");
+    const prices = await getPrices();
+    const price = prices[net.symbol];
+    if (!price) throw new Error(`Cannot value ${net.symbol} right now — refusing to send unpriced (safety default).`);
+    const usd = amt * price;
+    const gate = checkAgentPolicy(descriptor.policy, usd, spentToday());
+    if (!gate.ok) throw new Error("Policy blocked: " + gate.reason);
+    // RESERVE the spend on disk BEFORE broadcasting (audit M6): the
+    // day's total already includes this send while it is in flight.
+    const s = loadSpend(); s[today()] = spentToday() + usd;
+    writeFileSync(spendPath, JSON.stringify(s));
+    try {
+      const p = new ethers.JsonRpcProvider(net.rpc);
+      const tx = await wallet.connect(p).sendTransaction({ to, value: ethers.parseEther(String(amt)) });
+      await tx.wait();
+      return { hash: tx.hash, from: descriptor.keys.evm, network, amount: amt, symbol: net.symbol, usd };
+    } catch (e) {
+      // The send never landed — release the reservation so a transient
+      // failure doesn't eat the day's cap.
+      const s2 = loadSpend(); s2[today()] = Math.max(0, (s2[today()] || 0) - usd);
+      writeFileSync(spendPath, JSON.stringify(s2));
+      throw e;
+    }
+  };
   return {
     descriptor,
     addresses: () => descriptor.keys,
@@ -73,22 +123,8 @@ export async function openAgent({ dir, password } = {}) {
     async btcBalance() { return getBitcoinBalance(descriptor.keys.btc); },
     // Chain-native send, signed by the agent itself. Policy caps are checked
     // against live prices BEFORE signing; unpriceable or over-cap = throw.
-    async send({ network = "bsc", to, amount } = {}) {
-      const net = NETWORKS[network]; if (!net) throw new Error("Unknown network: " + network);
-      if (!/^0x[0-9a-fA-F]{40}$/.test(String(to || ""))) throw new Error("Invalid destination address.");
-      const amt = Number(amount); if (!(amt > 0)) throw new Error("Amount must be positive.");
-      const prices = await getPrices();
-      const price = prices[net.symbol];
-      if (!price) throw new Error(`Cannot value ${net.symbol} right now — refusing to send unpriced (safety default).`);
-      const gate = checkAgentPolicy(descriptor.policy, amt * price, spentToday());
-      if (!gate.ok) throw new Error("Policy blocked: " + gate.reason);
-      const p = new ethers.JsonRpcProvider(net.rpc);
-      const tx = await wallet.connect(p).sendTransaction({ to, value: ethers.parseEther(String(amt)) });
-      await tx.wait();
-      const s = loadSpend(); s[today()] = spentToday() + amt * price;
-      writeFileSync(spendPath, JSON.stringify(s));
-      return { hash: tx.hash, from: descriptor.keys.evm, network, amount: amt, symbol: net.symbol, usd: amt * price };
-    },
+    // Public entry point: serialised through the send queue (audit M6).
+    send: (args) => enqueueSend(() => sendLocked(args)),
   };
 }
 
