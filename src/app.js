@@ -12,6 +12,7 @@ import {
   bitcoinCashAddress, getBitcoinCashBalance, sendBitcoinCash, isValidBchAddress, formatBitcoinCashSendIntent,
   tronAddressFromPhrase, getTronBalances, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
+  suiAddressFromPhrase, getSuiBalances, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
@@ -29,7 +30,7 @@ const CHAINS_KEY = "fluid_chains_v1";
 const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
-  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff",
+  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
@@ -37,6 +38,7 @@ const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionD
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
 let tronAddr = null, tronBalances = [];
 let solAddr = null, solBalances = [];
+let suiAddr = null, suiBalances = [];
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
@@ -114,7 +116,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui";
   getTronBalances(tronAddr).then(rows => { tronBalances = rows; paintAssets(); }).catch(() => paintAssets());
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
@@ -123,6 +125,13 @@ async function renderMain() {
   solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   getSolanaBalances(solAddr).then(rows => { solBalances = rows; paintAssets(); }).catch(() => paintAssets());
+  // Sui (Phase 2b): SLIP-0010 Ed25519 branch (coin type 784) of the
+  // same seed — the same derivation family as Solana, Sui's own path.
+  // Also the future home of the OGO ERA Companion NFT.
+  suiAddr = suiAddressFromPhrase(wallet.mnemonic.phrase);
+  suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
+                 ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  getSuiBalances(suiAddr).then(rows => { suiBalances = rows; paintAssets(); }).catch(() => paintAssets());
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -157,6 +166,10 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of solBalances) {
+    const p = prices[b.symbol] ?? null;
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of suiBalances) {
     const p = prices[b.symbol] ?? null;
     if (p != null) t += Number(b.amount) * p;
   }
@@ -200,6 +213,17 @@ function paintAssets() {
         <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
     });
   }
+  // Sui family rows (tap a row to send on Sui)
+  if (suiBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Sui</p>`);
+    suiBalances.forEach((b, i) => {
+      const p = prices[b.symbol];
+      rows.push(`<div class="row" data-sui="${i}">
+        <span class="coin" style="background:${COIN_COLORS[b.symbol] || "#3b4a7a"}">${b.symbol.slice(0, 1)}</span>
+        <span class="grow"><b>${b.symbol}</b><small>Sui${b.address ? " · Coin" : ""}</small></span>
+        <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
+    });
+  }
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
   rows.push(`<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`);
   rows.push(`<div class="row" data-ltc="1">
@@ -226,6 +250,10 @@ function paintAssets() {
   document.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
     const b = solBalances[Number(r.dataset.sol)];
     if (b) openSolanaSheet(b);
+  });
+  document.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
+    const b = suiBalances[Number(r.dataset.sui)];
+    if (b) openSuiSheet(b);
   });
 }
 
@@ -355,6 +383,10 @@ $("actReceive").onclick = () => {
     <img class="qr" id="qrSol"><p class="mono">${solAddr}</p>
     <button class="btn ghost" id="cpSol">Copy Solana address</button>
     <hr style="border-color:var(--line)">
+    <p class="tag">Sui address (SUI and Sui coins):</p>
+    <img class="qr" id="qrSui"><p class="mono">${suiAddr}</p>
+    <button class="btn ghost" id="cpSui">Copy Sui address</button>
+    <hr style="border-color:var(--line)">
     <p class="tag">Litecoin address:</p>
     <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
     <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
@@ -367,11 +399,13 @@ $("actReceive").onclick = () => {
     <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
     <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
+  qr("qrSui", suiAddr);
   qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
   $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
   $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
+  $("cpSui").onclick = () => copyText(suiAddr, $("cpSui"));
   $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
   $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
   $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
@@ -567,6 +601,52 @@ function openSolanaSheet(tok) {
   };
 }
 
+// ---------- Sui sheet ----------
+// Mirrors the Solana sheet: review → human-readable sentence → confirm.
+// Transactions are built with the Sui SDK but signed locally by sendSui
+// (intent signing with the wallet's derived Ed25519 key); only the
+// signed transaction touches the network.
+function openSuiSheet(tok) {
+  let pendingSui = null;
+  openSheet(`<h3>Send ${tok.symbol} on Sui</h3>
+    <p><b>${fmt(tok.amount)} ${tok.symbol}</b> · from <span class="mono">${suiAddr}</span></p>
+    <input id="uTo" placeholder="Recipient Sui address (0x…)" autocapitalize="none">
+    <input id="uAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="uReview">Review send</button>
+    <div id="uIntent" class="hidden">
+      <p class="seed" id="uIntentText"></p>
+      <button class="btn" id="uConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="uMsg"></p>
+    <p class="tag">${tok.address
+      ? "Token sends pay a small SUI fee — keep some SUI in this wallet."
+      : "Sui network fees are paid in SUI and are tiny (about 0.001 SUI). Sends are final."}</p>`);
+  $("uReview").onclick = () => {
+    const to = $("uTo").value.trim(), amount = $("uAmt").value.trim();
+    if (!isValidSuiAddress(to)) return msg("uMsg", "That is not a valid Sui address (0x + hex).");
+    if (!amount || Number(amount) <= 0) return msg("uMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("uMsg", "Amount is more than your balance.");
+    pendingSui = { to, amount };
+    $("uIntentText").textContent = formatSuiSendIntent({ amount, symbol: tok.symbol, to });
+    show("uIntent"); msg("uMsg", "");
+  };
+  $("uConfirm").onclick = async () => {
+    if (!pendingSui) return;
+    try {
+      msg("uMsg", "Signing locally and executing…", true);
+      const { hash } = await sendSui(wallet.mnemonic.phrase, {
+        to: pendingSui.to, amount: pendingSui.amount,
+        token: tok.address ? { address: tok.address, decimals: tok.decimals } : null,
+      });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingSui.amount, symbol: tok.symbol, to: pendingSui.to,
+        link: `${SUI_EXPLORER}/mainnet/tx/${hash}`, explorer: SUI_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingSui = null; closeSheet(); renderMain();
+    } catch (e) { msg("uMsg", "Send failed: " + e.message); }
+  };
+}
+
 // ---------- Litecoin sheet ----------
 // Mirrors the Tron/Solana sheets: review → human-readable sentence →
 // confirm. Built and signed locally by sendLitecoin (same @scure stack
@@ -753,6 +833,12 @@ function swapTokenList(netKey) {
     return [{ symbol: "SOL", address: SOLANA_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
             ...SOLANA_TOKENS.map(t => ({ ...t, native: false }))];
   }
+  if (netKey === "sui") {
+    // LI.FI addresses Sui tokens by full coin type; native SUI is the
+    // zero-padded 0x2::sui::SUI type (see core).
+    return [{ symbol: "SUI", address: SUI_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
+            ...SUI_TOKENS.map(t => ({ ...t, native: false }))];
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: LIFI_NATIVE_TOKEN, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -767,7 +853,7 @@ function swapDurationText(sec) {
 }
 $("actSwap").onclick = () => {
   pendingSwap = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui"];
   const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
   const fromKey0 = networkKey === "sepolia" ? "bsc" : networkKey;
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
@@ -839,12 +925,13 @@ $("actSwap").onclick = () => {
       msg("wMsg", "Checking your balance…", true);
       const bals = fromKey === "tron" ? await getTronBalances(tronAddr)
         : fromKey === "solana" ? await getSolanaBalances(solAddr)
+        : fromKey === "sui" ? await getSuiBalances(suiAddr)
         : await getBalances(wallet, fromKey);
       const mine = bals.find(b => fromTok.native ? !b.address : (b.address || "").toLowerCase() === fromTok.address.toLowerCase());
       if (!mine || Number(amount) > Number(mine.amount))
         return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${mine ? fmt(mine.amount) : "0"}).`);
       msg("wMsg", "Searching routes across chains…", true);
-      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : wallet.address);
+      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : wallet.address);
       const routes = await getSwapRoutes({
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
@@ -887,6 +974,11 @@ $("actSwap").onclick = () => {
         hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
         srcExplorer = SOLANA_EXPLORER;
         srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+      } else if (fromKey === "sui") {
+        // Unreachable in practice — Sui-source route cards are disabled
+        // by swapRouteExecutable — but never fall through to the EVM
+        // signer with a Sui route.
+        throw new Error("Fluid can't sign swap steps starting on Sui yet — use the Sui rows to send SUI directly.");
       } else {
         hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
           // Keep a device record of every approval Fluid makes, so the user
@@ -897,7 +989,7 @@ $("actSwap").onclick = () => {
         });
         srcExplorer = NETWORKS[fromKey].explorer;
       }
-      const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : wallet.address;
+      const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));

@@ -5,6 +5,9 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { Keypair as SolKeypair, PublicKey as SolPublicKey } from "@solana/web3.js";
+import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_LIFI_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
+import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { blake2b } from "@noble/hashes/blake2.js";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -432,4 +435,76 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const compact = Uint8Array.from([...pad32(r), ...pad32(s)]);
   ok("bch: built tx signature verifies over the ForkID digest",
     secp256k1.verify(compact, digest, PUB, { prehash: false }));
+}
+
+// 31. Phase 2b — Sui (SLIP-0010 Ed25519, coin type 784, m/44'/784'/0'/0'/0').
+// The derivation REUSES the Solana branch's SLIP-0010 implementation —
+// only the path and the address encoding differ (BLAKE2b-256 of
+// 0x00 || pubkey, hex, instead of Base58 of the pubkey). The address
+// vectors below were cross-checked live during the build against
+// @mysten/sui's own Ed25519Keypair three ways (deriveKeypair default
+// path, deriveKeypair explicit path, fromSecretKey of Fluid's derived
+// seed) — the SDK agreement is re-asserted inline here.
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const ABANDON_SUI = "0x5e93a736d04fbb25737aa40bee40171ef79f65fae833749e3c089fe7cc2161f1";
+  const KNOWN_SUI = "0xc88ef07b9b8b2fc3b7daad9478f4e1337f01792e2eab9c3794494e610636026e";
+  ok("sui: abandon…about address vector", suiAddressFromPhrase(ABANDON) === ABANDON_SUI);
+  ok("sui: known-phrase address vector", suiAddressFromPhrase(KNOWN_PHRASE) === KNOWN_SUI);
+  ok("sui: @mysten/sui deriveKeypair (default path) agrees",
+    SuiEd25519Keypair.deriveKeypair(ABANDON).getPublicKey().toSuiAddress() === suiAddressFromPhrase(ABANDON)
+    && SuiEd25519Keypair.deriveKeypair(KNOWN_PHRASE).getPublicKey().toSuiAddress() === suiAddressFromPhrase(KNOWN_PHRASE));
+  ok("sui: @mysten/sui deriveKeypair (explicit path) agrees",
+    SuiEd25519Keypair.deriveKeypair(ABANDON, "m/44'/784'/0'/0'/0'").getPublicKey().toSuiAddress() === ABANDON_SUI);
+  ok("sui: @mysten/sui fromSecretKey of Fluid's SLIP-0010 seed agrees",
+    SuiEd25519Keypair.fromSecretKey(suiSeedFromSeed(mnemonicToSeedSync(ABANDON))).getPublicKey().toSuiAddress() === ABANDON_SUI);
+  ok("sui: seed-level derivation agrees", suiAddressFromSeed(mnemonicToSeedSync(ABANDON)) === ABANDON_SUI);
+  // Independent recomputation of the address recipe from primitives:
+  // BLAKE2b-256(0x00 || ed25519 pubkey of the derived seed), hex.
+  {
+    const pub = ed25519.getPublicKey(suiSeedFromSeed(mnemonicToSeedSync(ABANDON)));
+    const digest = blake2b(Uint8Array.from([0, ...pub]), { dkLen: 32 });
+    ok("sui: address is blake2b-256(0x00||pubkey)", "0x" + Buffer.from(digest).toString("hex") === ABANDON_SUI);
+  }
+  ok("sui: address format is 0x + 64 lowercase hex",
+    /^0x[0-9a-f]{64}$/.test(suiAddressFromPhrase(ABANDON)) && /^0x[0-9a-f]{64}$/.test(suiAddressFromPhrase(KNOWN_PHRASE)));
+  ok("sui: derivation is seed-sensitive and deterministic",
+    suiAddressFromPhrase(KNOWN_PHRASE) !== ABANDON_SUI && suiAddressFromPhrase(ABANDON) === suiAddressFromPhrase(ABANDON));
+
+  // Address validation / normalization (Sui pads short forms: "0x2" IS
+  // the 0x2 package address, so 1..64 hex digits are valid input)
+  ok("sui: valid addresses pass", isValidSuiAddress(ABANDON_SUI) && isValidSuiAddress("0x2") && isValidSuiAddress(KNOWN_SUI.toUpperCase().replace("0X", "0x")));
+  ok("sui: normalization pads and lowercases", normalizeSuiAddress("0x2") === "0x0000000000000000000000000000000000000000000000000000000000000002"
+    && normalizeSuiAddress(ABANDON_SUI.toUpperCase().replace("0X", "0x")) === ABANDON_SUI);
+  ok("sui: oversized and prefix-less forms refused", !isValidSuiAddress("0x" + "a".repeat(65)) && !isValidSuiAddress(ABANDON_SUI.slice(2)) && !isValidSuiAddress("0x"));
+  ok("sui: Solana/Tron addresses and garbage refused", !isValidSuiAddress("HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk")
+    && !isValidSuiAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t") && !isValidSuiAddress("hello") && !isValidSuiAddress("") && !isValidSuiAddress(null));
+
+  // MIST <-> SUI (9 decimals)
+  ok("sui: mist conversions", suiMistToSui(1_500_000_000) === "1.5" && suiMistToSui(0) === "0.0"
+    && suiSuiToMist("1.5") === 1_500_000_000n && suiSuiToMist("0.000000001") === 1n && suiSuiToMist("2") === 2_000_000_000n);
+
+  // Token constants — both verified live 2026-11-06 against the
+  // fullnode's coin metadata + LI.FI's token list. NOTE: the often-
+  // quoted "USDT" type 0x5d4b3025…::coin::COIN is on-chain a USDC
+  // (metadata name "USD Coin"); the USDT below reads name "Tether".
+  ok("sui: native coin type", SUI_COIN_TYPE === "0x2::sui::SUI");
+  ok("sui: token constants are the verified coin types", SUI_TOKENS[0].symbol === "USDC"
+    && SUI_TOKENS[0].address === "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC"
+    && SUI_TOKENS[1].symbol === "USDT"
+    && SUI_TOKENS[1].address === "0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT"
+    && SUI_TOKENS.every(t => t.decimals === 6));
+
+  const suiIntent = formatSuiSendIntent({ amount: "2.5", symbol: "SUI", to: ABANDON_SUI });
+  ok("sui: intent is human-readable", suiIntent.includes("Send 2.5 SUI") && suiIntent.includes("on Sui") && suiIntent.includes("Confirm?"));
+
+  // Swap wiring: LI.FI chain id (MVM) + native token + direction gating
+  ok("sui: LI.FI chain id and native token", SUI_LIFI_CHAIN_ID === 9270000000000000
+    && SUI_SWAP_NATIVE_TOKEN === "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+    && swapChainOf("sui").chainId === 9270000000000000 && swapChainOf("sui").name === "Sui");
+  const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus", transactionRequest: { data: "AAAA" } }] };
+  ok("sui: swap routes sourced from Sui are listed but not executable yet",
+    swapRouteExecutable(suiRoute).ok === false && /Sui/.test(swapRouteExecutable(suiRoute).reason) && /can't sign/.test(swapRouteExecutable(suiRoute).reason));
+  const intoSui = { fromChainId: 56, toChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
+  ok("sui: routes INTO Sui from an EVM chain stay executable", swapRouteExecutable(intoSui).ok === true && swapRouteExecutable(intoSui).steps.length === 1);
 }

@@ -7,9 +7,10 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58, base58check, base64 } from "@scure/base";
+import { base58, base58check, base64, hex } from "@scure/base";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
+import { blake2b } from "@noble/hashes/blake2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -18,6 +19,9 @@ import {
   Transaction as SolTransaction, TransactionInstruction as SolTxInstruction,
   VersionedTransaction as SolVersionedTransaction,
 } from "@solana/web3.js";
+import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { Transaction as SuiTransaction } from "@mysten/sui/transactions";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -218,7 +222,7 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
-  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT" };
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -232,7 +236,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -990,6 +994,161 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
   return { hash: signature, createsAta };
 }
 
+// ---------- Sui (SLIP-0010 Ed25519 branch, coin type 784) ----------
+// Sui keys are Ed25519, like Solana's — so Sui reuses the SAME SLIP-0010
+// derivation as the Solana branch (deriveSlip10Ed25519), at Sui's own
+// path m/44'/784'/0'/0'/0' (the @mysten/sui default). The address is not
+// the public key itself (as on Solana) but
+//   "0x" || hex(BLAKE2b-256(0x00 || pubkey))
+// where 0x00 is Sui's Ed25519 signature-scheme flag. Cross-checked
+// against @mysten/sui's own Ed25519Keypair.deriveKeypair on two
+// mnemonics — all derivations agree (see tests). Same seed phrase, same
+// backup — a third curve branch of it. Strategic double-duty: Sui is
+// also the future home of the OGO ERA Companion NFT (a Sui object), so
+// this account is the one the game will read.
+const SUI_RPC = "https://fullnode.mainnet.sui.io:443";
+export const SUI_EXPLORER = "https://suiscan.xyz";
+export const SUI_COIN_TYPE = "0x2::sui::SUI";
+export const SUI_TOKENS = [
+  // Circle's native USDC on Sui — verified live 2026-11-06 against the
+  // fullnode's coin metadata (name "USDC", 6 decimals, ~$335M supply)
+  // and LI.FI's Sui token list.
+  { symbol: "USDC", address: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC", decimals: 6 },
+  // USDT on Sui — verified live 2026-11-06, and the obvious candidate
+  // was WRONG: 0x5d4b3025…::coin::COIN, often listed as "USDT", has
+  // on-chain metadata name "USD Coin" / symbol USDC (it is the Wormhole
+  // USDC). The coin below is the one whose metadata reads name
+  // "Tether" / symbol USDT (module literally `usdt`), is LI.FI's
+  // first-listed Sui USDT, and carries a live ~6.78M supply. The legacy
+  // Wormhole-bridged USDT is 0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN
+  // (metadata "Tether USD") — not wired as a row.
+  { symbol: "USDT", address: "0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT", decimals: 6 },
+];
+// Gas reserve kept back on native sends (MIST): a simple Sui transfer
+// costs roughly 0.001 SUI all-in; 0.002 leaves headroom without ever
+// letting a send strand the fee.
+const SUI_GAS_RESERVE_MIST = 2000000n;
+
+/** The wallet's Sui private seed: BIP39 seed → m/44'/784'/0'/0'/0'. */
+export function suiSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 784, 0, 0, 0]).key;
+}
+function suiKeypair(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return SuiEd25519Keypair.fromSecretKey(suiSeedFromSeed(mnemonicToSeedSync(clean)));
+}
+/** Sui address (0x + 64 hex) for a raw BIP39 seed. */
+export function suiAddressFromSeed(seed) {
+  const pub = ed25519.getPublicKey(suiSeedFromSeed(seed));
+  const digest = blake2b(Uint8Array.from([0, ...pub]), { dkLen: 32 });
+  return "0x" + hex.encode(digest);
+}
+/** The Sui address of the wallet's main account. */
+export function suiAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return suiAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** Canonical Sui address form: 0x + 64 lowercase hex (left-padded with
+ *  zeros — Sui itself accepts and displays short forms like "0x2"). */
+export function normalizeSuiAddress(address) {
+  const s = String(address || "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,64}$/.test(s)) return null;
+  return "0x" + s.slice(2).padStart(64, "0");
+}
+/** A valid Sui address: 0x-prefixed hex of at most 32 bytes. */
+export function isValidSuiAddress(address) {
+  return normalizeSuiAddress(address) !== null;
+}
+export function suiMistToSui(mist) { return ethers.formatUnits(BigInt(mist), 9); }
+export function suiSuiToMist(amount) { return ethers.parseUnits(String(amount), 9); }
+
+async function suiRpc(method, params) {
+  const res = await fetch(SUI_RPC, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error("Sui network error (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Sui returned an unreadable reply.");
+  if (data.error) throw new Error("Sui rejected the request: " + (data.error.message || "unknown error"));
+  return data.result;
+}
+/** Sui balances shaped like getBalances(): native SUI first (address
+ *  null), then the stablecoins. Per-type reads (suix_getBalance) so a
+ *  failed token read degrades to that token's zero — it never fails
+ *  the whole lookup; only the native read is load-bearing. */
+export async function getSuiBalances(address) {
+  if (!isValidSuiAddress(address)) throw new Error("That is not a valid Sui address.");
+  const owner = normalizeSuiAddress(address);
+  const out = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 }];
+  const bal = await suiRpc("suix_getBalance", [owner, SUI_COIN_TYPE]);
+  out[0].amount = suiMistToSui((bal && bal.totalBalance) ?? 0); // no account on-chain yet = 0
+  for (const t of SUI_TOKENS) {
+    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
+    try {
+      const b = await suiRpc("suix_getBalance", [owner, t.address]);
+      row.amount = ethers.formatUnits(BigInt((b && b.totalBalance) ?? 0), t.decimals);
+    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
+    out.push(row);
+  }
+  return out;
+}
+/** The signer principle, Sui edition: a sentence, never a blob. */
+export function formatSuiSendIntent({ amount, symbol, to }) {
+  return `Send ${amount} ${symbol} to ${to} on Sui. Confirm?`;
+}
+
+let _suiClient = null;
+function suiClient() {
+  if (!_suiClient) _suiClient = new SuiJsonRpcClient({ url: SUI_RPC, network: "mainnet" });
+  return _suiClient;
+}
+/** Build, sign (locally, Sui intent signing via the SDK keypair) and
+ *  execute a SUI transfer or a coin transfer. `token` is null for
+ *  native SUI, otherwise a SUI_TOKENS {address, decimals}. Returns
+ *  {hash} — the transaction digest. */
+export async function sendSui(phrase, { to, amount, token = null }) {
+  if (!isValidSuiAddress(to)) throw new Error("That is not a valid Sui address.");
+  const recipient = normalizeSuiAddress(to);
+  const kp = suiKeypair(phrase);
+  const from = kp.getPublicKey().toSuiAddress();
+  const client = suiClient();
+  const tx = new SuiTransaction();
+  tx.setSender(from);
+  if (!token) {
+    const mist = suiSuiToMist(amount);
+    if (mist <= 0n) throw new Error("Enter an amount.");
+    const bal = await client.getBalance({ owner: from, coinType: SUI_COIN_TYPE });
+    if (mist + SUI_GAS_RESERVE_MIST > BigInt(bal.totalBalance)) {
+      throw new Error("Not enough SUI to cover the amount plus the network fee.");
+    }
+    // Native sends split straight off the gas coin — the canonical
+    // Sui wallet pattern; the remainder stays as gas/change.
+    const [coin] = tx.splitCoins(tx.gas, [mist]);
+    tx.transferObjects([coin], recipient);
+  } else {
+    const raw = ethers.parseUnits(String(amount), token.decimals ?? 6);
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    const { data: coins } = await client.getCoins({ owner: from, coinType: token.address });
+    const sorted = [...coins].sort((a, b) => (BigInt(b.balance) > BigInt(a.balance) ? 1 : BigInt(b.balance) < BigInt(a.balance) ? -1 : 0));
+    const picked = []; let sum = 0n;
+    for (const c of sorted) { picked.push(c); sum += BigInt(c.balance); if (sum >= raw) break; }
+    if (sum < raw) throw new Error(`Not enough ${token.symbol} on Sui (you have ${ethers.formatUnits(sum, token.decimals ?? 6)}).`);
+    // Merge fragments into the largest coin, then split the exact
+    // amount off it — the sender keeps the change automatically.
+    if (picked.length > 1) tx.mergeCoins(picked[0].coinObjectId, picked.slice(1).map(c => c.coinObjectId));
+    const [coin] = tx.splitCoins(picked[0].coinObjectId, [raw]);
+    tx.transferObjects([coin], recipient);
+  }
+  const res = await client.signAndExecuteTransaction({ signer: kp, transaction: tx, options: { showEffects: true } });
+  const status = res.effects && res.effects.status && res.effects.status.status;
+  if (status && status !== "success") {
+    throw new Error("Sui rejected the transaction: " + (res.effects.status.error || status));
+  }
+  return { hash: res.digest };
+}
+
 // ---------- Fluid Names: usernames that resolve under the Fluid domain ----------
 // Your name is `you.fluid.is-a.dev`. The registry is a public JSON file in
 // the open-source repo (names.json, served from the wallet site itself) —
@@ -1233,11 +1392,18 @@ export const TRON_SWAP_NATIVE_TOKEN = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
 // its "native token" is the System Program id, per LI.FI's chain list.
 export const SOLANA_LIFI_CHAIN_ID = 1151111081099710;
 export const SOLANA_SWAP_NATIVE_TOKEN = "11111111111111111111111111111111";
+// Sui (chainType MVM on LI.FI) is addressed by 0x coin types there; its
+// "native token" is the SUI coin type in zero-padded long form, exactly
+// as LI.FI's chain list carries it (verified live 2026-11-06 against
+// /v1/chains?chainTypes=…, which also fixed the chain id below).
+export const SUI_LIFI_CHAIN_ID = 9270000000000000;
+export const SUI_SWAP_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
 /** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
- *  a non-EVM family key ("tron", "solana"). Null when the key is unknown. */
+ *  a non-EVM family key ("tron", "solana", "sui"). Null when unknown. */
 export function swapChainOf(chainKey) {
   if (chainKey === "tron") return { chainId: TRON_LIFI_CHAIN_ID, name: "Tron" };
   if (chainKey === "solana") return { chainId: SOLANA_LIFI_CHAIN_ID, name: "Solana" };
+  if (chainKey === "sui") return { chainId: SUI_LIFI_CHAIN_ID, name: "Sui" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -1369,8 +1535,18 @@ export function swapRouteExecutable(route) {
       ? { ok: true, svm: true, steps }
       : { ok: false, reason: "This route's Solana steps carry no signable transaction — pick another route." };
   }
+  // Sui-sourced routes: LI.FI's MVM step payload shape could not be
+  // live-verified in the Phase 2b build session (LI.FI answered the
+  // /quote probes with HTTP 429 rate-limit), and Fluid never signs a
+  // payload shape it has not inspected — the same discipline that kept
+  // Tron routes disabled in Phase 1a. Routes INTO Sui from an EVM
+  // chain are unaffected: their signable steps are the EVM ones, and
+  // the bridge delivers to the Sui address.
+  if (Number(route?.fromChainId) === SUI_LIFI_CHAIN_ID) {
+    return { ok: false, reason: "Fluid can't sign swap steps starting on Sui yet — send from the Sui rows instead, or pick a route starting on an EVM chain or Solana." };
+  }
   // Fluid signs with an EVM key on EVM chains. Routes sourced from a
-  // non-EVM family (Tron, and later Sui/…) may carry steps, but
+  // non-EVM family (Tron, …) may carry steps, but
   // their signatures are a different scheme — they stay unexecutable
   // here until that family's signer lands, never faked.
   const evmIds = new Set(Object.values(NETWORKS).map(n => n.chainId));
