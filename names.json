@@ -1,1 +1,10 @@
-{}
+{
+  "ethuram": {
+    "evm": "0x0EBf5563F905E3B9D58718E28E08143511DC763b",
+    "btc": "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw"
+  },
+  "dripbot": {
+    "evm": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
+    "btc": "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn"
+  }
+}
