@@ -18,9 +18,13 @@ Where Fluid itself charges a fee, the fee is split:
 
 **All settlement is in Bitcoin over the Lightning Network.** Fees may be
 *collected* wherever the flow lives (RAIN token on Arc, game currency,
-future swap fees), but they are *settled* the same way every time:
+swap fees), but they are *settled* the same way every time:
 accrued fees are swept, converted to BTC, and paid out to the two
-Lightning addresses in the `FEE_SPLIT` config (`src/wallet-core.js`).
+Fluid usernames in the `FEE_SPLIT` config (`src/wallet-core.js`) —
+**ethuram** and **dripbot** — resolved to addresses through the Fluid
+Names registry (`names.json`) at settlement time (`feeLegTargets()`);
+a registry entry's `ln` field is that leg's Lightning destination
+when present.
 
 **The $2 rule (Ethuram, 2026-11-06):** fee profit never sits idle in
 chain assets (BNB, USDT, …). Whenever accumulated unsettled fees across
@@ -32,11 +36,16 @@ automatic. The 40% lands in the Drip Wallet (autonomous agent wallet,
 EVM `0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B`, BTC
 `bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn`, paired with
 @bitcoinornatin), from where the weekly drip distributes it.
-Lightning addresses: **to be provided** (treasury + DripBot).
-DripBot's 40% is not profit it keeps — it funds the weekly follower
-drip and the OGO ERA player pools; see `docs/DRIPBOT.md`. The split
-math (`splitFee`, remainder to treasury) is unit-tested and does not
-depend on the addresses being set.
+No external Lightning address is ever requested from anyone:
+settlement resolves by Fluid username. DripBot's Lightning identity
+is created and held by the keeper (DripBot's operator); Ethuram's
+60% resolves by his username to his own Fluid wallet. A leg whose
+registry entry has no `ln` field yet settles to its BTC/EVM address
+or waits for its Lightning identity — the split math (`splitFee`,
+remainder to treasury) is unit-tested and does not depend on any
+address being set. DripBot's 40% is not profit it keeps — it funds
+the weekly follower drip and the OGO ERA player pools; see
+`docs/DRIPBOT.md`.
 
 ## Where fees apply
 1. **RAIN claims (wallet):** `contracts/rain-distributor.sol` takes
@@ -55,7 +64,18 @@ depend on the addresses being set.
    Who qualifies (top-100 standings, lottery draw, referral tally) is
    computed by the keeper (DripBot) from the game's published activity
    data; the percentages and settlement rail are fixed here.
-3. **Future in-app swaps:** same rule when they land.
+3. **In-app swaps (the standard fee):** swaps and in-app conversions
+   carry Fluid's standard platform fee of **0.5%**
+   (`PLATFORM_FEE_BPS = 50` in the wallet core, set by Ethuram
+   2026-11-06), disclosed as its own clause in the swap confirmation
+   sentence — computed from the quote's actual amounts, never hidden
+   in a spread. Plain sends/receives never carry it. Collection rides
+   LI.FI's integrator fee into the DripBot agent wallet; LI.FI pays
+   integrator fees only to a wallet configured in its Partner Portal,
+   so collection activates once that one-time portal registration is
+   done (`PLATFORM_FEE_COLLECTION_ENABLED` in the wallet core gates
+   the parameter until then — the fee is computed and disclosed from
+   the same constant either way).
 
 ## What Fluid never does
 - No fee on plain sends/receives of your own money between your keys.

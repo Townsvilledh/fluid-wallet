@@ -2731,16 +2731,71 @@ export function findNameForAddresses(registry, { evm = null, btc = null } = {}) 
 }
 
 // ---------- Platform fees: cheapest-route principle + 60/40 split, settled in BTC over Lightning ----------
-// Fluid's own fees (RAIN claim fee, OGO ERA game rake, future swap fee) are
-// split 60% to Ethuram's treasury and 40% to DripBot — and ALL settlement
-// is in Bitcoin over the Lightning Network: fees accrue wherever they are
-// collected, a keeper (DripBot) sweeps them, converts to BTC and pays both
-// Lightning addresses. Lightning addresses are filled in when provided;
-// the split math never waits on them.
+// Fluid's own fees (RAIN claim fee, OGO ERA game rake, the swap fee
+// below) are split 60% to Ethuram's treasury and 40% to DripBot — and
+// ALL settlement is in Bitcoin over the Lightning Network: fees accrue
+// wherever they are collected, a keeper (DripBot) sweeps them, converts
+// to BTC and pays both legs. Settlement targets are Fluid USERNAMES —
+// "ethuram" (60%) and "dripbot" (40%) — resolved to addresses through
+// the Fluid Names registry (names.json) at settlement time via
+// feeLegTargets(); a registry entry's `ln` field is that leg's
+// Lightning destination when present. Nobody is ever asked for an
+// external Lightning address: DripBot's Lightning identity is created
+// and held by the keeper, and Ethuram's leg lands in his own Fluid
+// wallet. The split math never waits on resolution.
+
+/** Ethuram's standard platform fee: 0.5%, set by his decision on
+ *  2026-11-06. Charged on swaps and in-app conversions ONLY (see
+ *  platformFeeApplies) — plain sends and receives are network-fee-only,
+ *  always. This constant is the single source: the LI.FI collection
+ *  parameter, the quote disclosure and every fee computation derive
+ *  from it, never from a second copy of the number. */
+export const PLATFORM_FEE_BPS = 50;
+/** The same rate as a decimal fraction (0.005) — the shape LI.FI's
+ *  integrator `fee` parameter expects. */
+export const PLATFORM_FEE_FRACTION = PLATFORM_FEE_BPS / 10000;
+/** "0.5%" — the label the quote disclosure shows. Derived, not typed. */
+export function platformFeePercentText() {
+  const pct = PLATFORM_FEE_BPS / 100;
+  return (Number.isInteger(pct) ? String(pct) : String(parseFloat(pct.toFixed(2)))) + "%";
+}
+/** The platform fee on a raw integer amount (smallest units, BigInt
+ *  math): fee = floor(amount × PLATFORM_FEE_BPS / 10000). Rounding:
+ *  the fee is floored, so fee + net == amount EXACTLY (net is simply
+ *  amount − fee) — rounding can never create or destroy value, and
+ *  the sub-unit remainder of the division stays with the user's net.
+ *  Amounts under 200 raw units (fee < 1 unit) pay 0. LI.FI's fee is
+ *  defined on the swap's fromAmount, so this is too. */
+export function platformFeeOn(rawAmount) {
+  const a = typeof rawAmount === "bigint" ? rawAmount : BigInt(Math.max(0, Math.floor(Number(rawAmount) || 0)));
+  if (a <= 0n) return 0n;
+  return (a * BigInt(PLATFORM_FEE_BPS)) / 10000n;
+}
+/** Scope of the standard fee, pinned by tests: asset exchanges Fluid
+ *  routes ("swap", "conversion") carry it; moving your own money
+ *  ("send", "receive") never does. */
+export function platformFeeApplies(kind) {
+  return kind === "swap" || kind === "conversion";
+}
+/** LI.FI collection switch. LI.FI's docs ("Monetizing the
+ *  integration", checked 2026-11-06) are explicit: the `fee` parameter
+ *  pays out to the fee wallet CONFIGURED for the integrator in the
+ *  LI.FI Partner Portal (portal.li.fi) — an integrator string with no
+ *  portal account has no configured wallet to forward to. Fluid's
+ *  "fluid-wallet" integrator is not registered yet, so collection
+ *  stays OFF: quotes must never skim a fee nobody can claim. Flip to
+ *  true only after the portal registration designates the DripBot
+ *  agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) as the EVM fee
+ *  wallet (Solana fees would go to the agent wallet's Solana address).
+ *  The fee is still COMPUTED and DISCLOSED on every swap confirmation
+ *  (formatSwapIntent) from the same constant, so the price a user sees
+ *  is the price charged the moment collection activates. */
+export const PLATFORM_FEE_COLLECTION_ENABLED = false;
+
 export const FEE_SPLIT = {
   currency: "BTC", rail: "lightning",
-  treasury: { share: 60, label: "Ethuram (treasury)", evmWallet: "0x7d0e382D1267C38EE5d5Ce806018d93da241750e", lnAddress: null },
-  dripbot: { share: 40, label: "DripBot", x: "@bitcoinornatin", hashtag: "#bitcoinornothing", lnAddress: null,
+  treasury: { share: 60, label: "Ethuram (treasury)", username: "ethuram" },
+  dripbot: { share: 40, label: "DripBot", username: "dripbot", x: "@bitcoinornatin", hashtag: "#bitcoinornatin",
     // Autonomous agent wallet created 2026-11-06 (agent/fluid-agent.mjs,
     // mode: autonomous, paired with @bitcoinornatin). Public addresses only:
     agentWallet: { evm: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", btc: "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn" },
@@ -2764,6 +2819,46 @@ export function splitFee(amount) {
   const a = Math.floor(Number(amount));
   const dripbot = Math.floor((a * FEE_SPLIT.dripbot.share) / 100);
   return { treasury: a - dripbot, dripbot };
+}
+/** Resolve the two settlement legs to addresses through the Fluid
+ *  Names registry — the names.json object (username → {evm, btc, ln?},
+ *  the same shape buildNameEntry produces). Resolution is by USERNAME,
+ *  always: the keeper looks up "ethuram" and "dripbot", never a
+ *  hard-coded or hand-supplied address. `ln` is null until the name's
+ *  entry carries one (DripBot's Lightning identity is keeper-created;
+ *  the treasury leg's is Ethuram's own in-app Lightning) — a null ln
+ *  means that leg settles to its btc/evm address or waits for the
+ *  Lightning identity, never that anyone gets asked for an external
+ *  Lightning address. A missing registry entry resolves to all-null
+ *  addresses with the username and share intact. */
+export function feeLegTargets(registry) {
+  const leg = (cfg) => {
+    const e = (registry && typeof registry === "object") ? registry[cfg.username] : null;
+    return { username: cfg.username, share: cfg.share, label: cfg.label,
+             evm: e?.evm ?? null, btc: e?.btc ?? null, ln: e?.ln ?? null };
+  };
+  return [leg(FEE_SPLIT.treasury), leg(FEE_SPLIT.dripbot)];
+}
+/** Keeper's settlement-trigger input: total the unsettled fee pot in
+ *  USD from per-chain fee-wallet holdings. Each holding is
+ *  { amount, priceUsd } — amount in whole units of the asset, priceUsd
+ *  the USD price of ONE unit from the app's existing price sources
+ *  (the keeper passes getVerifiedPrice results), or null when no
+ *  source prices that asset. Unpriced holdings are EXCLUDED from the
+ *  total and counted in `unpriced` — the keeper never settles on a
+ *  guessed price (the same discipline as getVerifiedPrice). `due`
+ *  applies the $2 rule (feeSettlementDue). Pure: no fetching here, so
+ *  the wallet bundle and the server-side keeper share one accounting. */
+export function feePotReport(holdings) {
+  let totalUsd = 0, priced = 0, unpriced = 0;
+  for (const h of holdings || []) {
+    const amt = Number(h?.amount);
+    if (!(amt > 0)) continue;
+    const px = h?.priceUsd == null ? null : Number(h.priceUsd);
+    if (px == null || !Number.isFinite(px) || px <= 0) { unpriced++; continue; }
+    totalUsd += amt * px; priced++;
+  }
+  return { totalUsd, priced, unpriced, due: feeSettlementDue(totalUsd) };
 }
 // OGO ERA has its OWN fee split (set by Ethuram 2026-11-06), different
 // from the wallet split: the game gives most of its fees back to players.
@@ -3367,6 +3462,32 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
 // once the source steps are mined. No Fluid server, no Fluid custody.
 export const LIFI_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
 const LIFI_API = "https://li.quest/v1";
+/** Fluid's LI.FI integrator string (sent on every route/quote request).
+ *  NOTE: it is not yet registered in the LI.FI Partner Portal, which is
+ *  why fee collection is gated off — see PLATFORM_FEE_COLLECTION_ENABLED. */
+export const LIFI_INTEGRATOR = "fluid-wallet";
+/** Build the POST /v1/routes body. Pure and exported so tests can pin
+ *  exactly what reaches LI.FI: the integrator string always; the `fee`
+ *  fraction (PLATFORM_FEE_FRACTION of fromAmount) ONLY when collection
+ *  is enabled — sending it before the portal registration would skim a
+ *  fee with no configured wallet to receive it. */
+export function buildLifiRoutesRequest({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = PLATFORM_FEE_COLLECTION_ENABLED } = {}) {
+  const options = { integrator: LIFI_INTEGRATOR, order: "RECOMMENDED" };
+  if (includeFee) options.fee = PLATFORM_FEE_FRACTION;
+  return { fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount: String(fromAmount), fromAddress, toAddress, options };
+}
+/** Build the GET /v1/quote params (same fee gating as the routes body;
+ *  on /quote, integrator and fee are top-level parameters). */
+export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = PLATFORM_FEE_COLLECTION_ENABLED } = {}) {
+  const q = new URLSearchParams({
+    fromChain: fromChainId, toChain: toChainId,
+    fromToken: fromTokenAddress, toToken: toTokenAddress,
+    fromAmount: String(fromAmount), fromAddress, toAddress,
+    integrator: LIFI_INTEGRATOR,
+  });
+  if (includeFee) q.set("fee", String(PLATFORM_FEE_FRACTION));
+  return q;
+}
 // Non-EVM families join the swap universe by their LI.FI chain id. Tron
 // (chainType TVM on LI.FI) is addressed by base58 T-addresses there —
 // its "native token" is the T-form of the zero address, NOT the EVM one.
@@ -3419,27 +3540,19 @@ export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress
   const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
   if (!from || !to) throw new Error("Unknown network in swap.");
   const destAddress = toAddress || fromAddress;
+  const reqArgs = { fromChainId: from.chainId, toChainId: to.chainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress: destAddress };
   try {
     const res = await fetch(`${LIFI_API}/routes`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(20000),
-      body: JSON.stringify({
-        fromChainId: from.chainId, toChainId: to.chainId,
-        fromTokenAddress, toTokenAddress,
-        fromAmount: String(fromAmount), fromAddress, toAddress: destAddress,
-        options: { integrator: "fluid-wallet", order: "RECOMMENDED" },
-      }),
+      body: JSON.stringify(buildLifiRoutesRequest(reqArgs)),
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
       if (data.routes?.length) return data.routes;
     }
   } catch { /* slow or unavailable — fall back to /quote below */ }
-  const q = new URLSearchParams({
-    fromChain: from.chainId, toChain: to.chainId,
-    fromToken: fromTokenAddress, toToken: toTokenAddress,
-    fromAmount: String(fromAmount), fromAddress, toAddress: destAddress,
-  });
+  const q = buildLifiQuoteParams(reqArgs);
   const res = await fetch(`${LIFI_API}/quote?${q.toString()}`);
   const step = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Route search failed: " + (step.message || ("HTTP " + res.status)));
@@ -4121,8 +4234,13 @@ export async function fetchStableTokens(chainId) {
   } catch { return null; }
 }
 
-/** The swap version of the signer principle: a sentence, never a blob. */
-export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount, toSymbol, toNetKey, toolName, feeUsd, durationSec }) {
+/** The swap version of the signer principle: a sentence, never a blob.
+ *  `platformFee` is a pre-formatted display string for Fluid's own fee
+ *  ("0.42 USDC"), computed by the caller from the quote's actual
+ *  fromAmount via platformFeeOn — when present it is disclosed as its
+ *  own clause BEFORE the user confirms, with the rate label derived
+ *  from PLATFORM_FEE_BPS. Fluid never hides its fee in a spread. */
+export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount, toSymbol, toNetKey, toolName, feeUsd, durationSec, platformFee }) {
   const f = swapChainOf(fromNetKey), t = swapChainOf(toNetKey);
   const secs = Math.max(1, Math.round(Number(durationSec) || 0));
   const when = Number.isFinite(durationSec)
@@ -4131,8 +4249,9 @@ export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount,
     : "";
   const fee = Number(feeUsd || 0);
   const feeText = fee > 0 && fee < 0.01 ? "under $0.01" : "$" + fee.toFixed(2);
+  const platformFeeText = platformFee ? ` Fluid fee (${platformFeePercentText()}): ${platformFee}.` : "";
   return `Swap ${fromAmount} ${fromSymbol} on ${f.name} for about ${toAmount} ${toSymbol} on ${t.name} via ${toolName}. ` +
-         `Route + network fees about ${feeText}.${when} Confirm?`;
+         `Route + network fees about ${feeText}.${platformFeeText}${when} Confirm?`;
 }
 
 // ---------- Universal token support (every token, every chain) ----------

@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -174,6 +174,50 @@ ok("agent descriptor is chain-only", (() => { const d = buildAgentDescriptor({ n
 ok("fee settlement threshold is $2", FEE_SETTLEMENT.thresholdUsd === 2 && FEE_SETTLEMENT.rail === "lightning");
 ok("fee settlement due logic", feeSettlementDue(1.99) === false && feeSettlementDue(2) === true && feeSettlementDue(2.01) === true);
 ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B" && FEE_SPLIT.dripbot.x === "@bitcoinornatin");
+
+// 22b. Standard platform fee (Ethuram 2026-11-06): 0.5% on swaps/conversions only
+ok("platform fee pinned at 50 bps", PLATFORM_FEE_BPS === 50 && PLATFORM_FEE_FRACTION === 0.005);
+ok("platform fee label derived", platformFeePercentText() === "0.5%");
+ok("platform fee math", platformFeeOn(10000n) === 50n && platformFeeOn(200n) === 1n && platformFeeOn(123456789n) === 617283n);
+ok("platform fee floors to zero on dust", platformFeeOn(199n) === 0n && platformFeeOn(0n) === 0n && platformFeeOn(101) === 0n);
+ok("platform fee never exceeds amount, net is exact", [1n, 199n, 200n, 10000n, 987654321n].every(a => { const f = platformFeeOn(a); return f >= 0n && f <= a && (a - f) + f === a; }));
+ok("platform fee accepts raw strings", platformFeeOn("84000000") === 420000n);
+ok("platform fee scope: swaps+conversions only", platformFeeApplies("swap") === true && platformFeeApplies("conversion") === true);
+ok("platform fee scope: sends/receives are fee-free", platformFeeApplies("send") === false && platformFeeApplies("receive") === false && platformFeeApplies("") === false && platformFeeApplies(undefined) === false);
+ok("send intent carries no platform fee", !formatSendIntent({ amount: "0.05", symbol: "BNB", to: fresh.address, networkKey: "bsc", feeNative: "0.000105" }).includes("Fluid fee"));
+// Disclosure: the confirm sentence shows the fee computed from the quote's real numbers
+ok("swap intent discloses fluid fee from quote numbers", (() => {
+  const feeDisp = swapRawToAmount(platformFeeOn("84000000").toString(), 6); // 84 USDC quote -> 0.42 USDC fee
+  const s = formatSwapIntent({ fromAmount: "84", fromSymbol: "USDC", fromNetKey: "bsc", toAmount: "83.9", toSymbol: "USDT", toNetKey: "bsc", toolName: "PancakeSwap", feeUsd: 0.21, durationSec: 30, platformFee: `${feeDisp} USDC` });
+  return feeDisp === "0.42" && s.includes("Fluid fee (0.5%): 0.42 USDC");
+})());
+ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmount: "1", fromSymbol: "BNB", fromNetKey: "bsc", toAmount: "100", toSymbol: "USDC", toNetKey: "bsc", toolName: "X", feeUsd: 0.1, durationSec: 30 }).includes("Fluid fee"));
+// LI.FI request construction: integrator always; fee param gated on collection being enabled
+ok("lifi collection gated off until portal registration", PLATFORM_FEE_COLLECTION_ENABLED === false);
+ok("lifi routes request carries integrator, no fee while gated", (() => {
+  const r = buildLifiRoutesRequest({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: 1000n, fromAddress: "0xc", toAddress: "0xc" });
+  return r.options.integrator === LIFI_INTEGRATOR && LIFI_INTEGRATOR === "fluid-wallet" && !("fee" in r.options) && r.fromAmount === "1000";
+})());
+ok("lifi routes request with collection on carries 0.005", buildLifiRoutesRequest({ fromChainId: 56, toChainId: 1, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true }).options.fee === 0.005);
+ok("lifi quote params mirror the gating", (() => {
+  const off = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
+  const on = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
+  return off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
+})());
+// Settlement legs resolve by USERNAME through the names registry
+ok("fee legs are username-modelled", FEE_SPLIT.treasury.username === "ethuram" && FEE_SPLIT.treasury.share === 60 && FEE_SPLIT.dripbot.username === "dripbot" && FEE_SPLIT.dripbot.share === 40);
+ok("fee legs resolve via registry incl ln", (() => {
+  const reg = { ...buildNameEntry("ethuram", "0x0EBf5563F905E3B9D58718E28E08143511DC763b", "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw"),
+                ...buildNameEntry("dripbot", "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn", "dripbot@ln.fluid.example") };
+  const legs = feeLegTargets(reg);
+  return legs[0].username === "ethuram" && legs[0].evm === "0x0EBf5563F905E3B9D58718E28E08143511DC763b" && legs[0].ln === null
+      && legs[1].username === "dripbot" && legs[1].ln === "dripbot@ln.fluid.example" && legs[1].share === 40;
+})());
+ok("fee legs tolerate a missing registry", feeLegTargets(null).every(l => l.evm === null && l.btc === null && l.ln === null) && feeLegTargets({})[0].username === "ethuram");
+// Fee-pot accounting (keeper trigger): priced total, unpriced excluded, $2 rule
+ok("fee pot totals priced holdings", (() => { const r = feePotReport([{ amount: 1.5, priceUsd: 2 }, { amount: 0.5, priceUsd: 4 }]); return r.totalUsd === 5 && r.priced === 2 && r.unpriced === 0 && r.due === true; })());
+ok("fee pot excludes unpriced, never guesses", (() => { const r = feePotReport([{ amount: 100, priceUsd: null }, { amount: 3, priceUsd: 0.5 }]); return r.totalUsd === 1.5 && r.unpriced === 1 && r.due === false; })());
+ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due === true && feePotReport([{ amount: 1.99, priceUsd: 1 }]).due === false && feePotReport([]).totalUsd === 0);
 
 // 23. Swap route ranking (LI.FI): cheapest = best net USD after gas, fastest = shortest duration
 {

@@ -28,7 +28,7 @@ import {
   RECEIVE_NETWORKS, filterReceiveNetworks,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn,
   looksLikePoison, looksLikePoisonText, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -2461,10 +2461,16 @@ $("actSwap").onclick = () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
         pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        // Fluid's own fee, disclosed as its own clause in the confirm
+        // sentence: computed from THIS quote's actual fromAmount with
+        // the standard rate (platformFeeOn) — never a typed-in number.
+        const feeRaw = r.fromAmount != null ? platformFeeOn(r.fromAmount) : 0n;
+        const platformFee = feeRaw > 0n ? `${fmt(swapRawToAmount(feeRaw.toString(), fromTok.decimals))} ${fromTok.symbol}` : null;
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
           toAmount: fmt(swapRawToAmount(r.toAmount, toTok.decimals)), toSymbol: toTok.symbol, toNetKey: toKey,
           toolName: swapRouteName(r), feeUsd: r.gasCostUSD, durationSec: r.durationSec,
+          ...(platformFee ? { platformFee } : {}),
         }) + ((fromTok.verified === false || toTok.verified === false) ? " ⚠ " + UNVERIFIED_CAUTION : "");
         show("wConfirm"); msg("wMsg", "");
       });

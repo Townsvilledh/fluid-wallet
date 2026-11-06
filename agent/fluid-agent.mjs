@@ -34,7 +34,7 @@ import { ethers } from "ethers";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { NETWORKS, bitcoinAddress, getBitcoinBalance, getVerifiedPrice, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor } from "../src/wallet-core.js";
+import { NETWORKS, bitcoinAddress, getBitcoinBalance, getVerifiedPrice, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor, feePotReport } from "../src/wallet-core.js";
 
 const KS = "keystore.json", DESC = "descriptor.json", SECRET = ".secret", SPEND = "spend.json";
 const today = () => new Date().toISOString().slice(0, 10);
@@ -132,6 +132,30 @@ export async function openAgent({ dir, password } = {}) {
       return Number(ethers.formatEther(await p.getBalance(descriptor.keys.evm)));
     },
     async btcBalance() { return getBitcoinBalance(descriptor.keys.btc); },
+    // Keeper's fee-settlement trigger input: this wallet IS the fee
+    // collection wallet (FEE_SPLIT.dripbot.agentWallet), so its
+    // balances are the unsettled pot. Native balances across every
+    // network, each priced with the cross-checked source
+    // (getVerifiedPrice), totalled by the shared pure accounting
+    // (feePotReport in the wallet core): unpriced or unreachable
+    // chains are excluded and counted, never guessed. `due` in the
+    // report is the $2 settlement trigger. (ERC-20 fee balances —
+    // LI.FI pays the fee in the swap's from-token — slot into the
+    // same report as extra priced holdings once collection is live.)
+    async feePot() {
+      const holdings = [];
+      for (const [key, net] of Object.entries(NETWORKS)) {
+        try {
+          const p = new ethers.JsonRpcProvider(net.rpc);
+          const bal = Number(ethers.formatEther(await p.getBalance(descriptor.keys.evm)));
+          if (!(bal > 0)) continue;
+          let priceUsd = null;
+          try { priceUsd = await getVerifiedPrice(net.symbol); } catch { /* unpriced — counted, not guessed */ }
+          holdings.push({ chain: key, symbol: net.symbol, amount: bal, priceUsd });
+        } catch { /* chain unreachable — excluded from the pot, never guessed */ }
+      }
+      return { ...feePotReport(holdings), holdings };
+    },
     // Chain-native send, signed by the agent itself. Policy caps are checked
     // against live prices BEFORE signing; unpriceable or over-cap = throw.
     // Public entry point: serialised through the send queue (audit M6).
@@ -152,11 +176,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     } else if (cmd === "balance") {
       const a = await openAgent({ dir: arg("dir") });
       console.log(JSON.stringify({ evm: await a.balance(arg("network", "bsc")), btc: await a.btcBalance() }));
+    } else if (cmd === "feepot") {
+      const a = await openAgent({ dir: arg("dir") });
+      console.log(JSON.stringify(await a.feePot(), null, 1));
     } else if (cmd === "send") {
       const a = await openAgent({ dir: arg("dir") });
       console.log(JSON.stringify(await a.send({ network: arg("network", "bsc"), to: arg("to"), amount: arg("amount") }), null, 1));
     } else {
-      console.log("Commands: create | descriptor | balance | send  (see header of this file)");
+      console.log("Commands: create | descriptor | balance | feepot | send  (see header of this file)");
     }
   } catch (e) { console.error("Error:", e.message); process.exit(1); }
 }
