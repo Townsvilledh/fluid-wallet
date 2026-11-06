@@ -9,6 +9,9 @@ import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAd
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent } from "../src/wallet-core.js";
+import { chunkArray, parseDexScreenerPairs, lifiTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
+  shortAddrLabel, tronDecodeAbiString, formatTokenAmount, dexChainIdForEvmChain, SOLANA_TOKEN2022_PROGRAM,
+  MULTICALL3_ADDRESS } from "../src/wallet-core.js";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { Slip10RawIndex } from "@cosmjs/crypto";
 import { HDKey } from "@scure/bip32";
@@ -352,7 +355,7 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     const owner = "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk", mint = SOLANA_TOKENS[0].address;
     const [expect] = SolPublicKey.findProgramAddressSync(
       [new SolPublicKey(owner).toBuffer(), new SolPublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").toBuffer(), new SolPublicKey(mint).toBuffer()],
-      new SolPublicKey("ATokenzQdBNbLqTsPfnjz8TQzkCcePRF57yyESLRbJG"));
+      new SolPublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")); // the canonical ATA program id, stated independently of core
     ok("solana: ATA derivation matches web3.js PDA", solanaAtaAddress(owner, mint) === expect.toBase58() && isValidSolanaAddress(solanaAtaAddress(owner, mint)));
   }
 
@@ -588,3 +591,79 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   // no Cosmos-SDK chains) — no dead swap options are offered.
   ok("cosmos: not a LI.FI swap chain", swapChainOf("cosmoshub") === null && swapChainOf("osmosis") === null);
 }
+
+// 23. Universal token support (discovery helpers, pure logic)
+{
+  ok("chunkArray splits evenly", JSON.stringify(chunkArray([1, 2, 3, 4, 5], 2)) === "[[1,2],[3,4],[5]]");
+  ok("chunkArray degenerate sizes", chunkArray([], 3).length === 0 && chunkArray([1], 0).length === 1);
+  ok("formatTokenAmount respects decimals", formatTokenAmount(1500000n, 6) === "1.5" && formatTokenAmount("2500000000000000000", 18) === "2.5");
+  ok("shortAddrLabel shortens long ids", shortAddrLabel("0x1234567890abcdef1234567890abcdef12345678") === "0x1234…5678" && shortAddrLabel("SUI") === "SUI");
+  ok("multicall3 address is the canonical deployment", MULTICALL3_ADDRESS === "0xcA11bde05977b3631167028862bE2a173976CA11");
+  ok("dex chain ids map the majors", dexChainIdForEvmChain(56) === "bsc" && dexChainIdForEvmChain(1) === "ethereum"
+     && dexChainIdForEvmChain(137) === "polygon" && dexChainIdForEvmChain(999999) === null);
+
+  // DexScreener selection: the live magnitude cluster must beat a dead
+  // pool with phantom liquidity at the wrong price (observed live with
+  // BONK: two stale Meteora pools quoted ~4,900× the market).
+  const MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+  const dex = { pairs: [
+    { chainId: "solana", baseToken: { address: MINT, name: "Bonk", symbol: "Bonk" }, priceUsd: "0.01428", liquidity: { usd: 34076547 }, volume: { h24: 159414 } },
+    { chainId: "solana", baseToken: { address: MINT, name: "Bonk", symbol: "Bonk" }, priceUsd: "0.000002899", liquidity: { usd: 285472 }, volume: { h24: 263028 } },
+    { chainId: "solana", baseToken: { address: MINT, name: "Bonk", symbol: "Bonk" }, priceUsd: "0.000002888", liquidity: { usd: 246724 }, volume: { h24: 324424 } },
+    { chainId: "ethereum", baseToken: { address: MINT, name: "Bonk", symbol: "Bonk" }, priceUsd: "5", liquidity: { usd: 1e9 }, volume: { h24: 1e9 } },
+    { chainId: "solana", baseToken: { address: "SomeOtherMint1111111111111111111111111111111", name: "X", symbol: "X" },
+      quoteToken: { address: MINT, name: "Bonk", symbol: "Bonk" }, priceUsd: "9", liquidity: { usd: 1e9 }, volume: { h24: 1e9 } },
+  ] };
+  const dexMap = parseDexScreenerPairs(dex, "solana", [MINT]);
+  ok("dexscreener: live cluster price wins over phantom-liquidity dead pool",
+     dexMap.get(MINT.toLowerCase())?.priceUsd === 0.000002888); // parser keys are lowercased
+  const noDex = parseDexScreenerPairs(dex, "bsc", [MINT]);
+  ok("dexscreener: other chains ignored", noDex.size === 0);
+
+  // LI.FI verification status: "flagged" is the one explicit distrust.
+  ok("lifi verified: normal token", lifiTokenVerified({ verificationStatus: "verified" }) === true);
+  ok("lifi verified: no status still listed", lifiTokenVerified({}) === true);
+  ok("lifi verified: flagged is unverified", lifiTokenVerified({ verificationStatus: "flagged" }) === false);
+  ok("lifi verified: null token is unverified", lifiTokenVerified(null) === false);
+
+  // Cosmos denom display: native / registry / IBC / factory / u-prefix.
+  const hub = cosmosChain("cosmoshub");
+  const dNative = cosmosDenomDisplay(hub, "uatom", null);
+  ok("cosmos denom: native is named + verified", dNative.symbol === "ATOM" && dNative.verified === true && dNative.decimals === 6);
+  const dMeta = cosmosDenomDisplay(hub, "ibc/ABC123", { symbol: "USDC", name: "USD Coin", decimals: 6 });
+  ok("cosmos denom: registry meta beats the IBC label", dMeta.symbol === "USDC" && dMeta.verified === true);
+  const dIbc = cosmosDenomDisplay(hub, "ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2", null);
+  ok("cosmos denom: unknown IBC hash is labelled, unverified", dIbc.symbol === "IBC token" && dIbc.verified === false && dIbc.ibc === true);
+  const dU = cosmosDenomDisplay(hub, "uxprt", null);
+  ok("cosmos denom: u-prefix micro heuristic", dU.symbol === "XPRT" && dU.decimals === 6 && dU.verified === false);
+  const dFactory = cosmosDenomDisplay(hub, "factory/cosmos1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3ek/ufoo", null);
+  ok("cosmos denom: factory subdenom label", dFactory.symbol === "UFOO" && dFactory.verified === false);
+
+  // Sui coin-type fallback names: the struct name (third segment).
+  ok("sui fallback: struct name from the coin type", suiCoinFallbackSymbol("0xabc::deep::DEEP") === "DEEP");
+  ok("sui fallback: malformed type gets a neutral label", suiCoinFallbackSymbol("garbage") === "COIN");
+
+  // Tron constant-call string decoding: dynamic string + bytes32 forms.
+  const dyn = "0000000000000000000000000000000000000000000000000000000000000020"
+    + "000000000000000000000000000000000000000000000000000000000000000a"
+    + "54657468657220555344" + "0".repeat(44);
+  ok("tron abi string: dynamic form", tronDecodeAbiString("0x" + dyn) === "Tether USD");
+  const b32 = Buffer.from("USDT", "utf8").toString("hex").padEnd(64, "0");
+  ok("tron abi string: bytes32 form", tronDecodeAbiString("0x" + b32) === "USDT");
+
+  // Solana Token-2022 ATA: program-aware derivation matches web3.js
+  // with the Tokenz program, and differs from the legacy ATA.
+  const TOKENZ = new SolPublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+  const ATAPROG = new SolPublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+  const owner = new SolPublicKey("HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk");
+  const mint = new SolPublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const expect22 = SolPublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKENZ.toBuffer(), mint.toBuffer()], ATAPROG)[0].toBase58();
+  ok("solana ATA: Token-2022 derivation matches web3.js",
+     solanaAtaAddress(owner.toBase58(), mint.toBase58(), SOLANA_TOKEN2022_PROGRAM) === expect22);
+  ok("solana ATA: Token-2022 ATA differs from legacy",
+     solanaAtaAddress(owner.toBase58(), mint.toBase58(), SOLANA_TOKEN2022_PROGRAM)
+       !== solanaAtaAddress(owner.toBase58(), mint.toBase58()));
+}
+
+console.log(`\n${passed} checks passed`);

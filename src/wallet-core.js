@@ -797,8 +797,11 @@ export const SOLANA_TOKENS = [
 ];
 const SOLANA_PROGRAMS = {
   token: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-  ata: "ATokenzQdBNbLqTsPfnjz8TQzkCcePRF57yyESLRbJG",
+  token2022: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  ata: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
 };
+export const SOLANA_TOKEN_PROGRAM = SOLANA_PROGRAMS.token;
+export const SOLANA_TOKEN2022_PROGRAM = SOLANA_PROGRAMS.token2022;
 // Rent-exempt minimums (lamports): a 0-byte account must hold 890,880 or
 // exactly 0 — anything in between is not a valid account state; a token
 // account (165 bytes) costs 2,039,280, paid by whoever creates it.
@@ -884,11 +887,15 @@ export async function getSolanaBalances(address) {
   return out;
 }
 /** The associated token account (ATA) address for an owner + mint: a
- *  program-derived address, computed locally — no RPC needed. */
-export function solanaAtaAddress(ownerAddress, mintAddress) {
+ *  program-derived address, computed locally — no RPC needed. The
+ *  token program is a seed, so Token-2022 mints (programId =
+ *  SOLANA_TOKEN2022_PROGRAM) derive a DIFFERENT ATA than legacy SPL
+ *  mints — callers pass the mint's program when it isn't the legacy
+ *  one (token rows from getSolanaAllTokens carry it as `program`). */
+export function solanaAtaAddress(ownerAddress, mintAddress, programId = SOLANA_PROGRAMS.token) {
   const [pda] = SolPublicKey.findProgramAddressSync(
     [new SolPublicKey(ownerAddress).toBuffer(),
-     new SolPublicKey(SOLANA_PROGRAMS.token).toBuffer(),
+     new SolPublicKey(programId).toBuffer(),
      new SolPublicKey(mintAddress).toBuffer()],
     new SolPublicKey(SOLANA_PROGRAMS.ata));
   return pda.toBase58();
@@ -901,7 +908,7 @@ async function solanaAccountExists(address) {
  *  (sender-paid rent)? Drives both the pre-confirm plan and the send. */
 export async function solanaSendPlan(fromAddress, { to, token = null } = {}) {
   if (!token) return { createsAta: false, ataRentLamports: 0 };
-  const exists = await solanaAccountExists(solanaAtaAddress(to, token.address));
+  const exists = await solanaAccountExists(solanaAtaAddress(to, token.address, token.program || SOLANA_PROGRAMS.token));
   return { createsAta: !exists, ataRentLamports: exists ? 0 : SOLANA_ATA_RENT_LAMPORTS };
 }
 /** The signer principle, Solana edition: a sentence, never a blob. */
@@ -910,7 +917,7 @@ export function formatSolanaSendIntent({ amount, symbol, to, createsAta = false 
     (createsAta ? ` This also creates the recipient's ${symbol} account — you pay about ${solLamportsToSol(SOLANA_ATA_RENT_LAMPORTS)} SOL rent for it (it comes back if they ever close the account).` : "") +
     " Confirm?";
 }
-function solanaCreateAtaInstruction(payer, ataAddress, ownerAddress, mintAddress) {
+function solanaCreateAtaInstruction(payer, ataAddress, ownerAddress, mintAddress, tokenProgramId = SOLANA_PROGRAMS.token) {
   // createIdempotent (data [1]): succeeds whether or not the account
   // appeared since the plan was checked — no race can strand the send.
   return new SolTxInstruction({
@@ -921,9 +928,28 @@ function solanaCreateAtaInstruction(payer, ataAddress, ownerAddress, mintAddress
       { pubkey: new SolPublicKey(ownerAddress), isSigner: false, isWritable: false },
       { pubkey: new SolPublicKey(mintAddress), isSigner: false, isWritable: false },
       { pubkey: SolSystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: new SolPublicKey(SOLANA_PROGRAMS.token), isSigner: false, isWritable: false },
+      { pubkey: new SolPublicKey(tokenProgramId), isSigner: false, isWritable: false },
     ],
     data: Buffer.from([1]),
+  });
+}
+function solanaSplTransferCheckedInstruction(sourceAta, mintAddress, destAta, owner, rawAmount, decimals, tokenProgramId) {
+  // TransferChecked (data [12, amount u64 LE, decimals u8]): the
+  // Token-2022-safe form — it names the mint explicitly, so the
+  // program itself verifies the accounts belong to it.
+  const data = Buffer.alloc(10);
+  data[0] = 12;
+  data.writeBigUInt64LE(BigInt(rawAmount), 1);
+  data[9] = decimals & 0xff;
+  return new SolTxInstruction({
+    programId: new SolPublicKey(tokenProgramId),
+    keys: [
+      { pubkey: sourceAta, isSigner: false, isWritable: true },
+      { pubkey: new SolPublicKey(mintAddress), isSigner: false, isWritable: false },
+      { pubkey: destAta, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
+    ],
+    data,
   });
 }
 function solanaSplTransferInstruction(sourceAta, destAta, owner, rawAmount) {
@@ -974,7 +1000,13 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
   } else {
     const raw = ethers.parseUnits(String(amount), token.decimals ?? 6);
     if (raw <= 0n) throw new Error("Enter an amount.");
-    const fromAta = solanaAtaAddress(fromAddr, token.address);
+    // Token-2022 mints live under a different program: their ATAs are
+    // derived with that program as a seed and their transfers are
+    // TransferChecked instructions addressed to it. Legacy SPL keeps
+    // the original code path untouched.
+    const program = token.program || SOLANA_PROGRAMS.token;
+    const is2022 = program === SOLANA_PROGRAMS.token2022;
+    const fromAta = solanaAtaAddress(fromAddr, token.address, program);
     let held = 0n;
     try {
       const tb = await solanaRpc("getTokenAccountBalance", [fromAta]);
@@ -989,8 +1021,11 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
         ? `Not enough SOL for the fee plus the recipient's token-account rent (about ${solLamportsToSol(solNeeded)} SOL needed).`
         : "Not enough SOL to pay the network fee for this token send.");
     }
-    if (createsAta) tx.add(solanaCreateAtaInstruction(from, solanaAtaAddress(to, token.address), to, token.address));
-    tx.add(solanaSplTransferInstruction(new SolPublicKey(fromAta), new SolPublicKey(solanaAtaAddress(to, token.address)), from, raw));
+    const toAta = solanaAtaAddress(to, token.address, program);
+    if (createsAta) tx.add(solanaCreateAtaInstruction(from, toAta, to, token.address, program));
+    tx.add(is2022
+      ? solanaSplTransferCheckedInstruction(new SolPublicKey(fromAta), token.address, new SolPublicKey(toAta), from, raw, token.decimals ?? 6, program)
+      : solanaSplTransferInstruction(new SolPublicKey(fromAta), new SolPublicKey(toAta), from, raw));
   }
   tx.sign(kp);
   const signature = await solanaBroadcast(tx.serialize(), "That send");
@@ -1065,35 +1100,29 @@ export function isValidSuiAddress(address) {
 export function suiMistToSui(mist) { return ethers.formatUnits(BigInt(mist), 9); }
 export function suiSuiToMist(amount) { return ethers.parseUnits(String(amount), 9); }
 
-async function suiRpc(method, params) {
-  const res = await fetch(SUI_RPC, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) throw new Error("Sui network error (HTTP " + res.status + ").");
-  const data = await res.json().catch(() => null);
-  if (!data) throw new Error("Sui returned an unreadable reply.");
-  if (data.error) throw new Error("Sui rejected the request: " + (data.error.message || "unknown error"));
-  return data.result;
-}
+// (The raw JSON-RPC reader that used to live here is gone on purpose:
+// Mysten deprecated JSON-RPC on the public fullnodes — see the note on
+// getSuiBalances. Sui reads use the GraphQL endpoint in the universal
+// token section at the bottom of this file. sendSui still executes via
+// the SDK client below; that transport is tracked as follow-up work.)
 /** Sui balances shaped like getBalances(): native SUI first (address
- *  null), then the stablecoins. Per-type reads (suix_getBalance) so a
- *  failed token read degrades to that token's zero — it never fails
- *  the whole lookup; only the native read is load-bearing. */
+ *  null), then the stablecoins. This is now a view over
+ *  getSuiAllBalances (universal token support, bottom of this file):
+ *  Mysten deprecated JSON-RPC on the public fullnodes — the suix_*
+ *  reads this function originally used now return "Method not
+ *  found" (verified live 2026-11-06) — so all Sui READS ride the
+ *  public GraphQL endpoint instead. Same shape, same degradation:
+ *  the full read either answers or throws, and callers fall back to
+ *  placeholder rows rather than fake zeros. */
 export async function getSuiBalances(address) {
   if (!isValidSuiAddress(address)) throw new Error("That is not a valid Sui address.");
-  const owner = normalizeSuiAddress(address);
-  const out = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 }];
-  const bal = await suiRpc("suix_getBalance", [owner, SUI_COIN_TYPE]);
-  out[0].amount = suiMistToSui((bal && bal.totalBalance) ?? 0); // no account on-chain yet = 0
+  const all = await getSuiAllBalances(address);
+  const pick = (addr) => all.find(r => (r.address || null) === addr) || null;
+  const native = pick(null);
+  const out = [{ symbol: "SUI", amount: native ? native.amount : "0", address: null, decimals: 9 }];
   for (const t of SUI_TOKENS) {
-    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
-    try {
-      const b = await suiRpc("suix_getBalance", [owner, t.address]);
-      row.amount = ethers.formatUnits(BigInt((b && b.totalBalance) ?? 0), t.decimals);
-    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
-    out.push(row);
+    const hit = pick(t.address);
+    out.push({ symbol: t.symbol, amount: hit ? hit.amount : "0", address: t.address, decimals: t.decimals });
   }
   return out;
 }
@@ -1270,9 +1299,9 @@ export function formatCosmosSendIntent({ amount, symbol, to, chainName, feeAmoun
   return `Send ${amount} ${symbol} to ${to} on ${chainName}. ` +
          `Network fee about ${feeAmount} ${feeSymbol}. Confirm?`;
 }
-function cosmosMsgSend(chain, from, to, rawAmount) {
+function cosmosMsgSend(chain, from, to, rawAmount, denom = chain.denom) {
   return { typeUrl: "/cosmos.bank.v1beta1.MsgSend",
-           value: { fromAddress: from, toAddress: to, amount: [{ denom: chain.denom, amount: rawAmount }] } };
+           value: { fromAddress: from, toAddress: to, amount: [{ denom, amount: rawAmount }] } };
 }
 async function cosmosSignerClient(phrase, chain) {
   const { child } = cosmosKeys(phrase);
@@ -1283,14 +1312,14 @@ async function cosmosSignerClient(phrase, chain) {
  *  average gas price (CosmJS "auto" math: simulated gas × 1.4).
  *  Returns { fee: {amount: [{denom, amount}], gas}, feeText } where
  *  feeText is the display-unit fee for the intent sentence. */
-export async function estimateCosmosFee(phrase, chainKey, { to, amount }) {
+export async function estimateCosmosFee(phrase, chainKey, { to, amount, denom = null, decimals = null }) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
   const from = cosmosAddress(phrase, chainKey);
-  const raw = ethers.parseUnits(String(amount), chain.decimals).toString();
+  const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals).toString();
   const client = await cosmosSignerClient(phrase, chain);
   try {
-    const gasUsed = await client.simulate(from, [cosmosMsgSend(chain, from, to, raw)], "");
+    const gasUsed = await client.simulate(from, [cosmosMsgSend(chain, from, to, raw, denom || chain.denom)], "");
     const fee = calculateFee(Math.round(gasUsed * 1.4), GasPrice.fromString(chain.gasPrice));
     const coin = fee.amount[0] || { denom: chain.denom, amount: "0" };
     return { fee, feeText: ethers.formatUnits(BigInt(coin.amount), chain.decimals), feeSymbol: chain.symbol };
@@ -1301,17 +1330,17 @@ export async function estimateCosmosFee(phrase, chainKey, { to, amount }) {
  *  object from estimateCosmosFee to broadcast exactly what the user
  *  approved; without one the fee is computed at broadcast time.
  *  Returns { hash }. */
-export async function sendCosmos(phrase, chainKey, { to, amount, fee = null }) {
+export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, denom = null, decimals = null }) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
   if (chain.sendEnabled === false) throw new Error(`Sending on ${chain.name} is not available yet.`);
   if (!isValidCosmosAddress(to, chainKey)) throw new Error(`That is not a valid ${chain.name} address (it starts with ${chain.prefix}1).`);
-  const raw = ethers.parseUnits(String(amount), chain.decimals);
+  const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals);
   if (raw <= 0n) throw new Error("Enter an amount.");
   const from = cosmosAddress(phrase, chainKey);
   const client = await cosmosSignerClient(phrase, chain);
   try {
-    const result = await client.signAndBroadcast(from, [cosmosMsgSend(chain, from, to, raw.toString())], fee || "auto", "");
+    const result = await client.signAndBroadcast(from, [cosmosMsgSend(chain, from, to, raw.toString(), denom || chain.denom)], fee || "auto", "");
     assertIsDeliverTxSuccess(result);
     return { hash: result.transactionHash };
   } finally { client.disconnect(); }
@@ -2054,4 +2083,744 @@ export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount,
   const feeText = fee > 0 && fee < 0.01 ? "under $0.01" : "$" + fee.toFixed(2);
   return `Swap ${fromAmount} ${fromSymbol} on ${f.name} for about ${toAmount} ${toSymbol} on ${t.name} via ${toolName}. ` +
          `Route + network fees about ${feeText}.${when} Confirm?`;
+}
+
+// ---------- Universal token support (every token, every chain) ----------
+// Ethuram's rule (2026-11-06): Fluid supports TOKENS, not just chains —
+// every asset a wallet holds, memecoins included, is visible, sendable
+// and swappable — not only the native coin + USDC/USDT rows each family
+// shipped with. This section is the discovery layer behind that:
+//
+//   * Solana: UNFILTERED getTokenAccountsByOwner across BOTH SPL
+//     programs (legacy Token + Token-2022); metadata in the order
+//     Jupiter strict list → LI.FI token record → DexScreener → short
+//     mint label. (token.jup.ag did not answer from this machine at
+//     build time; the lookup degrades gracefully when it doesn't.)
+//   * Sui: the GraphQL balances connection (every coin type) + batched
+//     coinMetadata — JSON-RPC's suix_getAllBalances is deprecated on
+//     the public fullnodes (see getSuiBalances).
+//   * Cosmos: the bank balances response already carries EVERY denom;
+//     names/decimals come from the chain registry (cosmos.directory),
+//     IBC/ hashes are labelled "IBC token".
+//   * Tron: TronGrid's account resource carries the full trc20 map;
+//     metadata comes from the contracts themselves (constant calls).
+//   * EVM: the ACTIVE chain's LI.FI token list + a Multicall3
+//     balanceOf scan (JSON-RPC batch / direct-call fallbacks) + custom
+//     tokens by contract address.
+//
+// Safety treatment (wallet-security research, drainer-era discipline):
+// a token is "verified" only when it appears in the family's trusted
+// list (curated set, Jupiter strict, or the chain's LI.FI list without
+// a "flagged" mark). Everything else still shows and still works, but
+// carries verified:false — the app groups it under "Other tokens",
+// marks it ⚠, and adds a caution line to its send/swap reviews.
+// Prices come from the list that named the token (LI.FI priceUSD) or
+// DexScreener — NEVER from a bare symbol lookup, because any scam
+// token can call itself "USDC".
+// Row contract: DISCOVERED rows always carry `priceUsd` (a number, or
+// null when no source prices them); native/curated rows leave it
+// undefined so the app prices them from its market table exactly as
+// before. Consumers must prefer a present priceUsd — including null —
+// over any symbol-based price.
+
+export function chunkArray(arr, size) {
+  const out = [];
+  const n = Math.max(1, size | 0);
+  const a = arr || [];
+  for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n));
+  return out;
+}
+/** "0x1234…abcd"-style label for an address with no known metadata. */
+export function shortAddrLabel(address) {
+  const s = String(address || "");
+  return s.length > 12 ? s.slice(0, 6) + "…" + s.slice(-4) : s;
+}
+/** Format a raw smallest-unit amount for display (ethers formatUnits). */
+export function formatTokenAmount(raw, decimals) {
+  return ethers.formatUnits(BigInt(raw), decimals ?? 18);
+}
+
+// ----- DexScreener: long-tail prices + metadata of last resort -----
+const DEX_API = "https://api.dexscreener.com/latest/dex";
+/** DexScreener chain ids for the EVM chains Fluid knows by number. */
+const DEX_EVM_CHAIN_IDS = { 1: "ethereum", 56: "bsc", 8453: "base", 42161: "arbitrum", 10: "optimism",
+  137: "polygon", 43114: "avalanche", 324: "zksync", 59144: "linea", 534352: "scroll",
+  5000: "mantle", 100: "gnosis", 42220: "celo", 122: "fuse" };
+export function dexChainIdForEvmChain(chainId) {
+  return DEX_EVM_CHAIN_IDS[Number(chainId)] || null;
+}
+/** Pure parser: from a DexScreener /tokens response pick, per wanted
+ *  token address, a trustworthy price ON the requested chain where
+ *  the token is the BASE token. Returns a Map keyed by the LOWERCASED
+ *  address → { priceUsd, name, symbol }. Quote-side pairs (the token
+ *  merely traded against) never set its price.
+ *  Price selection is deliberately NOT "the deepest pool wins": dead
+ *  pools keep absurd ratios with phantom liquidity (measured live on
+ *  BONK, 2026-11-06: two stale Meteora pools quoted ~4,900× the real
+ *  price with $34M of "liquidity" between them, outranking every live
+ *  pool). Instead, candidate prices are bucketed by order of
+ *  magnitude; the bucket with the most 24h VOLUME wins (real trading
+ *  clusters at the real price; a stale pool cannot fake a market),
+ *  and inside the bucket the highest-volume pair's price is used. */
+export function parseDexScreenerPairs(data, dexChainId, addresses) {
+  const want = new Set((addresses || []).map(a => String(a).toLowerCase()));
+  const byToken = new Map(); // key -> [candidate pairs]
+  for (const p of (data && data.pairs) || []) {
+    if (!p || p.chainId !== dexChainId || !p.baseToken || !p.baseToken.address) continue;
+    const key = String(p.baseToken.address).toLowerCase();
+    if (!want.has(key)) continue;
+    const price = p.priceUsd != null && p.priceUsd !== "" ? Number(p.priceUsd) : null;
+    if (price == null || !(price > 0)) continue;
+    const cand = { price, vol: Number((p.volume && p.volume.h24) || 0),
+                   liq: Number((p.liquidity && p.liquidity.usd) || 0),
+                   name: p.baseToken.name || null, symbol: p.baseToken.symbol || null };
+    if (!byToken.has(key)) byToken.set(key, []);
+    byToken.get(key).push(cand);
+  }
+  const out = new Map();
+  for (const [key, cands] of byToken) {
+    const buckets = new Map(); // magnitude -> { vol, liq, pairs }
+    for (const c of cands) {
+      const mag = Math.floor(Math.log10(c.price));
+      const b = buckets.get(mag) || { vol: 0, liq: 0, pairs: [] };
+      b.vol += c.vol; b.liq += c.liq; b.pairs.push(c);
+      buckets.set(mag, b);
+    }
+    let win = null;
+    for (const b of buckets.values()) {
+      if (!win || b.vol > win.vol || (b.vol === win.vol && b.liq > win.liq)) win = b;
+    }
+    const rep = win.pairs.slice().sort((a, b) => (b.vol - a.vol) || (b.liq - a.liq))[0];
+    out.set(key, { priceUsd: rep.price, name: rep.name, symbol: rep.symbol });
+  }
+  return out;
+}
+/** Batched DexScreener lookup (30 addresses per call, the API's cap).
+ *  Returns a Map keyed by the address AS PASSED IN → { priceUsd, name,
+ *  symbol }. Fault-tolerant per batch: a failed batch prices nothing,
+ *  it never throws. */
+export async function getDexScreenerTokenInfo(dexChainId, addresses) {
+  const out = new Map();
+  if (!dexChainId) return out;
+  const clean = [...new Set((addresses || []).filter(Boolean).map(String))];
+  for (const grp of chunkArray(clean, 30)) {
+    try {
+      const res = await fetch(`${DEX_API}/tokens/${grp.join(",")}`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => null);
+      const m = parseDexScreenerPairs(data, dexChainId, grp);
+      for (const a of grp) {
+        const hit = m.get(a.toLowerCase());
+        if (hit) out.set(a, hit);
+      }
+    } catch { /* that batch stays unpriced */ }
+  }
+  return out;
+}
+
+// ----- LI.FI token lists (the swap universe doubles as a registry) -----
+function lifiTokenShape(t) {
+  if (!t || !t.address || !t.symbol) return null;
+  const px = t.priceUSD != null && t.priceUSD !== "" ? Number(t.priceUSD) : null;
+  return { symbol: t.symbol, name: t.name || t.symbol, address: t.address,
+           decimals: t.decimals ?? 18, priceUSD: px != null && px > 0 ? px : null,
+           verificationStatus: t.verificationStatus || null };
+}
+/** Verified, for LI.FI-sourced tokens, means: in the chain's LI.FI
+ *  list AND not marked "flagged" by LI.FI's own risk provider. */
+export function lifiTokenVerified(t) {
+  return !!t && t.verificationStatus !== "flagged";
+}
+/** The FULL LI.FI token list for one chain (any family LI.FI carries:
+ *  EVM chain ids, Solana 1151111081099710, Tron 728126428, Sui
+ *  9270000000000000). Trimmed to the fields the wallet uses. Returns
+ *  [] when LI.FI definitively has no list for the chain (HTTP 400),
+ *  null when the lookup itself failed. */
+export async function fetchLifiTokenList(chainId) {
+  try {
+    const res = await fetch(`${LIFI_API}/tokens?chains=${chainId}`, { signal: AbortSignal.timeout(30000) });
+    if (res.status === 400) return [];
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const list = (data && data.tokens && data.tokens[String(chainId)]) || [];
+    return list.map(lifiTokenShape).filter(Boolean);
+  } catch { return null; }
+}
+/** One token's LI.FI record (metadata + price + verification), or
+ *  null when LI.FI doesn't know it / the lookup failed. */
+export async function fetchLifiToken(chainId, address) {
+  try {
+    const res = await fetch(`${LIFI_API}/token?chain=${chainId}&token=${encodeURIComponent(address)}`,
+      { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    return lifiTokenShape(await res.json().catch(() => null));
+  } catch { return null; }
+}
+
+// ----- Solana: every SPL token, both programs -----
+let _jupStrictPromise = null;
+/** Jupiter's strict token list as a Map(mint → {symbol, name,
+ *  decimals}), fetched at most once per session and ONLY when an
+ *  unknown mint actually needs resolving. Null when the list doesn't
+ *  answer (it did not answer from the build machine — the fallback
+ *  chain in getSolanaAllTokens exists precisely for that). */
+export function fetchJupiterStrictMap() {
+  if (!_jupStrictPromise) {
+    _jupStrictPromise = (async () => {
+      try {
+        const res = await fetch("https://token.jup.ag/strict", { signal: AbortSignal.timeout(30000) });
+        if (!res.ok) return null;
+        const list = await res.json().catch(() => null);
+        if (!Array.isArray(list)) return null;
+        const m = new Map();
+        for (const t of list) if (t && t.address) m.set(t.address, { symbol: t.symbol, name: t.name || t.symbol, decimals: t.decimals });
+        return m;
+      } catch { return null; }
+    })();
+  }
+  return _jupStrictPromise;
+}
+/** EVERY Solana token row for an address: native SOL, the curated
+ *  USDC/USDT (always present, zero when unheld — the family's familiar
+ *  face), then every other mint with a positive balance across BOTH
+ *  token programs. Discovered rows carry { program, verified,
+ *  priceUsd } — priceUsd is null when no source prices the token,
+ *  never a symbol-based guess. Throws only when the token scan itself
+ *  is unreachable (both program reads failed); a single program's
+ *  failure degrades to the other's tokens. */
+export async function getSolanaAllTokens(address) {
+  if (!isValidSolanaAddress(address)) throw new Error("That is not a valid Solana address.");
+  const native = { symbol: "SOL", name: "Solana", amount: "0", address: null, decimals: 9, verified: true };
+  const bal = await solanaRpc("getBalance", [address]);
+  native.amount = solLamportsToSol((bal && bal.value) ?? 0);
+  const byMint = new Map(); // mint -> { raw, decimals, program }
+  let failures = 0;
+  for (const program of [SOLANA_PROGRAMS.token, SOLANA_PROGRAMS.token2022]) {
+    try {
+      const r = await solanaRpc("getTokenAccountsByOwner", [address, { programId: program }, { encoding: "jsonParsed" }]);
+      for (const acc of (r && r.value) || []) {
+        const info = acc && acc.account && acc.account.data && acc.account.data.parsed && acc.account.data.parsed.info;
+        const ta = info && info.tokenAmount;
+        if (!info || !info.mint || !ta) continue;
+        let raw = 0n;
+        try { raw = BigInt(ta.amount || "0"); } catch { continue; }
+        if (raw <= 0n) continue;
+        const cur = byMint.get(info.mint) || { raw: 0n, decimals: ta.decimals ?? 6, program };
+        cur.raw += raw;
+        byMint.set(info.mint, cur);
+      }
+    } catch { failures++; }
+  }
+  if (failures === 2) throw new Error("Solana token scan unavailable.");
+  // Metadata resolution for every held mint, cheapest source first.
+  const meta = new Map(); // mint -> { symbol, name, verified, priceUsd }
+  for (const t of SOLANA_TOKENS) meta.set(t.address, { symbol: t.symbol, name: t.symbol, verified: true, priceUsd: null });
+  const unknown = [...byMint.keys()].filter(m => !meta.has(m));
+  if (unknown.length) {
+    const jup = await fetchJupiterStrictMap().catch(() => null);
+    for (const m of unknown) {
+      const j = jup && jup.get(m);
+      if (j) meta.set(m, { symbol: j.symbol, name: j.name, verified: true, priceUsd: null });
+    }
+    const needMeta = unknown.filter(m => !meta.has(m)).slice(0, 24);
+    for (const grp of chunkArray(needMeta, 6)) {
+      await Promise.all(grp.map(async (m) => {
+        const t = await fetchLifiToken(SOLANA_LIFI_CHAIN_ID, m);
+        if (t) meta.set(m, { symbol: t.symbol, name: t.name, verified: lifiTokenVerified(t), priceUsd: t.priceUSD });
+      }));
+    }
+    const needPrice = unknown.filter(m => { const x = meta.get(m); return !x || x.priceUsd == null; });
+    if (needPrice.length) {
+      const dex = await getDexScreenerTokenInfo("solana", needPrice);
+      for (const m of needPrice) {
+        const d = dex.get(m);
+        if (!d) continue;
+        const cur = meta.get(m) || { symbol: d.symbol || shortAddrLabel(m), name: d.name || "", verified: false, priceUsd: null };
+        if (!meta.has(m) && d.symbol) { cur.symbol = d.symbol; cur.name = d.name || cur.name; }
+        if (d.priceUsd != null) cur.priceUsd = d.priceUsd;
+        meta.set(m, cur);
+      }
+    }
+  }
+  const rows = [native];
+  for (const t of SOLANA_TOKENS) {
+    const held = byMint.get(t.address);
+    rows.push({ symbol: t.symbol, name: t.symbol, amount: held ? ethers.formatUnits(held.raw, t.decimals) : "0",
+                address: t.address, decimals: t.decimals, program: held ? held.program : SOLANA_PROGRAMS.token,
+                verified: true });
+    byMint.delete(t.address);
+  }
+  for (const [mint, held] of byMint) {
+    const mm = meta.get(mint) || { symbol: shortAddrLabel(mint), name: "", verified: false, priceUsd: null };
+    rows.push({ symbol: mm.symbol, name: mm.name || mm.symbol, amount: ethers.formatUnits(held.raw, held.decimals),
+                address: mint, decimals: held.decimals, program: held.program,
+                verified: !!mm.verified, priceUsd: mm.priceUsd ?? null });
+  }
+  return rows;
+}
+/** One Solana balance for the swap sheet's targeted check: native SOL
+ *  when `mint` is null, else the summed balance of that mint across
+ *  both token programs, formatted with the given decimals. */
+export async function getSolanaTokenBalance(address, mint = null, decimals = 6) {
+  if (!mint) {
+    const bal = await solanaRpc("getBalance", [address]);
+    return solLamportsToSol((bal && bal.value) ?? 0);
+  }
+  let sum = 0n, dec = decimals;
+  for (const program of [SOLANA_PROGRAMS.token, SOLANA_PROGRAMS.token2022]) {
+    try {
+      const r = await solanaRpc("getTokenAccountsByOwner", [address, { mint, programId: program }, { encoding: "jsonParsed" }]);
+      for (const acc of (r && r.value) || []) {
+        const ta = acc && acc.account && acc.account.data && acc.account.data.parsed &&
+                   acc.account.data.parsed.info && acc.account.data.parsed.info.tokenAmount;
+        if (!ta) continue;
+        sum += BigInt(ta.amount || "0");
+        if (ta.decimals != null) dec = ta.decimals;
+      }
+    } catch { /* that program holds none / didn't answer */ }
+  }
+  return ethers.formatUnits(sum, dec);
+}
+
+// ----- Sui: every coin type, via the public GraphQL endpoint -----
+const SUI_GRAPHQL = "https://graphql.mainnet.sui.io/graphql";
+async function suiGraphql(query) {
+  const res = await fetch(SUI_GRAPHQL, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }), signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error("Sui network error (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  if (!data || data.errors) throw new Error("Sui returned an unreadable reply.");
+  return data.data;
+}
+/** Fallback symbol from a coin type string: the struct name
+ *  ("0x2::sui::SUI" → "SUI") — used only when on-chain metadata is
+ *  missing; such rows are unverified by construction. */
+export function suiCoinFallbackSymbol(coinType) {
+  const seg = String(coinType || "").split("::");
+  return seg.length >= 3 ? seg[2] : "COIN";
+}
+/** Fetch coin metadata for a batch of coin types in ONE GraphQL
+ *  request (aliased coinMetadata queries). Fault-tolerant per type:
+ *  a type whose metadata is missing or malformed is simply absent
+ *  from the returned Map. */
+async function suiCoinMetadataMap(coinTypes) {
+  const out = new Map();
+  for (const grp of chunkArray(coinTypes, 20)) {
+    try {
+      const fields = grp.map((t, i) =>
+        `m${i}: coinMetadata(coinType: ${JSON.stringify(t)}) { decimals name symbol }`).join(" ");
+      const data = await suiGraphql(`query { ${fields} }`);
+      grp.forEach((t, i) => {
+        const m = data && data["m" + i];
+        if (m && m.decimals != null) out.set(t, { decimals: m.decimals, name: m.name || "", symbol: m.symbol || "" });
+      });
+    } catch { /* that batch stays metadata-less */ }
+  }
+  return out;
+}
+/** EVERY Sui coin row for an address: native SUI, the curated
+ *  USDC/USDT (always present, zero when unheld), then every other
+ *  coin type the address holds. Reads ride Mysten's public GraphQL
+ *  (the JSON-RPC balances API is deprecated on public fullnodes).
+ *  Discovered rows carry { verified, priceUsd } like Solana's. */
+export async function getSuiAllBalances(address) {
+  if (!isValidSuiAddress(address)) throw new Error("That is not a valid Sui address.");
+  const owner = normalizeSuiAddress(address);
+  const held = new Map(); // coinType -> raw total (string)
+  let cursor = null, pages = 0;
+  while (pages < 4) {
+    const after = cursor ? `, after: ${JSON.stringify(cursor)}` : "";
+    const data = await suiGraphql(
+      `query { address(address: ${JSON.stringify(owner)}) { balances(first: 50${after}) { nodes { coinType { repr } totalBalance } pageInfo { hasNextPage endCursor } } } }`);
+    const conn = data && data.address && data.address.balances;
+    if (!conn) break;
+    for (const n of conn.nodes || []) {
+      if (n && n.coinType && n.coinType.repr) held.set(n.coinType.repr, String(n.totalBalance || "0"));
+    }
+    if (!conn.pageInfo || !conn.pageInfo.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+    pages++;
+  }
+  const norm = (t) => (normalizeSuiAddress(t.split("::")[0]) || t.split("::")[0]) + "::" + t.split("::").slice(1).join("::");
+  const heldByNorm = new Map([...held.entries()].map(([t, v]) => [norm(t), { type: t, raw: v }]));
+  const rows = [{ symbol: "SUI", name: "Sui", amount: suiMistToSui((heldByNorm.get(norm(SUI_COIN_TYPE)) || {}).raw ?? 0),
+                  address: null, decimals: 9, verified: true }];
+  heldByNorm.delete(norm(SUI_COIN_TYPE));
+  for (const t of SUI_TOKENS) {
+    const hit = heldByNorm.get(norm(t.address));
+    rows.push({ symbol: t.symbol, name: t.symbol, amount: hit ? ethers.formatUnits(BigInt(hit.raw), t.decimals) : "0",
+                address: t.address, decimals: t.decimals, verified: true });
+    heldByNorm.delete(norm(t.address));
+  }
+  const others = [...heldByNorm.values()].filter(h => { try { return BigInt(h.raw) > 0n; } catch { return false; } });
+  if (others.length) {
+    const metas = await suiCoinMetadataMap(others.map(h => h.type));
+    const meta = new Map();
+    const needLifi = [];
+    for (const h of others) {
+      const cm = metas.get(h.type);
+      meta.set(h.type, { symbol: (cm && cm.symbol) || suiCoinFallbackSymbol(h.type),
+                         name: (cm && cm.name) || "", decimals: cm ? cm.decimals : 9,
+                         verified: false, priceUsd: null });
+      needLifi.push(h.type);
+    }
+    for (const grp of chunkArray(needLifi.slice(0, 24), 6)) {
+      await Promise.all(grp.map(async (type) => {
+        const t = await fetchLifiToken(SUI_LIFI_CHAIN_ID, type);
+        if (t) { const cur = meta.get(type); cur.verified = lifiTokenVerified(t); cur.priceUsd = t.priceUSD; if (t.decimals != null) cur.decimals = t.decimals; }
+      }));
+    }
+    const needPrice = others.map(h => h.type).filter(t => { const x = meta.get(t); return !x || x.priceUsd == null; });
+    if (needPrice.length) {
+      const dex = await getDexScreenerTokenInfo("sui", needPrice);
+      for (const type of needPrice) {
+        const d = dex.get(type);
+        if (d && d.priceUsd != null) meta.get(type).priceUsd = d.priceUsd;
+      }
+    }
+    for (const h of others) {
+      const mm = meta.get(h.type);
+      rows.push({ symbol: mm.symbol, name: mm.name || mm.symbol, amount: ethers.formatUnits(BigInt(h.raw), mm.decimals),
+                  address: h.type, decimals: mm.decimals, verified: !!mm.verified, priceUsd: mm.priceUsd ?? null });
+    }
+  }
+  return rows;
+}
+/** One Sui coin balance for the swap sheet's targeted check. */
+export async function getSuiTokenBalance(address, coinType, decimals = 9) {
+  if (!isValidSuiAddress(address)) throw new Error("That is not a valid Sui address.");
+  const owner = normalizeSuiAddress(address);
+  const data = await suiGraphql(
+    `query { address(address: ${JSON.stringify(owner)}) { balance(coinType: ${JSON.stringify(coinType)}) { totalBalance } } }`);
+  const raw = (data && data.address && data.address.balance && data.address.balance.totalBalance) || "0";
+  return ethers.formatUnits(BigInt(raw), decimals);
+}
+
+// ----- Tron: every TRC-20 in the account resource -----
+/** Decode an ABI-encoded string from a TronGrid constant-call result
+ *  (hex, no 0x): dynamic string layout first, bytes32 fallback for
+ *  the old tokens that return fixed-width names/symbols. */
+export function tronDecodeAbiString(hexStr) {
+  try {
+    const bytes = ethers.getBytes("0x" + String(hexStr || "").replace(/^0x/i, ""));
+    if (bytes.length >= 64) {
+      const len = Number(BigInt("0x" + hex.encode(bytes.slice(32, 64))));
+      if (len > 0 && len <= 256 && bytes.length >= 64 + len) {
+        return new TextDecoder().decode(bytes.slice(64, 64 + len));
+      }
+    }
+    const s = new TextDecoder().decode(Uint8Array.from(bytes.filter(b => b !== 0))).trim();
+    return s || null;
+  } catch { return null; }
+}
+async function tronConstantResult(contractAddress, selector, parameter = "") {
+  const data = await tronPost("/wallet/triggerconstantcontract", {
+    owner_address: "410000000000000000000000000000000000000000", // zero-ish caller; constant calls need no account
+    contract_address: tronAddressToHex(contractAddress),
+    function_selector: selector, parameter,
+  });
+  const out = data && data.constant_result && data.constant_result[0];
+  return typeof out === "string" && out ? out : null;
+}
+/** A TRC-20's own metadata, read from the contract itself (name(),
+ *  symbol(), decimals() constant calls). Each field is independently
+ *  fault-tolerant; unanswered fields come back null. */
+export async function tronTrc20Meta(contractAddress) {
+  const out = { name: null, symbol: null, decimals: null };
+  const [n, s, d] = await Promise.all([
+    tronConstantResult(contractAddress, "name()").catch(() => null),
+    tronConstantResult(contractAddress, "symbol()").catch(() => null),
+    tronConstantResult(contractAddress, "decimals()").catch(() => null),
+  ]);
+  if (n) out.name = tronDecodeAbiString(n);
+  if (s) out.symbol = tronDecodeAbiString(s);
+  if (d) { try { out.decimals = Number(BigInt("0x" + d)); } catch { /* stays null */ } }
+  return out;
+}
+const TRON_META_LOOKUP_CAP = 40; // per-account cap on per-contract metadata reads
+/** EVERY Tron row for an address: native TRX, the curated USDT/USDC
+ *  (always present, zero when unheld), then every other TRC-20 the
+ *  account resource lists with a positive balance. Metadata for
+ *  discovered tokens is read from their contracts (capped, above);
+ *  prices come from DexScreener. Discovered rows carry { verified,
+ *  priceUsd }; verification for Tron means: curated, or present in
+ *  LI.FI's Tron token list without a "flagged" mark. */
+export async function getTronAllTokens(address) {
+  if (!isValidTronAddress(address)) throw new Error("That is not a valid Tron address.");
+  const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+  const rows = [{ symbol: "TRX", name: "Tron", amount: tronSunToTrx((acct && acct.balance) ?? 0), address: null, decimals: 6, verified: true }];
+  const held = new Map(); // contract -> raw BigInt
+  for (const entry of (acct && acct.trc20) || []) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const [contract, rawStr] of Object.entries(entry)) {
+      try { const raw = BigInt(rawStr); if (raw > 0n) held.set(contract, raw); } catch { /* unparsable balance — skip */ }
+    }
+  }
+  for (const t of TRON_TOKENS) {
+    const raw = held.get(t.address);
+    rows.push({ symbol: t.symbol, name: t.symbol, amount: raw != null ? ethers.formatUnits(raw, t.decimals) : "0",
+                address: t.address, decimals: t.decimals, verified: true });
+    held.delete(t.address);
+  }
+  const others = [...held.entries()];
+  if (others.length) {
+    const dex = await getDexScreenerTokenInfo("tron", others.map(([c]) => c));
+    const metaWork = others.slice(0, TRON_META_LOOKUP_CAP);
+    const metas = new Map();
+    for (const grp of chunkArray(metaWork, 5)) {
+      await Promise.all(grp.map(async ([contract]) => {
+        const [cm, lt] = await Promise.all([
+          tronTrc20Meta(contract).catch(() => ({ name: null, symbol: null, decimals: null })),
+          fetchLifiToken(TRON_LIFI_CHAIN_ID, contract).catch(() => null),
+        ]);
+        metas.set(contract, { cm, lt });
+      }));
+    }
+    for (const [contract, raw] of others) {
+      const { cm, lt } = metas.get(contract) || { cm: { name: null, symbol: null, decimals: null }, lt: null };
+      const d = dex.get(contract);
+      const decimals = cm.decimals ?? (lt && lt.decimals) ?? 6;
+      const symbol = cm.symbol || (lt && lt.symbol) || (d && d.symbol) || shortAddrLabel(contract);
+      const name = cm.name || (lt && lt.name) || (d && d.name) || symbol;
+      const priceUsd = (lt && lt.priceUSD) ?? (d && d.priceUsd) ?? null;
+      rows.push({ symbol, name, amount: ethers.formatUnits(raw, decimals), address: contract,
+                  decimals, verified: lifiTokenVerified(lt), priceUsd });
+    }
+  }
+  return rows;
+}
+/** One Tron balance for the swap sheet's targeted check: native TRX
+ *  when `token` is null, else that TRC-20's balanceOf. */
+export async function getTronTokenBalance(address, token = null) {
+  if (!token) {
+    const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
+    const data = await res.json().catch(() => null);
+    const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+    return tronSunToTrx((acct && acct.balance) ?? 0);
+  }
+  const raw = await tronTrc20Balance(address, token);
+  return ethers.formatUnits(raw, token.decimals ?? 6);
+}
+
+// ----- Cosmos: every denom the bank module reports -----
+const COSMOS_REGISTRY_API = "https://chains.cosmos.directory";
+const _cosmosRegistryCache = new Map(); // chainKey -> Map(denom -> {symbol, name, decimals}) | null
+/** The chain registry's asset table for one Cosmos chain (cosmos.
+ *  directory mirrors github.com/cosmos/chain-registry keylessly):
+ *  denom → display {symbol, name, decimals}. Session-cached; null
+ *  when the registry didn't answer (callers fall back to heuristics
+ *  and mark denoms unverified). */
+export async function fetchCosmosDenomRegistry(chainKey) {
+  if (_cosmosRegistryCache.has(chainKey)) return _cosmosRegistryCache.get(chainKey);
+  let map = null;
+  try {
+    const res = await fetch(`${COSMOS_REGISTRY_API}/${chainKey}`, { signal: AbortSignal.timeout(20000) });
+    if (res.ok) {
+      const j = await res.json().catch(() => null);
+      const assets = (j && j.chain && j.chain.assets) || (j && j.assets) || [];
+      map = new Map();
+      for (const a of assets) {
+        const denom = a && (a.denom || (a.base && a.base.denom));
+        if (!denom) continue;
+        const dec = a.decimals != null ? a.decimals
+          : (a.display && a.display.exponent != null ? a.display.exponent : 6);
+        map.set(denom, { symbol: a.symbol || denom, name: a.name || a.symbol || denom, decimals: dec });
+      }
+    }
+  } catch { /* registry unreachable — heuristics apply */ }
+  _cosmosRegistryCache.set(chainKey, map);
+  return map;
+}
+/** Pure presentation for one bank denom on one chain: the chain's
+ *  native denom and registry-known denoms are named + verified; IBC/
+ *  hashes are labelled "IBC token"; factory/ denoms show their
+ *  subdenom; a bare u-prefixed denom follows the Cosmos micro
+ *  convention (u = 6 decimals, symbol = the rest uppercased). Any
+ *  heuristic row is unverified — its amount may be mis-scaled if the
+ *  token uses non-standard decimals, which is exactly what the ⚠
+ *  in the app communicates. */
+export function cosmosDenomDisplay(chain, denom, meta) {
+  if (denom === chain.denom) {
+    return { symbol: chain.symbol, name: chain.name, decimals: chain.decimals, verified: true, ibc: false };
+  }
+  if (meta) return { symbol: meta.symbol, name: meta.name || meta.symbol, decimals: meta.decimals, verified: true, ibc: false };
+  if (String(denom).startsWith("ibc/")) {
+    return { symbol: "IBC token", name: "IBC token", decimals: 6, verified: false, ibc: true };
+  }
+  if (String(denom).startsWith("factory/")) {
+    const parts = String(denom).split("/");
+    return { symbol: parts[parts.length - 1].toUpperCase().slice(0, 16), name: "Factory token", decimals: 6, verified: false, ibc: false };
+  }
+  if (/^u[a-zA-Z0-9]{2,}$/.test(denom)) {
+    return { symbol: denom.slice(1).toUpperCase(), name: denom, decimals: 6, verified: false, ibc: false };
+  }
+  return { symbol: String(denom).toUpperCase().slice(0, 16), name: String(denom), decimals: 6, verified: false, ibc: false };
+}
+/** All seven Cosmos balances WITH every denom per chain. Same
+ *  fault-tolerance contract as getCosmosBalances: a chain whose read
+ *  fails reports amount: null AND tokens: null (unavailable, never a
+ *  fake zero); this function itself never throws. Each chain entry
+ *  gains `tokens`: [{ denom, symbol, name, amount, decimals,
+ *  verified, ibc }] with the native denom first. */
+export async function getCosmosAllBalances(phrase) {
+  const addrs = cosmosAddresses(phrase);
+  return Promise.all(COSMOS_CHAINS.map(async (chain) => {
+    let amount = null, tokens = null;
+    try {
+      const res = await fetch(`${chain.rest}/cosmos/bank/v1beta1/balances/${addrs[chain.key]}`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) throw new Error(`${chain.name} balance lookup failed (HTTP ${res.status}).`);
+      const data = await res.json().catch(() => null);
+      if (!data || !Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
+      const registry = await fetchCosmosDenomRegistry(chain.key);
+      tokens = data.balances.map(b => {
+        const disp = cosmosDenomDisplay(chain, b.denom, registry ? registry.get(b.denom) : null);
+        let amt = "0";
+        try { amt = ethers.formatUnits(BigInt(b.amount || "0"), disp.decimals); } catch { /* keep 0 */ }
+        return { denom: b.denom, ...disp, amount: amt };
+      });
+      tokens.sort((x, y) => (y.denom === chain.denom ? 1 : 0) - (x.denom === chain.denom ? 1 : 0) || x.denom.localeCompare(y.denom));
+      const nat = tokens.find(t => t.denom === chain.denom);
+      amount = nat ? nat.amount : "0";
+    } catch { amount = null; tokens = null; }
+    return { ...chain, address: addrs[chain.key], amount, tokens };
+  }));
+}
+
+// ----- EVM: Multicall3 scan, single reads, custom-token metadata -----
+export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
+// aggregate3 is declared `view` here on purpose: on-chain it is
+// payable, but it performs no state changes, and declaring it view is
+// what makes ethers issue an eth_call instead of demanding a signer
+// (a read-only provider "does not support sending transactions").
+const MULTICALL3_ABI = ["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[] results)"];
+const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
+const ERC20_META_ABI = [
+  "function name() view returns (string)", "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)", "function balanceOf(address) view returns (uint256)",
+];
+const ERC20_META_B32_ABI = ["function name() view returns (bytes32)", "function symbol() view returns (bytes32)"];
+const _multicall3Cache = new Map(); // networkKey -> boolean
+/** Does this chain have Multicall3 at its canonical address? One
+ *  eth_getCode per chain per session. */
+export async function hasMulticall3(networkKey) {
+  if (_multicall3Cache.has(networkKey)) return _multicall3Cache.get(networkKey);
+  let ok = false;
+  try {
+    const code = await providerFor(networkKey).getCode(MULTICALL3_ADDRESS);
+    ok = !!code && code !== "0x";
+  } catch { ok = false; }
+  _multicall3Cache.set(networkKey, ok);
+  return ok;
+}
+/** Scan a token list for an owner's positive balances on one chain.
+ *  Returns { balances: Map(lowercasedAddress -> BigInt raw), method }
+ *  where method is "multicall3" | "batch" | "direct" — the path that
+ *  actually ran, so the app can report scan quality honestly.
+ *  Strategy: Multicall3 aggregate3 in chunks of 250 when deployed;
+ *  else raw JSON-RPC batch eth_call in chunks of 50; else direct
+ *  eth_call in chunks of 25 — but a list longer than 800 with no
+ *  Multicall3 and a failed batch throws instead of hammering a
+ *  public RPC with thousands of calls (the app shows the scan as
+ *  "limited" on that chain; curated + custom tokens still work). */
+export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250 } = {}) {
+  const net = NETWORKS[networkKey];
+  if (!net) throw new Error("Unknown network: " + networkKey);
+  const list = (tokens || []).filter(t => t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address));
+  const balances = new Map();
+  if (!list.length) return { balances, method: "none" };
+  const iface = new ethers.Interface(ERC20_BALANCE_ABI);
+  const callData = iface.encodeFunctionData("balanceOf", [ownerAddress]);
+  if (await hasMulticall3(networkKey)) {
+    const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, providerFor(networkKey));
+    for (const grp of chunkArray(list, chunkSize)) {
+      const calls = grp.map(t => ({ target: t.address, allowFailure: true, callData }));
+      const results = await mc.aggregate3(calls);
+      results.forEach((r, i) => {
+        if (!r || !r.success || !r.returnData || r.returnData === "0x") return;
+        try {
+          const v = iface.decodeFunctionResult("balanceOf", r.returnData)[0];
+          if (v > 0n) balances.set(grp[i].address.toLowerCase(), v);
+        } catch { /* a non-ERC20 reply — not a balance */ }
+      });
+    }
+    return { balances, method: "multicall3" };
+  }
+  try {
+    for (const grp of chunkArray(list, 50)) {
+      const payload = grp.map((t, i) => ({ jsonrpc: "2.0", id: i, method: "eth_call",
+        params: [{ to: t.address, data: callData }, "latest"] }));
+      const res = await fetch(net.rpc, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
+      if (!res.ok) throw new Error("batch HTTP " + res.status);
+      const out = await res.json().catch(() => null);
+      if (!Array.isArray(out)) throw new Error("batch unsupported");
+      for (const item of out) {
+        const t = item && grp[item.id];
+        if (!t || !item.result || item.result === "0x") continue;
+        try { const v = BigInt(item.result); if (v > 0n) balances.set(t.address.toLowerCase(), v); } catch { /* not a number */ }
+      }
+    }
+    return { balances, method: "batch" };
+  } catch { /* batching refused — direct calls or an honest "limited" */ }
+  if (list.length > 800) throw new Error("Token scan is limited on this chain (no Multicall3 deployment).");
+  const provider = providerFor(networkKey);
+  for (const grp of chunkArray(list, 25)) {
+    await Promise.all(grp.map(async (t) => {
+      try {
+        const v = await new ethers.Contract(t.address, ERC20_BALANCE_ABI, provider).balanceOf(ownerAddress);
+        if (v > 0n) balances.set(t.address.toLowerCase(), v);
+      } catch { /* that contract didn't answer — not a balance */ }
+    }));
+  }
+  return { balances, method: "direct" };
+}
+/** One EVM balance for targeted checks (swap sheet, custom-token
+ *  rows): the native coin when `token` is null or the zero address,
+ *  else that contract's balanceOf. Returns a formatted string. */
+export async function getEvmTokenBalance(wallet, networkKey, token = null) {
+  const provider = providerFor(networkKey);
+  if (!token || !token.address || /^0x0{40}$/i.test(token.address)) {
+    return ethers.formatEther(await provider.getBalance(wallet.address));
+  }
+  const c = new ethers.Contract(token.address, ERC20_BALANCE_ABI, provider);
+  return ethers.formatUnits(await c.balanceOf(wallet.address), token.decimals ?? 18);
+}
+/** Read a would-be ERC-20's metadata + the owner's balance straight
+ *  from the contract (custom-token add: nothing is taken on trust
+ *  from any list). Throws a plain error when the contract doesn't
+ *  answer like an ERC-20 — a pasted address that isn't a token must
+ *  fail loudly here, not become a broken row. Handles the old
+ *  bytes32 name/symbol tokens via a fallback ABI. */
+export async function readEvmTokenMeta(networkKey, address, ownerAddress) {
+  if (!ethers.isAddress(address)) throw new Error("That is not a valid contract address.");
+  const contract = ethers.getAddress(address);
+  const provider = providerFor(networkKey);
+  const c = new ethers.Contract(contract, ERC20_META_ABI, provider);
+  let name = null, symbol = null, decimals = null, balance = 0n;
+  try { name = await c.name(); } catch { /* try bytes32 below */ }
+  try { symbol = await c.symbol(); } catch { /* try bytes32 below */ }
+  if (!symbol || !name) {
+    try {
+      const cb = new ethers.Contract(contract, ERC20_META_B32_ABI, provider);
+      const dec = (v) => { try { return new TextDecoder().decode(ethers.getBytes(v).filter(b => b !== 0)).trim() || null; } catch { return null; } };
+      if (!symbol) symbol = dec(await cb.symbol());
+      if (!name) name = dec(await cb.name());
+    } catch { /* stays null — handled below */ }
+  }
+  try { decimals = Number(await c.decimals()); } catch { /* handled below */ }
+  if (decimals == null || !Number.isFinite(decimals)) {
+    throw new Error("That contract doesn't answer like an ERC-20 token (no decimals) — check the address.");
+  }
+  if (!symbol) {
+    throw new Error("That contract doesn't answer like an ERC-20 token (no symbol) — check the address.");
+  }
+  try { balance = await c.balanceOf(ownerAddress); } catch { /* balance stays 0 */ }
+  return { address: contract, name: name || symbol, symbol, decimals,
+           balance: ethers.formatUnits(balance, decimals) };
 }
