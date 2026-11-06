@@ -1318,4 +1318,33 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     && idxSrc.includes("object-src 'none'"));
 }
 
+// ---------- vault KDF hardening (security audit H2) ----------
+// New vaults: scrypt N=2^18 (ethers default was 2^17) + a 12-character
+// password floor. Old-format vaults must keep unlocking, be detectable,
+// and re-encrypt to the new strength with the same password/phrase.
+{
+  const { validatePassword: vp, vaultKdfParams, needsKdfUpgrade: nku, reencryptVault, VAULT_SCRYPT, MIN_PASSWORD_LENGTH } =
+    await import("../src/wallet-core.js");
+  ok("h2: password floor is 12", MIN_PASSWORD_LENGTH === 12 && !vp("elevenchars") && vp("twelvechars!") && !vp(123456789012));
+  const strong = await createVault("a-strong-password");
+  const kp = vaultKdfParams(strong.keystore);
+  ok("h2: new vault uses scrypt N=2^18 r=8 p=1", kp && kp.N === VAULT_SCRYPT.N && kp.N === 262144 && kp.r === 8 && kp.p === 1);
+  ok("h2: new vault needs no upgrade", !nku(strong.keystore));
+  // An old-format vault, built exactly the way pre-H2 Fluid built it:
+  // ethers defaults (scrypt N=2^17) via wallet.encrypt.
+  const oldWallet = ethers.Wallet.fromPhrase(KNOWN_PHRASE);
+  const oldKeystore = await oldWallet.encrypt("password123");
+  const okp = vaultKdfParams(oldKeystore);
+  ok("h2: old vault reads back N=2^17", okp && okp.N === 131072);
+  ok("h2: old vault flagged for upgrade", nku(oldKeystore));
+  const oldUnlocked = await unlockVault(oldKeystore, "password123"); // 11-char password still unlocks — the floor is creation-only
+  ok("h2: old-format vault unlocks", oldUnlocked.address === "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+  const upgraded = await reencryptVault(oldUnlocked, "password123");
+  ok("h2: re-encrypted vault is at the new strength", vaultKdfParams(upgraded).N === 262144 && !nku(upgraded));
+  const upgradedUnlocked = await unlockVault(upgraded, "password123");
+  ok("h2: upgraded vault unlocks to the same wallet + phrase",
+    upgradedUnlocked.address === oldUnlocked.address && upgradedUnlocked.mnemonic.phrase === KNOWN_PHRASE);
+  ok("h2: garbage keystore → no params, no upgrade", vaultKdfParams("not json") === null && !nku("not json"));
+}
+
 console.log(`\n${passed} checks passed`);

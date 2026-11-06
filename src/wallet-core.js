@@ -172,11 +172,32 @@ export function registerNetworks(map) {
   return NETWORKS;
 }
 
+/* Vault KDF (audit H2, 2026-11-06): new vaults are encrypted with scrypt
+ * N=2^18, r=8, p=1 — twice the work factor of the ethers default (2^17)
+ * the audit measured. 2^19 was rejected deliberately: it needs ~512 MB
+ * of RAM inside the KDF, which risks the browser tab being killed on
+ * low-end Android WebViews; 2^18 (~256 MB) measured ≈1.4 s to unlock on
+ * this build machine and stays inside the 2–3 s budget on modest phones.
+ * The parameters are not a Fluid-side secret: they are stored IN the
+ * keystore JSON (Crypto.kdfparams), ethers reads them back at unlock,
+ * so vaults written by older Fluid versions (N=2^17) keep unlocking
+ * forever, and Fluid re-encrypts them at the new strength after the
+ * next successful unlock (see needsKdfUpgrade / reencryptVault and the
+ * unlock handler in app.js). NOTE: ethers' Wallet.encrypt() takes a
+ * progress callback as its second argument, NOT options — custom scrypt
+ * params must go through ethers.encryptKeystoreJson(account, pw,
+ * { scrypt }), which is what encryptVault below does (the mnemonic is
+ * preserved in the keystore's x-ethers section, as before). */
+export const VAULT_SCRYPT = Object.freeze({ N: 262144, r: 8, p: 1 });
+async function encryptVault(wallet, password) {
+  return ethers.encryptKeystoreJson(wallet, password, { scrypt: { ...VAULT_SCRYPT } });
+}
+
 /** Create a brand-new wallet. Returns the phrase ONCE so the UI can show it
  *  for backup; only the encrypted keystore should ever be stored. */
 export async function createVault(password) {
   const wallet = ethers.Wallet.createRandom();
-  const keystore = await wallet.encrypt(password);
+  const keystore = await encryptVault(wallet, password);
   return { phrase: wallet.mnemonic.phrase, address: wallet.address, keystore };
 }
 
@@ -184,7 +205,7 @@ export async function importVault(phrase, password) {
   const clean = phrase.trim().toLowerCase().replace(/\s+/g, " ");
   if (!ethers.Mnemonic.isValidMnemonic(clean)) throw new Error("That seed phrase is not valid BIP39.");
   const wallet = ethers.Wallet.fromPhrase(clean);
-  const keystore = await wallet.encrypt(password);
+  const keystore = await encryptVault(wallet, password);
   return { phrase: clean, address: wallet.address, keystore };
 }
 
@@ -196,8 +217,41 @@ export async function unlockVault(keystore, password) {
   }
 }
 
+/** The scrypt parameters a stored keystore was encrypted with, read from
+ *  the keystore JSON itself (ethers writes "Crypto", some tools write
+ *  "crypto"; param names are lowercase n/r/p). Null when unparseable. */
+export function vaultKdfParams(keystore) {
+  try {
+    const j = typeof keystore === "string" ? JSON.parse(keystore) : keystore;
+    const kp = (j && (j.Crypto || j.crypto) || {}).kdfparams || {};
+    const n = Number(kp.n), r = Number(kp.r), p = Number(kp.p);
+    if (!Number.isFinite(n) || !Number.isFinite(r) || !Number.isFinite(p)) return null;
+    return { N: n, r, p };
+  } catch { return null; }
+}
+
+/** True when a stored vault predates the current KDF strength and should
+ *  be re-encrypted at the next successful unlock. Unparseable keystores
+ *  return false (unlock will fail on its own; never "upgrade" blind). */
+export function needsKdfUpgrade(keystore) {
+  const kp = vaultKdfParams(keystore);
+  return !!kp && (kp.N < VAULT_SCRYPT.N || kp.r < VAULT_SCRYPT.r || kp.p < VAULT_SCRYPT.p);
+}
+
+/** Re-encrypt an already-unlocked wallet at the current KDF strength
+ *  (same password). Used opportunistically right after a successful
+ *  unlock of an old-format vault. */
+export async function reencryptVault(wallet, password) {
+  return encryptVault(wallet, password);
+}
+
+/* Password floor (audit H2): 12 characters for NEW wallets, imports and
+ * password changes. Unlocking an existing vault never applies this —
+ * an 8–11 character password set under the old floor must keep working
+ * (its vault is silently strengthened at unlock instead). */
+export const MIN_PASSWORD_LENGTH = 12;
 export function validatePassword(pw) {
-  return typeof pw === "string" && pw.length >= 8;
+  return typeof pw === "string" && pw.length >= MIN_PASSWORD_LENGTH;
 }
 
 export async function getBalances(wallet, networkKey) {

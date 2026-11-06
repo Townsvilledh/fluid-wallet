@@ -3,7 +3,7 @@
 import "./buffer-shim.js"; // must stay first: @solana/web3.js needs Buffer
 import QRCode from "qrcode";
 import {
-  NETWORKS, createVault, importVault, unlockVault, validatePassword,
+  NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
@@ -2377,7 +2377,7 @@ $("createName").addEventListener("input", () => {
 });
 $("createBtn").onclick = async () => {
   const pw = $("createPw").value;
-  if (!validatePassword(pw)) return msg("onboardMsg", "Password needs at least 8 characters.");
+  if (!validatePassword(pw)) return msg("onboardMsg", "Password needs at least 12 characters.");
   if (pw !== $("createPw2").value) return msg("onboardMsg", "Passwords do not match.");
   // Username is chosen FIRST, at creation (set by design): validate it and
   // check the public registry before any wallet exists.
@@ -2421,7 +2421,7 @@ $("createBtn").onclick = async () => {
 };
 $("importBtn").onclick = async () => {
   const pw = $("createPw").value;
-  if (!validatePassword(pw)) return msg("onboardMsg", "Set a password (8+ characters) above first.");
+  if (!validatePassword(pw)) return msg("onboardMsg", "Set a password (12+ characters) above first.");
   try {
     msg("onboardMsg", "Importing…", true);
     const v = await importVault($("importPhrase").value, pw);
@@ -2431,7 +2431,20 @@ $("importBtn").onclick = async () => {
   } catch (e) { msg("onboardMsg", e.message); }
 };
 $("unlockBtn").onclick = async () => {
-  try { wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value); refreshGate(); }
+  try {
+    wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value);
+    // Opportunistic KDF upgrade (audit H2): a vault written at the old
+    // scrypt strength is re-encrypted at the current strength with the
+    // password the user just proved — silently, and a failure here must
+    // never block an otherwise-good unlock.
+    try {
+      const stored = localStorage.getItem(VAULT_KEY);
+      if (stored && needsKdfUpgrade(stored)) {
+        localStorage.setItem(VAULT_KEY, await reencryptVault(wallet, $("unlockPw").value));
+      }
+    } catch { /* the old vault still works; the upgrade retries next unlock */ }
+    refreshGate();
+  }
   catch (e) { msg("onboardMsg", e.message); }
 };
 
