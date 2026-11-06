@@ -7,6 +7,7 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
+import { base58check } from "@scure/base";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -206,7 +207,7 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
-  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null };
+  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -220,7 +221,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -284,6 +285,171 @@ export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
   const post = await fetch(`${MEMPOOL}/tx`, { method: "POST", body: hex });
   if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
   return post.text();
+}
+
+// ---------- Tron (same secp256k1 key as the EVM account) ----------
+// Tron is NOT an EVM chain, but it reuses the wallet's secp256k1 key
+// directly: the Tron address is the EVM account's public key run through
+// keccak-256, taking the last 20 bytes (the same bytes as the EVM
+// address), prefixed with 0x41 and Base58Check-encoded. No new seed, no
+// new key — the user's existing backup covers Tron. Transactions are
+// built by TronGrid but signed locally; the key never leaves the device.
+const TRONGRID = "https://api.trongrid.io";
+export const TRON_EXPLORER = "https://tronscan.org";
+export const TRON_TOKENS = [
+  { symbol: "USDT", address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", decimals: 6 },
+  { symbol: "USDC", address: "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8", decimals: 6 },
+];
+const sha256Bytes = (b) => ethers.getBytes(ethers.sha256(b));
+const tronB58Check = base58check(sha256Bytes); // checksum = sha256(sha256(x))[:4], applied inside
+
+function tronPrivateKeyHex(input) {
+  if (typeof input === "string" && /^0x[0-9a-fA-F]{64}$/.test(input.trim())) return input.trim();
+  if (input && typeof input.privateKey === "string") return input.privateKey;
+  if (input instanceof Uint8Array && input.length === 32) return ethers.hexlify(input);
+  throw new Error("Tron needs the wallet's private key (hex or a signer).");
+}
+/** Derive the Tron address (base58 "T…") for a private key given as hex,
+ *  bytes, or any ethers signer carrying .privateKey (the unlocked Fluid
+ *  wallet qualifies — Tron uses the very same key as the EVM account). */
+export function tronAddressFromKey(input) {
+  const key = tronPrivateKeyHex(input);
+  const uncompressed = ethers.SigningKey.computePublicKey(key, false); // 0x04 || X || Y
+  const pub = ethers.getBytes(uncompressed).slice(1);                   // 64 bytes, no prefix
+  const body = ethers.getBytes(ethers.keccak256(pub)).slice(-20);       // == the EVM address bytes
+  const payload = new Uint8Array(21);
+  payload[0] = 0x41;
+  payload.set(body, 1);
+  return tronB58Check.encode(payload);
+}
+/** The Tron address of the wallet's main account — same derivation the
+ *  app uses for the EVM account (ethers' default BIP44 path). */
+export function tronAddressFromPhrase(phrase) {
+  return tronAddressFromKey(ethers.Wallet.fromPhrase(phrase.trim().toLowerCase().replace(/\s+/g, " ")).privateKey);
+}
+/** base58 T-address → 42-char hex form ("41…") TronGrid uses internally. */
+export function tronAddressToHex(address) {
+  const bytes = tronB58Check.decode(String(address || "").trim());
+  return ethers.hexlify(bytes).slice(2);
+}
+/** 42-char hex form ("41…") → base58 T-address. */
+export function tronAddressFromHex(hexAddr) {
+  const clean = String(hexAddr || "").trim().replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{42}$/.test(clean)) throw new Error("That is not a Tron hex address.");
+  return tronB58Check.encode(ethers.getBytes("0x" + clean));
+}
+/** A valid Tron address: Base58Check-decodable, 21 bytes, 0x41 prefix. */
+export function isValidTronAddress(address) {
+  try {
+    const bytes = tronB58Check.decode(String(address || "").trim());
+    return bytes.length === 21 && bytes[0] === 0x41;
+  } catch { return false; }
+}
+export function tronSunToTrx(sun) { return ethers.formatUnits(BigInt(sun), 6); }
+export function tronTrxToSun(amount) { return ethers.parseUnits(String(amount), 6); }
+
+async function tronPost(path, body) {
+  const res = await fetch(TRONGRID + path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error("Tron network error (HTTP " + res.status + ").");
+  return data;
+}
+function tronErrorText(m) {
+  if (typeof m !== "string" || !m) return "unknown error";
+  if (/^[0-9a-fA-F]+$/.test(m) && m.length % 2 === 0) {
+    try { return new TextDecoder().decode(ethers.getBytes("0x" + m)); } catch { /* keep raw */ }
+  }
+  return m;
+}
+/** TRC-20 balanceOf via a constant (free, unsigned) contract call.
+ *  Returns a BigInt in the token's smallest unit. */
+async function tronTrc20Balance(ownerAddress, token) {
+  const ownerHex = tronAddressToHex(ownerAddress);
+  const parameter = ownerHex.slice(2).padStart(64, "0"); // ABI address: 12 zero bytes + 20 address bytes
+  const data = await tronPost("/wallet/triggerconstantcontract", {
+    owner_address: ownerHex, contract_address: tronAddressToHex(token.address),
+    function_selector: "balanceOf(address)", parameter,
+  });
+  const out = data && data.constant_result && data.constant_result[0];
+  if (!out) throw new Error("Empty Tron balance reply.");
+  return BigInt("0x" + out);
+}
+/** Tron balances shaped like getBalances(): native TRX first (address
+ *  null), then the TRC-20 tokens. A failed token read degrades to the
+ *  native balance only — it never fails the whole lookup. */
+export async function getTronBalances(address) {
+  if (!isValidTronAddress(address)) throw new Error("That is not a valid Tron address.");
+  const out = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 }];
+  const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
+  const data = await res.json().catch(() => null);
+  const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+  out[0].amount = tronSunToTrx((acct && acct.balance) ?? 0); // no account on-chain yet = 0
+  for (const t of TRON_TOKENS) {
+    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
+    try {
+      const raw = await tronTrc20Balance(address, t);
+      row.amount = ethers.formatUnits(raw, t.decimals);
+    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
+    out.push(row);
+  }
+  return out;
+}
+/** The signer principle, Tron edition: a sentence, never a blob. */
+export function formatTronSendIntent({ amount, symbol, to }) {
+  return `Send ${amount} ${symbol} to ${to} on Tron. Confirm?`;
+}
+function signTronTxId(wallet, txID) {
+  // A Tron transaction's id IS sha256(raw_data); signing that digest with
+  // the account key yields the 65-byte r‖s‖v signature Tron expects
+  // (v = the bare recovery id, 0/1 — not Ethereum's 27/28).
+  const sk = new ethers.SigningKey(tronPrivateKeyHex(wallet));
+  const sig = sk.sign(ethers.getBytes("0x" + String(txID).replace(/^0x/, "")));
+  return sig.r.slice(2) + sig.s.slice(2) + sig.recoveryParam.toString(16).padStart(2, "0");
+}
+/** Build (via TronGrid), sign (locally) and broadcast a TRX transfer or
+ *  a TRC-20 token transfer. `token` is null for native TRX, otherwise a
+ *  TRON_TOKENS-style {address, decimals}. Returns {hash, txid}. */
+export async function sendTron(wallet, { to, amount, token = null }) {
+  if (!isValidTronAddress(to)) throw new Error("That is not a valid Tron address.");
+  const owner = tronAddressFromKey(wallet);
+  const ownerHex = tronAddressToHex(owner);
+  let tx;
+  if (!token) {
+    const sun = tronTrxToSun(amount);
+    if (sun <= 0n) throw new Error("Enter an amount.");
+    const data = await tronPost("/wallet/createtransaction", {
+      owner_address: ownerHex, to_address: tronAddressToHex(to), amount: Number(sun),
+    });
+    if (!data || data.Error) throw new Error("Tron rejected the transfer: " + tronErrorText(data && data.Error));
+    tx = data;
+  } else {
+    if (!isValidTronAddress(token.address)) throw new Error("Unknown Tron token contract.");
+    const raw = ethers.parseUnits(String(amount), token.decimals ?? 6);
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    const parameter = tronAddressToHex(to).slice(2).padStart(64, "0") + raw.toString(16).padStart(64, "0");
+    const data = await tronPost("/wallet/triggersmartcontract", {
+      owner_address: ownerHex, contract_address: tronAddressToHex(token.address),
+      function_selector: "transfer(address,uint256)", parameter,
+      fee_limit: 100_000_000, call_value: 0,
+    });
+    if (!data || !data.result || data.result.result !== true) {
+      throw new Error("Tron rejected the token transfer: " + tronErrorText(data && data.result && data.result.message));
+    }
+    tx = data.transaction;
+  }
+  if (!tx || !tx.txID || !tx.raw_data) throw new Error("Tron did not return a transaction to sign.");
+  const cast = await tronPost("/wallet/broadcasttransaction", {
+    txID: tx.txID, raw_data: tx.raw_data, raw_data_hex: tx.raw_data_hex,
+    signature: [signTronTxId(wallet, tx.txID)],
+  });
+  if (!cast || cast.result !== true) {
+    throw new Error("Tron network rejected the transaction: " + tronErrorText(cast && (cast.message || cast.code)));
+  }
+  return { hash: tx.txID, txid: tx.txID };
 }
 
 // ---------- Fluid Names: usernames that resolve under the Fluid domain ----------
@@ -520,6 +686,18 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
 // once the source steps are mined. No Fluid server, no Fluid custody.
 export const LIFI_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
 const LIFI_API = "https://li.quest/v1";
+// Non-EVM families join the swap universe by their LI.FI chain id. Tron
+// (chainType TVM on LI.FI) is addressed by base58 T-addresses there —
+// its "native token" is the T-form of the zero address, NOT the EVM one.
+export const TRON_LIFI_CHAIN_ID = 728126428;
+export const TRON_SWAP_NATIVE_TOKEN = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
+/** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
+ *  a non-EVM family key ("tron"). Null when the key is unknown. */
+export function swapChainOf(chainKey) {
+  if (chainKey === "tron") return { chainId: TRON_LIFI_CHAIN_ID, name: "Tron" };
+  const n = NETWORKS[chainKey];
+  return n ? { chainId: n.chainId, name: n.name } : null;
+}
 
 export function swapAmountToRaw(amount, decimals) { return ethers.parseUnits(String(amount), decimals).toString(); }
 export function swapRawToAmount(raw, decimals) { return ethers.formatUnits(raw ?? "0", decimals); }
@@ -544,9 +722,10 @@ function quoteStepToRoute(step) {
  *  (several competing routes). That endpoint can be very slow, so on a
  *  timeout or empty answer Fluid falls back to GET /v1/quote, which
  *  returns the single recommended route as one executable step. */
-export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress }) {
-  const from = NETWORKS[fromChainKey], to = NETWORKS[toChainKey];
+export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }) {
+  const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
   if (!from || !to) throw new Error("Unknown network in swap.");
+  const destAddress = toAddress || fromAddress;
   try {
     const res = await fetch(`${LIFI_API}/routes`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -554,7 +733,7 @@ export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress
       body: JSON.stringify({
         fromChainId: from.chainId, toChainId: to.chainId,
         fromTokenAddress, toTokenAddress,
-        fromAmount: String(fromAmount), fromAddress, toAddress: fromAddress,
+        fromAmount: String(fromAmount), fromAddress, toAddress: destAddress,
         options: { integrator: "fluid-wallet", order: "RECOMMENDED" },
       }),
     });
@@ -566,7 +745,7 @@ export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress
   const q = new URLSearchParams({
     fromChain: from.chainId, toChain: to.chainId,
     fromToken: fromTokenAddress, toToken: toTokenAddress,
-    fromAmount: String(fromAmount), fromAddress,
+    fromAmount: String(fromAmount), fromAddress, toAddress: destAddress,
   });
   const res = await fetch(`${LIFI_API}/quote?${q.toString()}`);
   const step = await res.json().catch(() => ({}));
@@ -626,6 +805,14 @@ export function swapExecutableSteps(route) {
     s.transactionRequest && (s.transactionRequest.chainId == null || cid(s.transactionRequest.chainId) === Number(route.fromChainId)));
 }
 export function swapRouteExecutable(route) {
+  // Fluid signs with an EVM key on EVM chains. Routes sourced from a
+  // non-EVM family (Tron, and later Solana/Sui/…) may carry steps, but
+  // their signatures are a different scheme — they stay unexecutable
+  // here until that family's signer lands, never faked.
+  const evmIds = new Set(Object.values(NETWORKS).map(n => n.chainId));
+  if (!evmIds.has(Number(route?.fromChainId))) {
+    return { ok: false, reason: "Fluid can't sign swap steps starting on this chain yet — send from the chain's own rows instead, or pick a route starting on an EVM chain." };
+  }
   const steps = swapExecutableSteps(route);
   return steps.length
     ? { ok: true, steps }
@@ -914,7 +1101,7 @@ export async function fetchStableTokens(chainId) {
 
 /** The swap version of the signer principle: a sentence, never a blob. */
 export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount, toSymbol, toNetKey, toolName, feeUsd, durationSec }) {
-  const f = NETWORKS[fromNetKey], t = NETWORKS[toNetKey];
+  const f = swapChainOf(fromNetKey), t = swapChainOf(toNetKey);
   const secs = Math.max(1, Math.round(Number(durationSec) || 0));
   const when = Number.isFinite(durationSec)
     ? (durationSec < 90 ? ` Funds should arrive in about ${secs} second${secs === 1 ? "" : "s"}.`

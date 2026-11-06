@@ -6,6 +6,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
+  tronAddressFromPhrase, getTronBalances, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
@@ -23,11 +24,12 @@ const CHAINS_KEY = "fluid_chains_v1";
 const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
-  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461" };
+  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
+let tronAddr = null, tronBalances = [];
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
@@ -96,6 +98,14 @@ async function renderMain() {
   // Bitcoin first (all chains, one wallet)
   btcAddr = bitcoinAddress(wallet.mnemonic.phrase);
   getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
+  // Tron next (a family like Bitcoin, not an EVM network): same key as
+  // the EVM account, its own rows, painted with zero placeholders until
+  // TronGrid answers.
+  tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
+  tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
+                  ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  $("totalSub").textContent = "on this network + Bitcoin + Tron";
+  getTronBalances(tronAddr).then(rows => { tronBalances = rows; paintAssets(); }).catch(() => paintAssets());
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
@@ -113,6 +123,10 @@ function heroTotal() {
   let t = btcBal * (prices.BTC || 0);
   for (const b of balances) {
     const p = b.address ? (prices[b.symbol] ?? null) : (prices[net.priceSym] ?? null);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of tronBalances) {
+    const p = prices[b.symbol] ?? null;
     if (p != null) t += Number(b.amount) * p;
   }
   return t;
@@ -133,8 +147,23 @@ function paintAssets() {
       <span class="grow"><b>${b.symbol}</b><small>${net.name}</small></span>
       <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
   }
+  // Tron family rows (tap a row to send on Tron)
+  if (tronBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Tron</p>`);
+    tronBalances.forEach((b, i) => {
+      const p = prices[b.symbol];
+      rows.push(`<div class="row" data-tron="${i}">
+        <span class="coin" style="background:${COIN_COLORS[b.symbol] || "#3b4a7a"}">${b.symbol.slice(0, 1)}</span>
+        <span class="grow"><b>${b.symbol}</b><small>Tron${b.address ? " · TRC20" : ""}</small></span>
+        <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
+    });
+  }
   $("assetList").innerHTML = rows.join("");
   $("btcRow").onclick = openBtcSheet;
+  document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
+    const b = tronBalances[Number(r.dataset.tron)];
+    if (b) openTronSheet(b);
+  });
 }
 
 // ---------- chain discovery (Phase 0: gated EVM auto-discovery) ----------
@@ -253,10 +282,15 @@ $("actReceive").onclick = () => {
     <hr style="border-color:var(--line)">
     <p class="tag">Bitcoin address:</p>
     <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
-    <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>`);
-  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr);
+    <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Tron address (TRX and TRC20 tokens):</p>
+    <img class="qr" id="qrTron"><p class="mono">${tronAddr}</p>
+    <button class="btn ghost" id="cpTron">Copy Tron address</button>`);
+  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
+  $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
 };
 
 // ---------- send (EVM) ----------
@@ -356,6 +390,50 @@ function openBtcSheet() {
   };
 }
 
+// ---------- Tron sheet ----------
+// Mirrors the EVM send sheet: review → human-readable sentence → confirm.
+// The transaction is built by TronGrid but signed locally by sendTron.
+function openTronSheet(tok) {
+  let pendingTron = null;
+  openSheet(`<h3>Send ${tok.symbol} on Tron</h3>
+    <p><b>${fmt(tok.amount)} ${tok.symbol}</b> · from <span class="mono">${tronAddr}</span></p>
+    <input id="tTo" placeholder="Recipient T… address" autocapitalize="none">
+    <input id="tAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="tReview">Review send</button>
+    <div id="tIntent" class="hidden">
+      <p class="seed" id="tIntentText"></p>
+      <button class="btn" id="tConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="tMsg"></p>
+    <p class="tag">${tok.address
+      ? "Token sends burn a little TRX for energy — keep some TRX in this wallet."
+      : "Tron network fees are paid in TRX (bandwidth/energy). Sends are final."}</p>`);
+  $("tReview").onclick = () => {
+    const to = $("tTo").value.trim(), amount = $("tAmt").value.trim();
+    if (!isValidTronAddress(to)) return msg("tMsg", "That is not a valid Tron address (it starts with T).");
+    if (!amount || Number(amount) <= 0) return msg("tMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("tMsg", "Amount is more than your balance.");
+    pendingTron = { to, amount };
+    $("tIntentText").textContent = formatTronSendIntent({ amount, symbol: tok.symbol, to });
+    show("tIntent"); msg("tMsg", "");
+  };
+  $("tConfirm").onclick = async () => {
+    if (!pendingTron) return;
+    try {
+      msg("tMsg", "Signing locally and broadcasting…", true);
+      const { hash } = await sendTron(wallet, {
+        to: pendingTron.to, amount: pendingTron.amount,
+        token: tok.address ? { address: tok.address, decimals: tok.decimals } : null,
+      });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingTron.amount, symbol: tok.symbol, to: pendingTron.to,
+        link: `https://tronscan.org/#/transaction/${hash}`, explorer: "https://tronscan.org", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingTron = null; closeSheet(); renderMain();
+    } catch (e) { msg("tMsg", "Send failed: " + e.message); }
+  };
+}
+
 // ---------- Lightning ----------
 $("lightningRow").onclick = () => {
   openSheet(`<h3>⚡ Lightning payment</h3>
@@ -424,7 +502,14 @@ $("actCash").onclick = () => rampSheet("sell");
 
 // ---------- swap (LI.FI routes: same-chain + cross-chain) ----------
 let pendingSwap = null;
+const swapChainName = (k) => (k === "tron" ? "Tron" : NETWORKS[k].name);
 function swapTokenList(netKey) {
+  if (netKey === "tron") {
+    // LI.FI addresses Tron tokens by their base58 T-address; the native
+    // TRX entry is LI.FI's T-form zero address (see core).
+    return [{ symbol: "TRX", address: TRON_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
+            ...TRON_TOKENS.map(t => ({ ...t, native: false }))];
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: LIFI_NATIVE_TOKEN, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -439,8 +524,8 @@ function swapDurationText(sec) {
 }
 $("actSwap").onclick = () => {
   pendingSwap = null;
-  const swapNets = Object.keys(NETWORKS).filter(k => k !== "sepolia");
-  const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("");
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron"];
+  const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
   const fromKey0 = networkKey === "sepolia" ? "bsc" : networkKey;
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   openSheet(`<h3>Swap</h3>
@@ -509,16 +594,17 @@ $("actSwap").onclick = () => {
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
     try {
       msg("wMsg", "Checking your balance…", true);
-      const bals = await getBalances(wallet, fromKey);
+      const bals = fromKey === "tron" ? await getTronBalances(tronAddr) : await getBalances(wallet, fromKey);
       const mine = bals.find(b => fromTok.native ? !b.address : (b.address || "").toLowerCase() === fromTok.address.toLowerCase());
       if (!mine || Number(amount) > Number(mine.amount))
-        return msg("wMsg", `Not enough ${fromTok.symbol} on ${NETWORKS[fromKey].name} (you have ${mine ? fmt(mine.amount) : "0"}).`);
+        return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${mine ? fmt(mine.amount) : "0"}).`);
       msg("wMsg", "Searching routes across chains…", true);
       const routes = await getSwapRoutes({
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
         fromAmount: swapAmountToRaw(amount, fromTok.decimals),
-        fromAddress: wallet.address,
+        fromAddress: fromKey === "tron" ? tronAddr : wallet.address,
+        toAddress: toKey === "tron" ? tronAddr : wallet.address,
       });
       if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
       const ranked = rankSwapRoutes(routes).slice(0, 3);
@@ -563,7 +649,7 @@ $("actSwap").onclick = () => {
       pendingSwap = null; show("wConfirm", false);
       msg("wMsg", fromKey === toKey
         ? `Swap done ✓ tx ${hashes[hashes.length - 1].slice(0, 16)}…`
-        : `Swap sent ✓ — your ${toTok.symbol} will arrive on ${NETWORKS[toKey].name} via the bridge shortly. First tx ${hashes[0].slice(0, 16)}…`, true);
+        : `Swap sent ✓ — your ${toTok.symbol} will arrive on ${swapChainName(toKey)} via the bridge shortly. First tx ${hashes[0].slice(0, 16)}…`, true);
       renderMain();
     } catch (e) { msg("wMsg", "Swap failed: " + (e.shortMessage || e.message)); }
     btn.disabled = false;
@@ -574,7 +660,7 @@ $("actSwap").onclick = () => {
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
   $("history").innerHTML = h.length
-    ? h.map(x => `<div class="hist">Sent ${x.amount} ${x.symbol} → ${String(x.to).slice(0, 10)}… · <a target="_blank" rel="noopener" href="${x.explorer}/tx/${x.hash}">view ↗</a></div>`).join("")
+    ? h.map(x => `<div class="hist">Sent ${x.amount} ${x.symbol} → ${String(x.to).slice(0, 10)}… · <a target="_blank" rel="noopener" href="${x.link || `${x.explorer}/tx/${x.hash}`}">view ↗</a></div>`).join("")
     : "No sends yet from this browser.";
 }
 
