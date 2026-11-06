@@ -43,6 +43,42 @@ const res = await window.FluidAgent.requestTransfer({
 }); // → { hash, from, network } after the owner approves
 ```
 
+## Autonomous mode — no human at all
+
+Owner-assisted mode (above) is for agents that should *not* hold keys. For a
+fully autonomous agent — a bot on a server, DripBot, an always-on service —
+Fluid ships a headless runtime: **`agent/fluid-agent.mjs`** (Node, same
+open-source repo). The agent creates its own wallet end-to-end:
+
+```bash
+node agent/fluid-agent.mjs create --name DripBot --dir ./dripbot-wallet
+node agent/fluid-agent.mjs balance --dir ./dripbot-wallet
+node agent/fluid-agent.mjs send --dir ./dripbot-wallet --to 0x… --amount 0.01 --network bsc
+```
+
+- The agent generates **its own BIP39 seed** and its own keystore password;
+  the seed exists on disk only as an encrypted keystore, the password in a
+  `0600` secret file in the agent's own directory. No human ever sees either.
+- It derives its own EVM + BTC addresses and publishes its descriptor.
+- `send()` signs with its own key — no approval step exists. The guardrails
+  are the **policy caps, enforced in code before signing**, plus valuation:
+  if a send can't be priced, it is refused (safety default). Over-cap sends
+  throw — verified live: a 1 BNB send against a $50 cap is blocked before
+  any signature.
+- There is deliberately **no ramp code path** in the runtime. Chain only.
+
+**The honest trade-off:** an autonomous agent holds its own keys, so whoever
+controls the agent's machine controls the wallet. The protection model is
+therefore *funding discipline + caps*: fund the agent wallet only with what
+it is allowed to spend (e.g. DripBot's fee income), keep the caps tight, and
+the worst case is bounded by what was sent to it. An operator who later wants
+custody back simply sweeps the funds — the descriptor addresses are public.
+
+Verified 2026-11-06 with a throwaway `TestBot` wallet: autonomous create,
+live balance reads (BSC + BTC), duplicate-create refusal, over-cap policy
+block, and a within-cap send that passed policy and reached the network
+(failing only on its zero balance).
+
 ## Safety model
 
 - **Signer separation** (Fluid's core rule): agents request, the signer signs.

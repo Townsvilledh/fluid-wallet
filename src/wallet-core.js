@@ -202,7 +202,19 @@ export async function getPrices() {
     const byPair = Object.fromEntries(data.map(d => [d.symbol, parseFloat(d.price)]));
     for (const [sym, pair] of Object.entries(PRICE_PAIRS)) if (pair && byPair[pair]) out[sym] = byPair[pair];
     if (out.USDC == null && byPair.USDCUSDT) out.USDC = byPair.USDCUSDT;
-  } catch { /* prices are decoration; balances still work without them */ }
+  } catch { /* fall through to the CoinGecko fallback below */ }
+  // Fallback (e.g. where api.binance.com is region-restricted — matters for
+  // headless agents, which refuse unpriced sends): CoinGecko simple price.
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle" };
+  const missing = Object.keys(CG).filter(s => out[s] == null);
+  if (missing.length) {
+    try {
+      const ids = missing.map(s => CG[s]).join(",");
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+      const data = await res.json();
+      for (const s of missing) if (data[CG[s]]?.usd) out[s] = data[CG[s]].usd;
+    } catch { /* prices stay partial; callers that need them refuse safely */ }
+  }
   return out;
 }
 
