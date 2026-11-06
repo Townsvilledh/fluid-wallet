@@ -28,7 +28,7 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
-  looksLikePoison, revokeApproval,
+  looksLikePoison, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
@@ -2584,8 +2584,13 @@ setInterval(() => { if (wallet && Date.now() - lastActivity > AUTOLOCK_MS) lockW
 function loadApprovals() { try { return JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]"); } catch { return []; } }
 $("approvalsBtn").onclick = () => {
   let pendingRevoke = null;
+  let chainFound = null; // on-chain scan result for the current network
+  let pendingChainRevoke = null;
   openSheet(`<h3>Token approvals</h3>
-    <p class="tag">Approvals Fluid made for swaps from this device. Revoking sets the permission back to zero.</p>
+    <p class="tag">Two views below: approvals found <b>on-chain</b> for this wallet on the current network — including any made from other apps — and Fluid's own records from this device. Revoking sets the permission back to zero.</p>
+    <h4 style="margin:14px 0 4px">On-chain · ${esc(NETWORKS[networkKey].name)}</h4>
+    <div id="apChainList"><p class="tag">Checking the chain for approvals…</p></div>
+    <h4 style="margin:14px 0 4px">Fluid's records · this device</h4>
     <div id="apList"></div>
     <div id="apConfirm"></div>
     <p class="msg err" id="apMsg"></p>`);
@@ -2603,6 +2608,7 @@ $("approvalsBtn").onclick = () => {
     document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = () => {
       const list = loadApprovals(); const a = list[Number(b.dataset.revoke)]; if (!a) return;
       pendingRevoke = Number(b.dataset.revoke);
+      pendingChainRevoke = null;
       $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">${formatRevokePrompt(a, (NETWORKS[a.chainKey] || {}).name)}</p>
         <button class="btn" id="apRevokeGo">Revoke approval</button>`;
       msg("apMsg", "");
@@ -2621,7 +2627,62 @@ $("approvalsBtn").onclick = () => {
       };
     });
   };
+  // On-chain section (audit M5): Fluid's records alone can give false
+  // assurance — approvals granted by other apps on this address are the
+  // dangerous set. Scan allowance() for the wallet's known tokens ×
+  // (spenders from Fluid's records on this chain + LI.FI's diamond).
+  const paintChain = () => {
+    const el = $("apChainList"); if (!el) return;
+    if (!chainFound) return; // still loading or failed — the placeholder/error text stands
+    el.innerHTML = chainFound.length ? chainFound.map((r, i) => `
+      <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span><b>${esc(r.tokenSymbol || "Token")}</b> · ${r.unlimited ? "Unlimited ∞" : esc(formatTokenAmount(r.allowance, r.decimals))}<br><small style="color:var(--dim)">spender ${esc(String(r.spender).slice(0, 6))}…${esc(String(r.spender).slice(-4))} · found on-chain</small></span>
+        <button class="btn ghost" data-chain-revoke="${i}" style="width:auto;padding:6px 12px">Revoke</button>
+      </div>`).join("") : `<p class="tag">No live approvals found on-chain for your known tokens and the spenders checked (Fluid's swap spenders + LI.FI's router).</p>`;
+    document.querySelectorAll("[data-chain-revoke]").forEach(b => b.onclick = () => {
+      const r = chainFound[Number(b.dataset.chainRevoke)]; if (!r) return;
+      pendingChainRevoke = Number(b.dataset.chainRevoke);
+      pendingRevoke = null;
+      const rec = { tokenSymbol: r.tokenSymbol, spender: r.spender, chainKey: networkKey };
+      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">${formatRevokePrompt(rec, NETWORKS[networkKey].name)}</p>
+        <button class="btn" id="apChainRevokeGo">Revoke approval</button>`;
+      msg("apMsg", "");
+      $("apChainRevokeGo").onclick = async () => {
+        const cur2 = chainFound[pendingChainRevoke]; if (!cur2) return;
+        const btn = $("apChainRevokeGo"); btn.disabled = true;
+        try {
+          msg("apMsg", "Sending revoke transaction…", true);
+          await revokeApproval(wallet, networkKey, cur2.token, cur2.spender);
+          chainFound.splice(pendingChainRevoke, 1);
+          pendingChainRevoke = null; $("apConfirm").innerHTML = "";
+          msg("apMsg", "Revoked ✓ — that spender can no longer move this token.", true);
+          paintChain();
+        } catch (e) { msg("apMsg", "Revoke failed: " + (e.shortMessage || e.message)); btn.disabled = false; }
+      };
+    });
+  };
   paint();
+  (async () => {
+    try {
+      const records = loadApprovals().filter(a => a.chainKey === networkKey);
+      const spenders = [...new Set([...records.map(a => a.spender), LIFI_DIAMOND])];
+      const toks = new Map();
+      const addTok = (address, symbol, decimals) => {
+        if (address && ethersIsAddress(address) && !/^0x0{40}$/i.test(address)) {
+          toks.set(address.toLowerCase(), { address, symbol: symbol || "Token", decimals: decimals ?? 18 });
+        }
+      };
+      for (const b of balances) if (b.address) addTok(b.address, b.symbol, b.decimals);
+      for (const t of NETWORKS[networkKey].tokens || []) addTok(t.address, t.symbol, t.decimals);
+      for (const a of records) addTok(a.token, a.tokenSymbol, a.decimals);
+      for (const ct of loadCustomTokens(NETWORKS[networkKey].chainId)) addTok(ct.address, ct.symbol, ct.decimals);
+      chainFound = await scanOnChainAllowances(networkKey, wallet.address, [...toks.values()], spenders);
+      paintChain();
+    } catch (e) {
+      const el = $("apChainList");
+      if (el) el.innerHTML = `<p class="tag">Couldn't read on-chain approvals right now (${esc(e.message || e)}). The list below only covers approvals Fluid itself made — for a full check from another device, revoke.cash also works.</p>`;
+    }
+  })();
 };
 
 // ---------- build stamp ----------

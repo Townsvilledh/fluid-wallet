@@ -2788,6 +2788,82 @@ export async function revokeApproval(wallet, chainKey, tokenAddress, spender) {
   return tx.hash;
 }
 
+/* On-chain approvals scan (audit M5, 2026-11-06): the approvals screen
+ * used to show only Fluid's own records, which made approvals granted
+ * through OTHER wallets/dApps on the same address invisible — including
+ * the unlimited drainer approvals the research flagged as a top loss
+ * pattern. This reads allowance(owner, spender) for the wallet's known
+ * tokens × a bounded spender set (every spender in Fluid's records for
+ * the chain, plus LI.FI's diamond — the spender Fluid itself uses),
+ * via Multicall3 when the chain has it, direct eth_calls otherwise.
+ * Only POSITIVE allowances are returned. The pair count is capped so a
+ * long token list can never turn the screen into an RPC flood. */
+export const LIFI_DIAMOND = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
+export const MAX_APPROVAL_SCAN_PAIRS = 400;
+export async function scanOnChainAllowances(networkKey, ownerAddress, tokens, spenders) {
+  const net = NETWORKS[networkKey];
+  if (!net) throw new Error("Unknown network: " + networkKey);
+  const toks = [];
+  const seenT = new Set();
+  for (const t of tokens || []) {
+    if (!t || !ethers.isAddress(t.address || "") || /^0x0{40}$/i.test(t.address)) continue;
+    const k = t.address.toLowerCase();
+    if (seenT.has(k)) continue;
+    seenT.add(k);
+    toks.push({ address: t.address, symbol: t.symbol || "Token", decimals: t.decimals ?? 18 });
+  }
+  const spends = [];
+  const seenS = new Set();
+  for (const s of spenders || []) {
+    if (!ethers.isAddress(s || "")) continue;
+    const k = s.toLowerCase();
+    if (seenS.has(k)) continue;
+    seenS.add(k);
+    spends.push(s);
+  }
+  const pairs = [];
+  for (const t of toks) for (const s of spends) {
+    if (pairs.length >= MAX_APPROVAL_SCAN_PAIRS) break;
+    pairs.push({ token: t, spender: s });
+  }
+  if (!pairs.length) return [];
+  const iface = new ethers.Interface(SWAP_ERC20);
+  const callData = (spender) => iface.encodeFunctionData("allowance", [ownerAddress, spender]);
+  const values = new Array(pairs.length).fill(0n);
+  if (await hasMulticall3(networkKey)) {
+    const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, providerFor(networkKey));
+    for (const grp of chunkArray(pairs.map((p, i) => ({ ...p, i })), 250)) {
+      const calls = grp.map(p => ({ target: p.token.address, allowFailure: true, callData: callData(p.spender) }));
+      const results = await mc.aggregate3(calls);
+      results.forEach((r, j) => {
+        if (!r || !r.success || !r.returnData || r.returnData === "0x") return;
+        try { values[grp[j].i] = iface.decodeFunctionResult("allowance", r.returnData)[0]; } catch { /* not an ERC-20 reply */ }
+      });
+    }
+  } else {
+    const provider = providerFor(networkKey);
+    for (const grp of chunkArray(pairs.map((p, i) => ({ ...p, i })), 25)) {
+      await Promise.all(grp.map(async (p) => {
+        try {
+          const c = new ethers.Contract(p.token.address, SWAP_ERC20, provider);
+          values[p.i] = await c.allowance(ownerAddress, p.spender);
+        } catch { /* that pair didn't answer — treated as no approval found */ }
+      }));
+    }
+  }
+  const out = [];
+  pairs.forEach((p, i) => {
+    if (values[i] > 0n) {
+      out.push({
+        token: p.token.address, tokenSymbol: p.token.symbol, decimals: p.token.decimals,
+        spender: p.spender, allowance: values[i].toString(),
+        unlimited: values[i] >= (1n << 255n),
+      });
+    }
+  });
+  return out;
+}
+
 /** Address-poisoning defence: scammers generate addresses that share the
  *  first and last few characters with one you already use, then dust you
  *  from them hoping you'll copy the wrong one out of your history. Returns

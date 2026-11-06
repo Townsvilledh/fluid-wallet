@@ -1425,7 +1425,7 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const nativeStep = (value, gasLimit, gasEst) => ({
     action: { fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 }, fromAmount: ETH(1) },
     estimate: { gasCosts: gasEst != null ? [{ amount: ETH(0.003), estimate: String(gasEst) }] : [] },
-    transactionRequest: { to: "0x1231DEB6f5749EF6ceE3a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
+    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
   });
   const route = { fromChainId: 56, fromAmount: ETH(1) };
   ok("m1: native step at the quoted value passes", checkSwapStepBounds(route, nativeStep(ETH(1), "21000", 200000)).ok);
@@ -1435,7 +1435,7 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const tokenStep = (value, gasLimit) => ({
     action: { fromToken: { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", decimals: 18 }, fromAmount: "100000000" },
     estimate: { gasCosts: [{ amount: ETH(0.003), estimate: "150000" }] },
-    transactionRequest: { to: "0x1231DEB6f5749EF6ceE3a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
+    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
   });
   ok("m1: token step with zero value passes", checkSwapStepBounds(route, tokenStep("0", "200000")).ok);
   ok("m1: token step value within its declared gas costs passes", checkSwapStepBounds(route, tokenStep(ETH(0.002), "200000")).ok);
@@ -1481,6 +1481,80 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("m3: picker escapes discovered labels", appSrc.includes("esc(label)") && appSrc.includes("esc(sub)"));
   ok("m3: agent list + approval sheet escape agent/network names",
     appSrc.includes("esc(a.name)") && appSrc.includes("esc(net.symbol)") && appSrc.includes("esc(net.name)") && appSrc.includes("esc(to)"));
+}
+
+// ---------- on-chain approvals scan (security audit M5) ----------
+// The approvals screen must see approvals granted by ANY app on this
+// address, not just Fluid's own records. The scan runs against a
+// stubbed JSON-RPC endpoint (offline): Multicall3 answers allowance()
+// for a fixture grid; only positive allowances come back.
+{
+  const { scanOnChainAllowances, LIFI_DIAMOND } = await import("../src/wallet-core.js");
+  ok("m5: LI.FI diamond spender is the canonical one", LIFI_DIAMOND === "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE");
+  ok("m5: empty token/spender sets scan to nothing, no network",
+    (await scanOnChainAllowances("bsc", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", [], [])).length === 0);
+  await assert.rejects(() => scanOnChainAllowances("nope", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", [], []), /Unknown network/);
+  ok("m5: unknown network is refused", true);
+  const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+  const TOK_A = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+  const TOK_B = "0x55d398326f99059fF775485246999027B3197955";
+  const OTHER = "0x1111111111111111111111111111111111111111";
+  const MAX = (1n << 256n) - 1n;
+  const grid = new Map([
+    [`${TOK_A.toLowerCase()}|${LIFI_DIAMOND.toLowerCase()}`, 5000000n],
+    [`${TOK_B.toLowerCase()}|${LIFI_DIAMOND.toLowerCase()}`, MAX],
+  ]);
+  const mcIface = new ethers.Interface(["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])"]);
+  const ercIface = new ethers.Interface(["function allowance(address owner, address spender) view returns (uint256)"]);
+  // ethers speaks JSON-RPC over node:http in Node (global fetch stubs
+  // can't intercept it), so the fixture is a real local RPC server and
+  // a throwaway registered network pointing at it.
+  const { createServer } = await import("node:http");
+  const server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      const parsed = JSON.parse(raw);
+      const answer = (body) => {
+        if (body.method === "eth_chainId") return "0x" + (4252023).toString(16);
+        if (body.method === "eth_blockNumber") return "0x100";
+        if (body.method === "eth_getCode") return "0x60016000"; // Multicall3 "deployed"
+        if (body.method === "eth_call") {
+          const [calls] = mcIface.decodeFunctionData("aggregate3", body.params[0].data);
+          const results = calls.map(c => {
+            const [, spender] = ercIface.decodeFunctionData("allowance", c.callData);
+            const v = grid.get(`${c.target.toLowerCase()}|${spender.toLowerCase()}`) || 0n;
+            return [true, ercIface.encodeFunctionResult("allowance", [v])];
+          });
+          return mcIface.encodeFunctionResult("aggregate3", [results]);
+        }
+        return "0x0";
+      };
+      res.setHeader("content-type", "application/json");
+      // ethers batches same-tick requests into one array payload.
+      if (Array.isArray(parsed)) {
+        return res.end(JSON.stringify(parsed.map(b => ({ jsonrpc: "2.0", id: b.id, result: answer(b) }))));
+      }
+      return res.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: answer(parsed) }));
+    });
+  });
+  await new Promise(r => server.listen(0, "127.0.0.1", r));
+  const { registerNetworks } = await import("../src/wallet-core.js");
+  registerNetworks({ xapprov: { name: "Approvals Fixture", chainId: 4252023, symbol: "FIX", priceSym: null,
+    rpc: `http://127.0.0.1:${server.address().port}`, explorer: null, fonbnkNetwork: null, tokens: [] } });
+  try {
+    const found = await scanOnChainAllowances("xapprov", OWNER,
+      [{ address: TOK_A, symbol: "USDC", decimals: 18 }, { address: TOK_B, symbol: "USDT", decimals: 18 },
+       { address: "0x0000000000000000000000000000000000000000", symbol: "NATIVE", decimals: 18 }],
+      [LIFI_DIAMOND, OTHER]);
+    ok("m5: scan returns exactly the positive allowances", found.length === 2);
+    const a = found.find(r => r.token === TOK_A), b = found.find(r => r.token === TOK_B);
+    ok("m5: finite allowance reported verbatim", !!a && a.allowance === "5000000" && a.unlimited === false && a.spender === LIFI_DIAMOND);
+    ok("m5: max allowance flagged unlimited", !!b && b.unlimited === true);
+  } finally { server.close(); }
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("m5: approvals screen has labelled on-chain + records sections",
+    appSrc.includes("apChainList") && appSrc.includes("scanOnChainAllowances") && appSrc.includes("Fluid's records"));
 }
 
 console.log(`\n${passed} checks passed`);
