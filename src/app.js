@@ -80,6 +80,8 @@ async function renderMain() {
   $("addrText").textContent = wallet.address.slice(0, 8) + "…" + wallet.address.slice(-6) + " ⧉ tap to copy";
   const myName = localStorage.getItem("fluid_name");
   $("nameText").textContent = myName ? "@" + myName + " · " + myName + "." + FLUID_DOMAIN : "";
+  if (myName && $("namePreview")) $("namePreview").textContent = myName + "." + FLUID_DOMAIN;
+  renderAgents();
   $("addrText").onclick = () => copyText(wallet.address, $("addrText"));
   $("netBtn").textContent = NETWORKS[networkKey].name + " ▾";
   try { prices = await getPrices(); } catch { prices = {}; }
@@ -549,7 +551,14 @@ $("wipeBtn").onclick = () => {
   $("wipeCancel").onclick = () => closeSheet();
   $("wipeGo").onclick = () => {
     localStorage.removeItem(VAULT_KEY); localStorage.removeItem("fluid_name");
-    wallet = null; pendingSend = null; closeSheet(); refreshGate();
+    wallet = null; pendingSend = null;
+    // Leave no trace of the removed wallet on the onboarding screen:
+    // a seed phrase or password must never linger in the form after removal.
+    $("seedOut").textContent = ""; show("seedBox", false);
+    $("seedCheck").checked = false;
+    for (const id of ["createPw", "createPw2", "importPhrase", "unlockPw", "createName"]) { const el = $(id); if (el) el.value = ""; }
+    msg("onboardMsg", "");
+    closeSheet(); refreshGate();
   };
 };
 
@@ -572,7 +581,7 @@ function recordAgentSpend(index, usdAmt) {
   localStorage.setItem(AGENT_SPEND_KEY, JSON.stringify(s));
 }
 function renderAgents() {
-  const list = loadAgents();
+  const list = loadAgents().filter(a => !a.owner || !wallet || a.owner === wallet.address);
   $("agentList").innerHTML = list.map(a =>
     `<div style="border-top:1px solid #26314d;padding:8px 0"><b>${a.name}</b> <span class="tag">caps $${a.policy.perTxCapUsd}/tx · $${a.policy.dailyCapUsd}/day · no ramps · no KYC</span><br>` +
     `<span class="mono" style="font-size:11px">EVM ${a.keys.evm}</span><br><span class="mono" style="font-size:11px">BTC ${a.keys.btc}</span></div>`).join("");
@@ -586,7 +595,7 @@ $("createAgentBtn").onclick = () => {
   const index = agents.length;
   const keys = agentAddresses(wallet.mnemonic.phrase, index);
   const descriptor = buildAgentDescriptor({ name, index, evm: keys.evm, btc: keys.btc });
-  agents.push({ name, index, keys, policy: descriptor.policy });
+  agents.push({ name, index, keys, policy: descriptor.policy, owner: wallet.address });
   saveAgents(agents); renderAgents();
   $("agentDescriptor").textContent = JSON.stringify(descriptor, null, 1);
   show("agentBox");
