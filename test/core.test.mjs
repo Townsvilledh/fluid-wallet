@@ -1871,4 +1871,189 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("rt-f10: an unknown agent name fails loudly", appSrc.includes("No agent named"));
 }
 
+// ---------- Build B: Taproot (BIP86), Ordinals safety, Runes ----------
+// Taproot address = the OFFICIAL BIP86 test vector (independently
+// cross-checked against bitcoinjs-lib in scratch before shipping).
+{
+  const { bitcoinTaprootAddress, bitcoinAddress } = await import("../src/wallet-core.js");
+  const BIP86_PHRASE = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  ok("b-b: taproot address matches the official BIP86 vector",
+    bitcoinTaprootAddress(BIP86_PHRASE) === "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr");
+  ok("b-b: taproot and segwit accounts are distinct addresses from one seed",
+    bitcoinTaprootAddress(KNOWN_PHRASE) !== bitcoinAddress(KNOWN_PHRASE)
+    && bitcoinTaprootAddress(KNOWN_PHRASE).startsWith("bc1p"));
+}
+// Ordinals index parsing: the outpoint encoding pinned by a REAL
+// outpoint verified against mempool.space (txid byte-reversed + LE vout).
+{
+  const { parseTurboOutpoint, normalizeTurboInscriptions, formatInscriptionRow, inscriptionPreviewUrl } =
+    await import("../src/wallet-core.js");
+  const p = parseTurboOutpoint("efa55da277f37e7a72db86da84377072ed8a969bb7e9a637c1b640547f8aa15d00000000");
+  ok("b-b: turbo outpoint decodes to the on-chain txid:vout",
+    p && p.txid === "5da18a7f5440b6c137a6e9b79b968aed72703784da86db727a7ef377a25da5ef" && p.vout === 0);
+  ok("b-b: malformed outpoints are rejected",
+    parseTurboOutpoint("zz") === null && parseTurboOutpoint("ab".repeat(32)) === null && parseTurboOutpoint(null) === null);
+  const rows = normalizeTurboInscriptions([
+    { id: "cb".repeat(32) + "i0", num: 42, content_type: "image/png", meta: { name: "<img onerror=alert(1)>" },
+      collection: { name: "Evil<script>" }, outpoint: { outpoint: "11".repeat(32) + "00000000", sat_offset: 0 } },
+    { id: "bad", outpoint: { outpoint: "nope" } },
+  ]);
+  ok("b-b: normalize keeps only rows with parseable outpoints", rows.length === 1 && rows[0].txid === "11".repeat(32));
+  const html = formatInscriptionRow(rows[0]);
+  ok("b-b: inscription row renders hostile metadata inert",
+    !html.includes("<img onerror") && !html.includes("<script>") && html.includes("&lt;img")
+    && html.includes(`src="https://cdn.ordinalswallet.com/inscription/preview/${"cb".repeat(32)}i0"`));
+  ok("b-b: preview url only for strictly-valid inscription ids",
+    inscriptionPreviewUrl("cb".repeat(32) + "i12") !== null && inscriptionPreviewUrl('x" onerror="1') === null
+    && inscriptionPreviewUrl("cb".repeat(32)) === null);
+}
+// Runestone encoder: five vectors produced independently by BOTH
+// @ordjs/runestone (official ord, WASM) and @magiceden-oss/runestone-lib
+// in scratch — byte-for-byte agreement is the shipping gate.
+{
+  const { encodeRunestone, runeWholeToBase, parseRuneId, normalizeTurboRunes, formatRuneRow } =
+    await import("../src/wallet-core.js");
+  const hex = b => Buffer.from(b).toString("hex");
+  ok("b-b: runestone v1 single edict", hex(encodeRunestone({ edicts: [{ id: { block: 840011, tx: 56 }, amount: 1000n, output: 1 }] })) === "6a5d0800cba23338e80701");
+  ok("b-b: runestone v2 two runes + pointer", hex(encodeRunestone({ edicts: [{ id: { block: 840000, tx: 1229 }, amount: 55n, output: 1 }, { id: { block: 840011, tx: 56 }, amount: 1000n, output: 1 }], pointer: 2 })) === "6a5d0f160200c0a233cd0937010b38e80701");
+  ok("b-b: runestone v3 zero + u128-overflow amount", hex(encodeRunestone({ edicts: [{ id: { block: 840011, tx: 56 }, amount: 0n, output: 1 }, { id: { block: 840011, tx: 57 }, amount: 18446744073709551617n, output: 2 }] })) === "6a5d1400cba23338000100018180808080808080800202");
+  ok("b-b: runestone v4 mint only", hex(encodeRunestone({ mint: { block: 840011, tx: 56 } })) === "6a5d0614cba2331438");
+  ok("b-b: runestone v5 same-block deltas + pointer 0", hex(encodeRunestone({ edicts: [{ id: { block: 840011, tx: 56 }, amount: 7n, output: 1 }, { id: { block: 840011, tx: 57 }, amount: 8n, output: 2 }, { id: { block: 840012, tx: 0 }, amount: 9n, output: 1 }], pointer: 0 })) === "6a5d11160000cba2333807010001080201000901");
+  ok("b-b: edicts are sorted by the encoder (input order irrelevant)",
+    hex(encodeRunestone({ edicts: [{ id: { block: 840011, tx: 56 }, amount: 1000n, output: 1 }, { id: { block: 840000, tx: 1229 }, amount: 55n, output: 1 }], pointer: 2 })) === "6a5d0f160200c0a233cd0937010b38e80701");
+  ok("b-b: whole→base conversion (whole units proven on-chain)",
+    runeWholeToBase("2100", 10) === 21000000000000n && runeWholeToBase("1.5", 2) === 150n
+    && runeWholeToBase("7", 0) === 7n);
+  let threw = false; try { runeWholeToBase("1.234", 2); } catch { threw = true; }
+  ok("b-b: excess fractional digits are rejected", threw);
+  ok("b-b: rune id parsing is strict",
+    parseRuneId("840011:56").key === "840011:56" && parseRuneId("840011") === null && parseRuneId("a:b") === null);
+  const rr = normalizeTurboRunes([
+    { rune_id: "840000:1229", name: "ANARCHO•CATBUS", symbol: "<svg onload=1>", amount: "2100", divisibility: 10 },
+    { rune_id: "bad", amount: "5", divisibility: 0 },
+    { rune_id: "1:2", amount: "1.5", divisibility: 0 }, // fractional whole amount: not the API's semantics
+  ]);
+  ok("b-b: rune normalize validates id + integer whole amounts", rr.length === 1 && rr[0].amount === "2100");
+  const rhtml = formatRuneRow(rr[0]);
+  ok("b-b: rune row renders hostile symbol inert", !rhtml.includes("<svg") && rhtml.includes("&lt;svg"));
+}
+// Inscription protection in real plans (stubbed fetch): the LARGEST
+// confirmed UTXO carries an inscription and must be excluded; the send
+// then plans over the remaining coin and says how many were protected.
+{
+  const { planBitcoinSend, bitcoinAddress } = await import("../src/wallet-core.js");
+  const realFetch = globalThis.fetch;
+  const bigTx = "cc".repeat(32), smallTx = "dd".repeat(32);
+  const mkStub = (inscriptions, aggBalance) => async (url) => {
+    const u = String(url);
+    if (u.includes("/v1/fees/recommended")) return { ok: true, json: async () => ({ halfHourFee: 10 }) };
+    if (u.includes("blockstream.info/api/fee-estimates")) return { ok: true, json: async () => ({ "3": 11 }) };
+    if (u.includes("turbo.ordinalswallet.com") && u.endsWith("/inscriptions")) return { ok: true, json: async () => inscriptions };
+    if (u.includes("turbo.ordinalswallet.com")) return { ok: true, json: async () => ({ inscription_balance: aggBalance, inscriptions: [] }) };
+    if (u.includes("/utxos")) return { ok: true, json: async () => ([
+      { txid: bigTx, vout: 0, value: 500000, status: { confirmed: true } },
+      { txid: smallTx, vout: 1, value: 100000, status: { confirmed: true } },
+    ]) };
+    throw new Error("unexpected fetch " + u);
+  };
+  // bigTx reversed-bytes encoding for the Turbo outpoint form:
+  const bigOutpoint = bigTx.match(/../g).reverse().join("") + "00000000";
+  const dest = bitcoinAddress(KNOWN_PHRASE);
+  try {
+    globalThis.fetch = mkStub([{ id: "ee".repeat(32) + "i0", num: 1, content_type: "text/plain",
+      outpoint: { outpoint: bigOutpoint, sat_offset: 0 } }], 500000);
+    const plan = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005 });
+    ok("b-b: inscription-bearing UTXO is excluded from coin selection",
+      plan.protectedCount === 1 && plan.inscriptionCheckOk === true && plan.feeSat === 1400);
+    await assert.rejects(() => planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.002 }),
+      /inscription-bearing coin\(s\) are protected/);
+    ok("b-b: protected coins cannot fund a bigger send (clear error)", true);
+    globalThis.fetch = async () => { throw new Error("index down"); };
+    // fee stubs are also down here — pass an explicit rate so ONLY the
+    // inscription index is unreachable:
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("turbo.ordinalswallet.com")) throw new Error("index down");
+      if (u.includes("/utxos")) return { ok: true, json: async () => ([{ txid: smallTx, vout: 1, value: 100000, status: { confirmed: true } }]) };
+      throw new Error("unexpected fetch " + u);
+    };
+    const plan2 = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005, feeRate: 10 });
+    ok("b-b: index unreachable → send proceeds, check flagged as not run",
+      plan2.inscriptionCheckOk === false && plan2.protectedCount === 0 && plan2.feeSat === 1400);
+    globalThis.fetch = mkStub([], 500000); // cold index: aggregate says coins exist, list empty
+    const plan3 = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005 });
+    ok("b-b: cold-index inconsistency distrusts the empty list", plan3.inscriptionCheckOk === false && plan3.protectedCount === 0);
+    // Taproot plan: same rails, P2TR sizes (fee = (10 + 58 + 43 + 43) × 10).
+    globalThis.fetch = mkStub([], 0);
+    const planTr = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005, kind: "taproot" });
+    ok("b-b: taproot plan uses P2TR vsize and signs", planTr.feeSat === 1420 && planTr.kind === "taproot"
+      && /^[0-9a-f]{64}$/.test(planTr.txid));
+  } finally { globalThis.fetch = realFetch; }
+}
+// Rune transfer planning (stubbed fetch across BOTH accounts): the
+// runestone in the built tx must equal the pinned encoding, the layout
+// must be [runestone, recipient 546, rune change 546 w/ pointer], and a
+// coin carrying a second rune must refuse the transfer.
+{
+  const { planRuneTransfer, bitcoinAddress, bitcoinTaprootAddress, encodeRunestone } = await import("../src/wallet-core.js");
+  const realFetch = globalThis.fetch;
+  const segAddr = bitcoinAddress(KNOWN_PHRASE), trAddr = bitcoinTaprootAddress(KNOWN_PHRASE);
+  const coinTx = "f1".repeat(32), feeTx = "f2".repeat(32), bothTx = "f3".repeat(32);
+  const baseStub = (runeOutpoints, utxosByAddr, balancesByAddr) => async (url) => {
+    const u = String(url);
+    if (u.includes("turbo.ordinalswallet.com")) {
+      if (u.includes("/rune-outpoints/")) {
+        const rid = decodeURIComponent(u.split("/rune-outpoints/")[1]);
+        return { ok: true, json: async () => (runeOutpoints[rid] || []) };
+      }
+      if (u.includes("/rune-balance")) {
+        const addr = u.split("/wallet/")[1].split("/")[0];
+        return { ok: true, json: async () => (balancesByAddr[addr] || []) };
+      }
+      if (u.endsWith("/inscriptions")) return { ok: true, json: async () => [] };
+      return { ok: true, json: async () => ({ inscription_balance: 0 }) };
+    }
+    if (u.includes("/address/") && u.includes("/utxos")) {
+      const addr = u.split("/address/")[1].split("/")[0];
+      return { ok: true, json: async () => (utxosByAddr[addr] || []) };
+    }
+    throw new Error("unexpected fetch " + u);
+  };
+  const dest = bitcoinAddress("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
+  try {
+    globalThis.fetch = baseStub(
+      { "840011:56": [{ outpoint: `${coinTx}:0`, amount: "100", sats: 546 }] },
+      { [segAddr]: [{ txid: coinTx, vout: 0, value: 10000, status: { confirmed: true } },
+                    { txid: feeTx, vout: 0, value: 100000, status: { confirmed: true } }],
+        [trAddr]: [] },
+      { [segAddr]: [{ rune_id: "840011:56", name: "TEST•RUNE", symbol: "T", amount: "100", divisibility: 0 }],
+        [trAddr]: [] });
+    const plan = await planRuneTransfer(KNOWN_PHRASE, { runeId: "840011:56", to: dest, amountWhole: "30", feeRate: 5 });
+    ok("b-b: rune plan embeds the pinned runestone (30 units, change→pointer 2)",
+      plan.runestoneHex === Buffer.from(encodeRunestone({ edicts: [{ id: { block: 840011, tx: 56 }, amount: 30n, output: 1 }], pointer: 2 })).toString("hex")
+      && plan.baseAmount === "30" && plan.runeChange === true && plan.hex.includes(plan.runestoneHex));
+    const full = await planRuneTransfer(KNOWN_PHRASE, { runeId: "840011:56", to: dest, amountWhole: "100", feeRate: 5 });
+    ok("b-b: exact-amount rune send has no rune change output", full.runeChange === false);
+    // A coin carrying a SECOND rune must refuse:
+    globalThis.fetch = baseStub(
+      { "840011:56": [{ outpoint: `${bothTx}:0`, amount: "100", sats: 546 }],
+        "840000:1": [{ outpoint: `${bothTx}:0`, amount: "7", sats: 546 }] },
+      { [segAddr]: [{ txid: bothTx, vout: 0, value: 10000, status: { confirmed: true } },
+                    { txid: feeTx, vout: 0, value: 100000, status: { confirmed: true } }],
+        [trAddr]: [] },
+      { [segAddr]: [{ rune_id: "840011:56", name: "TEST•RUNE", symbol: "T", amount: "100", divisibility: 0 },
+                    { rune_id: "840000:1", name: "OTHER•RUNE", symbol: "O", amount: "7", divisibility: 0 }],
+        [trAddr]: [] });
+    await assert.rejects(() => planRuneTransfer(KNOWN_PHRASE, { runeId: "840011:56", to: dest, amountWhole: "30", feeRate: 5 }),
+      /also holds OTHER•RUNE/);
+    ok("b-b: a coin carrying two runes refuses the transfer", true);
+  } finally { globalThis.fetch = realFetch; }
+}
+// Receive selector: "taproot" resolves to the Bitcoin panel.
+{
+  const { filterReceiveNetworks } = await import("../src/wallet-core.js");
+  ok("b-b: receive input 'taproot' resolves to bitcoin",
+    JSON.stringify(filterReceiveNetworks("taproot").map(e => e.id)) === JSON.stringify(["bitcoin"]));
+}
+
 console.log(`\n${passed} checks passed`);

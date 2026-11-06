@@ -484,36 +484,393 @@ export async function broadcastBitcoinTx(hex) {
  *  broadcasts these exact bytes (what was reviewed is what is sent).
  *  Coin selection uses CONFIRMED UTXOs only (audit L2 — spending an
  *  unconfirmed input can strand the payment if its parent is replaced
- *  or dropped). */
-export async function planBitcoinSend(phrase, { to, amountBtc, feeRate }) {
-  const { child, address, script } = btcKeys(phrase);
+ *  or dropped) and, since Build B, excludes inscription-bearing UTXOs
+ *  (see getInscriptionProtection): an ordinary send must never burn an
+ *  inscription as fee/change dust. `kind` selects the account: "segwit"
+ *  (BIP84, default) or "taproot" (BIP86). When the inscription index
+ *  cannot be reached the plan still proceeds (the coins are the user's
+ *  to risk) but reports inscriptionCheckOk=false so the review can say
+ *  plainly that the check did not run. */
+export async function planBitcoinSend(phrase, { to, amountBtc, feeRate, kind = "segwit" }) {
+  const keys = kind === "taproot" ? btcTaprootKeys(phrase) : btcKeys(phrase);
+  const { child, address, script } = keys;
   let rateInfo = null;
   if (!feeRate) { rateInfo = await getBtcFeeRateInfo(); feeRate = rateInfo.rate; }
   const rate = feeRate;
+  const prot = await getInscriptionProtection(address);
   const res = await fetch(`${MEMPOOL}/address/${address}/utxos`);
-  const utxos = (await res.json()).filter(u => u.status && u.status.confirmed === true)
+  const confirmed = (await res.json()).filter(u => u.status && u.status.confirmed === true);
+  const utxos = confirmed.filter(u => !prot.outpoints.has(`${u.txid}:${u.vout}`))
     .sort((a, b) => b.value - a.value);
+  const protectedCount = confirmed.length - utxos.length;
   const target = Math.round(amountBtc * 1e8);
   const picked = []; let sum = 0;
   for (const u of utxos) { picked.push(u); sum += u.value; if (sum >= target + 1000) break; }
-  // fee for nIn inputs, 2 outputs (pay + change), P2WPKH: ~10 + 68/in + 31/out vbytes
-  const fee = Math.ceil((10 + picked.length * 68 + 62) * rate);
-  if (sum < target + fee) throw new Error("Not enough confirmed BTC to cover the amount plus network fee.");
+  // fee for nIn inputs, 2 outputs (pay + change): ~10 overhead + 68/in
+  // (P2WPKH) or 58/in (P2TR keypath) + the two output sizes (31 P2WPKH /
+  // 43 P2TR each, sized from the actual output scripts).
+  const inVb = kind === "taproot" ? 58 : 68;
+  const fee = Math.ceil((10 + picked.length * inVb + btcOutVsize(to) + btcOutVsize(address)) * rate);
+  if (sum < target + fee) {
+    throw new Error(protectedCount > 0
+      ? `Not enough spendable BTC to cover the amount plus network fee. ${protectedCount} inscription-bearing coin(s) are protected and are never spent by ordinary sends.`
+      : "Not enough confirmed BTC to cover the amount plus network fee.");
+  }
   const change = sum - target - fee;
   const tx = new btc.Transaction();
   for (const u of picked) {
-    tx.addInput({ txid: u.txid, index: u.vout, witnessUtxo: { script, amount: BigInt(u.value) }, sighashType: btc.SigHash.ALL });
+    const input = { txid: u.txid, index: u.vout, witnessUtxo: { script, amount: BigInt(u.value) } };
+    if (kind === "taproot") input.tapInternalKey = keys.internalKey; // SIGHASH_DEFAULT, as cross-verified
+    else input.sighashType = btc.SigHash.ALL;
+    tx.addInput(input);
   }
   tx.addOutputAddress(to, BigInt(target), btc.NETWORK);
   if (change > 330) tx.addOutputAddress(address, BigInt(change), btc.NETWORK);
   tx.sign(child.privateKey);
   tx.finalize();
-  return { hex: tx.hex, txid: tx.id, feeSat: fee, feeBtc: fee / 1e8, rate, rateInfo };
+  return { hex: tx.hex, txid: tx.id, feeSat: fee, feeBtc: fee / 1e8, rate, rateInfo, protectedCount, inscriptionCheckOk: prot.ok, kind };
+}
+/** Virtual size of one output paying `address` (script + 9 bytes of
+ *  framing), from the address family — fee estimation only; the built
+ *  transaction's real fee is fixed by the change-absorbs-the-rest
+ *  construction, exactly as the SegWit planner has always worked. */
+function btcOutVsize(address) {
+  const a = String(address || "");
+  if (a.startsWith("bc1p")) return 43; // P2TR script 34
+  if (a.startsWith("bc1q")) return 31; // P2WPKH script 22
+  if (a.startsWith("3")) return 32;    // P2SH script 23
+  if (a.startsWith("1")) return 34;    // P2PKH script 25
+  return 43;                           // unknown: assume the largest standard size
 }
 /** Build, sign and broadcast a BTC payment. Returns the txid. */
 export async function sendBitcoin(phrase, opts) {
   const plan = await planBitcoinSend(phrase, opts);
   return broadcastBitcoinTx(plan.hex);
+}
+// --- Taproot (BIP86) — Build B. A second Bitcoin account from the same
+// seed: m/86'/0'/account'/0/0, bc1p… Derivation and Schnorr keypath
+// signing were cross-checked byte-for-byte against bitcoinjs-lib (an
+// independent implementation, scratch-only) and the official BIP86 test
+// vector before shipping: abandon×11+about at m/86'/0'/0'/0/0 →
+// bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr.
+function btcTaprootKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/86'/0'/${account}'/0/0`);
+  // p2tr needs the x-only (32-byte) internal key — secp keys are 33 bytes.
+  const xonly = child.publicKey.slice(1);
+  const pay = btc.p2tr(xonly, undefined, btc.NETWORK);
+  return { child, address: pay.address, script: pay.script, internalKey: xonly };
+}
+export function bitcoinTaprootAddress(phrase, account = 0) { return btcTaprootKeys(phrase, account).address; }
+// --- Ordinals safety + Runes — Build B. Index: the Ordinals Wallet
+// "Turbo" API (keyless for reads, verified live 2026-11-06; the Hiro
+// Ordinals/Runes APIs now require an API key, so they cannot serve a
+// keyless wallet). All index data is HOSTILE input: ids and outpoints
+// are strictly validated, names/symbols are escaped at render, amounts
+// are integer strings bounded in code. Rare sats: no verified keyless
+// per-UTXO satributes source exists today, so the protection covers
+// inscriptions (the index-verified asset class); a UTXO carrying only a
+// rare sat is not detectable keylessly — disclosed in the Build B report.
+const ORD_API = "https://turbo.ordinalswallet.com";
+/** Parse Turbo's inscription outpoint encoding: 72 hex chars = the txid
+ *  in internal (reversed) byte order + a little-endian u32 vout.
+ *  Returns { txid (display order), vout } or null on any malformation.
+ *  Verified against mempool.space on a real outpoint (see tests). */
+export function parseTurboOutpoint(op) {
+  const s = String(op ?? "").toLowerCase();
+  if (!/^[0-9a-f]{72}$/.test(s)) return null;
+  const rawBytes = s.slice(0, 64).match(/../g).reverse().join("");
+  const vout = parseInt(s.slice(64, 72).match(/../g).reverse().join(""), 16);
+  return { txid: rawBytes, vout };
+}
+/** Validate + normalise one raw Turbo inscriptions response. Rows whose
+ *  outpoint does not parse are dropped entirely — for protection AND
+ *  display an unparseable location is worse than none. Metadata is
+ *  length-capped here and escaped at render. */
+export function normalizeTurboInscriptions(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    const loc = parseTurboOutpoint(r?.outpoint?.outpoint);
+    if (!loc) continue;
+    const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
+    out.push({
+      id: /^[0-9a-f]{64}i[0-9]+$/.test(String(r?.id ?? "")) ? String(r.id) : null,
+      num: Number.isInteger(r?.num) ? r.num : null,
+      contentType: str(r?.content_type, 100) || "unknown",
+      name: str(r?.meta?.name, 200),
+      collection: str(r?.collection?.name, 200),
+      txid: loc.txid, vout: loc.vout,
+      satOffset: Number.isInteger(r?.outpoint?.sat_offset) ? r.outpoint.sat_offset : null,
+    });
+  }
+  return out;
+}
+/** The wallet's inscriptions (display). Throws on index failure so the
+ *  UI can show an honest error state instead of "none". */
+export async function getInscriptions(address) {
+  const res = await fetch(`${ORD_API}/wallet/${address}/inscriptions`);
+  if (!res.ok) throw new Error(`Inscription index returned ${res.status}.`);
+  return normalizeTurboInscriptions(await res.json());
+}
+/** Which confirmed UTXOs must ordinary BTC sends NEVER touch.
+ *  NEVER throws: any failure (index down, malformed data, the cold-index
+ *  case where the aggregate claims inscription coins exist but the list
+ *  comes back empty) returns ok:false with an EMPTY protected set plus
+ *  the flag, and the caller proceeds with the disclosure the brief
+ *  specifies — the protection must never brick a plain BTC send. */
+export async function getInscriptionProtection(address) {
+  try {
+    const [insRes, walRes] = await Promise.all([
+      fetch(`${ORD_API}/wallet/${address}/inscriptions`),
+      fetch(`${ORD_API}/wallet/${address}`),
+    ]);
+    if (!insRes.ok || !walRes.ok) return { ok: false, outpoints: new Set(), count: 0 };
+    const list = normalizeTurboInscriptions(await insRes.json());
+    const agg = await walRes.json();
+    if (Number(agg?.inscription_balance) > 0 && list.length === 0) {
+      return { ok: false, outpoints: new Set(), count: 0 }; // cold index — distrust the empty list
+    }
+    return { ok: true, outpoints: new Set(list.map(i => `${i.txid}:${i.vout}`)), count: list.length };
+  } catch { return { ok: false, outpoints: new Set(), count: 0 }; }
+}
+export function inscriptionPreviewUrl(id) {
+  return typeof id === "string" && /^[0-9a-f]{64}i[0-9]+$/.test(id)
+    ? `https://cdn.ordinalswallet.com/inscription/preview/${id}` : null;
+}
+/** One collectibles row, fully escaped (C1 pattern). The preview image
+ *  is only ever the id-validated CDN URL, only for image content. */
+export function formatInscriptionRow(ins) {
+  const title = ins?.name || ins?.collection || "Inscription";
+  const bits = [ins?.num != null ? `#${ins.num}` : null, ins?.contentType || "unknown type",
+    ins?.collection && ins?.name ? ins.collection : null].filter(Boolean).join(" · ");
+  const url = String(ins?.contentType || "").startsWith("image/") ? inscriptionPreviewUrl(ins?.id) : null;
+  const img = url ? `<img src="${escapeHtml(url)}" alt="" loading="lazy" style="width:38px;height:38px;border-radius:8px;object-fit:cover;vertical-align:middle;margin-right:8px">` : "";
+  return `<div class="hist">${img}<b>${escapeHtml(title)}</b> <small style="color:var(--dim)">${escapeHtml(bits)}</small></div>`;
+}
+// --- Runes: balances, and transfers whose runestone encoding was
+// validated byte-for-byte in scratch against TWO independent reference
+// implementations (@ordjs/runestone — the official ord WASM — and
+// @magiceden-oss/runestone-lib) across five vectors incl. multi-rune
+// edicts, pointer, mint, zero/huge amounts and same-block delta rules.
+export function parseRuneId(s) {
+  const m = /^(\d{1,10}):(\d{1,10})$/.exec(String(s ?? "").trim());
+  if (!m) return null;
+  const block = Number(m[1]), tx = Number(m[2]);
+  if (!Number.isSafeInteger(block) || !Number.isSafeInteger(tx)) return null;
+  return { block, tx, key: `${block}:${tx}` };
+}
+/** Turbo's rune amount is in WHOLE units (proven against an on-chain
+ *  runestone: 2,100 whole at divisibility 10 = 21,000,000,000,000 base).
+ *  Amounts are kept as strings end-to-end — never floats. */
+export function normalizeTurboRunes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    const id = parseRuneId(r?.rune_id);
+    if (!id) continue;
+    if (!/^\d{1,40}$/.test(String(r?.amount ?? ""))) continue; // integer whole units only
+    const div = Number(r?.divisibility);
+    if (!Number.isInteger(div) || div < 0 || div > 38) continue;
+    const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
+    out.push({ runeId: id.key, block: id.block, tx: id.tx, name: str(r?.name, 200) || id.key,
+      symbol: str(r?.symbol, 16), amount: String(r.amount), divisibility: div });
+  }
+  return out;
+}
+export async function getRuneBalances(address) {
+  const res = await fetch(`${ORD_API}/wallet/${address}/rune-balance`);
+  if (!res.ok) throw new Error(`Rune index returned ${res.status}.`);
+  return normalizeTurboRunes(await res.json());
+}
+export function normalizeTurboRuneOutpoints(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    const m = /^([0-9a-f]{64}):(\d{1,6})$/i.exec(String(r?.outpoint ?? ""));
+    if (!m) continue;
+    if (!/^\d{1,40}$/.test(String(r?.amount ?? ""))) continue;
+    out.push({ txid: m[1].toLowerCase(), vout: Number(m[2]), amountWhole: String(r.amount),
+      sats: Number.isSafeInteger(r?.sats) && r.sats > 0 ? r.sats : null });
+  }
+  return out;
+}
+export async function getRuneOutpoints(address, runeId) {
+  const res = await fetch(`${ORD_API}/wallet/${address}/rune-outpoints/${encodeURIComponent(runeId)}`);
+  if (!res.ok) throw new Error(`Rune index returned ${res.status}.`);
+  return normalizeTurboRuneOutpoints(await res.json());
+}
+/** Whole-unit amount string → base units (BigInt). Fractional input is
+ *  accepted up to the rune's divisibility and rejected beyond it. */
+export function runeWholeToBase(amount, divisibility) {
+  const s = String(amount ?? "").trim();
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error("Invalid rune amount.");
+  const [whole, frac = ""] = s.split(".");
+  if (frac.length > divisibility) throw new Error("Too many decimal places for this rune.");
+  const padded = (frac + "0".repeat(divisibility)).slice(0, divisibility);
+  return BigInt(whole) * 10n ** BigInt(divisibility) + BigInt(padded || "0");
+}
+function leb128Encode(n) {
+  let v = BigInt(n); const out = [];
+  do { let b = Number(v & 0x7fn); v >>= 7n; if (v > 0n) b |= 0x80; out.push(b); } while (v > 0n);
+  return out;
+}
+/** Encode a runestone script (OP_RETURN OP_13 + chunked payload pushes).
+ *  Field order: mint (tag 20 as two pairs), pointer (tag 22), body
+ *  (tag 0, then delta-encoded edicts sorted by rune id; the tx component
+ *  is ABSOLUTE when the block advanced, a delta only within one block).
+ *  Pinned byte-for-byte by five reference vectors in the tests. */
+export function encodeRunestone({ edicts = [], pointer, mint } = {}) {
+  const ints = [];
+  if (mint) ints.push(20, mint.block, 20, mint.tx);
+  if (pointer !== undefined && pointer !== null) ints.push(22, pointer);
+  if (edicts.length) {
+    const sorted = [...edicts].sort((a, b) => (a.id.block - b.id.block) || (a.id.tx - b.id.tx));
+    ints.push(0);
+    let prevBlock = 0, prevTx = 0;
+    for (const e of sorted) {
+      const blockDelta = e.id.block - prevBlock;
+      ints.push(blockDelta, blockDelta === 0 ? e.id.tx - prevTx : e.id.tx, e.amount, e.output);
+      prevBlock = e.id.block; prevTx = e.id.tx;
+    }
+  }
+  if (!ints.length) throw new Error("A runestone needs at least one field.");
+  const payload = ints.flatMap(i => leb128Encode(i));
+  const script = [0x6a, 0x5d]; // OP_RETURN, OP_13 (the Runestone magic)
+  for (let off = 0; off < payload.length; off += 520) {
+    const chunk = payload.slice(off, off + 520);
+    if (chunk.length < 76) script.push(chunk.length);
+    else if (chunk.length <= 0xff) script.push(0x4c, chunk.length);
+    else script.push(0x4d, chunk.length & 0xff, (chunk.length >> 8) & 0xff);
+    script.push(...chunk);
+  }
+  return Uint8Array.from(script);
+}
+/** One rune balance row, fully escaped. Rune names/symbols are hostile
+ *  metadata (anyone can etch any name) — the app adds the standing
+ *  unverified caution at section level. */
+export function formatRuneRow(r) {
+  return `<div class="hist"><b>${escapeHtml(r?.name || r?.runeId || "Rune")}</b> <small style="color:var(--dim)">${escapeHtml(r?.symbol || "")} · ${escapeHtml(r?.runeId || "")}</small><br><b>${escapeHtml(r?.amount ?? "0")}</b></div>`;
+}
+/** Build + sign a Rune transfer WITHOUT broadcasting (same
+ *  review-then-broadcast-exact-bytes pattern as planBitcoinSend).
+ *  Construction: output 0 = runestone OP_RETURN, output 1 = recipient
+ *  (546 sats, edict target), output 2 = rune change (546 sats, pointer)
+ *  only when unallocated runes remain, then BTC change. Safety rails:
+ *  the inscription check MUST have run (unlike a plain BTC send, a rune
+ *  transfer refuses when it cannot verify its fee coins are
+ *  inscription-free); a rune coin that also carries an inscription or a
+ *  DIFFERENT rune is a hard refusal with a split-first message, because
+ *  moving it would silently move that asset too. */
+export async function planRuneTransfer(phrase, { runeId, to, amountWhole, feeRate }) {
+  const rid = parseRuneId(runeId);
+  if (!rid) throw new Error("Invalid rune id.");
+  try { btc.Address(btc.NETWORK).decode(String(to)); }
+  catch { throw new Error("That is not a valid Bitcoin address."); }
+  let rateInfo = null;
+  if (!feeRate) { rateInfo = await getBtcFeeRateInfo(); feeRate = rateInfo.rate; }
+  const rate = feeRate;
+  const accounts = [
+    { kind: "segwit", ...btcKeys(phrase) },
+    { kind: "taproot", ...btcTaprootKeys(phrase) },
+  ];
+  let divisibility = null, runeName = rid.key;
+  const runeCoins = [], feeCoins = [];
+  let protectedCount = 0;
+  for (const acct of accounts) {
+    const balances = await getRuneBalances(acct.address).catch(() => null);
+    if (!balances) throw new Error("Could not reach the rune index — no transfer was built.");
+    const entry = balances.find(b => b.runeId === rid.key);
+    const prot = await getInscriptionProtection(acct.address);
+    if (!prot.ok) throw new Error("The inscription check could not run, so Fluid won't build a rune transfer: its fee coins could not be verified inscription-free. Try again when the index is reachable.");
+    protectedCount += prot.count;
+    const uRes = await fetch(`${MEMPOOL}/address/${acct.address}/utxos`);
+    const utxoMap = new Map(((await uRes.json()) || [])
+      .filter(u => u.status && u.status.confirmed === true).map(u => [`${u.txid}:${u.vout}`, u.value]));
+    const runeHeldOutpoints = new Set();
+    if (entry) {
+      if (divisibility === null) { divisibility = entry.divisibility; runeName = entry.name; }
+      else if (divisibility !== entry.divisibility) throw new Error("The rune index disagrees with itself about this rune — no transfer was built.");
+      for (const c of await getRuneOutpoints(acct.address, rid.key)) {
+        const key = `${c.txid}:${c.vout}`, value = utxoMap.get(key);
+        if (value === undefined) continue; // spent or unconfirmed since indexing
+        runeHeldOutpoints.add(key);
+        if (prot.outpoints.has(key)) throw new Error("One of the coins holding this rune also carries an inscription — Fluid won't move it. Split that coin in a dedicated ordinals wallet first.");
+        runeCoins.push({ ...c, value, kind: acct.kind, base: runeWholeToBase(c.amountWhole, divisibility) });
+      }
+    }
+    for (const b of balances) {
+      if (b.runeId === rid.key) continue;
+      for (const o of await getRuneOutpoints(acct.address, b.runeId)) {
+        const key = `${o.txid}:${o.vout}`;
+        runeHeldOutpoints.add(key);
+        if (runeCoins.some(c => `${c.txid}:${c.vout}` === key)) {
+          throw new Error(`One of the coins holding this rune also holds ${b.name} — sending it would move that rune too. Split that coin first.`);
+        }
+      }
+    }
+    for (const [key, value] of utxoMap) {
+      if (prot.outpoints.has(key) || runeHeldOutpoints.has(key)) continue;
+      const [txid, vout] = key.split(":");
+      feeCoins.push({ txid, vout: Number(vout), value, kind: acct.kind });
+    }
+  }
+  if (divisibility === null) throw new Error("This wallet does not hold that rune.");
+  const targetBase = runeWholeToBase(amountWhole, divisibility);
+  if (targetBase <= 0n) throw new Error("Enter an amount above zero.");
+  runeCoins.sort((a, b) => (a.base > b.base ? -1 : a.base < b.base ? 1 : 0));
+  feeCoins.sort((a, b) => b.value - a.value);
+  const pickedRunes = []; let runeSum = 0n;
+  for (const c of runeCoins) { pickedRunes.push(c); runeSum += c.base; if (runeSum >= targetBase) break; }
+  if (runeSum < targetBase) throw new Error(`Not enough ${runeName} — this wallet holds less than the amount entered.`);
+  const runeChange = runeSum > targetBase;
+  const primary = accounts.find(a => a.kind === pickedRunes[0].kind);
+  const runestone = encodeRunestone({
+    edicts: [{ id: rid, amount: targetBase, output: 1 }],
+    ...(runeChange ? { pointer: 2 } : {}),
+  });
+  const POSTAGE = 546;
+  const outputsBase = POSTAGE * (runeChange ? 2 : 1);
+  const inVbOf = c => (c.kind === "taproot" ? 58 : 68);
+  const pickedFees = [];
+  const feeFor = () => Math.ceil((10
+    + [...pickedRunes, ...pickedFees].reduce((s, c) => s + inVbOf(c), 0)
+    + (runestone.length + 9) + btcOutVsize(to)
+    + (runeChange ? btcOutVsize(primary.address) : 0)
+    + btcOutVsize(primary.address)) * rate); // + BTC change output, always estimated in
+  let fee = feeFor();
+  const totalIn = () => [...pickedRunes, ...pickedFees].reduce((s, c) => s + c.value, 0);
+  while (totalIn() < outputsBase + fee) {
+    const next = feeCoins.shift();
+    if (!next) throw new Error("Not enough inscription-free BTC to pay this transfer's postage and network fee.");
+    pickedFees.push(next); fee = feeFor();
+  }
+  const change = totalIn() - outputsBase - fee;
+  // allowUnknownOutputs is required for the OP_RETURN runestone output.
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  const byKind = { segwit: accounts[0], taproot: accounts[1] };
+  const usedKinds = new Set();
+  for (const c of [...pickedRunes, ...pickedFees]) {
+    const acct = byKind[c.kind];
+    const input = { txid: c.txid, index: c.vout, witnessUtxo: { script: acct.script, amount: BigInt(c.value) } };
+    if (c.kind === "taproot") input.tapInternalKey = acct.internalKey; else input.sighashType = btc.SigHash.ALL;
+    tx.addInput(input); usedKinds.add(c.kind);
+  }
+  tx.addOutput({ script: runestone, amount: 0n });
+  tx.addOutputAddress(to, BigInt(POSTAGE), btc.NETWORK);
+  if (runeChange) tx.addOutputAddress(primary.address, BigInt(POSTAGE), btc.NETWORK);
+  if (change > 330) tx.addOutputAddress(primary.address, BigInt(change), btc.NETWORK);
+  for (const k of usedKinds) tx.sign(byKind[k].child.privateKey);
+  tx.finalize();
+  return { hex: tx.hex, txid: tx.id, feeSat: fee, feeBtc: fee / 1e8, rate, rateInfo,
+    baseAmount: targetBase.toString(), runeChange, protectedCount, runeName,
+    runestoneHex: Buffer.from(runestone).toString("hex") };
+}
+export async function sendRuneTransfer(phrase, opts) {
+  const plan = await planRuneTransfer(phrase, opts);
+  const txid = await broadcastBitcoinTx(plan.hex);
+  return { ...plan, txid };
 }
 
 // ---------- Litecoin (same seed, BIP84 native SegWit, coin type 2) ----------
@@ -1949,7 +2306,7 @@ const COSMOS_RECEIVE_ALIASES = {
 export const RECEIVE_NETWORKS = [
   { id: "evm", name: "EVM networks", sub: "one address · all 15 networks",
     aliases: ["evm", "eth", "ethereum", "bsc", "bnb", "bnb chain", "binance smart chain", "base", "polygon", "matic", "arbitrum", "optimism", "avalanche", "avax"] },
-  { id: "bitcoin", name: "Bitcoin", aliases: ["btc", "bitcoin"] },
+  { id: "bitcoin", name: "Bitcoin", aliases: ["btc", "bitcoin", "taproot"] },
   { id: "lightning", name: "Bitcoin Lightning", sub: "via your own Lightning wallet",
     aliases: ["lightning", "ln", "lnurl", "webln", "sats"] },
   { id: "tron", name: "Tron", aliases: ["trx", "tron", "trc20"] },
