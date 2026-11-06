@@ -360,19 +360,82 @@ export async function getBitcoinBalance(address) {
   const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
   return (funded - spent) / 1e8;
 }
-export async function getBtcFeeRate() {
-  try {
-    const res = await fetch(`${MEMPOOL}/v1/fees/recommended`);
-    const d = await res.json();
-    return Math.max(1, d.halfHourFee || 5);
-  } catch { return 5; }
+
+/* Fee-rate resolution (audit H1, 2026-11-06): a fee oracle is an input
+ * to signing, so it is treated like every other hostile input — never
+ * single-source, never unbounded. resolveFeeRate is the pure core:
+ *   - two sane sources that agree within 2× → the primary's rate;
+ *   - two sane sources diverging by MORE than 2× → the LOWER rate (a
+ *     manipulated or broken oracle can then only underpay, and the UI
+ *     discloses it), flagged `diverged`;
+ *   - one sane source → that rate; none → the caller's fallback;
+ *   - the result is clamped to a coded ceiling, flagged `clamped`.
+ * Ceilings: BTC's halfHourFee has exceeded 300 sat/vB only in brief
+ * mania spikes (May 2023 ordinals congestion peaked ≈300–500 for hours,
+ * not days); paying more than that for a wallet send is never the
+ * user's intent, and a capped transaction still confirms when the
+ * mempool drains — it is disclosed in the review sentence. LTC's
+ * market rate lives at 1–10 sat/vB; 100 is a generous ceiling. */
+export const BTC_FEE_CEILING_SATVB = 300;
+export const LTC_FEE_CEILING_SATVB = 100;
+export function resolveFeeRate({ primary, secondary, ceiling, fallback = 5 } = {}) {
+  const sane = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0) ? v : null;
+  const p = sane(primary), s = sane(secondary);
+  let rate, diverged = false, sources = 0;
+  if (p != null && s != null) {
+    sources = 2;
+    if (Math.max(p, s) / Math.min(p, s) > 2) { rate = Math.min(p, s); diverged = true; }
+    else rate = p;
+  } else if (p != null) { rate = p; sources = 1; }
+  else if (s != null) { rate = s; sources = 1; }
+  else rate = fallback;
+  let clamped = false;
+  if (ceiling && rate > ceiling) { rate = ceiling; clamped = true; }
+  return { rate: Math.max(1, rate), diverged, clamped, sources };
 }
-/** Build, sign and broadcast a BTC payment. Returns the txid. */
-export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
+/** The user-facing disclosure for a resolved fee rate, or "" when the
+ *  rate was unremarkable (two agreeing sources under the ceiling). */
+export function feeRateNote(info) {
+  if (!info) return "";
+  const bits = [];
+  if (info.diverged) bits.push("the two fee sources disagreed sharply, so Fluid used the lower rate");
+  if (info.clamped) bits.push("fee quotes are extremely high right now, so Fluid capped the rate — this may confirm more slowly than usual");
+  if (info.sources === 0) bits.push("fee sources were unreachable, so a conservative default rate was used");
+  return bits.join("; ");
+}
+const _feeGrab = async (fn) => { try { const v = await fn(); return Number.isFinite(v) && v > 0 ? v : null; } catch { return null; } };
+/** BTC fee rate, cross-checked: mempool.space's halfHourFee against
+ *  Blockstream's independent Esplora fee-estimates (its ~3-block
+ *  target ≈ the same half hour), resolved + ceiling-clamped. */
+export async function getBtcFeeRateInfo() {
+  const [primary, secondary] = await Promise.all([
+    _feeGrab(async () => { const r = await fetch(`${MEMPOOL}/v1/fees/recommended`); const d = await r.json(); return Number(d.halfHourFee); }),
+    _feeGrab(async () => { const r = await fetch("https://blockstream.info/api/fee-estimates"); const d = await r.json(); return Number(d["3"]); }),
+  ]);
+  return resolveFeeRate({ primary, secondary, ceiling: BTC_FEE_CEILING_SATVB, fallback: 5 });
+}
+export async function getBtcFeeRate() {
+  return (await getBtcFeeRateInfo()).rate;
+}
+/** Relay an already-built, already-signed BTC transaction. */
+export async function broadcastBitcoinTx(hex) {
+  const post = await fetch(`${MEMPOOL}/tx`, { method: "POST", body: hex });
+  if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
+  return post.text();
+}
+/** Build + sign a BTC payment WITHOUT broadcasting, so the review sheet
+ *  can show the EXACT fee before the user confirms; confirming then
+ *  broadcasts these exact bytes (what was reviewed is what is sent).
+ *  Coin selection uses CONFIRMED UTXOs only (audit L2 — spending an
+ *  unconfirmed input can strand the payment if its parent is replaced
+ *  or dropped). */
+export async function planBitcoinSend(phrase, { to, amountBtc, feeRate }) {
   const { child, address, script } = btcKeys(phrase);
-  const rate = feeRate || (await getBtcFeeRate());
+  let rateInfo = null;
+  if (!feeRate) { rateInfo = await getBtcFeeRateInfo(); feeRate = rateInfo.rate; }
+  const rate = feeRate;
   const res = await fetch(`${MEMPOOL}/address/${address}/utxos`);
-  const utxos = (await res.json()).filter(u => u.status?.confirmed !== false || true)
+  const utxos = (await res.json()).filter(u => u.status && u.status.confirmed === true)
     .sort((a, b) => b.value - a.value);
   const target = Math.round(amountBtc * 1e8);
   const picked = []; let sum = 0;
@@ -389,10 +452,12 @@ export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
   if (change > 330) tx.addOutputAddress(address, BigInt(change), btc.NETWORK);
   tx.sign(child.privateKey);
   tx.finalize();
-  const hex = tx.hex;
-  const post = await fetch(`${MEMPOOL}/tx`, { method: "POST", body: hex });
-  if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
-  return post.text();
+  return { hex: tx.hex, txid: tx.id, feeSat: fee, feeBtc: fee / 1e8, rate, rateInfo };
+}
+/** Build, sign and broadcast a BTC payment. Returns the txid. */
+export async function sendBitcoin(phrase, opts) {
+  const plan = await planBitcoinSend(phrase, opts);
+  return broadcastBitcoinTx(plan.hex);
 }
 
 // ---------- Litecoin (same seed, BIP84 native SegWit, coin type 2) ----------
@@ -421,25 +486,41 @@ export async function getLitecoinBalance(address) {
   const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
   return (funded - spent) / 1e8;
 }
+/** LTC fee rate, cross-checked (audit H1): litecoinspace's halfHourFee
+ *  against BlockCypher's independent LTC fee stats (medium_fee_per_kb,
+ *  converted to sat/vB), resolved + ceiling-clamped like Bitcoin's. */
+export async function getLtcFeeRateInfo() {
+  const [primary, secondary] = await Promise.all([
+    _feeGrab(async () => { const r = await fetch(`${LTC_API}/v1/fees/recommended`); const d = await r.json(); return Number(d.halfHourFee); }),
+    _feeGrab(async () => { const r = await fetch("https://api.blockcypher.com/v1/ltc/main"); const d = await r.json(); return Number(d.medium_fee_per_kb) / 1000; }),
+  ]);
+  return resolveFeeRate({ primary, secondary, ceiling: LTC_FEE_CEILING_SATVB, fallback: 1 });
+}
 export async function getLtcFeeRate() {
-  try {
-    const res = await fetch(`${LTC_API}/v1/fees/recommended`);
-    const d = await res.json();
-    return Math.max(1, d.halfHourFee || 1);
-  } catch { return 1; }
+  return (await getLtcFeeRateInfo()).rate;
 }
-export function formatLitecoinSendIntent({ amount, to, feeLtc }) {
-  return `Send ${amount} LTC to ${to} on Litecoin. Network fee about ${feeLtc} LTC. Confirm?`;
+export function formatLitecoinSendIntent({ amount, to, feeLtc, feeUsd, note }) {
+  return `Send ${amount} LTC to ${to} on Litecoin. Network fee about ${feeLtc} LTC${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
 }
-/** Build, sign and broadcast an LTC payment. Returns the txid. */
-export async function sendLitecoin(phrase, { to, amountLtc, feeRate }) {
+/** Relay an already-built, already-signed LTC transaction. */
+export async function broadcastLitecoinTx(hex) {
+  const post = await fetch(`${LTC_API}/tx`, { method: "POST", body: hex });
+  if (!post.ok) throw new Error("Litecoin network rejected the transaction: " + (await post.text()));
+  return post.text();
+}
+/** Build + sign an LTC payment WITHOUT broadcasting (see planBitcoinSend
+ *  for the pattern; confirmed UTXOs only, like Bitcoin). */
+export async function planLitecoinSend(phrase, { to, amountLtc, feeRate }) {
   const { child, address, script } = ltcKeys(phrase);
   if (!isValidLitecoinAddress(to)) throw new Error("That is not a valid Litecoin address.");
-  const rate = feeRate || (await getLtcFeeRate());
+  let rateInfo = null;
+  if (!feeRate) { rateInfo = await getLtcFeeRateInfo(); feeRate = rateInfo.rate; }
+  const rate = feeRate;
   // NB: litecoinspace's UTXO route is the singular /utxo (mempool.space
   // uses the plural /utxos) — verified live before wiring.
   const res = await fetch(`${LTC_API}/address/${address}/utxo`);
-  const utxos = (await res.json()).sort((a, b) => b.value - a.value);
+  const utxos = (await res.json()).filter(u => u.status && u.status.confirmed === true)
+    .sort((a, b) => b.value - a.value);
   const target = Math.round(amountLtc * 1e8);
   const picked = []; let sum = 0;
   for (const u of utxos) { picked.push(u); sum += u.value; if (sum >= target + 1000) break; }
@@ -455,9 +536,12 @@ export async function sendLitecoin(phrase, { to, amountLtc, feeRate }) {
   if (change > 294) tx.addOutputAddress(address, BigInt(change), LTC_NETWORK); // SegWit dust limit
   tx.sign(child.privateKey);
   tx.finalize();
-  const post = await fetch(`${LTC_API}/tx`, { method: "POST", body: tx.hex });
-  if (!post.ok) throw new Error("Litecoin network rejected the transaction: " + (await post.text()));
-  return post.text();
+  return { hex: tx.hex, txid: tx.id, feeSat: fee, feeLtc: fee / 1e8, rate, rateInfo };
+}
+/** Build, sign and broadcast an LTC payment. Returns the txid. */
+export async function sendLitecoin(phrase, opts) {
+  const plan = await planLitecoinSend(phrase, opts);
+  return broadcastLitecoinTx(plan.hex);
 }
 
 // ---------- Dogecoin (same seed, BIP44 legacy only, coin type 3) ----------
@@ -572,22 +656,35 @@ export async function broadcastDogeTx(txHex) {
   }
   throw new Error("Dogecoin relays rejected the transaction — " + errors.join(" · "));
 }
-export function formatDogeSendIntent({ amount, to, feeDoge }) {
-  return `Send ${amount} DOGE to ${to} on Dogecoin. Network fee about ${feeDoge} DOGE. Confirm?`;
+export function formatDogeSendIntent({ amount, to, feeDoge, feeUsd, note }) {
+  return `Send ${amount} DOGE to ${to} on Dogecoin. Network fee about ${feeDoge} DOGE${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
 }
-/** Build, sign and broadcast a DOGE payment. UTXOs come from
- *  dogechain's unspent list (confirmed only, largest first); the fee
- *  is the live dogechain median koinu/byte (floored at 1000) times
- *  the legacy size estimate; the signed bytes go out through
- *  broadcastDogeTx. Returns { txid, feeDoge, route }. */
-export async function sendDogecoin(phrase, { to, amountDoge, feeRateKoinuByte = null }) {
+/* Dogecoin's fee quote is dogechain's median of what recent transactions
+ * actually paid — an aggregate, not a single oracle's say-so — but it is
+ * still network input, so it is floored AND ceiling-clamped (audit H1
+ * pattern). 100,000 koinu/byte = 0.001 DOGE/byte: a typical 226-byte
+ * transaction would pay ≈0.23 DOGE at the ceiling, far above the live
+ * market (~0.01–0.05 DOGE total) — anything above it is a bad quote,
+ * not a real fee. */
+export const DOGE_FEE_CEILING_KOINU_BYTE = 100000;
+export function resolveDogeFeeRate(medianKoinuByte) {
+  let rate = Math.max(1000, Math.floor(Number(medianKoinuByte) || 10000));
+  let clamped = false;
+  if (rate > DOGE_FEE_CEILING_KOINU_BYTE) { rate = DOGE_FEE_CEILING_KOINU_BYTE; clamped = true; }
+  return { rate, clamped };
+}
+/** Build + sign a DOGE payment WITHOUT broadcasting, so the review
+ *  sheet shows the EXACT fee (dogechain rate × actual selected inputs);
+ *  confirming relays these exact bytes. UTXOs come from dogechain's
+ *  unspent list (confirmed only, largest first). */
+export async function planDogecoinSend(phrase, { to, amountDoge, feeRateKoinuByte = null }) {
   const { child, address } = dogeKeys(phrase);
   if (!isValidDogeAddress(to)) throw new Error("That is not a valid Dogecoin address.");
   const amountKoinu = Math.round(Number(amountDoge) * 1e8);
   if (!(amountKoinu >= DOGE_DUST_KOINU)) {
     throw new Error(`Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
   }
-  const rate = Math.max(1000, Math.floor(feeRateKoinuByte ?? (await getDogeFeeInfo()).medianSatByte ?? 10000));
+  const { rate, clamped } = resolveDogeFeeRate(feeRateKoinuByte ?? (await getDogeFeeInfo()).medianSatByte);
   const res = await fetch(`${DOGECHAIN_API}/v1/address/unspent/${address}`, { signal: AbortSignal.timeout(20000) });
   const data = await res.json().catch(() => null);
   const raw = Array.isArray(data?.unspent_outputs) ? data.unspent_outputs : [];
@@ -604,8 +701,14 @@ export async function sendDogecoin(phrase, { to, amountDoge, feeRateKoinuByte = 
   }
   if (sum < amountKoinu + feeKoinu) throw new Error("Not enough confirmed DOGE to cover the amount plus network fee.");
   const built = buildSignedDogeTx({ privateKey: child.privateKey, utxos: picked, to, amountKoinu, feeKoinu, changeAddress: address });
-  const route = await broadcastDogeTx(built.hex);
-  return { txid: built.txid, feeDoge: built.feeKoinu / 1e8, route };
+  return { hex: built.hex, txid: built.txid, feeDoge: built.feeKoinu / 1e8, feeKoinu: built.feeKoinu, rateKoinuByte: rate, clamped };
+}
+/** Build, sign and broadcast a DOGE payment (plan + raw relay).
+ *  Returns { txid, feeDoge, route }. */
+export async function sendDogecoin(phrase, opts) {
+  const plan = await planDogecoinSend(phrase, opts);
+  const route = await broadcastDogeTx(plan.hex);
+  return { txid: plan.txid, feeDoge: plan.feeDoge, route };
 }
 
 // ---------- Bitcoin Cash (same seed, BIP44 coin type 145, CashAddr) ----------
@@ -772,11 +875,14 @@ export async function getBitcoinCashBalance(address) {
   return (Number(d.confirmed) + Number(d.unconfirmed || 0)) / 1e8;
 }
 export const BCH_DUST = 546;
-export function formatBitcoinCashSendIntent({ amount, to, feeBch }) {
-  return `Send ${amount} BCH to ${to} on Bitcoin Cash. Network fee about ${feeBch} BCH. Confirm?`;
+export function formatBitcoinCashSendIntent({ amount, to, feeBch, feeUsd, note }) {
+  return `Send ${amount} BCH to ${to} on Bitcoin Cash. Network fee about ${feeBch} BCH${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
 }
-/** Build, sign and broadcast a BCH payment (1 sat/byte fee). Returns the txid. */
-export async function sendBitcoinCash(phrase, { to, amountBch }) {
+/** Build + sign a BCH payment WITHOUT broadcasting, so the review sheet
+ *  shows the EXACT fee (BCH pays a fixed 1 sat/byte — no oracle is
+ *  involved, but the fee still depends on the selected inputs).
+ *  Confirming relays these exact bytes. */
+export async function planBitcoinCashSend(phrase, { to, amountBch }) {
   const { child, address, script } = bchKeys(phrase);
   const destScript = bchAddressToScript(to); // throws on a bad address
   const target = Math.round(amountBch * 1e8);
@@ -799,12 +905,21 @@ export async function sendBitcoinCash(phrase, { to, amountBch }) {
   const { hex, txid } = buildSignedBchTx({
     inputs: picked, outputs, privateKey: child.privateKey, publicKey: child.publicKey, ownScript: script,
   });
+  return { hex, txid, feeSat: fee, feeBch: fee / 1e8 };
+}
+/** Relay an already-built, already-signed BCH transaction. */
+export async function broadcastBitcoinCashTx(hex, fallbackTxid) {
   const post = await fetch(`${HASKOIN_BCH}/transactions`, {
     method: "POST", headers: { "Content-Type": "text/plain" }, body: hex,
   });
   if (!post.ok) throw new Error("Bitcoin Cash network rejected the transaction: " + (await post.text()));
   const d = await post.json().catch(() => null);
-  return d?.txid || txid;
+  return d?.txid || fallbackTxid;
+}
+/** Build, sign and broadcast a BCH payment (1 sat/byte fee). Returns the txid. */
+export async function sendBitcoinCash(phrase, opts) {
+  const plan = await planBitcoinCashSend(phrase, opts);
+  return broadcastBitcoinCashTx(plan.hex, plan.txid);
 }
 
 // ---------- Tron (same secp256k1 key as the EVM account) ----------

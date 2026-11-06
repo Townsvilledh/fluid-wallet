@@ -1347,4 +1347,72 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("h2: garbage keystore → no params, no upgrade", vaultKdfParams("not json") === null && !nku("not json"));
 }
 
+// ---------- BTC-family fee safety (security audit H1 + L2) ----------
+// Fee rates are resolved from TWO sources with a coded ceiling; the
+// send sheets build the transaction at review time and show the exact
+// fee. Coin selection spends confirmed UTXOs only.
+{
+  const { resolveFeeRate, feeRateNote, resolveDogeFeeRate, DOGE_FEE_CEILING_KOINU_BYTE,
+    BTC_FEE_CEILING_SATVB, LTC_FEE_CEILING_SATVB, planBitcoinSend } = await import("../src/wallet-core.js");
+  const agree = resolveFeeRate({ primary: 20, secondary: 22, ceiling: 300 });
+  ok("h1: agreeing sources → primary rate, no flags", agree.rate === 20 && !agree.diverged && !agree.clamped && agree.sources === 2);
+  const diverged = resolveFeeRate({ primary: 900, secondary: 30, ceiling: 300 });
+  ok("h1: >2× divergence → lower rate, flagged", diverged.rate === 30 && diverged.diverged && !diverged.clamped);
+  const clamped = resolveFeeRate({ primary: 800, secondary: 780, ceiling: 300 });
+  ok("h1: agreeing-but-huge → clamped to ceiling", clamped.rate === 300 && clamped.clamped && !clamped.diverged);
+  const both = resolveFeeRate({ primary: 1200, secondary: 500, ceiling: 300 });
+  ok("h1: diverged AND over ceiling → lower, then clamped", both.rate === 300 && both.diverged && both.clamped);
+  ok("h1: ceilings are the coded constants", BTC_FEE_CEILING_SATVB === 300 && LTC_FEE_CEILING_SATVB === 100);
+  ok("h1: single source is used", resolveFeeRate({ primary: null, secondary: 15, ceiling: 300 }).rate === 15
+    && resolveFeeRate({ primary: 7, secondary: null, ceiling: 300 }).sources === 1);
+  const none = resolveFeeRate({ primary: NaN, secondary: -3, ceiling: 300, fallback: 5 });
+  ok("h1: garbage/absent sources → fallback, sources 0", none.rate === 5 && none.sources === 0);
+  ok("h1: rate floor is 1 sat/vB", resolveFeeRate({ primary: 0.2, secondary: null, ceiling: 300 }).rate === 1);
+  ok("h1: notes disclose divergence / clamp / fallback, silent when clean",
+    feeRateNote(diverged).includes("lower rate") && feeRateNote(clamped).includes("capped")
+    && feeRateNote(none).includes("default rate") && feeRateNote(agree) === "" && feeRateNote(null) === "");
+  ok("h1: doge rate floors, defaults and clamps",
+    resolveDogeFeeRate(null).rate === 10000 && resolveDogeFeeRate(500).rate === 1000
+    && resolveDogeFeeRate(5000).rate === 5000 && !resolveDogeFeeRate(5000).clamped
+    && resolveDogeFeeRate(250000).rate === DOGE_FEE_CEILING_KOINU_BYTE && resolveDogeFeeRate(250000).clamped);
+  const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("l2: the dead UTXO filter (|| true) is gone", !coreSrc.includes("confirmed !== false || true"));
+  // planBitcoinSend, fully offline via a stubbed fetch: the wallet holds
+  // one confirmed 100,000-sat UTXO and one UNCONFIRMED 500,000-sat UTXO.
+  // The plan must spend only the confirmed one: fee = 140 vB × 10 sat/vB.
+  const realFetch = globalThis.fetch;
+  const utxoSet = [
+    { txid: "aa".repeat(32), vout: 0, value: 100000, status: { confirmed: true, block_height: 800000 } },
+    { txid: "bb".repeat(32), vout: 1, value: 500000, status: { confirmed: false } },
+  ];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/v1/fees/recommended")) return { ok: true, json: async () => ({ halfHourFee: 10 }) };
+    if (u.includes("blockstream.info/api/fee-estimates")) return { ok: true, json: async () => ({ "3": 11, "6": 8 }) };
+    if (u.includes("/utxos")) return { ok: true, json: async () => utxoSet };
+    throw new Error("unexpected fetch " + u);
+  };
+  try {
+    const dest = bitcoinAddress(KNOWN_PHRASE); // self-send target is fine for a plan (never broadcast)
+    const plan = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005 });
+    ok("h1: plan resolves the cross-checked rate", plan.rate === 10 && plan.rateInfo && plan.rateInfo.sources === 2);
+    ok("h1+l2: plan spends confirmed UTXOs only, exact fee", plan.feeSat === 1400 && plan.feeBtc === 0.000014
+      && typeof plan.hex === "string" && /^[0-9a-f]{64}$/.test(plan.txid));
+    await assert.rejects(
+      () => planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0055 }),
+      /Not enough confirmed BTC/);
+    ok("l2: unconfirmed balance cannot be spent", true);
+  } finally { globalThis.fetch = realFetch; }
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("h1: all four BTC-family sheets plan-then-broadcast",
+    appSrc.includes("planBitcoinSend") && appSrc.includes("broadcastBitcoinTx")
+    && appSrc.includes("planLitecoinSend") && appSrc.includes("broadcastLitecoinTx")
+    && appSrc.includes("planDogecoinSend") && appSrc.includes("broadcastDogeTx")
+    && appSrc.includes("planBitcoinCashSend") && appSrc.includes("broadcastBitcoinCashTx")
+    && !appSrc.includes("Network fee will be added at the current rate"));
+  ok("h1: intent formatters carry USD + note when given",
+    formatLitecoinSendIntent({ amount: "1", to: "ltc1qxy", feeLtc: "0.00001400", feeUsd: "$0.01", note: "n" })
+      .includes("($0.01)") && formatLitecoinSendIntent({ amount: "1", to: "ltc1qxy", feeLtc: "0.00001400" }).endsWith("Confirm?"));
+}
+
 console.log(`\n${passed} checks passed`);

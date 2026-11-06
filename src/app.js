@@ -6,11 +6,11 @@ import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
-  bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
-  litecoinAddress, getLitecoinBalance, getLtcFeeRate, sendLitecoin, isValidLitecoinAddress, formatLitecoinSendIntent,
+  bitcoinAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
+  litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
   dogecoinAddress, getDogecoinBalance, isValidDogeAddress, DOGE_MIN_OUTPUT,
-  sendDogecoin, formatDogeSendIntent, getDogeFeeInfo,
-  bitcoinCashAddress, getBitcoinCashBalance, sendBitcoinCash, isValidBchAddress, formatBitcoinCashSendIntent,
+  planDogecoinSend, broadcastDogeTx, formatDogeSendIntent,
+  bitcoinCashAddress, getBitcoinCashBalance, planBitcoinCashSend, broadcastBitcoinCashTx, isValidBchAddress, formatBitcoinCashSendIntent,
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
@@ -1115,7 +1115,7 @@ function openBtcSheet() {
       <button class="btn" id="bConfirm">Confirm &amp; send</button>
     </div>
     <p class="msg err" id="bMsg"></p>
-    <p class="tag">Fee uses the current recommended network rate (mempool.space). Sends are final.</p>`);
+    <p class="tag">The fee rate is cross-checked against two independent sources and capped for your protection; the exact fee is shown before you confirm. Sends are final.</p>`);
   qr("qrBtc2", btcAddr);
   $("cpBtc2").onclick = () => copyText(btcAddr, $("cpBtc2"));
   $("bSend").onclick = async () => {
@@ -1128,19 +1128,27 @@ function openBtcSheet() {
       to = hit.btc; sendName = hit.name;
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
-    pendingBtc = { to, amount };
-    // Same disclosure as formatSendIntent: when the recipient was given
-    // as a Fluid name, the sentence shows the name AND the address it
-    // resolved to — the user confirms the resolution, not just the name.
-    const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to.slice(0, 10)}…${to.slice(-6)})` : to;
-    $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin. Network fee will be added at the current rate. Confirm?`;
-    show("bIntent"); msg("bMsg", "");
+    try {
+      // Build the transaction NOW (audit H1): the review shows the exact
+      // fee, and Confirm broadcasts exactly these bytes — the fee can
+      // never change between what the user read and what gets signed.
+      msg("bMsg", "Checking the network fee…", true);
+      const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount });
+      pendingBtc = { to, amount, plan };
+      // Same disclosure as formatSendIntent: when the recipient was given
+      // as a Fluid name, the sentence shows the name AND the FULL address
+      // it resolved to — the user confirms the resolution, not the name.
+      const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to})` : to;
+      const note = feeRateNote(plan.rateInfo);
+      $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin. Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${note ? ` Note: ${note}.` : ""} Confirm?`;
+      show("bIntent"); msg("bMsg", "");
+    } catch (e) { msg("bMsg", e.message); }
   };
   $("bConfirm").onclick = async () => {
     if (!pendingBtc) return;
     try {
-      msg("bMsg", "Building, signing and broadcasting…", true);
-      const txid = await sendBitcoin(wallet.mnemonic.phrase, { to: pendingBtc.to, amountBtc: pendingBtc.amount });
+      msg("bMsg", "Broadcasting the transaction you reviewed…", true);
+      const txid = await broadcastBitcoinTx(pendingBtc.plan.hex);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingBtc.amount, symbol: "BTC", to: pendingBtc.to, explorer: "https://mempool.space", at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
@@ -1771,26 +1779,30 @@ function openLtcSheet() {
       <button class="btn" id="lConfirm">Confirm &amp; send</button>
     </div>
     <p class="msg err" id="lMsg"></p>
-    <p class="tag">Fees use the current recommended Litecoin rate (litecoinspace.org), like Bitcoin's. Sends are final.</p>`);
+    <p class="tag">The fee rate is cross-checked against two independent sources and capped, like Bitcoin's; the exact fee is shown before you confirm. Sends are final.</p>`);
   $("lReview").onclick = async () => {
     const to = $("lTo").value.trim(), amount = $("lAmt").value.trim();
     if (!isValidLitecoinAddress(to)) return msg("lMsg", "That is not a valid Litecoin address.");
     if (!amount || Number(amount) <= 0) return msg("lMsg", "Enter an amount.");
     if (Number(amount) > ltcBal) return msg("lMsg", "Amount is more than your balance.");
     try {
+      // Build now, show the EXACT fee, broadcast the same bytes on
+      // confirm (audit H1) — no more 140-vbyte estimate in the sentence.
       msg("lMsg", "Checking the network fee…", true);
-      const rate = await getLtcFeeRate();
-      const feeLtc = (Math.ceil(140 * rate) / 1e8).toFixed(8); // ~1-in/2-out SegWit estimate for the sentence
-      pendingLtc = { to, amount };
-      $("lIntentText").textContent = formatLitecoinSendIntent({ amount, to, feeLtc });
+      const plan = await planLitecoinSend(wallet.mnemonic.phrase, { to, amountLtc: Number(amount) });
+      pendingLtc = { to, amount, plan };
+      $("lIntentText").textContent = formatLitecoinSendIntent({
+        amount, to, feeLtc: plan.feeLtc.toFixed(8),
+        feeUsd: usd(plan.feeLtc * (prices.LTC || 0)), note: feeRateNote(plan.rateInfo),
+      });
       show("lIntent"); msg("lMsg", "");
     } catch (e) { msg("lMsg", "Could not check the fee: " + e.message); }
   };
   $("lConfirm").onclick = async () => {
     if (!pendingLtc) return;
     try {
-      msg("lMsg", "Signing locally and broadcasting…", true);
-      const txid = await sendLitecoin(wallet.mnemonic.phrase, { to: pendingLtc.to, amountLtc: Number(pendingLtc.amount) });
+      msg("lMsg", "Broadcasting the transaction you reviewed…", true);
+      const txid = await broadcastLitecoinTx(pendingLtc.plan.hex);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingLtc.amount, symbol: "LTC", to: pendingLtc.to,
         explorer: "https://litecoinspace.org", at: Date.now() });
@@ -1816,21 +1828,29 @@ function openBchSheet() {
       <button class="btn" id="cConfirm">Confirm &amp; send</button>
     </div>
     <p class="msg err" id="cMsg"></p>
-    <p class="tag">Fees are 1 satoshi per byte (about 0.00000226 BCH for a typical send). CashAddr and legacy addresses both work. Sends are final.</p>`);
-  $("cReview").onclick = () => {
+    <p class="tag">Fees are a fixed 1 satoshi per byte — the exact fee for your inputs is shown before you confirm. CashAddr and legacy addresses both work. Sends are final.</p>`);
+  $("cReview").onclick = async () => {
     const to = $("cTo").value.trim(), amount = $("cAmt").value.trim();
     if (!isValidBchAddress(to)) return msg("cMsg", "That is not a valid Bitcoin Cash address.");
     if (!amount || Number(amount) <= 0) return msg("cMsg", "Enter an amount.");
     if (Number(amount) > bchBal) return msg("cMsg", "Amount is more than your balance.");
-    pendingBch = { to, amount };
-    $("cIntentText").textContent = formatBitcoinCashSendIntent({ amount, to, feeBch: "0.00000226" });
-    show("cIntent"); msg("cMsg", "");
+    try {
+      // Build now, show the EXACT fee, broadcast the same bytes on
+      // confirm (audit H1) — no more hardcoded "typical" fee.
+      msg("cMsg", "Checking the network fee…", true);
+      const plan = await planBitcoinCashSend(wallet.mnemonic.phrase, { to, amountBch: Number(amount) });
+      pendingBch = { to, amount, plan };
+      $("cIntentText").textContent = formatBitcoinCashSendIntent({
+        amount, to, feeBch: plan.feeBch.toFixed(8), feeUsd: usd(plan.feeBch * (prices.BCH || 0)),
+      });
+      show("cIntent"); msg("cMsg", "");
+    } catch (e) { msg("cMsg", "Could not check the fee: " + e.message); }
   };
   $("cConfirm").onclick = async () => {
     if (!pendingBch) return;
     try {
-      msg("cMsg", "Signing locally and broadcasting…", true);
-      const txid = await sendBitcoinCash(wallet.mnemonic.phrase, { to: pendingBch.to, amountBch: Number(pendingBch.amount) });
+      msg("cMsg", "Broadcasting the transaction you reviewed…", true);
+      const txid = await broadcastBitcoinCashTx(pendingBch.plan.hex, pendingBch.plan.txid);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingBch.amount, symbol: "BCH", to: pendingBch.to,
         link: `https://blockchair.com/bitcoin-cash/transaction/${txid}`, explorer: "https://blockchair.com/bitcoin-cash", at: Date.now() });
@@ -1874,20 +1894,24 @@ function openDogeSheet() {
     if (Number(amount) < DOGE_MIN_OUTPUT) return msg("gMsg", `Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
     if (Number(amount) > dogeBal) return msg("gMsg", "Amount is more than your balance.");
     try {
+      // Build now, show the EXACT fee, relay the same bytes on confirm
+      // (audit H1) — no more 226-byte estimate in the sentence.
       msg("gMsg", "Checking the network fee…", true);
-      const info = await getDogeFeeInfo();
-      const rate = Math.max(1000, Math.floor(info.medianSatByte ?? 10000));
-      const feeDoge = (rate * 226 / 1e8).toFixed(8); // ~1-in/2-out legacy estimate for the sentence
-      pendingDoge = { to, amount };
-      $("gIntentText").textContent = formatDogeSendIntent({ amount, to, feeDoge });
+      const plan = await planDogecoinSend(wallet.mnemonic.phrase, { to, amountDoge: Number(amount) });
+      pendingDoge = { to, amount, plan };
+      $("gIntentText").textContent = formatDogeSendIntent({
+        amount, to, feeDoge: plan.feeDoge.toFixed(8), feeUsd: usd(plan.feeDoge * (prices.DOGE || 0)),
+        note: plan.clamped ? "the live fee quote was unusually high, so Fluid capped the rate — the fee shown is exactly what will be paid" : "",
+      });
       show("gIntent"); msg("gMsg", "");
     } catch (e) { msg("gMsg", "Could not check the fee: " + e.message); }
   };
   $("gConfirm").onclick = async () => {
     if (!pendingDoge) return;
     try {
-      msg("gMsg", "Signing locally and broadcasting…", true);
-      const { txid } = await sendDogecoin(wallet.mnemonic.phrase, { to: pendingDoge.to, amountDoge: Number(pendingDoge.amount) });
+      msg("gMsg", "Relaying the transaction you reviewed…", true);
+      await broadcastDogeTx(pendingDoge.plan.hex);
+      const txid = pendingDoge.plan.txid;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingDoge.amount, symbol: "DOGE", to: pendingDoge.to,
         link: `https://blockchair.com/dogecoin/transaction/${txid}`, explorer: "https://blockchair.com/dogecoin", at: Date.now() });
