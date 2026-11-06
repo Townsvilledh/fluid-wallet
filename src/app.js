@@ -6,7 +6,8 @@ import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
-  bitcoinAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
+  bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
+  getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
   dogecoinAddress, getDogecoinBalance, isValidDogeAddress, DOGE_MIN_OUTPUT,
   planDogecoinSend, broadcastDogeTx, formatDogeSendIntent,
@@ -51,7 +52,7 @@ const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#27
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
-let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
+let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, btcTrAddr = null, btcTrBal = 0, pendingSend = null;
 let tronAddr = null, tronBalances = [];
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
@@ -205,6 +206,10 @@ async function renderMain() {
   renderNameSection();
   adoptRegistryNameIfMine();
   getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
+  // Taproot (BIP86) — a second Bitcoin account from the same seed
+  // (Build B): its own address and balance, rolled into the BTC totals.
+  btcTrAddr = bitcoinTaprootAddress(wallet.mnemonic.phrase);
+  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; paintAssets(); }).catch(() => paintAssets());
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
@@ -342,7 +347,7 @@ async function renderMain() {
 
 function heroTotal() {
   const net = NETWORKS[networkKey];
-  let t = btcBal * (prices.BTC || 0)
+  let t = (btcBal + btcTrBal) * (prices.BTC || 0)
     + ltcBal * (prices.LTC || 0) + dogeBal * (prices.DOGE || 0) + bchBal * (prices.BCH || 0);
   for (const b of balances) {
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
@@ -439,8 +444,8 @@ function paintAssets() {
   const rows = [];
   rows.push(`<div class="row" id="btcRow">
       <span class="coin" style="background:${COIN_COLORS.BTC}">₿</span>
-      <span class="grow"><b>Bitcoin</b><small>Native SegWit · all networks' wallet</small></span>
-      <span class="amt"><b>${fmt(btcBal, 8)}</b><small>${usd(btcBal * (prices.BTC || 0))}</small></span></div>`);
+      <span class="grow"><b>Bitcoin</b><small>Native SegWit + Taproot · same seed</small></span>
+      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>`);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first.
@@ -904,9 +909,13 @@ $("actReceive").onclick = () => {
     evm: `<p class="tag">EVM address — the same on all 15 networks:</p>
       <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
       <button class="btn ghost" id="cpEvm">Copy EVM address</button>`,
-    bitcoin: `<p class="tag">Bitcoin address:</p>
+    bitcoin: `<p class="tag">Bitcoin — Native SegWit address (bc1q…):</p>
       <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
-      <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>`,
+      <button class="btn ghost" id="cpBtc">Copy SegWit address</button>
+      <p class="tag">Bitcoin — Taproot address (bc1p…), same seed:</p>
+      <img class="qr" id="qrBtcTr"><p class="mono">${btcTrAddr}</p>
+      <button class="btn ghost" id="cpBtcTr">Copy Taproot address</button>
+      <p class="tag">Both addresses are yours and both can receive BTC. Taproot is the newer format — some older services only send to SegWit.</p>`,
     lightning: `<div id="rcvLnSlot"><p class="tag">Checking your Fluid name for a Lightning address…</p></div>
       <p class="tag">Fluid never custodies Lightning funds — Lightning runs through your own Lightning wallet (WebLN / LNURL-pay). Anyone can pay the Lightning address registered to your Fluid name, or your name itself.</p>`,
     tron: `<p class="tag">Tron address (TRX and TRC20 tokens):</p>
@@ -969,7 +978,8 @@ $("actReceive").onclick = () => {
   }
   const binds = {
     evm: () => { qr("qrEvm", wallet.address); $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm")); },
-    bitcoin: () => { qr("qrBtc", btcAddr); $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc")); },
+    bitcoin: () => { qr("qrBtc", btcAddr); $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
+      qr("qrBtcTr", btcTrAddr); $("cpBtcTr").onclick = () => copyText(btcTrAddr, $("cpBtcTr")); },
     lightning: () => {
       const paintLn = (ln, name) => {
         const slot = $("rcvLnSlot"); if (!slot) return; // sheet has moved on
@@ -1104,11 +1114,20 @@ $("actSend").onclick = () => {
 function openBtcSheet() {
   let pendingBtc = null;
   openSheet(`<h3>Bitcoin</h3>
-    <p><b>${fmt(btcBal, 8)} BTC</b> · ${usd(btcBal * (prices.BTC || 0))}</p>
+    <p><b>${fmt(btcBal + btcTrBal, 8)} BTC</b> · ${usd((btcBal + btcTrBal) * (prices.BTC || 0))} across two accounts from the same seed</p>
+    <p class="tag">Native SegWit (bc1q…) · ${fmt(btcBal, 8)} BTC</p>
     <img class="qr" id="qrBtc2"><p class="mono">${btcAddr}</p>
-    <button class="btn ghost" id="cpBtc2">Copy address</button>
+    <button class="btn ghost" id="cpBtc2">Copy SegWit address</button>
+    <p class="tag">Taproot (bc1p…) · ${fmt(btcTrBal, 8)} BTC</p>
+    <img class="qr" id="qrBtcTr2"><p class="mono">${btcTrAddr}</p>
+    <button class="btn ghost" id="cpBtcTr2">Copy Taproot address</button>
     <hr style="border-color:var(--line)">
     <h3>Send BTC</h3>
+    <p class="tag">Send from</p>
+    <select id="bFrom" style="width:100%;margin:4px 0 10px">
+      <option value="segwit">SegWit account (bc1q…)</option>
+      <option value="taproot">Taproot account (bc1p…)</option>
+    </select>
     <input id="bTo" placeholder="Recipient bc1… address or Fluid name">
     <input id="bAmt" inputmode="decimal" placeholder="Amount in BTC">
     <button class="btn" id="bSend">Review &amp; send BTC</button>
@@ -1117,9 +1136,97 @@ function openBtcSheet() {
       <button class="btn" id="bConfirm">Confirm &amp; send</button>
     </div>
     <p class="msg err" id="bMsg"></p>
-    <p class="tag">The fee rate is cross-checked against two independent sources and capped for your protection; the exact fee is shown before you confirm. Sends are final.</p>`);
+    <p class="tag">The fee rate is cross-checked against two independent sources and capped for your protection; the exact fee is shown before you confirm. Coins carrying inscriptions are never spent by ordinary sends. Sends are final.</p>
+    <hr style="border-color:var(--line)">
+    <h3>Collectibles · Inscriptions</h3>
+    <div id="bInscList"><p class="tag">Loading inscriptions from the index…</p></div>
+    <p class="tag">Inscriptions are collectibles — they are never counted in your BTC balance and ordinary sends never spend the coins carrying them.</p>
+    <hr style="border-color:var(--line)">
+    <h3>Runes</h3>
+    <div id="bRuneList"><p class="tag">Loading rune balances from the index…</p></div>
+    <p class="tag">⚠ Runes are not verified by Fluid — anyone can etch a rune with any name, including names imitating well-known ones. Always check the rune id.</p>
+    <div id="bRuneForm"></div>`);
   qr("qrBtc2", btcAddr);
   $("cpBtc2").onclick = () => copyText(btcAddr, $("cpBtc2"));
+  qr("qrBtcTr2", btcTrAddr);
+  $("cpBtcTr2").onclick = () => copyText(btcTrAddr, $("cpBtcTr2"));
+  $("bFrom").onchange = () => { pendingBtc = null; $("bIntent").classList.add("hidden"); };
+  // Collectibles + Runes, loaded fresh from the keyless index for BOTH
+  // Bitcoin accounts each time the sheet opens. Failures show an honest
+  // unavailable state — never a false "none".
+  (async () => {
+    try {
+      const [s, t] = await Promise.all([getInscriptions(btcAddr), getInscriptions(btcTrAddr)]);
+      const el = $("bInscList"); if (!el) return; // sheet moved on
+      const all = [...s, ...t];
+      el.innerHTML = all.length ? all.map(formatInscriptionRow).join("")
+        : `<p class="tag">No inscriptions on either Bitcoin address.</p>`;
+    } catch {
+      const el = $("bInscList"); if (el) el.innerHTML =
+        `<p class="tag">Couldn't reach the inscription index — collectibles are unavailable right now. Your BTC balance and sends are unaffected.</p>`;
+    }
+    try {
+      const [s, t] = await Promise.all([getRuneBalances(btcAddr), getRuneBalances(btcTrAddr)]);
+      const el = $("bRuneList"); if (!el) return;
+      const merged = new Map();
+      for (const r of [...s, ...t]) {
+        const prev = merged.get(r.runeId);
+        if (prev) prev.amount = (BigInt(prev.amount) + BigInt(r.amount)).toString();
+        else merged.set(r.runeId, { ...r });
+      }
+      const runes = [...merged.values()];
+      el.innerHTML = runes.length ? runes.map((r, i) =>
+        `<div>${formatRuneRow(r)}<button class="btn ghost" data-rune-send="${i}">Send ${esc(r.symbol || "rune")}</button></div>`).join("")
+        : `<p class="tag">No runes on either Bitcoin address.</p>`;
+      el.querySelectorAll("[data-rune-send]").forEach(btn =>
+        btn.onclick = () => paintRuneSendForm(runes[Number(btn.getAttribute("data-rune-send"))]));
+    } catch {
+      const el = $("bRuneList"); if (el) el.innerHTML =
+        `<p class="tag">Couldn't reach the rune index — rune balances are unavailable right now.</p>`;
+    }
+  })();
+  // Rune send sub-form, rendered in place under the rune list. Same
+  // review-then-broadcast-exact-bytes pattern as the BTC send above.
+  const paintRuneSendForm = (r) => {
+    const mount = $("bRuneForm"); if (!mount) return;
+    let pendingRune = null;
+    mount.innerHTML = `<hr style="border-color:var(--line)">
+      <h3>Send ${esc(r.name)}</h3>
+      <p class="tag">Rune id ${esc(r.runeId)} · you hold ${esc(r.amount)}. The transfer rides on small BTC outputs (546 sats each) plus the network fee — it needs a little inscription-free BTC for postage.</p>
+      <input id="rTo" placeholder="Recipient Bitcoin address (bc1…)" autocapitalize="none">
+      <input id="rAmt" inputmode="decimal" placeholder="Amount (whole units)">
+      <button class="btn" id="rReview">Review rune send</button>
+      <div id="rIntent" class="hidden">
+        <p class="seed" id="rIntentText"></p>
+        <button class="btn" id="rConfirm">Confirm &amp; send</button>
+      </div>
+      <p class="msg err" id="rMsg"></p>`;
+    $("rReview").onclick = async () => {
+      const to = $("rTo").value.trim(), amountWhole = $("rAmt").value.trim();
+      if (!to || !amountWhole) return msg("rMsg", "Enter a recipient and amount.");
+      try {
+        msg("rMsg", "Building the transfer…", true);
+        const plan = await planRuneTransfer(wallet.mnemonic.phrase, { runeId: r.runeId, to, amountWhole });
+        pendingRune = { to, amountWhole, plan };
+        const note = feeRateNote(plan.rateInfo);
+        $("rIntentText").textContent = `Send ${amountWhole} ${r.name} (rune ${r.runeId}) to ${to} on Bitcoin. Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${plan.protectedCount ? ` ${plan.protectedCount} inscription-bearing coin(s) left untouched.` : ""}${note ? ` Note: ${note}.` : ""} Confirm?`;
+        show("rIntent"); msg("rMsg", "");
+      } catch (e) { msg("rMsg", e.message); }
+    };
+    $("rConfirm").onclick = async () => {
+      if (!pendingRune) return;
+      try {
+        msg("rMsg", "Broadcasting the transfer you reviewed…", true);
+        const txid = await broadcastBitcoinTx(pendingRune.plan.hex);
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash: txid, amount: pendingRune.amountWhole, symbol: sanitizePersistedSymbol(r.name), to: pendingRune.to, explorer: "https://mempool.space", at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+        pendingRune = null;
+        msg("rMsg", "Broadcast ✓ txid " + txid.slice(0, 16) + "…", true);
+        renderMain();
+      } catch (e) { msg("rMsg", e.message); }
+    };
+  };
   $("bSend").onclick = async () => {
     let to = $("bTo").value.trim();
     let sendName = null;
@@ -1137,7 +1244,7 @@ function openBtcSheet() {
     // own BTC address or a past BTC recipient.
     let poisonNote = "";
     if (!sendName) {
-      const knownBtc = [btcAddr, ...JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").filter(x => x && x.symbol === "BTC").map(x => x.to).filter(Boolean)];
+      const knownBtc = [btcAddr, btcTrAddr, ...JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").filter(x => x && x.symbol === "BTC").map(x => x.to).filter(Boolean)];
       const look = looksLikePoisonText(to, knownBtc);
       if (look) poisonNote = `⚠ This address starts and ends like ${look.slice(0, 10)}…${look.slice(-6)} which you've used before, but it is NOT the same address — this is how address-poisoning scams work. Double-check every character.`;
     }
@@ -1146,14 +1253,20 @@ function openBtcSheet() {
       // fee, and Confirm broadcasts exactly these bytes — the fee can
       // never change between what the user read and what gets signed.
       msg("bMsg", "Checking the network fee…", true);
-      const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount });
+      const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount, kind: $("bFrom").value });
       pendingBtc = { to, amount, plan };
       // Same disclosure as formatSendIntent: when the recipient was given
       // as a Fluid name, the sentence shows the name AND the FULL address
       // it resolved to — the user confirms the resolution, not the name.
       const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to})` : to;
       const note = feeRateNote(plan.rateInfo);
-      $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin. Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${note ? ` Note: ${note}.` : ""} Confirm?`;
+      // Inscription protection disclosure (Build B): the exclusion is
+      // VISIBLE in the review, and a check that could not run is stated
+      // plainly — never silently assumed clean.
+      const protNote = !plan.inscriptionCheckOk
+        ? " Note: the inscription check could not run, so Fluid could not verify that none of the coins spent carry inscriptions."
+        : plan.protectedCount > 0 ? ` ${plan.protectedCount} inscription-bearing coin(s) left untouched.` : "";
+      $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin (from your ${plan.kind === "taproot" ? "Taproot" : "SegWit"} account). Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${note ? ` Note: ${note}.` : ""}${protNote} Confirm?`;
       show("bIntent"); msg("bMsg", poisonNote);
     } catch (e) { msg("bMsg", e.message); }
   };
