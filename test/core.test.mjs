@@ -1623,4 +1623,44 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     && agentSrc.indexOf("RESERVE the spend on disk BEFORE broadcasting") < agentSrc.indexOf("sendTransaction"));
 }
 
+// ---------- red-team F-01: swap step payload inspection ----------
+// Value/gas bounds alone do not make a step safe: its calldata, its
+// target and the approval spender are network data too. A step whose
+// calldata is a raw ERC-20 transfer/approve, a step aimed at the sold
+// token's own contract, or an approval addressed to a third-party
+// spender all refuse before signing; honest router shapes still pass.
+{
+  const { checkSwapStepBounds } = await import("../src/wallet-core.js");
+  const ETH = (n) => BigInt(Math.round(n * 1e18)).toString();
+  const DIAMOND = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
+  const USDC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+  const ATTACKER = "0x00000000000000000000000000000000deadbeef";
+  const route = { fromChainId: 56, fromAmount: ETH(1) };
+  const gas = [{ amount: ETH(0.003), estimate: "150000" }];
+  const tokenStep = (over) => ({
+    action: { fromToken: { address: USDC, symbol: "USDC", decimals: 18 }, fromAmount: "100000000" },
+    estimate: { gasCosts: gas },
+    transactionRequest: { to: DIAMOND, data: "0x", value: "0", gasLimit: "200000", chainId: 56 },
+    ...over,
+  });
+  const rA = checkSwapStepBounds(route, tokenStep({ estimate: { gasCosts: gas, approvalAddress: ATTACKER } }));
+  ok("rt-f01: approval addressed to a third-party spender is refused", !rA.ok && /unexpected spender/.test(rA.reason));
+  const stepB = tokenStep({ transactionRequest: { to: USDC, data: "0xa9059cbb" + "0".repeat(64), value: "0", gasLimit: "200000", chainId: 56 } });
+  ok("rt-f01: raw ERC-20 transfer calldata in a step is refused", !checkSwapStepBounds(route, stepB).ok);
+  const stepC = {
+    action: { fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 }, fromAmount: ETH(1) },
+    estimate: { gasCosts: [{ amount: ETH(0.003), estimate: "200000" }] },
+    transactionRequest: { to: DIAMOND, data: "0x095ea7b3" + "f".repeat(64), value: ETH(1), gasLimit: "200000", chainId: 56 },
+  };
+  ok("rt-f01: native step carrying approve calldata is refused", !checkSwapStepBounds(route, stepC).ok);
+  ok("rt-f01: approval addressed to the LI.FI diamond passes",
+    checkSwapStepBounds(route, tokenStep({ estimate: { gasCosts: gas, approvalAddress: DIAMOND } })).ok);
+  const ROUTER = "0x1111111111111111111111111111111111111111";
+  const stepR = tokenStep({
+    transactionRequest: { to: ROUTER, data: "0x", value: "0", gasLimit: "200000", chainId: 56 },
+    estimate: { gasCosts: gas, approvalAddress: ROUTER },
+  });
+  ok("rt-f01: approval addressed to the step's own router passes", checkSwapStepBounds(route, stepR).ok);
+}
+
 console.log(`\n${passed} checks passed`);

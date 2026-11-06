@@ -2735,6 +2735,34 @@ export function checkSwapStepBounds(route, step) {
   if (value > maxValue) {
     return refuse("Fluid refused this route: a step asked to send more value than the amount you agreed to swap. Pick another route.");
   }
+  // RED-TEAM 2026-11-06 (Finding A): value/gas bounds alone do not make a
+  // step safe — `to`, `data` and the approval spender are also network
+  // data. Three payload shapes are never a legitimate swap step and are
+  // refused outright:
+  //   1. The step's calldata is a RAW ERC-20 transfer/approve/transferFrom.
+  //      Routers move tokens inside their own calls; a top-level ERC-20
+  //      call in a "swap" step moves the wallet's tokens wherever the
+  //      payload says (or grants an approval of any size).
+  //   2. The step targets the very token being sold — steps talk to
+  //      routers/bridges, never to the sold token's own contract.
+  //   3. The approval spender is a third party: LI.FI routes approve
+  //      either the LI.FI diamond or the step's own target contract.
+  //      Any other spender (an EOA, a foreign contract) is a substitution.
+  const dataSel = typeof tr.data === "string" ? tr.data.slice(0, 10).toLowerCase() : "";
+  if (["0xa9059cbb", "0x095ea7b3", "0x23b872dd"].includes(dataSel)) {
+    return refuse("Fluid refused this route: a step tried to move or approve your tokens directly instead of swapping through a router. Pick another route.");
+  }
+  const toLc = typeof tr.to === "string" ? tr.to.toLowerCase() : "";
+  if (!isNative && fromToken?.address && toLc === String(fromToken.address).toLowerCase()) {
+    return refuse("Fluid refused this route: a step targeted the token being sold instead of a swap router. Pick another route.");
+  }
+  const approvalSpender = step.estimate?.approvalAddress;
+  if (approvalSpender) {
+    const sp = String(approvalSpender).toLowerCase();
+    if (sp !== toLc && sp !== LIFI_DIAMOND.toLowerCase()) {
+      return refuse("Fluid refused this route: the token approval was addressed to an unexpected spender, not the swap router. Pick another route.");
+    }
+  }
   if (tr.gasLimit != null) {
     let gl = null;
     try { gl = BigInt(tr.gasLimit); } catch { gl = null; /* unparseable → the node estimates, as before */ }
