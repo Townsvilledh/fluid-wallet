@@ -1663,4 +1663,31 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("rt-f01: approval addressed to the step's own router passes", checkSwapStepBounds(route, stepR).ok);
 }
 
+// ---------- red-team F-02: Solana step instruction inspection ----------
+// The fee-payer check authenticates the victim, not the payload: a
+// "swap" transaction whose payer is the user can still carry top-level
+// instructions that drain the user. Those shapes refuse before signing;
+// account creation (WSOL/ATA plumbing) and ordinary program calls pass.
+{
+  const { assertSolanaStepSafe } = await import("../src/wallet-core.js");
+  const SYS = "11111111111111111111111111111111";
+  const TOK = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const TOK22 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+  const u32 = (n) => { const b = new Uint8Array(12); new DataView(b.buffer).setUint32(0, n, true); return b; };
+  assert.throws(() => assertSolanaStepSafe([{ program: SYS, data: u32(2) }]), /send SOL directly/);
+  ok("rt-f02: SystemProgram transfer in a swap step is refused", true);
+  assert.throws(() => assertSolanaStepSafe([{ program: TOK, data: new Uint8Array([3, 1, 0, 0, 0, 0, 0, 0, 0]) }]), /move, approve, burn or close/);
+  ok("rt-f02: SPL token transfer in a swap step is refused", true);
+  assert.throws(() => assertSolanaStepSafe([{ program: TOK22, data: new Uint8Array([16, 1]) }]), /move, approve, burn or close/);
+  ok("rt-f02: Token-2022 approveChecked in a swap step is refused", true);
+  assertSolanaStepSafe([{ program: SYS, data: u32(0) }]); // CreateAccount
+  ok("rt-f02: SystemProgram CreateAccount (WSOL/ATA plumbing) passes", true);
+  assertSolanaStepSafe([{ program: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", data: new Uint8Array([104, 105]) }]);
+  ok("rt-f02: benign memo instruction passes", true);
+  const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("rt-f02: inspection runs before signing on both tx shapes",
+    coreSrc.indexOf("assertSolanaStepSafe(vtx.message.compiledInstructions") < coreSrc.indexOf("vtx.sign([kp])")
+    && coreSrc.indexOf("assertSolanaStepSafe(tx.instructions") < coreSrc.indexOf("tx.partialSign(kp)"));
+}
+
 console.log(`\n${passed} checks passed`);

@@ -2661,6 +2661,33 @@ export function swapRouteExecutable(route) {
  *  payer must be the wallet's Solana address — never sign a transaction
  *  addressed to someone else's account), sign with the wallet's Solana
  *  key and broadcast. Returns the transaction signatures. */
+const SOL_SYSTEM_PROGRAM = "11111111111111111111111111111111";
+const SOL_TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
+/* RED-TEAM 2026-11-06 (Finding B): the fee-payer check authenticates the
+ * VICTIM, not the payload — a serialized "swap" transaction whose payer
+ * is the user can still carry instructions that drain the user directly.
+ * Aggregator-built swap transactions move the user's funds via CPI inside
+ * the router program's OWN instructions; they never contain a top-level
+ * SystemProgram transfer out of the user, nor a top-level SPL transfer /
+ * approve / burn / close authorised by the user. Refuse those shapes:
+ *   - SystemProgram instruction 2 (Transfer lamports)
+ *   - SPL Token/Token-2022 instructions 3 (Transfer), 4 (Approve),
+ *     8 (Burn), 9 (CloseAccount), 12 (TransferChecked), 16 (ApproveChecked)
+ * Instructions whose program cannot be resolved from the static account
+ * keys (lookup-table programs) are not system/token programs in practice
+ * (those are always static) and are left to the router-instruction class. */
+export function assertSolanaStepSafe(ixs) {
+  for (const ix of ixs) {
+    if (!ix.program) continue;
+    if (ix.program === SOL_SYSTEM_PROGRAM) {
+      const disc = ix.data && ix.data.length >= 4 ? (ix.data[0] | (ix.data[1] << 8) | (ix.data[2] << 16) | (ix.data[3] << 24)) : -1;
+      if (disc === 2) throw new Error("That Solana route asks your wallet to send SOL directly instead of swapping through the swap program — refusing to sign it.");
+    } else if (SOL_TOKEN_PROGRAMS.has(ix.program)) {
+      const op = ix.data && ix.data.length >= 1 ? ix.data[0] : -1;
+      if ([3, 4, 8, 9, 12, 16].includes(op)) throw new Error("That Solana route asks your wallet to move, approve, burn or close a token account directly instead of swapping through the swap program — refusing to sign it.");
+    }
+  }
+}
 export async function executeSolanaSwapRoute(phrase, route, onProgress = () => {}) {
   const { ok, svm, steps, reason } = swapRouteExecutable(route);
   if (!ok || !svm) throw new Error(reason || "That route does not start on Solana.");
@@ -2676,11 +2703,16 @@ export async function executeSolanaSwapRoute(phrase, route, onProgress = () => {
       const vtx = SolVersionedTransaction.deserialize(raw);
       const payer = vtx.message.staticAccountKeys[0];
       if (!payer || payer.toBase58() !== myAddr) throw new Error("That Solana route was built for a different account — refusing to sign it.");
+      assertSolanaStepSafe(vtx.message.compiledInstructions.map(ci => ({
+        program: vtx.message.staticAccountKeys[ci.programIdIndex]?.toBase58() || null,
+        data: ci.data,
+      })));
       vtx.sign([kp]);
       serialized = vtx.serialize();
     } else {
       const tx = SolTransaction.from(raw);
       if (tx.feePayer && tx.feePayer.toBase58() !== myAddr) throw new Error("That Solana route was built for a different account — refusing to sign it.");
+      assertSolanaStepSafe(tx.instructions.map(ins => ({ program: ins.programId?.toBase58() || null, data: ins.data })));
       tx.partialSign(kp);
       serialized = tx.serialize();
     }
