@@ -1,0 +1,30 @@
+# Build integrity (audit P1): every push to main is rebuilt from source
+# in CI, and the job FAILS if the committed dist/ differs from the fresh
+# build — so the bundle users are served always corresponds to the
+# published source. Tests run first; a red suite blocks nothing else
+# here but is reported on the same job.
+name: build-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Rebuild from source and compare with committed dist/
+        run: |
+          npm run build
+          if ! git diff --exit-code -- dist/; then
+            echo "::error::Committed dist/ does not match a fresh build from source. Run 'npm run build' locally and commit the result."
+            exit 1
+          fi
