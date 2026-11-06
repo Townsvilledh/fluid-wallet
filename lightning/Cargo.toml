@@ -1,0 +1,25 @@
+[package]
+name = "fluid-lightning"
+version = "0.1.0"
+edition = "2021"
+description = "Fluid's in-app Lightning node: rust-lightning (LDK) compiled to WASM, driven by JS host bridges. Pure self-custody — keys derive from the Fluid seed and never leave the user's device."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Official LDK / rust-bitcoin crates only (LightningDevKit / rust-bitcoin orgs).
+# lightning is built WITHOUT its `std` feature: std::time traps on
+# wasm32-unknown-unknown, so the node takes time from the chain tip and
+# the host at construction, exactly like embedded no-std LDK targets.
+lightning = { version = "=0.2.7", default-features = false, features = ["grind_signatures"] }
+lightning-invoice = { version = "=0.34.1", default-features = false }
+bitcoin = "=0.32.102"
+wasm-bindgen = "=0.2.130"
+lightning-types = "=0.3.5"
+bitcoin-io = "=0.1.101"
+
+[profile.release]
+opt-level = 2
+panic = "abort"

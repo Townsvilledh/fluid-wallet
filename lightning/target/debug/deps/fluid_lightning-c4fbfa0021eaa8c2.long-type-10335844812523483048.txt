@@ -1,0 +1,1 @@
+Arc<ChainMonitor<InMemorySigner, Arc<HostFilter>, Arc<HostBroadcaster>, Arc<HostFees>, Arc<HostLogger>, Arc<HostStore>, Arc<KeysManager>>>

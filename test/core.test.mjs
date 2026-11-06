@@ -2190,7 +2190,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // private key, RFC 6979 deterministic signatures).
 {
   const { parseBolt11, encodeBolt11, bolt11IsExpired, parseBolt12Offer, resolveBip353Address,
-    classifyLightningTarget, deriveLightningSeed, ASYNC_PAY_HOLD, validateHoldHours,
+    classifyLightningTarget, deriveLightningSeed, deriveLightningStorageKey, ASYNC_PAY_HOLD, validateHoldHours,
     holdWindowCopy, summariseHeldPayments } = await import("../src/wallet-core.js");
   const { bech32m } = await import("@scure/base");
   const PRIV = "e126f68f7eafcc8b74f54d269fe206be715000f94dac067d1c04a8ca3b2db734";
@@ -2282,6 +2282,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     Buffer.from(deriveLightningSeed(KNOWN_PHRASE)).toString("hex") ===
       "83cced9bd54d12b9b00abdfbccfeb5ca2e06d4828ee2c326ff1315a19471d3dc" &&
     deriveLightningSeed(KNOWN_PHRASE).length === 32);
+  ok("ln: deriveLightningStorageKey is a separate pinned HKDF branch",
+    Buffer.from(deriveLightningStorageKey(KNOWN_PHRASE)).toString("hex") ===
+      "7051ae1eef2bf8df4c2ac373e356db0f2291b5f451aa1cdfbd5d10695736f43e");
   // BOLT 12 offer parsing (hand-built TLV stream; byte layout per BOLT 12)
   const tlv = (type, value) => Buffer.concat([Buffer.from([type, value.length]), value]);
   const offerBytes = Buffer.concat([

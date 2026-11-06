@@ -1,0 +1,1 @@
+for<'a> std::sync::Mutex<ProbabilisticScorer<Arc<NetworkGraph<Arc<HostLogger>>>, Arc<HostLogger>>>: LockableScore<'a>

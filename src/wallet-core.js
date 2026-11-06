@@ -2921,6 +2921,16 @@ export function deriveLightningSeed(phrase) {
   return hkdf(sha256, seed, new TextEncoder().encode("fluid"), new TextEncoder().encode("fluid/lightning/ldk-seed/v1"), 32);
 }
 
+/** AES key encrypting the Lightning node's persisted state at rest
+ *  (channel monitors + manager in the browser's localStorage domain).
+ *  A SEPARATE HKDF branch from the node seed itself: the storage key
+ *  can decrypt state blobs but is never channel key material. */
+export function deriveLightningStorageKey(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const seed = mnemonicToSeedSync(clean);
+  return hkdf(sha256, seed, new TextEncoder().encode("fluid"), new TextEncoder().encode("fluid/lightning/storage/v1"), 32);
+}
+
 // --- 5-bit word <-> byte helpers (BOLT 11 packs its data part as a bit
 // stream: words are concatenated as bits and zero-padded to bytes). ---
 function wordsToBytesPadded(words) {

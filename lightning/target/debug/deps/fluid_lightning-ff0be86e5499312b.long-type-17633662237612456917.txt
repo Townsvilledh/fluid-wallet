@@ -1,0 +1,1 @@
+lightning_invoice::InvoiceBuilder<bolt11_invoice::tb::True, bolt11_invoice::tb::True, bolt11_invoice::tb::False, bolt11_invoice::tb::False, bolt11_invoice::tb::True, bolt11_invoice::tb::False>
