@@ -21,7 +21,7 @@ import {
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
-  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader,
+  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
@@ -2724,7 +2724,12 @@ $("wipeBtn").onclick = () => {
     <button class="btn ghost" id="wipeCancel">Keep my wallet</button>`);
   $("wipeCancel").onclick = () => closeSheet();
   $("wipeGo").onclick = () => {
-    localStorage.removeItem(VAULT_KEY); localStorage.removeItem("fluid_name");
+    // Full wipe (audit L3): EVERY fluid_* key goes — vault, name,
+    // history, approval records, agents + spend log, chain cache,
+    // custom tokens, caches. Nothing of the removed wallet survives.
+    const allKeys = [];
+    for (let i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i));
+    for (const k of fluidStorageKeysToWipe(allKeys)) localStorage.removeItem(k);
     wallet = null; pendingSend = null;
     // Leave no trace of the removed wallet on the onboarding screen:
     // a seed phrase or password must never linger in the form after removal.

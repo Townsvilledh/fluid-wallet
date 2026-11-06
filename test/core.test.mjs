@@ -187,10 +187,12 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("swap intent is human-readable", si.includes("Swap 0.01 BNB on BNB Chain") && si.includes("USDC") && si.includes("Base") && si.includes("Confirm?"));
 }
 
-// 25. Send intent with a resolved Fluid name: confirmation shows name AND address
+// 25. Send intent with a resolved Fluid name: confirmation shows name AND
+// the FULL address (audit L1 superseded the original short-address pin:
+// the user confirms the resolution, so it is never truncated).
 {
   const named = formatSendIntent({ amount: "0.0005", symbol: "BNB", to: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", networkKey: "bsc", feeNative: "0.000105", name: "dripbot" });
-  ok("named intent shows name and short address", named.includes("Send 0.0005 BNB to dripbot.fluid.is-a.dev (0x7Fe6…135B) on BNB Chain"));
+  ok("named intent shows name and FULL address", named.includes("Send 0.0005 BNB to dripbot.fluid.is-a.dev (0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B) on BNB Chain"));
   const plain = formatSendIntent({ amount: "0.0005", symbol: "BNB", to: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", networkKey: "bsc", feeNative: "0.000105" });
   ok("plain intent keeps raw address only", plain.includes("to 0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B on BNB Chain") && !plain.includes("dripbot"));
 }
@@ -1573,6 +1575,25 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     idxSrc.indexOf('id="welcomeText"') > idxSrc.indexOf('id="tab-wallet"')
     && idxSrc.indexOf('id="welcomeText"') < idxSrc.indexOf('class="hero"')
     && appSrc.includes('$("welcomeText").textContent = formatWelcomeHeader(stored)'));
+}
+
+// ---------- low bundle: full wipe (L3) + full address in name intents (L1) ----------
+// (L2, confirmed-only BTC coin selection, shipped with the H1 fee work.)
+{
+  const { fluidStorageKeysToWipe } = await import("../src/wallet-core.js");
+  const all = ["fluid_vault_v1", "fluid_name", "fluid_history_v1", "fluid_approvals_v1", "fluid_agents_v1",
+    "fluid_agent_spend_v1", "fluid_chains_v1", "fluid_custom_tokens_v1", "fluid_lifi_tokens_v1",
+    "fluid_country", "fluid_ogo_notify", "other_app_key", "fluidx", "xfluid_name"];
+  const wiped = fluidStorageKeysToWipe(all);
+  ok("l3: wipe takes every fluid_* key and nothing else",
+    wiped.length === 11 && wiped.includes("fluid_vault_v1") && wiped.includes("fluid_agent_spend_v1")
+    && !wiped.includes("other_app_key") && !wiped.includes("fluidx"));
+  const named = formatSendIntent({ amount: "0.05", symbol: "BNB", to: fresh.address, networkKey: "bsc", feeNative: "0.000105", name: "ethuram" });
+  ok("l1: name-send intent shows the FULL resolved address",
+    named.includes(`ethuram.fluid.is-a.dev (${fresh.address})`) && !named.includes("…"));
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("l3: the wipe handler runs the full-key filter",
+    appSrc.includes("fluidStorageKeysToWipe(allKeys)") && !appSrc.includes('localStorage.removeItem(VAULT_KEY); localStorage.removeItem("fluid_name")'));
 }
 
 console.log(`\n${passed} checks passed`);

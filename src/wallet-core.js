@@ -283,11 +283,22 @@ export function formatWelcomeHeader(name) {
 export function formatSendIntent({ amount, symbol, to, networkKey, feeNative, name }) {
   const net = NETWORKS[networkKey];
   // When the recipient was given as a Fluid name, the confirmation must
-  // show BOTH the name the user typed and the address it resolved to —
-  // the sender confirms the resolution, not just the lookup.
-  const dest = name ? `${name}.${FLUID_DOMAIN} (${to.slice(0, 6)}…${to.slice(-4)})` : to;
+  // show BOTH the name the user typed and the FULL address it resolved
+  // to (audit L1: a truncated address asks the user to trust the very
+  // resolution they are supposed to be checking).
+  const dest = name ? `${name}.${FLUID_DOMAIN} (${to})` : to;
   return `Send ${amount} ${symbol} to ${dest} on ${net.name}. ` +
          `Network fee about ${feeNative} ${net.symbol}. Confirm?`;
+}
+
+/** "Remove wallet" must leave NOTHING behind (audit L3): every key the
+ *  app owns is fluid_* — the vault, the name, send history, approval
+ *  records, agent descriptors AND their spend log, the discovered-chain
+ *  cache, custom tokens, the LI.FI token cache, the ramp country. The
+ *  wipe filters a storage key list through this pure helper so the set
+ *  is unit-tested; foreign keys (other apps on the origin) survive. */
+export function fluidStorageKeysToWipe(keys) {
+  return [...(keys || [])].filter(k => typeof k === "string" && k.startsWith("fluid_"));
 }
 
 export async function estimateSend(wallet, networkKey, { to, amount, token }) {
