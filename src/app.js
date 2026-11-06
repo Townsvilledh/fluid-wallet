@@ -7,6 +7,7 @@ import {
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
+  AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -339,3 +340,76 @@ $("wipeBtn").onclick = () => {
 };
 
 refreshGate();
+
+// ---------- Agentic wallets ----------
+// Agents are stored as PUBLIC descriptors only (name, index, addresses,
+// policy). Keys are derived from the seed in memory, only while unlocked,
+// and never leave the wallet. Agent access is chain-only: no KYC, no ramps.
+const AGENTS_KEY = "fluid_agents_v1";
+const AGENT_SPEND_KEY = "fluid_agent_spend_v1";
+const loadAgents = () => { try { return JSON.parse(localStorage.getItem(AGENTS_KEY) || "[]"); } catch { return []; } };
+const saveAgents = (a) => localStorage.setItem(AGENTS_KEY, JSON.stringify(a));
+function agentSpentToday(index) {
+  try { const s = JSON.parse(localStorage.getItem(AGENT_SPEND_KEY) || "{}"); const t = new Date().toISOString().slice(0, 10); return s[t + ":" + index] || 0; } catch { return 0; }
+}
+function recordAgentSpend(index, usdAmt) {
+  const s = (() => { try { return JSON.parse(localStorage.getItem(AGENT_SPEND_KEY) || "{}"); } catch { return {}; } })();
+  const k = new Date().toISOString().slice(0, 10) + ":" + index; s[k] = (s[k] || 0) + usdAmt;
+  localStorage.setItem(AGENT_SPEND_KEY, JSON.stringify(s));
+}
+function renderAgents() {
+  const list = loadAgents();
+  $("agentList").innerHTML = list.map(a =>
+    `<div style="border-top:1px solid #26314d;padding:8px 0"><b>${a.name}</b> <span class="tag">caps $${a.policy.perTxCapUsd}/tx · $${a.policy.dailyCapUsd}/day · no ramps · no KYC</span><br>` +
+    `<span class="mono" style="font-size:11px">EVM ${a.keys.evm}</span><br><span class="mono" style="font-size:11px">BTC ${a.keys.btc}</span></div>`).join("");
+}
+$("createAgentBtn").onclick = () => {
+  if (!wallet) return msg("agentMsg", "Unlock your wallet first.");
+  const name = $("agentNameInput").value.trim();
+  if (name.length < 2) return msg("agentMsg", "Give the agent a name (2+ characters).");
+  const agents = loadAgents();
+  if (agents.some(a => a.name.toLowerCase() === name.toLowerCase())) return msg("agentMsg", "You already have an agent with that name.");
+  const index = agents.length;
+  const keys = agentAddresses(wallet.mnemonic.phrase, index);
+  const descriptor = buildAgentDescriptor({ name, index, evm: keys.evm, btc: keys.btc });
+  agents.push({ name, index, keys, policy: descriptor.policy });
+  saveAgents(agents); renderAgents();
+  $("agentDescriptor").textContent = JSON.stringify(descriptor, null, 1);
+  show("agentBox");
+  msg("agentMsg", `Agent wallet created for ${name} — separate account, full chain access, no KYC, no ramps.`, true);
+};
+$("copyAgentBtn").onclick = () => navigator.clipboard?.writeText($("agentDescriptor").textContent);
+renderAgents();
+
+// The agent-facing API. An agent (script, bot, another app on this device)
+// can READ public info and REQUEST a transfer. It can never sign: every
+// request pops a human-readable approval to the owner, policy caps are
+// enforced first, and the transfer is signed by the agent account's key
+// inside the wallet only after the owner taps Approve.
+window.FluidAgent = {
+  list: () => loadAgents().map(a => ({ name: a.name, keys: a.keys, policy: a.policy })),
+  async requestTransfer({ agent, to, amount, network } = {}) {
+    if (!wallet) throw new Error("Fluid is locked — the owner must unlock first.");
+    const agents = loadAgents();
+    const a = agents.find(x => x.name === agent) || agents[0];
+    if (!a) throw new Error("No agent wallet exists yet — the owner creates one in More → Agentic wallet.");
+    const netKey = network || networkKey;
+    const net = NETWORKS[netKey];
+    if (!net) throw new Error("Unknown network: " + netKey);
+    const amt = Number(amount);
+    if (!ethersIsAddress(to)) throw new Error("Invalid destination address.");
+    const price = prices[net.symbol] || 0;
+    const usdAmt = price ? amt * price : 0;
+    const gate = checkAgentPolicy(a.policy, price ? usdAmt : 0.0001, agentSpentToday(a.index));
+    if (price && !gate.ok) throw new Error("Policy blocked: " + gate.reason);
+    const ok = confirm(`🤖 Agent "${a.name}" requests a transfer:\n\nSend ${amt} ${net.symbol} on ${net.name}\nTo: ${to}\n${price ? "Value ≈ " + usd(usdAmt) + ` (caps: $${a.policy.perTxCapUsd}/tx, $${a.policy.dailyCapUsd}/day)` : "(price unknown — check carefully)"}\n\nApprove and sign with the AGENT wallet?`);
+    if (!ok) throw new Error("Owner declined.");
+    const tx = await sendFromAgent(wallet.mnemonic.phrase, a.index, netKey, to, amt);
+    if (price) recordAgentSpend(a.index, usdAmt);
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    h.unshift({ hash: tx.hash, amount: String(amt), symbol: net.symbol, to, explorer: net.explorer, at: Date.now(), agent: a.name });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+    return { hash: tx.hash, from: a.keys.evm, network: netKey };
+  },
+};
+function ethersIsAddress(x) { return /^0x[0-9a-fA-F]{40}$/.test(String(x || "")); }

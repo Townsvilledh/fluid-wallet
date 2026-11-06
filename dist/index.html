@@ -184,6 +184,19 @@
         <p class="msg err" id="nameMsg"></p>
       </div>
       <div class="card">
+        <b>🤖 Agentic wallet</b>
+        <p class="tag" style="margin:6px 0">Give an AI agent its own wallet on Fluid. Agents get <b>full blockchain access</b> — every chain — with <b>no KYC and no on/off-ramps, ever</b>. The agent wallet is a separate account from yours (same seed backup), with spending caps you set. The agent can only <i>request</i> transfers; you approve and Fluid signs.</p>
+        <input id="agentNameInput" placeholder="Agent name (e.g. DripBot)" autocapitalize="none">
+        <button class="btn" id="createAgentBtn">Create agent wallet</button>
+        <div id="agentBox" class="hidden">
+          <p class="tag">Hand this descriptor to your agent — it contains only public addresses and its rules, never keys:</p>
+          <div class="seed" id="agentDescriptor" style="font-size:11px;white-space:pre-wrap"></div>
+          <button class="btn ghost" id="copyAgentBtn">Copy descriptor</button>
+        </div>
+        <div id="agentList"></div>
+        <p class="msg err" id="agentMsg"></p>
+      </div>
+      <div class="card">
         <b>Offline recovery tool</b>
         <p class="tag" style="margin:6px 0">Split your seed into 2-of-4 Shamir shards — any 2 recover it, 1 alone is useless. Run it offline.</p>
         <a href="recovery.html" target="_blank" rel="noopener">Open the recovery tool ↗</a>

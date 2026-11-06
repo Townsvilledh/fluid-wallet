@@ -207,14 +207,14 @@ export async function getPrices() {
 }
 
 // ---------- Bitcoin (same seed, BIP84 native SegWit) ----------
-function btcKeys(phrase) {
+function btcKeys(phrase, account = 0) {
   const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
   const root = HDKey.fromMasterSeed(seed);
-  const child = root.derive("m/84'/0'/0'/0/0");
+  const child = root.derive(`m/84'/0'/${account}'/0/0`);
   const pay = btc.p2wpkh(child.publicKey, btc.NETWORK);
   return { child, address: pay.address, script: pay.script };
 }
-export function bitcoinAddress(phrase) { return btcKeys(phrase).address; }
+export function bitcoinAddress(phrase, account = 0) { return btcKeys(phrase, account).address; }
 
 const MEMPOOL = "https://mempool.space/api";
 export async function getBitcoinBalance(address) {
@@ -423,3 +423,52 @@ export const GLOBAL_RAMPS = [
   { name: "Ramp Network", region: "Global · 150+ countries", buy: "https://ramp.network/", sell: "https://ramp.network/" },
   { name: "Transak", region: "Global · 170+ countries", buy: "https://global.transak.com/", sell: "https://global.transak.com/" },
 ];
+
+// ---------- Agentic wallets ----------
+// An agent wallet is a SEPARATE account derived from the owner's seed at a
+// reserved account range (1000+), so one seed backup covers owner + agents
+// while agent funds stay apart from the owner's main account. Agent wallets
+// are chain-only BY DESIGN: no KYC, no on/off-ramps, no seed export. The
+// agent works through intents (window.FluidAgent); the owner's signer signs.
+export const AGENT_ACCOUNT_BASE = 1000;
+export const AGENT_POLICY_DEFAULTS = Object.freeze({
+  kyc: false, ramps: false, seedExport: false,
+  chains: "all",            // every Fluid chain: 15 EVM + Bitcoin (+ Lightning receive via owner's address)
+  perTxCapUsd: 50, dailyCapUsd: 200,
+  approval: "owner",        // owner approves each spend in the wallet UI
+});
+export function agentEvmWallet(mnemonic, index = 0) {
+  return ethers.HDNodeWallet.fromPhrase(mnemonic, undefined, `m/44'/60'/${AGENT_ACCOUNT_BASE + index}'/0/0`);
+}
+export function agentAddresses(mnemonic, index = 0) {
+  return { evm: agentEvmWallet(mnemonic, index).address, btc: bitcoinAddress(mnemonic, AGENT_ACCOUNT_BASE + index) };
+}
+export function buildAgentDescriptor({ name, index = 0, evm, btc, policy = {} }) {
+  return {
+    type: "fluid-agent-wallet", version: 1, name,
+    accountIndex: AGENT_ACCOUNT_BASE + index,
+    keys: { evm, btc },
+    access: { blockchain: "full", kyc: false, onramp: false, offramp: false },
+    policy: { ...AGENT_POLICY_DEFAULTS, ...policy },
+    api: "window.FluidAgent — requestTransfer({network,to,amount}) returns a promise; the owner approves and the wallet signs. Keys are never exposed to the agent.",
+  };
+}
+// Policy gate for an agent spend intent. Returns {ok} or {ok:false, reason}.
+export function checkAgentPolicy(policy, amountUsd, spentTodayUsd = 0) {
+  const p = { ...AGENT_POLICY_DEFAULTS, ...(policy || {}) };
+  if (p.ramps !== false) return { ok: false, reason: "agent wallets never use ramps" };
+  if (!(amountUsd > 0)) return { ok: false, reason: "amount must be positive" };
+  if (amountUsd > p.perTxCapUsd) return { ok: false, reason: `over per-transaction cap ($${p.perTxCapUsd})` };
+  if (spentTodayUsd + amountUsd > p.dailyCapUsd) return { ok: false, reason: `over daily cap ($${p.dailyCapUsd})` };
+  return { ok: true };
+}
+// Execute an owner-approved agent spend (native token) on a given network.
+export async function sendFromAgent(mnemonic, index, networkKey, to, amountNative) {
+  const net = NETWORKS[networkKey];
+  if (!net) throw new Error("Unknown network: " + networkKey);
+  const provider = new ethers.JsonRpcProvider(net.rpc);
+  const aw = agentEvmWallet(mnemonic, index).connect(provider);
+  const tx = await aw.sendTransaction({ to, value: ethers.parseEther(String(amountNative)) });
+  await tx.wait();
+  return tx;
+}
