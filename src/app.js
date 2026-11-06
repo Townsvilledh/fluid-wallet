@@ -269,15 +269,18 @@ function rampSheet(mode) {
     <p class="tag">Pick your country and coin. You complete the ${mode === "buy" ? "purchase" : "sale"} with the provider in your own currency (they handle KYC &amp; fiat) — Fluid never touches your bank money.</p>
     <label class="tag">Country / currency</label>
     <select id="rCountry">${RAMP_COUNTRIES.map(c => `<option value="${c.code}" ${c.code === country ? "selected" : ""}>${c.name}</option>`).join("")}</select>
-    <label class="tag">Coin (on ${NETWORKS[networkKey].name})</label>
+    <label class="tag">Network</label>
+    <select id="rNet">${Object.keys(NETWORKS).filter(k => k !== "sepolia").map(k => `<option value="${k}" ${k === (networkKey === "sepolia" ? "bsc" : networkKey) ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("")}</select>
+    <label class="tag" id="rAssetLabel">Coin (on ${NETWORKS[networkKey === "sepolia" ? "bsc" : networkKey].name})</label>
     <select id="rAsset"><option>USDC</option><option>USDT</option></select>
     <div id="rList"></div>`);
   const paint = () => {
-    const code = $("rCountry").value, asset = $("rAsset").value;
+    const code = $("rCountry").value, asset = $("rAsset").value, netKey = $("rNet").value;
     localStorage.setItem("fluid_country", code);
+    $("rAssetLabel").textContent = `Coin (on ${NETWORKS[netKey].name})`;
     const c = RAMP_COUNTRIES.find(x => x.code === code);
     const fonbnk = c.fonbnk
-      ? (mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, code) : fonbnkOfframpUrl(networkKey, asset, code)) : null;
+      ? (mode === "buy" ? fonbnkOnrampUrl(netKey, asset, code) : fonbnkOfframpUrl(netKey, asset, code)) : null;
     const routes = GLOBAL_RAMPS.map(r => ({ name: r.name, url: mode === "buy" ? r.buy : r.sell, region: r.region }));
     if (fonbnk) routes.push({ name: "Fonbnk", url: fonbnk, region: c.name + " · bank & mobile money" });
     const ranked = rankRoutes(routes);
@@ -285,9 +288,9 @@ function rampSheet(mode) {
       `<p class="tag" style="margin-top:10px">⚡ Sorted cheapest-route first (typical fees from provider docs — the provider shows your final quote before you pay).</p>` +
       ranked.map((r, i) =>
         `<button class="netitem" onclick="window.open('${r.url}','_blank')"><span>${r.name} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${r.note || r.region}</small></button>`).join("") +
-      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[networkKey].name} — switch network (e.g. BNB Chain or Base) to use it, or use a global provider above.</p>` : "");
+      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use a global provider instead.</p>` : "");
   };
-  $("rCountry").onchange = paint; $("rAsset").onchange = paint; paint();
+  $("rCountry").onchange = paint; $("rAsset").onchange = paint; $("rNet").onchange = paint; paint();
 }
 $("actBuy").onclick = () => rampSheet("buy");
 $("actCash").onclick = () => rampSheet("sell");

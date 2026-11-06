@@ -1,11 +1,17 @@
 // Build: bundle JS, copy pages, and produce a single-file wallet.
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 mkdirSync("dist", { recursive: true });
 await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js" });
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");
+// Cache-bust the bundle: stamp dist/index.html with app.bundle.js?v=<hash> so
+// every deploy is a new URL and browsers never sit on a stale bundle.
+const bundleHash = createHash("sha256").update(readFileSync("dist/app.bundle.js")).digest("hex").slice(0, 10);
+const distHtml = readFileSync("dist/index.html", "utf8");
+writeFileSync("dist/index.html", distHtml.replace('<script src="app.bundle.js"></script>', `<script src="app.bundle.js?v=${bundleHash}"></script>`));
 const html = readFileSync("src/index.html", "utf8");
 const js = readFileSync("dist/app.bundle.js", "utf8");
 const single = html.replace('<script src="app.bundle.js"></script>', () => "<script>" + js.replace(/<\/script>/g, "<\\/script>") + "</script>");
