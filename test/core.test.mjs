@@ -280,6 +280,14 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     ok("gate: duplicate TVL rows keep the max", byId(out, 9014)?.tvl === 5_000_000 && byId(out, 9014)?.tier === "discoverable");
     ok("gate: null-chainId TVL attaches by normalized name", byId(out, 9015)?.tvl === 30_000_000 && byId(out, 9015)?.tier === "display");
   }
+  // Brand alias: DefiLlama "BSquared" must attach to registry "B2 Mainnet"
+  // (the live B² Network case — $2.5M TVL, chainId null on DefiLlama)
+  {
+    const out = gate({ lifiChains: [], registry: [reg(223, { name: "B2 Mainnet", nativeCurrency: { symbol: "BTC", decimals: 18 } })],
+      tvl: [{ chainId: null, name: "BSquared", tvl: 2_500_000 }] });
+    const c = byId(out, 223);
+    ok("gate: BSquared alias attaches TVL to B2 (223)", !!c && c.tvl === 2_500_000 && c.tier === "discoverable");
+  }
   // Non-EVM registry squatters (Tron, Algorand) never auto-admit
   {
     const out = gate({ lifiChains: [], tvl: [{ chainId: 728126428, tvl: 5_000_000_000 }, { chainId: 4160, tvl: 30_000_000 }],

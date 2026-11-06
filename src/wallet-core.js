@@ -132,6 +132,19 @@ export const NETWORKS = {
     rpc: "https://rpc.fuse.io", explorer: "https://explorer.fuse.io",
     fonbnkNetwork: null, tokens: [],
   },
+  // B² Network (Bitcoin L2) is pinned as a built-in, live-verified
+  // 2026-11-06: the discovery gate admits it (DefiLlama "BSquared" TVL
+  // $2.5M, discoverable tier) but the registry's first RPC for it
+  // (mainnet.b2-rpc.com) is dead — tenant disabled — so the gate's entry
+  // could never pass the switch-time fingerprint. This pin carries the
+  // verified RPC instead (eth_chainId 0xdf, blocks flowing). LI.FI does
+  // not list chain 223 at all, so there is no LI.FI stable list to pin;
+  // the universal EVM scan still finds held tokens on it.
+  b2: {
+    name: "B² Network", chainId: 223, symbol: "BTC", priceSym: "BTC",
+    rpc: "https://rpc.bsquared.network", explorer: "https://explorer.bsquared.network",
+    fonbnkNetwork: null, tokens: [],
+  },
   sepolia: {
     name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
     rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
@@ -2591,6 +2604,12 @@ function chainNameMarksTestnet(name) {
 }
 /** Loose name key for cross-source matching: "X Layer Mainnet", "X Layer"
  *  and "XLayer" should all land on the same chain. */
+/** Brand aliases a name-normalisation can't bridge: the same chain is
+ *  spelled so differently across sources that stripping suffixes and
+ *  punctuation never converges ("BSquared" on DefiLlama vs "B2 Mainnet"
+ *  on the registry — live-audited 2026-11-06: the mismatch silently kept
+ *  B² Network's $2.5M TVL from attaching, and the chain out of the gate). */
+const CHAIN_NAME_ALIASES = { bsquared: "b2" };
 function normalizeChainName(name) {
   let s = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   let changed = true;
@@ -2600,7 +2619,7 @@ function normalizeChainName(name) {
       if (s.length > suf.length && s.endsWith(suf)) { s = s.slice(0, -suf.length); changed = true; }
     }
   }
-  return s;
+  return CHAIN_NAME_ALIASES[s] || s;
 }
 const cleanChainRpc = (u) =>
   (typeof u === "string" && u.startsWith("https://") && !u.includes("{") && !u.includes("}")) ? u : null;
