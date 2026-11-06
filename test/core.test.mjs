@@ -1690,4 +1690,23 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     && coreSrc.indexOf("assertSolanaStepSafe(tx.instructions") < coreSrc.indexOf("tx.partialSign(kp)"));
 }
 
+// ---------- red-team F-03: agent reservation release ----------
+// M6 reserved spend on disk before broadcast but released it on ANY
+// failure — including failures after the chain accepted the broadcast,
+// un-counting money that had moved and letting the daily cap be spent
+// again. The release must exist ONLY on the provably pre-broadcast path
+// (sendTransaction itself threw); a confirmation failure keeps the
+// reservation. Pinned structurally here; the red team's attack-agent
+// fixture proves it end-to-end (6 sends land, the 7th is gate-blocked,
+// $177 accounted).
+{
+  const agentSrc = readFileSync(new URL("../agent/fluid-agent.mjs", import.meta.url), "utf8");
+  ok("rt-f03: reservation release happens exactly once (pre-broadcast path only)",
+    (agentSrc.match(/s2\[today\(\)\] = Math\.max\(0/g) || []).length === 1);
+  ok("rt-f03: the release sits before the broadcast/confirmation flow",
+    agentSrc.indexOf("s2[today()] = Math.max(0") < agentSrc.indexOf("await tx.wait()"));
+  ok("rt-f03: unconfirmed broadcasts keep the spend reserved, stated plainly",
+    agentSrc.includes("broadcast but unconfirmed") && agentSrc.includes("spend stays reserved"));
+}
+
 console.log(`\n${passed} checks passed`);

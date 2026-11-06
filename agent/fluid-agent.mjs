@@ -99,18 +99,28 @@ export async function openAgent({ dir, password } = {}) {
     // day's total already includes this send while it is in flight.
     const s = loadSpend(); s[today()] = spentToday() + usd;
     writeFileSync(spendPath, JSON.stringify(s));
+    const p = new ethers.JsonRpcProvider(net.rpc);
+    let tx;
     try {
-      const p = new ethers.JsonRpcProvider(net.rpc);
-      const tx = await wallet.connect(p).sendTransaction({ to, value: ethers.parseEther(String(amt)) });
-      await tx.wait();
-      return { hash: tx.hash, from: descriptor.keys.evm, network, amount: amt, symbol: net.symbol, usd };
+      tx = await wallet.connect(p).sendTransaction({ to, value: ethers.parseEther(String(amt)) });
     } catch (e) {
-      // The send never landed — release the reservation so a transient
-      // failure doesn't eat the day's cap.
+      // sendTransaction itself failed (estimation, nonce, connection) —
+      // nothing was broadcast, so releasing the reservation is exact.
       const s2 = loadSpend(); s2[today()] = Math.max(0, (s2[today()] || 0) - usd);
       writeFileSync(spendPath, JSON.stringify(s2));
       throw e;
     }
+    try {
+      await tx.wait();
+    } catch (e) {
+      // RED-TEAM 2026-11-06: the transaction WAS broadcast — a failure to
+      // CONFIRM it (receipt read error, dropped connection) is not proof
+      // it didn't land. Releasing here un-counts money that may have
+      // moved and lets the daily cap be spent again. Keep the reservation
+      // (over-counting is the safe direction) and say so plainly.
+      throw new Error(`Send broadcast but unconfirmed (${tx.hash}) — the spend stays reserved against today's cap. Confirmation error: ${e.message}`);
+    }
+    return { hash: tx.hash, from: descriptor.keys.evm, network, amount: amt, symbol: net.symbol, usd };
   };
   return {
     descriptor,
