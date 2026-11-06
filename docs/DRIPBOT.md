@@ -56,3 +56,38 @@ Run by Muse as Ethuram's agent, inside X's rules and rate limits:
 - Impersonation is the #1 risk for a drip account: every real payout
   post comes only from @bitcoinornatin and links the Lightning payment
   proof.
+
+## Mechanics — clarified by Ethuram, 2026-11-06 10:21 WAT
+
+These points OVERRIDE the earlier reserve-floor/caps language above where
+they conflict:
+
+1. **One identity, two faces (paired accounts).** The @bitcoinornatin X
+   account and the DripBot Fluid agent wallet are a pair — the same entity.
+   Pairing is public and verifiable: the wallet descriptor carries the X
+   handle; the X bio carries the wallet's Fluid name + addresses. One
+   operator (Muse, or the autonomous runtime) runs both sides.
+2. **The drip wallet is a DISTRIBUTOR, not a reserve.** Fluid's fees are
+   small — a few cents added on the cheapest available route for whatever
+   network the user is on (Arbitrum cheapest on Arbitrum, Base cheapest on
+   Base, etc.). Fee profit splits 60% Ethuram / 40% drip wallet. The 40%
+   stacks up during the week; at the weekly drip it is paid OUT to active
+   users. Funds are not held back as a reserve — if the week brings $1,000
+   of fees, the drip wallet's ~$400 goes to users that week.
+3. **No fixed dollar caps on distribution.** Fixed $/tx or $/day caps
+   (the generic agent defaults) do NOT fit this wallet: they would strangle
+   a big week. Drip sizing is proportional to the pot and to each winner's
+   activity share. The only rails are sanity rails: no single payment may
+   exceed the pot, payouts are batched and published, and anomalous
+   patterns (brand-new accounts farming) are filtered by the scoring.
+4. **Winner selection reads BOTH sides of the pair:**
+   - X side: followers who genuinely engage @bitcoinornatin — replies,
+     reposts, quotes, quality posts promoting Fluid/Bitcoin.
+   - Wallet side: real Fluid activity under a user's Fluid name — sends,
+     swaps, RAIN claims, agent usage.
+   Scores combine; the week's pot is split across top active usernames,
+   with preference to people active on BOTH sides (they are the promoters
+   who also use the product).
+5. **Rewards are addressed by Fluid username** (name.fluid.is-a.dev →
+   keys), paid in BTC over Lightning as before. A winner with no Fluid
+   name yet is told to claim one — the drip doubles as wallet onboarding.
