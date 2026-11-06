@@ -28,7 +28,7 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
-  looksLikePoison, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
+  looksLikePoison, looksLikePoisonText, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
@@ -1130,6 +1130,17 @@ function openBtcSheet() {
       to = hit.btc; sendName = hit.name;
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
+    // Address-poisoning check (red-team Finding D): the EVM sheet has
+    // always warned on lookalike recipients; the Bitcoin sheet — the
+    // highest-value target for poisoning — showed nothing. Mirror it:
+    // warn (never hard-block) when a raw recipient imitates the user's
+    // own BTC address or a past BTC recipient.
+    let poisonNote = "";
+    if (!sendName) {
+      const knownBtc = [btcAddr, ...JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]").filter(x => x && x.symbol === "BTC").map(x => x.to).filter(Boolean)];
+      const look = looksLikePoisonText(to, knownBtc);
+      if (look) poisonNote = `⚠ This address starts and ends like ${look.slice(0, 10)}…${look.slice(-6)} which you've used before, but it is NOT the same address — this is how address-poisoning scams work. Double-check every character.`;
+    }
     try {
       // Build the transaction NOW (audit H1): the review shows the exact
       // fee, and Confirm broadcasts exactly these bytes — the fee can
@@ -1143,7 +1154,7 @@ function openBtcSheet() {
       const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to})` : to;
       const note = feeRateNote(plan.rateInfo);
       $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin. Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${note ? ` Note: ${note}.` : ""} Confirm?`;
-      show("bIntent"); msg("bMsg", "");
+      show("bIntent"); msg("bMsg", poisonNote);
     } catch (e) { msg("bMsg", e.message); }
   };
   $("bConfirm").onclick = async () => {

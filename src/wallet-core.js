@@ -2983,8 +2983,8 @@ export async function scanOnChainAllowances(networkKey, ownerAddress, tokens, sp
 /** Address-poisoning defence: scammers generate addresses that share the
  *  first and last few characters with one you already use, then dust you
  *  from them hoping you'll copy the wrong one out of your history. Returns
- *  the known address the recipient imitates (same first 4 AND last 4 hex
- *  chars, case-insensitive, but NOT the same address), otherwise null. */
+ *  the known address the recipient imitates (a meaningful shared head AND
+ *  tail, case-insensitive, but NOT the same address), otherwise null. */
 export function looksLikePoison(recipient, knownAddresses) {
   const norm = (a) => String(a || "").trim().toLowerCase();
   const r = norm(recipient);
@@ -2992,7 +2992,37 @@ export function looksLikePoison(recipient, knownAddresses) {
   for (const k of knownAddresses || []) {
     const known = norm(k);
     if (!/^0x[0-9a-f]{40}$/.test(known) || known === r) continue;
-    if (known.slice(0, 6) === r.slice(0, 6) && known.slice(-4) === r.slice(-4)) return k;
+    if (affixMatch(r.slice(2), known.slice(2), 3, 3, 7)) return k;
+  }
+  return null;
+}
+/* Common prefix/suffix test behind both lookalike checks: an imitator
+ * must share a meaningful head AND tail with the known string. Two
+ * unrelated addresses essentially never share 3+3 affixes by chance
+ * (hex: ~16^-6 per pair), while ground vanity addresses match on
+ * whichever side was cheaper to grind. */
+function affixMatch(a, b, minPrefix, minSuffix, minTotal) {
+  let p = 0; while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  if (p < minPrefix) return false;
+  let s = 0; while (s < a.length && s < b.length && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  return s >= minSuffix && p + s >= minTotal;
+}
+/* RED-TEAM 2026-11-06 (Finding D): the poisoning warning existed only
+ * for EVM addresses — the Bitcoin sheet (and the other families) showed
+ * none, and the EVM check required first-4 AND last-4, so imitators
+ * ground on the cheaper side (first-3+last-4, first-4+last-3) evaded it.
+ * looksLikePoison above now matches on combined affixes; this generic
+ * variant covers bech32/base58 families, whose constant HRP ("bc1q")
+ * inflates the shared prefix — hence the higher defaults (an imitator
+ * must match 4+ characters BEYOND the shared "bc1q" and 4 at the tail). */
+export function looksLikePoisonText(recipient, knownAddresses, { minPrefix = 8, minSuffix = 4, minTotal = 12 } = {}) {
+  const norm = (a) => String(a || "").trim().toLowerCase();
+  const r = norm(recipient);
+  if (r.length < minTotal + 2) return null;
+  for (const k of knownAddresses || []) {
+    const known = norm(k);
+    if (!known || known === r) continue;
+    if (affixMatch(r, known, minPrefix, minSuffix, minTotal)) return k;
   }
   return null;
 }

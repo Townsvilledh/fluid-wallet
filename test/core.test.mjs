@@ -1747,4 +1747,29 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   } finally { globalThis.fetch = realFetch; }
 }
 
+// ---------- red-team F-05: poisoning-warning coverage ----------
+// The old EVM check needed first-4 AND last-4, so imitators ground on
+// the cheaper side (first-3+last-4, first-4+last-3) slipped through,
+// and the Bitcoin sheet — the classic poisoning target — had no check
+// at all. Combined-affix matching now covers both evasion shapes, and
+// a generic text variant covers bech32/base58 families.
+{
+  const { looksLikePoisonText } = await import("../src/wallet-core.js");
+  const knownEvm = "0x" + "abcdef" + "0".repeat(30) + "beef";
+  const imitA = "0x" + "abc" + "f".repeat(33) + "beef";   // first-3 + last-4
+  const imitB = "0x" + "abcd" + "f".repeat(33) + "eef";   // first-4 + last-3
+  ok("rt-f05: first-3+last-4 imitator warns", looksLikePoison(imitA, [knownEvm]) === knownEvm);
+  ok("rt-f05: first-4+last-3 imitator warns", looksLikePoison(imitB, [knownEvm]) === knownEvm);
+  ok("rt-f05: unrelated address does not warn", looksLikePoison("0x" + "9".repeat(40), [knownEvm]) === null);
+  ok("rt-f05: the address itself does not warn", looksLikePoison(knownEvm, [knownEvm]) === null);
+  const knownBtc = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+  const imitBtc = knownBtc.slice(0, 24) + "qqqq" + knownBtc.slice(-6);
+  ok("rt-f05: bech32 lookalike warns via the text check", looksLikePoisonText(imitBtc, [knownBtc]) === knownBtc);
+  ok("rt-f05: sharing only the bc1q HRP does not warn",
+    looksLikePoisonText("bc1q" + "z".repeat(38), [knownBtc]) === null);
+  ok("rt-f05: the BTC address itself does not warn", looksLikePoisonText(knownBtc, [knownBtc]) === null);
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("rt-f05: the Bitcoin sheet runs the lookalike check", appSrc.includes("looksLikePoisonText(to, knownBtc)"));
+}
+
 console.log(`\n${passed} checks passed`);
