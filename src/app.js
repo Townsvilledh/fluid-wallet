@@ -21,7 +21,7 @@ import {
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
-  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt,
+  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
@@ -2485,6 +2485,10 @@ $("unlockBtn").onclick = async () => {
 let nameAdoptTried = false;
 function renderNameSection() {
   const stored = localStorage.getItem("fluid_name");
+  // The home header greets by Fluid name (Ethuram's requirement): set it
+  // here because every name-state change (claim, adoption, removal)
+  // flows through this function, and renderMain calls it on unlock.
+  $("welcomeText").textContent = formatWelcomeHeader(stored);
   if (!stored) { show("ownedNameBox", false); show("claimForm", true); return; }
   show("claimForm", false);
   show("ownedNameBox", true);

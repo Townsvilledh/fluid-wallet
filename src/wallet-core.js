@@ -268,6 +268,16 @@ export async function getBalances(wallet, networkKey) {
   return out;
 }
 
+/** The home-screen greeting (Ethuram's requirement, 2026-11-06): the
+ *  wallet opens with the username FIRST — "Welcome, <name>" when the
+ *  wallet owns/adopted a Fluid name, plain "Welcome" when it hasn't.
+ *  Selection logic lives here so it is unit-tested; the name is only
+ *  ever rendered via textContent. */
+export function formatWelcomeHeader(name) {
+  const n = String(name || "").trim();
+  return n ? `Welcome, ${n}` : "Welcome";
+}
+
 /** The signer principle from the Fluid spec: the user approves a sentence,
  *  never a hex blob. Returns the intent text + the tx the wallet would send. */
 export function formatSendIntent({ amount, symbol, to, networkKey, feeNative, name }) {

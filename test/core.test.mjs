@@ -1557,4 +1557,22 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     appSrc.includes("apChainList") && appSrc.includes("scanOnChainAllowances") && appSrc.includes("Fluid's records"));
 }
 
+// ---------- username-at-top home header (Ethuram's requirement) ----------
+// The wallet home opens with "Welcome, <name>" when a Fluid name is
+// owned/adopted, plain "Welcome" otherwise — above the balance hero.
+{
+  const { formatWelcomeHeader } = await import("../src/wallet-core.js");
+  ok("welcome: owned name greets by name", formatWelcomeHeader("ethuram") === "Welcome, ethuram");
+  ok("welcome: no name → plain Welcome", formatWelcomeHeader(null) === "Welcome"
+    && formatWelcomeHeader("") === "Welcome" && formatWelcomeHeader("  ") === "Welcome"
+    && formatWelcomeHeader(undefined) === "Welcome");
+  ok("welcome: surrounding whitespace is trimmed", formatWelcomeHeader("  dripbot ") === "Welcome, dripbot");
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("welcome: header element sits at the top of the wallet tab, set via textContent from the name state",
+    idxSrc.indexOf('id="welcomeText"') > idxSrc.indexOf('id="tab-wallet"')
+    && idxSrc.indexOf('id="welcomeText"') < idxSrc.indexOf('class="hero"')
+    && appSrc.includes('$("welcomeText").textContent = formatWelcomeHeader(stored)'));
+}
+
 console.log(`\n${passed} checks passed`);
