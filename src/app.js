@@ -869,8 +869,10 @@ $("netBtn").onclick = () => {
     <p class="msg err" id="netMsg"></p>`);
   const paint = () => {
     const q = $("netSearch").value.trim().toLowerCase();
+    // SECURITY (audit M3): discovered-chain names/symbols are registry
+    // data — escaped here even though gateChains also sanitises them.
     const item = (k, label, sub) =>
-      `<button class="netitem" data-net="${k}"><span>${label}${sub ? ` <small style="color:var(--dim)">${sub}</small>` : ""}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`;
+      `<button class="netitem" data-net="${k}"><span>${esc(label)}${sub ? ` <small style="color:var(--dim)">${esc(sub)}</small>` : ""}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`;
     let html = BUILTIN_NETWORK_KEYS
       .filter(k => !q || NETWORKS[k].name.toLowerCase().includes(q))
       .map(k => item(k, NETWORKS[k].name)).join("");
@@ -2690,8 +2692,8 @@ function recordAgentSpend(index, usdAmt) {
 function renderAgents() {
   const list = loadAgents().filter(a => !a.owner || !wallet || a.owner === wallet.address);
   $("agentList").innerHTML = list.map(a =>
-    `<div style="border-top:1px solid #26314d;padding:8px 0"><b>${a.name}</b> <span class="tag">caps $${a.policy.perTxCapUsd}/tx · $${a.policy.dailyCapUsd}/day · no ramps · no KYC</span><br>` +
-    `<span class="mono" style="font-size:11px">EVM ${a.keys.evm}</span><br><span class="mono" style="font-size:11px">BTC ${a.keys.btc}</span></div>`).join("");
+    `<div style="border-top:1px solid #26314d;padding:8px 0"><b>${esc(a.name)}</b> <span class="tag">caps $${a.policy.perTxCapUsd}/tx · $${a.policy.dailyCapUsd}/day · no ramps · no KYC</span><br>` +
+    `<span class="mono" style="font-size:11px">EVM ${esc(a.keys.evm)}</span><br><span class="mono" style="font-size:11px">BTC ${esc(a.keys.btc)}</span></div>`).join("");
 }
 $("createAgentBtn").onclick = () => {
   if (!wallet) return msg("agentMsg", "Unlock your wallet first.");
@@ -2727,12 +2729,12 @@ function askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday }) {
       : `⚠️ <b>Price unknown</b> — the dollar policy caps could not be checked for this transfer. Check the amount and destination extra carefully.`;
     openSheet(`<h3>🤖 Agent transfer request</h3>
       <p class="tag">An agent is asking to spend from its own agent wallet. Nothing moves unless you tap Approve.</p>
-      <p><b>Agent:</b> ${a.name} <span class="tag">(agent #${a.index})</span></p>
-      <p><b>Send:</b> ${amt} ${net.symbol} on ${net.name}</p>
+      <p><b>Agent:</b> ${esc(a.name)} <span class="tag">(agent #${a.index})</span></p>
+      <p><b>Send:</b> ${amt} ${esc(net.symbol)} on ${esc(net.name)}</p>
       <p><b>To — full destination address:</b></p>
-      <p class="mono" style="word-break:break-all">${to}</p>
+      <p class="mono" style="word-break:break-all">${esc(to)}</p>
       <p><b>From — the agent's wallet:</b></p>
-      <p class="mono" style="word-break:break-all">${a.keys.evm}</p>
+      <p class="mono" style="word-break:break-all">${esc(a.keys.evm)}</p>
       <p>${policyLine}</p>
       <button class="btn" id="agentApprove">Approve &amp; sign with the AGENT wallet</button>
       <button class="btn ghost" id="agentReject">Reject</button>`);

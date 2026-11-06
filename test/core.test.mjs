@@ -1456,4 +1456,31 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("m1: executeSwapRoute refuses a hostile step before signing", true);
 }
 
+// ---------- registry/agent label escaping (security audit M3) ----------
+// Discovered-chain names/symbols are community-submitted registry data:
+// sanitised at the gate AND escaped at every render (picker, agent list,
+// agent approval sheet).
+{
+  const { sanitizeChainLabel, sanitizeChainSymbol, gateChains } = await import("../src/wallet-core.js");
+  ok("m3: hostile chain label loses all markup characters",
+    !/[<>"'`]/.test(sanitizeChainLabel(`<img src=x onerror=alert(1)> Chain`)));
+  ok("m3: legitimate chain labels pass through unchanged",
+    sanitizeChainLabel("BNB Smart Chain") === "BNB Smart Chain"
+    && sanitizeChainLabel("B² Network") === "B² Network"
+    && sanitizeChainLabel("zkSync Era") === "zkSync Era");
+  ok("m3: symbol sanitiser strips markup, keeps tickers",
+    sanitizeChainSymbol("USDC") === "USDC" && !/[<>]/.test(sanitizeChainSymbol("<b>EVL</b>")));
+  const out = gateChains({
+    lifiChains: [], tvl: [{ chainId: 777001, tvl: 50_000_000 }],
+    registry: [{ chainId: 777001, name: `<img src=x onerror=alert(1)> Chain`, rpc: ["https://rpc-777001.example"],
+      nativeCurrency: { symbol: "<b>EVL</b>", decimals: 18 }, status: "active" }],
+  });
+  const c = out.find(x => x.chainId === 777001);
+  ok("m3: gate admits the chain but its labels arrive inert", !!c && !/[<>]/.test(c.name) && !/[<>]/.test(c.symbol));
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("m3: picker escapes discovered labels", appSrc.includes("esc(label)") && appSrc.includes("esc(sub)"));
+  ok("m3: agent list + approval sheet escape agent/network names",
+    appSrc.includes("esc(a.name)") && appSrc.includes("esc(net.symbol)") && appSrc.includes("esc(net.name)") && appSrc.includes("esc(to)"));
+}
+
 console.log(`\n${passed} checks passed`);

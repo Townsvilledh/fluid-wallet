@@ -2854,6 +2854,18 @@ function normalizeChainName(name) {
 }
 const cleanChainRpc = (u) =>
   (typeof u === "string" && u.startsWith("https://") && !u.includes("{") && !u.includes("}")) ? u : null;
+/* Registry labels are community-submitted third-party data (audit M3):
+ * before a discovered chain's name/symbol is admitted — and long before
+ * it is rendered — strip everything outside a conservative charset, so
+ * a markup-carrying registry entry arrives inert even before the UI's
+ * escaping. Legitimate names ("BNB Smart Chain", "B² Network", "zkSync
+ * Era") pass through unchanged. */
+export function sanitizeChainLabel(s, maxLen = 48) {
+  return String(s ?? "").replace(/[^\p{L}\p{N} .,&'()+\-²³/]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, maxLen);
+}
+export function sanitizeChainSymbol(s) {
+  return String(s ?? "").replace(/[^A-Za-z0-9.\-]+/g, "").slice(0, 16);
+}
 /** LI.FI carries a few pseudo-entries that are not plain EVM networks for
  *  their id (its Hyperliquid L1 entry uses id 1337 while its own wallet
  *  metadata points at chain 42161). A self-consistent entry's metamask
@@ -2928,7 +2940,7 @@ export function gateChains({ lifiChains = [], registry = [], tvl = [] } = {}) {
     const reg = regById.get(chainId), lifi = lifiById.get(chainId);
     if (reg && reg.status && reg.status !== "active") continue;
     if (reg && Array.isArray(reg.redFlags) && reg.redFlags.includes("reusedChainId")) continue;
-    let name = (reg && reg.name) || (lifi && lifi.name) || "";
+    let name = sanitizeChainLabel((reg && reg.name) || (lifi && lifi.name) || "");
     let testnet = chainNameMarksTestnet(name);
     if (lifi && lifi.mainnet === false) testnet = true;
     // A LI.FI mainnet whose registry entry still carries a previous chain's
@@ -2937,7 +2949,7 @@ export function gateChains({ lifiChains = [], registry = [], tvl = [] } = {}) {
     // name and for every other field sourced from that registry entry.
     let staleReg = false;
     if (lifi && lifi.mainnet === true && chainNameMarksTestnet(name) && !chainNameMarksTestnet(lifi.name)) {
-      name = lifi.name; testnet = false; staleReg = true;
+      name = sanitizeChainLabel(lifi.name); testnet = false; staleReg = true;
     }
     if (testnet || !name) continue;
     const chainTvl = tvlById.get(chainId) || 0;
@@ -2958,7 +2970,7 @@ export function gateChains({ lifiChains = [], registry = [], tvl = [] } = {}) {
     const nc = (fieldReg && fieldReg.nativeCurrency) || (lifi && lifi.nativeToken) || {};
     out.push({
       key: "c" + chainId, chainId, name, rpc, explorer,
-      symbol: nc.symbol || (lifi && lifi.coin) || "", decimals: nc.decimals ?? 18,
+      symbol: sanitizeChainSymbol(nc.symbol || (lifi && lifi.coin) || ""), decimals: nc.decimals ?? 18,
       tier, lifi: !!lifi, tvl: chainTvl,
     });
   }
