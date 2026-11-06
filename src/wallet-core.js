@@ -261,7 +261,7 @@ const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLU
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
-  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT" };
+  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -275,7 +275,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -1737,6 +1737,7 @@ export const RECEIVE_NETWORKS = [
   { id: "xrpl", name: "XRP Ledger", aliases: ["xrp", "xrpl", "ripple", "xrp ledger"] },
   { id: "polkadot", name: "Polkadot Asset Hub", aliases: ["dot", "polkadot", "asset hub"] },
   { id: "aptos", name: "Aptos", aliases: ["apt", "aptos"] },
+  { id: "stacks", name: "Stacks", aliases: ["stx", "stacks"] },
   { id: "litecoin", name: "Litecoin", aliases: ["ltc", "litecoin"] },
   { id: "dogecoin", name: "Dogecoin", aliases: ["doge", "dogecoin"] },
   { id: "bitcoincash", name: "Bitcoin Cash", aliases: ["bch", "bitcoin cash", "bitcoincash"] },
@@ -5292,4 +5293,402 @@ export function formatApprovalRow(a, amountText, dateText) {
 export function formatRevokePrompt(a, networkName) {
   const spender = String(a?.spender ?? "");
   return `Revoke the ${escapeHtml(a?.tokenSymbol || "token")} approval for spender ${escapeHtml(spender.slice(0, 6))}…${escapeHtml(spender.slice(-4))} on ${escapeHtml(networkName || a?.chainKey || "this network")}? This sends an on-chain transaction setting the permission to zero (a network fee applies). The swap that used it already finished — revoking breaks nothing.`;
+}
+
+/* ================= Stacks (Bitcoin L2 — Build A, Step 2) =================
+ * Stacks is a NON-EVM Bitcoin L2 (settles to Bitcoin via PoX). Full
+ * function: balances, receive, sends — hand-rolled against the wire
+ * formats in SIP-005/SIP-010, NO @stacks/* runtime dependency (the
+ * official SDK is used only as a scratch verifier — see the validation
+ * note at the end of this section).
+ *
+ * Keys: secp256k1 BIP44 m/44'/5757'/0'/0/0 (Stacks' registered coin
+ * type), address = c32check(version, hash160(compressed pubkey)),
+ * version 22 mainnet (SP…) / 26 testnet (ST…). Derivation cross-checked
+ * against @stacks/transactions (getAddressFromPrivateKey) and the
+ * c32check package's own decoder — two independent SDK surfaces:
+ * test mnemonic → mainnet SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J,
+ * testnet STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ (hash160
+ * 1859c6840c4dc8ab3a3d39c6b5003fb36c5e7232).
+ *
+ * Reads: Hiro API (api.hiro.so) keyless — /extended/v1/address/{a}/
+ * balances (STX + every SIP-010 balance) and /v2/accounts/{a} (nonce).
+ * Token metadata for DISCOVERED tokens is read from the contracts
+ * themselves (call-read get-name/get-symbol/get-decimals) and treated
+ * as hostile: control characters stripped, lengths capped, decimals
+ * range-checked. Pinned tokens (STACKS_TOKENS) are verified against
+ * their live on-chain metadata (checked 2026-11-06); everything else
+ * renders unverified (⚠).
+ *
+ * Sends: transactions are built and signed locally (SIP-005 sighash
+ * chain: sha512/256, VRS signature). STX = token-transfer payload;
+ * SIP-010 = contract-call transfer(uint, principal, principal,
+ * optional-buff) with an EXACT-AMOUNT post-condition (SendEq, mode
+ * Deny). Fee: Hiro's /v2/fees/transfer rate (µSTX/byte) × tx length —
+ * the same algorithm @stacks/transactions uses for transfers — shown
+ * in the intent sentence and SANITY-BOUNDED in code (rate and total
+ * caps below) before anything is signed. */
+
+export const STACKS_EXPLORER = "https://explorer.hiro.so";
+const STACKS_NETWORKS = {
+  mainnet: { label: "Stacks", api: "https://api.hiro.so", chainId: 0x00000001, txVersion: 0x00, addressVersion: 22, explorerChain: "mainnet" },
+  testnet: { label: "Stacks Testnet", api: "https://api.testnet.hiro.so", chainId: 0x80000000, txVersion: 0x80, addressVersion: 26, explorerChain: "testnet" },
+};
+export function stacksNetwork(network) { return STACKS_NETWORKS[network === "testnet" ? "testnet" : "mainnet"]; }
+export function stacksExplorerTxUrl(txid, network = "mainnet") {
+  return `${STACKS_EXPLORER}/txid/${txid}?chain=${stacksNetwork(network).explorerChain}`;
+}
+// Fee sanity bounds (security directive: fees bounded in code before signing).
+export const STACKS_MAX_FEE_RATE_USTX_PER_BYTE = 10_000; // Hiro's live rate is 1
+export const STACKS_MAX_FEE_USTX = 50_000n;              // 0.05 STX — far above any sane transfer fee
+
+/* ---------- c32check addresses ---------- */
+const C32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+function c32EncodeBytes(bytes) {
+  let leadingZeros = 0;
+  while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) leadingZeros++;
+  let v = 0n;
+  for (const b of bytes) v = (v << 8n) | BigInt(b);
+  let digits = "";
+  while (v > 0n) { digits = C32_ALPHABET[Number(v % 32n)] + digits; v /= 32n; }
+  return "0".repeat(leadingZeros) + digits;
+}
+function c32DecodeToBytes(str) {
+  const norm = String(str).toUpperCase().replace(/O/g, "0").replace(/[LI]/g, "1");
+  if (![...norm].every(ch => C32_ALPHABET.includes(ch))) throw new Error("Invalid c32 character");
+  let leadingZeros = 0;
+  while (leadingZeros < norm.length && norm[leadingZeros] === "0") leadingZeros++;
+  let v = 0n;
+  for (const ch of norm.slice(leadingZeros)) v = v * 32n + BigInt(C32_ALPHABET.indexOf(ch));
+  let hexStr = v === 0n ? "" : v.toString(16);
+  if (hexStr.length % 2) hexStr = "0" + hexStr;
+  const body = hexToBytesB(hexStr);
+  const out = new Uint8Array(leadingZeros + body.length);
+  out.set(body, leadingZeros);
+  return out;
+}
+function stacksChecksum(version, hash160Bytes) {
+  return sha256(sha256(catB(Uint8Array.of(version), hash160Bytes))).slice(0, 4);
+}
+/** Encode a Stacks address from an address version + 20-byte hash160. */
+export function stacksAddressEncode(version, hash160Bytes) {
+  if (hash160Bytes.length !== 20) throw new Error("Stacks hash160 must be 20 bytes");
+  const payload = catB(hash160Bytes, stacksChecksum(version, hash160Bytes));
+  return "S" + C32_ALPHABET[version] + c32EncodeBytes(payload);
+}
+/** Decode + checksum-verify a Stacks address → { version, hash160 (hex) }. */
+export function stacksAddressDecode(address) {
+  const a = String(address || "").trim();
+  if (a.length < 3 || a[0] !== "S") throw new Error("Invalid Stacks address");
+  const version = C32_ALPHABET.indexOf(a[1].toUpperCase());
+  if (version < 0) throw new Error("Invalid Stacks address version");
+  const payload = c32DecodeToBytes(a.slice(2));
+  if (payload.length !== 24) throw new Error("Invalid Stacks address length");
+  const hash160Bytes = payload.slice(0, 20);
+  const want = stacksChecksum(version, hash160Bytes);
+  if (!payload.slice(20).every((b, i) => b === want[i])) throw new Error("Invalid Stacks address checksum");
+  return { version, hash160: bytesToHexB(hash160Bytes) };
+}
+export function isValidStacksAddress(address, network) {
+  try {
+    const { version } = stacksAddressDecode(address);
+    if (version !== 22 && version !== 26) return false;
+    if (network) return version === stacksNetwork(network).addressVersion;
+    return true;
+  } catch { return false; }
+}
+/** Contract addresses may also be multisig (SM…/SN…): versions 20/21.
+ *  (The sBTC deployer is SM… — a standard-principal check would reject
+ *  the most important token contract on the network.) */
+export function isValidStacksContractAddress(address, network = "mainnet") {
+  try {
+    const { version } = stacksAddressDecode(address);
+    return network === "testnet" ? (version === 26 || version === 21) : (version === 22 || version === 20);
+  } catch { return false; }
+}
+
+/* ---------- keys ---------- */
+function stacksChildFromPhrase(phrase) {
+  const seed = mnemonicToSeedSync(String(phrase).trim());
+  return HDKey.fromMasterSeed(seed).derive("m/44'/5757'/0'/0/0");
+}
+export function stacksAddressFromPhrase(phrase, network = "mainnet") {
+  const child = stacksChildFromPhrase(phrase);
+  const pub = secp256k1.getPublicKey(child.privateKey, true);
+  const hash160 = ripemd160(sha256(pub));
+  return stacksAddressEncode(stacksNetwork(network).addressVersion, hash160);
+}
+
+/* ---------- units ---------- */
+export function stxMicroToStx(micro) {
+  const m = BigInt(micro); const neg = m < 0n; const a = neg ? -m : m;
+  const whole = a / 1_000_000n, frac = String(a % 1_000_000n).padStart(6, "0").replace(/0+$/, "");
+  return (neg ? "-" : "") + whole.toString() + (frac ? "." + frac : "");
+}
+export function stxToMicro(text) {
+  const t = String(text).trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(t)) throw new Error("Enter a valid STX amount (up to 6 decimals)");
+  const [w, f = ""] = t.split(".");
+  return BigInt(w) * 1_000_000n + BigInt((f + "000000").slice(0, 6));
+}
+/** Parse a decimal amount string into raw base units for any decimals. */
+export function stacksAmountToRaw(text, decimals) {
+  const t = String(text).trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) throw new Error("Enter a valid amount");
+  const [w, f = ""] = t.split(".");
+  if (f.length > decimals) throw new Error(`Too many decimal places (max ${decimals})`);
+  return BigInt(w) * 10n ** BigInt(decimals) + BigInt((f + "0".repeat(decimals)).slice(0, decimals) || "0");
+}
+export function stacksRawToAmount(raw, decimals) {
+  const v = BigInt(raw); const base = 10n ** BigInt(decimals);
+  const whole = v / base, frac = String(v % base).padStart(decimals, "0").replace(/0+$/, "");
+  return whole.toString() + (frac ? "." + frac : "");
+}
+
+/* ---------- pinned tokens (verified on-chain 2026-11-06) ----------
+ * symbol/name/decimals come from the contracts' own get-symbol /
+ * get-name / get-decimals call-reads; the assetName is the contract's
+ * define-fungible-token name taken from the verified contract SOURCE
+ * and confirmed against Hiro's balance keys — it is NOT the symbol
+ * (sBTC's asset is "sbtc-token", USDA's is "usda"), and it is what
+ * post-conditions must reference exactly. */
+export const STACKS_TOKENS = [
+  { contract: "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token", assetName: "sbtc-token", symbol: "sBTC", name: "sBTC", decimals: 8 },
+  { contract: "SP2C2YFP12AJZB4MABJBAJ55XECVS7E4PMMZ89YZR.usda-token", assetName: "usda", symbol: "USDA", name: "USDA", decimals: 6 },
+];
+
+/* ---------- reads (Hiro) ---------- */
+async function stacksCallRead(api, contract, fn, sender) {
+  const [addr, name] = contract.split(".");
+  const r = await fetch(`${api}/v2/contracts/call-read/${addr}/${name}/${fn}`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sender, arguments: [] }),
+  });
+  if (!r.ok) throw new Error(`call-read ${fn} HTTP ${r.status}`);
+  const j = await r.json();
+  if (!j || j.okay !== true || typeof j.result !== "string") throw new Error(`call-read ${fn} failed`);
+  return hexToBytesB(j.result.replace(/^0x/, ""));
+}
+/** Parse a Clarity (ok <string-ascii|utf8>) or (ok <uint>) call-read result. Hostile-input safe: returns null on anything unexpected. */
+export function parseStacksCallReadValue(bytes) {
+  try {
+    let b = bytes;
+    if (b[0] === 0x07) b = b.slice(1); // (ok …) wrapper
+    if (b[0] === 0x01 && b.length === 17) { // uint128
+      let v = 0n; for (let i = 1; i < 17; i++) v = (v << 8n) | BigInt(b[i]);
+      return { kind: "uint", value: v };
+    }
+    if (b[0] === 0x0d) { // string-ascii: u32 len + bytes
+      const len = new DataView(b.buffer, b.byteOffset + 1, 4).getUint32(0);
+      if (b.length < 5 + len) return null;
+      return { kind: "string", value: new TextDecoder().decode(b.slice(5, 5 + len)) };
+    }
+    if (b[0] === 0x0e) { // string-utf8: u32 char count + 4-byte codepoints
+      const len = new DataView(b.buffer, b.byteOffset + 1, 4).getUint32(0);
+      if (b.length < 5 + len * 4) return null;
+      let s = "";
+      for (let i = 0; i < len; i++) s += String.fromCodePoint(new DataView(b.buffer, b.byteOffset + 5 + i * 4, 4).getUint32(0));
+      return { kind: "string", value: s };
+    }
+    return null;
+  } catch { return null; }
+}
+function stacksCleanMeta(s, max) {
+  return String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
+}
+/** STX balance + nonce + every SIP-010 balance (metadata read from the contracts for unpinned tokens). */
+export async function fetchStacksAccount(address, network = "mainnet") {
+  const net = stacksNetwork(network);
+  let balances, account;
+  try {
+    const [br, ar] = await Promise.all([
+      fetch(`${net.api}/extended/v1/address/${address}/balances`),
+      fetch(`${net.api}/v2/accounts/${address}`),
+    ]);
+    if (!br.ok) throw new Error(`Hiro balances HTTP ${br.status}`);
+    if (!ar.ok) throw new Error(`Hiro account HTTP ${ar.status}`);
+    balances = await br.json(); account = await ar.json();
+  } catch (e) {
+    return { address, exists: false, nonce: 0, stxUstx: "0", tokens: [], scanFailed: true, error: String(e.message || e) };
+  }
+  const stxUstx = BigInt(balances?.stx?.balance ?? "0");
+  const nonce = Number(account?.nonce ?? 0);
+  // Pinned contracts (exact contract + asset name) are verified by the
+  // pin itself — no call-reads needed. Everything else gets its metadata
+  // read from its contract, in parallel, and stays unverified (⚠).
+  const tokens = await Promise.all(Object.entries(balances?.fungible_tokens || {}).map(async ([key, v]) => {
+    const m = /^(S[0-9A-Z]+)\.([a-zA-Z0-9_-]+)::(.+)$/.exec(key);
+    if (!m) return null;
+    const contract = `${m[1]}.${m[2]}`, assetName = m[3];
+    const pin = STACKS_TOKENS.find(t => t.contract === contract && t.assetName === assetName);
+    if (pin) return { contract, assetName, symbol: pin.symbol, name: pin.name, decimals: pin.decimals, balanceRaw: String(v.balance ?? "0"), verified: true };
+    const row = { contract, assetName, symbol: assetName, name: assetName, decimals: 0, balanceRaw: String(v.balance ?? "0"), verified: false };
+    try {
+      const [nm, sy, de] = await Promise.all([
+        stacksCallRead(net.api, contract, "get-name", address),
+        stacksCallRead(net.api, contract, "get-symbol", address),
+        stacksCallRead(net.api, contract, "get-decimals", address),
+      ]);
+      const nameV = parseStacksCallReadValue(nm), symV = parseStacksCallReadValue(sy), decV = parseStacksCallReadValue(de);
+      if (nameV?.kind === "string") row.name = stacksCleanMeta(nameV.value, 64) || assetName;
+      if (symV?.kind === "string") row.symbol = stacksCleanMeta(symV.value, 32) || assetName;
+      if (decV?.kind === "uint" && decV.value >= 0n && decV.value <= 18n) row.decimals = Number(decV.value);
+    } catch { /* metadata unreadable → stays unverified with the asset name */ }
+    return row;
+  }));
+  const tokenRows = tokens.filter(Boolean);
+  tokenRows.sort((a, b) => (b.verified - a.verified) || a.symbol.localeCompare(b.symbol));
+  return { address, exists: stxUstx > 0n || nonce > 0 || tokenRows.length > 0, nonce, stxUstx: stxUstx.toString(), tokens: tokenRows, scanFailed: false };
+}
+
+/* ---------- transaction building & signing (SIP-005) ---------- */
+const u32beS = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, Number(n), false); return b; };
+const u64beS = (n) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), false); return b; };
+const u128beS = (n) => { const v = BigInt(n); return catB(u64beS(v >> 64n), u64beS(v & 0xffffffffffffffffn)); };
+const lpStringS = (s) => { const bytes = new TextEncoder().encode(String(s)); if (bytes.length > 128) throw new Error("Stacks name too long"); return catB(Uint8Array.of(bytes.length), bytes); };
+function stacksPrincipalBytes(address) { // post-condition / address wire form: version || hash160
+  const { version, hash160 } = stacksAddressDecode(address);
+  return catB(Uint8Array.of(version), hexToBytesB(hash160));
+}
+function stacksPrincipalCvBytes(address) { // Clarity principal value: 0x05 || version || hash160
+  return catB(Uint8Array.of(0x05), stacksPrincipalBytes(address));
+}
+function stacksSerializeTx({ net, auth, anchorMode, postConditionMode, postConditions, payload }) {
+  return catB(
+    Uint8Array.of(net.txVersion), u32beS(net.chainId), auth,
+    Uint8Array.of(anchorMode), Uint8Array.of(postConditionMode),
+    u32beS(postConditions.length), ...postConditions, payload,
+  );
+}
+function stacksSpendingCondition({ pubKey, nonce, feeUstx, signature }) {
+  const signer = ripemd160(sha256(pubKey));
+  return catB(
+    Uint8Array.of(0x04, 0x00), signer, u64beS(nonce), u64beS(feeUstx),
+    Uint8Array.of(0x00), signature ?? new Uint8Array(65),
+  );
+}
+/** SIP-005 sighash chain for a single-sig origin (sha512/256 throughout). */
+export function stacksSighash(serializedWithClearedAuth, feeUstx, nonce, pubKey, signatureVrs) {
+  const initial = bytesToHexB(sha512_256(serializedWithClearedAuth));
+  const pre = sha512_256(catB(hexToBytesB(initial), Uint8Array.of(0x04), u64beS(feeUstx), u64beS(nonce)));
+  if (!signatureVrs) return { initial, preSign: bytesToHexB(pre) };
+  const post = sha512_256(catB(pre, Uint8Array.of(0x00), signatureVrs));
+  return { initial, preSign: bytesToHexB(pre), postSign: bytesToHexB(post) };
+}
+/**
+ * Build + sign a Stacks transaction. draft = { to, amountRaw (BigInt),
+ * token: null | { contract, assetName } }. Returns { rawHex, txid }.
+ * Byte-identical to @stacks/transactions for identical inputs
+ * (validation 2026-11-06 — see test vectors).
+ */
+export function buildSignedStacksTx({ phrase, network = "mainnet", to, amountRaw, token = null, feeUstx, nonce }) {
+  const net = stacksNetwork(network);
+  const child = stacksChildFromPhrase(phrase);
+  const priv = child.privateKey;
+  const pub = secp256k1.getPublicKey(priv, true);
+  const from = stacksAddressEncode(net.addressVersion, ripemd160(sha256(pub)));
+  if (!isValidStacksAddress(to, network)) throw new Error(`Recipient is not a valid ${net.label} address`);
+  const amount = BigInt(amountRaw);
+  if (amount <= 0n) throw new Error("Amount must be more than zero");
+  if (amount > 0xffffffffffffffffn) throw new Error("Amount exceeds the Stacks u64 limit");
+  const fee = BigInt(feeUstx); const nn = BigInt(nonce);
+  let payload, postConditions = [], postConditionMode = 0x02; // Deny
+  if (!token) {
+    payload = catB(Uint8Array.of(0x00), stacksPrincipalCvBytes(to), u64beS(amount), new Uint8Array(34));
+  } else {
+    const [cAddr, cName] = String(token.contract).split(".");
+    if (!cAddr || !cName || !isValidStacksContractAddress(cAddr, network)) throw new Error("Invalid token contract");
+    payload = catB(
+      Uint8Array.of(0x02), stacksPrincipalBytes(cAddr), lpStringS(cName), lpStringS("transfer"),
+      u32beS(4),
+      catB(Uint8Array.of(0x01), u128beS(amount)),          // uint
+      stacksPrincipalCvBytes(from),                        // sender principal
+      stacksPrincipalCvBytes(to),                          // recipient principal
+      Uint8Array.of(0x09),                                 // none (no memo)
+    );
+    const asset = catB(stacksPrincipalBytes(cAddr), lpStringS(cName), lpStringS(token.assetName));
+    postConditions = [catB(
+      Uint8Array.of(0x01, 0x02), stacksPrincipalBytes(from), asset, // fungible PC, STANDARD principal (wire id 2)
+      Uint8Array.of(0x01), u64beS(amount),                 // SendEq, exact amount
+    )];
+  }
+  const anchorMode = 0x03; // Any
+  const clearedAuth = stacksSpendingCondition({ pubKey: pub, nonce: 0n, feeUstx: 0n });
+  const unsigned = stacksSerializeTx({ net, auth: clearedAuth, anchorMode, postConditionMode, postConditions, payload });
+  const { preSign } = stacksSighash(unsigned, fee, nn, pub, null);
+  const sigVrs = secp256k1.sign(hexToBytesB(preSign), priv, { lowS: true, prehash: false, format: "recovered" });
+  const auth = stacksSpendingCondition({ pubKey: pub, nonce: nn, feeUstx: fee, signature: sigVrs });
+  const raw = stacksSerializeTx({ net, auth, anchorMode, postConditionMode, postConditions, payload });
+  return { rawHex: bytesToHexB(raw), txid: "0x" + bytesToHexB(sha512_256(raw)), from };
+}
+
+/* ---------- fee estimation (bounded) ---------- */
+/** fee = Hiro transfer fee-rate (µSTX/byte) × tx byte length — the same
+ *  algorithm @stacks/transactions uses for transfers — with the rate and
+ *  the total sanity-bounded BEFORE signing (hostile-oracle guard). */
+export async function estimateStacksFee(byteLen, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const r = await fetch(`${net.api}/v2/fees/transfer`);
+  if (!r.ok) throw new Error(`Hiro fee estimate HTTP ${r.status}`);
+  const text = (await r.text()).trim();
+  if (!/^\d+$/.test(text)) throw new Error("Hiro returned an unusable fee rate");
+  const rate = BigInt(text);
+  if (rate < 1n || rate > BigInt(STACKS_MAX_FEE_RATE_USTX_PER_BYTE)) {
+    throw new Error(`Hiro fee rate ${text} µSTX/byte is outside the sane bound — refusing to sign`);
+  }
+  const fee = rate * BigInt(byteLen);
+  if (fee > STACKS_MAX_FEE_USTX) throw new Error(`Estimated Stacks fee ${stxMicroToStx(fee)} STX exceeds the safety cap — refusing to sign`);
+  return fee;
+}
+
+/* ---------- plan + send ---------- */
+export function formatStacksSendIntent({ amountText, symbol, to, feeUstx, network = "mainnet" }) {
+  return `Send ${amountText} ${symbol} to ${to} on ${stacksNetwork(network).label} — network fee ${stxMicroToStx(feeUstx)} STX. Confirm?`;
+}
+export async function planStacksSend(phrase, { to, amountText, token = null }, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const from = stacksAddressFromPhrase(phrase, network);
+  const acct = await fetchStacksAccount(from, network);
+  if (acct.scanFailed) throw new Error("Couldn't reach the Stacks network (Hiro) — check your connection and try again");
+  const decimals = token ? token.decimals : 6;
+  const symbol = token ? token.symbol : "STX";
+  const amountRaw = stacksAmountToRaw(amountText, decimals);
+  if (amountRaw <= 0n) throw new Error("Amount must be more than zero");
+  const stxBal = BigInt(acct.stxUstx);
+  if (token) {
+    if (amountRaw > BigInt(token.balanceRaw)) throw new Error(`Insufficient ${symbol} balance`);
+  }
+  // Fee first (needs the tx length, which is fee-independent: the fee is
+  // a fixed-width u64 in the auth), then build the signed transaction.
+  const probe = buildSignedStacksTx({ phrase, network, to, amountRaw, token, feeUstx: 0n, nonce: acct.nonce });
+  const feeUstx = await estimateStacksFee(probe.rawHex.length / 2, network);
+  if (token ? feeUstx > stxBal : amountRaw + feeUstx > stxBal) {
+    throw new Error(token ? "Insufficient STX for the network fee" : `Insufficient STX (amount + ${stxMicroToStx(feeUstx)} STX fee exceeds your balance)`);
+  }
+  const built = buildSignedStacksTx({ phrase, network, to, amountRaw, token, feeUstx, nonce: acct.nonce });
+  return {
+    from, to, token, symbol, decimals, amountRaw: amountRaw.toString(),
+    amountText: stacksRawToAmount(amountRaw, decimals),
+    feeUstx: feeUstx.toString(), nonce: acct.nonce,
+    rawHex: built.rawHex, txid: built.txid,
+    intent: formatStacksSendIntent({ amountText: stacksRawToAmount(amountRaw, decimals), symbol, to, feeUstx, network }),
+  };
+}
+/** Re-plan (fresh nonce/balances/fee), then broadcast via Hiro. */
+export async function sendStacks(phrase, draft, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const plan = await planStacksSend(phrase, draft, network);
+  const r = await fetch(`${net.api}/v2/transactions`, {
+    method: "POST", headers: { "content-type": "application/octet-stream" },
+    body: hexToBytesB(plan.rawHex),
+  });
+  const text = await r.text();
+  if (!r.ok) {
+    let reason = text.slice(0, 200);
+    try { const j = JSON.parse(text); reason = j.reason || j.error || reason; if (j.reason_data?.message) reason += `: ${j.reason_data.message}`; } catch { /* keep raw */ }
+    throw new Error(`Stacks node rejected the transaction (${reason})`);
+  }
+  let txid = plan.txid;
+  try { const j = JSON.parse(text); if (typeof j === "string" && /^0x[0-9a-f]{64}$/i.test(j)) txid = j; } catch { /* plain-text txid */ }
+  return { hash: txid, plan };
 }

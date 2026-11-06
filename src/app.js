@@ -22,6 +22,7 @@ import {
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt,
+  stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
@@ -46,7 +47,7 @@ const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#27
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
   TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
-  ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff" };
+  ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
@@ -61,6 +62,7 @@ let algoAddr = null, algoBalances = [], algoFunded = null, algoLoadFailed = fals
 let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
 let dotAddr = null, dotBalances = [], dotExists = null, dotLoadFailed = false;
 let aptosAddr = null, aptosBalances = [], aptosExists = null, aptosLoadFailed = false, aptosScanFailed = false;
+let stacksAddr = null, stacksBalances = [], stacksLoadFailed = false, stacksScanFailed = false;
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
@@ -209,7 +211,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub + Aptos";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub + Aptos + Stacks";
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
     .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -291,6 +293,21 @@ async function renderMain() {
   getAptosAccount(aptosAddr)
     .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; paintAssets(); })
     .catch(() => { aptosLoadFailed = true; paintAssets(); });
+  // Stacks (Bitcoin L2): BIP44 coin-5757 branch of the same seed. STX +
+  // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
+  // everything else unverified (⚠) with contract-read metadata.
+  stacksAddr = stacksAddressFromPhrase(wallet.mnemonic.phrase);
+  stacksBalances = [{ symbol: "STX", name: "Stacks", amount: "0", decimals: 6, verified: true, contract: null },
+                    ...STACKS_TOKENS.map(t => ({ ...t, amount: "0", balanceRaw: "0", verified: true }))];
+  stacksLoadFailed = false; stacksScanFailed = false;
+  fetchStacksAccount(stacksAddr)
+    .then(acct => {
+      if (acct.scanFailed) { stacksScanFailed = true; paintAssets(); return; }
+      stacksBalances = [{ symbol: "STX", name: "Stacks", amount: stxMicroToStx(acct.stxUstx), decimals: 6, verified: true, contract: null },
+                        ...acct.tokens.map(t => ({ ...t, amount: stacksRawToAmount(t.balanceRaw, t.decimals) }))];
+      paintAssets();
+    })
+    .catch(() => { stacksLoadFailed = true; paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -369,6 +386,10 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of aptosBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of stacksBalances) {
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -532,6 +553,15 @@ function paintAssets() {
     if (aptosScanFailed) rows.push(`<p class="tag">Full token scan unavailable — showing main Aptos tokens only.</p>`);
     if (aptosLoadFailed) rows.push(`<p class="tag">Aptos balances couldn't be loaded right now.</p>`);
   }
+  // Stacks family rows (Bitcoin L2; tap a row to send on Stacks)
+  if (stacksBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`);
+    const sp = splitRows(stacksBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `Stacks${b.contract ? " · SIP-010 token" : ""}`, `data-stacks="${stacksBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("stacks", sp.other, render));
+    if (stacksScanFailed || stacksLoadFailed) rows.push(`<p class="tag">Stacks balances couldn't be loaded right now.</p>`);
+  }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
   // shows "unavailable", never a fake zero.
@@ -605,6 +635,10 @@ function paintAssets() {
   document.querySelectorAll("[data-aptos]").forEach(r => r.onclick = () => {
     const b = aptosBalances[Number(r.dataset.aptos)];
     if (b) openAptosSheet(b);
+  });
+  document.querySelectorAll("[data-stacks]").forEach(r => r.onclick = () => {
+    const b = stacksBalances[Number(r.dataset.stacks)];
+    if (b) openStacksSheet(b);
   });
   document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
@@ -908,6 +942,9 @@ $("actReceive").onclick = () => {
       <img class="qr" id="qrAptos"><p class="mono">${aptosAddr}</p>
       <button class="btn ghost" id="cpAptos">Copy Aptos address</button>
       ${aptosExists === false ? `<p class="tag">This account isn't created yet — it is created when it first receives APT.</p>` : ""}`,
+    stacks: `<p class="tag">Stacks address (STX, sBTC, USDA and other Stacks assets):</p>
+      <img class="qr" id="qrStacks"><p class="mono">${stacksAddr}</p>
+      <button class="btn ghost" id="cpStacks">Copy Stacks address</button>`,
     litecoin: `<p class="tag">Litecoin address:</p>
       <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
       <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>`,
@@ -958,6 +995,7 @@ $("actReceive").onclick = () => {
     xrpl: () => { qr("qrXrp", xrpAddr); $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp")); },
     polkadot: () => { qr("qrDot", dotAddr); $("cpDot").onclick = () => copyText(dotAddr, $("cpDot")); },
     aptos: () => { qr("qrAptos", aptosAddr); $("cpAptos").onclick = () => copyText(aptosAddr, $("cpAptos")); },
+    stacks: () => { qr("qrStacks", stacksAddr); $("cpStacks").onclick = () => copyText(stacksAddr, $("cpStacks")); },
     litecoin: () => { qr("qrLtc", ltcAddr); $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc")); },
     dogecoin: () => { qr("qrDoge", dogeAddr); $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge")); },
     bitcoincash: () => { qr("qrBch", bchAddr); $("cpBch").onclick = () => copyText(bchAddr, $("cpBch")); },
@@ -1666,6 +1704,54 @@ function openAptosSheet(tok) {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingAptos = null; closeSheet(); renderMain();
     } catch (e) { msg("apMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Stacks sheet (Bitcoin L2) ----------
+// Review runs planStacksSend so the intent sentence quotes Hiro's fee
+// estimate for this exact transaction (sanity-bounded in wallet-core
+// before signing); sendStacks re-plans fresh and re-enforces balances
+// in code before signing locally. SIP-010 sends carry an exact-amount
+// post-condition.
+function openStacksSheet(tok) {
+  let pendingStacks = null;
+  const tokenArg = tok.contract ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on Stacks</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${stacksAddr}</span></p>
+    ${tok.contract ? `<p class="tag">Token contract <span class="mono">${esc(tok.contract)}</span></p>` : ""}
+    <input id="sxTo" placeholder="Recipient Stacks address (SP…)" autocapitalize="none">
+    <input id="sxAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="sxReview">Review send</button>
+    <div id="sxIntent" class="hidden">
+      <p class="seed" id="sxIntentText"></p>
+      <button class="btn" id="sxConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="sxMsg"></p>
+    <p class="tag">Fees are paid in STX, estimated by the network for this exact send and shown in the sentence above. Sends are final.</p>`);
+  $("sxReview").onclick = async () => {
+    const to = $("sxTo").value.trim(), amount = $("sxAmt").value.trim();
+    if (!isValidStacksAddress(to)) return msg("sxMsg", "That is not a valid Stacks address.");
+    if (!amount || Number(amount) <= 0) return msg("sxMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("sxMsg", "Amount is more than your balance.");
+    try {
+      msg("sxMsg", "Checking with the network…", true);
+      const plan = await planStacksSend(wallet.mnemonic.phrase, { to, amountText: amount, token: tokenArg });
+      pendingStacks = { to, amount };
+      $("sxIntentText").textContent = plan.intent + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("sxIntent"); msg("sxMsg", "");
+    } catch (e) { msg("sxMsg", e.message); }
+  };
+  $("sxConfirm").onclick = async () => {
+    if (!pendingStacks) return;
+    try {
+      msg("sxMsg", "Signing locally and broadcasting…", true);
+      const { hash } = await sendStacks(wallet.mnemonic.phrase, { to: pendingStacks.to, amountText: pendingStacks.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingStacks.amount, symbol: sanitizePersistedSymbol(tok.symbol), to: pendingStacks.to,
+        link: stacksExplorerTxUrl(hash), explorer: STACKS_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingStacks = null; closeSheet(); renderMain();
+    } catch (e) { msg("sxMsg", "Send failed: " + e.message); }
   };
 }
 

@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -1152,11 +1152,11 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const ids = q => filterReceiveNetworks(q).map(m => m.id);
   const TOP_IDS = ["evm", "bitcoin", "lightning", "tron", "solana", "sui", "stellar", "ton", "near",
     "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash"];
-  ok("receive: one entry per network (16 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 23);
+  ok("receive: one entry per network (17 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 24);
   ok("receive: ids unique", new Set(RECEIVE_NETWORKS.map(m => m.id)).size === RECEIVE_NETWORKS.length);
   ok("receive: every panel id covered", TOP_IDS.every(id => RECEIVE_NETWORKS.some(m => m.id === id))
     && COSMOS_CHAINS.every(c => RECEIVE_NETWORKS.some(m => m.id === c.key)));
-  ok("receive: blank query lists everything", ids("") .length === 23 && ids("   ").length === 23);
+  ok("receive: blank query lists everything", ids("") .length === 24 && ids("   ").length === 24);
   ok("receive: btc → Bitcoin only (not Bitcoin Cash)", JSON.stringify(ids("btc")) === '["bitcoin"]');
   ok("receive: ln → Lightning only", JSON.stringify(ids("ln")) === '["lightning"]');
   ok("receive: lightning → Lightning only", JSON.stringify(ids("lightning")) === '["lightning"]');
@@ -1188,6 +1188,83 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "foo") === true
     && receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "bar") === false
     && receiveNetworkMatches({ name: "Foo Chain", aliases: [] }, "") === true);
+}
+
+// ---------- Stacks family (Bitcoin L2, Build A step 2) ----------
+// Derivation/address vectors cross-checked against @stacks/transactions
+// (getAddressFromPrivateKey) + the c32check package's decoder; signed-tx
+// vectors are BYTE-IDENTICAL to @stacks/transactions output for the same
+// inputs (makeSTXTokenTransfer / makeContractCall with an exact-amount
+// Pc post-condition), re-verified 2026-11-06. A testnet transfer through
+// sendStacks confirmed on-chain the same day (txid 0xfb8ff0…9f62a).
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  ok("stacks: mainnet address vector (BIP44 m/44'/5757'/0'/0/0)",
+    stacksAddressFromPhrase(ABANDON) === "SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J");
+  ok("stacks: testnet address vector",
+    stacksAddressFromPhrase(ABANDON, "testnet") === "STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ");
+  const dec = stacksAddressDecode("SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J");
+  ok("stacks: c32 decode gives version 22 + the pinned hash160",
+    dec.version === 22 && dec.hash160 === "1859c6840c4dc8ab3a3d39c6b5003fb36c5e7232");
+  ok("stacks: address validation (checksum + network version)",
+    isValidStacksAddress("SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J") === true
+    && isValidStacksAddress("SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54K") === false
+    && isValidStacksAddress("STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ", "testnet") === true
+    && isValidStacksAddress("STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ", "mainnet") === false
+    && isValidStacksAddress("not an address") === false);
+  ok("stacks: SM contract addresses validate as contracts, not as user addresses",
+    isValidStacksContractAddress("SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4") === true
+    && isValidStacksAddress("SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4") === false);
+  ok("stacks: c32 round-trip with a leading-zero hash160",
+    stacksAddressDecode(stacksAddressEncode(22, Uint8Array.from([0, ...Array(19).fill(0x11)]))).hash160 === "00" + "11".repeat(19));
+  ok("stacks: unit conversions (µSTX, 6dp)",
+    stxMicroToStx(1620n) === "0.00162" && stxMicroToStx(500000n) === "0.5" && stxMicroToStx(0n) === "0"
+    && stxToMicro("0.5") === 500000n && stxToMicro("12.000001") === 12000001n);
+  ok("stacks: amount parsing is strict",
+    (() => { try { stxToMicro("0.0000001"); return false; } catch { return true; } })()
+    && stacksAmountToRaw("1.5", 8) === 150000000n
+    && stacksRawToAmount(150000000n, 8) === "1.5"
+    && stacksRawToAmount(5n, 6) === "0.000005");
+  const TO = "SP37RG88PJBHSFKK90PG2NDWC0A8Y4JK9MDQ9YEKH";
+  const stxTx = buildSignedStacksTx({ phrase: ABANDON, to: TO, amountRaw: 1000n, feeUstx: 200n, nonce: 3 });
+  ok("stacks: signed STX transfer is the @stacks/transactions byte vector",
+    stxTx.rawHex === "000000000104001859c6840c4dc8ab3a3d39c6b5003fb36c5e7232000000000000000300000000000000c80000b6127e6120d8e57222d26885a01c2144f2ac24e7d523778caa578665ce6cc6007d1714020865f57169a6fd211614b62df0838ffb92b8f3f478d936174be45d0d030200000000000516cf88211692e397ce6905a02ab78c0291e24a69a300000000000003e800000000000000000000000000000000000000000000000000000000000000000000"
+    && stxTx.txid === "0x50d7ec699556abae72af2290ea98b37a26ea0dfbad8aae7fe20696ef8eece3fc");
+  const usdaTx = buildSignedStacksTx({ phrase: ABANDON, to: TO, amountRaw: 5n, token: { contract: "SP2C2YFP12AJZB4MABJBAJ55XECVS7E4PMMZ89YZR.usda-token", assetName: "usda" }, feeUstx: 300n, nonce: 7 });
+  ok("stacks: signed SIP-010 transfer (exact-amount PC) is the SDK byte vector",
+    usdaTx.rawHex === "000000000104001859c6840c4dc8ab3a3d39c6b5003fb36c5e72320000000000000007000000000000012c00003003d918ac72594f0949e0e27b91c3608c55448e12a7d09ed1489c0fa326fe975b12cdf9388694f26f04e12a887f351c4998fa983994fc6168818435c66abdb90302000000010102161859c6840c4dc8ab3a3d39c6b5003fb36c5e723216982f3ec112a5f5928a5c96a914bd733793b896a50a757364612d746f6b656e04757364610100000000000000050216982f3ec112a5f5928a5c96a914bd733793b896a50a757364612d746f6b656e087472616e7366657200000004010000000000000000000000000000000505161859c6840c4dc8ab3a3d39c6b5003fb36c5e72320516cf88211692e397ce6905a02ab78c0291e24a69a309"
+    && usdaTx.txid === "0x3b335d4064527122c4bd997691b085b82eddb69afd9785d0b53196c4b5c4a12b");
+  const stxTxT = buildSignedStacksTx({ phrase: ABANDON, network: "testnet", to: "ST37RG88PJBHSFKK90PG2NDWC0A8Y4JK9MC5RYQHX", amountRaw: 250000n, feeUstx: 180n, nonce: 0 });
+  ok("stacks: signed testnet STX transfer is the SDK byte vector",
+    stxTxT.rawHex === "808000000004001859c6840c4dc8ab3a3d39c6b5003fb36c5e7232000000000000000000000000000000b400006e245f9e94a6d34c010a37d7dad203bf43a584154c6d58985f3fc67930298f5574c1a1f9b6e1710e039af496d9e0814a3010603f1ffb73b5bac48ca1a0b5533e03020000000000051acf88211692e397ce6905a02ab78c0291e24a69a3000000000003d09000000000000000000000000000000000000000000000000000000000000000000000");
+  ok("stacks: signing is deterministic and rejects bad inputs",
+    buildSignedStacksTx({ phrase: ABANDON, to: TO, amountRaw: 1000n, feeUstx: 200n, nonce: 3 }).rawHex === stxTx.rawHex
+    && (() => { try { buildSignedStacksTx({ phrase: ABANDON, to: "STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ", amountRaw: 1n, feeUstx: 1n, nonce: 0 }); return false; } catch { return true; } })()
+    && (() => { try { buildSignedStacksTx({ phrase: ABANDON, to: TO, amountRaw: 0n, feeUstx: 1n, nonce: 0 }); return false; } catch { return true; } })());
+  ok("stacks: intent sentence quotes the fee",
+    formatStacksSendIntent({ amountText: "0.5", symbol: "STX", to: "ST37RG88PJBHSFKK90PG2NDWC0A8Y4JK9MC5RYQHX", feeUstx: 1620n, network: "testnet" })
+      === "Send 0.5 STX to ST37RG88PJBHSFKK90PG2NDWC0A8Y4JK9MC5RYQHX on Stacks Testnet — network fee 0.00162 STX. Confirm?");
+  ok("stacks: fee safety caps are pinned",
+    STACKS_MAX_FEE_USTX === 50000n && STACKS_MAX_FEE_RATE_USTX_PER_BYTE === 10000);
+  ok("stacks: call-read value parser (ok-ascii / ok-uint / garbage)",
+    (() => {
+      const ascii = Uint8Array.from([0x07, 0x0d, 0, 0, 0, 4, ...new TextEncoder().encode("sBTC")]);
+      const uint = Uint8Array.from([0x07, 0x01, ...new Uint8Array(15), 8]);
+      const a = parseStacksCallReadValue(ascii), u = parseStacksCallReadValue(uint);
+      return a?.kind === "string" && a.value === "sBTC" && u?.kind === "uint" && u.value === 8n
+        && parseStacksCallReadValue(Uint8Array.from([0xff, 0x01])) === null;
+    })());
+  ok("stacks: pinned tokens carry the on-chain asset names (not the symbols)",
+    STACKS_TOKENS.length === 2
+    && STACKS_TOKENS[0].assetName === "sbtc-token" && STACKS_TOKENS[0].decimals === 8
+    && STACKS_TOKENS[1].assetName === "usda" && STACKS_TOKENS[1].decimals === 6);
+  ok("stacks: receive search aliases resolve to Stacks only",
+    JSON.stringify(filterReceiveNetworks("stx").map(n => n.id)) === "[\"stacks\"]"
+    && JSON.stringify(filterReceiveNetworks("stacks").map(n => n.id)) === "[\"stacks\"]");
+  ok("stacks: no LI.FI swap chain (Stacks is not on LI.FI's live chain list)",
+    swapChainOf("stacks") === null);
+  ok("stacks: explorer URL shape",
+    stacksExplorerTxUrl("0xabc") === "https://explorer.hiro.so/txid/0xabc?chain=mainnet");
 }
 
 // ---------- persisted-metadata XSS (security audit C1) ----------
