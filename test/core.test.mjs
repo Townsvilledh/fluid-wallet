@@ -1,6 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks } from "../src/wallet-core.js";
+import { readFileSync } from "node:fs";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -1187,6 +1188,57 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "foo") === true
     && receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "bar") === false
     && receiveNetworkMatches({ name: "Foo Chain", aliases: [] }, "") === true);
+}
+
+// ---------- persisted-metadata XSS (security audit C1) ----------
+// History + approval records persist token metadata from ERC-20 contracts
+// and LI.FI — attacker-controlled strings. The render path must escape
+// them, history links must be rebuilt only from validated parts, and the
+// two app.js screens must route through these formatters.
+{
+  const EVIL = "<img src=x onerror=alert(1)>";
+  ok("c1: escapeHtml escapes all five markup characters",
+    escapeHtml(`&<>"'`) === "&amp;&lt;&gt;&quot;&#39;");
+  const row = formatHistoryEntry({ amount: "1", symbol: EVIL, to: "0xabc", hash: "0x" + "a".repeat(64), explorer: "https://bscscan.com" });
+  ok("c1: history row renders a malicious symbol as inert text",
+    row.includes("&lt;img src=x onerror=alert(1)&gt;") && !row.includes("<img"));
+  ok("c1: history row keeps a working explorer link for a valid hash",
+    row.includes('href="https://bscscan.com/tx/0x' + "a".repeat(64) + '"'));
+  const badLink = formatHistoryEntry({ amount: "1", symbol: "X", to: "0xabc", link: "javascript:alert(1)" });
+  ok("c1: a javascript: history link is dropped, never emitted",
+    !badLink.includes("href=") && !badLink.includes("javascript:"));
+  const badHash = formatHistoryEntry({ amount: "1", symbol: "X", to: "0xabc", hash: '0x" onmouseover="alert(1)', explorer: "https://bscscan.com" });
+  ok("c1: a quote-breakout hash yields no link",
+    !badHash.includes("href=") && !badHash.includes("onmouseover"));
+  ok("c1: historyTxUrl keeps a clean https link, rejects http and junk",
+    historyTxUrl({ link: "https://tonscan.org/address/EQabc" }) === "https://tonscan.org/address/EQabc"
+    && historyTxUrl({ link: "http://evil.example/x" }) === null
+    && historyTxUrl({}) === null && historyTxUrl(null) === null);
+  const ap = formatApprovalRow({ tokenSymbol: "<svg onload=alert(1)>", spender: "<script>zzzzzz" }, "5", "06/11/2026");
+  ok("c1: approvals row escapes the token symbol and the spender slice",
+    ap.includes("&lt;svg onload=alert(1)&gt;") && !ap.includes("<svg") && ap.includes("&lt;scrip") && !ap.includes("<script"));
+  const rp = formatRevokePrompt({ tokenSymbol: "EVIL<x>", spender: "0x1234567890abcdef" }, "BNB <b>Chain</b>");
+  ok("c1: revoke prompt escapes symbol and network name",
+    rp.includes("EVIL&lt;x&gt;") && rp.includes("BNB &lt;b&gt;Chain&lt;/b&gt;") && !rp.includes("<b>Chain</b>"));
+  ok("c1: write-time symbol sanitiser strips markup + control chars",
+    sanitizePersistedSymbol('AB<C>"D\'E`F') === "ABCDEF"
+    && sanitizePersistedSymbol("") === "Token"
+    && sanitizePersistedSymbol("A".repeat(64)).length === 32);
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("c1: app renders history only through formatHistoryEntry",
+    appSrc.includes("h.map(formatHistoryEntry)")
+    && !appSrc.includes("${x.amount} ${x.symbol}")
+    && !appSrc.includes('href="${x.link'));
+  ok("c1: app renders approvals only through the escaping formatters",
+    appSrc.includes("formatApprovalRow(a, fmt(a.amount)")
+    && appSrc.includes("formatRevokePrompt(a,")
+    && !appSrc.includes("${a.tokenSymbol || \"Token\"}")
+    && !appSrc.includes("${a.tokenSymbol || \"token\"}"));
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("c1: index.html ships the strict CSP meta",
+    idxSrc.includes('http-equiv="Content-Security-Policy"')
+    && idxSrc.includes("script-src 'self'")
+    && idxSrc.includes("object-src 'none'"));
 }
 
 console.log(`\n${passed} checks passed`);

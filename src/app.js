@@ -21,6 +21,7 @@ import {
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
+  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
@@ -1974,8 +1975,11 @@ function rampSheet(mode) {
     $("rList").innerHTML =
       `<p class="tag" style="margin-top:10px">⚡ Sorted cheapest-route first (typical fees from provider docs — the provider shows your final quote before you pay).</p>` +
       ranked.map((r, i) =>
-        `<button class="netitem" onclick="window.open('${r.url}','_blank')"><span>${r.name} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${r.note || r.region}</small></button>`).join("") +
+        // No inline onclick (the CSP forbids inline handlers): the URL
+        // rides in a data attribute and is opened by the bound listener.
+        `<button class="netitem" data-ramp-url="${esc(r.url)}"><span>${esc(r.name)} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${esc(r.note || r.region || "")}</small></button>`).join("") +
       (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use a global provider instead.</p>` : "");
+    document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
   };
   $("rCountry").onchange = paint; $("rAsset").onchange = paint; $("rNet").onchange = paint; paint();
 }
@@ -2247,14 +2251,14 @@ $("actSwap").onclick = () => {
           // Keep a device record of every approval Fluid makes, so the user
           // can review and revoke them later (More → Token approvals).
           const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
-          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: rec.tokenSymbol, spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
           localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
         });
         srcExplorer = NETWORKS[fromKey].explorer;
       }
       const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      h.unshift({ hash: hashes[0], amount, symbol: `${fromTok.symbol}→${toTok.symbol}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
+      h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingSwap = null; show("wConfirm", false);
       msg("wMsg", fromKey === toKey
@@ -2267,10 +2271,15 @@ $("actSwap").onclick = () => {
 };
 
 // ---------- activity ----------
+// SECURITY (audit C1): history entries persist token symbols from ERC-20 /
+// LI.FI metadata — attacker-controlled. They render ONLY through
+// formatHistoryEntry (wallet-core), which escapes every value and rebuilds
+// the explorer link from a validated hash / clean https URL. Never
+// interpolate a stored history field into innerHTML directly here.
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
   $("history").innerHTML = h.length
-    ? h.map(x => `<div class="hist">Sent ${x.amount} ${x.symbol} → ${String(x.to).slice(0, 10)}… · <a target="_blank" rel="noopener" href="${x.link || `${x.explorer}/tx/${x.hash}`}">view ↗</a></div>`).join("")
+    ? h.map(formatHistoryEntry).join("")
     : "No sends yet from this browser.";
 }
 
@@ -2458,15 +2467,18 @@ $("approvalsBtn").onclick = () => {
   const emptyNote = `<p class="tag">No approvals recorded — swaps approve the exact amount needed, and they'll appear here.</p>`;
   const paint = () => {
     const mine = loadApprovals().map((a, i) => ({ ...a, _i: i })).filter(a => a.chainKey === networkKey);
+    // SECURITY (audit C1): approval records persist LI.FI token symbols —
+    // attacker-controlled. Rows render ONLY through formatApprovalRow /
+    // formatRevokePrompt (wallet-core), which escape every stored value.
     $("apList").innerHTML = mine.length ? mine.map(a => `
       <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span><b>${a.tokenSymbol || "Token"}</b> · ${fmt(a.amount)}<br><small style="color:var(--dim)">spender ${a.spender.slice(0, 6)}…${a.spender.slice(-4)} · ${new Date(a.at).toLocaleDateString()}</small></span>
+        ${formatApprovalRow(a, fmt(a.amount), new Date(a.at).toLocaleDateString())}
         <button class="btn ghost" data-revoke="${a._i}" style="width:auto;padding:6px 12px">Revoke</button>
       </div>`).join("") : emptyNote;
     document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = () => {
       const list = loadApprovals(); const a = list[Number(b.dataset.revoke)]; if (!a) return;
       pendingRevoke = Number(b.dataset.revoke);
-      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">Revoke the ${a.tokenSymbol || "token"} approval for spender ${a.spender.slice(0, 6)}…${a.spender.slice(-4)} on ${NETWORKS[a.chainKey].name}? This sends an on-chain transaction setting the permission to zero (a network fee applies). The swap that used it already finished — revoking breaks nothing.</p>
+      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">${formatRevokePrompt(a, (NETWORKS[a.chainKey] || {}).name)}</p>
         <button class="btn" id="apRevokeGo">Revoke approval</button>`;
       msg("apMsg", "");
       $("apRevokeGo").onclick = async () => {

@@ -19,6 +19,16 @@ writeFileSync("dist/index.html", distHtml
   .replace("</head>", `<meta name="fluid-build" content="${bundleHash}"></head>`));
 const html = readFileSync("src/index.html", "utf8");
 const js = readFileSync("dist/app.bundle.js", "utf8");
-const single = html.replace('<script src="app.bundle.js"></script>', () => "<script>" + js.replace(/<\/script>/g, "<\\/script>") + "</script>");
+// The single-file build inlines the bundle, so the strict CSP in
+// index.html (script-src 'self') would block it. Give ONLY the single
+// file a hash allowance for its exact inline script bytes: compute the
+// sha256 of the precise text placed between <script>...</script> and add
+// 'sha256-...' to its script-src. Any modification of the inlined script
+// changes the hash and the script stops running.
+const inlinedJs = js.replace(/<\/script>/g, "<\\/script>");
+const singleFileHash = createHash("sha256").update(inlinedJs, "utf8").digest("base64");
+const single = html
+  .replace('<script src="app.bundle.js"></script>', () => "<script>" + inlinedJs + "</script>")
+  .replace("script-src 'self'", `script-src 'self' 'sha256-${singleFileHash}'`);
 writeFileSync("dist/fluid-wallet.html", single);
 console.log("built dist/{index.html, app.bundle.js, recovery.html, fluid-wallet.html}", (single.length / 1024).toFixed(0) + "KB single file");

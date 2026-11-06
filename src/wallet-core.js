@@ -5226,3 +5226,70 @@ export async function sendAptos(phrase, { to, amount, token = null }) {
   }
   return { hash, pending: true };
 }
+
+/* ================= Persisted-metadata safety (security audit 2026-11-06, C1) =================
+ * Token symbols/names come from ERC-20 metadata and LI.FI — attacker-
+ * controlled strings. Fluid PERSISTS some of them (send history
+ * `fluid_history`, swap approval records `fluid_approvals_v1`) and used to
+ * render them back into innerHTML UNESCAPED: a token whose symbol() returns
+ * markup executed script in the wallet origin on the next Activity /
+ * Token-approvals view (stored XSS → password keylogging / seed scraping).
+ * The helpers below are the single render path for those two screens now:
+ * every persisted value is escaped, history links are rebuilt only from a
+ * validated hash or a clean https URL, and symbols are ALSO sanitised at
+ * write time (defence in depth — render escaping alone already makes any
+ * previously stored payload inert). */
+
+/** Escape a value for interpolation into HTML text or a quoted attribute.
+ *  Same entity map as the esc() the token rows and swap pickers use. */
+export function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+/** Write-time sanitiser for token symbols persisted to localStorage:
+ *  strips markup characters and control characters, caps the length. */
+export function sanitizePersistedSymbol(s) {
+  const clean = String(s ?? "").replace(/[<>&"'`\u0000-\u001f\u007f]/g, "").trim().slice(0, 32);
+  return clean || "Token";
+}
+
+/** Rebuild a history entry's explorer URL — or return null (no link).
+ *  A stored `link` is trusted only when it parses as a clean https URL
+ *  (anything else, e.g. javascript: or a quote breakout, is DROPPED, never
+ *  emitted); otherwise the URL is rebuilt from the explorer base plus a
+ *  hash restricted to a conservative charset (hex / base58 / base64url
+ *  txids across Fluid's families). */
+export function historyTxUrl(x) {
+  if (!x || typeof x !== "object") return null;
+  const link = typeof x.link === "string" ? x.link.trim() : "";
+  if (link) {
+    try { const u = new URL(link); return u.protocol === "https:" ? u.href : null; } catch { return null; }
+  }
+  const hash = typeof x.hash === "string" ? x.hash.trim() : "";
+  const explorer = typeof x.explorer === "string" ? x.explorer.trim().replace(/\/+$/, "") : "";
+  if (!explorer || !/^[A-Za-z0-9._~-]{8,200}$/.test(hash)) return null;
+  try { const u = new URL(explorer + "/tx/" + hash); return u.protocol === "https:" ? u.href : null; } catch { return null; }
+}
+
+/** One Activity-history row, fully escaped (the renderHistory render path). */
+export function formatHistoryEntry(x) {
+  const url = historyTxUrl(x);
+  const view = url ? ` · <a target="_blank" rel="noopener" href="${escapeHtml(url)}">view ↗</a>` : "";
+  return `<div class="hist">Sent ${escapeHtml(x?.amount)} ${escapeHtml(x?.symbol)} → ${escapeHtml(String(x?.to ?? "").slice(0, 10))}…${view}</div>`;
+}
+
+/** One Token-approvals list row's text span, fully escaped. amountText and
+ *  dateText are formatted by the caller (fmt / toLocaleDateString) and are
+ *  escaped here anyway — spender is sliced AND escaped (a slice of a
+ *  hostile string is still hostile). */
+export function formatApprovalRow(a, amountText, dateText) {
+  const spender = String(a?.spender ?? "");
+  return `<span><b>${escapeHtml(a?.tokenSymbol || "Token")}</b> · ${escapeHtml(amountText)}<br><small style="color:var(--dim)">spender ${escapeHtml(spender.slice(0, 6))}…${escapeHtml(spender.slice(-4))} · ${escapeHtml(dateText)}</small></span>`;
+}
+
+/** The revoke-confirmation sentence, fully escaped (incl. the network name,
+ *  which for discovered chains is registry-controlled data). */
+export function formatRevokePrompt(a, networkName) {
+  const spender = String(a?.spender ?? "");
+  return `Revoke the ${escapeHtml(a?.tokenSymbol || "token")} approval for spender ${escapeHtml(spender.slice(0, 6))}…${escapeHtml(spender.slice(-4))} on ${escapeHtml(networkName || a?.chainKey || "this network")}? This sends an on-chain transaction setting the permission to zero (a network fee applies). The swap that used it already finished — revoking breaks nothing.`;
+}
