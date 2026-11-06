@@ -1860,4 +1860,15 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     appSrc.includes("rankSwapRoutes(routes, Number(toTok.priceUSD)") && appSrc.includes("usdMismatch"));
 }
 
+// ---------- red-team F-10: agent request fallback ----------
+// requestTransfer named a specific agent but silently fell back to
+// agents[0] when the name didn't exist — a substitution primitive:
+// a caller could spend a different agent's allowance than the one it
+// asked for. Unknown names must throw, naming the miss.
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("rt-f10: no silent fallback to the first agent remains", !appSrc.includes("|| agents[0]"));
+  ok("rt-f10: an unknown agent name fails loudly", appSrc.includes("No agent named"));
+}
+
 console.log(`\n${passed} checks passed`);

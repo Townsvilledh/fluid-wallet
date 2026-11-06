@@ -2835,8 +2835,15 @@ window.FluidAgent = {
   async requestTransfer({ agent, to, amount, network } = {}) {
     if (!wallet) throw new Error("Fluid is locked — the owner must unlock first.");
     const agents = loadAgents();
-    const a = agents.find(x => x.name === agent) || agents[0];
-    if (!a) throw new Error("No agent wallet exists yet — the owner creates one in More → Agentic wallet.");
+    // RED-TEAM 2026-11-06 (Finding J): never fall back to the first agent
+    // when the named one doesn't exist — a caller asking for a specific
+    // agent must fail loudly, not silently spend a different agent's
+    // allowance (the approval sheet named the real agent, but a fatigued
+    // owner could approve without noticing the substitution).
+    const a = agents.find(x => x.name === agent);
+    if (!a) throw new Error(agents.length
+      ? `No agent named "${String(agent)}" exists.`
+      : "No agent wallet exists yet — the owner creates one in More → Agentic wallet.");
     const netKey = network || networkKey;
     const net = NETWORKS[netKey];
     if (!net) throw new Error("Unknown network: " + netKey);
