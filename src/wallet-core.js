@@ -109,6 +109,17 @@ export function providerFor(networkKey) {
   return new ethers.JsonRpcProvider(NETWORKS[networkKey].rpc, NETWORKS[networkKey].chainId);
 }
 
+/** Register runtime-discovered networks (see the discovery section at the
+ *  bottom of this file) into the live registry every core function reads.
+ *  Built-in keys are never overwritten; discovered chains use "c<chainId>"
+ *  keys, which cannot collide with the built-ins. Returns the registry. */
+export function registerNetworks(map) {
+  for (const [k, v] of Object.entries(map || {})) {
+    if (v && v.chainId && !NETWORKS[k]) NETWORKS[k] = v;
+  }
+  return NETWORKS;
+}
+
 /** Create a brand-new wallet. Returns the phrase ONCE so the UI can show it
  *  for backup; only the encrypted keystore should ever be stored. */
 export async function createVault(password) {
@@ -693,6 +704,212 @@ export function looksLikePoison(recipient, knownAddresses) {
     if (known.slice(0, 6) === r.slice(0, 6) && known.slice(-4) === r.slice(-4)) return k;
   }
   return null;
+}
+
+// ---------- Chain discovery (Phase 0: gated EVM auto-discovery) ----------
+// Fluid's 15 built-ins stay canonical, but the EVM world keeps growing.
+// Discovery merges three keyless public sources — LI.FI's chain list (the
+// routing universe), chainid.network's registry (names, RPCs, explorers,
+// status, red flags) and DefiLlama's TVL table (does anyone actually use
+// this chain?) — and admits a chain only through the gate below:
+//   * not in the hard graveyard (sunset/wound-down chains), not a known
+//     non-EVM squatter in the registry (those get their own family phase);
+//   * registry status active (an absent status counts as active) and no
+//     "reusedChainId" red flag;
+//   * not a testnet (by name, or LI.FI's own mainnet flag);
+//   * and it must matter: LI.FI-listed, or DefiLlama TVL >= $10M
+//     (tier "display"); LI.FI-listed or TVL >= $1M is the floor for the
+//     "discoverable" tier. Below both, the chain is excluded.
+// Admission is never trust: before the wallet switches to a discovered
+// chain, probeChain fingerprints its RPC (eth_chainId must match, blocks
+// must flow). Discovery failure degrades to the built-ins, always.
+export const CHAIN_GRAVEYARD = new Set([1101, 81457, 1666600000]); // Polygon zkEVM, Blast, Harmony — sunset/wound down
+const CHAIN_NON_EVM = new Set([728126428, 4160]); // Tron, Algorand: registry entries, but not EVM — allow-list-only families
+const TESTNET_NAME_TOKENS = new Set(["sepolia", "goerli", "holesky", "mumbai", "amoy", "fuji",
+  "alfajores", "baobab", "kairos", "chapel", "kovan", "rinkeby", "ropsten", "chiado", "minato"]);
+const CHAIN_NAME_SUFFIXES = ["mainnet", "network", "blockchain", "chain", "evm", "espace", "l1", "l2"];
+
+function chainNameMarksTestnet(name) {
+  const s = String(name || "").toLowerCase();
+  if (s.includes("testnet")) return true;
+  return s.split(/[^a-z0-9]+/).some(t => TESTNET_NAME_TOKENS.has(t));
+}
+/** Loose name key for cross-source matching: "X Layer Mainnet", "X Layer"
+ *  and "XLayer" should all land on the same chain. */
+function normalizeChainName(name) {
+  let s = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suf of CHAIN_NAME_SUFFIXES) {
+      if (s.length > suf.length && s.endsWith(suf)) { s = s.slice(0, -suf.length); changed = true; }
+    }
+  }
+  return s;
+}
+const cleanChainRpc = (u) =>
+  (typeof u === "string" && u.startsWith("https://") && !u.includes("{") && !u.includes("}")) ? u : null;
+/** LI.FI carries a few pseudo-entries that are not plain EVM networks for
+ *  their id (its Hyperliquid L1 entry uses id 1337 while its own wallet
+ *  metadata points at chain 42161). A self-consistent entry's metamask
+ *  chainId must equal the chain id itself; anything else is dropped. */
+function lifiChainConsistent(c) {
+  const mm = c && c.metamask && c.metamask.chainId;
+  if (!mm) return true;
+  const n = parseInt(mm, 16);
+  return Number.isFinite(n) && n === Number(c.id);
+}
+
+async function fetchJsonT(url, timeoutMs) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+/** Fetch the three discovery sources. Each is independently fault-tolerant:
+ *  a failed source comes back empty and the gate simply works with less —
+ *  this function never throws. */
+export async function fetchEvmChainSources() {
+  const grab = (p) => p.catch(() => null);
+  const [lifiRaw, registryRaw, tvlRaw] = await Promise.all([
+    grab(fetchJsonT("https://li.quest/v1/chains", 20000)),
+    grab(fetchJsonT("https://chainid.network/chains.json", 30000)),
+    grab(fetchJsonT("https://api.llama.fi/v2/chains", 20000)),
+  ]);
+  const lifiList = Array.isArray(lifiRaw) ? lifiRaw : (lifiRaw && Array.isArray(lifiRaw.chains) ? lifiRaw.chains : []);
+  return {
+    lifiChains: lifiList.filter(c => c && c.chainType === "EVM"),
+    registry: Array.isArray(registryRaw) ? registryRaw : [],
+    tvl: Array.isArray(tvlRaw) ? tvlRaw : [],
+  };
+}
+
+/** The gate itself — pure, no I/O. Inputs are the three raw source lists
+ *  (LI.FI chain objects, chainid.network entries, DefiLlama rows); output
+ *  is the admitted chains, display tier first, then by TVL. */
+export function gateChains({ lifiChains = [], registry = [], tvl = [] } = {}) {
+  const lifiById = new Map(), regById = new Map(), tvlById = new Map();
+  for (const c of lifiChains || []) {
+    if (c && c.chainType === "EVM" && Number.isFinite(Number(c.id)) && lifiChainConsistent(c)) lifiById.set(Number(c.id), c);
+  }
+  for (const c of registry || []) {
+    if (c && Number.isFinite(Number(c.chainId))) regById.set(Number(c.chainId), c);
+  }
+  for (const t of tvl || []) {
+    if (!t || t.chainId == null || !Number.isFinite(Number(t.chainId))) continue;
+    const id = Number(t.chainId), v = Number(t.tvl || 0);
+    if (!tvlById.has(id) || v > tvlById.get(id)) tvlById.set(id, v); // duplicate rows exist — keep the max
+  }
+  // DefiLlama leaves chainId null on some rows (XDC, Flare, Hyperliquid…).
+  // Attach those by normalized name — uniquely, or not at all.
+  const nameToId = new Map(), ambiguousNames = new Set();
+  const claimName = (name, id) => {
+    const k = normalizeChainName(name);
+    if (!k) return;
+    if (nameToId.has(k) && nameToId.get(k) !== id) ambiguousNames.add(k);
+    else nameToId.set(k, id);
+  };
+  for (const [id, c] of regById) claimName(c.name, id);
+  for (const [id, c] of lifiById) claimName(c.name, id);
+  for (const k of ambiguousNames) nameToId.delete(k);
+  for (const t of tvl || []) {
+    if (!t || t.chainId != null) continue;
+    const id = nameToId.get(normalizeChainName(t.name));
+    if (id != null && !tvlById.has(id)) tvlById.set(id, Number(t.tvl || 0));
+  }
+
+  const out = [];
+  for (const chainId of new Set([...regById.keys(), ...lifiById.keys()])) {
+    if (CHAIN_GRAVEYARD.has(chainId) || CHAIN_NON_EVM.has(chainId)) continue;
+    const reg = regById.get(chainId), lifi = lifiById.get(chainId);
+    if (reg && reg.status && reg.status !== "active") continue;
+    if (reg && Array.isArray(reg.redFlags) && reg.redFlags.includes("reusedChainId")) continue;
+    let name = (reg && reg.name) || (lifi && lifi.name) || "";
+    let testnet = chainNameMarksTestnet(name);
+    if (lifi && lifi.mainnet === false) testnet = true;
+    // A LI.FI mainnet whose registry entry still carries a previous chain's
+    // testnet name is a stale reused-id entry (live case: 999 is "Wanchain
+    // Testnet" in the registry, HyperEVM to LI.FI). LI.FI wins — for the
+    // name and for every other field sourced from that registry entry.
+    let staleReg = false;
+    if (lifi && lifi.mainnet === true && chainNameMarksTestnet(name) && !chainNameMarksTestnet(lifi.name)) {
+      name = lifi.name; testnet = false; staleReg = true;
+    }
+    if (testnet || !name) continue;
+    const chainTvl = tvlById.get(chainId) || 0;
+    let tier = null;
+    if (lifi || chainTvl >= 10_000_000) tier = "display";
+    else if (chainTvl >= 1_000_000) tier = "discoverable";
+    if (!tier) continue;
+    const fieldReg = staleReg ? null : reg;
+    const rpcCandidates = [...((lifi && lifi.metamask && lifi.metamask.rpcUrls) || []), ...((fieldReg && fieldReg.rpc) || [])];
+    const rpc = rpcCandidates.map(cleanChainRpc).find(Boolean) || null;
+    let explorer = null;
+    const exps = (fieldReg && fieldReg.explorers) || [];
+    const eip = exps.find(e => e && e.standard === "EIP3091") || exps[0];
+    if (eip && eip.url) explorer = String(eip.url).replace(/\/+$/, "");
+    else if (lifi && lifi.metamask && Array.isArray(lifi.metamask.blockExplorerUrls) && lifi.metamask.blockExplorerUrls[0]) {
+      explorer = String(lifi.metamask.blockExplorerUrls[0]).replace(/\/+$/, "");
+    }
+    const nc = (fieldReg && fieldReg.nativeCurrency) || (lifi && lifi.nativeToken) || {};
+    out.push({
+      key: "c" + chainId, chainId, name, rpc, explorer,
+      symbol: nc.symbol || (lifi && lifi.coin) || "", decimals: nc.decimals ?? 18,
+      tier, lifi: !!lifi, tvl: chainTvl,
+    });
+  }
+  const tierRank = { display: 0, discoverable: 1 };
+  return out.sort((a, b) => tierRank[a.tier] - tierRank[b.tier] || b.tvl - a.tvl || a.name.localeCompare(b.name));
+}
+
+/** Fingerprint a discovered chain before trusting it: its RPC must answer
+ *  eth_chainId with the chain's own id, and blocks must flow. One retry
+ *  after a short pause — public RPCs throttle bursts, and a single user
+ *  tap should not be rejected for a transient rate limit. */
+export async function probeChain(entry) {
+  if (!entry || !entry.rpc || !entry.chainId) return false;
+  const call = async (method) => {
+    const res = await fetch(entry.rpc, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(8000),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
+    });
+    if (!res.ok) throw new Error("http " + res.status);
+    return res.json();
+  };
+  const attempt = async () => {
+    const idRes = await call("eth_chainId");
+    if (parseInt(idRes && idRes.result, 16) !== entry.chainId) return false;
+    const bnRes = await call("eth_blockNumber");
+    return typeof (bnRes && bnRes.result) === "string";
+  };
+  try { if (await attempt()) return true; } catch { /* fall through to the retry */ }
+  await new Promise(r => setTimeout(r, 600));
+  try { return await attempt(); } catch { return false; }
+}
+
+/** The stablecoins LI.FI knows on a chain — fetched lazily when a
+ *  discovered chain is first selected. Returns [{symbol, address,
+ *  decimals}] for USDC/USDT, [] when the chain has none, null when the
+ *  lookup itself failed (callers may retry later). */
+export async function fetchStableTokens(chainId) {
+  try {
+    const res = await fetch(`${LIFI_API}/tokens?chains=${chainId}`, { signal: AbortSignal.timeout(20000) });
+    // LI.FI answers 400 for chains outside its universe — that is a
+    // definitive "no list", not a failure: report an empty list so
+    // callers stop retrying. Other errors stay retryable (null).
+    if (res.status === 400) return [];
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const list = (data && data.tokens && data.tokens[String(chainId)]) || [];
+    const out = [];
+    for (const sym of ["USDC", "USDT"]) {
+      const t = list.find(x => x && x.symbol === sym && x.coinKey === sym) || list.find(x => x && x.symbol === sym);
+      if (t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address)) {
+        out.push({ symbol: sym, address: t.address, decimals: t.decimals ?? 6 });
+      }
+    }
+    return out;
+  } catch { return null; }
 }
 
 /** The swap version of the signer principle: a sentence, never a blob. */

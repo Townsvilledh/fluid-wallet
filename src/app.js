@@ -10,12 +10,18 @@ import {
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
   looksLikePoison, revokeApproval,
+  registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
 const HISTORY_KEY = "fluid_history_v1";
 const APPROVALS_KEY = "fluid_approvals_v1";
+const CHAINS_KEY = "fluid_chains_v1";
+// Snapshot BEFORE discovery merges anything: these are the 15 canonical
+// built-ins. Some surfaces (ramps) intentionally list only these.
+const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
+const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -99,6 +105,7 @@ async function renderMain() {
   } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
   paintAssets();
   renderHistory();
+  discoverChains(); // background, non-blocking; no-ops while the cache is fresh
 }
 
 function heroTotal() {
@@ -130,11 +137,110 @@ function paintAssets() {
   $("btcRow").onclick = openBtcSheet;
 }
 
+// ---------- chain discovery (Phase 0: gated EVM auto-discovery) ----------
+// The 15 built-ins stay canonical. Discovered chains (gated in core:
+// active, no reused ids, no testnets, LI.FI-listed or real TVL) persist on
+// this device, refresh every 24h, and are fingerprint-checked with
+// probeChain before the wallet ever switches to one. Discovery runs in
+// the background after unlock and can never break the wallet — if every
+// source fails, the built-ins simply carry on.
+let discoveredChains = {};   // key -> gated entry produced by gateChains
+let chainsCache = null;      // parsed fluid_chains_v1 payload
+let discoveryRunning = false;
+
+function applyDiscovered(list) {
+  discoveredChains = {};
+  const reg = {};
+  for (const d of list || []) {
+    if (!d || !d.key || !d.rpc || BUILTIN_CHAIN_IDS.has(d.chainId)) continue;
+    discoveredChains[d.key] = d;
+    reg[d.key] = { name: d.name, chainId: d.chainId, symbol: d.symbol, priceSym: d.symbol,
+      rpc: d.rpc, explorer: d.explorer, fonbnkNetwork: null, tokens: d.tokens || [], discovered: true };
+  }
+  registerNetworks(reg);
+}
+function loadStoredChains() {
+  try { chainsCache = JSON.parse(localStorage.getItem(CHAINS_KEY) || "null"); } catch { chainsCache = null; }
+  if (chainsCache && Array.isArray(chainsCache.chains)) applyDiscovered(chainsCache.chains);
+}
+async function discoverChains() {
+  if (discoveryRunning) return;
+  if (chainsCache && Date.now() - (chainsCache.fetchedAt || 0) < 24 * 3600 * 1000) return;
+  discoveryRunning = true;
+  try {
+    const gated = gateChains(await fetchEvmChainSources());
+    if (gated.length) {
+      // Keep stable-token lists fetched lazily in earlier sessions.
+      const oldById = new Map(Object.values(discoveredChains).map(d => [d.chainId, d]));
+      for (const d of gated) {
+        const old = oldById.get(d.chainId);
+        if (old && old.tokens) { d.tokens = old.tokens; d.tokensLoaded = true; }
+      }
+      chainsCache = { fetchedAt: Date.now(), chains: gated };
+      try { localStorage.setItem(CHAINS_KEY, JSON.stringify(chainsCache)); } catch { /* full/blocked storage — run uncached */ }
+      applyDiscovered(gated);
+    }
+  } catch { /* every source failed — the built-ins carry on regardless */ }
+  discoveryRunning = false;
+}
+/** Lazily fetch a discovered chain's USDC/USDT (LI.FI) the first time it
+ *  is selected; the result is cached on the entry, in the live registry
+ *  and in local storage. Built-ins and already-loaded chains are no-ops. */
+async function ensureStableTokens(key) {
+  const d = discoveredChains[key];
+  if (!d || d.tokensLoaded) return;
+  const toks = await fetchStableTokens(d.chainId);
+  if (toks === null) return; // lookup failed — leave unloaded so a later selection retries
+  d.tokens = toks; d.tokensLoaded = true;
+  if (NETWORKS[key]) NETWORKS[key].tokens = toks;
+  try {
+    const s = JSON.parse(localStorage.getItem(CHAINS_KEY) || "null");
+    const rec = s && (s.chains || []).find(c => c.key === key);
+    if (rec) { rec.tokens = toks; rec.tokensLoaded = true; localStorage.setItem(CHAINS_KEY, JSON.stringify(s)); chainsCache = s; }
+  } catch { /* cache write is best-effort */ }
+  if (key === networkKey) renderMain();
+}
+loadStoredChains();
+
 // ---------- network sheet ----------
+async function selectNetwork(key) {
+  if (!NETWORKS[key] || key === networkKey) { closeSheet(); return; }
+  const d = discoveredChains[key];
+  if (d) {
+    msg("netMsg", `Checking ${d.name}…`, true);
+    if (!(await probeChain(d))) return msg("netMsg", "That network didn't answer correctly — not switching.");
+    networkKey = key; closeSheet(); renderMain();
+    ensureStableTokens(key);
+    return;
+  }
+  networkKey = key; closeSheet(); renderMain();
+}
 $("netBtn").onclick = () => {
-  openSheet(`<h3>Choose network</h3>` + Object.entries(NETWORKS).map(([k, n]) =>
-    `<button class="netitem" data-net="${k}"><span>${n.name}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`).join(""));
-  document.querySelectorAll("[data-net]").forEach(b => b.onclick = () => { networkKey = b.dataset.net; closeSheet(); renderMain(); });
+  openSheet(`<h3>Choose network</h3>
+    <input id="netSearch" placeholder="Search networks…" autocapitalize="none">
+    <div id="netList"></div>
+    <p class="msg err" id="netMsg"></p>`);
+  const paint = () => {
+    const q = $("netSearch").value.trim().toLowerCase();
+    const item = (k, label, sub) =>
+      `<button class="netitem" data-net="${k}"><span>${label}${sub ? ` <small style="color:var(--dim)">${sub}</small>` : ""}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`;
+    let html = BUILTIN_NETWORK_KEYS
+      .filter(k => !q || NETWORKS[k].name.toLowerCase().includes(q))
+      .map(k => item(k, NETWORKS[k].name)).join("");
+    // Display-tier chains are listed outright; discoverable-tier chains
+    // surface as soon as the user starts searching.
+    const disc = Object.values(discoveredChains).filter(d =>
+      (q ? true : d.tier === "display") &&
+      (!q || d.name.toLowerCase().includes(q) || d.symbol.toLowerCase() === q));
+    if (disc.length) {
+      html += `<p class="tag" style="margin:12px 0 4px">More networks — discovered automatically, checked live before switching</p>` +
+        disc.map(d => item(d.key, d.name, d.symbol)).join("");
+    }
+    $("netList").innerHTML = html || `<p class="tag">No networks match.</p>`;
+    document.querySelectorAll("[data-net]").forEach(b => b.onclick = () => selectNetwork(b.dataset.net));
+  };
+  $("netSearch").addEventListener("input", paint);
+  paint();
 };
 
 // ---------- receive ----------
@@ -283,13 +389,16 @@ $("lightningRow").onclick = () => {
 function rampSheet(mode) {
   const country = localStorage.getItem("fluid_country") || "NG";
   const ctry = RAMP_COUNTRIES.find(c => c.code === country) || RAMP_COUNTRIES[0];
+  // Ramps settle on the built-in networks (provider coverage is mapped
+  // there); discovered chains are for holding, sending and swapping.
+  const rampDefault = BUILTIN_NETWORK_KEYS.includes(networkKey) ? networkKey : "bsc";
   openSheet(`<h3>${mode === "buy" ? "Deposit local currency → crypto" : "Withdraw crypto → local currency"}</h3>
     <p class="tag">Pick your country and coin. You complete the ${mode === "buy" ? "purchase" : "sale"} with the provider in your own currency (they handle KYC &amp; fiat) — Fluid never touches your bank money.</p>
     <label class="tag">Country / currency</label>
     <select id="rCountry">${RAMP_COUNTRIES.map(c => `<option value="${c.code}" ${c.code === country ? "selected" : ""}>${c.name}</option>`).join("")}</select>
     <label class="tag">Network</label>
-    <select id="rNet">${Object.keys(NETWORKS).filter(k => k !== "sepolia").map(k => `<option value="${k}" ${k === (networkKey === "sepolia" ? "bsc" : networkKey) ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("")}</select>
-    <label class="tag" id="rAssetLabel">Coin (on ${NETWORKS[networkKey === "sepolia" ? "bsc" : networkKey].name})</label>
+    <select id="rNet">${BUILTIN_NETWORK_KEYS.filter(k => k !== "sepolia").map(k => `<option value="${k}" ${k === rampDefault ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("")}</select>
+    <label class="tag" id="rAssetLabel">Coin (on ${NETWORKS[rampDefault].name})</label>
     <select id="rAsset"><option>USDC</option><option>USDT</option></select>
     <div id="rList"></div>`);
   const paint = () => {
@@ -363,10 +472,23 @@ $("actSwap").onclick = () => {
       if (si > 0) $(tokSel).value = String(si);
     }
   };
+  // Discovered chains learn their USDC/USDT lazily (LI.FI) — refresh the
+  // token select once they land, keeping the user's current pick.
+  const syncToks = (netSel, tokSel) => {
+    const toks = swapTokenList($(netSel).value);
+    const cur = toks[Number($(tokSel).value)];
+    fillToks(netSel, tokSel, true);
+    if (cur) {
+      const i = swapTokenList($(netSel).value).findIndex(t => t.symbol === cur.symbol && t.address === cur.address);
+      if (i >= 0) $(tokSel).value = String(i);
+    }
+  };
   fillToks("wFromNet", "wFromTok", true);
   fillToks("wToNet", "wToTok", false);
-  $("wFromNet").onchange = () => fillToks("wFromNet", "wFromTok", true);
-  $("wToNet").onchange = () => fillToks("wToNet", "wToTok", false);
+  $("wFromNet").onchange = async () => { await ensureStableTokens($("wFromNet").value); fillToks("wFromNet", "wFromTok", true); };
+  $("wToNet").onchange = async () => { await ensureStableTokens($("wToNet").value); fillToks("wToNet", "wToTok", false); };
+  ensureStableTokens(fromKey0).then(() => syncToks("wFromNet", "wFromTok"));
+  ensureStableTokens(toKey0).then(() => syncToks("wToNet", "wToTok"));
   $("wFlip").onclick = () => {
     const fn = $("wFromNet").value, ft = $("wFromTok").value, tn = $("wToNet").value, tt = $("wToTok").value;
     $("wFromNet").value = tn; fillToks("wFromNet", "wFromTok", true); $("wFromTok").value = tt;
@@ -374,6 +496,9 @@ $("actSwap").onclick = () => {
     show("wConfirm", false); $("wList").innerHTML = ""; msg("wMsg", "");
   };
   $("wRoutes").onclick = async () => {
+    await ensureStableTokens($("wFromNet").value);
+    await ensureStableTokens($("wToNet").value);
+    syncToks("wFromNet", "wFromTok"); syncToks("wToNet", "wToTok");
     const fromKey = $("wFromNet").value, toKey = $("wToNet").value;
     const fromTok = swapTokenList(fromKey)[Number($("wFromTok").value)];
     const toTok = swapTokenList(toKey)[Number($("wToTok").value)];

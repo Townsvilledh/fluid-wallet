@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor } from "../src/wallet-core.js";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -139,6 +139,111 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("named intent shows name and short address", named.includes("Send 0.0005 BNB to dripbot.fluid.is-a.dev (0x7Fe6…135B) on BNB Chain"));
   const plain = formatSendIntent({ amount: "0.0005", symbol: "BNB", to: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", networkKey: "bsc", feeNative: "0.000105" });
   ok("plain intent keeps raw address only", plain.includes("to 0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B on BNB Chain") && !plain.includes("dripbot"));
+}
+
+// 27. Chain discovery gate: LI.FI + chainid.network + DefiLlama merged,
+// admitted only when active, untainted by reused ids, not a testnet, and
+// either LI.FI-listed or carrying real TVL.
+{
+  const lifi = (id, extra = {}) => ({ chainType: "EVM", id, name: "Lifi " + id, mainnet: true, coin: "LX",
+    nativeToken: { symbol: "LX", decimals: 18 },
+    metamask: { chainId: "0x" + id.toString(16), rpcUrls: ["https://lifi-rpc-" + id + ".example"], blockExplorerUrls: ["https://lifi-scan-" + id + ".example"] },
+    ...extra });
+  const reg = (chainId, extra = {}) => ({ chainId, name: "Chain " + chainId, rpc: ["https://reg-rpc-" + chainId + ".example"],
+    nativeCurrency: { symbol: "RX", decimals: 18 },
+    explorers: [{ url: "https://reg-scan-" + chainId + ".example", standard: "EIP3091" }], ...extra });
+  const gate = (sources) => gateChains(sources);
+  const byId = (list, id) => list.find(c => c.chainId === id);
+
+  // LI.FI-listed with negligible TVL → display, LI.FI RPC wins
+  {
+    const out = gate({ lifiChains: [lifi(9001)], registry: [], tvl: [{ chainId: 9001, tvl: 100 }] });
+    const c = byId(out, 9001);
+    ok("gate: LI.FI-listed low-TVL chain is display tier", !!c && c.tier === "display" && c.lifi === true && c.key === "c9001");
+    ok("gate: LI.FI RPC and explorer preferred", c.rpc === "https://lifi-rpc-9001.example" && c.explorer === "https://lifi-scan-9001.example");
+  }
+  // $50M TVL, not LI.FI-listed → display
+  {
+    const out = gate({ lifiChains: [], registry: [reg(9002)], tvl: [{ chainId: 9002, tvl: 50_000_000 }] });
+    const c = byId(out, 9002);
+    ok("gate: $50M TVL non-LI.FI chain is display tier", !!c && c.tier === "display" && c.lifi === false && c.tvl === 50_000_000);
+  }
+  // $2M TVL, not LI.FI-listed → discoverable only
+  {
+    const out = gate({ lifiChains: [], registry: [reg(9003)], tvl: [{ chainId: 9003, tvl: 2_000_000 }] });
+    ok("gate: $2M TVL non-LI.FI chain is discoverable only", byId(out, 9003)?.tier === "discoverable");
+  }
+  // $500k TVL, not LI.FI-listed → excluded entirely
+  {
+    const out = gate({ lifiChains: [], registry: [reg(9004)], tvl: [{ chainId: 9004, tvl: 500_000 }] });
+    ok("gate: $500k TVL non-LI.FI chain is excluded", byId(out, 9004) === undefined);
+  }
+  // Graveyard chains stay out even when LI.FI lists them
+  {
+    const out = gate({ lifiChains: [lifi(1101), lifi(81457), lifi(1666600000)], registry: [reg(1101), reg(81457), reg(1666600000)], tvl: [] });
+    ok("gate: graveyard excluded even when LI.FI-listed", out.length === 0);
+  }
+  // Testnet names stay out even with huge TVL
+  {
+    const out = gate({ lifiChains: [], tvl: [{ chainId: 9005, tvl: 50_000_000 }, { chainId: 9006, tvl: 50_000_000 }],
+      registry: [reg(9005, { name: "Foo Testnet" }), reg(9006, { name: "Bar Sepolia" })] });
+    ok("gate: testnet-named chains excluded", out.length === 0);
+  }
+  // reusedChainId red flag stays out — even when LI.FI-listed and rich
+  {
+    const out = gate({ lifiChains: [lifi(9007)], registry: [reg(9007, { redFlags: ["reusedChainId"] })], tvl: [{ chainId: 9007, tvl: 50_000_000 }] });
+    ok("gate: reusedChainId red flag excluded", out.length === 0);
+  }
+  // Non-active registry status stays out (deprecated, incubating)
+  {
+    const out = gate({ lifiChains: [], tvl: [{ chainId: 9008, tvl: 50_000_000 }, { chainId: 9009, tvl: 50_000_000 }],
+      registry: [reg(9008, { status: "deprecated" }), reg(9009, { status: "incubating" })] });
+    ok("gate: deprecated and incubating statuses excluded", out.length === 0);
+  }
+  // API-key-templated RPCs are skipped for the next clean one
+  {
+    const out = gate({ lifiChains: [], tvl: [{ chainId: 9010, tvl: 50_000_000 }],
+      registry: [reg(9010, { rpc: ["https://rpc.example/v1/${API_KEY}", "wss://socket.example", "https://clean.example"] })] });
+    ok("gate: templated and wss RPCs skipped for a clean https one", byId(out, 9010)?.rpc === "https://clean.example");
+  }
+  // LI.FI mainnet overrides a stale testnet registry entry (the 999 pattern)
+  {
+    const out = gate({ lifiChains: [lifi(9012, { name: "HyperEVM", nativeToken: { symbol: "HYPE", decimals: 18 } })],
+      registry: [reg(9012, { name: "Wanchain Testnet", nativeCurrency: { symbol: "WAN", decimals: 18 } })], tvl: [] });
+    const c = byId(out, 9012);
+    ok("gate: LI.FI mainnet beats stale testnet registry entry", !!c && c.name === "HyperEVM" && c.symbol === "HYPE" && c.tier === "display");
+  }
+  // LI.FI pseudo-entries (wallet metadata pointing at another chain) drop out
+  {
+    const bad = lifi(9013, { name: "Hyperliquid" });
+    bad.metamask.chainId = "0x1"; // metadata disagrees with the id — not a plain EVM network
+    const out = gate({ lifiChains: [bad], registry: [], tvl: [] });
+    ok("gate: self-inconsistent LI.FI entry dropped", out.length === 0);
+  }
+  // Duplicate DefiLlama rows keep the max TVL; null-chainId rows attach by name
+  {
+    const out = gate({ lifiChains: [], registry: [reg(9014, { name: "Dup Chain" }), reg(9015, { name: "Namely Mainnet" })],
+      tvl: [{ chainId: 9014, tvl: 0 }, { chainId: 9014, tvl: 5_000_000 }, { chainId: null, name: "Namely", tvl: 30_000_000 }] });
+    ok("gate: duplicate TVL rows keep the max", byId(out, 9014)?.tvl === 5_000_000 && byId(out, 9014)?.tier === "discoverable");
+    ok("gate: null-chainId TVL attaches by normalized name", byId(out, 9015)?.tvl === 30_000_000 && byId(out, 9015)?.tier === "display");
+  }
+  // Non-EVM registry squatters (Tron, Algorand) never auto-admit
+  {
+    const out = gate({ lifiChains: [], tvl: [{ chainId: 728126428, tvl: 5_000_000_000 }, { chainId: 4160, tvl: 30_000_000 }],
+      registry: [reg(728126428, { name: "Tron Mainnet" }), reg(4160, { name: "Algorand" })] });
+    ok("gate: non-EVM squatters excluded", out.length === 0);
+  }
+  // Empty or missing sources gate to nothing — never throw
+  ok("gate: empty sources give an empty list", gateChains().length === 0 && gateChains({}).length === 0);
+}
+
+// 28. registerNetworks: discovered chains join the live registry core
+// reads; built-ins are never overwritten.
+{
+  registerNetworks({ c424242: { name: "Test Chain", chainId: 424242, symbol: "TST", priceSym: null, rpc: "https://rpc-424242.example", explorer: null, fonbnkNetwork: null, tokens: [] } });
+  ok("registerNetworks adds a discovered chain", NETWORKS.c424242?.chainId === 424242 && NETWORKS.c424242?.name === "Test Chain");
+  ok("registerNetworks leaves built-ins untouched", NETWORKS.bsc.chainId === 56 && NETWORKS.bsc.rpc === "https://bsc-rpc.publicnode.com");
+  ok("providerFor builds for a registered chain", !!providerFor("c424242"));
 }
 
 // 26. Address-poisoning lookalike detection: same first 4 + last 4 hex
