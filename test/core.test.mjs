@@ -1772,4 +1772,26 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("rt-f05: the Bitcoin sheet runs the lookalike check", appSrc.includes("looksLikePoisonText(to, knownBtc)"));
 }
 
+// ---------- red-team F-06: DexScreener dust-pool capture ----------
+// Pair selection trusted wash-tradable volume: a $120-liquidity pair
+// at $400 used to set BOTH a token's displayed price and its identity
+// (renaming it "USD Coin"/"USDC"). Pairs under $1,000 liquidity now
+// contribute nothing — the token stays unpriced rather than captured.
+// (Selection within qualifying pairs is unchanged: the BONK phantom-
+// liquidity behaviour pinned in section 23 must not regress.)
+{
+  const TOK = "0x1111111111111111111111111111111111111111";
+  const data = { pairs: [
+    { chainId: "bsc", baseToken: { address: TOK, name: "USD Coin", symbol: "USDC" }, priceUsd: "400", liquidity: { usd: 120 }, volume: { h24: 1000000 } },
+    { chainId: "bsc", baseToken: { address: TOK, name: "Real Token", symbol: "REAL" }, priceUsd: "1.00", liquidity: { usd: 50000 }, volume: { h24: 5000 } },
+  ] };
+  const m = parseDexScreenerPairs(data, "bsc", [TOK]);
+  ok("rt-f06: dust pool cannot capture the price", m.get(TOK)?.priceUsd === 1);
+  ok("rt-f06: dust pool cannot capture the name", m.get(TOK)?.name === "Real Token" && m.get(TOK)?.symbol === "REAL");
+  const dustOnly = { pairs: [
+    { chainId: "bsc", baseToken: { address: TOK, name: "USD Coin", symbol: "USDC" }, priceUsd: "400", liquidity: { usd: 120 }, volume: { h24: 1000000 } },
+  ] };
+  ok("rt-f06: a token with only dust pairs stays unpriced", !parseDexScreenerPairs(dustOnly, "bsc", [TOK]).has(TOK));
+}
+
 console.log(`\n${passed} checks passed`);

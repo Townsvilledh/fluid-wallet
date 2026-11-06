@@ -3351,8 +3351,16 @@ export function parseDexScreenerPairs(data, dexChainId, addresses) {
     if (!want.has(key)) continue;
     const price = p.priceUsd != null && p.priceUsd !== "" ? Number(p.priceUsd) : null;
     if (price == null || !(price > 0)) continue;
+    // RED-TEAM 2026-11-06 (Finding F): a pair with dust liquidity and
+    // wash-traded volume used to set BOTH the displayed price and the
+    // token's display name/symbol here (a $120 pool "renamed" a token to
+    // USDC at $400). Liquidity is the expensive thing to fake; volume is
+    // not. Pairs under the floor contribute nothing — the token simply
+    // stays unpriced (Other tokens, still fully usable).
+    const liq = Number((p.liquidity && p.liquidity.usd) || 0);
+    if (!(liq >= 1000)) continue;
     const cand = { price, vol: Number((p.volume && p.volume.h24) || 0),
-                   liq: Number((p.liquidity && p.liquidity.usd) || 0),
+                   liq,
                    name: p.baseToken.name || null, symbol: p.baseToken.symbol || null };
     if (!byToken.has(key)) byToken.set(key, []);
     byToken.get(key).push(cand);
