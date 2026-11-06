@@ -2786,10 +2786,11 @@ export function splitGameFee(amount) {
  *  The provider always shows the final live quote before the user pays;
  *  Fluid's job is to put the typically-cheapest route first. */
 const RAMP_FEE_PROFILE = {
-  "Fonbnk": { score: 1, note: "flat ~$0.12 fee (documented) — usually cheapest locally" },
-  "Ramp Network": { score: 2, note: "low % fees, often ~0.5-1.5%" },
-  "Transak": { score: 3, note: "typically ~0.5-3.5% + network fee" },
-  "MoonPay": { score: 4, note: "typically ~1-4.5% depending on payment method" },
+  "Mt Pelerin": { score: 1, note: "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" },
+  "Paybis": { score: 2, note: "Bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address" },
+  "Guardarian": { score: 3, note: "~1.6% built into the rate · No account — paste your Fluid address in their checkout" },
+  "Fonbnk": { score: 4, note: "Bank & mobile money · fees shown in their quote before you pay" },
+  "Mercuryo": { score: 5, note: "Buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card" },
 };
 export function rankRoutes(routes) {
   return routes.map(r => ({ ...r, ...(RAMP_FEE_PROFILE[r.name] || { score: 9, note: "" }) }))
@@ -2812,24 +2813,24 @@ export async function payLightningInvoice(invoice) {
 // below (bank + mobile money inside its widget); the global providers
 // cover 150-180+ countries each. Fluid never touches the fiat itself.
 export const RAMP_COUNTRIES = [
-  { code: "NG", name: "Nigeria · NGN", fonbnk: true },
-  { code: "KE", name: "Kenya · KES", fonbnk: true },
-  { code: "GH", name: "Ghana · GHS", fonbnk: true },
-  { code: "ZA", name: "South Africa · ZAR", fonbnk: true },
-  { code: "UG", name: "Uganda · UGX", fonbnk: true },
-  { code: "TZ", name: "Tanzania · TZS", fonbnk: true },
-  { code: "CM", name: "Cameroon · XAF", fonbnk: true },
-  { code: "SN", name: "Senegal · XOF", fonbnk: true },
-  { code: "CI", name: "Côte d'Ivoire · XOF", fonbnk: true },
-  { code: "ZM", name: "Zambia · ZMW", fonbnk: true },
-  { code: "US", name: "United States · USD", fonbnk: false },
-  { code: "GB", name: "United Kingdom · GBP", fonbnk: false },
-  { code: "DE", name: "Germany · EUR", fonbnk: false },
-  { code: "IN", name: "India · INR", fonbnk: false },
-  { code: "BR", name: "Brazil · BRL", fonbnk: false },
-  { code: "PH", name: "Philippines · PHP", fonbnk: false },
-  { code: "ID", name: "Indonesia · IDR", fonbnk: false },
-  { code: "MX", name: "Mexico · MXN", fonbnk: false },
+  { code: "NG", name: "Nigeria · NGN", fiat: "NGN", fonbnk: true },
+  { code: "KE", name: "Kenya · KES", fiat: "KES", fonbnk: true },
+  { code: "GH", name: "Ghana · GHS", fiat: "GHS", fonbnk: true },
+  { code: "ZA", name: "South Africa · ZAR", fiat: "ZAR", fonbnk: true },
+  { code: "UG", name: "Uganda · UGX", fiat: "UGX", fonbnk: true },
+  { code: "TZ", name: "Tanzania · TZS", fiat: "TZS", fonbnk: true },
+  { code: "CM", name: "Cameroon · XAF", fiat: "XAF", fonbnk: true },
+  { code: "SN", name: "Senegal · XOF", fiat: "XOF", fonbnk: true },
+  { code: "CI", name: "Côte d'Ivoire · XOF", fiat: "XOF", fonbnk: true },
+  { code: "ZM", name: "Zambia · ZMW", fiat: "ZMW", fonbnk: true },
+  { code: "US", name: "United States · USD", fiat: "USD", fonbnk: false },
+  { code: "GB", name: "United Kingdom · GBP", fiat: "GBP", fonbnk: false },
+  { code: "DE", name: "Germany · EUR", fiat: "EUR", fonbnk: false },
+  { code: "IN", name: "India · INR", fiat: "INR", fonbnk: false },
+  { code: "BR", name: "Brazil · BRL", fiat: "BRL", fonbnk: false },
+  { code: "PH", name: "Philippines · PHP", fiat: "PHP", fonbnk: false },
+  { code: "ID", name: "Indonesia · IDR", fiat: "IDR", fonbnk: false },
+  { code: "MX", name: "Mexico · MXN", fiat: "MXN", fonbnk: false },
 ];
 export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
   const net = NETWORKS[networkKey];
@@ -2842,14 +2843,42 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
 export function fonbnkOnrampUrl(networkKey, asset = "USDC", country = "NG") {
   const net = NETWORKS[networkKey];
   if (!net.fonbnkNetwork) return null;
+  // Fonbnk's current widget: the ROOT path is the buy (on-ramp) flow; the
+  // old /onramp path is dead (the app shows its own 404 view there — the
+  // route table in the served bundle has AMOUNT:'/' and no /onramp entry).
+  // Only non-gated params go in the link: source/signature/address/
+  // freezeWallet require a KYB-verified merchant account, so the user
+  // enters their address inside the widget.
   const p = new URLSearchParams({ network: net.fonbnkNetwork, asset, countryIsoCode: country });
-  return `https://pay.fonbnk.com/onramp?${p.toString()}`;
+  return `https://pay.fonbnk.com/?${p.toString()}`;
+}
+// Mt Pelerin: the consumer site IS the checkout (no account, no partner
+// key). URL params prefill the fiat + crypto pair (bsc/bdc buy, ssc/sdc
+// sell — official parameter docs). Only 18 fiats are supported; any other
+// currency returns null so the sheet can say so honestly instead of
+// linking to a broken prefill.
+export const MTPELERIN_FIATS = ["AUD", "CAD", "CHF", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF", "JPY", "MXN", "NOK", "NZD", "PLN", "SEK", "SGD", "USD", "ZAR"];
+const MTPELERIN_SLUGS = {
+  USDT: { buy: "buy-tether-usdt", sell: "sell-tether-usdt" },
+  USDC: { buy: "buy-usdc", sell: "sell-usdc" },
+};
+export function mtpelerinBuyUrl(asset = "USDT", fiat = "EUR") {
+  const slugs = MTPELERIN_SLUGS[asset];
+  if (!slugs || !MTPELERIN_FIATS.includes(fiat)) return null;
+  const p = new URLSearchParams({ bsc: fiat, bdc: asset });
+  return `https://www.mtpelerin.com/${slugs.buy}?${p.toString()}`;
+}
+export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
+  const slugs = MTPELERIN_SLUGS[asset];
+  if (!slugs || !MTPELERIN_FIATS.includes(fiat)) return null;
+  const p = new URLSearchParams({ ssc: asset, sdc: fiat });
+  return `https://www.mtpelerin.com/${slugs.sell}?${p.toString()}`;
 }
 // Global consumer ramps (no Fluid partner key needed; user completes on provider).
 export const GLOBAL_RAMPS = [
-  { name: "MoonPay", region: "Global · 180+ countries", buy: "https://www.moonpay.com/buy", sell: "https://www.moonpay.com/sell" },
-  { name: "Ramp Network", region: "Global · 150+ countries", buy: "https://ramp.network/", sell: "https://ramp.network/" },
-  { name: "Transak", region: "Global · 170+ countries", buy: "https://global.transak.com/", sell: "https://global.transak.com/" },
+  { name: "Guardarian", region: "Global · 170+ countries", buy: "https://guardarian.com/", sell: "https://guardarian.com/" },
+  { name: "Paybis", region: "Global · 180+ countries", buy: "https://paybis.com/", sell: "https://paybis.com/" },
+  { name: "Mercuryo", region: "Global · 150+ countries", buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
 ];
 
 // ---------- Agentic wallets ----------

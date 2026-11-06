@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -2205,8 +2205,10 @@ function rampSheet(mode) {
     const c = RAMP_COUNTRIES.find(x => x.code === code);
     const fonbnk = c.fonbnk
       ? (mode === "buy" ? fonbnkOnrampUrl(netKey, asset, code) : fonbnkOfframpUrl(netKey, asset, code)) : null;
+    const mtp = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
     const routes = GLOBAL_RAMPS.map(r => ({ name: r.name, url: mode === "buy" ? r.buy : r.sell, region: r.region }));
     if (fonbnk) routes.push({ name: "Fonbnk", url: fonbnk, region: c.name + " · bank & mobile money" });
+    if (mtp) routes.push({ name: "Mt Pelerin", url: mtp, region: "Bank transfer · " + c.fiat });
     const ranked = rankRoutes(routes);
     $("rList").innerHTML =
       `<p class="tag" style="margin-top:10px">⚡ Sorted cheapest-route first (typical fees from provider docs — the provider shows your final quote before you pay).</p>` +
@@ -2214,7 +2216,8 @@ function rampSheet(mode) {
         // No inline onclick (the CSP forbids inline handlers): the URL
         // rides in a data attribute and is opened by the bound listener.
         `<button class="netitem" data-ramp-url="${esc(r.url)}"><span>${esc(r.name)} ${i === 0 ? '<span class="pill">CHEAPEST</span>' : ""}</span><small style="color:var(--dim)">${esc(r.note || r.region || "")}</small></button>`).join("") +
-      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use a global provider instead.</p>` : "");
+      (!fonbnk && c.fonbnk ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use a global provider instead.</p>` : "") +
+      (!mtp ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
   };
   $("rCountry").onchange = paint; $("rAsset").onchange = paint; $("rNet").onchange = paint; paint();

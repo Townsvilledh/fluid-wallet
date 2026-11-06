@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -103,13 +103,31 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 
 // 15. Global ramps + onramp links
 ok("global ramps listed", GLOBAL_RAMPS.length >= 3 && GLOBAL_RAMPS.every(r => r.buy.startsWith("https://")));
-ok("fonbnk onramp builds", (fonbnkOnrampUrl("bsc") || "").includes("pay.fonbnk.com/onramp"));
+ok("global ramps are the new lineup", ["Guardarian", "Paybis", "Mercuryo"].every(n => GLOBAL_RAMPS.some(r => r.name === n)));
+ok("removed providers stay removed", !GLOBAL_RAMPS.some(r => ["MoonPay", "Ramp Network", "Transak", "Paychant"].includes(r.name))
+  && GLOBAL_RAMPS.every(r => !/moonpay|transak|ramp\.network|paychant/i.test(r.buy + r.sell)));
+// Fonbnk buy = widget ROOT (the old /onramp path is a dead route in the app)
+ok("fonbnk onramp builds at root", (fonbnkOnrampUrl("bsc") || "").startsWith("https://pay.fonbnk.com/?")
+  && (fonbnkOnrampUrl("bsc") || "").includes("countryIsoCode=NG") && !(fonbnkOnrampUrl("bsc") || "").includes("/onramp"));
 ok("fonbnk onramp null without mapping", fonbnkOnrampUrl("linea") === null);
+// Fonbnk links never carry merchant-gated params
+ok("fonbnk links carry no gated params", ["bsc", "base"].every(k => !/[?&](source|signature|address|freezeWallet)=/.test(fonbnkOnrampUrl(k) + "&" + (fonbnkOfframpUrl(k) || ""))));
 
 // 16. Local-currency rails: country-aware Fonbnk links + country table
 ok("fonbnk KE onramp", (fonbnkOnrampUrl("bsc", "USDC", "KE") || "").includes("countryIsoCode=KE"));
 ok("fonbnk GH offramp USDT", (fonbnkOfframpUrl("base", "USDT", "GH") || "").includes("asset=USDT"));
 ok("ramp countries include NG+US", RAMP_COUNTRIES.some(c => c.code === "NG" && c.fonbnk) && RAMP_COUNTRIES.some(c => c.code === "US"));
+ok("ramp countries carry fiats", RAMP_COUNTRIES.every(c => typeof c.fiat === "string" && c.fiat.length >= 3)
+  && RAMP_COUNTRIES.find(c => c.code === "NG").fiat === "NGN" && RAMP_COUNTRIES.find(c => c.code === "ZA").fiat === "ZAR");
+
+// 16b. Mt Pelerin: param-prefilled links, 18-fiat gate
+ok("mtpelerin fiat table has 18", MTPELERIN_FIATS.length === 18 && MTPELERIN_FIATS.includes("ZAR") && !MTPELERIN_FIATS.includes("NGN"));
+ok("mtpelerin buy USDT/EUR", mtpelerinBuyUrl("USDT", "EUR") === "https://www.mtpelerin.com/buy-tether-usdt?bsc=EUR&bdc=USDT");
+ok("mtpelerin sell USDT/ZAR", mtpelerinSellUrl("USDT", "ZAR") === "https://www.mtpelerin.com/sell-tether-usdt?ssc=USDT&sdc=ZAR");
+ok("mtpelerin buy USDC/USD", mtpelerinBuyUrl("USDC", "USD") === "https://www.mtpelerin.com/buy-usdc?bsc=USD&bdc=USDC");
+ok("mtpelerin sell USDC/GBP", mtpelerinSellUrl("USDC", "GBP") === "https://www.mtpelerin.com/sell-usdc?ssc=USDC&sdc=GBP");
+ok("mtpelerin null for unsupported fiat", mtpelerinBuyUrl("USDT", "NGN") === null && mtpelerinSellUrl("USDC", "KES") === null);
+ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
 // 17. Fluid Names
 ok("fluid name valid", validateFluidName("ethuram") && validateFluidName("kemi_2"));
@@ -136,7 +154,8 @@ ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { b
 ok("split 60/40", (() => { const s = splitFee(1000); return s.treasury === 600 && s.dripbot === 400; })());
 ok("split remainder to treasury", (() => { const s = splitFee(101); return s.treasury + s.dripbot === 101 && s.treasury === 61; })());
 ok("split config is BTC lightning", FEE_SPLIT.currency === "BTC" && FEE_SPLIT.rail === "lightning" && FEE_SPLIT.dripbot.x === "@bitcoinornatin");
-ok("cheapest route first", rankRoutes([{ name: "MoonPay" }, { name: "Fonbnk" }])[0].name === "Fonbnk");
+ok("cheapest route first", rankRoutes([{ name: "Mercuryo" }, { name: "Fonbnk" }, { name: "Mt Pelerin" }])[0].name === "Mt Pelerin"
+  && rankRoutes([{ name: "Mercuryo" }, { name: "Guardarian" }])[0].name === "Guardarian");
 
 // 20. OGO ERA game fee split 40/20/20/20, all BTC Lightning
 ok("game split sums to 100", GAME_FEE_SPLIT.treasury + GAME_FEE_SPLIT.top100 + GAME_FEE_SPLIT.sessionLottery + GAME_FEE_SPLIT.weeklyReferrals === 100);
