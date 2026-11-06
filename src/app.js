@@ -470,7 +470,11 @@ $("actSend").onclick = () => {
 };
 
 // ---------- Bitcoin sheet ----------
+// Mirrors the other family sheets: review → human-readable sentence →
+// confirm, all in-app. No native confirm() dialog here — those get
+// swallowed in some phone webviews and make the button look dead.
 function openBtcSheet() {
+  let pendingBtc = null;
   openSheet(`<h3>Bitcoin</h3>
     <p><b>${fmt(btcBal, 8)} BTC</b> · ${usd(btcBal * (prices.BTC || 0))}</p>
     <img class="qr" id="qrBtc2"><p class="mono">${btcAddr}</p>
@@ -480,6 +484,10 @@ function openBtcSheet() {
     <input id="bTo" placeholder="Recipient bc1… address or Fluid name">
     <input id="bAmt" inputmode="decimal" placeholder="Amount in BTC">
     <button class="btn" id="bSend">Review &amp; send BTC</button>
+    <div id="bIntent" class="hidden">
+      <p class="seed" id="bIntentText"></p>
+      <button class="btn" id="bConfirm">Confirm &amp; send</button>
+    </div>
     <p class="msg err" id="bMsg"></p>
     <p class="tag">Fee uses the current recommended network rate (mempool.space). Sends are final.</p>`);
   qr("qrBtc2", btcAddr);
@@ -494,14 +502,23 @@ function openBtcSheet() {
       to = hit.btc; sendName = hit.name;
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
+    pendingBtc = { to, amount };
+    // Same disclosure as formatSendIntent: when the recipient was given
+    // as a Fluid name, the sentence shows the name AND the address it
+    // resolved to — the user confirms the resolution, not just the name.
     const dest = sendName ? `${sendName}.${FLUID_DOMAIN} (${to.slice(0, 10)}…${to.slice(-6)})` : to;
-    if (!confirm(`Send ${amount} BTC to ${dest}? Network fee will be added at the current rate.`)) return;
+    $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin. Network fee will be added at the current rate. Confirm?`;
+    show("bIntent"); msg("bMsg", "");
+  };
+  $("bConfirm").onclick = async () => {
+    if (!pendingBtc) return;
     try {
       msg("bMsg", "Building, signing and broadcasting…", true);
-      const txid = await sendBitcoin(wallet.mnemonic.phrase, { to, amountBtc: amount });
+      const txid = await sendBitcoin(wallet.mnemonic.phrase, { to: pendingBtc.to, amountBtc: pendingBtc.amount });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      h.unshift({ hash: txid, amount, symbol: "BTC", to, explorer: "https://mempool.space", at: Date.now() });
+      h.unshift({ hash: txid, amount: pendingBtc.amount, symbol: "BTC", to: pendingBtc.to, explorer: "https://mempool.space", at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingBtc = null;
       msg("bMsg", "Broadcast ✓ txid " + txid.slice(0, 16) + "…", true);
       renderMain();
     } catch (e) { msg("bMsg", e.message); }
