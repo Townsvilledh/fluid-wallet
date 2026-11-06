@@ -1415,4 +1415,45 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
       .includes("($0.01)") && formatLitecoinSendIntent({ amount: "1", to: "ltc1qxy", feeLtc: "0.00001400" }).endsWith("Confirm?"));
 }
 
+// ---------- swap step bounds (security audit M1) ----------
+// A route's step transactions are network data: their value and
+// gasLimit are bounded against the quote the user confirmed, and a
+// breach refuses the route before any approval or signature.
+{
+  const { checkSwapStepBounds, executeSwapRoute } = await import("../src/wallet-core.js");
+  const ETH = (n) => BigInt(Math.round(n * 1e18)).toString();
+  const nativeStep = (value, gasLimit, gasEst) => ({
+    action: { fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 }, fromAmount: ETH(1) },
+    estimate: { gasCosts: gasEst != null ? [{ amount: ETH(0.003), estimate: String(gasEst) }] : [] },
+    transactionRequest: { to: "0x1231DEB6f5749EF6ceE3a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
+  });
+  const route = { fromChainId: 56, fromAmount: ETH(1) };
+  ok("m1: native step at the quoted value passes", checkSwapStepBounds(route, nativeStep(ETH(1), "21000", 200000)).ok);
+  ok("m1: native step within 2% tolerance passes", checkSwapStepBounds(route, nativeStep(ETH(1.01), "21000", 200000)).ok);
+  const overValue = checkSwapStepBounds(route, nativeStep(ETH(1.5), "21000", 200000));
+  ok("m1: native step 50% over the quote is refused", !overValue.ok && /more value than the amount you agreed/.test(overValue.reason));
+  const tokenStep = (value, gasLimit) => ({
+    action: { fromToken: { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", decimals: 18 }, fromAmount: "100000000" },
+    estimate: { gasCosts: [{ amount: ETH(0.003), estimate: "150000" }] },
+    transactionRequest: { to: "0x1231DEB6f5749EF6ceE3a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
+  });
+  ok("m1: token step with zero value passes", checkSwapStepBounds(route, tokenStep("0", "200000")).ok);
+  ok("m1: token step value within its declared gas costs passes", checkSwapStepBounds(route, tokenStep(ETH(0.002), "200000")).ok);
+  ok("m1: token step carrying real value is refused", !checkSwapStepBounds(route, tokenStep(ETH(0.5), "200000")).ok);
+  ok("m1: gasLimit within 3× the estimate passes", checkSwapStepBounds(route, nativeStep(ETH(1), "500000", 200000)).ok);
+  const overGas = checkSwapStepBounds(route, nativeStep(ETH(1), "700000", 200000));
+  ok("m1: gasLimit beyond 3× the estimate is refused", !overGas.ok && /gas limit far above/.test(overGas.reason));
+  ok("m1: no estimate → fallback cap applies", checkSwapStepBounds(route, nativeStep(ETH(1), "1900000", null)).ok
+    && !checkSwapStepBounds(route, nativeStep(ETH(1), "2100000", null)).ok);
+  ok("m1: a hostile huge estimate cannot lift the absolute cap",
+    !checkSwapStepBounds(route, nativeStep(ETH(1), "20000000", 10000000)).ok);
+  // End-to-end: the executor itself refuses the hostile route before
+  // touching the network (bounds run ahead of allowance/signing).
+  const hostileRoute = { fromChainId: 56, fromAmount: ETH(1), steps: [nativeStep(ETH(2), "21000", 200000)] };
+  await assert.rejects(
+    () => executeSwapRoute(ethers.Wallet.createRandom(), hostileRoute),
+    /Fluid refused this route/);
+  ok("m1: executeSwapRoute refuses a hostile step before signing", true);
+}
+
 console.log(`\n${passed} checks passed`);

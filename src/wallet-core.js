@@ -2674,6 +2674,63 @@ const SWAP_ERC20 = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
 ];
+/* Swap step bounds (audit M1, 2026-11-06): the route object the user
+ * confirmed is the ONLY authority for what a step may spend. LI.FI's
+ * per-step transactionRequest is network data — a compromised or buggy
+ * response must not be able to make the wallet send more value, or
+ * burn more gas, than the quote the user read. checkSwapStepBounds is
+ * pure and runs BEFORE the step's approval and signature:
+ *   - VALUE: for a native-input step, value ≤ the step's quoted input
+ *     amount + 2% tolerance. For a token-input step, value may only
+ *     cover the step's own declared gas costs (native-denominated) —
+ *     in practice LI.FI sends 0 there.
+ *   - GASLIMIT: ≤ 3× the step's own gas estimate, never above the
+ *     absolute cap; with no estimate at all, the fallback cap applies.
+ * A breach refuses the whole route with a plain explanation. */
+export const SWAP_STEP_VALUE_TOLERANCE_BPS = 200n;   // 2% over the quoted input
+export const SWAP_STEP_GASLIMIT_MULTIPLE = 3n;       // × the step's own estimate
+export const SWAP_STEP_GASLIMIT_FALLBACK_CAP = 2_000_000n; // no estimate → this
+export const SWAP_STEP_GASLIMIT_ABSOLUTE_CAP = 10_000_000n; // never, estimate or not
+export function checkSwapStepBounds(route, step) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const tr = step?.transactionRequest;
+  if (!tr) return refuse("Fluid refused this route: a step carried no transaction to check. Pick another route.");
+  let value = 0n;
+  try { value = tr.value != null ? BigInt(tr.value) : 0n; } catch { return refuse("Fluid refused this route: a step's value could not be read as a number. Pick another route."); }
+  if (value < 0n) return refuse("Fluid refused this route: a step asked for a negative value. Pick another route.");
+  const fromToken = step.action?.fromToken;
+  const isNative = !fromToken?.address || /^0x0{40}$/i.test(fromToken.address);
+  let maxValue;
+  if (isNative) {
+    let base = 0n;
+    try { base = BigInt(step.action?.fromAmount ?? route?.fromAmount ?? 0); } catch { base = 0n; }
+    maxValue = base + (base * SWAP_STEP_VALUE_TOLERANCE_BPS) / 10000n;
+  } else {
+    maxValue = 0n;
+    for (const g of step.estimate?.gasCosts || []) {
+      try { maxValue += BigInt(g?.amount || 0); } catch { /* an unreadable gas cost grants nothing */ }
+    }
+  }
+  if (value > maxValue) {
+    return refuse("Fluid refused this route: a step asked to send more value than the amount you agreed to swap. Pick another route.");
+  }
+  if (tr.gasLimit != null) {
+    let gl = null;
+    try { gl = BigInt(tr.gasLimit); } catch { gl = null; /* unparseable → the node estimates, as before */ }
+    if (gl != null) {
+      let est = 0n;
+      for (const g of step.estimate?.gasCosts || []) {
+        try { est += BigInt(g?.estimate || 0); } catch { /* ignore unreadable estimates */ }
+      }
+      let cap = est > 0n ? est * SWAP_STEP_GASLIMIT_MULTIPLE : SWAP_STEP_GASLIMIT_FALLBACK_CAP;
+      if (cap > SWAP_STEP_GASLIMIT_ABSOLUTE_CAP) cap = SWAP_STEP_GASLIMIT_ABSOLUTE_CAP;
+      if (gl > cap) {
+        return refuse("Fluid refused this route: a step asked for a gas limit far above its own estimate, which could burn your funds on a failing transaction. Pick another route.");
+      }
+    }
+  }
+  return { ok: true };
+}
 /** Execute a chosen route: approve the from-token where a step needs it,
  *  then send each signable step's transaction in order from the user's
  *  wallet on the source chain, awaiting each receipt. Returns tx hashes.
@@ -2691,6 +2748,10 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}, onA
   const hashes = [];
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i], tr = step.transactionRequest;
+    // Bounds BEFORE approval and BEFORE signing (audit M1): a hostile
+    // step gets neither an approval nor a signature.
+    const bounds = checkSwapStepBounds(route, step);
+    if (!bounds.ok) throw new Error(bounds.reason);
     const fromToken = step.action?.fromToken;
     const isNative = !fromToken?.address || /^0x0{40}$/i.test(fromToken.address);
     if (!isNative && step.action?.fromAmount) {
