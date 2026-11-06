@@ -34,7 +34,7 @@ import { ethers } from "ethers";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { NETWORKS, bitcoinAddress, getBitcoinBalance, getPrices, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor } from "../src/wallet-core.js";
+import { NETWORKS, bitcoinAddress, getBitcoinBalance, getVerifiedPrice, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor } from "../src/wallet-core.js";
 
 const KS = "keystore.json", DESC = "descriptor.json", SECRET = ".secret", SPEND = "spend.json";
 const today = () => new Date().toISOString().slice(0, 10);
@@ -89,9 +89,10 @@ export async function openAgent({ dir, password } = {}) {
     const net = NETWORKS[network]; if (!net) throw new Error("Unknown network: " + network);
     if (!/^0x[0-9a-fA-F]{40}$/.test(String(to || ""))) throw new Error("Invalid destination address.");
     const amt = Number(amount); if (!(amt > 0)) throw new Error("Amount must be positive.");
-    const prices = await getPrices();
-    const price = prices[net.symbol];
-    if (!price) throw new Error(`Cannot value ${net.symbol} right now — refusing to send unpriced (safety default).`);
+    // Caps are a security control, so the price must be CROSS-CHECKED
+    // between two independent sources (red-team Finding C): a single
+    // source's word — or a >25% disagreement — refuses the send.
+    const price = await getVerifiedPrice(net.symbol);
     const usd = amt * price;
     const gate = checkAgentPolicy(descriptor.policy, usd, spentToday());
     if (!gate.ok) throw new Error("Policy blocked: " + gate.reason);

@@ -337,6 +337,41 @@ const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLU
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
   TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
+const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
+/* RED-TEAM 2026-11-06 (Finding C): getPrices() takes Binance's word alone
+ * (CoinGecko only fills gaps and is never compared), yet the agent runtime
+ * prices its USD spending CAPS from it — one wrong or malicious response
+ * silently revalues every cap. Security controls need agreement: this
+ * fetches both sources independently and refuses (throws) unless both
+ * answer within 25% of each other. The valuation returned is the HIGHER
+ * of the two — for cap enforcement, overvaluing a send is the safe side.
+ * Display code keeps using getPrices(); only cap checks use this. */
+export async function getVerifiedPrice(symbol) {
+  const pair = PRICE_PAIRS[symbol], cgId = CG_IDS[symbol];
+  if (symbol === "USDT") return 1;
+  if (!pair && !cgId) throw new Error(`No price sources known for ${symbol} — refusing to value it.`);
+  let bin = null, cg = null;
+  if (pair) {
+    try {
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`);
+      const d = await res.json();
+      const v = parseFloat(d && d.price);
+      if (Number.isFinite(v) && v > 0) bin = v;
+    } catch { /* source down */ }
+  }
+  if (cgId) {
+    try {
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
+      const d = await res.json();
+      const v = Number(d && d[cgId] && d[cgId].usd);
+      if (Number.isFinite(v) && v > 0) cg = v;
+    } catch { /* source down */ }
+  }
+  if (bin == null || cg == null) throw new Error(`Could not cross-check the ${symbol} price between two independent sources — refusing to value the send.`);
+  const hi = Math.max(bin, cg), lo = Math.min(bin, cg);
+  if ((hi - lo) / lo > 0.25) throw new Error(`Price sources disagree on ${symbol} (Binance ${bin}, CoinGecko ${cg}) — refusing to value the send.`);
+  return hi;
+}
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -350,7 +385,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
+  const CG = CG_IDS;
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {

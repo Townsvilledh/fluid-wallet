@@ -1709,4 +1709,42 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     agentSrc.includes("broadcast but unconfirmed") && agentSrc.includes("spend stays reserved"));
 }
 
+// ---------- red-team F-04: agent cap price cross-check ----------
+// The agent runtime valued its USD spending caps from Binance alone
+// (CoinGecko only filled gaps, never compared) — one lying response
+// revalued every cap. Cap valuation now needs both sources agreeing
+// within 25% and takes the higher (conservative) value.
+{
+  const { getVerifiedPrice } = await import("../src/wallet-core.js");
+  const realFetch = globalThis.fetch;
+  const stub = (binPrice, cgPrice) => {
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) {
+        if (binPrice === null) throw new Error("source down");
+        return { json: async () => ({ price: String(binPrice) }) };
+      }
+      if (u.includes("api.coingecko.com")) {
+        if (cgPrice === null) throw new Error("source down");
+        return { json: async () => ({ binancecoin: { usd: cgPrice } }) };
+      }
+      throw new Error("unexpected fetch " + u);
+    };
+  };
+  try {
+    stub(590, 595);
+    ok("rt-f04: agreeing sources value at the higher price", (await getVerifiedPrice("BNB")) === 595);
+    stub(1, 590);
+    await assert.rejects(() => getVerifiedPrice("BNB"), /disagree/);
+    ok("rt-f04: a rigged single source (BNB = $1) refuses the valuation", true);
+    stub(590, null);
+    await assert.rejects(() => getVerifiedPrice("BNB"), /cross-check/);
+    ok("rt-f04: one silent source refuses the valuation", true);
+    ok("rt-f04: USDT is the unit price without any fetch", (await getVerifiedPrice("USDT")) === 1);
+    const agentSrc = readFileSync(new URL("../agent/fluid-agent.mjs", import.meta.url), "utf8");
+    ok("rt-f04: agent caps are valued through the cross-check",
+      agentSrc.includes("getVerifiedPrice(net.symbol)") && !agentSrc.includes("prices[net.symbol]"));
+  } finally { globalThis.fetch = realFetch; }
+}
+
 console.log(`\n${passed} checks passed`);
