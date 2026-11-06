@@ -7,6 +7,9 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   fonbnkOfframpUrl, fonbnkOnrampUrl, GLOBAL_RAMPS, RAMP_COUNTRIES, getPrices,
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
+  litecoinAddress, getLitecoinBalance, getLtcFeeRate, sendLitecoin, isValidLitecoinAddress, formatLitecoinSendIntent,
+  dogecoinAddress, getDogecoinBalance, isValidDogeAddress, DOGE_MIN_OUTPUT,
+  bitcoinCashAddress, getBitcoinCashBalance, sendBitcoinCash, isValidBchAddress, formatBitcoinCashSendIntent,
   tronAddressFromPhrase, getTronBalances, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
@@ -26,13 +29,17 @@ const CHAINS_KEY = "fluid_chains_v1";
 const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
-  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff" };
+  POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff",
+  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, pendingSend = null;
 let tronAddr = null, tronBalances = [];
 let solAddr = null, solBalances = [];
+let ltcAddr = null, ltcBal = 0;
+let dogeAddr = null, dogeBal = 0;
+let bchAddr = null, bchBal = 0;
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
@@ -107,7 +114,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Tron + Solana";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana";
   getTronBalances(tronAddr).then(rows => { tronBalances = rows; paintAssets(); }).catch(() => paintAssets());
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
@@ -116,6 +123,15 @@ async function renderMain() {
   solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   getSolanaBalances(solAddr).then(rows => { solBalances = rows; paintAssets(); }).catch(() => paintAssets());
+  // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
+  // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
+  // Bitcoin Cash (BIP44 coin 145, CashAddr).
+  ltcAddr = litecoinAddress(wallet.mnemonic.phrase);
+  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; paintAssets(); }).catch(() => paintAssets());
+  dogeAddr = dogecoinAddress(wallet.mnemonic.phrase);
+  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; paintAssets(); }).catch(() => paintAssets());
+  bchAddr = bitcoinCashAddress(wallet.mnemonic.phrase);
+  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; paintAssets(); }).catch(() => paintAssets());
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
@@ -130,7 +146,8 @@ async function renderMain() {
 
 function heroTotal() {
   const net = NETWORKS[networkKey];
-  let t = btcBal * (prices.BTC || 0);
+  let t = btcBal * (prices.BTC || 0)
+    + ltcBal * (prices.LTC || 0) + dogeBal * (prices.DOGE || 0) + bchBal * (prices.BCH || 0);
   for (const b of balances) {
     const p = b.address ? (prices[b.symbol] ?? null) : (prices[net.priceSym] ?? null);
     if (p != null) t += Number(b.amount) * p;
@@ -183,8 +200,25 @@ function paintAssets() {
         <span class="amt"><b>${fmt(b.amount)}</b><small>${p != null ? usd(Number(b.amount) * p) : ""}</small></span></div>`);
     });
   }
+  // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
+  rows.push(`<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`);
+  rows.push(`<div class="row" data-ltc="1">
+      <span class="coin" style="background:${COIN_COLORS.LTC}">Ł</span>
+      <span class="grow"><b>Litecoin</b><small>Native SegWit · same seed as Bitcoin</small></span>
+      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>`);
+  rows.push(`<div class="row" data-doge="1">
+      <span class="coin" style="background:${COIN_COLORS.DOGE}">Ð</span>
+      <span class="grow"><b>Dogecoin</b><small>Legacy · receive &amp; balance (sending not yet available)</small></span>
+      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>`);
+  rows.push(`<div class="row" data-bch="1">
+      <span class="coin" style="background:${COIN_COLORS.BCH}">B</span>
+      <span class="grow"><b>Bitcoin Cash</b><small>CashAddr · same seed as Bitcoin</small></span>
+      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>`);
   $("assetList").innerHTML = rows.join("");
   $("btcRow").onclick = openBtcSheet;
+  document.querySelector("[data-ltc]").onclick = openLtcSheet;
+  document.querySelector("[data-doge]").onclick = openDogeSheet;
+  document.querySelector("[data-bch]").onclick = openBchSheet;
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
     if (b) openTronSheet(b);
@@ -319,12 +353,28 @@ $("actReceive").onclick = () => {
     <hr style="border-color:var(--line)">
     <p class="tag">Solana address (SOL and SPL tokens):</p>
     <img class="qr" id="qrSol"><p class="mono">${solAddr}</p>
-    <button class="btn ghost" id="cpSol">Copy Solana address</button>`);
+    <button class="btn ghost" id="cpSol">Copy Solana address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Litecoin address:</p>
+    <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
+    <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Dogecoin address:</p>
+    <img class="qr" id="qrDoge"><p class="mono">${dogeAddr}</p>
+    <button class="btn ghost" id="cpDoge">Copy Dogecoin address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">Bitcoin Cash address:</p>
+    <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
+    <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
+  qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
   $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
   $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
+  $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
+  $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
+  $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
 };
 
 // ---------- send (EVM) ----------
@@ -515,6 +565,110 @@ function openSolanaSheet(tok) {
       pendingSol = null; closeSheet(); renderMain();
     } catch (e) { msg("oMsg", "Send failed: " + e.message); }
   };
+}
+
+// ---------- Litecoin sheet ----------
+// Mirrors the Tron/Solana sheets: review → human-readable sentence →
+// confirm. Built and signed locally by sendLitecoin (same @scure stack
+// as Bitcoin, Litecoin network parameters).
+function openLtcSheet() {
+  let pendingLtc = null;
+  openSheet(`<h3>Send LTC on Litecoin</h3>
+    <p><b>${fmt(ltcBal, 8)} LTC</b> · from <span class="mono">${ltcAddr}</span></p>
+    <input id="lTo" placeholder="Recipient ltc1… address" autocapitalize="none">
+    <input id="lAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="lReview">Review send</button>
+    <div id="lIntent" class="hidden">
+      <p class="seed" id="lIntentText"></p>
+      <button class="btn" id="lConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="lMsg"></p>
+    <p class="tag">Fees use the current recommended Litecoin rate (litecoinspace.org), like Bitcoin's. Sends are final.</p>`);
+  $("lReview").onclick = async () => {
+    const to = $("lTo").value.trim(), amount = $("lAmt").value.trim();
+    if (!isValidLitecoinAddress(to)) return msg("lMsg", "That is not a valid Litecoin address.");
+    if (!amount || Number(amount) <= 0) return msg("lMsg", "Enter an amount.");
+    if (Number(amount) > ltcBal) return msg("lMsg", "Amount is more than your balance.");
+    try {
+      msg("lMsg", "Checking the network fee…", true);
+      const rate = await getLtcFeeRate();
+      const feeLtc = (Math.ceil(140 * rate) / 1e8).toFixed(8); // ~1-in/2-out SegWit estimate for the sentence
+      pendingLtc = { to, amount };
+      $("lIntentText").textContent = formatLitecoinSendIntent({ amount, to, feeLtc });
+      show("lIntent"); msg("lMsg", "");
+    } catch (e) { msg("lMsg", "Could not check the fee: " + e.message); }
+  };
+  $("lConfirm").onclick = async () => {
+    if (!pendingLtc) return;
+    try {
+      msg("lMsg", "Signing locally and broadcasting…", true);
+      const txid = await sendLitecoin(wallet.mnemonic.phrase, { to: pendingLtc.to, amountLtc: Number(pendingLtc.amount) });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingLtc.amount, symbol: "LTC", to: pendingLtc.to,
+        explorer: "https://litecoinspace.org", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingLtc = null; closeSheet(); renderMain();
+    } catch (e) { msg("lMsg", "Send failed: " + e.message); }
+  };
+}
+// ---------- Bitcoin Cash sheet ----------
+// Mirrors the Litecoin sheet: review → human-readable sentence →
+// confirm. Built and signed locally by sendBitcoinCash (ForkID
+// sighash, validated against bitcore-lib-cash + real mainnet
+// signatures before shipping).
+function openBchSheet() {
+  let pendingBch = null;
+  openSheet(`<h3>Send BCH on Bitcoin Cash</h3>
+    <p><b>${fmt(bchBal, 8)} BCH</b> · from <span class="mono">${bchAddr}</span></p>
+    <input id="cTo" placeholder="Recipient bitcoincash:q… or legacy address" autocapitalize="none">
+    <input id="cAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="cReview">Review send</button>
+    <div id="cIntent" class="hidden">
+      <p class="seed" id="cIntentText"></p>
+      <button class="btn" id="cConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="cMsg"></p>
+    <p class="tag">Fees are 1 satoshi per byte (about 0.00000226 BCH for a typical send). CashAddr and legacy addresses both work. Sends are final.</p>`);
+  $("cReview").onclick = () => {
+    const to = $("cTo").value.trim(), amount = $("cAmt").value.trim();
+    if (!isValidBchAddress(to)) return msg("cMsg", "That is not a valid Bitcoin Cash address.");
+    if (!amount || Number(amount) <= 0) return msg("cMsg", "Enter an amount.");
+    if (Number(amount) > bchBal) return msg("cMsg", "Amount is more than your balance.");
+    pendingBch = { to, amount };
+    $("cIntentText").textContent = formatBitcoinCashSendIntent({ amount, to, feeBch: "0.00000226" });
+    show("cIntent"); msg("cMsg", "");
+  };
+  $("cConfirm").onclick = async () => {
+    if (!pendingBch) return;
+    try {
+      msg("cMsg", "Signing locally and broadcasting…", true);
+      const txid = await sendBitcoinCash(wallet.mnemonic.phrase, { to: pendingBch.to, amountBch: Number(pendingBch.amount) });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingBch.amount, symbol: "BCH", to: pendingBch.to,
+        link: `https://blockchair.com/bitcoin-cash/transaction/${txid}`, explorer: "https://blockchair.com/bitcoin-cash", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingBch = null; closeSheet(); renderMain();
+    } catch (e) { msg("cMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Dogecoin sheet ----------
+// Receive + live balance only. Sending is visibly disabled: no keyless
+// API offers a raw-transaction broadcast for Dogecoin (verified live
+// 2026-11-06), and Fluid never lets a server build transactions it
+// signs. The minimum-spendable note reflects Dogecoin's high dust
+// limit (0.01 DOGE).
+function openDogeSheet() {
+  openSheet(`<h3>Dogecoin</h3>
+    <p><b>${fmt(dogeBal, 8)} DOGE</b> · ${usd(dogeBal * (prices.DOGE || 0))}</p>
+    <img class="qr" id="qrDoge2"><p class="mono">${dogeAddr}</p>
+    <button class="btn ghost" id="cpDoge2">Copy address</button>
+    <hr style="border-color:var(--line)">
+    <h3>Send DOGE</h3>
+    <button class="btn" disabled style="opacity:.45">Sending not available yet</button>
+    <p class="tag">Sending is off for now: no public Dogecoin service lets Fluid broadcast a transaction it built and signed itself, and Fluid won't hand your transaction to a server to build. Receiving and balances work normally. Note: Dogecoin treats outputs under ${DOGE_MIN_OUTPUT} DOGE as dust — senders should keep amounts above that.</p>`);
+  qr("qrDoge2", dogeAddr);
+  $("cpDoge2").onclick = () => copyText(dogeAddr, $("cpDoge2"));
 }
 
 // ---------- Lightning ----------

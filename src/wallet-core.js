@@ -9,8 +9,10 @@ import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
 import { base58, base58check, base64 } from "@scure/base";
 import { hmac } from "@noble/hashes/hmac.js";
-import { sha512 } from "@noble/hashes/sha2.js";
+import { sha256, sha512 } from "@noble/hashes/sha2.js";
+import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
 import {
   Keypair as SolKeypair, PublicKey as SolPublicKey, SystemProgram as SolSystemProgram,
   Transaction as SolTransaction, TransactionInstruction as SolTxInstruction,
@@ -215,7 +217,8 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
-  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT" };
+  AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -229,7 +232,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -293,6 +296,315 @@ export async function sendBitcoin(phrase, { to, amountBtc, feeRate }) {
   const post = await fetch(`${MEMPOOL}/tx`, { method: "POST", body: hex });
   if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
   return post.text();
+}
+
+// ---------- Litecoin (same seed, BIP84 native SegWit, coin type 2) ----------
+// Same construction as Bitcoin, with Litecoin's network parameters:
+// bech32 hrp "ltc", pubKeyHash 0x30, scriptHash 0x32, WIF 0xb0 — the
+// address for the abandon…about test seed was cross-checked against
+// bitcoinjs-lib's Litecoin params in scratch before shipping.
+const LTC_NETWORK = { bech32: "ltc", pubKeyHash: 0x30, scriptHash: 0x32, wif: 0xb0 };
+function ltcKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/84'/2'/${account}'/0/0`);
+  const pay = btc.p2wpkh(child.publicKey, LTC_NETWORK);
+  return { child, address: pay.address, script: pay.script };
+}
+export function litecoinAddress(phrase, account = 0) { return ltcKeys(phrase, account).address; }
+export function isValidLitecoinAddress(address) {
+  try { btc.Address(LTC_NETWORK).decode(String(address).trim()); return true; } catch { return false; }
+}
+
+const LTC_API = "https://litecoinspace.org/api"; // Esplora (mempool-style), keyless
+export async function getLitecoinBalance(address) {
+  const res = await fetch(`${LTC_API}/address/${address}`);
+  const d = await res.json();
+  const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
+  const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
+  return (funded - spent) / 1e8;
+}
+export async function getLtcFeeRate() {
+  try {
+    const res = await fetch(`${LTC_API}/v1/fees/recommended`);
+    const d = await res.json();
+    return Math.max(1, d.halfHourFee || 1);
+  } catch { return 1; }
+}
+export function formatLitecoinSendIntent({ amount, to, feeLtc }) {
+  return `Send ${amount} LTC to ${to} on Litecoin. Network fee about ${feeLtc} LTC. Confirm?`;
+}
+/** Build, sign and broadcast an LTC payment. Returns the txid. */
+export async function sendLitecoin(phrase, { to, amountLtc, feeRate }) {
+  const { child, address, script } = ltcKeys(phrase);
+  if (!isValidLitecoinAddress(to)) throw new Error("That is not a valid Litecoin address.");
+  const rate = feeRate || (await getLtcFeeRate());
+  // NB: litecoinspace's UTXO route is the singular /utxo (mempool.space
+  // uses the plural /utxos) — verified live before wiring.
+  const res = await fetch(`${LTC_API}/address/${address}/utxo`);
+  const utxos = (await res.json()).sort((a, b) => b.value - a.value);
+  const target = Math.round(amountLtc * 1e8);
+  const picked = []; let sum = 0;
+  for (const u of utxos) { picked.push(u); sum += u.value; if (sum >= target + 1000) break; }
+  // P2WPKH sizing mirrors Bitcoin: ~10 + 68/in + 31/out vbytes.
+  const fee = Math.ceil((10 + picked.length * 68 + 62) * rate);
+  if (sum < target + fee) throw new Error("Not enough confirmed LTC to cover the amount plus network fee.");
+  const change = sum - target - fee;
+  const tx = new btc.Transaction();
+  for (const u of picked) {
+    tx.addInput({ txid: u.txid, index: u.vout, witnessUtxo: { script, amount: BigInt(u.value) }, sighashType: btc.SigHash.ALL });
+  }
+  tx.addOutputAddress(to, BigInt(target), LTC_NETWORK);
+  if (change > 294) tx.addOutputAddress(address, BigInt(change), LTC_NETWORK); // SegWit dust limit
+  tx.sign(child.privateKey);
+  tx.finalize();
+  const post = await fetch(`${LTC_API}/tx`, { method: "POST", body: tx.hex });
+  if (!post.ok) throw new Error("Litecoin network rejected the transaction: " + (await post.text()));
+  return post.text();
+}
+
+// ---------- Dogecoin (same seed, BIP44 legacy only, coin type 3) ----------
+// Dogecoin has no SegWit in this wallet: legacy P2PKH (D… addresses,
+// pubKeyHash 0x1e, scriptHash 0x16, WIF 0x9e), cross-checked against
+// bitcoinjs-lib's Dogecoin params in scratch before shipping.
+// Sending is intentionally NOT wired: verified live 2026-11-06, no
+// keyless API offers a raw-transaction broadcast for Dogecoin
+// (dogechain's pushtx is dead; BlockCypher's /txs/send builds the
+// transaction server-side, which breaks Fluid's local-signing rule).
+// Balances and fees are live via dogechain.com; the app shows the send
+// button disabled with the reason.
+const DOGE_NETWORK = { bech32: "doge", pubKeyHash: 0x1e, scriptHash: 0x16, wif: 0x9e };
+function dogeKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/44'/3'/${account}'/0/0`);
+  const pay = btc.p2pkh(child.publicKey, DOGE_NETWORK);
+  return { child, address: pay.address, script: pay.script };
+}
+export function dogecoinAddress(phrase, account = 0) { return dogeKeys(phrase, account).address; }
+export function isValidDogeAddress(address) {
+  try {
+    const raw = base58check(sha256Bytes).decode(String(address).trim());
+    return raw.length === 21 && raw[0] === 0x1e;
+  } catch { return false; }
+}
+// Dogecoin's dust limit is high (0.01 DOGE since Core 1.14.5): outputs
+// below this are unspendable in practice, so it is the wallet minimum.
+export const DOGE_MIN_OUTPUT = 0.01;
+const DOGECHAIN_API = "https://dogechain.com/api";
+export async function getDogecoinBalance(address) {
+  const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`);
+  const d = await res.json();
+  const bal = d?.balance ?? d?.data?.balance;
+  if (bal == null) throw new Error("Dogecoin balance lookup failed.");
+  return Number(bal);
+}
+/** Live fee context for display (sending is disabled — see note above). */
+export async function getDogeFeeInfo() {
+  try {
+    const res = await fetch(`${DOGECHAIN_API}/v3/fees`);
+    const d = await res.json();
+    return { medianSatByte: Number(d?.data?.fee_rate_koinu_per_byte?.median) || null, medianFeeDoge: Number(d?.data?.median_fee_paid) || null };
+  } catch { return { medianSatByte: null, medianFeeDoge: null }; }
+}
+
+// ---------- Bitcoin Cash (same seed, BIP44 coin type 145, CashAddr) ----------
+// BCH signing is NOT plain Bitcoin signing: it uses the ForkID sighash
+// (BIP143-style digest, sighash byte 0x41, forkId 0), which
+// @scure/btc-signer does not implement — so the digest and transaction
+// are assembled here from the spec and signed with @noble/curves.
+// VALIDATED before shipping (2026-11-06, scratch cross-checks):
+//  - the digest below is byte-identical to bitcore-lib-cash's
+//    Transaction.Sighash output (modulo bitcore's display reversal)
+//    on 1-input and 2-input scenarios;
+//  - a real confirmed mainnet signature (tx 18ea60ef…, block 976217)
+//    verifies over this digest with two independent ECDSA codebases
+//    (tiny-secp256k1 and @noble/curves);
+//  - a transaction built by this code passes bitcore-lib-cash's own
+//    consensus script interpreter (SCRIPT_ENABLE_SIGHASH_FORKID).
+// GOTCHA that the validation caught: @noble/curves v2 sign/verify
+// PREHASH the message by default — with a sighash digest the digest
+// IS the message, so every sign call must pass { prehash: false }.
+const bchDsha256 = (b) => sha256(sha256(b));
+const bchHash160 = (b) => ripemd160(sha256(b));
+const bchB58Check = base58check(sha256);
+const hexToBytesB = (h) => Uint8Array.from(Buffer.from(h, "hex"));
+const bytesToHexB = (b) => Buffer.from(b).toString("hex");
+
+// CashAddr (BCH's bech32-like format) — encode/decode per the CashAddr
+// spec (polymod checksum, 5-bit payload, version byte: type << 3 | size).
+const CASHADDR_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+function cashaddrPolymod(values) {
+  const GENERATOR = [0x98f2bc8e61n, 0x79b76d99e2n, 0xf33e5fb3c4n, 0xae2eabe2a8n, 0x1e4f43e470n];
+  let c = 1n;
+  for (const v of values) {
+    const c0 = c >> 35n;
+    c = ((c & 0x07ffffffffn) << 5n) ^ BigInt(v);
+    for (let i = 0; i < 5; i++) if ((c0 >> BigInt(i)) & 1n) c ^= GENERATOR[i];
+  }
+  return c ^ 1n;
+}
+function convertBitsB(data, from, to, pad) {
+  let acc = 0, bits = 0; const out = [];
+  for (const v of data) {
+    acc = (acc << from) | v; bits += from;
+    while (bits >= to) { bits -= to; out.push((acc >> bits) & ((1 << to) - 1)); }
+  }
+  if (pad) { if (bits) out.push((acc << (to - bits)) & ((1 << to) - 1)); }
+  else if (bits >= from || ((acc << (to - bits)) & ((1 << to) - 1))) throw new Error("bad padding");
+  return out;
+}
+export function cashaddrEncode(hash, type = "p2pkh", prefix = "bitcoincash") {
+  const version = type === "p2pkh" ? 0 : 8; // 160-bit hash: size bits 0
+  const payload = convertBitsB([version, ...hash], 8, 5, true);
+  const prefixData = [...prefix].map(ch => ch.charCodeAt(0) & 0x1f);
+  const mod = cashaddrPolymod([...prefixData, 0, ...payload, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const checksum = [];
+  for (let i = 0; i < 8; i++) checksum.push(Number((mod >> BigInt(5 * (7 - i))) & 0x1fn));
+  return prefix + ":" + [...payload, ...checksum].map(i => CASHADDR_CHARSET[i]).join("");
+}
+export function cashaddrDecode(str) {
+  let s = String(str).trim().toLowerCase();
+  let prefix = "bitcoincash";
+  if (s.includes(":")) { const parts = s.split(":"); prefix = parts[0]; s = parts[1]; }
+  if (!/^[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+$/.test(s)) throw new Error("bad cashaddr characters");
+  const data = [...s].map(ch => CASHADDR_CHARSET.indexOf(ch));
+  const prefixData = [...prefix].map(ch => ch.charCodeAt(0) & 0x1f);
+  if (cashaddrPolymod([...prefixData, 0, ...data]) !== 0n) throw new Error("bad cashaddr checksum");
+  const payload = convertBitsB(data.slice(0, -8), 5, 8, false);
+  const version = payload[0];
+  const type = (version >> 3) & 0x1f; // 0=p2pkh, 1=p2sh
+  const expected = [20, 24, 28, 32, 40, 48, 56, 64][version & 0x07];
+  const hash = Uint8Array.from(payload.slice(1));
+  if (hash.length !== expected) throw new Error("bad cashaddr hash length");
+  return { prefix, type: type === 0 ? "p2pkh" : type === 1 ? "p2sh" : "unknown", hash };
+}
+/** Any BCH address (CashAddr with/without prefix, or legacy base58) → output script bytes. */
+export function bchAddressToScript(address) {
+  const a = String(address).trim();
+  if (/^(bitcoincash|bch):/i.test(a) || /^[qp][a-z0-9]{41}$/i.test(a)) {
+    const { type, hash } = cashaddrDecode(a);
+    if (type === "p2pkh") return Uint8Array.from([0x76, 0xa9, 0x14, ...hash, 0x88, 0xac]);
+    if (type === "p2sh") return Uint8Array.from([0xa9, 0x14, ...hash, 0x87]);
+    throw new Error("Unsupported CashAddr type.");
+  }
+  const bytes = bchB58Check.decode(a); // 0x00 p2pkh / 0x05 p2sh + hash160
+  if (bytes.length !== 21) throw new Error("bad legacy address");
+  if (bytes[0] === 0x00) return Uint8Array.from([0x76, 0xa9, 0x14, ...bytes.slice(1), 0x88, 0xac]);
+  if (bytes[0] === 0x05) return Uint8Array.from([0xa9, 0x14, ...bytes.slice(1), 0x87]);
+  throw new Error("bad legacy address version");
+}
+export function isValidBchAddress(address) {
+  try { bchAddressToScript(address); return true; } catch { return false; }
+}
+
+function bchKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/44'/145'/${account}'/0/0`);
+  const hash = bchHash160(child.publicKey);
+  const script = Uint8Array.from([0x76, 0xa9, 0x14, ...hash, 0x88, 0xac]);
+  return { child, hash, script, address: cashaddrEncode(hash) };
+}
+export function bitcoinCashAddress(phrase, account = 0) { return bchKeys(phrase, account).address; }
+export function bitcoinCashLegacyAddress(phrase, account = 0) {
+  return bchB58Check.encode(Uint8Array.from([0x00, ...bchKeys(phrase, account).hash]));
+}
+
+// ForkID sighash (BIP143 digest with hashType 0x41 = SIGHASH_ALL | FORKID, forkId 0)
+const u32leB = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, true); return b; };
+const u64leB = (n) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), true); return b; };
+const compactSizeB = (n) => {
+  if (n < 0xfd) return Uint8Array.of(n);
+  if (n <= 0xffff) { const b = new Uint8Array(3); b[0] = 0xfd; new DataView(b.buffer).setUint16(1, n, true); return b; }
+  const b = new Uint8Array(5); b[0] = 0xfe; new DataView(b.buffer).setUint32(1, n, true); return b;
+};
+const catB = (...parts) => { const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+export const BCH_SIGHASH_FORKID = 0x41;
+export function bchSighashDigest(tx, inputIndex, scriptCode, amountSat) {
+  const hashPrevouts = bchDsha256(catB(...tx.inputs.map(i => catB(hexToBytesB(i.txid).reverse(), u32leB(i.index)))));
+  const hashSequence = bchDsha256(catB(...tx.inputs.map(i => u32leB(i.sequence ?? 0xffffffff))));
+  const hashOutputs = bchDsha256(catB(...tx.outputs.map(o => catB(u64leB(o.value), compactSizeB(o.script.length), o.script))));
+  const inp = tx.inputs[inputIndex];
+  const preimage = catB(
+    u32leB(tx.version ?? 2), hashPrevouts, hashSequence,
+    hexToBytesB(inp.txid).reverse(), u32leB(inp.index),
+    compactSizeB(scriptCode.length), scriptCode, u64leB(amountSat), u32leB(inp.sequence ?? 0xffffffff),
+    hashOutputs, u32leB(tx.locktime ?? 0), u32leB(BCH_SIGHASH_FORKID),
+  );
+  return bchDsha256(preimage);
+}
+function derIntB(x) {
+  let i = 0; while (i < x.length - 1 && x[i] === 0) i++;
+  let v = x.slice(i);
+  if (v[0] & 0x80) v = Uint8Array.from([0, ...v]);
+  return v;
+}
+function derEncodeB(compact) {
+  const r = derIntB(compact.slice(0, 32)), s = derIntB(compact.slice(32, 64));
+  const body = Uint8Array.from([0x02, r.length, ...r, 0x02, s.length, ...s]);
+  return Uint8Array.from([0x30, body.length, ...body]);
+}
+/** Assemble + sign a BCH transaction (all inputs spend the wallet's own P2PKH script). */
+export function buildSignedBchTx({ inputs, outputs, privateKey, publicKey, ownScript }) {
+  const tx = { version: 2, locktime: 0, inputs: inputs.map(i => ({ ...i, sequence: 0xffffffff })), outputs };
+  const scriptSigs = tx.inputs.map((inp, idx) => {
+    const digest = bchSighashDigest(tx, idx, ownScript, inp.value);
+    const compact = secp256k1.sign(digest, privateKey, { lowS: true, prehash: false }); // digest IS the message
+    const sigWithType = Uint8Array.from([...derEncodeB(compact), BCH_SIGHASH_FORKID]);
+    return catB(compactSizeB(sigWithType.length), sigWithType, compactSizeB(publicKey.length), publicKey);
+  });
+  const raw = catB(
+    u32leB(tx.version), compactSizeB(tx.inputs.length),
+    ...tx.inputs.map((inp, i) => catB(hexToBytesB(inp.txid).reverse(), u32leB(inp.index), compactSizeB(scriptSigs[i].length), scriptSigs[i], u32leB(0xffffffff))),
+    compactSizeB(outputs.length),
+    ...outputs.map(o => catB(u64leB(o.value), compactSizeB(o.script.length), o.script)),
+    u32leB(0),
+  );
+  return { hex: bytesToHexB(raw), txid: bytesToHexB(bchDsha256(raw).reverse()) };
+}
+
+const HASKOIN_BCH = "https://api.haskoin.com/bch"; // keyless, verified live 2026-11-06
+export async function getBitcoinCashBalance(address) {
+  const res = await fetch(`${HASKOIN_BCH}/address/${address}/balance`);
+  const d = await res.json();
+  if (d?.confirmed == null) throw new Error("Bitcoin Cash balance lookup failed.");
+  return (Number(d.confirmed) + Number(d.unconfirmed || 0)) / 1e8;
+}
+export const BCH_DUST = 546;
+export function formatBitcoinCashSendIntent({ amount, to, feeBch }) {
+  return `Send ${amount} BCH to ${to} on Bitcoin Cash. Network fee about ${feeBch} BCH. Confirm?`;
+}
+/** Build, sign and broadcast a BCH payment (1 sat/byte fee). Returns the txid. */
+export async function sendBitcoinCash(phrase, { to, amountBch }) {
+  const { child, address, script } = bchKeys(phrase);
+  const destScript = bchAddressToScript(to); // throws on a bad address
+  const target = Math.round(amountBch * 1e8);
+  if (target < BCH_DUST) throw new Error(`Amount is below the Bitcoin Cash dust limit (${BCH_DUST} satoshis).`);
+  const res = await fetch(`${HASKOIN_BCH}/address/${address}/unspent`);
+  const utxos = (await res.json()).filter(u => u.value > 0)
+    .map(u => ({ txid: u.txid, index: u.index, value: u.value }))
+    .sort((a, b) => b.value - a.value);
+  const picked = []; let sum = 0;
+  for (const u of utxos) {
+    picked.push(u); sum += u.value;
+    const fee = 10 + picked.length * 148 + 2 * 34; // 1 sat/byte, P2PKH sizing
+    if (sum >= target + fee) break;
+  }
+  const fee = 10 + picked.length * 148 + 2 * 34;
+  if (sum < target + fee) throw new Error("Not enough confirmed BCH to cover the amount plus network fee.");
+  const change = sum - target - fee;
+  const outputs = [{ value: target, script: destScript }];
+  if (change >= BCH_DUST) outputs.push({ value: change, script });
+  const { hex, txid } = buildSignedBchTx({
+    inputs: picked, outputs, privateKey: child.privateKey, publicKey: child.publicKey, ownScript: script,
+  });
+  const post = await fetch(`${HASKOIN_BCH}/transactions`, {
+    method: "POST", headers: { "Content-Type": "text/plain" }, body: hex,
+  });
+  if (!post.ok) throw new Error("Bitcoin Cash network rejected the transaction: " + (await post.text()));
+  const d = await post.json().catch(() => null);
+  return d?.txid || txid;
 }
 
 // ---------- Tron (same secp256k1 key as the EVM account) ----------
