@@ -2075,4 +2075,165 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     JSON.stringify(filterReceiveNetworks("taproot").map(e => e.id)) === JSON.stringify(["bitcoin"]));
 }
 
+// Lightning native node — BOLT 11 codec pinned byte-for-byte by the
+// official BOLT 11 spec examples (all signed with the spec's example
+// private key, RFC 6979 deterministic signatures).
+{
+  const { parseBolt11, encodeBolt11, bolt11IsExpired, parseBolt12Offer, resolveBip353Address,
+    classifyLightningTarget, deriveLightningSeed, ASYNC_PAY_HOLD, validateHoldHours,
+    holdWindowCopy, summariseHeldPayments } = await import("../src/wallet-core.js");
+  const { bech32m } = await import("@scure/base");
+  const PRIV = "e126f68f7eafcc8b74f54d269fe206be715000f94dac067d1c04a8ca3b2db734";
+  const PAYEE = "03e7156ae33b0a208d0744199163177e909e80176e55d97a2f221ede0f934dd9ad";
+  const PH = "0001020304050607080900010203040506070809000102030405060708090102";
+  const SECRET = "11".repeat(32);
+  const FEAT = [16, 8, 0];
+  const TS = 1496314658;
+  const HASH_DESC = "3925b6f67e2c340036ed12093dd44e0368df1b6ea26c53dbe4811f58fd5db8c1";
+  const V1 = "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpl2pkx2ctnv5sxxmmwwd5kgetjypeh2ursdae8g6twvus8g6rfwvs8qun0dfjkxaq9qrsgq357wnc5r2ueh7ck6q93dj32dlqnls087fxdwk8qakdyafkq3yap9us6v52vjjsrvywa6rt52cm9r9zqt8r2t7mlcwspyetp5h2tztugp9lfyql";
+  const V2 = "lnbc2500u1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7enxv4jsxqzpu9qrsgquk0rl77nj30yxdy8j9vdx85fkpmdla2087ne0xh8nhedh8w27kyke0lp53ut353s06fv3qfegext0eh0ymjpf39tuven09sam30g4vgpfna3rh";
+  const V3 = "lnbc2500u1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdpquwpc4curk03c9wlrswe78q4eyqc7d8d0xqzpu9qrsgqhtjpauu9ur7fw2thcl4y9vfvh4m9wlfyz2gem29g5ghe2aak2pm3ps8fdhtceqsaagty2vph7utlgj48u0ged6a337aewvraedendscp573dxr";
+  const V4 = "lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqhp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqs9qrsgq7ea976txfraylvgzuxs8kgcw23ezlrszfnh8r6qtfpr6cxga50aj6txm9rxrydzd06dfeawfk6swupvz4erwnyutnjq7x39ymw6j38gp7ynn44";
+  const V5 = "lntb20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfpp3x9et2e20v6pu37c5d9vax37wxq72un989qrsgqdj545axuxtnfemtpwkc45hx9d2ft7x04mt8q7y6t0k2dge9e7h8kpy9p34ytyslj3yu569aalz2xdk8xkd7ltxqld94u8h2esmsmacgpghe9k8";
+  const V6 = "lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqhp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqsfpp3qjmp7lwpagxun9pygexvgpjdc4jdj85fr9yq20q82gphp2nflc7jtzrcazrra7wwgzxqc8u7754cdlpfrmccae92qgzqvzq2ps8pqqqqqqpqqqqq9qqqvpeuqafqxu92d8lr6fvg0r5gv0heeeqgcrqlnm6jhphu9y00rrhy4grqszsvpcgpy9qqqqqqgqqqqq7qqzq9qrsgqdfjcdk6w3ak5pca9hwfwfh63zrrz06wwfya0ydlzpgzxkn5xagsqz7x9j4jwe7yj7vaf2k9lqsdk45kts2fd0fkr28am0u4w95tt2nsq76cqw0";
+  const V7 = "lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfppj3a24vwu6r8ejrss3axul8rxldph2q7z99qrsgqz6qsgww34xlatfj6e3sngrwfy3ytkt29d2qttr8qz2mnedfqysuqypgqex4haa2h8fx3wnypranf3pdwyluftwe680jjcfp438u82xqphf75ym";
+  const w2bStrict = (words) => { // 5-bit words -> bytes, dropping the pad bits of the final word
+    let acc = 0, bits = 0; const out = [];
+    for (const w of words) { acc = (acc << 5) | w; bits += 5; while (bits >= 8) { bits -= 8; out.push((acc >>> bits) & 0xff); } acc &= (1 << bits) - 1; }
+    return Buffer.from(out).toString("hex");
+  };
+  const p1 = parseBolt11(V1);
+  ok("ln: BOLT11 spec vector 1 parses (donation, amountless)",
+    p1.network === "mainnet" && p1.amountMsat === null && p1.timestamp === TS &&
+    p1.paymentHash === PH && p1.paymentSecret === SECRET &&
+    p1.description === "Please consider supporting this project" &&
+    p1.payee === PAYEE && p1.expirySeconds === 3600 && p1.minFinalCltvExpiryDelta === 18);
+  ok("ln: BOLT11 spec vector 1 re-encodes byte-for-byte",
+    encodeBolt11({ network: "bc", amountMsat: null, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["d", "Please consider supporting this project"], ["9", FEAT]] }) === V1);
+  const p2 = parseBolt11(V2);
+  ok("ln: BOLT11 spec vector 2 parses (2500u, 60s expiry)",
+    p2.amountMsat === 250000000n && p2.description === "1 cup coffee" && p2.expirySeconds === 60 && p2.payee === PAYEE);
+  ok("ln: BOLT11 spec vector 2 re-encodes byte-for-byte",
+    encodeBolt11({ network: "bc", amountMsat: 250000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["d", "1 cup coffee"], ["x", 60], ["9", FEAT]] }) === V2);
+  ok("ln: BOLT11 spec vector 3 (UTF-8 description) re-encodes byte-for-byte",
+    encodeBolt11({ network: "bc", amountMsat: 250000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["d", "ナンセンス 1杯"], ["x", 60], ["9", FEAT]] }) === V3 &&
+    parseBolt11(V3).description === "ナンセンス 1杯");
+  ok("ln: BOLT11 spec vector 4 (hashed description, 20m) re-encodes byte-for-byte",
+    encodeBolt11({ network: "bc", amountMsat: 2000000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["h", HASH_DESC], ["9", FEAT]] }) === V4 &&
+    parseBolt11(V4).descriptionHash === HASH_DESC);
+  const p5 = parseBolt11(V5);
+  ok("ln: BOLT11 spec vector 5 parses (testnet, P2PKH fallback)",
+    p5.network === "testnet" && p5.amountMsat === 2000000000n && p5.fallback.version === 17 &&
+    w2bStrict(p5.fallback.programWords) === "3172b5654f6683c8fb146959d347ce303cae4ca7");
+  ok("ln: BOLT11 spec vector 5 re-encodes byte-for-byte",
+    encodeBolt11({ network: "tb", amountMsat: 2000000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["h", HASH_DESC], ["p", PH],
+        ["f", { version: 17, program: "3172b5654f6683c8fb146959d347ce303cae4ca7" }], ["9", FEAT]] }) === V5);
+  const p6 = parseBolt11(V6);
+  ok("ln: BOLT11 spec vector 6 parses both route hints exactly",
+    p6.routeHints.length === 2 &&
+    p6.routeHints[0].pubkey === "029e03a901b85534ff1e92c43c74431f7ce72046060fcf7a95c37e148f78c77255" &&
+    p6.routeHints[0].shortChannelId === "66051x263430x1800" &&
+    p6.routeHints[0].feeBaseMsat === 1 && p6.routeHints[0].feeProportionalMillionths === 20 && p6.routeHints[0].cltvExpiryDelta === 3 &&
+    p6.routeHints[1].pubkey === "039e03a901b85534ff1e92c43c74431f7ce72046060fcf7a95c37e148f78c77255" &&
+    p6.routeHints[1].shortChannelId === "197637x395016x2314" &&
+    p6.routeHints[1].feeBaseMsat === 2 && p6.routeHints[1].feeProportionalMillionths === 30 && p6.routeHints[1].cltvExpiryDelta === 4);
+  ok("ln: BOLT11 spec vector 6 re-encodes byte-for-byte",
+    encodeBolt11({ network: "bc", amountMsat: 2000000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["h", HASH_DESC],
+        ["f", { version: 17, program: w2bStrict(p6.fallback.programWords) }],
+        ["r", p6.routeHints], ["9", FEAT]] }) === V6);
+  const p7 = parseBolt11(V7);
+  ok("ln: BOLT11 spec vector 7 (P2SH fallback) re-encodes byte-for-byte",
+    p7.fallback.version === 18 &&
+    encodeBolt11({ network: "bc", amountMsat: 2000000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["h", HASH_DESC], ["p", PH],
+        ["f", { version: 18, program: w2bStrict(p7.fallback.programWords) }], ["9", FEAT]] }) === V7);
+  ok("ln: BOLT11 expiry honours the x field",
+    bolt11IsExpired(p2, TS + 59) === false && bolt11IsExpired(p2, TS + 61) === true &&
+    bolt11IsExpired(p1, TS + 3599) === false && bolt11IsExpired(p1, TS + 3601) === true);
+  assert.throws(() => parseBolt11(V2.replace("2500u", "2501u")), /./);
+  ok("ln: a tampered invoice is refused (checksum/signature)", true);
+  assert.throws(() => parseBolt11(encodeBolt11({ network: "bc", amountMsat: null, timestamp: TS, privKey: PRIV,
+    fields: [["s", SECRET], ["d", "no payment hash"]] })), /payment hash/);
+  ok("ln: an invoice with no payment hash is refused", true);
+  assert.throws(() => parseBolt11("lnbc1garbage"), /./);
+  ok("ln: garbage input is refused", true);
+  ok("ln: amount encoding picks the shortest form, incl. pico",
+    parseBolt11(encodeBolt11({ network: "bc", amountMsat: 1n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["d", "one msat"]] })).amountMsat === 1n &&
+    encodeBolt11({ network: "bc", amountMsat: 100000000n, timestamp: TS, privKey: PRIV,
+      fields: [["s", SECRET], ["p", PH], ["d", "one milli"]] }).startsWith("lnbc1m1"));
+  ok("ln: deriveLightningSeed is pinned for the known test phrase",
+    Buffer.from(deriveLightningSeed(KNOWN_PHRASE)).toString("hex") ===
+      "83cced9bd54d12b9b00abdfbccfeb5ca2e06d4828ee2c326ff1315a19471d3dc" &&
+    deriveLightningSeed(KNOWN_PHRASE).length === 32);
+  // BOLT 12 offer parsing (hand-built TLV stream; byte layout per BOLT 12)
+  const tlv = (type, value) => Buffer.concat([Buffer.from([type, value.length]), value]);
+  const offerBytes = Buffer.concat([
+    tlv(2, Buffer.from("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000", "hex")),
+    tlv(4, Buffer.from("deadbeef", "hex")),
+    tlv(8, Buffer.from("01e240", "hex")),
+    tlv(10, Buffer.from("coffee", "utf8")),
+    tlv(14, Buffer.from("70dbd880", "hex")),
+    tlv(16, Buffer.from("fluid", "utf8")),
+    tlv(20, Buffer.alloc(0)),
+    tlv(22, Buffer.from(PAYEE, "hex")),
+  ]);
+  const b2w = (bytes) => { let acc = 0, bits = 0; const out = [];
+    for (const b of bytes) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >>> bits) & 31); } acc &= (1 << bits) - 1; }
+    if (bits > 0) out.push((acc << (5 - bits)) & 31); return out; };
+  const offerStr = bech32m.encode("lno", b2w(offerBytes), 8000);
+  const po = parseBolt12Offer(offerStr);
+  ok("ln: BOLT12 offer parses its display fields",
+    po.kind === "offer" && po.description === "coffee" && po.amountMsat === 123456n &&
+    po.issuer === "fluid" && po.issuerId === PAYEE && po.quantityMax === 0n &&
+    po.absoluteExpiry === 1893456000 && po.chains[0] === "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000" &&
+    po.metadata === "deadbeef");
+  ok("ln: BOLT12 offer id is the TLV stream hash",
+    po.offerId === Buffer.from(nobleSha256(offerBytes)).toString("hex"));
+  const oooBytes = Buffer.concat([tlv(10, Buffer.from("x", "utf8")), tlv(8, Buffer.from("01", "hex"))]);
+  assert.throws(() => parseBolt12Offer(bech32m.encode("lno", b2w(oooBytes), 8000)), /out of order/);
+  ok("ln: BOLT12 offer with out-of-order TLVs is refused", true);
+  // BIP-353 over a stubbed DoH endpoint
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("_bitcoin-payment.alice.example.com")) {
+      return { ok: true, json: async () => ({ Answer: [{ name: "_bitcoin-payment.alice.example.com", type: 16, data: `"bitcoin:?lno=${offerStr}"` }] }) };
+    }
+    throw new Error("unexpected fetch: " + url);
+  };
+  try {
+    const r = await resolveBip353Address("₿alice@example.com");
+    ok("ln: BIP-353 resolves a DNS TXT offer and validates it",
+      r.offer === offerStr && r.parsedOffer.description === "coffee");
+    await assert.rejects(() => resolveBip353Address("bob@example.com"), /No BIP-353|DNS lookup/);
+    ok("ln: BIP-353 with no TXT record fails plainly", true);
+  } finally { globalThis.fetch = realFetch; }
+  ok("ln: classifyLightningTarget routes every input shape",
+    classifyLightningTarget(V2).kind === "bolt11" &&
+    classifyLightningTarget(offerStr).kind === "bolt12" &&
+    classifyLightningTarget("alice@example.com").kind === "address" &&
+    classifyLightningTarget("ethuram").kind === "fluid-name" &&
+    classifyLightningTarget("not a payment").kind === "unknown");
+  ok("ln: async hold window is bounded and its copy is honest",
+    ASYNC_PAY_HOLD.defaultHours === 24 && ASYNC_PAY_HOLD.maxHours === 72 &&
+    validateHoldHours(72) === 72 && holdWindowCopy(24).includes("cannot take or redirect") &&
+    holdWindowCopy(24).includes("automatically returned to the sender"));
+  assert.throws(() => validateHoldHours(73), /between 1 and 72/);
+  assert.throws(() => validateHoldHours(0), /between 1 and 72/);
+  ok("ln: hold windows outside 1..72h are refused", true);
+  const sh = summariseHeldPayments([
+    { amountMsat: 1000n, holdExpiresAtSec: 2000 },
+    { amountMsat: 2500n, holdExpiresAtSec: 1500 },
+    { amountMsat: 500n, holdExpiresAtSec: 900 },
+  ], 1000);
+  ok("ln: held-payment summary totals, expiry ordering and lapse counting",
+    sh.count === 3 && sh.totalMsat === 4000n && sh.nextExpirySec === 1500 && sh.expiredUnswept === 1);
+}
+
 console.log(`\n${passed} checks passed`);

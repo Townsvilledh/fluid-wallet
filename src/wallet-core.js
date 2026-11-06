@@ -7,7 +7,7 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58, base58check, base58xrp, base64, base32, bech32, hex } from "@scure/base";
+import { base58, base58check, base58xrp, base64, base32, bech32, bech32m, hex } from "@scure/base";
 import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
 import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { TxBody as CosmosTxBody, TxRaw as CosmosTxRaw, AuthInfo as CosmosAuthInfo, SignDoc as CosmosSignDoc, SignerInfo as CosmosSignerInfo, ModeInfo as CosmosModeInfo } from "cosmjs-types/cosmos/tx/v1beta1/tx";
@@ -16,6 +16,7 @@ import { Any as ProtobufAny } from "cosmjs-types/google/protobuf/any";
 import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
 import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
 import { hmac } from "@noble/hashes/hmac.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256, sha512, sha512_256 } from "@noble/hashes/sha2.js";
 import { keccak_256, sha3_256 } from "@noble/hashes/sha3.js";
 import { blake2b } from "@noble/hashes/blake2.js";
@@ -2804,6 +2805,430 @@ export async function payLightningInvoice(invoice) {
   }
   await window.webln.enable();
   return window.webln.sendPayment(invoice);
+}
+
+// ---------- Lightning, native node (rust-lightning in WASM, lazy chunk) ----------
+// Fluid runs its OWN Lightning node, in the browser, from the same seed
+// phrase as every other chain. Keys never leave the device; there is no
+// custodian, no operator co-signing, no federation — the node is the
+// user's, the way the on-chain wallets are. The heavy engine
+// (rust-lightning compiled to WASM) lives in a lazily loaded chunk
+// (src/lightning-node.js); everything in this section is the pure,
+// testable protocol layer around it: BOLT 11 invoice codec, BOLT 12
+// offer parsing, BIP-353 resolution, and the async-receive (held HTLC)
+// state model from BOLT 12 async payments. The BOLT 11 codec is pinned
+// byte-for-byte by the official BOLT 11 spec examples (see tests) and
+// cross-checked against the Rust implementation in the chunk.
+
+/** The 32-byte seed for the in-app Lightning node, derived from the
+ *  wallet's BIP-39 seed with HKDF-SHA256 under a Fluid-specific domain
+ *  separator. Same phrase -> same Lightning node, on any device, and
+ *  independent of every other chain's keys. */
+export function deriveLightningSeed(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const seed = mnemonicToSeedSync(clean);
+  return hkdf(sha256, seed, new TextEncoder().encode("fluid"), new TextEncoder().encode("fluid/lightning/ldk-seed/v1"), 32);
+}
+
+// --- 5-bit word <-> byte helpers (BOLT 11 packs its data part as a bit
+// stream: words are concatenated as bits and zero-padded to bytes). ---
+function wordsToBytesPadded(words) {
+  let acc = 0, bits = 0; const out = [];
+  for (const w of words) {
+    acc = (acc << 5) | (w & 31); bits += 5;
+    while (bits >= 8) { bits -= 8; out.push((acc >>> bits) & 0xff); }
+    acc &= (1 << bits) - 1;
+  }
+  if (bits > 0) out.push((acc << (8 - bits)) & 0xff);
+  return Uint8Array.from(out);
+}
+/** Strict variant for VALUE decoding: N bytes encode to ceil(N*8/5)
+ *  words with zero padding bits in the final word; decoding must drop
+ *  the partial byte, not materialise it as a trailing zero byte. */
+function wordsToBytesStrict(words) {
+  const totalBits = words.length * 5;
+  const byteLen = Math.floor(totalBits / 8);
+  const full = wordsToBytesPadded(words);
+  return full.slice(0, byteLen);
+}
+function bytesToWords(bytes) {
+  let acc = 0, bits = 0; const out = [];
+  for (const b of bytes) {
+    acc = (acc << 8) | b; bits += 8;
+    while (bits >= 5) { bits -= 5; out.push((acc >>> bits) & 31); }
+    acc &= (1 << bits) - 1;
+  }
+  if (bits > 0) out.push((acc << (5 - bits)) & 31);
+  return out;
+}
+function wordsToInt(words) {
+  let v = 0n;
+  for (const w of words) v = (v << 5n) | BigInt(w & 31);
+  return v;
+}
+function intToWords(value, count = 0) {
+  let v = BigInt(value); const out = [];
+  while (v > 0n) { out.unshift(Number(v & 31n)); v >>= 5n; }
+  while (out.length < count) out.unshift(0);
+  return out.length ? out : [0];
+}
+const hexOf = (bytes) => Buffer.from(bytes).toString("hex");
+const bytesOfHex = (h) => Uint8Array.from(Buffer.from(String(h || ""), "hex"));
+
+// --- BOLT 11 ---
+const BOLT11_PREFIXES = { bc: "mainnet", tb: "testnet", bcrt: "regtest", tbs: "signet" };
+const BOLT11_MULT_MSAT = { "": 100000000000n, m: 100000000n, u: 100000n, n: 100n };
+function bolt11Hrp(network, amountMsat) {
+  if (amountMsat == null) return "ln" + network;
+  const a = BigInt(amountMsat);
+  if (a <= 0n) throw new Error("Invoice amount must be positive.");
+  for (const [suffix, mult] of [["", 100000000000n], ["m", 100000000n], ["u", 100000n], ["n", 100n]]) {
+    if (a % mult === 0n) return `ln${network}${a / mult}${suffix}`;
+  }
+  return `ln${network}${a * 10n}p`; // pico: value is msat*10, always ends in 0
+}
+function bolt11AmountFromHrp(hrp) {
+  const m = /^ln(bcrt|tbs|bc|tb)(\d+)?([munp])?$/.exec(hrp);
+  if (!m) throw new Error("That invoice's currency prefix is not recognised.");
+  const network = BOLT11_PREFIXES[m[1]];
+  if (!m[2]) return { network, amountMsat: null };
+  const digits = m[2], mult = m[3] || "";
+  if (mult === "p") {
+    if (!digits.endsWith("0")) throw new Error("Invalid invoice amount (pico amount must end in 0).");
+    return { network, amountMsat: BigInt(digits) / 10n };
+  }
+  return { network, amountMsat: BigInt(digits) * BOLT11_MULT_MSAT[mult] };
+}
+const BOLT11_TAGS = { p: 1, s: 16, d: 13, m: 27, n: 19, h: 23, x: 6, c: 24, f: 9, r: 3, "9": 5 };
+function bolt11TagWords(tag, value) {
+  switch (tag) {
+    case "p": case "s": case "h": {
+      const b = bytesOfHex(value); if (b.length !== 32) throw new Error(`Invoice field ${tag} must be 32 bytes.`);
+      return bytesToWords(b);
+    }
+    case "n": {
+      const b = bytesOfHex(value); if (b.length !== 33) throw new Error("Invoice payee field must be 33 bytes.");
+      return bytesToWords(b);
+    }
+    case "d": return bytesToWords(new TextEncoder().encode(String(value)));
+    case "m": return bytesToWords(bytesOfHex(value));
+    case "x": case "c": return intToWords(BigInt(value));
+    case "f": {
+      const prog = bytesToWords(bytesOfHex(value.program || ""));
+      return [value.version, ...prog];
+    }
+    case "r": {
+      const entries = value.map((e) => {
+        const pk = bytesOfHex(e.pubkey); if (pk.length !== 33) throw new Error("Route hint pubkey must be 33 bytes.");
+        let scid;
+        if (typeof e.shortChannelId === "string") {
+          const [bh, ti, oi] = e.shortChannelId.split("x").map((p) => BigInt(p));
+          scid = (bh << 40n) | (ti << 16n) | oi; // blockheight(24) | txindex(24) | output(16)
+        } else scid = BigInt(e.shortChannelId);
+        const buf = new Uint8Array(51);
+        buf.set(pk, 0);
+        const dv = new DataView(buf.buffer);
+        dv.setBigUint64(33, scid);
+        dv.setUint32(41, Number(e.feeBaseMsat));
+        dv.setUint32(45, Number(e.feeProportionalMillionths));
+        dv.setUint16(49, Number(e.cltvExpiryDelta));
+        return buf;
+      });
+      const all = new Uint8Array(entries.length * 51);
+      entries.forEach((b, i) => all.set(b, i * 51));
+      return bytesToWords(all);
+    }
+    case "9": return [...value]; // caller supplies raw 5-bit feature words
+    default: throw new Error("Unknown invoice field: " + tag);
+  }
+}
+/** Encode a BOLT 11 invoice. `fields` is an ORDERED array of
+ *  [tag, value] pairs (order is significant — it is signed). Signing is
+ *  RFC 6979 deterministic ECDSA over secp256k1, exactly per BOLT 11;
+ *  pinned byte-for-byte by the spec's own examples in the test suite. */
+export function encodeBolt11({ network = "bc", amountMsat = null, timestamp, fields, privKey }) {
+  if (!BOLT11_PREFIXES[network]) throw new Error("Unknown invoice network: " + network);
+  const hrp = bolt11Hrp(network, amountMsat);
+  const words = [...intToWords(BigInt(timestamp), 7)];
+  for (const [tag, value] of fields) {
+    const data = bolt11TagWords(tag, value);
+    words.push(BOLT11_TAGS[tag], data.length >> 5, data.length & 31, ...data);
+  }
+  const signData = new Uint8Array([...new TextEncoder().encode(hrp), ...wordsToBytesPadded(words)]);
+  const hash = sha256(signData);
+  const priv = bytesOfHex(privKey);
+  const sig = secp256k1.sign(hash, priv, { prehash: false });
+  const myPub = hexOf(secp256k1.getPublicKey(priv));
+  let recovery = -1;
+  for (let rec = 0; rec < 4; rec++) {
+    try {
+      const pk = secp256k1.Signature.fromBytes(sig, "compact").addRecoveryBit(rec).recoverPublicKey(hash);
+      if (pk.toHex() === myPub) { recovery = rec; break; }
+    } catch { /* not this recovery id */ }
+  }
+  if (recovery < 0) throw new Error("Could not determine the invoice signature recovery id.");
+  const sigBytes = new Uint8Array(65); sigBytes.set(sig, 0); sigBytes[64] = recovery;
+  return bech32.encode(hrp, [...words, ...bytesToWords(sigBytes)], 4000);
+}
+/** Parse and validate a BOLT 11 invoice (BOLT 11 reader requirements:
+ *  exactly one p and one s field, exactly one of d/h, fixed field
+ *  lengths, valid signature — the payee is recovered from the signature
+ *  or taken from the n field and verified against it). Hostile input:
+ *  anything malformed throws; nothing is trusted on shape alone. */
+export function parseBolt11(input) {
+  let s = String(input || "").trim();
+  if (/^lightning:/i.test(s)) s = s.slice(10);
+  s = s.toLowerCase();
+  let dec;
+  try { dec = bech32.decode(s, 8000); }
+  catch { throw new Error("That is not a valid BOLT 11 invoice (bech32 checksum failed)."); }
+  if (!dec.prefix.startsWith("ln")) throw new Error("That is not a BOLT 11 invoice.");
+  const { network, amountMsat } = bolt11AmountFromHrp(dec.prefix);
+  const words = dec.words;
+  if (words.length < 7 + 104) throw new Error("Invoice is too short to be valid.");
+  const timestamp = Number(wordsToInt(words.slice(0, 7)));
+  const sigWords = words.slice(words.length - 104);
+  const fieldWords = words.slice(7, words.length - 104);
+  const sigBytes = wordsToBytesStrict(sigWords);
+  if (sigBytes.length !== 65) throw new Error("Invoice signature has the wrong length.");
+  const out = {
+    network, amountMsat, timestamp,
+    paymentHash: null, paymentSecret: null, description: null, descriptionHash: null,
+    expirySeconds: 3600, minFinalCltvExpiryDelta: 18, metadata: null,
+    fallback: null, routeHints: [], featuresWords: null, payee: null, payeeFromField: false,
+  };
+  const seen = new Set();
+  let i = 0;
+  while (i + 2 < fieldWords.length + 0 && i < fieldWords.length) {
+    const type = fieldWords[i];
+    const len = (fieldWords[i + 1] << 5) | fieldWords[i + 2];
+    const data = fieldWords.slice(i + 3, i + 3 + len);
+    if (data.length < len) throw new Error("Invoice has a truncated field.");
+    i += 3 + len;
+    const tagName = Object.keys(BOLT11_TAGS).find((k) => BOLT11_TAGS[k] === type);
+    if (!tagName) continue; // unknown fields are skipped, per spec
+    if (["p", "s", "d", "h", "n", "x", "c"].includes(tagName)) {
+      if (seen.has(tagName)) throw new Error(`Invoice has a duplicate ${tagName} field.`);
+      seen.add(tagName);
+    }
+    const dataBytes = wordsToBytesStrict(data);
+    switch (tagName) {
+      case "p": if (len !== 52) throw new Error("Invoice payment hash has the wrong length."); out.paymentHash = hexOf(dataBytes.slice(0, 32)); break;
+      case "s": if (len !== 52) throw new Error("Invoice payment secret has the wrong length."); out.paymentSecret = hexOf(dataBytes.slice(0, 32)); break;
+      case "h": if (len !== 52) throw new Error("Invoice description hash has the wrong length."); out.descriptionHash = hexOf(dataBytes.slice(0, 32)); break;
+      case "n": if (len !== 53) throw new Error("Invoice payee field has the wrong length."); out.payee = hexOf(dataBytes.slice(0, 33)); out.payeeFromField = true; break;
+      case "d":
+        try { out.description = new TextDecoder("utf-8", { fatal: true }).decode(dataBytes); }
+        catch { throw new Error("Invoice description is not valid UTF-8."); }
+        break;
+      case "m": out.metadata = hexOf(dataBytes); break;
+      case "x": out.expirySeconds = Number(wordsToInt(data)); break;
+      case "c": out.minFinalCltvExpiryDelta = Number(wordsToInt(data)); break;
+      case "f": out.fallback = { version: data[0], programWords: data.slice(1) }; break;
+      case "9": out.featuresWords = [...data]; break;
+      case "r": {
+        const bytes = wordsToBytesStrict(data);
+        for (let off = 0; off + 51 <= bytes.length; off += 51) {
+          const dv = new DataView(bytes.buffer, bytes.byteOffset + off, 51);
+          const scid = dv.getBigUint64(33); // entry layout: pubkey(33) | scid(8) | feeBase(4) | feeProp(4) | cltv(2)
+          out.routeHints.push({
+            pubkey: hexOf(bytes.slice(off, off + 33)),
+            shortChannelId: `${scid >> 40n}x${(scid >> 16n) & 0xffffffn}x${scid & 0xffffn}`,
+            feeBaseMsat: dv.getUint32(41), feeProportionalMillionths: dv.getUint32(45),
+            cltvExpiryDelta: dv.getUint16(49),
+          });
+        }
+        break;
+      }
+    }
+  }
+  if (!out.paymentHash) throw new Error("Invoice is missing its payment hash.");
+  if (!out.paymentSecret) throw new Error("Invoice is missing its payment secret.");
+  if ((out.description == null) === (out.descriptionHash == null))
+    throw new Error("Invoice must carry exactly one of a description or a description hash.");
+  // Signature: recover the payee (or verify against the n field).
+  const signData = new Uint8Array([...new TextEncoder().encode(dec.prefix), ...wordsToBytesPadded(words.slice(0, words.length - 104))]);
+  const hash = sha256(signData);
+  const sig = sigBytes.slice(0, 64), recId = sigBytes[64];
+  if (recId > 3) throw new Error("Invoice signature recovery id is out of range.");
+  let recovered;
+  try { recovered = secp256k1.Signature.fromBytes(sig, "compact").addRecoveryBit(recId).recoverPublicKey(hash).toHex(); }
+  catch { throw new Error("Invoice signature is invalid."); }
+  if (out.payeeFromField) {
+    // With an n field the signature itself must verify against it.
+    let ok = false;
+    try { ok = secp256k1.verify(sig, hash, bytesOfHex(out.payee), { prehash: false, format: "compact" }); } catch { ok = false; }
+    if (!ok) throw new Error("Invoice signature does not match its stated payee.");
+  } else {
+    out.payee = recovered;
+  }
+  out.expiresAt = timestamp + out.expirySeconds;
+  return out;
+}
+/** Has this invoice expired at `nowSec` (default: now)? */
+export function bolt11IsExpired(parsed, nowSec = Math.floor(Date.now() / 1000)) {
+  return nowSec > parsed.expiresAt;
+}
+
+// --- BOLT 12 offers (display/validation layer; the node builds them) ---
+// TLV type assignments for the `offer` stream per BOLT 12. Kept in one
+// table so it can be audited against the spec / the Rust implementation
+// in one place.
+export const BOLT12_OFFER_TLV = {
+  chains: 2, metadata: 4, currency: 6, amount: 8, description: 10,
+  features: 12, absoluteExpiry: 14, issuer: 16, paths: 18,
+  quantityMax: 20, issuerId: 22,
+};
+function bigSizeRead(bytes, off) {
+  if (off >= bytes.length) throw new Error("Truncated BOLT 12 data.");
+  const b = bytes[off];
+  if (b < 0xfd) return [BigInt(b), 1];
+  if (b === 0xfd) { if (off + 2 >= bytes.length) throw new Error("Truncated BOLT 12 data."); return [BigInt((bytes[off + 1] << 8) | bytes[off + 2]), 3]; }
+  if (b === 0xfe) { if (off + 4 >= bytes.length) throw new Error("Truncated BOLT 12 data."); return [BigInt(new DataView(bytes.buffer, bytes.byteOffset + off + 1, 4).getUint32(0)), 5]; }
+  if (off + 8 >= bytes.length) throw new Error("Truncated BOLT 12 data.");
+  return [new DataView(bytes.buffer, bytes.byteOffset + off + 1, 8).getBigUint64(0), 9];
+}
+function tu64(bytes) { let v = 0n; for (const b of bytes) v = (v << 8n) | BigInt(b); return v; }
+/** Parse a BOLT 12 offer (lno1…) into its displayable fields. The offer
+ *  is an unsigned TLV stream; its id is the SHA-256 of the stream. Only
+ *  known fields are surfaced; unknown TLVs are reported, never trusted
+ *  silently. Full payment handling lives in the node chunk — this is
+ *  the validation/display layer the wallet UI and BIP-353 resolver use
+ *  before an offer is shown or handed to the node. */
+export function parseBolt12Offer(input) {
+  let s = String(input || "").trim();
+  if (/^lightning:/i.test(s)) s = s.slice(10);
+  s = s.toLowerCase();
+  let dec;
+  try { dec = bech32m.decode(s, 8000); }
+  catch { throw new Error("That is not a valid BOLT 12 string (bech32m checksum failed)."); }
+  const kind = { lno: "offer", lnr: "invoice_request", lni: "invoice" }[dec.prefix];
+  if (!kind) throw new Error("That is not a BOLT 12 string.");
+  const bytes = wordsToBytesStrict(dec.words);
+  const out = {
+    kind, raw: s, chains: null, metadata: null, currency: null, amountMsat: null,
+    description: null, featuresHex: null, absoluteExpiry: null, issuer: null,
+    hasPaths: false, quantityMax: null, issuerId: null, unknownTlvs: [],
+    offerId: kind === "offer" ? hexOf(sha256(bytes)) : null,
+  };
+  if (kind !== "offer") return out;
+  const nameByType = Object.fromEntries(Object.entries(BOLT12_OFFER_TLV).map(([k, v]) => [v, k]));
+  let off = 0, lastType = -1n;
+  while (off < bytes.length) {
+    const [type, tLen] = bigSizeRead(bytes, off); off += tLen;
+    const [len, lLen] = bigSizeRead(bytes, off); off += lLen;
+    const n = Number(len);
+    if (off + n > bytes.length) throw new Error("BOLT 12 offer has a truncated TLV record.");
+    const value = bytes.slice(off, off + n); off += n;
+    if (type <= lastType) throw new Error("BOLT 12 offer TLV records are out of order or duplicated.");
+    lastType = type;
+    const name = nameByType[Number(type)];
+    switch (name) {
+      case "chains": out.chains = []; for (let k = 0; k + 32 <= value.length; k += 32) out.chains.push(hexOf(value.slice(k, k + 32))); break;
+      case "metadata": out.metadata = hexOf(value); break;
+      case "currency": out.currency = new TextDecoder().decode(value.slice(0, 3)); break;
+      case "amount": out.amountMsat = tu64(value); break;
+      case "description":
+        try { out.description = new TextDecoder("utf-8", { fatal: true }).decode(value); }
+        catch { throw new Error("Offer description is not valid UTF-8."); }
+        break;
+      case "features": out.featuresHex = hexOf(value); break;
+      case "absoluteExpiry": out.absoluteExpiry = Number(tu64(value)); break;
+      case "issuer":
+        try { out.issuer = new TextDecoder("utf-8", { fatal: true }).decode(value); }
+        catch { throw new Error("Offer issuer is not valid UTF-8."); }
+        break;
+      case "paths": out.hasPaths = true; break;
+      case "quantityMax": out.quantityMax = tu64(value); break;
+      case "issuerId": if (value.length === 33) out.issuerId = hexOf(value); break;
+      default: out.unknownTlvs.push({ type: Number(type), length: n });
+    }
+  }
+  return out;
+}
+
+// --- BIP-353 (DNS payment instructions) ---
+/** Resolve a BIP-353 address (₿user@domain or user@domain) to the
+ *  BOLT 12 offer published in its DNS TXT record. Uses DNS-over-HTTPS
+ *  (Cloudflare) because browsers cannot do raw DNS. The returned offer
+ *  is validated with parseBolt12Offer before it is trusted — DNS is
+ *  hostile input like everything else on the wire. */
+export async function resolveBip353Address(address, dohUrl = "https://cloudflare-dns.com/dns-query") {
+  let a = String(address || "").trim().replace(/^₿/, "");
+  const m = /^([a-zA-Z0-9._-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})$/.exec(a);
+  if (!m) throw new Error("That is not a payment address (name@domain).");
+  const qname = `_bitcoin-payment.${m[1].toLowerCase()}.${m[2].toLowerCase()}`;
+  let res;
+  try {
+    res = await fetch(`${dohUrl}?name=${encodeURIComponent(qname)}&type=TXT`, { headers: { Accept: "application/dns-json" } });
+  } catch (e) { throw new Error("DNS lookup for that address failed."); }
+  if (!res.ok) throw new Error("DNS lookup for that address failed.");
+  const j = await res.json();
+  const answers = (j.Answer || []).filter((r) => r.type === 16);
+  for (const r of answers) {
+    const txt = String(r.data || "").replace(/"\s*/g, "").replace(/"/g, "");
+    if (!/^bitcoin:/i.test(txt)) continue;
+    const query = txt.slice(txt.indexOf("?") + 1);
+    const params = new URLSearchParams(query);
+    const lno = params.get("lno");
+    if (lno) {
+      const offer = parseBolt12Offer(decodeURIComponent(lno));
+      return { address: a, offer: offer.raw, parsedOffer: offer, txt };
+    }
+    const lnp = params.get("lnp");
+    if (lnp) return { address: a, invoice: decodeURIComponent(lnp), txt };
+  }
+  throw new Error("No BIP-353 payment instructions are published for that address.");
+}
+
+/** Classify anything a user pastes into the Lightning sheet so the UI
+ *  routes it correctly: BOLT 11 invoice, BOLT 12 offer, a name@domain
+ *  address (BIP-353 first, LNURL-pay fallback), or a Fluid name. */
+export function classifyLightningTarget(input) {
+  const s = String(input || "").trim();
+  const body = s.replace(/^lightning:/i, "");
+  if (/^ln(bc|tb|bcrt|tbs)/i.test(body)) return { kind: "bolt11", value: body };
+  if (/^lno1/i.test(body)) return { kind: "bolt12", value: body };
+  if (/^lnr1/i.test(body) || /^lni1/i.test(body)) return { kind: "bolt12-other", value: body };
+  if (/^₿?[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) return { kind: "address", value: s.replace(/^₿/, "") };
+  if (validateFluidName(normalizeFluidName(s))) return { kind: "fluid-name", value: normalizeFluidName(s) };
+  return { kind: "unknown", value: s };
+}
+
+// --- BOLT 12 async payments: the held-HTLC receive model ---
+// A payment to the user's offer while Fluid is closed is HELD by the
+// user's own channel peer as a time-locked HTLC. The holder can only
+// delay — it cannot settle (it never learns the preimage), redirect, or
+// keep the funds past the hold window the user's OWN invoice chose; on
+// timeout the sender is automatically refunded. Fluid must be open to
+// SETTLE, not to receive. See
+// research_notes/fluid-lightning-offline-receive-20261106-2119.
+export const ASYNC_PAY_HOLD = { defaultHours: 24, maxHours: 72, minHours: 1 };
+export function validateHoldHours(hours) {
+  const h = Math.floor(Number(hours));
+  if (!Number.isFinite(h) || h < ASYNC_PAY_HOLD.minHours || h > ASYNC_PAY_HOLD.maxHours) {
+    throw new Error(`Hold window must be between ${ASYNC_PAY_HOLD.minHours} and ${ASYNC_PAY_HOLD.maxHours} hours.`);
+  }
+  return h;
+}
+/** The plain-language promise shown wherever the offer is shared. */
+export function holdWindowCopy(hours = ASYNC_PAY_HOLD.defaultHours) {
+  validateHoldHours(hours);
+  return `Payments sent to this offer while Fluid is closed can wait up to ${hours} hour${hours === 1 ? "" : "s"} for you to open Fluid. The peer holding them cannot take or redirect them — it can only wait. If you don't open Fluid in time, the payment is automatically returned to the sender.`;
+}
+/** Summarise payments currently held for this wallet (pure; the node
+ *  chunk supplies the records). */
+export function summariseHeldPayments(held, nowSec = Math.floor(Date.now() / 1000)) {
+  const list = Array.isArray(held) ? held : [];
+  let totalMsat = 0n; let nextExpirySec = null; let expired = 0;
+  for (const h of list) {
+    totalMsat += BigInt(h.amountMsat || 0);
+    if (h.holdExpiresAtSec != null) {
+      if (h.holdExpiresAtSec <= nowSec) expired++;
+      else if (nextExpirySec == null || h.holdExpiresAtSec < nextExpirySec) nextExpirySec = h.holdExpiresAtSec;
+    }
+  }
+  return { count: list.length, totalMsat, nextExpirySec, expiredUnswept: expired };
 }
 
 // ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
