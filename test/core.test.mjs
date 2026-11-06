@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -1134,6 +1134,51 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("aptos: intent is human-readable", aptosIntent.includes("Send 2 APT") && aptosIntent.includes("on Aptos")
     && aptosIntent.includes("Network fee ≈ 0.00000107 APT") && aptosIntent.includes("Confirm?"));
   ok("aptos: no swap chain registered", swapChainOf("aptos") === null);
+}
+
+// ---------- Receive selector: network metadata + alias search ----------
+// Ethuram's rule for the Receive sheet: search a spoken/short name, tap
+// the network, get its panel — no scrolling a stack of address blocks.
+{
+  const ids = q => filterReceiveNetworks(q).map(m => m.id);
+  const TOP_IDS = ["evm", "bitcoin", "lightning", "tron", "solana", "sui", "stellar", "ton", "near",
+    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash"];
+  ok("receive: one entry per network (16 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 23);
+  ok("receive: ids unique", new Set(RECEIVE_NETWORKS.map(m => m.id)).size === RECEIVE_NETWORKS.length);
+  ok("receive: every panel id covered", TOP_IDS.every(id => RECEIVE_NETWORKS.some(m => m.id === id))
+    && COSMOS_CHAINS.every(c => RECEIVE_NETWORKS.some(m => m.id === c.key)));
+  ok("receive: blank query lists everything", ids("") .length === 23 && ids("   ").length === 23);
+  ok("receive: btc → Bitcoin only (not Bitcoin Cash)", JSON.stringify(ids("btc")) === '["bitcoin"]');
+  ok("receive: ln → Lightning only", JSON.stringify(ids("ln")) === '["lightning"]');
+  ok("receive: lightning → Lightning only", JSON.stringify(ids("lightning")) === '["lightning"]');
+  ok("receive: bsc/bnb/eth → the one shared EVM entry",
+    JSON.stringify(ids("bsc")) === '["evm"]' && JSON.stringify(ids("bnb")) === '["evm"]' && JSON.stringify(ids("eth")) === '["evm"]');
+  ok("receive: sol → Solana", JSON.stringify(ids("sol")) === '["solana"]');
+  ok("receive: doge → Dogecoin", JSON.stringify(ids("doge")) === '["dogecoin"]');
+  ok("receive: ltc → Litecoin", JSON.stringify(ids("ltc")) === '["litecoin"]');
+  ok("receive: bch → Bitcoin Cash only (not Bitcoin)", JSON.stringify(ids("bch")) === '["bitcoincash"]');
+  ok("receive: bitcoin → Bitcoin, Lightning and Bitcoin Cash",
+    ids("bitcoin").includes("bitcoin") && ids("bitcoin").includes("lightning") && ids("bitcoin").includes("bitcoincash"));
+  ok("receive: xrp → XRP Ledger", JSON.stringify(ids("xrp")) === '["xrpl"]');
+  ok("receive: dot → Polkadot Asset Hub", JSON.stringify(ids("dot")) === '["polkadot"]');
+  ok("receive: atom → Cosmos Hub", JSON.stringify(ids("atom")) === '["cosmoshub"]');
+  ok("receive: cosmos → the whole Cosmos family, nothing else",
+    ids("cosmos").length === 7 && COSMOS_CHAINS.every(c => ids("cosmos").includes(c.key)));
+  ok("receive: inj → Injective", JSON.stringify(ids("inj")) === '["injective"]');
+  ok("receive: apt → Aptos", JSON.stringify(ids("apt")) === '["aptos"]');
+  ok("receive: sui → Sui", JSON.stringify(ids("sui")) === '["sui"]');
+  ok("receive: ton → TON", JSON.stringify(ids("ton")) === '["ton"]');
+  ok("receive: near → NEAR", JSON.stringify(ids("near")) === '["near"]');
+  ok("receive: algo → Algorand", JSON.stringify(ids("algo")) === '["algorand"]');
+  ok("receive: xlm → Stellar", JSON.stringify(ids("xlm")) === '["stellar"]');
+  ok("receive: trx → Tron", JSON.stringify(ids("trx")) === '["tron"]');
+  ok("receive: queries are case-insensitive and trimmed",
+    JSON.stringify(ids("BTC")) === '["bitcoin"]' && JSON.stringify(ids("  Lightning ")) === '["lightning"]');
+  ok("receive: gibberish matches nothing", ids("zzzz").length === 0);
+  ok("receive: matcher works on bare metadata",
+    receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "foo") === true
+    && receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "bar") === false
+    && receiveNetworkMatches({ name: "Foo Chain", aliases: [] }, "") === true);
 }
 
 console.log(`\n${passed} checks passed`);

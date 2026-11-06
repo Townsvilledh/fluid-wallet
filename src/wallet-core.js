@@ -1690,6 +1690,66 @@ export function cosmosChain(chainKey) {
 /** The BIP44 coin type a Cosmos chain derives at: 118 for the family,
  *  60 for Injective (the Keplr/Leap path — see the family note). */
 export function cosmosCoinType(chain) { return chain.coinType || 118; }
+
+/** ---------- Receive view: network selector metadata + search ----------
+ *  The Receive sheet is a picker, not a scroll: one entry per network the
+ *  wallet can receive on, each with the spoken/short names people actually
+ *  search by ("btc", "ln", "doge"…). The app pairs each id with that
+ *  network's existing receive panel; this table is only names + aliases,
+ *  so it is unit-testable without any UI. EVM is ONE entry on purpose —
+ *  every EVM network shares a single receive address. The Cosmos entries
+ *  are generated from COSMOS_CHAINS so the two can never drift apart. */
+const COSMOS_RECEIVE_ALIASES = {
+  cosmoshub: ["atom", "cosmos hub"],
+  osmosis: ["osmo"],
+  noble: ["usdc", "noble usdc"],
+  celestia: ["tia"],
+  injective: ["inj"],
+  sei: ["sei"],
+  dydx: ["dydx"],
+};
+export const RECEIVE_NETWORKS = [
+  { id: "evm", name: "EVM networks", sub: "one address · all 15 networks",
+    aliases: ["evm", "eth", "ethereum", "bsc", "bnb", "bnb chain", "binance smart chain", "base", "polygon", "matic", "arbitrum", "optimism", "avalanche", "avax"] },
+  { id: "bitcoin", name: "Bitcoin", aliases: ["btc", "bitcoin"] },
+  { id: "lightning", name: "Bitcoin Lightning", sub: "via your own Lightning wallet",
+    aliases: ["lightning", "ln", "lnurl", "webln", "sats"] },
+  { id: "tron", name: "Tron", aliases: ["trx", "tron", "trc20"] },
+  { id: "solana", name: "Solana", aliases: ["sol", "solana", "spl"] },
+  { id: "sui", name: "Sui", aliases: ["sui"] },
+  { id: "stellar", name: "Stellar", aliases: ["xlm", "stellar"] },
+  { id: "ton", name: "TON", aliases: ["ton", "the open network", "jetton", "jettons"] },
+  { id: "near", name: "NEAR", aliases: ["near"] },
+  { id: "algorand", name: "Algorand", aliases: ["algo", "algorand", "asa"] },
+  { id: "xrpl", name: "XRP Ledger", aliases: ["xrp", "xrpl", "ripple", "xrp ledger"] },
+  { id: "polkadot", name: "Polkadot Asset Hub", aliases: ["dot", "polkadot", "asset hub"] },
+  { id: "aptos", name: "Aptos", aliases: ["apt", "aptos"] },
+  { id: "litecoin", name: "Litecoin", aliases: ["ltc", "litecoin"] },
+  { id: "dogecoin", name: "Dogecoin", aliases: ["doge", "dogecoin"] },
+  { id: "bitcoincash", name: "Bitcoin Cash", aliases: ["bch", "bitcoin cash", "bitcoincash"] },
+  ...COSMOS_CHAINS.map(c => ({
+    id: c.key, name: c.name, sub: "Cosmos",
+    aliases: [c.symbol.toLowerCase(), c.name.toLowerCase(), "cosmos", ...(COSMOS_RECEIVE_ALIASES[c.key] || [])],
+  })),
+];
+/** Does one receive-network entry match a search-box query? Matches the
+ *  display name as a substring, or any alias exactly / as a prefix / as a
+ *  substring — so "btc" finds Bitcoin (but not Bitcoin Cash, which claims
+ *  no "btc"-ish alias), "ln" and "lightning" find Lightning, and "cosmos"
+ *  finds the whole Cosmos family. Blank query matches everything. */
+export function receiveNetworkMatches(meta, query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return true;
+  if (String(meta.name || "").toLowerCase().includes(q)) return true;
+  return (meta.aliases || []).some(a => {
+    const al = String(a).toLowerCase();
+    return al === q || al.startsWith(q) || al.includes(q);
+  });
+}
+export function filterReceiveNetworks(query, metas = RECEIVE_NETWORKS) {
+  return metas.filter(m => receiveNetworkMatches(m, query));
+}
+
 function cosmosKeys(phrase, coinType = 118) {
   const seed = mnemonicToSeedSync(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
   const root = HDKey.fromMasterSeed(seed);

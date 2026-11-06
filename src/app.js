@@ -22,6 +22,7 @@ import {
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
+  RECEIVE_NETWORKS, filterReceiveNetworks,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
@@ -857,103 +858,143 @@ $("netBtn").onclick = () => {
 // ---------- receive ----------
 function qr(el, text) { QRCode.toDataURL(text, { width: 180, margin: 1 }).then(u => { const i = $(el); if (i) i.src = u; }).catch(() => {}); }
 $("actReceive").onclick = () => {
-  // Cosmos: seven prefixes (six over one shared account, Injective on
-  // the Keplr path) — all seven addresses are
-  // listed with copy buttons; each chain's QR lives in that chain's own
-  // sheet (tap its row in the asset list).
-  const cosmosHtml = COSMOS_CHAINS.map(c => `
-    <hr style="border-color:var(--line)">
-    <p class="tag">${c.name} address (${c.symbol}):</p>
-    <p class="mono">${cosmosAddrs[c.key]}</p>
-    <button class="btn ghost" data-cpcosmos="${c.key}">Copy ${c.name} address</button>`).join("");
+  // Selector + search, not a scroll: one panel per network (the exact
+  // blocks the old list stacked — same labels, QR ids, copy buttons and
+  // state notes), and only the selected network's panel is in the sheet.
+  // Entries + alias matching live in wallet-core (RECEIVE_NETWORKS) so the
+  // search behaviour is unit-tested.
+  const panels = {
+    evm: `<p class="tag">EVM address — the same on all 15 networks:</p>
+      <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
+      <button class="btn ghost" id="cpEvm">Copy EVM address</button>`,
+    bitcoin: `<p class="tag">Bitcoin address:</p>
+      <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
+      <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>`,
+    lightning: `<div id="rcvLnSlot"><p class="tag">Checking your Fluid name for a Lightning address…</p></div>
+      <p class="tag">Fluid never custodies Lightning funds — Lightning runs through your own Lightning wallet (WebLN / LNURL-pay). Anyone can pay the Lightning address registered to your Fluid name, or your name itself.</p>`,
+    tron: `<p class="tag">Tron address (TRX and TRC20 tokens):</p>
+      <img class="qr" id="qrTron"><p class="mono">${tronAddr}</p>
+      <button class="btn ghost" id="cpTron">Copy Tron address</button>`,
+    solana: `<p class="tag">Solana address (SOL and SPL tokens):</p>
+      <img class="qr" id="qrSol"><p class="mono">${solAddr}</p>
+      <button class="btn ghost" id="cpSol">Copy Solana address</button>`,
+    sui: `<p class="tag">Sui address (SUI and Sui coins):</p>
+      <img class="qr" id="qrSui"><p class="mono">${suiAddr}</p>
+      <button class="btn ghost" id="cpSui">Copy Sui address</button>`,
+    stellar: `<p class="tag">Stellar address (XLM and Stellar assets):</p>
+      <img class="qr" id="qrStellar"><p class="mono">${stellarAddr}</p>
+      <button class="btn ghost" id="cpStellar">Copy Stellar address</button>
+      ${stellarFunded === false ? `<p class="tag">This account isn't activated yet — it activates when it first receives at least 1 XLM.</p>` : ""}`,
+    ton: `<p class="tag">TON address (TON and jettons like USDT):</p>
+      <img class="qr" id="qrTon"><p class="mono">${tonAddr}</p>
+      <button class="btn ghost" id="cpTon">Copy TON address</button>
+      ${tonState && tonState !== "active" ? `<p class="tag">This wallet deploys automatically with your first send — receiving works right away.</p>` : ""}`,
+    near: `<p class="tag">NEAR address (implicit account — NEAR and NEP-141 tokens):</p>
+      <img class="qr" id="qrNear"><p class="mono">${nearAddr}</p>
+      <button class="btn ghost" id="cpNear">Copy NEAR address</button>
+      ${nearExists === false ? `<p class="tag">This account is created when it first receives at least 0.00182 NEAR.</p>` : ""}`,
+    algorand: `<p class="tag">Algorand address (ALGO and ASAs like USDC):</p>
+      <img class="qr" id="qrAlgo"><p class="mono">${algoAddr}</p>
+      <button class="btn ghost" id="cpAlgo">Copy Algorand address</button>`,
+    xrpl: `<p class="tag">XRP Ledger address (XRP and trust-line tokens):</p>
+      <img class="qr" id="qrXrp"><p class="mono">${xrpAddr}</p>
+      <button class="btn ghost" id="cpXrp">Copy XRP Ledger address</button>
+      ${xrpFunded === false ? `<p class="tag">This account activates when it first receives at least the network base reserve (1 XRP).</p>` : ""}`,
+    polkadot: `<p class="tag">Polkadot Asset Hub address (DOT, USDC, USDT on Asset Hub):</p>
+      <img class="qr" id="qrDot"><p class="mono">${dotAddr}</p>
+      <button class="btn ghost" id="cpDot">Copy Polkadot address</button>`,
+    aptos: `<p class="tag">Aptos address (APT, USDC, USDt and other Aptos assets):</p>
+      <img class="qr" id="qrAptos"><p class="mono">${aptosAddr}</p>
+      <button class="btn ghost" id="cpAptos">Copy Aptos address</button>
+      ${aptosExists === false ? `<p class="tag">This account isn't created yet — it is created when it first receives APT.</p>` : ""}`,
+    litecoin: `<p class="tag">Litecoin address:</p>
+      <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
+      <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>`,
+    dogecoin: `<p class="tag">Dogecoin address:</p>
+      <img class="qr" id="qrDoge"><p class="mono">${dogeAddr}</p>
+      <button class="btn ghost" id="cpDoge">Copy Dogecoin address</button>`,
+    bitcoincash: `<p class="tag">Bitcoin Cash address:</p>
+      <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
+      <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>`,
+  };
+  // Cosmos: seven prefixes (six over one shared account, Injective on the
+  // Keplr path) — one panel per chain, as the family's own sheets show.
+  for (const c of COSMOS_CHAINS) {
+    panels[c.key] = `<p class="tag">${c.name} address (${c.symbol}):</p>
+      <img class="qr" id="qrCosmos_${c.key}"><p class="mono">${cosmosAddrs[c.key]}</p>
+      <button class="btn ghost" data-cpcosmos="${c.key}">Copy ${c.name} address</button>
+      <p class="tag">${c.key === "injective"
+        ? "Injective uses the standard Keplr path, so this address matches Keplr/Leap for the same phrase. Send each coin only on its own chain."
+        : "One Cosmos account on six chains — only the prefix differs; this is its " + c.name + " form. Send each coin only on its own chain."}</p>`;
+  }
+  const binds = {
+    evm: () => { qr("qrEvm", wallet.address); $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm")); },
+    bitcoin: () => { qr("qrBtc", btcAddr); $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc")); },
+    lightning: () => {
+      const paintLn = (ln, name) => {
+        const slot = $("rcvLnSlot"); if (!slot) return; // sheet has moved on
+        if (ln) {
+          slot.innerHTML = `<p class="tag">Your Lightning address${name ? ` (registered to ${esc(name)}.${FLUID_DOMAIN})` : ""}:</p>
+            <img class="qr" id="qrLn"><p class="mono">${esc(ln)}</p>
+            <button class="btn ghost" id="cpLn">Copy Lightning address</button>`;
+          qr("qrLn", ln);
+          $("cpLn").onclick = () => copyText(ln, $("cpLn"));
+        } else {
+          slot.innerHTML = `<p class="tag">No Lightning address is registered to your Fluid name yet — add one under “Your Fluid name” in the More tab and it will show here.</p>`;
+        }
+      };
+      const myName = localStorage.getItem("fluid_name");
+      if (!myName) return paintLn(null);
+      resolveFluidName(myName).then(hit => paintLn(hit && hit.ln, myName)).catch(() => paintLn(null, myName));
+    },
+    tron: () => { qr("qrTron", tronAddr); $("cpTron").onclick = () => copyText(tronAddr, $("cpTron")); },
+    solana: () => { qr("qrSol", solAddr); $("cpSol").onclick = () => copyText(solAddr, $("cpSol")); },
+    sui: () => { qr("qrSui", suiAddr); $("cpSui").onclick = () => copyText(suiAddr, $("cpSui")); },
+    stellar: () => { qr("qrStellar", stellarAddr); $("cpStellar").onclick = () => copyText(stellarAddr, $("cpStellar")); },
+    ton: () => { qr("qrTon", tonAddr); $("cpTon").onclick = () => copyText(tonAddr, $("cpTon")); },
+    near: () => { qr("qrNear", nearAddr); $("cpNear").onclick = () => copyText(nearAddr, $("cpNear")); },
+    algorand: () => { qr("qrAlgo", algoAddr); $("cpAlgo").onclick = () => copyText(algoAddr, $("cpAlgo")); },
+    xrpl: () => { qr("qrXrp", xrpAddr); $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp")); },
+    polkadot: () => { qr("qrDot", dotAddr); $("cpDot").onclick = () => copyText(dotAddr, $("cpDot")); },
+    aptos: () => { qr("qrAptos", aptosAddr); $("cpAptos").onclick = () => copyText(aptosAddr, $("cpAptos")); },
+    litecoin: () => { qr("qrLtc", ltcAddr); $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc")); },
+    dogecoin: () => { qr("qrDoge", dogeAddr); $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge")); },
+    bitcoincash: () => { qr("qrBch", bchAddr); $("cpBch").onclick = () => copyText(bchAddr, $("cpBch")); },
+  };
+  for (const c of COSMOS_CHAINS) {
+    binds[c.key] = () => {
+      qr("qrCosmos_" + c.key, cosmosAddrs[c.key]);
+      document.querySelectorAll("[data-cpcosmos]").forEach(b => b.onclick = () => copyText(cosmosAddrs[b.dataset.cpcosmos], b));
+    };
+  }
+  // Default: the context the user came from — the active network is an
+  // EVM chain, whose receive entry is the shared EVM panel.
+  let selected = "evm";
   openSheet(`<h3>Receive</h3>
-    <p class="tag">EVM address — the same on all 15 networks:</p>
-    <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
-    <button class="btn ghost" id="cpEvm">Copy EVM address</button>
+    <input id="rcvSearch" placeholder="Search networks…" autocapitalize="none">
+    <div id="rcvPanel"></div>
     <hr style="border-color:var(--line)">
-    <p class="tag">Bitcoin address:</p>
-    <img class="qr" id="qrBtc"><p class="mono">${btcAddr}</p>
-    <button class="btn ghost" id="cpBtc">Copy Bitcoin address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Tron address (TRX and TRC20 tokens):</p>
-    <img class="qr" id="qrTron"><p class="mono">${tronAddr}</p>
-    <button class="btn ghost" id="cpTron">Copy Tron address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Solana address (SOL and SPL tokens):</p>
-    <img class="qr" id="qrSol"><p class="mono">${solAddr}</p>
-    <button class="btn ghost" id="cpSol">Copy Solana address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Sui address (SUI and Sui coins):</p>
-    <img class="qr" id="qrSui"><p class="mono">${suiAddr}</p>
-    <button class="btn ghost" id="cpSui">Copy Sui address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Stellar address (XLM and Stellar assets):</p>
-    <img class="qr" id="qrStellar"><p class="mono">${stellarAddr}</p>
-    <button class="btn ghost" id="cpStellar">Copy Stellar address</button>
-    ${stellarFunded === false ? `<p class="tag">This account isn't activated yet — it activates when it first receives at least 1 XLM.</p>` : ""}
-    <hr style="border-color:var(--line)">
-    <p class="tag">TON address (TON and jettons like USDT):</p>
-    <img class="qr" id="qrTon"><p class="mono">${tonAddr}</p>
-    <button class="btn ghost" id="cpTon">Copy TON address</button>
-    ${tonState && tonState !== "active" ? `<p class="tag">This wallet deploys automatically with your first send — receiving works right away.</p>` : ""}
-    <hr style="border-color:var(--line)">
-    <p class="tag">NEAR address (implicit account — NEAR and NEP-141 tokens):</p>
-    <img class="qr" id="qrNear"><p class="mono">${nearAddr}</p>
-    <button class="btn ghost" id="cpNear">Copy NEAR address</button>
-    ${nearExists === false ? `<p class="tag">This account is created when it first receives at least 0.00182 NEAR.</p>` : ""}
-    <hr style="border-color:var(--line)">
-    <p class="tag">Algorand address (ALGO and ASAs like USDC):</p>
-    <img class="qr" id="qrAlgo"><p class="mono">${algoAddr}</p>
-    <button class="btn ghost" id="cpAlgo">Copy Algorand address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">XRP Ledger address (XRP and trust-line tokens):</p>
-    <img class="qr" id="qrXrp"><p class="mono">${xrpAddr}</p>
-    <button class="btn ghost" id="cpXrp">Copy XRP Ledger address</button>
-    ${xrpFunded === false ? `<p class="tag">This account activates when it first receives at least the network base reserve (1 XRP).</p>` : ""}
-    <hr style="border-color:var(--line)">
-    <p class="tag">Polkadot Asset Hub address (DOT, USDC, USDT on Asset Hub):</p>
-    <img class="qr" id="qrDot"><p class="mono">${dotAddr}</p>
-    <button class="btn ghost" id="cpDot">Copy Polkadot address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Aptos address (APT, USDC, USDt and other Aptos assets):</p>
-    <img class="qr" id="qrAptos"><p class="mono">${aptosAddr}</p>
-    <button class="btn ghost" id="cpAptos">Copy Aptos address</button>
-    ${aptosExists === false ? `<p class="tag">This account isn't created yet — it is created when it first receives APT.</p>` : ""}
-    <hr style="border-color:var(--line)">
-    <p class="tag">Litecoin address:</p>
-    <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
-    <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Dogecoin address:</p>
-    <img class="qr" id="qrDoge"><p class="mono">${dogeAddr}</p>
-    <button class="btn ghost" id="cpDoge">Copy Dogecoin address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Bitcoin Cash address:</p>
-    <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
-    <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>
-    <hr style="border-color:var(--line)">
-    <p class="tag">Cosmos addresses — one account on six chains (only the prefix differs); Injective uses the standard Keplr path, so its address here matches Keplr/Leap for the same phrase. Send each coin only on its own chain.</p>
-    ${cosmosHtml}`);
-  qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
-  qr("qrSui", suiAddr); qr("qrStellar", stellarAddr);
-  qr("qrTon", tonAddr); qr("qrNear", nearAddr); qr("qrAlgo", algoAddr); qr("qrXrp", xrpAddr); qr("qrDot", dotAddr); qr("qrAptos", aptosAddr);
-  qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
-  $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
-  $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
-  $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
-  $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
-  $("cpSui").onclick = () => copyText(suiAddr, $("cpSui"));
-  $("cpStellar").onclick = () => copyText(stellarAddr, $("cpStellar"));
-  $("cpTon").onclick = () => copyText(tonAddr, $("cpTon"));
-  $("cpNear").onclick = () => copyText(nearAddr, $("cpNear"));
-  $("cpAlgo").onclick = () => copyText(algoAddr, $("cpAlgo"));
-  $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp"));
-  $("cpDot").onclick = () => copyText(dotAddr, $("cpDot"));
-  $("cpAptos").onclick = () => copyText(aptosAddr, $("cpAptos"));
-  $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
-  $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
-  $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
-  document.querySelectorAll("[data-cpcosmos]").forEach(b => b.onclick = () => copyText(cosmosAddrs[b.dataset.cpcosmos], b));
+    <div id="rcvList" style="max-height:38dvh;overflow-y:auto"></div>`);
+  const paintPanel = () => {
+    const host = $("rcvPanel"); if (!host) return;
+    host.innerHTML = panels[selected] || "";
+    if (binds[selected]) binds[selected]();
+  };
+  const paintList = () => {
+    const host = $("rcvList"); if (!host) return;
+    const hits = filterReceiveNetworks($("rcvSearch").value);
+    host.innerHTML = hits.length
+      ? hits.map(m => `<button class="netitem" data-rcv="${m.id}"><span>${esc(m.name)}${m.sub ? ` <small style="color:var(--dim)">${esc(m.sub)}</small>` : ""}</span>${m.id === selected ? '<span class="pill">SHOWING</span>' : ""}</button>`).join("")
+      : `<p class="tag">No networks match.</p>`;
+    document.querySelectorAll("[data-rcv]").forEach(b => b.onclick = () => {
+      selected = b.dataset.rcv;
+      paintPanel(); paintList();
+      const p = $("rcvPanel"); if (p) p.scrollIntoView({ block: "nearest" });
+    });
+  };
+  $("rcvSearch").addEventListener("input", paintList);
+  paintPanel();
+  paintList();
 };
 
 // ---------- send (EVM) ----------
