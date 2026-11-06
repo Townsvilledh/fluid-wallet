@@ -7,7 +7,7 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58, base58check, base64, bech32, hex } from "@scure/base";
+import { base58, base58check, base64, base32, bech32, hex } from "@scure/base";
 import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
 import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { hmac } from "@noble/hashes/hmac.js";
@@ -24,6 +24,11 @@ import {
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction as SuiTransaction } from "@mysten/sui/transactions";
 import { SuiGraphQLClient } from "@mysten/sui/graphql";
+import {
+  Keypair as StellarKeypair, Account as StellarAccount,
+  TransactionBuilder as StellarTxBuilder, Operation as StellarOperation,
+  Asset as StellarAsset, Networks as StellarNetworks,
+} from "@stellar/stellar-sdk/base";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -224,7 +229,7 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
-  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT",
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
@@ -239,7 +244,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -1210,6 +1215,264 @@ export async function sendSui(phrase, { to, amount, token = null }) {
     throw new Error("Sui rejected the transaction: " + errMsg);
   }
   return { hash: txn.digest };
+}
+
+// ---------- Stellar (SLIP-0010 Ed25519 branch, coin type 148) ----------
+// Stellar keys are Ed25519 — the same curve family as Solana/Sui — so
+// Stellar reuses deriveSlip10Ed25519 at m/44'/148'/0' (Stellar's coin
+// type 148; the path stops at the account level — that IS the Stellar
+// standard, the one Ledger/Trezor use). The address is a StrKey:
+//   base32(0x30 || pubkey || CRC16-XModem(0x30 || pubkey)), no padding
+// where version byte 0x30 is why every address starts with "G".
+// Derivation and the StrKey codec are cross-checked against
+// @stellar/stellar-sdk (Keypair.fromRawEd25519Seed, StrKey) in tests.
+//
+// Stellar's account model differs from every family above, and the
+// code below enforces those differences instead of papering over them:
+//  • Accounts do not exist until funded with ≥ 1 XLM. A Horizon 404 is
+//    a STATE ("not yet activated"), never an error, never a fake zero.
+//  • An account can only RECEIVE an asset it has opted into with a
+//    trustline — asset sends check the recipient's trustlines first.
+//  • Every account must keep a minimum XLM reserve of
+//    (2 + subentry_count) × 0.5 XLM; sends that would breach it are
+//    blocked before anything is signed.
+// Reads and submission ride plain fetch against Horizon (house style);
+// the SDK is used for what it must be used for — account/transaction
+// construction and local signing.
+const STELLAR_HORIZON = "https://horizon.stellar.org";
+export const STELLAR_EXPLORER = "https://stellar.expert/explorer/public";
+// Circle's USDC issuer on Stellar — verified live 2026-11-06 against
+// horizon.stellar.org/assets?asset_code=USDC&asset_issuer=<this>:
+// exactly one asset record (credit_alphanum4), ~2.53M authorized
+// accounts. This (code, issuer) pair is the ONLY verified Stellar
+// asset in Fluid; every other trustline is unverified by default.
+export const STELLAR_USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+export const STELLAR_USDC = { symbol: "USDC", code: "USDC", issuer: STELLAR_USDC_ISSUER, decimals: 7 };
+const STELLAR_BASE_RESERVE_STROOPS = 5000000n;  // 0.5 XLM
+const STELLAR_MIN_CREATE_STROOPS = 10000000n;   // 1 XLM
+
+/** The wallet's Stellar private seed: BIP39 seed → m/44'/148'/0'. */
+export function stellarSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 148, 0]).key;
+}
+function stellarKeypair(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return StellarKeypair.fromRawEd25519Seed(stellarSeedFromSeed(mnemonicToSeedSync(clean)));
+}
+/** CRC16-XModem (poly 0x1021, init 0) — the StrKey checksum. */
+export function crc16Xmodem(bytes) {
+  let crc = 0;
+  for (const b of bytes) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+}
+const STRKEY_VERSION_ED25519_PUBLIC = 0x30; // 6 << 3 — renders as "G…"
+/** StrKey-encode a 32-byte Ed25519 public key into a "G…" address. */
+export function strKeyEncodeEd25519(pubkey) {
+  const payload = Uint8Array.from([STRKEY_VERSION_ED25519_PUBLIC, ...pubkey]);
+  const crc = crc16Xmodem(payload);
+  return base32.encode(Uint8Array.from([...payload, crc & 0xff, (crc >> 8) & 0xff])).replace(/=+$/, "");
+}
+/** Decode a "G…" StrKey back to its 32-byte public key, verifying the
+ *  version byte and the CRC16 checksum. Null for anything else —
+ *  including "S…" secret seeds, which carry a different version byte
+ *  and must never be accepted as an address. */
+export function strKeyDecodeEd25519(address) {
+  try {
+    const s = String(address || "").trim().toUpperCase().replace(/=+$/, "");
+    const raw = base32.decode(s + "=".repeat((8 - (s.length % 8)) % 8));
+    if (raw.length !== 35 || raw[0] !== STRKEY_VERSION_ED25519_PUBLIC) return null;
+    const crc = crc16Xmodem(raw.slice(0, 33));
+    if (raw[33] !== (crc & 0xff) || raw[34] !== ((crc >> 8) & 0xff)) return null;
+    return raw.slice(1, 33);
+  } catch { return null; }
+}
+/** Stellar address (StrKey "G…") for a raw BIP39 seed. */
+export function stellarAddressFromSeed(seed) {
+  return strKeyEncodeEd25519(ed25519.getPublicKey(stellarSeedFromSeed(seed)));
+}
+/** The Stellar address of the wallet's main account. */
+export function stellarAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return stellarAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** A valid Stellar destination: a checksummed "G…" StrKey. */
+export function isValidStellarAddress(address) {
+  return strKeyDecodeEd25519(address) !== null;
+}
+export function xlmToStroops(amount) { return ethers.parseUnits(String(amount), 7); }
+export function stroopsToXlm(stroops) { return ethers.formatUnits(BigInt(stroops), 7); }
+/** Minimum XLM balance an account with `subentryCount` subentries
+ *  (trustlines, offers, …) must keep: (2 + subentries) × 0.5 XLM. */
+export function stellarMinBalanceStroops(subentryCount) {
+  return (2n + BigInt(subentryCount || 0)) * STELLAR_BASE_RESERVE_STROOPS;
+}
+export function stellarMinBalanceXlm(subentryCount) {
+  return stroopsToXlm(stellarMinBalanceStroops(subentryCount));
+}
+
+async function horizonJson(path) {
+  const res = await fetch(STELLAR_HORIZON + path, { signal: AbortSignal.timeout(20000) });
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+}
+/** The Horizon account record, or null when Horizon says 404 — the
+ *  account simply doesn't exist yet (unfunded). Other failures throw. */
+async function stellarFetchAccount(address) {
+  const { status, data } = await horizonJson("/accounts/" + address);
+  if (status === 404) return null;
+  if (status !== 200 || !data) throw new Error("Stellar network error (HTTP " + status + ").");
+  return data;
+}
+/** Recommended base fee (stroops per operation): the fee_stats
+ *  fee_charged p50 — the same figure the SDK's fetchBaseFee returns —
+ *  floored at the 100-stroop network base fee. */
+export async function stellarBaseFeeStroops() {
+  try {
+    const { status, data } = await horizonJson("/fee_stats");
+    const p50 = BigInt(data?.fee_charged?.p50 ?? 0);
+    return p50 > 100n ? p50 : 100n;
+  } catch { return 100n; }
+}
+function stellarNativeRow(amount) {
+  return { symbol: "XLM", name: "Stellar Lumens", amount, address: null, assetCode: null, issuer: null, decimals: 7, verified: true };
+}
+function stellarTrustlineRow(b) {
+  if (b.asset_type === "liquidity_pool_shares") {
+    return { symbol: "LP", name: "Liquidity pool shares", amount: b.balance, address: "lp:" + (b.liquidity_pool_id || ""),
+      assetCode: null, issuer: null, decimals: 7, verified: false, priceUsd: null, lpShare: true };
+  }
+  const code = b.asset_code, issuer = b.asset_issuer;
+  const isUsdc = code === STELLAR_USDC.code && issuer === STELLAR_USDC.issuer;
+  return {
+    symbol: code, name: isUsdc ? "USD Coin" : `${code} · ${issuer.slice(0, 4)}…${issuer.slice(-4)}`,
+    amount: b.balance, address: code + ":" + issuer, assetCode: code, issuer, decimals: 7,
+    verified: isUsdc, priceUsd: isUsdc ? 1 : null,
+  };
+}
+/** The full Stellar account state: activation, reserve and EVERY
+ *  balance — native XLM plus all trustlines, verified or not (the
+ *  universal-token rule: everything the account holds is surfaced).
+ *  An unfunded account returns funded:false with a zero XLM row —
+ *  the UI renders the activation state, not an error. */
+export async function getStellarAccount(address) {
+  if (!isValidStellarAddress(address)) throw new Error("That is not a valid Stellar address.");
+  const rec = await stellarFetchAccount(address);
+  if (!rec) {
+    return { funded: false, subentryCount: 0, minBalanceXlm: stellarMinBalanceXlm(0), balances: [stellarNativeRow("0")] };
+  }
+  const balances = [stellarNativeRow((rec.balances || []).find(b => b.asset_type === "native")?.balance ?? "0")];
+  for (const b of rec.balances || []) if (b.asset_type !== "native") balances.push(stellarTrustlineRow(b));
+  return { funded: true, subentryCount: rec.subentry_count || 0, minBalanceXlm: stellarMinBalanceXlm(rec.subentry_count || 0), balances };
+}
+/** Stellar balances shaped like the other families' row lists. */
+export async function getStellarBalances(address) {
+  return (await getStellarAccount(address)).balances;
+}
+/** Read-only pre-flight for the send sheet (mirrors solanaSendPlan):
+ *  what the destination's state means for this send, plus the fee —
+ *  so the intent sentence can say "this creates the account" before
+ *  anything is signed. Best-effort: unknown states come back null and
+ *  sendStellar re-checks everything authoritatively anyway. */
+export async function stellarSendPlan(fromAddress, { to, token = null } = {}) {
+  const plan = { feeXlm: null, senderFunded: null, destFunded: null, destHasTrustline: null, senderXlm: null, minBalanceXlm: null };
+  try { plan.feeXlm = stroopsToXlm(await stellarBaseFeeStroops()); } catch { /* stays null */ }
+  try {
+    const sender = await stellarFetchAccount(fromAddress);
+    plan.senderFunded = !!sender;
+    if (sender) {
+      plan.senderXlm = (sender.balances || []).find(b => b.asset_type === "native")?.balance ?? "0";
+      plan.minBalanceXlm = stellarMinBalanceXlm(sender.subentry_count || 0);
+    }
+  } catch { /* stays null */ }
+  try {
+    const dest = await stellarFetchAccount(to);
+    plan.destFunded = !!dest;
+    if (dest && token) {
+      plan.destHasTrustline = (dest.balances || []).some(b => b.asset_code === token.code && b.asset_issuer === token.issuer);
+    }
+  } catch { /* stays null */ }
+  return plan;
+}
+/** The signer principle, Stellar edition: a sentence, never a blob. */
+export function formatStellarSendIntent({ amount, symbol, to, feeXlm, createsAccount = false }) {
+  let s = `Send ${amount} ${symbol} to ${to} on Stellar.`;
+  if (createsAccount) s += " This creates the recipient's account — Stellar accounts only exist once they hold at least 1 XLM.";
+  if (feeXlm != null) s += ` Network fee ≈ ${feeXlm} XLM.`;
+  return s + " Confirm?";
+}
+function stellarParseAmount(amount) {
+  try { return xlmToStroops(amount); }
+  catch { throw new Error("Stellar amounts can have at most 7 decimal places."); }
+}
+/** Build, sign LOCALLY with the derived Stellar keypair, and submit a
+ *  payment (or an account creation, when XLM goes to an unfunded
+ *  address). `token` is null for native XLM, otherwise the row's
+ *  {code, issuer}. Every Stellar rule — activation, trustlines,
+ *  minimum reserve — is enforced here in code before signing, with a
+ *  plain message, whatever the UI showed. Returns {hash}. */
+export async function sendStellar(phrase, { to, amount, token = null }) {
+  if (!isValidStellarAddress(to)) throw new Error("That is not a valid Stellar address (it starts with G).");
+  const kp = stellarKeypair(phrase);
+  const from = kp.publicKey();
+  const sender = await stellarFetchAccount(from);
+  if (!sender) throw new Error("Your Stellar account isn't activated yet — it needs to receive at least 1 XLM before it can send.");
+  const dest = await stellarFetchAccount(to);
+  const fee = await stellarBaseFeeStroops();
+  const minBal = stellarMinBalanceStroops(sender.subentry_count || 0);
+  const senderXlm = xlmToStroops((sender.balances || []).find(b => b.asset_type === "native")?.balance ?? "0");
+  const reserveMsg = `That would leave your account below its minimum reserve of ${stroopsToXlm(minBal)} XLM — Stellar accounts must always keep that much XLM. Lower the amount.`;
+  const tb = new StellarTxBuilder(new StellarAccount(from, String(sender.sequence)), {
+    fee: fee.toString(), networkPassphrase: StellarNetworks.PUBLIC,
+  });
+  if (!token) {
+    const amt = stellarParseAmount(amount);
+    if (amt <= 0n) throw new Error("Enter an amount.");
+    if (!dest) {
+      // Sending XLM to an address that has never held any CREATES the
+      // account — and an account's own minimum balance is 1 XLM, so a
+      // smaller creation is invalid on the network, not just unwise.
+      if (amt < STELLAR_MIN_CREATE_STROOPS) {
+        throw new Error("That Stellar account doesn't exist yet, so this send would create it — and creating an account needs a starting balance of at least 1 XLM.");
+      }
+      tb.addOperation(StellarOperation.createAccount({ destination: to, startingBalance: stroopsToXlm(amt) }));
+    } else {
+      tb.addOperation(StellarOperation.payment({ destination: to, asset: StellarAsset.native(), amount: stroopsToXlm(amt) }));
+    }
+    if (senderXlm - amt - fee < minBal) throw new Error(reserveMsg);
+  } else {
+    const raw = stellarParseAmount(amount);
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    if (!dest) {
+      throw new Error(`The recipient's Stellar account isn't activated yet (it has never received XLM), so it can't hold ${token.code} yet. They need to receive at least 1 XLM first.`);
+    }
+    const tl = (dest.balances || []).find(b => b.asset_code === token.code && b.asset_issuer === token.issuer);
+    if (!tl) {
+      throw new Error(`The recipient can't receive ${token.code} yet — on Stellar, an account can only hold an asset it has opted into with a trustline, and this account has no trustline for ${token.code}.`);
+    }
+    const held = (sender.balances || []).find(b => b.asset_code === token.code && b.asset_issuer === token.issuer);
+    if (!held || raw > xlmToStroops(held.balance)) {
+      throw new Error(`Not enough ${token.code} on Stellar (you have ${held ? held.balance : "0"}).`);
+    }
+    tb.addOperation(StellarOperation.payment({ destination: to, asset: new StellarAsset(token.code, token.issuer), amount: stroopsToXlm(raw) }));
+    if (senderXlm - fee < minBal) throw new Error(reserveMsg);
+  }
+  const tx = tb.setTimeout(120).build();
+  tx.sign(kp);
+  const res = await fetch(STELLAR_HORIZON + "/transactions", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tx=" + encodeURIComponent(tx.toXDR()),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.hash) {
+    const codes = data?.extras?.result_codes;
+    const detail = codes ? [codes.transaction, ...(codes.operations || [])].filter(Boolean).join(", ") : "HTTP " + res.status;
+    throw new Error("Stellar rejected the transaction (" + detail + ").");
+  }
+  return { hash: data.hash };
 }
 
 // ---------- Cosmos (one secp256k1 account, seven chains) ----------

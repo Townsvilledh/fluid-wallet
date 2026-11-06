@@ -13,6 +13,7 @@ import {
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
+  stellarAddressFromPhrase, getStellarAccount, sendStellar, isValidStellarAddress, formatStellarSendIntent, stellarSendPlan, STELLAR_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
@@ -34,7 +35,7 @@ const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
-  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351",
+  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
@@ -43,6 +44,7 @@ let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = nul
 let tronAddr = null, tronBalances = [];
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
+let stellarAddr = null, stellarBalances = [], stellarFunded = null, stellarLoadFailed = false;
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
@@ -185,7 +187,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Cosmos (7 chains)";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains)";
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
     .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -204,6 +206,17 @@ async function renderMain() {
                  ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
     .then(rows => { if (rows) suiBalances = rows; paintAssets(); });
+  // Stellar (Phase 3b): SLIP-0010 Ed25519 branch (coin type 148) of
+  // the same seed. The single account read IS the all-asset read
+  // (XLM + every trustline). An unfunded account is a state — "not
+  // yet activated" — painted honestly; a failed read keeps the
+  // placeholder row plus a "couldn't load" note, never a fake zero.
+  stellarAddr = stellarAddressFromPhrase(wallet.mnemonic.phrase);
+  stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
+  stellarFunded = null; stellarLoadFailed = false;
+  getStellarAccount(stellarAddr)
+    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; paintAssets(); })
+    .catch(() => { stellarLoadFailed = true; paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -253,6 +266,10 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of suiBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of stellarBalances) {
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -346,6 +363,16 @@ function paintAssets() {
     rows.push(otherGroupHtml("sui", sp.other, render));
     if (familyScanFailed.sui) rows.push(`<p class="tag">Full token scan unavailable — showing main Sui tokens only.</p>`);
   }
+  // Stellar family rows (tap a row to send on Stellar)
+  if (stellarBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Stellar</p>`);
+    const sp = splitRows(stellarBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `Stellar${b.address && !b.lpShare ? " · Trustline asset" : ""}`, `data-stellar="${stellarBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("stellar", sp.other, render));
+    if (stellarFunded === false) rows.push(`<p class="tag">Account not yet activated — receive at least 1 XLM to activate it.</p>`);
+    if (stellarLoadFailed) rows.push(`<p class="tag">Stellar balances couldn't be loaded right now.</p>`);
+  }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
   // shows "unavailable", never a fake zero.
@@ -391,6 +418,10 @@ function paintAssets() {
   document.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
     const b = suiBalances[Number(r.dataset.sui)];
     if (b) openSuiSheet(b);
+  });
+  document.querySelectorAll("[data-stellar]").forEach(r => r.onclick = () => {
+    const b = stellarBalances[Number(r.dataset.stellar)];
+    if (b) openStellarSheet(b);
   });
   document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
@@ -675,6 +706,11 @@ $("actReceive").onclick = () => {
     <img class="qr" id="qrSui"><p class="mono">${suiAddr}</p>
     <button class="btn ghost" id="cpSui">Copy Sui address</button>
     <hr style="border-color:var(--line)">
+    <p class="tag">Stellar address (XLM and Stellar assets):</p>
+    <img class="qr" id="qrStellar"><p class="mono">${stellarAddr}</p>
+    <button class="btn ghost" id="cpStellar">Copy Stellar address</button>
+    ${stellarFunded === false ? `<p class="tag">This account isn't activated yet — it activates when it first receives at least 1 XLM.</p>` : ""}
+    <hr style="border-color:var(--line)">
     <p class="tag">Litecoin address:</p>
     <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
     <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
@@ -690,13 +726,14 @@ $("actReceive").onclick = () => {
     <p class="tag">Cosmos addresses — one account on six chains (only the prefix differs); Injective uses the standard Keplr path, so its address here matches Keplr/Leap for the same phrase. Send each coin only on its own chain.</p>
     ${cosmosHtml}`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
-  qr("qrSui", suiAddr);
+  qr("qrSui", suiAddr); qr("qrStellar", stellarAddr);
   qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
   $("cpTron").onclick = () => copyText(tronAddr, $("cpTron"));
   $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
   $("cpSui").onclick = () => copyText(suiAddr, $("cpSui"));
+  $("cpStellar").onclick = () => copyText(stellarAddr, $("cpStellar"));
   $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
   $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
   $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
@@ -957,6 +994,78 @@ function openSuiSheet(tok) {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingSui = null; closeSheet(); renderMain();
     } catch (e) { msg("uMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Stellar sheet ----------
+// Mirrors the Sui sheet: review → human-readable sentence → confirm.
+// The review pre-flights the destination's state (activation +
+// trustline) via stellarSendPlan so the sentence can say what will
+// happen; sendStellar re-enforces every rule in code before signing.
+function openStellarSheet(tok) {
+  if (tok.lpShare) {
+    openSheet(`<h3>Stellar liquidity pool shares</h3>
+      <p><b>${fmt(tok.amount)} shares</b> · from <span class="mono">${stellarAddr}</span></p>
+      <p class="tag">These are shares in a Stellar liquidity pool. Fluid shows them so nothing you hold is hidden, but they can't be sent from Fluid yet — withdraw them from the pool with a Stellar tool that supports liquidity pools.</p>`);
+    return;
+  }
+  if (stellarFunded === false) {
+    openSheet(`<h3>Stellar</h3>
+      <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${stellarAddr}</span></p>
+      <p class="tag">Account not yet activated — Stellar accounts only exist once they hold XLM. Receive at least 1 XLM at this address to activate it; then you can send.</p>`);
+    return;
+  }
+  let pendingStellar = null;
+  const assetTok = tok.address ? { code: tok.assetCode, issuer: tok.issuer } : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on Stellar</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${stellarAddr}</span></p>
+    ${tok.address ? `<p class="tag">Issuer <span class="mono">${esc(tok.issuer)}</span></p>` : ""}
+    <input id="stTo" placeholder="Recipient Stellar address (G…)" autocapitalize="none">
+    <input id="stAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="stReview">Review send</button>
+    <div id="stIntent" class="hidden">
+      <p class="seed" id="stIntentText"></p>
+      <button class="btn" id="stConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="stMsg"></p>
+    <p class="tag">${tok.address
+      ? "The recipient must already hold a trustline for this asset — Stellar accounts can only receive assets they have opted into. Sends are final."
+      : "Stellar fees are paid in XLM and are tiny. Your account must always keep its minimum XLM reserve. Sends are final."}</p>`);
+  $("stReview").onclick = async () => {
+    const to = $("stTo").value.trim(), amount = $("stAmt").value.trim();
+    if (!isValidStellarAddress(to)) return msg("stMsg", "That is not a valid Stellar address (it starts with G).");
+    if (!amount || Number(amount) <= 0) return msg("stMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("stMsg", "Amount is more than your balance.");
+    try {
+      msg("stMsg", "Checking the recipient…", true);
+      const plan = await stellarSendPlan(stellarAddr, { to, token: assetTok });
+      if (assetTok) {
+        if (plan.destFunded === false) return msg("stMsg", `The recipient's Stellar account isn't activated yet, so it can't hold ${tok.symbol} yet. They need to receive at least 1 XLM first.`);
+        if (plan.destHasTrustline === false) return msg("stMsg", `The recipient can't receive ${tok.symbol} yet — they have no trustline for it. On Stellar, an account can only hold an asset it has opted into with a trustline.`);
+      } else if (plan.destFunded === false && Number(amount) < 1) {
+        return msg("stMsg", "That account doesn't exist yet — creating it needs a starting balance of at least 1 XLM.");
+      }
+      pendingStellar = { to, amount };
+      $("stIntentText").textContent = formatStellarSendIntent({
+        amount, symbol: tok.symbol, to, feeXlm: plan.feeXlm,
+        createsAccount: !assetTok && plan.destFunded === false,
+      }) + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("stIntent"); msg("stMsg", "");
+    } catch (e) { msg("stMsg", "Could not check the recipient: " + e.message); }
+  };
+  $("stConfirm").onclick = async () => {
+    if (!pendingStellar) return;
+    try {
+      msg("stMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendStellar(wallet.mnemonic.phrase, {
+        to: pendingStellar.to, amount: pendingStellar.amount, token: assetTok,
+      });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingStellar.amount, symbol: tok.symbol, to: pendingStellar.to,
+        link: `${STELLAR_EXPLORER}/tx/${hash}`, explorer: STELLAR_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingStellar = null; closeSheet(); renderMain();
+    } catch (e) { msg("stMsg", "Send failed: " + e.message); }
   };
 }
 
