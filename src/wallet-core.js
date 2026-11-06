@@ -7,11 +7,11 @@ import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
-import { base58, base58check, base64, base32, bech32, hex } from "@scure/base";
+import { base58, base58check, base58xrp, base64, base32, bech32, hex } from "@scure/base";
 import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
 import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { hmac } from "@noble/hashes/hmac.js";
-import { sha256, sha512 } from "@noble/hashes/sha2.js";
+import { sha256, sha512, sha512_256 } from "@noble/hashes/sha2.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -29,6 +29,17 @@ import {
   TransactionBuilder as StellarTxBuilder, Operation as StellarOperation,
   Asset as StellarAsset, Networks as StellarNetworks,
 } from "@stellar/stellar-sdk/base";
+import {
+  Address as TonAddress, beginCell as tonBeginCell, storeMessage as tonStoreMessage,
+  external as tonExternal, internal as tonInternal, toNano as tonToNano, fromNano as tonFromNano,
+} from "@ton/core";
+import { WalletContractV4 as TonWalletContractV4 } from "@ton/ton";
+import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
+import algosdk from "algosdk";
+import { encodeForSigning as xrplEncodeForSigning, encode as xrplEncode, decode as xrplDecode } from "ripple-binary-codec";
+import { ApiPromise as DotApiPromise, HttpProvider as DotHttpProvider } from "@polkadot/api";
+import { Keyring as DotKeyring } from "@polkadot/keyring";
+import { decodeAddress as dotDecodeAddress, cryptoWaitReady as dotCryptoWaitReady } from "@polkadot/util-crypto";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -230,7 +241,8 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
-  ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT" };
+  ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
+  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT" };
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -244,7 +256,7 @@ export async function getPrices() {
   } catch { /* fall through to the CoinGecko fallback below */ }
   // Fallback (e.g. where api.binance.com is region-restricted — matters for
   // headless agents, which refuse unpriced sends): CoinGecko simple price.
-  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain" };
+  const CG = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot" };
   const missing = Object.keys(CG).filter(s => out[s] == null);
   if (missing.length) {
     try {
@@ -3136,4 +3148,1215 @@ export async function readEvmTokenMeta(networkKey, address, ownerAddress) {
   try { balance = await c.balanceOf(ownerAddress); } catch { /* balance stays 0 */ }
   return { address: contract, name: name || symbol, symbol, decimals,
            balance: ethers.formatUnits(balance, decimals) };
+}
+
+// ---------- TON (SLIP-0010 Ed25519 branch, coin type 607) ----------
+// TON keys are Ed25519, derived exactly like Solana's at m/44'/607'/0'
+// (TON's registered coin type; the path ends at the account level —
+// that is the path Tonkeeper and the hardware wallets use). A TON
+// "address" is not the public key: it is the hash of the wallet
+// contract's StateInit (code + data holding the key), so the same key
+// yields one address per wallet-contract version. Fluid uses Wallet
+// V4R2 — the long-standing default across TON wallets (V5 exists but
+// V4R2 remains the interoperability baseline). Derivation and the
+// address were cross-checked against TWO independent implementations
+// (@ton/ton's WalletContractV4 and tonweb's v4R2) in scratch, and the
+// V4 signature scheme was verified by rebuilding the signing message
+// by hand and checking @ton/ton's signature under noble Ed25519.
+// Reads and broadcast ride toncenter (keyless; ~1 req/s courtesy
+// rate, respected by keeping reads sequential and few).
+const TONCENTER_V2 = "https://toncenter.com/api/v2/jsonRPC";
+const TONCENTER_V3 = "https://toncenter.com/api/v3";
+export const TON_EXPLORER = "https://tonviewer.io";
+// Tether's USDT jetton master on TON — verified live 2026-11-06
+// against toncenter v3 /jetton/masters: jetton content points at
+// tether.to, 6 decimals, ~1.43 trillion (raw) total supply.
+export const TON_USDT_MASTER = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+export const TON_USDT = { symbol: "USDT", name: "Tether USD", address: TON_USDT_MASTER, decimals: 6, verified: true, priceUsd: 1 };
+// What a V4 transfer parks for network fees; the unused part returns
+// to the sender with the wallet's answer message. Disclosed in the
+// intent sentence rather than buried.
+export const TON_FEE_RESERVE = "0.05";
+
+/** The wallet's TON private seed: BIP39 seed → m/44'/607'/0'. */
+export function tonSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 607, 0]).key;
+}
+function tonKeypair(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return tonKeyPairFromSeed(Buffer.from(tonSeedFromSeed(mnemonicToSeedSync(clean))));
+}
+function tonWalletContract(publicKey) {
+  return TonWalletContractV4.create({ publicKey, workchain: 0 });
+}
+function tonFriendly(address) {
+  return address.toString({ bounceable: true, urlSafe: true });
+}
+/** TON Wallet V4R2 address for a raw BIP39 seed. */
+export function tonAddressFromSeed(seed) {
+  return tonFriendly(tonWalletContract(tonKeyPairFromSeed(Buffer.from(tonSeedFromSeed(seed))).publicKey).address);
+}
+/** The TON address of the wallet's main account. */
+export function tonAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return tonAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** A valid TON address: raw ("0:…") or user-friendly, parseable. */
+export function isValidTonAddress(address) {
+  try { TonAddress.parse(String(address || "").trim()); return true; } catch { return false; }
+}
+export function tonNanoToTon(nano) { return tonFromNano(BigInt(nano)); }
+export function tonTonToNano(amount) { return tonToNano(String(amount)); }
+
+async function tonV2(method, params) {
+  const res = await fetch(TONCENTER_V2, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) throw new Error("TON network error (HTTP " + res.status + ").");
+  return data.result;
+}
+async function tonV3(path) {
+  const res = await fetch(TONCENTER_V3 + path, { signal: AbortSignal.timeout(20000) });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data) throw new Error("TON network error (HTTP " + res.status + ").");
+  return data;
+}
+const tonMasterMetaCache = new Map();
+/** Jetton master metadata (name/symbol/decimals) from toncenter's
+ *  content record, following the metadata URI when the content only
+ *  points at one. Best-effort: nulls when nothing answers. */
+async function tonJettonMeta(masterRaw) {
+  if (tonMasterMetaCache.has(masterRaw)) return tonMasterMetaCache.get(masterRaw);
+  let meta = { name: null, symbol: null, decimals: null };
+  try {
+    const data = await tonV3("/jetton/masters?address=" + encodeURIComponent(masterRaw));
+    const content = data?.jetton_masters?.[0]?.jetton_content || {};
+    meta = { name: content.name || null, symbol: content.symbol || null,
+             decimals: content.decimals != null ? Number(content.decimals) : null };
+    if ((!meta.symbol || meta.decimals == null) && content.uri && /^https?:\/\//.test(content.uri)) {
+      try {
+        const r = await fetch(content.uri, { signal: AbortSignal.timeout(10000) });
+        const j = await r.json().catch(() => null);
+        if (j) {
+          meta.name = meta.name || j.name || null;
+          meta.symbol = meta.symbol || j.symbol || null;
+          if (meta.decimals == null && j.decimals != null) meta.decimals = Number(j.decimals);
+        }
+      } catch { /* metadata URI unreachable — the row still surfaces */ }
+    }
+  } catch { /* master read failed — the row still surfaces, unlabelled */ }
+  tonMasterMetaCache.set(masterRaw, meta);
+  return meta;
+}
+function tonNativeRow(amount) {
+  return { symbol: "TON", name: "Toncoin", amount, address: null, decimals: 9, verified: true };
+}
+/** The full TON account state: native balance + account state +
+ *  EVERY jetton wallet toncenter's indexer knows for the address
+ *  (the universal-token rule). USDT is the one verified jetton —
+ *  matched by master contract, never by name; every other jetton is
+ *  unverified by default. A failed jetton read degrades to the
+ *  native row plus a zero USDT row with jettonsFailed set — the UI
+ *  says "scan unavailable" rather than faking an empty wallet. */
+export async function getTonAccount(address) {
+  if (!isValidTonAddress(address)) throw new Error("That is not a valid TON address.");
+  const parsed = TonAddress.parse(address);
+  const [balanceNano, state] = await Promise.all([
+    tonV2("getAddressBalance", { address }),
+    tonV2("getAddressState", { address }).catch(() => "unknown"),
+  ]);
+  const balances = [tonNativeRow(tonFromNano(BigInt(balanceNano)))];
+  let jettonsFailed = false;
+  try {
+    const data = await tonV3("/jetton/wallets?owner_address=" + encodeURIComponent(address) + "&limit=128&offset=0");
+    const wallets = data?.jetton_wallets || [];
+    let usdtSeen = false;
+    for (const w of wallets) {
+      const master = TonAddress.parse(w.jetton);
+      const masterFriendly = tonFriendly(master);
+      if (masterFriendly === TON_USDT_MASTER) {
+        usdtSeen = true;
+        balances.push({ ...TON_USDT, amount: ethers.formatUnits(BigInt(w.balance || "0"), TON_USDT.decimals) });
+        continue;
+      }
+      const meta = await tonJettonMeta(master.toRawString());
+      const decimals = meta.decimals != null && Number.isFinite(meta.decimals) ? meta.decimals : 9;
+      balances.push({
+        symbol: meta.symbol || shortAddrLabel(masterFriendly), name: meta.name || "Jetton",
+        amount: ethers.formatUnits(BigInt(w.balance || "0"), decimals),
+        address: masterFriendly, decimals, verified: false, priceUsd: null,
+      });
+    }
+    if (!usdtSeen) balances.push({ ...TON_USDT, amount: "0" });
+  } catch { jettonsFailed = true; balances.push({ ...TON_USDT, amount: "0" }); }
+  return { state, balances, jettonsFailed };
+}
+/** TON balances shaped like the other families' row lists. */
+export async function getTonBalances(address) {
+  return (await getTonAccount(address)).balances;
+}
+/** The sender's jetton wallet address for a master, via toncenter's
+ *  indexer (null when the sender has no wallet for it yet). */
+async function tonJettonWalletOf(ownerAddress, masterAddress) {
+  const data = await tonV3("/jetton/wallets?owner_address=" + encodeURIComponent(ownerAddress)
+    + "&jetton_address=" + encodeURIComponent(masterAddress) + "&limit=1");
+  const w = data?.jetton_wallets?.[0];
+  return w ? w.address : null; // raw "0:…" form
+}
+/** Read-only pre-flight for the send sheet (mirrors stellarSendPlan). */
+export async function tonSendPlan(fromAddress, { token = null } = {}) {
+  const plan = { feeTon: TON_FEE_RESERVE, balanceTon: null, state: null, jettonWallet: null };
+  try {
+    const [balanceNano, state] = await Promise.all([
+      tonV2("getAddressBalance", { address: fromAddress }),
+      tonV2("getAddressState", { address: fromAddress }).catch(() => "unknown"),
+    ]);
+    plan.balanceTon = tonFromNano(BigInt(balanceNano)); plan.state = state;
+  } catch { /* stays null — sendTon re-checks authoritatively */ }
+  if (token) {
+    try { plan.jettonWallet = await tonJettonWalletOf(fromAddress, token.address); } catch { /* stays null */ }
+  }
+  return plan;
+}
+/** The signer principle, TON edition: a sentence, never a blob. */
+export function formatTonSendIntent({ amount, symbol, to, isJetton = false }) {
+  let s = `Send ${amount} ${symbol} to ${to} on TON.`;
+  s += ` About ${TON_FEE_RESERVE} TON is set aside for network fees${isJetton ? " (jetton transfers move through your token wallet contract)" : ""} — what isn't used comes back to you.`;
+  return s + " Confirm?";
+}
+function tonParseAmount(amount, decimals) {
+  try { return ethers.parseUnits(String(amount), decimals); }
+  catch { throw new Error(`TON amounts can have at most ${decimals} decimal places.`); }
+}
+/** The TEP-74 jetton transfer body (op 0xf8a7ea5) — the standard
+ *  layout every TON wallet builds: query id, amount, destination,
+ *  response destination (excess fees come back), no custom payload,
+ *  a 0.01 TON forward so the recipient's wallet posts the credit. */
+export function tonJettonTransferBody({ queryId = 0n, amountRaw, to, responseTo }) {
+  return tonBeginCell()
+    .storeUint(0xf8a7ea5, 32)
+    .storeUint(BigInt(queryId), 64)
+    .storeCoins(BigInt(amountRaw))
+    .storeAddress(TonAddress.parse(to))
+    .storeAddress(TonAddress.parse(responseTo))
+    .storeBit(0) // no custom payload
+    .storeCoins(10000000n) // forward_ton_amount: 0.01 TON
+    .storeBit(0) // forward payload: empty, in place
+    .endCell();
+}
+/** Build, sign LOCALLY with the derived TON keypair, and submit a
+ *  transfer (native TON or a jetton). The external message is
+ *  assembled here — state-init included when the wallet contract
+ *  isn't deployed yet — and only the finished BOC touches the
+ *  network. Returns {hash} = the external message hash. */
+export async function sendTon(phrase, { to, amount, token = null }) {
+  if (!isValidTonAddress(to)) throw new Error("That is not a valid TON address.");
+  const kp = tonKeypair(phrase);
+  const wallet = tonWalletContract(kp.publicKey);
+  const from = tonFriendly(wallet.address);
+  const state = await tonV2("getAddressState", { address: from }).catch(() => "unknown");
+  const balanceNano = BigInt(await tonV2("getAddressBalance", { address: from }));
+  const feeReserve = tonToNano(TON_FEE_RESERVE);
+  let seqno = 0;
+  if (state === "active") {
+    const r = await tonV2("runGetMethod", { address: from, method: "seqno", stack: [] });
+    seqno = Number(BigInt(r?.stack?.[0]?.[1] ?? "0x0"));
+  }
+  let message;
+  if (!token) {
+    const amt = tonParseAmount(amount, 9);
+    if (amt <= 0n) throw new Error("Enter an amount.");
+    if (amt + feeReserve > balanceNano) {
+      throw new Error(`Not enough TON — a transfer needs the amount plus about ${TON_FEE_RESERVE} TON set aside for fees (you have ${tonFromNano(balanceNano)} TON).`);
+    }
+    message = tonInternal({ to: TonAddress.parse(to), value: amt, bounce: false });
+  } else {
+    const raw = tonParseAmount(amount, token.decimals);
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    if (feeReserve > balanceNano) {
+      throw new Error(`Jetton transfers are paid for in TON — you need about ${TON_FEE_RESERVE} TON for fees (you have ${tonFromNano(balanceNano)} TON).`);
+    }
+    const jw = await tonJettonWalletOf(from, token.address);
+    if (!jw) throw new Error(`You have no ${token.symbol} wallet on TON to send from.`);
+    message = tonInternal({
+      to: TonAddress.parse(jw), value: feeReserve, bounce: true,
+      body: tonJettonTransferBody({ amountRaw: raw, to, responseTo: from }),
+    });
+  }
+  const body = wallet.createTransfer({
+    seqno, secretKey: kp.secretKey, timeout: Math.floor(Date.now() / 1000) + 300,
+    sendMode: 3, messages: [message],
+  });
+  const extCell = tonBeginCell().store(tonStoreMessage(tonExternal({
+    to: wallet.address, init: state === "active" ? undefined : wallet.init, body,
+  }))).endCell();
+  const res = await fetch(TONCENTER_V2, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sendBoc", params: { boc: extCell.toBoc().toString("base64") } }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error("TON rejected the transfer (" + (data?.error || ("HTTP " + res.status)) + ").");
+  }
+  return { hash: extCell.hash().toString("hex") };
+}
+
+// ---------- NEAR (SLIP-0010 Ed25519 branch, coin type 397) ----------
+// NEAR keys are Ed25519 at m/44'/397'/0'/0'/0' — the path NEAR's own
+// tooling (near-seed-phrase / Ledger) uses. The account IS the key:
+// an "implicit account" whose id is simply the hex of the public key.
+// Derivation was cross-checked against the independent ed25519-hd-key
+// package (key AND chain code), and the transaction format was
+// validated byte-for-byte: Fluid's hand-rolled borsh serializer
+// produces exactly near-api-js's bytes for both Transfer and
+// FunctionCall actions, and noble's signature over sha256(tx) is
+// byte-identical to near-api-js's KeyPair signature. So NEAR ships
+// with NO runtime dependency on near-api-js — plain fetch + borsh.
+// NEAR's account-existence rule is enforced in code: an account must
+// always hold storage_usage × storage_amount_per_byte (a fresh
+// implicit account: 182 bytes × 10^19 yocto = 0.00182 NEAR), and a
+// transfer to a not-yet-existing implicit account must carry at
+// least that much or the network refuses to create it.
+const NEAR_RPC = "https://rpc.mainnet.near.org";
+export const NEAR_EXPLORER = "https://nearblocks.io";
+// NEP-141 contracts verified live 2026-11-06 via ft_metadata on the
+// public RPC: Circle's native USDC (the hex-named contract Circle
+// deployed), Tether's native USDt, the Rainbow Bridge USDC.e/USDT.e,
+// and wNEAR. Every one of them answered with the expected symbol and
+// decimals; nothing else is marked verified on NEAR.
+export const NEAR_TOKENS = [
+  { symbol: "USDC", name: "USD Coin (Circle, native)", address: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", decimals: 6, verified: true, priceUsd: 1 },
+  { symbol: "USDT", name: "Tether USD (native)", address: "usdt.tether-token.near", decimals: 6, verified: true, priceUsd: 1 },
+  { symbol: "USDC.e", name: "Bridged USDC (Rainbow Bridge)", address: "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near", decimals: 6, verified: true, priceUsd: 1 },
+  { symbol: "USDT.e", name: "Tether USD (Rainbow Bridge)", address: "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near", decimals: 6, verified: true, priceUsd: 1 },
+  { symbol: "wNEAR", name: "Wrapped NEAR", address: "wrap.near", decimals: 24, verified: true },
+];
+const NEAR_FRESH_ACCOUNT_BYTES = 182n;
+const NEAR_STORAGE_BYTE_FALLBACK = 10000000000000000000n; // 10^19 yocto/byte, the protocol value since genesis
+const NEAR_FT_GAS = 30000000000000n;        // 30 TGas per function call
+const NEAR_FT_REGISTER_FALLBACK = 1250000000000000000000n; // 0.00125 NEAR, the ecosystem-standard ft registration deposit
+
+/** The wallet's NEAR private seed: BIP39 seed → m/44'/397'/0'/0'/0'. */
+export function nearSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 397, 0, 0, 0]).key;
+}
+function nearKey(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return nearSeedFromSeed(mnemonicToSeedSync(clean));
+}
+/** NEAR implicit account id (hex public key) for a raw BIP39 seed. */
+export function nearAddressFromSeed(seed) {
+  return hex.encode(ed25519.getPublicKey(nearSeedFromSeed(seed)));
+}
+/** The NEAR implicit account of the wallet's main key. */
+export function nearAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return nearAddressFromSeed(mnemonicToSeedSync(clean));
+}
+const NEAR_NAMED_RE = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
+/** A valid NEAR account id: a 64-hex implicit id or a named account. */
+export function isValidNearAddress(address) {
+  const s = String(address || "").trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(s)) return true;
+  return s.length >= 2 && s.length <= 64 && NEAR_NAMED_RE.test(s);
+}
+export function nearIsImplicit(address) { return /^[0-9a-f]{64}$/.test(String(address || "").trim().toLowerCase()); }
+export function nearYoctoToNear(yocto) { return ethers.formatUnits(BigInt(yocto), 24); }
+export function nearNearToYocto(amount) { return ethers.parseUnits(String(amount), 24); }
+
+async function nearRpc(method, params) {
+  const res = await fetch(NEAR_RPC, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "fluid", method, params }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data) throw new Error("NEAR network error (HTTP " + res.status + ").");
+  if (data.error) {
+    const err = new Error(data.error.data?.message || data.error.cause?.name || data.error.message || "NEAR RPC error");
+    err.nearCause = data.error.data?.name || data.error.cause?.name || "";
+    throw err;
+  }
+  return data.result;
+}
+async function nearQuery(requestType, args) {
+  return nearRpc("query", { request_type: requestType, finality: "final", ...args });
+}
+function nearQueryErrorIs(error, name) {
+  return error?.nearCause === name || String(error?.message || "").includes(name);
+}
+/** A view-function call; returns the decoded JSON value (or null when
+ *  the contract itself answered JSON null). RPC-level failures throw. */
+async function nearCallView(accountId, methodName, args = {}) {
+  const r = await nearQuery("call_function", {
+    account_id: accountId, method_name: methodName,
+    args_base64: base64.encode(new TextEncoder().encode(JSON.stringify(args))),
+  });
+  if (r.error) throw new Error("NEAR view call failed: " + r.error);
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(r.result)));
+}
+let nearStorageByteCache = null;
+/** The protocol's storage price (yocto per byte), read live from the
+ *  protocol config; the genesis value is the fallback. */
+export async function nearStoragePerByte() {
+  if (nearStorageByteCache) return nearStorageByteCache;
+  try {
+    const cfg = await nearRpc("EXPERIMENTAL_protocol_config", { finality: "final" });
+    nearStorageByteCache = BigInt(cfg?.runtime_config?.storage_amount_per_byte ?? NEAR_STORAGE_BYTE_FALLBACK);
+  } catch { nearStorageByteCache = NEAR_STORAGE_BYTE_FALLBACK; }
+  return nearStorageByteCache;
+}
+/** Minimum NEAR an account with `storageUsage` bytes must always
+ *  hold to exist. A fresh implicit account is 182 bytes → 0.00182. */
+export function nearMinExistYocto(storageUsage) {
+  return BigInt(storageUsage ?? NEAR_FRESH_ACCOUNT_BYTES) * NEAR_STORAGE_BYTE_FALLBACK;
+}
+function nearNativeRow(amount) {
+  return { symbol: "NEAR", name: "NEAR Protocol", amount, address: null, decimals: 24, verified: true };
+}
+/** The full NEAR account state: existence, NEAR balance, storage,
+ *  and every curated NEP-141 balance (ft_balance_of per contract —
+ *  an unregistered account simply reads 0). A non-existent account
+ *  returns exists:false with zero rows, never an error. */
+export async function getNearAccount(address) {
+  if (!isValidNearAddress(address)) throw new Error("That is not a valid NEAR account id.");
+  let rec = null;
+  try { rec = await nearQuery("view_account", { account_id: address }); }
+  catch (e) { if (!nearQueryErrorIs(e, "UNKNOWN_ACCOUNT")) throw e; }
+  if (!rec) return { exists: false, storageUsage: 0, balances: [nearNativeRow("0"), ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))] };
+  const balances = [nearNativeRow(nearYoctoToNear(rec.amount))];
+  for (const t of NEAR_TOKENS) {
+    let amount = "0";
+    try {
+      const raw = await nearCallView(t.address, "ft_balance_of", { account_id: address });
+      amount = ethers.formatUnits(BigInt(raw ?? "0"), t.decimals);
+    } catch { /* one bad contract must not break the list */ }
+    balances.push({ ...t, amount });
+  }
+  return { exists: true, storageUsage: rec.storage_usage || 0, balances };
+}
+/** NEAR balances shaped like the other families' row lists. */
+export async function getNearBalances(address) {
+  return (await getNearAccount(address)).balances;
+}
+// ----- hand-rolled borsh (validated byte-for-byte vs near-api-js) -----
+function nearBStr(s) {
+  const b = new TextEncoder().encode(s);
+  const len = new Uint8Array(4); new DataView(len.buffer).setUint32(0, b.length, true);
+  return [...len, ...b];
+}
+function nearBBytes(b) {
+  const len = new Uint8Array(4); new DataView(len.buffer).setUint32(0, b.length, true);
+  return [...len, ...b];
+}
+function nearU64(n) { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), true); return [...b]; }
+function nearU128(n) {
+  const b = new Uint8Array(16); const v = BigInt(n);
+  for (let i = 0; i < 16; i++) b[i] = Number((v >> BigInt(8 * i)) & 0xffn);
+  return [...b];
+}
+/** Action enum 3 — Transfer { deposit: u128 }. */
+export function nearActionTransfer(depositYocto) { return [3, ...nearU128(depositYocto)]; }
+/** Action enum 2 — FunctionCall { method, args, gas, deposit }. */
+export function nearActionFunctionCall(methodName, argsBytes, gas, depositYocto) {
+  return [2, ...nearBStr(methodName), ...nearBBytes(argsBytes), ...nearU64(gas), ...nearU128(depositYocto)];
+}
+/** Serialize an unsigned NEAR transaction (the exact bytes the
+ *  signature covers via sha256). */
+export function nearTransactionBytes({ signerId, publicKey, nonce, receiverId, blockHash, actions }) {
+  const out = [
+    ...nearBStr(signerId), 0, ...publicKey, ...nearU64(nonce), ...nearBStr(receiverId), ...blockHash,
+    ...(() => { const l = new Uint8Array(4); new DataView(l.buffer).setUint32(0, actions.length, true); return [...l]; })(),
+  ];
+  for (const a of actions) out.push(...a);
+  return Uint8Array.from(out);
+}
+/** Serialize a signed transaction for broadcast_tx_commit. */
+export function nearSignedTransactionBytes(txBytes, signature) {
+  return Uint8Array.from([...txBytes, 0, ...signature]);
+}
+/** Read-only pre-flight for the send sheet: existence of both sides,
+ *  the sender's existence minimum, and (for tokens) whether the
+ *  recipient is registered on the token contract. */
+export async function nearSendPlan(fromAddress, { to: toRaw, token = null } = {}) {
+  const to = String(toRaw || "").trim().toLowerCase();
+  const plan = { senderExists: null, senderNear: null, minExistNear: null, destExists: null, destRegistered: null, registerNear: null };
+  try {
+    const s = await nearQuery("view_account", { account_id: fromAddress });
+    plan.senderExists = true;
+    plan.senderNear = nearYoctoToNear(s.amount);
+    plan.minExistNear = nearYoctoToNear(BigInt(s.storage_usage || 0) * (await nearStoragePerByte()));
+  } catch (e) { if (nearQueryErrorIs(e, "UNKNOWN_ACCOUNT")) plan.senderExists = false; }
+  try { await nearQuery("view_account", { account_id: to }); plan.destExists = true; }
+  catch (e) { if (nearQueryErrorIs(e, "UNKNOWN_ACCOUNT")) plan.destExists = false; }
+  if (token && plan.destExists) {
+    try {
+      const bal = await nearCallView(token.address, "storage_balance_of", { account_id: to });
+      plan.destRegistered = bal !== null;
+      if (!bal) {
+        const bounds = await nearCallView(token.address, "storage_balance_bounds", {}).catch(() => null);
+        plan.registerNear = nearYoctoToNear(bounds?.min ?? NEAR_FT_REGISTER_FALLBACK);
+      }
+    } catch { /* stays null — sendNear re-checks authoritatively */ }
+  }
+  return plan;
+}
+/** The signer principle, NEAR edition: a sentence, never a blob. */
+export function formatNearSendIntent({ amount, symbol, to, createsAccount = false, registerCostNear = null }) {
+  let s = `Send ${amount} ${symbol} to ${to} on NEAR.`;
+  if (createsAccount) s += " This creates the recipient's account — the amount covers its storage deposit.";
+  if (registerCostNear) s += ` The recipient isn't registered for ${symbol} yet, so about ${registerCostNear} NEAR from your balance registers them (a storage deposit on the token contract).`;
+  return s + " Network fees on NEAR are a fraction of a cent. Confirm?";
+}
+function nearJsonArgs(obj) { return new TextEncoder().encode(JSON.stringify(obj)); }
+/** Build, sign LOCALLY with the derived NEAR key, and broadcast a
+ *  transfer — native NEAR or an NEP-141 token (with the recipient's
+ *  storage registration folded into the same transaction when they
+ *  aren't registered yet). Every NEAR rule is enforced here in code
+ *  before signing, with a plain message. Returns {hash}. */
+export async function sendNear(phrase, { to, amount, token = null }) {
+  const dest = String(to || "").trim().toLowerCase();
+  if (!isValidNearAddress(dest)) throw new Error("That is not a valid NEAR account id.");
+  const key = nearKey(phrase);
+  const pub = ed25519.getPublicKey(key);
+  const from = hex.encode(pub);
+  const sender = await nearQuery("view_account", { account_id: from }).catch(e => {
+    if (nearQueryErrorIs(e, "UNKNOWN_ACCOUNT")) return null;
+    throw e;
+  });
+  if (!sender) throw new Error("Your NEAR account doesn't exist yet — it needs to receive at least 0.00182 NEAR before it can send.");
+  const senderYocto = BigInt(sender.amount);
+  const perByte = await nearStoragePerByte();
+  const minExist = BigInt(sender.storage_usage || 0) * perByte;
+  const accessKey = await nearQuery("view_access_key", { account_id: from, public_key: "ed25519:" + base58.encode(pub) });
+  const nonce = BigInt(accessKey.nonce) + 1n;
+  const block = await nearRpc("block", { finality: "final" });
+  const blockHash = base58.decode(block.header.hash);
+  const destRec = await nearQuery("view_account", { account_id: dest }).catch(e => {
+    if (nearQueryErrorIs(e, "UNKNOWN_ACCOUNT")) return null;
+    throw e;
+  });
+  let actions, totalNearCost = 0n;
+  if (!token) {
+    let amt;
+    try { amt = nearNearToYocto(amount); } catch { throw new Error("NEAR amounts can have at most 24 decimal places."); }
+    if (amt <= 0n) throw new Error("Enter an amount.");
+    if (!destRec) {
+      if (!nearIsImplicit(dest)) {
+        throw new Error("That NEAR account doesn't exist — a plain transfer can't create a named account. Check the account id.");
+      }
+      const createMin = NEAR_FRESH_ACCOUNT_BYTES * perByte;
+      if (amt < createMin) {
+        throw new Error(`That account doesn't exist yet, so this transfer would create it — and creating it needs at least ${nearYoctoToNear(createMin)} NEAR to cover its storage.`);
+      }
+    }
+    if (senderYocto - amt < minExist) {
+      throw new Error(`That would leave your account below the ${nearYoctoToNear(minExist)} NEAR it must always hold for storage. Lower the amount.`);
+    }
+    actions = [nearActionTransfer(amt)];
+    totalNearCost = amt;
+  } else {
+    let raw;
+    try { raw = ethers.parseUnits(String(amount), token.decimals); } catch { throw new Error(`${token.symbol} amounts can have at most ${token.decimals} decimal places.`); }
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    if (!destRec) throw new Error("The recipient's NEAR account doesn't exist yet, so it can't hold tokens. They need a NEAR account first.");
+    const held = await nearCallView(token.address, "ft_balance_of", { account_id: from }).catch(() => "0");
+    if (raw > BigInt(held ?? "0")) throw new Error(`Not enough ${token.symbol} on NEAR (you have ${ethers.formatUnits(BigInt(held ?? "0"), token.decimals)}).`);
+    actions = [];
+    const reg = await nearCallView(token.address, "storage_balance_of", { account_id: dest }).catch(() => null);
+    if (reg === null) {
+      const bounds = await nearCallView(token.address, "storage_balance_bounds", {}).catch(() => null);
+      const regDeposit = BigInt(bounds?.min ?? NEAR_FT_REGISTER_FALLBACK);
+      actions.push(nearActionFunctionCall("storage_deposit", nearJsonArgs({ account_id: dest }), NEAR_FT_GAS, regDeposit));
+      totalNearCost += regDeposit;
+    }
+    actions.push(nearActionFunctionCall("ft_transfer",
+      nearJsonArgs({ receiver_id: dest, amount: raw.toString(), memo: null }), NEAR_FT_GAS, 1n));
+    totalNearCost += 1n;
+    // Gas is also paid from the NEAR balance; keep a small cushion
+    // above the storage minimum on top of the deposits.
+    if (senderYocto - totalNearCost < minExist + (10n ** 21n)) {
+      throw new Error(`This token send also spends a little NEAR (registration + fees) and would leave your account below its storage minimum of ${nearYoctoToNear(minExist)} NEAR. Top up your NEAR first.`);
+    }
+  }
+  const txBytes = nearTransactionBytes({
+    signerId: from, publicKey: pub, nonce, receiverId: token ? token.address : dest, blockHash, actions,
+  });
+  const signature = ed25519.sign(sha256(txBytes), key);
+  const signed = nearSignedTransactionBytes(txBytes, signature);
+  const result = await nearRpc("broadcast_tx_commit", [base64.encode(signed)]);
+  const failure = result?.status?.Failure;
+  if (failure) {
+    const kind = failure?.ActionError?.kind;
+    const detail = kind?.FunctionCallError?.ExecutionError || kind?.TransferToClosedAccount
+      || (typeof kind === "string" ? kind : null) || failure?.TxExecutionError?.InvalidTxError?.toString?.()
+      || "the network rejected it";
+    throw new Error("NEAR rejected the transaction (" + detail + ").");
+  }
+  const hash = result?.transaction?.hash || result?.transaction_outcome?.id;
+  if (!hash) throw new Error("NEAR didn't confirm the transaction.");
+  return { hash };
+}
+
+// ---------- Algorand (SLIP-0010 Ed25519 branch, coin type 283) ----------
+// Algorand keys are Ed25519 at m/44'/283'/0'/0'/0'. The address is
+// base32(pubkey ‖ last-4-bytes(sha512/256(pubkey))) — hand-rolled
+// here and cross-checked character-for-character against
+// algosdk.encodeAddress in tests; a signed payment built by algosdk
+// from this derived key verifies independently under noble. (Note:
+// algosdk's own 25-word mnemonic is a DIFFERENT system — a checksum
+// encoding of a raw key, not BIP39. Fluid never uses it; the BIP39
+// phrase stays the one backup, and this branch is derived from it
+// like every other Ed25519 family.) Reads ride Algonode's free
+// public algod; transactions are built and signed by algosdk from
+// the derived key (the Stellar pattern: house derivation, SDK
+// signing). Algorand's rules are enforced in code: every account
+// must keep its min-balance (0.1 ALGO + 0.1 per ASA/app), and an ASA
+// can only be sent to an account that has opted into it.
+const ALGOD = "https://mainnet-api.algonode.cloud";
+export const ALGO_EXPLORER = "https://explorer.perawallet.app";
+// Circle's USDC on Algorand — verified live 2026-11-06 against
+// Algonode /v2/assets/31566704 (creator is Circle's address,
+// unit-name USDC, 6 decimals).
+export const ALGO_USDC_ASA = 31566704;
+export const ALGO_USDC = { symbol: "USDC", name: "USD Coin", address: String(ALGO_USDC_ASA), decimals: 6, verified: true, priceUsd: 1 };
+
+/** The wallet's Algorand private seed: BIP39 seed → m/44'/283'/0'/0'/0'. */
+export function algoSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 283, 0, 0, 0]).key;
+}
+function algoKey(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return algoSeedFromSeed(mnemonicToSeedSync(clean));
+}
+/** Algorand address encoding: base32(pubkey ‖ checksum), no padding. */
+export function algoAddressFromPubkey(pubkey) {
+  const checksum = sha512_256(pubkey).slice(-4);
+  return base32.encode(Uint8Array.from([...pubkey, ...checksum])).replace(/=+$/, "");
+}
+/** Algorand address for a raw BIP39 seed. */
+export function algoAddressFromSeed(seed) {
+  return algoAddressFromPubkey(ed25519.getPublicKey(algoSeedFromSeed(seed)));
+}
+/** The Algorand address of the wallet's main account. */
+export function algoAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return algoAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** Decode an Algorand address back to its 32-byte public key,
+ *  verifying length and checksum. Null for anything invalid. */
+export function algoAddressDecode(address) {
+  try {
+    const s = String(address || "").trim().toUpperCase().replace(/=+$/, "");
+    if (s.length !== 58) return null;
+    const raw = base32.decode(s + "=".repeat((8 - (s.length % 8)) % 8));
+    if (raw.length !== 36) return null;
+    const pub = raw.slice(0, 32);
+    const want = sha512_256(pub).slice(-4);
+    if (!want.every((b, i) => raw[32 + i] === b)) return null;
+    return pub;
+  } catch { return null; }
+}
+export function isValidAlgorandAddress(address) { return algoAddressDecode(address) !== null; }
+export function algoMicroToAlgo(micro) { return ethers.formatUnits(BigInt(micro), 6); }
+export function algoAlgoToMicro(amount) { return ethers.parseUnits(String(amount), 6); }
+
+async function algodJson(path) {
+  const res = await fetch(ALGOD + path, { signal: AbortSignal.timeout(20000) });
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+}
+/** One ASA's parameters (unit name, name, decimals). Best-effort:
+ *  null when the node doesn't answer — the row still surfaces. */
+const algoAssetMetaCache = new Map();
+async function algoAssetMeta(assetId) {
+  if (algoAssetMetaCache.has(assetId)) return algoAssetMetaCache.get(assetId);
+  let meta = null;
+  try {
+    const { status, data } = await algodJson("/v2/assets/" + assetId);
+    if (status === 200 && data?.params) {
+      meta = { symbol: data.params["unit-name"] || null, name: data.params.name || null,
+               decimals: Number(data.params.decimals ?? 0) };
+    }
+  } catch { /* stays null */ }
+  algoAssetMetaCache.set(assetId, meta);
+  return meta;
+}
+function algoNativeRow(amount) {
+  return { symbol: "ALGO", name: "Algorand", amount, address: null, decimals: 6, verified: true };
+}
+/** The full Algorand account state: ALGO balance, the account's
+ *  min-balance, and EVERY ASA it holds (the account record lists
+ *  them — the universal-token rule comes free here). USDC (Circle's
+ *  ASA 31566704) is the only verified ASA; all others are
+ *  unverified. A 404 is an unfunded account — a state, not an
+ *  error (the Stellar treatment). */
+export async function getAlgorandAccount(address) {
+  if (!isValidAlgorandAddress(address)) throw new Error("That is not a valid Algorand address.");
+  const { status, data } = await algodJson("/v2/accounts/" + address);
+  if (status === 404) {
+    return { funded: false, minBalanceAlgo: "0.1", balances: [algoNativeRow("0")] };
+  }
+  if (status !== 200 || !data) throw new Error("Algorand network error (HTTP " + status + ").");
+  const balances = [algoNativeRow(algoMicroToAlgo(data.amount ?? 0))];
+  for (const a of data.assets || []) {
+    const id = Number(a["asset-id"]);
+    if (id === ALGO_USDC_ASA) {
+      balances.push({ ...ALGO_USDC, amount: ethers.formatUnits(BigInt(a.amount ?? 0), ALGO_USDC.decimals) });
+      continue;
+    }
+    const meta = await algoAssetMeta(id);
+    const decimals = meta?.decimals ?? 0;
+    balances.push({
+      symbol: meta?.symbol || ("ASA " + id), name: meta?.name || "Algorand asset",
+      amount: ethers.formatUnits(BigInt(a.amount ?? 0), decimals),
+      address: String(id), decimals, verified: false, priceUsd: null,
+    });
+  }
+  return { funded: true, minBalanceAlgo: algoMicroToAlgo(data["min-balance"] ?? 100000), balances };
+}
+/** Algorand balances shaped like the other families' row lists. */
+export async function getAlgorandBalances(address) {
+  return (await getAlgorandAccount(address)).balances;
+}
+/** Read-only pre-flight for the send sheet. */
+export async function algoSendPlan(fromAddress, { to, token = null } = {}) {
+  const plan = { senderFunded: null, senderAlgo: null, minBalanceAlgo: null, destFunded: null, destOptedIn: null, feeAlgo: null };
+  try {
+    const p = await algodJson("/v2/transactions/params");
+    if (p.status === 200 && p.data) plan.feeAlgo = algoMicroToAlgo(p.data["min-fee"] ?? 1000);
+  } catch { /* stays null */ }
+  try {
+    const s = await algodJson("/v2/accounts/" + fromAddress);
+    plan.senderFunded = s.status === 200;
+    if (plan.senderFunded) {
+      plan.senderAlgo = algoMicroToAlgo(s.data.amount ?? 0);
+      plan.minBalanceAlgo = algoMicroToAlgo(s.data["min-balance"] ?? 100000);
+    }
+  } catch { /* stays null */ }
+  try {
+    const d = await algodJson("/v2/accounts/" + to);
+    plan.destFunded = d.status === 200;
+    if (plan.destFunded && token) {
+      plan.destOptedIn = (d.data.assets || []).some(a => Number(a["asset-id"]) === Number(token.address));
+    }
+  } catch { /* stays null */ }
+  return plan;
+}
+/** The signer principle, Algorand edition: a sentence, never a blob. */
+export function formatAlgoSendIntent({ amount, symbol, to, feeAlgo }) {
+  let s = `Send ${amount} ${symbol} to ${to} on Algorand.`;
+  if (feeAlgo != null) s += ` Network fee ${feeAlgo} ALGO.`;
+  return s + " Confirm?";
+}
+/** Build, sign LOCALLY (algosdk, from the derived key), and submit
+ *  a payment or ASA transfer. Min-balance and opt-in rules are
+ *  enforced here in code before signing, with plain messages.
+ *  Returns {hash} = the transaction id. */
+export async function sendAlgorand(phrase, { to, amount, token = null }) {
+  if (!isValidAlgorandAddress(to)) throw new Error("That is not a valid Algorand address.");
+  const key = algoKey(phrase);
+  const pub = ed25519.getPublicKey(key);
+  const from = algoAddressFromPubkey(pub);
+  const sk = Uint8Array.from([...key, ...pub]); // algosdk/nacl secret-key layout
+  const senderRes = await algodJson("/v2/accounts/" + from);
+  if (senderRes.status !== 200 || !senderRes.data) {
+    throw new Error("Your Algorand account doesn't exist yet — it needs to receive ALGO before it can send.");
+  }
+  const sender = senderRes.data;
+  const minBal = BigInt(sender["min-balance"] ?? 100000);
+  const client = new algosdk.Algodv2("", ALGOD, "");
+  const params = await client.getTransactionParams().do();
+  let txn;
+  if (!token) {
+    let amt;
+    try { amt = algoAlgoToMicro(amount); } catch { throw new Error("ALGO amounts can have at most 6 decimal places."); }
+    if (amt <= 0n) throw new Error("Enter an amount.");
+    txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: from, receiver: to, amount: amt, suggestedParams: params,
+    });
+    const fee = BigInt(txn.fee);
+    if (BigInt(sender.amount) - amt - fee < minBal) {
+      throw new Error(`That would leave your account below its minimum balance of ${algoMicroToAlgo(minBal)} ALGO — Algorand accounts must always keep that much. Lower the amount.`);
+    }
+  } else {
+    let raw;
+    try { raw = ethers.parseUnits(String(amount), token.decimals); } catch { throw new Error(`${token.symbol} amounts can have at most ${token.decimals} decimal places.`); }
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    const held = (sender.assets || []).find(a => Number(a["asset-id"]) === Number(token.address));
+    if (!held || raw > BigInt(held.amount ?? 0)) {
+      throw new Error(`Not enough ${token.symbol} on Algorand (you have ${held ? ethers.formatUnits(BigInt(held.amount), token.decimals) : "0"}).`);
+    }
+    const destRes = await algodJson("/v2/accounts/" + to);
+    if (destRes.status !== 200 || !destRes.data) {
+      throw new Error("The recipient's Algorand account doesn't exist yet, so it can't hold assets. They need to receive ALGO first.");
+    }
+    const opted = (destRes.data.assets || []).some(a => Number(a["asset-id"]) === Number(token.address));
+    if (!opted) {
+      throw new Error(`The recipient can't receive ${token.symbol} yet — on Algorand, an account can only hold an asset it has opted into, and this account hasn't opted into it.`);
+    }
+    txn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: from, receiver: to, assetIndex: Number(token.address), amount: raw, suggestedParams: params,
+    });
+    const fee = BigInt(txn.fee);
+    if (BigInt(sender.amount) - fee < minBal) {
+      throw new Error(`Your account must keep its minimum balance of ${algoMicroToAlgo(minBal)} ALGO after the fee. Top up your ALGO first.`);
+    }
+  }
+  const signed = algosdk.signTransaction(txn, sk);
+  const { txid } = await client.sendRawTransaction(signed.blob).do();
+  try { await algosdk.waitForConfirmation(client, txid, 4); } catch { /* accepted ≠ failed: return the id */ }
+  return { hash: txid };
+}
+
+// ---------- XRP Ledger (secp256k1 BIP44 branch, coin type 144) ----------
+// XRPL accounts in the wider world come in two flavours: Ed25519
+// keys (Xaman-style, from a family seed) and secp256k1 keys at the
+// BIP44 path m/44'/144'/0'/0/0 — the Ledger/Trezor standard, and the
+// one Fluid uses, because it keeps XRPL on the same audited BIP32
+// tree as the EVM and Bitcoin accounts: private key → compressed
+// public key → account ID = RIPEMD160(SHA256(pubkey)) → classic
+// address (base58check, XRPL alphabet). Derivation and the address
+// codec were cross-checked against ripple-address-codec; signing was
+// validated three ways — noble's DER signature over the
+// sha512half signing hash (with prehash DISABLED — noble v2 hashes
+// by default, the same trap the BCH build documented) is
+// byte-identical to ripple-keypairs' signature, a hand-built signed
+// blob round-trips through ripple-binary-codec and verifies, and a
+// real mainnet transaction's hash recomputed from its blob matches
+// the hash the network reports. Reserve rules are read LIVE from
+// server_info on every load — never hardcoded — and enforced in
+// code before signing.
+const XRPL_RPCS = ["https://s2.ripple.com:51234", "https://xrplcluster.com"];
+export const XRPL_EXPLORER = "https://xrpscan.com";
+// Circle's USDC issuer on XRPL — verified live 2026-11-06 via
+// gateway_balances on THIS address (≈5.52M USDC of obligations
+// under currency 55534443…). Cautionary note: an address that
+// differs from this one by a few characters circulates in project
+// briefs — it fails XRPL checksum validation entirely. Only this
+// exact address is Circle's.
+export const XRPL_USDC_ISSUER = "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE";
+export const XRPL_USDC = { symbol: "USDC", currency: "USDC", issuer: XRPL_USDC_ISSUER, decimals: 0, verified: true, priceUsd: 1 };
+const XRPL_FULLY_CANONICAL = 2147483648; // tfFullyCanonicalSig
+
+function xrplKeys(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const master = HDKey.fromMasterSeed(mnemonicToSeedSync(clean));
+  const child = master.derive("m/44'/144'/0'/0/0");
+  return { privateKey: child.privateKey, publicKey: child.publicKey };
+}
+/** Classic address from a compressed secp256k1 public key:
+ *  base58check(0x00 ‖ RIPEMD160(SHA256(pubkey))) in the XRPL
+ *  alphabet. Hand-rolled; pinned against ripple-address-codec. */
+export function xrplAddressFromPubkey(pubkey) {
+  const accountId = ripemd160(sha256(pubkey));
+  const payload = Uint8Array.from([0, ...accountId]);
+  const checksum = sha256(sha256(payload)).slice(0, 4);
+  return base58xrp.encode(Uint8Array.from([...payload, ...checksum]));
+}
+/** The XRPL classic address of the wallet's main account. */
+export function xrplAddressFromPhrase(phrase) {
+  return xrplAddressFromPubkey(xrplKeys(phrase).publicKey);
+}
+/** Decode a classic address to its 20-byte account ID, verifying
+ *  the version byte and checksum. Null for anything invalid. */
+export function xrplAddressDecode(address) {
+  try {
+    const raw = base58xrp.decode(String(address || "").trim());
+    if (raw.length !== 25 || raw[0] !== 0) return null;
+    const payload = raw.slice(0, 21);
+    const want = sha256(sha256(payload)).slice(0, 4);
+    if (!want.every((b, i) => raw[21 + i] === b)) return null;
+    return raw.slice(1, 21);
+  } catch { return null; }
+}
+export function isValidXrplAddress(address) { return xrplAddressDecode(address) !== null; }
+export function xrplDropsToXrp(drops) { return ethers.formatUnits(BigInt(drops), 6); }
+export function xrplXrpToDrops(amount) { return ethers.parseUnits(String(amount), 6); }
+/** rippled reports non-3-letter currency codes as 160-bit hex in
+ *  account_lines; decode those to their ASCII label. */
+export function xrplCurrencyLabel(currency) {
+  const c = String(currency || "");
+  if (/^[0-9A-Fa-f]{40}$/.test(c)) {
+    try {
+      const bytes = hex.decode(c);
+      const label = new TextDecoder().decode(bytes).replace(/\0+$/, "").trim();
+      if (label && /^[\x20-\x7E]+$/.test(label)) return label;
+    } catch { /* fall through */ }
+  }
+  return c;
+}
+async function xrplRpc(method, params) {
+  let lastErr = null;
+  for (const url of XRPL_RPCS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params: [params] }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.result) throw new Error("HTTP " + res.status);
+      if (data.result.error) {
+        const e = new Error(data.result.error_message || data.result.error);
+        e.xrplError = data.result.error;
+        throw e;
+      }
+      return data.result;
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error("XRP Ledger network error (" + (lastErr?.message || "unreachable") + ").");
+}
+/** Current reserve requirements (in drops), read live from the
+ *  validated ledger: base reserve + per-object increment. */
+export async function xrplReserves() {
+  const info = await xrplRpc("server_info", {});
+  const v = info?.info?.validated_ledger || {};
+  const base = BigInt(Math.round(Number(v.reserve_base_xrp ?? 1) * 1e6));
+  const inc = BigInt(Math.round(Number(v.reserve_inc_xrp ?? 0.2) * 1e6));
+  return { baseDrops: base, incrementDrops: inc };
+}
+function xrpNativeRow(amount) {
+  return { symbol: "XRP", name: "XRP", amount, address: null, currency: null, issuer: null, decimals: 6, verified: true };
+}
+function xrplTrustlineRow(line) {
+  const label = xrplCurrencyLabel(line.currency);
+  const isUsdc = label === XRPL_USDC.currency && line.account === XRPL_USDC.issuer;
+  return {
+    symbol: label, name: isUsdc ? "USD Coin" : `${label} · ${line.account.slice(0, 6)}…${line.account.slice(-4)}`,
+    amount: String(line.balance), address: line.currency + ":" + line.account,
+    currency: line.currency, issuer: line.account, decimals: 0,
+    verified: isUsdc, priceUsd: isUsdc ? 1 : null,
+  };
+}
+/** The full XRPL account state: XRP balance, live reserve figures,
+ *  and EVERY trust line (the universal-token rule). An unfunded
+ *  account (actNotFound) returns funded:false with a zero row —
+ *  the account simply doesn't exist until it receives at least the
+ *  base reserve. */
+export async function getXrplAccount(address) {
+  if (!isValidXrplAddress(address)) throw new Error("That is not a valid XRP Ledger address.");
+  const reserves = await xrplReserves();
+  let info = null;
+  try { info = await xrplRpc("account_info", { account: address, ledger_index: "validated" }); }
+  catch (e) { if (e.xrplError !== "actNotFound") throw e; }
+  if (!info?.account_data) {
+    return { funded: false, ownerCount: 0,
+      reserveXrp: xrplDropsToXrp(reserves.baseDrops), baseReserveXrp: xrplDropsToXrp(reserves.baseDrops),
+      balances: [xrpNativeRow("0")] };
+  }
+  const d = info.account_data;
+  const linesRes = await xrplRpc("account_lines", { account: address, ledger_index: "validated" }).catch(() => ({ lines: [] }));
+  const balances = [xrpNativeRow(xrplDropsToXrp(d.Balance ?? "0"))];
+  for (const line of linesRes.lines || []) balances.push(xrplTrustlineRow(line));
+  const reserve = reserves.baseDrops + BigInt(d.OwnerCount || 0) * reserves.incrementDrops;
+  return { funded: true, ownerCount: d.OwnerCount || 0, sequence: d.Sequence,
+    reserveXrp: xrplDropsToXrp(reserve), baseReserveXrp: xrplDropsToXrp(reserves.baseDrops), balances };
+}
+/** XRPL balances shaped like the other families' row lists. */
+export async function getXrplBalances(address) {
+  return (await getXrplAccount(address)).balances;
+}
+/** Read-only pre-flight for the send sheet. */
+export async function xrplSendPlan(fromAddress, { to } = {}) {
+  const plan = { feeXrp: null, senderFunded: null, senderXrp: null, reserveXrp: null, destFunded: null, baseReserveXrp: null };
+  try {
+    const fee = await xrplRpc("fee", {});
+    plan.feeXrp = xrplDropsToXrp(fee?.drops?.base_fee ?? "10");
+  } catch { /* stays null */ }
+  try {
+    const acct = await getXrplAccount(fromAddress);
+    plan.senderFunded = acct.funded;
+    plan.senderXrp = acct.balances[0]?.amount ?? "0";
+    plan.reserveXrp = acct.reserveXrp;
+    plan.baseReserveXrp = acct.baseReserveXrp;
+  } catch { /* stays null */ }
+  try { plan.destFunded = (await getXrplAccount(to)).funded; } catch { /* stays null */ }
+  return plan;
+}
+/** The signer principle, XRPL edition: a sentence, never a blob. */
+export function formatXrplSendIntent({ amount, symbol, to, feeXrp, destinationTag = null }) {
+  let s = `Send ${amount} ${symbol} to ${to} on the XRP Ledger.`;
+  if (destinationTag != null) s += ` Destination tag: ${destinationTag}.`;
+  if (feeXrp != null) s += ` Network fee ${feeXrp} XRP.`;
+  return s + " Confirm?";
+}
+/** Assemble and sign a Payment (the exact path sendXrpl submits).
+ *  Exported so tests can prove the production bytes: the blob must
+ *  decode via ripple-binary-codec and verify under ripple-keypairs. */
+export function xrplSignPayment({ privateKey, publicKey, tx }) {
+  const signingHex = xrplEncodeForSigning(tx);
+  const hash = sha512(hex.decode(signingHex)).slice(0, 32);
+  // noble v2 prehashes by default — XRPL signs the sha512half digest
+  // itself, so prehash must be off (the BCH lesson, again).
+  const sig = secp256k1.sign(hash, privateKey, { format: "der", lowS: true, prehash: false });
+  const signed = {
+    ...tx,
+    SigningPubKey: hex.encode(publicKey).toUpperCase(),
+    TxnSignature: hex.encode(sig).toUpperCase(),
+  };
+  const blob = xrplEncode(signed);
+  const id = sha512(Uint8Array.from([0x54, 0x58, 0x4e, 0x00, ...hex.decode(blob)])).slice(0, 32);
+  return { blob, hash: hex.encode(id).toUpperCase() };
+}
+/** Build, sign LOCALLY with the derived secp256k1 key, and submit a
+ *  Payment — native XRP or a trust-line token. Reserve rules are
+ *  enforced in code (figures read live) before signing.
+ *  `token` is null for XRP, else the row's {currency, issuer};
+ *  `destinationTag` is an optional integer exchanges often require.
+ *  Returns {hash}. */
+export async function sendXrpl(phrase, { to, amount, token = null, destinationTag = null }) {
+  if (!isValidXrplAddress(to)) throw new Error("That is not a valid XRP Ledger address (it starts with r).");
+  let tag = null;
+  if (destinationTag != null && String(destinationTag).trim() !== "") {
+    tag = Number(destinationTag);
+    if (!Number.isInteger(tag) || tag < 0 || tag > 4294967295) {
+      throw new Error("The destination tag must be a whole number between 0 and 4294967295.");
+    }
+  }
+  const { privateKey, publicKey } = xrplKeys(phrase);
+  const from = xrplAddressFromPubkey(publicKey);
+  const senderInfo = await xrplRpc("account_info", { account: from, ledger_index: "validated" })
+    .catch(e => { if (e.xrplError === "actNotFound") return null; throw e; });
+  if (!senderInfo?.account_data) {
+    throw new Error("Your XRP Ledger account doesn't exist yet — it needs to receive at least the base reserve (1 XRP) before it can send.");
+  }
+  const sender = senderInfo.account_data;
+  const reserves = await xrplReserves();
+  const reserve = reserves.baseDrops + BigInt(sender.OwnerCount || 0) * reserves.incrementDrops;
+  const feeRes = await xrplRpc("fee", {}).catch(() => null);
+  const feeDrops = BigInt(feeRes?.drops?.base_fee ?? "10");
+  const senderDrops = BigInt(sender.Balance ?? "0");
+  let amountField;
+  if (!token) {
+    let drops;
+    try { drops = xrplXrpToDrops(amount); } catch { throw new Error("XRP amounts can have at most 6 decimal places."); }
+    if (drops <= 0n) throw new Error("Enter an amount.");
+    const destInfo = await xrplRpc("account_info", { account: to, ledger_index: "validated" })
+      .catch(e => { if (e.xrplError === "actNotFound") return null; throw e; });
+    if (!destInfo?.account_data && drops < reserves.baseDrops) {
+      throw new Error(`That XRP Ledger account doesn't exist yet, so this payment would create it — and creating an account needs at least the base reserve of ${xrplDropsToXrp(reserves.baseDrops)} XRP.`);
+    }
+    if (senderDrops - drops - feeDrops < reserve) {
+      throw new Error(`That would leave your account below its reserve of ${xrplDropsToXrp(reserve)} XRP — the base reserve plus 0.2 XRP per item your account owns (trust lines, offers…). Lower the amount.`);
+    }
+    amountField = drops.toString();
+  } else {
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter an amount.");
+    const linesRes = await xrplRpc("account_lines", { account: from, ledger_index: "validated" }).catch(() => ({ lines: [] }));
+    const line = (linesRes.lines || []).find(l => l.currency === token.currency && l.account === token.issuer);
+    if (!line || amt > Number(line.balance)) {
+      throw new Error(`Not enough ${xrplCurrencyLabel(token.currency)} on the XRP Ledger (you have ${line ? line.balance : "0"}).`);
+    }
+    if (senderDrops - feeDrops < reserve) {
+      throw new Error(`Your account must keep its reserve of ${xrplDropsToXrp(reserve)} XRP after the fee. Top up your XRP first.`);
+    }
+    amountField = { currency: token.currency, issuer: token.issuer, value: String(amount) };
+  }
+  const ledger = await xrplRpc("server_info", {}).catch(() => null);
+  const validatedSeq = ledger?.info?.validated_ledger?.seq;
+  const tx = {
+    TransactionType: "Payment", Account: from, Destination: to, Amount: amountField,
+    Fee: feeDrops.toString(), Sequence: sender.Sequence, Flags: XRPL_FULLY_CANONICAL,
+    ...(validatedSeq ? { LastLedgerSequence: validatedSeq + 20 } : {}),
+    ...(tag != null ? { DestinationTag: tag } : {}),
+  };
+  const { blob, hash } = xrplSignPayment({ privateKey, publicKey, tx });
+  const submitted = await xrplRpc("submit", { tx_blob: blob });
+  const engine = submitted?.engine_result;
+  if (engine !== "tesSUCCESS") {
+    throw new Error("XRP Ledger rejected the payment (" + (submitted?.engine_result_message || engine || "unknown error") + ").");
+  }
+  return { hash };
+}
+
+// ---------- Polkadot Asset Hub (Sr25519, Substrate mnemonic scheme) ----------
+// Polkadot does NOT do BIP44: the seed phrase feeds Substrate's own
+// scheme — mnemonicToMiniSecret, which is PBKDF2-HMAC-SHA512 over
+// the mnemonic's ENTROPY (salt "mnemonic"), a different input from
+// the BIP39 seed (which hashes the sentence) — Fluid's other
+// families must never be confused with it. The mini-secret seeds an
+// Sr25519 pair; the Asset Hub address is that pair at SS58 format 0
+// (confirmed live from the chain registry: chainSS58 = 0, DOT with
+// 10 decimals). Every step was validated independently: the
+// mini-secret matches a hand-computed entropy-route PBKDF2 (noble),
+// keyring and primitive derivations agree on the address, and
+// sr25519 signatures verify under the canonical primitive. The
+// chain connection is plain HTTPS JSON-RPC via @polkadot/api's
+// HttpProvider (this VM's egress blocks websockets; the Lucky
+// Friday public endpoint answers HTTPS and read the full account
+// state live during development). Asset IDs verified live via
+// on-chain metadata: 1337 = Circle USDC ("USD Coin", 6 dp),
+// 1984 = Tether ("USDt", 6 dp).
+const DOT_RPC = "https://rpc-asset-hub-polkadot.luckyfriday.io";
+export const DOT_EXPLORER = "https://assethub-polkadot.subscan.io";
+export const DOT_TOKENS = [
+  { symbol: "USDC", name: "USD Coin", address: "1337", decimals: 6, verified: true, priceUsd: 1 },
+  { symbol: "USDT", name: "Tether USD", address: "1984", decimals: 6, verified: true, priceUsd: 1 },
+];
+let dotKeyringInstance = null;
+function dotKeyring() {
+  if (!dotKeyringInstance) dotKeyringInstance = new DotKeyring({ type: "sr25519", ss58Format: 0 });
+  return dotKeyringInstance;
+}
+function dotPair(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return dotKeyring().addFromMnemonic(clean);
+}
+/** The wallet's Polkadot Asset Hub address (SS58 format 0). */
+export function dotAddressFromPhrase(phrase) {
+  return dotPair(phrase).address;
+}
+/** A valid SS58 address (any network prefix — the account bytes are
+ *  what the chain reads; Fluid's own addresses are format 0). */
+export function isValidDotAddress(address) {
+  try {
+    const raw = dotDecodeAddress(String(address || "").trim());
+    return raw.length === 32;
+  } catch { return false; }
+}
+export function dotPlanckToDot(planck) { return ethers.formatUnits(BigInt(planck), 10); }
+export function dotDotToPlanck(amount) { return ethers.parseUnits(String(amount), 10); }
+let dotApiPromise = null;
+/** The shared Asset Hub API connection (HTTPS). A failed attempt
+ *  is NOT cached — the next call retries from scratch. */
+export function dotApi() {
+  if (!dotApiPromise) {
+    dotCryptoWaitReady().catch(() => {});
+    dotApiPromise = DotApiPromise.create({ provider: new DotHttpProvider(DOT_RPC), noInitWarn: true })
+      .catch(e => { dotApiPromise = null; throw e; });
+  }
+  return dotApiPromise;
+}
+function dotNativeRow(amount) {
+  return { symbol: "DOT", name: "Polkadot", amount, address: null, decimals: 10, verified: true };
+}
+/** The full Asset Hub account state: DOT (free minus the part the
+ *  UI must treat carefully — the raw free balance is shown; the
+ *  existential deposit is enforced at send time) plus the verified
+ *  stablecoin assets. An account the chain has never seen returns
+ *  exists:false with zero rows. NOTE: Asset Hub hosts thousands of
+ *  community assets; Fluid checks the two verified stables — the
+ *  chain gives no cheap "all assets of one account" query without
+ *  an indexer, and inventing one from partial data would lie. */
+export async function getDotAccount(address) {
+  if (!isValidDotAddress(address)) throw new Error("That is not a valid Polkadot address.");
+  const api = await dotApi();
+  const acct = await api.query.system.account(address);
+  const free = acct.data.free.toString();
+  const exists = Number(acct.providers?.toString?.() ?? 0) > 0 || !acct.data.free.isZero();
+  const balances = [dotNativeRow(dotPlanckToDot(free))];
+  for (const t of DOT_TOKENS) {
+    let amount = "0";
+    try {
+      const entry = await api.query.assets.account(Number(t.address), address);
+      if (entry.isSome) amount = ethers.formatUnits(BigInt(entry.unwrap().balance.toString()), t.decimals);
+    } catch { /* one asset must not break the list */ }
+    balances.push({ ...t, amount });
+  }
+  return { exists, balances, existentialDepositDot: dotPlanckToDot(api.consts.balances.existentialDeposit.toString()) };
+}
+/** Asset Hub balances shaped like the other families' row lists. */
+export async function getDotBalances(address) {
+  return (await getDotAccount(address)).balances;
+}
+function dotBuildTx(api, pair, { to, amount, token }) {
+  if (!token) {
+    return api.tx.balances.transferKeepAlive(to, dotDotToPlanck(amount).toString());
+  }
+  const raw = ethers.parseUnits(String(amount), token.decimals);
+  const id = Number(token.address);
+  const fn = api.tx.assets.transferKeepAlive ?? api.tx.assets.transfer;
+  return fn(id, to, raw.toString());
+}
+/** Read-only pre-flight for the send sheet: the network's own fee
+ *  estimate for exactly this transfer, plus the ED. */
+export async function dotSendPlan(phrase, { to, amount, token = null } = {}) {
+  const plan = { feeDot: null, senderFreeDot: null, existentialDepositDot: null };
+  if (!isValidDotAddress(to)) return plan;
+  try {
+    const api = await dotApi();
+    const pair = dotPair(phrase);
+    plan.existentialDepositDot = dotPlanckToDot(api.consts.balances.existentialDeposit.toString());
+    const acct = await api.query.system.account(pair.address);
+    plan.senderFreeDot = dotPlanckToDot(acct.data.free.toString());
+    const tx = dotBuildTx(api, pair, { to, amount, token });
+    const info = await tx.paymentInfo(pair);
+    plan.feeDot = dotPlanckToDot(info.partialFee.toString());
+  } catch { /* stays null — sendDot re-checks authoritatively */ }
+  return plan;
+}
+/** The signer principle, Polkadot edition: a sentence, never a blob. */
+export function formatDotSendIntent({ amount, symbol, to, feeDot }) {
+  let s = `Send ${amount} ${symbol} to ${to} on Polkadot Asset Hub.`;
+  if (feeDot != null) s += ` Network fee ≈ ${feeDot} DOT.`;
+  return s + " Confirm?";
+}
+function dotSubmit(tx, pair) {
+  return new Promise((resolve, reject) => {
+    let unsub = null, settled = false;
+    const done = (fn, v) => { if (!settled) { settled = true; if (unsub) unsub(); fn(v); } };
+    tx.signAndSend(pair, (result) => {
+      if (result.dispatchError) {
+        let detail = result.dispatchError.toString();
+        try {
+          if (result.dispatchError.isModule) {
+            const meta = tx.registry.findMetaError(result.dispatchError.asModule);
+            detail = `${meta.section}.${meta.name}`;
+          }
+        } catch { /* keep the raw form */ }
+        done(reject, new Error("Polkadot Asset Hub rejected the transfer (" + detail + ")."));
+        return;
+      }
+      if (result.status?.isInBlock || result.status?.isFinalized) {
+        done(resolve, { hash: result.txHash.toHex() });
+      }
+    }).then(u => { unsub = u; if (settled) u(); }).catch(e => done(reject, e));
+  });
+}
+/** Sign LOCALLY with the Sr25519 pair (@polkadot/api + keyring) and
+ *  submit a DOT or asset transfer on Asset Hub. The chain's
+ *  existential deposit (read live from the chain's constants —
+ *  0.01 DOT at verification time) is enforced in code before
+ *  signing: transferKeepAlive at the protocol level, plus Fluid's
+ *  own pre-check so the user reads the reason, not an error code. */
+export async function sendDot(phrase, { to, amount, token = null }) {
+  if (!isValidDotAddress(to)) throw new Error("That is not a valid Polkadot address.");
+  const api = await dotApi();
+  const pair = dotPair(phrase);
+  const acct = await api.query.system.account(pair.address);
+  const free = acct.data.free.toBigInt();
+  if (free === 0n && !token) {
+    throw new Error("Your Asset Hub account doesn't exist yet — it needs to receive DOT before it can send.");
+  }
+  const ed = api.consts.balances.existentialDeposit.toBigInt();
+  const tx = dotBuildTx(api, pair, { to, amount, token });
+  const info = await tx.paymentInfo(pair);
+  const fee = info.partialFee.toBigInt();
+  if (!token) {
+    let amt;
+    try { amt = dotDotToPlanck(amount); } catch { throw new Error("DOT amounts can have at most 10 decimal places."); }
+    if (amt <= 0n) throw new Error("Enter an amount.");
+    if (free - amt - fee < ed) {
+      throw new Error(`That would leave your account below the existential deposit of ${dotPlanckToDot(ed)} DOT — an Asset Hub account under that amount is deleted and loses the rest. Lower the amount.`);
+    }
+  } else {
+    let raw;
+    try { raw = ethers.parseUnits(String(amount), token.decimals); } catch { throw new Error(`${token.symbol} amounts can have at most ${token.decimals} decimal places.`); }
+    if (raw <= 0n) throw new Error("Enter an amount.");
+    const entry = await api.query.assets.account(Number(token.address), pair.address);
+    const held = entry.isSome ? entry.unwrap().balance.toBigInt() : 0n;
+    if (raw > held) {
+      throw new Error(`Not enough ${token.symbol} on Asset Hub (you have ${ethers.formatUnits(held, token.decimals)}).`);
+    }
+    if (free - fee < ed) {
+      throw new Error(`Your DOT must cover the fee and stay above the existential deposit of ${dotPlanckToDot(ed)} DOT. Top up your DOT first.`);
+    }
+  }
+  return dotSubmit(tx, pair);
 }

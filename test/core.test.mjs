@@ -14,6 +14,26 @@ import { Keypair as StellarKeypair, StrKey as StellarStrKey } from "@stellar/ste
 import { chunkArray, parseDexScreenerPairs, lifiTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
   shortAddrLabel, tronDecodeAbiString, formatTokenAmount, dexChainIdForEvmChain, SOLANA_TOKEN2022_PROGRAM,
   MULTICALL3_ADDRESS } from "../src/wallet-core.js";
+import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAddress, tonNanoToTon, tonTonToNano, formatTonSendIntent, tonJettonTransferBody, TON_USDT_MASTER,
+  nearAddressFromPhrase, nearAddressFromSeed, nearSeedFromSeed, isValidNearAddress, nearYoctoToNear, nearNearToYocto, nearMinExistYocto, nearTransactionBytes, nearSignedTransactionBytes, nearActionTransfer, nearActionFunctionCall, formatNearSendIntent, NEAR_TOKENS,
+  algoAddressFromPhrase, algoAddressFromSeed, algoSeedFromSeed, algoAddressFromPubkey, algoAddressDecode, isValidAlgorandAddress, algoMicroToAlgo, algoAlgoToMicro, formatAlgoSendIntent, ALGO_USDC, ALGO_USDC_ASA,
+  xrplAddressFromPhrase, xrplAddressFromPubkey, xrplAddressDecode, isValidXrplAddress, xrplDropsToXrp, xrplXrpToDrops, xrplCurrencyLabel, xrplSignPayment, formatXrplSendIntent, XRPL_USDC, XRPL_USDC_ISSUER,
+  dotAddressFromPhrase, isValidDotAddress, dotPlanckToDot, dotDotToPlanck, formatDotSendIntent, DOT_TOKENS } from "../src/wallet-core.js";
+import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
+import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
+import { contractAddress as tonContractAddress, beginCell as tonBeginCell, storeMessageRelaxed as tonStoreMessageRelaxed, internal as tonInternalMsg, Address as TonAddr } from "@ton/core";
+import { derivePath as ed25519HdDerivePath } from "ed25519-hd-key";
+import { KeyPair as NearKeyPair, PublicKey as NearPublicKey, createTransaction as nearCreateTx, actions as nearActions, encodeTransaction as nearEncodeTx, baseEncode as nearBaseEncode, baseDecode as nearBaseDecode } from "near-api-js";
+import algosdk from "algosdk";
+import { encodeAccountID as xrplCodecEncodeAccountID } from "ripple-address-codec";
+import * as xrplKeypairs from "ripple-keypairs";
+import { decode as xrplCodecDecode, encodeForSigning as xrplCodecEncodeForSigning } from "ripple-binary-codec";
+import { sr25519PairFromSeed as dotSrPairFromSeed, encodeAddress as dotEncodeAddress, sr25519Verify as dotSrVerify } from "@polkadot/util-crypto";
+import { mnemonicToEntropy as scureMnemonicToEntropy } from "@scure/bip39";
+import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
+import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
+import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
+import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
 import { DirectSecp256k1HdWallet, DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
 import { Slip10RawIndex } from "@cosmjs/crypto";
 import { HDKey } from "@scure/bip32";
@@ -740,6 +760,216 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   // EVM/SVM/UTXO/MVM/TVM) contains NO Stellar chain, so there is
   // deliberately no swap registration for the family.
   ok("stellar: no swap chain registered", swapChainOf("stellar") === null);
+}
+
+// 34. Phase 4 — payments-grade families: TON, NEAR, Algorand,
+// XRP Ledger, Polkadot Asset Hub. Every family's derivation was
+// cross-checked during development against an independent
+// implementation (tonweb / ed25519-hd-key / algosdk /
+// ripple-address-codec / entropy-route PBKDF2) and every signature
+// scheme against a second implementation or a live vector; the
+// checks below pin those results so they can never silently drift.
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+  // ----- TON (SLIP-0010 coin 607, Wallet V4R2) -----
+  const ABANDON_TON = "EQAzWZa6nM5mJev91wGc7VCSfBoIsYRqKJpV78N8Add9-U9d";
+  const KNOWN_TON = "EQAtUn6khf4MxnAB4aQNcDlUPNOsLtU8IOVZbIabFzw9Kbar";
+  ok("ton: abandon…about address vector", tonAddressFromPhrase(ABANDON) === ABANDON_TON);
+  ok("ton: known-phrase address vector", tonAddressFromPhrase(KNOWN_PHRASE) === KNOWN_TON);
+  ok("ton: seed-level derivation agrees", tonAddressFromSeed(mnemonicToSeedSync(ABANDON)) === ABANDON_TON);
+  // Independent address path: rebuild the StateInit address from the
+  // contract's code+data with @ton/core's contractAddress — a
+  // different code path from WalletContractV4's own .address.
+  {
+    const kp = tonKeyPairFromSeed(Buffer.from(tonSeedFromSeed(mnemonicToSeedSync(ABANDON))));
+    const w = TonWalletV4.create({ publicKey: kp.publicKey, workchain: 0 });
+    const rebuilt = tonContractAddress(0, w.init).toString({ bounceable: true, urlSafe: true });
+    ok("ton: @ton/core contractAddress over the StateInit agrees", rebuilt === ABANDON_TON);
+    ok("ton: noble pubkey agrees with @ton/crypto", Buffer.from(ed25519.getPublicKey(tonSeedFromSeed(mnemonicToSeedSync(ABANDON)))).equals(kp.publicKey));
+    // Signing: @ton/ton's createTransfer signature must verify under
+    // noble over a signing message rebuilt BY HAND (walletId,
+    // timeout, seqno, extended-action op 0, per-message send mode +
+    // ref) — the exact bytes the wallet contract checks on-chain.
+    const dest = TonAddr.parse(TON_USDT_MASTER);
+    const m = tonInternalMsg({ to: dest, value: 100000000n, bounce: false });
+    const body = w.createTransfer({ seqno: 0, secretKey: kp.secretKey, timeout: 1700000000, sendMode: 3, messages: [m] });
+    const sig = body.beginParse().loadBuffer(64);
+    const signing = tonBeginCell().storeUint(w.walletId, 32).storeUint(1700000000, 32).storeUint(0, 32)
+      .storeUint(0, 8).storeUint(3, 8).storeRef(tonBeginCell().store(tonStoreMessageRelaxed(m)).endCell()).endCell();
+    ok("ton: createTransfer signature verifies over the hand-built signing message",
+      ed25519.verify(sig, signing.hash(), kp.publicKey));
+    // Jetton transfer body: TEP-74 op + fields decode back out.
+    const jb = tonJettonTransferBody({ amountRaw: 1000000n, to: ABANDON_TON, responseTo: ABANDON_TON });
+    const js = jb.beginParse();
+    ok("ton: jetton body carries op 0xf8a7ea5 and the amount",
+      js.loadUint(32) === 0xf8a7ea5 && (js.loadUint(64), js.loadCoins()) === 1000000n);
+  }
+  ok("ton: valid addresses pass (friendly + raw)", isValidTonAddress(ABANDON_TON)
+    && isValidTonAddress("0:B2F18D7C8A26FAAA0F064B3A2E2873B1368A7A7DED502D279E37EABE9CA30ECF"));
+  ok("ton: other families refused", !isValidTonAddress("rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v3")
+    && !isValidTonAddress("hello") && !isValidTonAddress("") && !isValidTonAddress(null));
+  ok("ton: nano conversions", tonTonToNano("0.05") === 50000000n && tonNanoToTon(1500000000n) === "1.5");
+  const tonIntent = formatTonSendIntent({ amount: "2", symbol: "TON", to: ABANDON_TON });
+  ok("ton: intent discloses the fee reserve", tonIntent.includes("Send 2 TON") && tonIntent.includes("0.05 TON is set aside for network fees")
+    && tonIntent.includes("comes back to you") && tonIntent.includes("Confirm?"));
+  ok("ton: USDT master is Tether's verified contract", TON_USDT_MASTER === "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs");
+  ok("ton: no swap chain registered", swapChainOf("ton") === null);
+
+  // ----- NEAR (SLIP-0010 coin 397, implicit accounts) -----
+  const ABANDON_NEAR = "4e7de0a21d8a20f970c86b6edf407906d7ba9e205979c3268270eef80a286e2d";
+  const KNOWN_NEAR = "0930358eaca9e871d33cfb89eb07e936be5669a99e3a17c020447492fb8382d0";
+  ok("near: abandon…about implicit account vector", nearAddressFromPhrase(ABANDON) === ABANDON_NEAR);
+  ok("near: known-phrase implicit account vector", nearAddressFromPhrase(KNOWN_PHRASE) === KNOWN_NEAR);
+  ok("near: seed-level derivation agrees", nearAddressFromSeed(mnemonicToSeedSync(ABANDON)) === ABANDON_NEAR);
+  {
+    // Independent derivation: the ed25519-hd-key package (NEAR
+    // tooling's own reference) must produce the same key + chain code.
+    const ref = ed25519HdDerivePath("m/44'/397'/0'/0'/0'", Buffer.from(mnemonicToSeedSync(ABANDON)).toString("hex"));
+    const mine = deriveSlip10Ed25519(mnemonicToSeedSync(ABANDON), [44, 397, 0, 0, 0]);
+    ok("near: ed25519-hd-key derivation agrees (key + chain code)",
+      Buffer.from(mine.key).toString("hex") === Buffer.from(ref.key).toString("hex")
+      && Buffer.from(mine.chainCode).toString("hex") === Buffer.from(ref.chainCode).toString("hex"));
+    // Serialization: Fluid's hand-rolled borsh must equal
+    // near-api-js's bytes for a Transfer AND for the two
+    // FunctionCall actions an NEP-141 send is built from; the
+    // signature must equal near-api-js's KeyPair signature.
+    const key = nearSeedFromSeed(mnemonicToSeedSync(ABANDON));
+    const pub = ed25519.getPublicKey(key);
+    const blockHash = nearBaseDecode("8xEAj3AoegnxQFJJgGQE2G9u5WG4jGWHYGqTXCSi7Em9");
+    const deposit = 10n ** 24n;
+    const mineTx = nearTransactionBytes({ signerId: ABANDON_NEAR, publicKey: pub, nonce: 42n, receiverId: "near", blockHash, actions: [nearActionTransfer(deposit)] });
+    const refTx = nearCreateTx(ABANDON_NEAR, NearPublicKey.fromString("ed25519:" + nearBaseEncode(pub)), "near", 42n, [nearActions.transfer(deposit)], blockHash);
+    ok("near: transfer serialization matches near-api-js", Buffer.from(mineTx).equals(Buffer.from(nearEncodeTx(refTx))));
+    const usdc = NEAR_TOKENS[0].address;
+    const sdArgs = new TextEncoder().encode(JSON.stringify({ account_id: "someone.near" }));
+    const ftArgs = new TextEncoder().encode(JSON.stringify({ receiver_id: "someone.near", amount: "1000000", memo: null }));
+    const mineFc = nearTransactionBytes({ signerId: ABANDON_NEAR, publicKey: pub, nonce: 7n, receiverId: usdc, blockHash,
+      actions: [nearActionFunctionCall("storage_deposit", sdArgs, 30000000000000n, 1250000000000000000000n),
+                nearActionFunctionCall("ft_transfer", ftArgs, 30000000000000n, 1n)] });
+    const refFc = nearCreateTx(ABANDON_NEAR, NearPublicKey.fromString("ed25519:" + nearBaseEncode(pub)), usdc, 7n,
+      [nearActions.functionCall("storage_deposit", sdArgs, 30000000000000n, 1250000000000000000000n),
+       nearActions.functionCall("ft_transfer", ftArgs, 30000000000000n, 1n)], blockHash);
+    ok("near: function-call serialization matches near-api-js", Buffer.from(mineFc).equals(Buffer.from(nearEncodeTx(refFc))));
+    const digest = nobleSha256(mineTx);
+    const sigMine = ed25519.sign(digest, key);
+    const kp = NearKeyPair.fromString("ed25519:" + nearBaseEncode(new Uint8Array([...key, ...pub])));
+    const { signature: sigRef } = await kp.sign(digest);
+    ok("near: signature matches near-api-js KeyPair", Buffer.from(sigMine).equals(Buffer.from(sigRef)));
+    ok("near: signed-tx assembly carries the same bytes",
+      nearSignedTransactionBytes(mineTx, sigMine).length === mineTx.length + 65);
+  }
+  ok("near: address validation", isValidNearAddress(ABANDON_NEAR) && isValidNearAddress("example.near")
+    && isValidNearAddress("usdt.tether-token.near") && isValidNearAddress("UPPER.NEAR") // case-normalized, as sendNear lowercases
+    && !isValidNearAddress("NOT AN ADDRESS") && !isValidNearAddress("") && !isValidNearAddress(null));
+  ok("near: yocto conversions", nearNearToYocto("0.00182") === 1820000000000000000000n
+    && nearYoctoToNear(1820000000000000000000n) === "0.00182" && nearYoctoToNear(100n) === "0.0000000000000000000001");
+  ok("near: existence minimum is 182 bytes × 10^19", nearMinExistYocto(182) === 1820000000000000000000n);
+  ok("near: USDC contract is Circle's native deployment", NEAR_TOKENS[0].address === "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
+    && NEAR_TOKENS[0].symbol === "USDC" && NEAR_TOKENS[0].verified === true);
+  const nearIntent = formatNearSendIntent({ amount: "1", symbol: "NEAR", to: "someone.near", createsAccount: true });
+  ok("near: intent discloses account creation", nearIntent.includes("Send 1 NEAR") && nearIntent.includes("creates the recipient's account"));
+  ok("near: no swap chain registered", swapChainOf("near") === null);
+
+  // ----- Algorand (SLIP-0010 coin 283) -----
+  const ABANDON_ALGO = "EP2D7TV7IAFANZHK3B6QLKB53N5UTD7RARVXZTWCPCRQQBKYVGM2XIMT2Q";
+  const KNOWN_ALGO = "XTNEJTKVSDVMMRR6JZ7P2M2JMOHIUXU2CQAPL6WGEXNJ2L2HUBGW2OVQ6Q";
+  ok("algorand: abandon…about address vector", algoAddressFromPhrase(ABANDON) === ABANDON_ALGO);
+  ok("algorand: known-phrase address vector", algoAddressFromPhrase(KNOWN_PHRASE) === KNOWN_ALGO);
+  ok("algorand: seed-level derivation agrees", algoAddressFromSeed(mnemonicToSeedSync(ABANDON)) === ABANDON_ALGO);
+  {
+    const pub = ed25519.getPublicKey(algoSeedFromSeed(mnemonicToSeedSync(ABANDON)));
+    ok("algorand: algosdk.encodeAddress agrees", algosdk.encodeAddress(pub) === ABANDON_ALGO);
+    ok("algorand: decode round-trips through both codecs",
+      Buffer.from(algoAddressDecode(ABANDON_ALGO)).equals(Buffer.from(pub))
+      && Buffer.from(algosdk.decodeAddress(ABANDON_ALGO).publicKey).equals(Buffer.from(pub)));
+    ok("algorand: derivation agrees with ed25519-hd-key",
+      Buffer.from(algoSeedFromSeed(mnemonicToSeedSync(ABANDON))).toString("hex")
+      === Buffer.from(ed25519HdDerivePath("m/44'/283'/0'/0'/0'", Buffer.from(mnemonicToSeedSync(ABANDON)).toString("hex")).key).toString("hex"));
+  }
+  const tamperedAlgo = ABANDON_ALGO.slice(0, 30) + (ABANDON_ALGO[30] === "A" ? "B" : "A") + ABANDON_ALGO.slice(31);
+  ok("algorand: tampered checksum refused", !isValidAlgorandAddress(tamperedAlgo) && algoAddressDecode(tamperedAlgo) === null);
+  ok("algorand: valid passes, other families refused", isValidAlgorandAddress(ABANDON_ALGO)
+    && !isValidAlgorandAddress(ABANDON_TON) && !isValidAlgorandAddress("hello") && !isValidAlgorandAddress(""));
+  ok("algorand: micro conversions", algoAlgoToMicro("0.1") === 100000n && algoMicroToAlgo(100000n) === "0.1");
+  ok("algorand: USDC is Circle's ASA", ALGO_USDC_ASA === 31566704 && ALGO_USDC.address === "31566704" && ALGO_USDC.verified === true);
+  const algoIntent = formatAlgoSendIntent({ amount: "3", symbol: "ALGO", to: ABANDON_ALGO, feeAlgo: "0.001" });
+  ok("algorand: intent is human-readable", algoIntent.includes("Send 3 ALGO") && algoIntent.includes("on Algorand")
+    && algoIntent.includes("Network fee 0.001 ALGO") && algoIntent.includes("Confirm?"));
+  ok("algorand: no swap chain registered", swapChainOf("algorand") === null);
+
+  // ----- XRP Ledger (BIP44 secp256k1 coin 144) -----
+  const ABANDON_XRP = "rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v3";
+  const KNOWN_XRP = "rnrbiYDUYTJS4JVdSV5FtyCj4HFuRjfLKM";
+  ok("xrpl: abandon…about classic address vector", xrplAddressFromPhrase(ABANDON) === ABANDON_XRP);
+  ok("xrpl: known-phrase classic address vector", xrplAddressFromPhrase(KNOWN_PHRASE) === KNOWN_XRP);
+  ok("xrpl: ripple-address-codec agrees on the account id",
+    xrplCodecEncodeAccountID(Buffer.from(xrplAddressDecode(ABANDON_XRP))) === ABANDON_XRP
+    && xrplCodecEncodeAccountID(Buffer.from(xrplAddressDecode(KNOWN_XRP))) === KNOWN_XRP);
+  {
+    // Signing: the production builder's blob must decode via
+    // ripple-binary-codec and verify under ripple-keypairs — the
+    // exact checks the network performs.
+    const child = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON)).derive("m/44'/144'/0'/0/0");
+    const tx = { TransactionType: "Payment", Account: ABANDON_XRP, Destination: KNOWN_XRP,
+      Amount: "1000000", Fee: "12", Sequence: 12345, Flags: 2147483648, LastLedgerSequence: 108200000 };
+    const { blob, hash } = xrplSignPayment({ privateKey: child.privateKey, publicKey: child.publicKey, tx });
+    const back = xrplCodecDecode(blob);
+    ok("xrpl: production blob verifies under ripple-keypairs",
+      xrplKeypairs.verify(xrplCodecEncodeForSigning(tx), back.TxnSignature, back.SigningPubKey));
+    ok("xrpl: tx hash is a 64-hex id", /^[0-9A-F]{64}$/.test(hash) && back.Account === ABANDON_XRP);
+  }
+  const tamperedXrp = ABANDON_XRP.slice(0, 10) + (ABANDON_XRP[10] === "r" ? "p" : "r") + ABANDON_XRP.slice(11);
+  ok("xrpl: tampered checksum refused", !isValidXrplAddress(tamperedXrp) && xrplAddressDecode(tamperedXrp) === null);
+  ok("xrpl: valid passes, other families refused", isValidXrplAddress(ABANDON_XRP)
+    && !isValidXrplAddress(ABANDON_TON) && !isValidXrplAddress("GB3JDWCQJCWMJ3IILWIGDTQJJC5567PGVEVXSCVPEQOTDN64VJBDQBYX")
+    && !isValidXrplAddress("") && !isValidXrplAddress(null));
+  ok("xrpl: drops conversions", xrplXrpToDrops("1.5") === 1500000n && xrplDropsToXrp(1500000n) === "1.5" && xrplDropsToXrp(10n) === "0.00001");
+  ok("xrpl: currency labels decode from 160-bit hex", xrplCurrencyLabel("5553444300000000000000000000000000000000") === "USDC"
+    && xrplCurrencyLabel("USD") === "USD");
+  // Circle's issuer — the brief for this phase carried a garbled
+  // variant that fails XRPL checksum validation outright; only this
+  // exact address verified live (gateway_balances obligations).
+  ok("xrpl: USDC is Circle's verified issuer", XRPL_USDC_ISSUER === "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE"
+    && isValidXrplAddress(XRPL_USDC_ISSUER) && XRPL_USDC.verified === true);
+  const xrpIntent = formatXrplSendIntent({ amount: "5", symbol: "XRP", to: ABANDON_XRP, feeXrp: "0.00001", destinationTag: 12345 });
+  ok("xrpl: intent shows the destination tag", xrpIntent.includes("Send 5 XRP") && xrpIntent.includes("Destination tag: 12345")
+    && xrpIntent.includes("Network fee 0.00001 XRP") && xrpIntent.includes("Confirm?"));
+  ok("xrpl: no swap chain registered", swapChainOf("xrpl") === null);
+
+  // ----- Polkadot Asset Hub (Sr25519, Substrate scheme) -----
+  const ABANDON_DOT = "13KVd4f2a4S5pLp4gTTFezyXdPWx27vQ9vS6xBXJ9yWVd7xo";
+  const KNOWN_DOT = "15hjAH9GXCLMkcSxeRcbdbtuQZ59pgL6rDU73FBknBprgNR8";
+  ok("polkadot: abandon…about address vector", dotAddressFromPhrase(ABANDON) === ABANDON_DOT);
+  ok("polkadot: known-phrase address vector", dotAddressFromPhrase(KNOWN_PHRASE) === KNOWN_DOT);
+  {
+    // Independent mini-secret: PBKDF2-HMAC-SHA512 over the mnemonic
+    // ENTROPY (@scure/bip39's decoder + noble's PBKDF2 — neither is
+    // @polkadot code), then the primitive Sr25519 derivation must
+    // land on the same address the Keyring route produces.
+    const entropy = scureMnemonicToEntropy(ABANDON, bip39EnglishWordlist);
+    const mini = noblePbkdf2(nobleSha512, entropy, new TextEncoder().encode("mnemonic"), { c: 2048, dkLen: 64 }).slice(0, 32);
+    const pair = dotSrPairFromSeed(mini);
+    ok("polkadot: entropy-route mini-secret + primitive derivation agrees",
+      dotEncodeAddress(pair.publicKey, 0) === ABANDON_DOT);
+    // And the pair's signatures verify under the canonical
+    // primitive — the property @polkadot/api's signer relies on.
+    const { Keyring: DotKeyringTest } = await import("@polkadot/keyring");
+    const kp = new DotKeyringTest({ type: "sr25519", ss58Format: 0 }).addFromMnemonic(ABANDON);
+    const message = new TextEncoder().encode("fluid phase4 check");
+    ok("polkadot: keyring pair signature verifies under the primitive",
+      dotSrVerify(message, kp.sign(message), kp.publicKey));
+  }
+  ok("polkadot: address validation", isValidDotAddress(ABANDON_DOT) && isValidDotAddress(KNOWN_DOT)
+    && !isValidDotAddress(ABANDON_XRP) && !isValidDotAddress("hello") && !isValidDotAddress("") && !isValidDotAddress(null));
+  ok("polkadot: planck conversions", dotDotToPlanck("0.01") === 100000000n && dotPlanckToDot(100000000n) === "0.01"
+    && dotPlanckToDot(15000000000n) === "1.5");
+  ok("polkadot: stablecoin asset ids are the verified pair", DOT_TOKENS[0].address === "1337" && DOT_TOKENS[0].symbol === "USDC"
+    && DOT_TOKENS[1].address === "1984" && DOT_TOKENS[1].symbol === "USDT");
+  const dotIntent = formatDotSendIntent({ amount: "2", symbol: "DOT", to: ABANDON_DOT, feeDot: "0.00012" });
+  ok("polkadot: intent is human-readable", dotIntent.includes("Send 2 DOT") && dotIntent.includes("on Polkadot Asset Hub")
+    && dotIntent.includes("Network fee ≈ 0.00012 DOT") && dotIntent.includes("Confirm?"));
+  ok("polkadot: no swap chain registered", swapChainOf("polkadot") === null);
 }
 
 console.log(`\n${passed} checks passed`);

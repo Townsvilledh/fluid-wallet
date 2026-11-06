@@ -14,6 +14,11 @@ import {
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
   stellarAddressFromPhrase, getStellarAccount, sendStellar, isValidStellarAddress, formatStellarSendIntent, stellarSendPlan, STELLAR_EXPLORER,
+  tonAddressFromPhrase, getTonAccount, sendTon, isValidTonAddress, formatTonSendIntent, tonSendPlan, TON_EXPLORER, TON_USDT,
+  nearAddressFromPhrase, getNearAccount, sendNear, isValidNearAddress, formatNearSendIntent, nearSendPlan, NEAR_EXPLORER, NEAR_TOKENS,
+  algoAddressFromPhrase, getAlgorandAccount, sendAlgorand, isValidAlgorandAddress, formatAlgoSendIntent, algoSendPlan, ALGO_EXPLORER, ALGO_USDC,
+  xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
+  dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
@@ -36,6 +41,7 @@ const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
+  TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff" };
 const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
@@ -45,6 +51,11 @@ let tronAddr = null, tronBalances = [];
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
 let stellarAddr = null, stellarBalances = [], stellarFunded = null, stellarLoadFailed = false;
+let tonAddr = null, tonBalances = [], tonState = null, tonLoadFailed = false;
+let nearAddr = null, nearBalances = [], nearExists = null, nearLoadFailed = false;
+let algoAddr = null, algoBalances = [], algoFunded = null, algoLoadFailed = false;
+let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
+let dotAddr = null, dotBalances = [], dotExists = null, dotLoadFailed = false;
 let ltcAddr = null, ltcBal = 0;
 let dogeAddr = null, dogeBal = 0;
 let bchAddr = null, bchBal = 0;
@@ -187,7 +198,7 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains)";
+  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub";
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
     .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -217,6 +228,46 @@ async function renderMain() {
   getStellarAccount(stellarAddr)
     .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; paintAssets(); })
     .catch(() => { stellarLoadFailed = true; paintAssets(); });
+  // Phase 4 — payments-grade families: TON (SLIP-0010 coin 607,
+  // Wallet V4R2), NEAR (coin 397, implicit account), Algorand (coin
+  // 283), XRP Ledger (BIP44 secp256k1 coin 144), Polkadot Asset Hub
+  // (Sr25519, Substrate derivation). Each follows the Stellar
+  // discipline: placeholder rows, honest state notes on failure —
+  // never a fake zero presented as a loaded balance.
+  tonAddr = tonAddressFromPhrase(wallet.mnemonic.phrase);
+  tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
+                 { ...TON_USDT, amount: "0" }];
+  tonState = null; tonLoadFailed = false;
+  getTonAccount(tonAddr)
+    .then(acct => { tonBalances = acct.balances; tonState = acct.state; paintAssets(); })
+    .catch(() => { tonLoadFailed = true; paintAssets(); });
+  nearAddr = nearAddressFromPhrase(wallet.mnemonic.phrase);
+  nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
+                  ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  nearExists = null; nearLoadFailed = false;
+  getNearAccount(nearAddr)
+    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; paintAssets(); })
+    .catch(() => { nearLoadFailed = true; paintAssets(); });
+  algoAddr = algoAddressFromPhrase(wallet.mnemonic.phrase);
+  algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
+                  { ...ALGO_USDC, amount: "0" }];
+  algoFunded = null; algoLoadFailed = false;
+  getAlgorandAccount(algoAddr)
+    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; paintAssets(); })
+    .catch(() => { algoLoadFailed = true; paintAssets(); });
+  xrpAddr = xrplAddressFromPhrase(wallet.mnemonic.phrase);
+  xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
+  xrpFunded = null; xrpLoadFailed = false;
+  getXrplAccount(xrpAddr)
+    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; paintAssets(); })
+    .catch(() => { xrpLoadFailed = true; paintAssets(); });
+  dotAddr = dotAddressFromPhrase(wallet.mnemonic.phrase);
+  dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
+                 ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  dotExists = null; dotLoadFailed = false;
+  getDotAccount(dotAddr)
+    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; paintAssets(); })
+    .catch(() => { dotLoadFailed = true; paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -270,6 +321,27 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of stellarBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of tonBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of nearBalances) {
+    // wNEAR is NEAR, wrapped 1:1 — price it as NEAR.
+    const p = priceOfRow(b, b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of algoBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of xrpBalances) {
+    const p = priceOfRow(b, prices[b.symbol]);
+    if (p != null) t += Number(b.amount) * p;
+  }
+  for (const b of dotBalances) {
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -373,6 +445,55 @@ function paintAssets() {
     if (stellarFunded === false) rows.push(`<p class="tag">Account not yet activated — receive at least 1 XLM to activate it.</p>`);
     if (stellarLoadFailed) rows.push(`<p class="tag">Stellar balances couldn't be loaded right now.</p>`);
   }
+  // TON family rows (Phase 4; tap a row to send on TON)
+  if (tonBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">TON</p>`);
+    const sp = splitRows(tonBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `TON${b.address ? " · Jetton" : ""}`, `data-ton="${tonBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("ton", sp.other, render));
+    if (tonState && tonState !== "active") rows.push(`<p class="tag">Wallet not deployed yet — it deploys automatically with your first send.</p>`);
+    if (tonLoadFailed) rows.push(`<p class="tag">TON balances couldn't be loaded right now.</p>`);
+  }
+  // NEAR family rows (Phase 4; tap a row to send on NEAR)
+  if (nearBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">NEAR</p>`);
+    const sp = splitRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `NEAR${b.address ? " · NEP-141" : ""}`, `data-near="${nearBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("near", sp.other, render));
+    if (nearExists === false) rows.push(`<p class="tag">Account doesn't exist yet — it is created when it first receives at least 0.00182 NEAR.</p>`);
+    if (nearLoadFailed) rows.push(`<p class="tag">NEAR balances couldn't be loaded right now.</p>`);
+  }
+  // Algorand family rows (Phase 4; tap a row to send on Algorand)
+  if (algoBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Algorand</p>`);
+    const sp = splitRows(algoBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `Algorand${b.address ? " · ASA " + esc(b.address) : ""}`, `data-algo="${algoBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("algorand", sp.other, render));
+    if (algoFunded === false) rows.push(`<p class="tag">Account not funded yet — receive ALGO to start using it.</p>`);
+    if (algoLoadFailed) rows.push(`<p class="tag">Algorand balances couldn't be loaded right now.</p>`);
+  }
+  // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
+  if (xrpBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`);
+    const sp = splitRows(xrpBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `XRP Ledger${b.address ? " · Trust line" : ""}`, `data-xrp="${xrpBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("xrpl", sp.other, render));
+    if (xrpFunded === false) rows.push(`<p class="tag">Account not activated yet — it activates when it first receives at least the network base reserve (1 XRP).</p>`);
+    if (xrpLoadFailed) rows.push(`<p class="tag">XRP Ledger balances couldn't be loaded right now.</p>`);
+  }
+  // Polkadot Asset Hub family rows (Phase 4; tap a row to send)
+  if (dotBalances.length) {
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`);
+    const sp = splitRows(dotBalances, (b) => prices[b.symbol]);
+    const render = ({ b, v }) => tokenRowHtml(b, v, `Polkadot Asset Hub${b.address ? " · Asset " + esc(b.address) : ""}`, `data-dot="${dotBalances.indexOf(b)}"`);
+    for (const item of sp.main) rows.push(render(item));
+    rows.push(otherGroupHtml("polkadot", sp.other, render));
+    if (dotLoadFailed) rows.push(`<p class="tag">Polkadot Asset Hub balances couldn't be loaded right now.</p>`);
+  }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
   // shows "unavailable", never a fake zero.
@@ -422,6 +543,26 @@ function paintAssets() {
   document.querySelectorAll("[data-stellar]").forEach(r => r.onclick = () => {
     const b = stellarBalances[Number(r.dataset.stellar)];
     if (b) openStellarSheet(b);
+  });
+  document.querySelectorAll("[data-ton]").forEach(r => r.onclick = () => {
+    const b = tonBalances[Number(r.dataset.ton)];
+    if (b) openTonSheet(b);
+  });
+  document.querySelectorAll("[data-near]").forEach(r => r.onclick = () => {
+    const b = nearBalances[Number(r.dataset.near)];
+    if (b) openNearSheet(b);
+  });
+  document.querySelectorAll("[data-algo]").forEach(r => r.onclick = () => {
+    const b = algoBalances[Number(r.dataset.algo)];
+    if (b) openAlgoSheet(b);
+  });
+  document.querySelectorAll("[data-xrp]").forEach(r => r.onclick = () => {
+    const b = xrpBalances[Number(r.dataset.xrp)];
+    if (b) openXrplSheet(b);
+  });
+  document.querySelectorAll("[data-dot]").forEach(r => r.onclick = () => {
+    const b = dotBalances[Number(r.dataset.dot)];
+    if (b) openDotSheet(b);
   });
   document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
@@ -711,6 +852,29 @@ $("actReceive").onclick = () => {
     <button class="btn ghost" id="cpStellar">Copy Stellar address</button>
     ${stellarFunded === false ? `<p class="tag">This account isn't activated yet — it activates when it first receives at least 1 XLM.</p>` : ""}
     <hr style="border-color:var(--line)">
+    <p class="tag">TON address (TON and jettons like USDT):</p>
+    <img class="qr" id="qrTon"><p class="mono">${tonAddr}</p>
+    <button class="btn ghost" id="cpTon">Copy TON address</button>
+    ${tonState && tonState !== "active" ? `<p class="tag">This wallet deploys automatically with your first send — receiving works right away.</p>` : ""}
+    <hr style="border-color:var(--line)">
+    <p class="tag">NEAR address (implicit account — NEAR and NEP-141 tokens):</p>
+    <img class="qr" id="qrNear"><p class="mono">${nearAddr}</p>
+    <button class="btn ghost" id="cpNear">Copy NEAR address</button>
+    ${nearExists === false ? `<p class="tag">This account is created when it first receives at least 0.00182 NEAR.</p>` : ""}
+    <hr style="border-color:var(--line)">
+    <p class="tag">Algorand address (ALGO and ASAs like USDC):</p>
+    <img class="qr" id="qrAlgo"><p class="mono">${algoAddr}</p>
+    <button class="btn ghost" id="cpAlgo">Copy Algorand address</button>
+    <hr style="border-color:var(--line)">
+    <p class="tag">XRP Ledger address (XRP and trust-line tokens):</p>
+    <img class="qr" id="qrXrp"><p class="mono">${xrpAddr}</p>
+    <button class="btn ghost" id="cpXrp">Copy XRP Ledger address</button>
+    ${xrpFunded === false ? `<p class="tag">This account activates when it first receives at least the network base reserve (1 XRP).</p>` : ""}
+    <hr style="border-color:var(--line)">
+    <p class="tag">Polkadot Asset Hub address (DOT, USDC, USDT on Asset Hub):</p>
+    <img class="qr" id="qrDot"><p class="mono">${dotAddr}</p>
+    <button class="btn ghost" id="cpDot">Copy Polkadot address</button>
+    <hr style="border-color:var(--line)">
     <p class="tag">Litecoin address:</p>
     <img class="qr" id="qrLtc"><p class="mono">${ltcAddr}</p>
     <button class="btn ghost" id="cpLtc">Copy Litecoin address</button>
@@ -727,6 +891,7 @@ $("actReceive").onclick = () => {
     ${cosmosHtml}`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
   qr("qrSui", suiAddr); qr("qrStellar", stellarAddr);
+  qr("qrTon", tonAddr); qr("qrNear", nearAddr); qr("qrAlgo", algoAddr); qr("qrXrp", xrpAddr); qr("qrDot", dotAddr);
   qr("qrLtc", ltcAddr); qr("qrDoge", dogeAddr); qr("qrBch", bchAddr);
   $("cpEvm").onclick = () => copyText(wallet.address, $("cpEvm"));
   $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
@@ -734,6 +899,11 @@ $("actReceive").onclick = () => {
   $("cpSol").onclick = () => copyText(solAddr, $("cpSol"));
   $("cpSui").onclick = () => copyText(suiAddr, $("cpSui"));
   $("cpStellar").onclick = () => copyText(stellarAddr, $("cpStellar"));
+  $("cpTon").onclick = () => copyText(tonAddr, $("cpTon"));
+  $("cpNear").onclick = () => copyText(nearAddr, $("cpNear"));
+  $("cpAlgo").onclick = () => copyText(algoAddr, $("cpAlgo"));
+  $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp"));
+  $("cpDot").onclick = () => copyText(dotAddr, $("cpDot"));
   $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc"));
   $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge"));
   $("cpBch").onclick = () => copyText(bchAddr, $("cpBch"));
@@ -1066,6 +1236,292 @@ function openStellarSheet(tok) {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
       pendingStellar = null; closeSheet(); renderMain();
     } catch (e) { msg("stMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- TON sheet (Phase 4) ----------
+// Mirrors the Stellar sheet: review → human-readable sentence →
+// confirm. sendTon re-enforces every rule in code before signing
+// (balance minus the disclosed fee reserve; jetton wallet must
+// exist). TON's broadcast returns the external message hash, which
+// is not a tonviewer transaction id — the history link points at
+// the wallet's own page, where the transfer appears.
+function openTonSheet(tok) {
+  let pendingTon = null;
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on TON</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${tonAddr}</span></p>
+    ${tok.address ? `<p class="tag">Jetton master <span class="mono">${esc(tok.address)}</span></p>` : ""}
+    <input id="tnTo" placeholder="Recipient TON address (EQ… / UQ…)" autocapitalize="none">
+    <input id="tnAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="tnReview">Review send</button>
+    <div id="tnIntent" class="hidden">
+      <p class="seed" id="tnIntentText"></p>
+      <button class="btn" id="tnConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="tnMsg"></p>
+    <p class="tag">TON fees come out of your TON balance — about 0.05 TON is set aside per send and what isn't used comes back. Sends are final.</p>`);
+  $("tnReview").onclick = async () => {
+    const to = $("tnTo").value.trim(), amount = $("tnAmt").value.trim();
+    if (!isValidTonAddress(to)) return msg("tnMsg", "That is not a valid TON address.");
+    if (!amount || Number(amount) <= 0) return msg("tnMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("tnMsg", "Amount is more than your balance.");
+    try {
+      msg("tnMsg", "Checking your wallet…", true);
+      await tonSendPlan(tonAddr, { token: tokenArg });
+      pendingTon = { to, amount };
+      $("tnIntentText").textContent = formatTonSendIntent({ amount, symbol: tok.symbol, to, isJetton: !!tokenArg })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("tnIntent"); msg("tnMsg", "");
+    } catch (e) { msg("tnMsg", "Could not check: " + e.message); }
+  };
+  $("tnConfirm").onclick = async () => {
+    if (!pendingTon) return;
+    try {
+      msg("tnMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendTon(wallet.mnemonic.phrase, { to: pendingTon.to, amount: pendingTon.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingTon.amount, symbol: tok.symbol, to: pendingTon.to,
+        link: `${TON_EXPLORER}/address/${tonAddr}`, explorer: TON_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingTon = null; closeSheet(); renderMain();
+    } catch (e) { msg("tnMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- NEAR sheet (Phase 4) ----------
+// Review pre-flights the recipient (existence + token registration)
+// via nearSendPlan so the sentence can say when a send creates the
+// recipient's account or pays their token registration; sendNear
+// re-enforces every rule (storage minimums) in code before signing.
+function openNearSheet(tok) {
+  if (nearExists === false) {
+    openSheet(`<h3>NEAR</h3>
+      <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${nearAddr}</span></p>
+      <p class="tag">Your NEAR account doesn't exist yet — NEAR accounts are created by their first transfer. Receive at least 0.00182 NEAR at this address to create it; then you can send.</p>`);
+    return;
+  }
+  let pendingNear = null;
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on NEAR</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${nearAddr}</span></p>
+    ${tok.address ? `<p class="tag">Token contract <span class="mono">${esc(tok.address)}</span></p>` : ""}
+    <input id="nrTo" placeholder="Recipient NEAR account (name.near or 64-hex)" autocapitalize="none">
+    <input id="nrAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="nrReview">Review send</button>
+    <div id="nrIntent" class="hidden">
+      <p class="seed" id="nrIntentText"></p>
+      <button class="btn" id="nrConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="nrMsg"></p>
+    <p class="tag">${tok.address
+      ? "The recipient must have a NEAR account; if they aren't registered for this token yet, a small NEAR storage deposit from your balance registers them in the same transaction. Sends are final."
+      : "Your account must always keep the NEAR it holds for storage — Fluid stops any send that would zero it below that minimum. Sends are final."}</p>`);
+  $("nrReview").onclick = async () => {
+    const to = $("nrTo").value.trim(), amount = $("nrAmt").value.trim();
+    if (!isValidNearAddress(to)) return msg("nrMsg", "That is not a valid NEAR account id.");
+    if (!amount || Number(amount) <= 0) return msg("nrMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("nrMsg", "Amount is more than your balance.");
+    try {
+      msg("nrMsg", "Checking the recipient…", true);
+      const plan = await nearSendPlan(nearAddr, { to, token: tokenArg });
+      if (tokenArg) {
+        if (plan.destExists === false) return msg("nrMsg", "The recipient's NEAR account doesn't exist yet, so it can't hold tokens. They need a NEAR account first.");
+      } else if (plan.destExists === false && !/^[0-9a-fA-F]{64}$/.test(to)) {
+        return msg("nrMsg", "That NEAR account doesn't exist — a plain transfer can't create a named account. Check the account id.");
+      }
+      pendingNear = { to, amount };
+      $("nrIntentText").textContent = formatNearSendIntent({
+        amount, symbol: tok.symbol, to,
+        createsAccount: !tokenArg && plan.destExists === false,
+        registerCostNear: tokenArg ? plan.registerNear : null,
+      }) + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("nrIntent"); msg("nrMsg", "");
+    } catch (e) { msg("nrMsg", "Could not check the recipient: " + e.message); }
+  };
+  $("nrConfirm").onclick = async () => {
+    if (!pendingNear) return;
+    try {
+      msg("nrMsg", "Signing locally and broadcasting…", true);
+      const { hash } = await sendNear(wallet.mnemonic.phrase, { to: pendingNear.to, amount: pendingNear.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingNear.amount, symbol: tok.symbol, to: pendingNear.to,
+        link: `${NEAR_EXPLORER}/txns/${hash}`, explorer: NEAR_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingNear = null; closeSheet(); renderMain();
+    } catch (e) { msg("nrMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Algorand sheet (Phase 4) ----------
+// Review pre-flights ASA opt-in via algoSendPlan; sendAlgorand
+// re-enforces min-balance and opt-in in code before signing.
+function openAlgoSheet(tok) {
+  if (algoFunded === false) {
+    openSheet(`<h3>Algorand</h3>
+      <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${algoAddr}</span></p>
+      <p class="tag">Your Algorand account isn't funded yet, so it can't send. Receive ALGO at this address first — every account must always keep at least 0.1 ALGO (plus 0.1 per asset it holds).</p>`);
+    return;
+  }
+  let pendingAlgo = null;
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on Algorand</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${algoAddr}</span></p>
+    ${tok.address ? `<p class="tag">ASA id <span class="mono">${esc(tok.address)}</span></p>` : ""}
+    <input id="agTo" placeholder="Recipient Algorand address" autocapitalize="none">
+    <input id="agAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="agReview">Review send</button>
+    <div id="agIntent" class="hidden">
+      <p class="seed" id="agIntentText"></p>
+      <button class="btn" id="agConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="agMsg"></p>
+    <p class="tag">${tok.address
+      ? "The recipient must already be opted into this asset — Algorand accounts can only hold assets they have opted into. Sends are final."
+      : "Every Algorand account must always keep its minimum balance (0.1 ALGO plus 0.1 per asset held) — Fluid stops any send that would break that. Sends are final."}</p>`);
+  $("agReview").onclick = async () => {
+    const to = $("agTo").value.trim(), amount = $("agAmt").value.trim();
+    if (!isValidAlgorandAddress(to)) return msg("agMsg", "That is not a valid Algorand address.");
+    if (!amount || Number(amount) <= 0) return msg("agMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("agMsg", "Amount is more than your balance.");
+    try {
+      msg("agMsg", "Checking the recipient…", true);
+      const plan = await algoSendPlan(algoAddr, { to, token: tokenArg });
+      if (tokenArg && plan.destOptedIn === false) {
+        return msg("agMsg", `The recipient can't receive ${tok.symbol} yet — on Algorand, an account can only hold an asset it has opted into, and this account hasn't opted into it.`);
+      }
+      if (tokenArg && plan.destFunded === false) {
+        return msg("agMsg", "The recipient's Algorand account isn't funded yet, so it can't hold assets. They need to receive ALGO first.");
+      }
+      pendingAlgo = { to, amount };
+      $("agIntentText").textContent = formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("agIntent"); msg("agMsg", "");
+    } catch (e) { msg("agMsg", "Could not check the recipient: " + e.message); }
+  };
+  $("agConfirm").onclick = async () => {
+    if (!pendingAlgo) return;
+    try {
+      msg("agMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendAlgorand(wallet.mnemonic.phrase, { to: pendingAlgo.to, amount: pendingAlgo.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingAlgo.amount, symbol: tok.symbol, to: pendingAlgo.to,
+        link: `${ALGO_EXPLORER}/tx/${hash}`, explorer: ALGO_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingAlgo = null; closeSheet(); renderMain();
+    } catch (e) { msg("agMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- XRP Ledger sheet (Phase 4) ----------
+// Includes the optional destination tag exchanges require. Review
+// pre-flights funding + the live reserve via xrplSendPlan;
+// sendXrpl re-enforces the reserve rules in code before signing.
+function openXrplSheet(tok) {
+  if (xrpFunded === false) {
+    openSheet(`<h3>XRP Ledger</h3>
+      <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${xrpAddr}</span></p>
+      <p class="tag">Your XRP Ledger account isn't activated yet — accounts only exist once they hold the network base reserve. Receive at least 1 XRP at this address to activate it; then you can send.</p>`);
+    return;
+  }
+  let pendingXrp = null;
+  const tokenArg = tok.address ? { currency: tok.currency, issuer: tok.issuer } : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on the XRP Ledger</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${xrpAddr}</span></p>
+    ${tok.address ? `<p class="tag">Issuer <span class="mono">${esc(tok.issuer)}</span></p>` : ""}
+    <input id="xrTo" placeholder="Recipient XRP Ledger address (r…)" autocapitalize="none">
+    <input id="xrAmt" inputmode="decimal" placeholder="Amount">
+    <input id="xrTag" inputmode="numeric" placeholder="Destination tag (optional — exchanges often require one)">
+    <button class="btn" id="xrReview">Review send</button>
+    <div id="xrIntent" class="hidden">
+      <p class="seed" id="xrIntentText"></p>
+      <button class="btn" id="xrConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="xrMsg"></p>
+    <p class="tag">Your account must always keep its reserve (base reserve plus 0.2 XRP per object it owns, read live from the network) — Fluid stops any send that would break that. Sending to an exchange? Add its destination tag or the deposit may be lost. Sends are final.</p>`);
+  $("xrReview").onclick = async () => {
+    const to = $("xrTo").value.trim(), amount = $("xrAmt").value.trim();
+    const tagRaw = $("xrTag").value.trim();
+    let destinationTag = null;
+    if (tagRaw !== "") {
+      if (!/^\d{1,10}$/.test(tagRaw) || Number(tagRaw) > 4294967295) return msg("xrMsg", "The destination tag must be a whole number (0 to 4294967295), or left empty.");
+      destinationTag = Number(tagRaw);
+    }
+    if (!isValidXrplAddress(to)) return msg("xrMsg", "That is not a valid XRP Ledger address (it starts with r).");
+    if (!amount || Number(amount) <= 0) return msg("xrMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("xrMsg", "Amount is more than your balance.");
+    try {
+      msg("xrMsg", "Checking the recipient…", true);
+      const plan = await xrplSendPlan(xrpAddr, { to });
+      if (!tokenArg && plan.destFunded === false && plan.baseReserveXrp != null && Number(amount) < Number(plan.baseReserveXrp)) {
+        return msg("xrMsg", `That account doesn't exist yet — creating it needs a starting balance of at least ${plan.baseReserveXrp} XRP (the network base reserve).`);
+      }
+      pendingXrp = { to, amount, destinationTag };
+      $("xrIntentText").textContent = formatXrplSendIntent({ amount, symbol: tok.symbol, to, feeXrp: plan.feeXrp, destinationTag })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("xrIntent"); msg("xrMsg", "");
+    } catch (e) { msg("xrMsg", "Could not check the recipient: " + e.message); }
+  };
+  $("xrConfirm").onclick = async () => {
+    if (!pendingXrp) return;
+    try {
+      msg("xrMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendXrpl(wallet.mnemonic.phrase, {
+        to: pendingXrp.to, amount: pendingXrp.amount, token: tokenArg, destinationTag: pendingXrp.destinationTag,
+      });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingXrp.amount, symbol: tok.symbol, to: pendingXrp.to,
+        link: `${XRPL_EXPLORER}/tx/${hash}`, explorer: XRPL_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingXrp = null; closeSheet(); renderMain();
+    } catch (e) { msg("xrMsg", "Send failed: " + e.message); }
+  };
+}
+
+// ---------- Polkadot Asset Hub sheet (Phase 4) ----------
+// The review builds the exact transfer in core to quote the
+// network's own fee estimate; sendDot re-enforces the existential
+// deposit in code (and transferKeepAlive at the protocol level).
+function openDotSheet(tok) {
+  let pendingDot = null;
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<h3>Send ${esc(tok.symbol)} on Polkadot Asset Hub</h3>
+    <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${dotAddr}</span></p>
+    ${tok.address ? `<p class="tag">Asset id <span class="mono">${esc(tok.address)}</span> · Polkadot Asset Hub</p>` : ""}
+    <input id="dtTo" placeholder="Recipient Polkadot address" autocapitalize="none">
+    <input id="dtAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="dtReview">Review send</button>
+    <div id="dtIntent" class="hidden">
+      <p class="seed" id="dtIntentText"></p>
+      <button class="btn" id="dtConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="dtMsg"></p>
+    <p class="tag">This address is for Polkadot Asset Hub (DOT and its USDC/USDT). An account must always keep at least 0.01 DOT (the existential deposit) — Fluid stops any send that would reap it. Sends are final.</p>`);
+  $("dtReview").onclick = async () => {
+    const to = $("dtTo").value.trim(), amount = $("dtAmt").value.trim();
+    if (!isValidDotAddress(to)) return msg("dtMsg", "That is not a valid Polkadot address.");
+    if (!amount || Number(amount) <= 0) return msg("dtMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("dtMsg", "Amount is more than your balance.");
+    try {
+      msg("dtMsg", "Estimating the network fee…", true);
+      const plan = await dotSendPlan(wallet.mnemonic.phrase, { to, amount, token: tokenArg });
+      pendingDot = { to, amount };
+      $("dtIntentText").textContent = formatDotSendIntent({ amount, symbol: tok.symbol, to, feeDot: plan.feeDot })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      show("dtIntent"); msg("dtMsg", "");
+    } catch (e) { msg("dtMsg", "Could not estimate: " + e.message); }
+  };
+  $("dtConfirm").onclick = async () => {
+    if (!pendingDot) return;
+    try {
+      msg("dtMsg", "Signing locally and submitting…", true);
+      const { hash } = await sendDot(wallet.mnemonic.phrase, { to: pendingDot.to, amount: pendingDot.amount, token: tokenArg });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: pendingDot.amount, symbol: tok.symbol, to: pendingDot.to,
+        link: `${DOT_EXPLORER}/extrinsic/${hash}`, explorer: DOT_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingDot = null; closeSheet(); renderMain();
+    } catch (e) { msg("dtMsg", "Send failed: " + e.message); }
   };
 }
 
