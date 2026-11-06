@@ -192,14 +192,32 @@
       <div class="card">
         <b>Your Fluid name</b>
         <p class="tag" style="margin:6px 0">One name for every chain — people send to <span class="mono" id="namePreview">you.fluid.is-a.dev</span> instead of a long address. Names live in the public registry in the open-source repo; first come, first served.</p>
-        <input id="nameInput" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
-        <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
-        <button class="btn" id="claimNameBtn">Claim this name</button>
-        <div id="claimBox" class="hidden">
-          <p class="tag">Almost there — publish it so every Fluid wallet can resolve you. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
-          <div class="seed" id="nameEntry" style="font-size:12px"></div>
-          <button class="btn ghost" id="copyEntryBtn">Copy entry</button>
-          <a class="btn ghost" style="display:block;text-align:center;text-decoration:none" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>
+        <div id="ownedNameBox" class="hidden">
+          <div style="font-size:20px;font-weight:700;margin:6px 0" id="ownedNameText"></div>
+          <p class="tag" style="margin:6px 0">This name is registered to this wallet in the public registry — anyone can send to it on any chain.</p>
+          <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>EVM</b> <small style="color:var(--dim)">(every EVM chain)</small><br><small class="mono" id="ownedEvm" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedEvm" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>Bitcoin</b><br><small class="mono" id="ownedBtc" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedBtc" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div class="hist hidden" id="ownedLnRow" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>Lightning</b><br><small class="mono" id="ownedLn" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedLn" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+        </div>
+        <div id="claimForm">
+          <input id="nameInput" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
+          <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
+          <button class="btn" id="claimNameBtn">Claim this name</button>
+          <div id="claimBox" class="hidden">
+            <p class="tag">Almost there — publish it so every Fluid wallet can resolve you. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
+            <div class="seed" id="nameEntry" style="font-size:12px"></div>
+            <button class="btn ghost" id="copyEntryBtn">Copy entry</button>
+            <a class="btn ghost" style="display:block;text-align:center;text-decoration:none" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>
+          </div>
         </div>
         <p class="msg err" id="nameMsg"></p>
       </div>

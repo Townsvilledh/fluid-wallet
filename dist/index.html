@@ -77,7 +77,7 @@
   footer{ color:var(--dim); font-size:12px; text-align:center; margin:18px 0 4px; }
   a{ color:var(--acc); }
 </style>
-<meta name="fluid-build" content="a0cfbd3562"></head>
+<meta name="fluid-build" content="525c4d2f71"></head>
 <body>
 <div class="phone">
 
@@ -192,14 +192,32 @@
       <div class="card">
         <b>Your Fluid name</b>
         <p class="tag" style="margin:6px 0">One name for every chain — people send to <span class="mono" id="namePreview">you.fluid.is-a.dev</span> instead of a long address. Names live in the public registry in the open-source repo; first come, first served.</p>
-        <input id="nameInput" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
-        <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
-        <button class="btn" id="claimNameBtn">Claim this name</button>
-        <div id="claimBox" class="hidden">
-          <p class="tag">Almost there — publish it so every Fluid wallet can resolve you. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
-          <div class="seed" id="nameEntry" style="font-size:12px"></div>
-          <button class="btn ghost" id="copyEntryBtn">Copy entry</button>
-          <a class="btn ghost" style="display:block;text-align:center;text-decoration:none" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>
+        <div id="ownedNameBox" class="hidden">
+          <div style="font-size:20px;font-weight:700;margin:6px 0" id="ownedNameText"></div>
+          <p class="tag" style="margin:6px 0">This name is registered to this wallet in the public registry — anyone can send to it on any chain.</p>
+          <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>EVM</b> <small style="color:var(--dim)">(every EVM chain)</small><br><small class="mono" id="ownedEvm" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedEvm" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>Bitcoin</b><br><small class="mono" id="ownedBtc" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedBtc" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div class="hist hidden" id="ownedLnRow" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>Lightning</b><br><small class="mono" id="ownedLn" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedLn" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+        </div>
+        <div id="claimForm">
+          <input id="nameInput" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
+          <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
+          <button class="btn" id="claimNameBtn">Claim this name</button>
+          <div id="claimBox" class="hidden">
+            <p class="tag">Almost there — publish it so every Fluid wallet can resolve you. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
+            <div class="seed" id="nameEntry" style="font-size:12px"></div>
+            <button class="btn ghost" id="copyEntryBtn">Copy entry</button>
+            <a class="btn ghost" style="display:block;text-align:center;text-decoration:none" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>
+          </div>
         </div>
         <p class="msg err" id="nameMsg"></p>
       </div>
@@ -254,6 +272,6 @@
     <p class="tag" style="margin:0">Fluid is a free, open-source (MIT), non-custodial wallet for every blockchain. One seed phrase derives your accounts on EVM chains and L2s (15 built in, more auto-discovered), Bitcoin and Lightning, Litecoin, Dogecoin, Bitcoin Cash, Tron, Solana, Sui, seven Cosmos chains, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot Asset Hub and Aptos — and every chain both sends and receives. Fluid never holds your keys or your funds: your keys stay encrypted on your own device, there is no account, no sign-up and no KYC, and if Fluid disappeared tomorrow your seed phrase would restore everything in any standard wallet. Buy and cash out worldwide at the cheapest available route, swap between chains, and send to a simple name — like you.fluid.is-a.dev — instead of a long address. Source code: <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a>.</p>
   </section>
 </div>
-<script src="app.bundle.js?v=a0cfbd3562"></script>
+<script src="app.bundle.js?v=525c4d2f71"></script>
 </body>
 </html>

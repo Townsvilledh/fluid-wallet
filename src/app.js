@@ -22,7 +22,7 @@ import {
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, lightningInvoiceForAddress, rankRoutes,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, rankRoutes,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount,
   looksLikePoison, revokeApproval,
@@ -194,6 +194,12 @@ async function renderMain() {
   try { prices = await getPrices(); } catch { prices = {}; }
   // Bitcoin first (all chains, one wallet)
   btcAddr = bitcoinAddress(wallet.mnemonic.phrase);
+  // Fluid name: paint the owned/claim state, then (once per session) try
+  // to adopt a registry name that already belongs to this wallet — a
+  // restored wallet whose name was published earlier should SEE its name,
+  // not an empty claim form that rejects the name as "already claimed".
+  renderNameSection();
+  adoptRegistryNameIfMine();
   getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
@@ -2244,7 +2250,12 @@ $("createBtn").onclick = async () => {
   if (!validateFluidName(wantName)) return msg("onboardMsg", "Username must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   msg("onboardMsg", "Checking your username…", true);
   const taken = await resolveFluidName(wantName).catch(() => null);
-  if (taken) return msg("onboardMsg", "That username is already claimed. Try another.");
+  // A new wallet has no addresses yet, so a registered name can never be
+  // verified as this wallet's here — the hard block stands. But if the
+  // name belongs to a wallet the user already HAS, importing/unlocking
+  // that wallet adopts it automatically by reverse lookup (see
+  // adoptRegistryNameIfMine) — say so instead of a dead end.
+  if (taken) return msg("onboardMsg", "That username is already claimed. If it's yours from a wallet you already have, import or unlock that wallet instead — Fluid will attach the name to it automatically.");
   pendingName = wantName;
   msg("onboardMsg", "Creating your wallet… (encrypting takes a few seconds)", true);
   const v = await createVault(pw);
@@ -2288,7 +2299,56 @@ $("unlockBtn").onclick = async () => {
   catch (e) { msg("onboardMsg", e.message); }
 };
 
-// ---------- Fluid name claim ----------
+// ---------- Fluid name: owned state + claim ----------
+// The name card has two states. OWNED: the wallet has a name (claimed on
+// this device, or adopted from the public registry by reverse lookup) —
+// show the name and the addresses it resolves to, with copy buttons.
+// UNCLAIMED: show the claim form. Owning a name must never look like not
+// owning one: a restored wallet whose name was published from another
+// browser previously saw an empty form, and claiming its own name back
+// was hard-blocked as "already claimed" — by itself.
+let nameAdoptTried = false;
+function renderNameSection() {
+  const stored = localStorage.getItem("fluid_name");
+  if (!stored) { show("ownedNameBox", false); show("claimForm", true); return; }
+  show("claimForm", false);
+  show("ownedNameBox", true);
+  $("namePreview").textContent = stored + "." + FLUID_DOMAIN;
+  $("ownedNameText").textContent = stored + "." + FLUID_DOMAIN;
+  // Prefill from this wallet's own keys right away; the registry entry
+  // (what senders actually resolve) refines the fields when it loads.
+  if (wallet) {
+    $("ownedEvm").textContent = wallet.address;
+    $("ownedBtc").textContent = btcAddr || bitcoinAddress(wallet.mnemonic.phrase);
+  }
+  $("copyOwnedEvm").onclick = () => copyText($("ownedEvm").textContent, $("copyOwnedEvm"));
+  $("copyOwnedBtc").onclick = () => copyText($("ownedBtc").textContent, $("copyOwnedBtc"));
+  $("copyOwnedLn").onclick = () => copyText($("ownedLn").textContent, $("copyOwnedLn"));
+  resolveFluidName(stored).then(hit => {
+    if (!hit) return;
+    if (hit.evm) $("ownedEvm").textContent = hit.evm;
+    if (hit.btc) $("ownedBtc").textContent = hit.btc;
+    if (hit.ln) { $("ownedLn").textContent = hit.ln; show("ownedLnRow", true); }
+    else show("ownedLnRow", false);
+  }).catch(() => {});
+}
+/** Reverse lookup, once per unlock session: if the public registry holds
+ *  a name whose EVM or BTC address is THIS wallet's, adopt it — store it
+ *  locally and paint the owned state. Never touches names that resolve
+ *  to anyone else's addresses. */
+async function adoptRegistryNameIfMine() {
+  if (!wallet || nameAdoptTried || localStorage.getItem("fluid_name")) return;
+  nameAdoptTried = true;
+  try {
+    const reg = await fetchNameRegistry();
+    const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase) });
+    if (hit) {
+      localStorage.setItem("fluid_name", hit.name);
+      $("nameText").textContent = "@" + hit.name + " · " + hit.name + "." + FLUID_DOMAIN;
+      renderNameSection();
+    }
+  } catch { /* registry unreachable — the claim form stays, nothing breaks */ }
+}
 // Top level on purpose: this wiring used to live inside the seedDoneBtn
 // click handler, so the Claim button was dead for anyone who unlocked an
 // existing wallet instead of creating a fresh one in the same session.
@@ -2298,7 +2358,20 @@ $("claimNameBtn").onclick = async () => {
   if (!validateFluidName(name)) return msg("nameMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   msg("nameMsg", "Checking the registry…", true);
   const existing = await resolveFluidName(name).catch(() => null);
-  if (existing) return msg("nameMsg", "That name is already claimed. Try another.");
+  if (existing) {
+    // Registered already — but to THIS wallet? Then it's not a conflict,
+    // it's a homecoming: adopt it instead of blocking the owner.
+    const mine = findNameForAddresses({ [existing.name]: existing },
+      { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase) });
+    if (mine) {
+      localStorage.setItem("fluid_name", name);
+      msg("nameMsg", "That name is already yours — added to this wallet.", true);
+      renderNameSection();
+      renderMain();
+      return;
+    }
+    return msg("nameMsg", "That name is already claimed. Try another.");
+  }
   localStorage.setItem("fluid_name", name);
   const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null);
   $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
@@ -2307,11 +2380,11 @@ $("claimNameBtn").onclick = async () => {
   renderMain();
 };
 $("copyEntryBtn").onclick = () => copyText($("nameEntry").textContent, $("copyEntryBtn"));
-if (localStorage.getItem("fluid_name")) $("namePreview").textContent = localStorage.getItem("fluid_name") + "." + FLUID_DOMAIN;
+renderNameSection();
 
 // ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
-function lockWallet() { wallet = null; pendingSend = null; refreshGate(); }
+function lockWallet() { wallet = null; pendingSend = null; nameAdoptTried = false; refreshGate(); }
 $("lockBtn").onclick = lockWallet;
 
 // ---------- auto-lock ----------

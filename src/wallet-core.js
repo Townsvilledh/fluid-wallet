@@ -2011,6 +2011,28 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
   const entry = reg[name];
   return entry ? { name, ...entry } : null;
 }
+/** Fetch the whole name registry (null on any failure). */
+export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
+  const res = await fetch(registryUrl, { cache: "no-store" });
+  if (!res.ok) return null;
+  return res.json();
+}
+/** Reverse lookup: which registered name belongs to these addresses?
+ *  EVM addresses compare case-insensitively (checksummed vs lowercase
+ *  spellings of the same key); BTC addresses are case-sensitive and
+ *  compare exactly. Returns { name, ...entry } or null. Lets a wallet
+ *  that already owns a published name recognise it as its own instead
+ *  of being told the name is "already claimed" by itself. */
+export function findNameForAddresses(registry, { evm = null, btc = null } = {}) {
+  if (!registry || typeof registry !== "object") return null;
+  const evmLc = evm ? String(evm).toLowerCase() : null;
+  for (const [name, entry] of Object.entries(registry)) {
+    if (!entry) continue;
+    if (evmLc && entry.evm && String(entry.evm).toLowerCase() === evmLc) return { name, ...entry };
+    if (btc && entry.btc && entry.btc === btc) return { name, ...entry };
+  }
+  return null;
+}
 
 // ---------- Platform fees: cheapest-route principle + 60/40 split, settled in BTC over Lightning ----------
 // Fluid's own fees (RAIN claim fee, OGO ERA game rake, future swap fee) are
