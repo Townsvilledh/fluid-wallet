@@ -2180,7 +2180,8 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     tlv(8, Buffer.from("01e240", "hex")),
     tlv(10, Buffer.from("coffee", "utf8")),
     tlv(14, Buffer.from("70dbd880", "hex")),
-    tlv(16, Buffer.from("fluid", "utf8")),
+    tlv(16, Buffer.from("aabbcc", "hex")),
+    tlv(18, Buffer.from("fluid", "utf8")),
     tlv(20, Buffer.alloc(0)),
     tlv(22, Buffer.from(PAYEE, "hex")),
   ]);
@@ -2191,7 +2192,7 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const po = parseBolt12Offer(offerStr);
   ok("ln: BOLT12 offer parses its display fields",
     po.kind === "offer" && po.description === "coffee" && po.amountMsat === 123456n &&
-    po.issuer === "fluid" && po.issuerId === PAYEE && po.quantityMax === 0n &&
+    po.issuer === "fluid" && po.hasPaths === true && po.issuerId === PAYEE && po.quantityMax === 0n &&
     po.absoluteExpiry === 1893456000 && po.chains[0] === "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000" &&
     po.metadata === "deadbeef");
   ok("ln: BOLT12 offer id is the TLV stream hash",

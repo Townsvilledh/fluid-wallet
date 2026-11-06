@@ -3075,8 +3075,10 @@ export function bolt11IsExpired(parsed, nowSec = Math.floor(Date.now() / 1000)) 
 // table so it can be audited against the spec / the Rust implementation
 // in one place.
 export const BOLT12_OFFER_TLV = {
+  // Verified against the rust-lightning 0.2.7 OfferTlvStream definition
+  // (lightning/src/offers/offer.rs): 16 is paths, 18 is issuer.
   chains: 2, metadata: 4, currency: 6, amount: 8, description: 10,
-  features: 12, absoluteExpiry: 14, issuer: 16, paths: 18,
+  features: 12, absoluteExpiry: 14, paths: 16, issuer: 18,
   quantityMax: 20, issuerId: 22,
 };
 function bigSizeRead(bytes, off) {
