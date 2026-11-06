@@ -32,6 +32,7 @@
     "@ton/ton": "^16.3.0",
     "algosdk": "^3.9.0",
     "buffer": "^6.0.3",
+    "cosmjs-types": "^0.11.0",
     "ed25519-hd-key": "^2.0.0",
     "ethers": "^6.17.0",
     "near-api-js": "^7.4.0",

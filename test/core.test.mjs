@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, formatSendIntent, NETWORKS, bitcoinAddress, GLOBAL_RAMPS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, splitFee, FEE_SPLIT, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -8,7 +8,10 @@ import { Keypair as SolKeypair, PublicKey as SolPublicKey } from "@solana/web3.j
 import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_LIFI_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent } from "../src/wallet-core.js";
+import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent, buildInjectiveSignedTx, INJECTIVE_PUBKEY_TYPE, injectiveAddressBytes } from "../src/wallet-core.js";
+import * as btcSigner from "@scure/btc-signer";
+import { ethers } from "ethers";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { stellarAddressFromPhrase, stellarAddressFromSeed, stellarSeedFromSeed, isValidStellarAddress, strKeyDecodeEd25519, crc16Xmodem, xlmToStroops, stroopsToXlm, stellarMinBalanceXlm, stellarMinBalanceStroops, formatStellarSendIntent, STELLAR_USDC, STELLAR_USDC_ISSUER } from "../src/wallet-core.js";
 import { Keypair as StellarKeypair, StrKey as StellarStrKey } from "@stellar/stellar-sdk/base";
 import { chunkArray, parseDexScreenerPairs, lifiTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
@@ -414,6 +417,52 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("dogecoin: own address validates", isValidDogeAddress("DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC"));
   ok("dogecoin: bitcoin/doge-network confusion refused", !isValidDogeAddress("1BoatSLRHtKNngkdXEeobR76b53LETtpyT") && !isValidDogeAddress("ltc1qjmxnz78nmc8nq77wuxh25n2es7rzm5c2rkk4wh"));
   ok("dogecoin: dust minimum is 0.01 DOGE", DOGE_MIN_OUTPUT === 0.01);
+
+  // Sends (gap-closure build, 2026-11-06): the pure builder's output
+  // for a fabricated prev transaction is byte-identical to the
+  // transaction cross-checked against bitcoinjs-lib in scratch AND
+  // relayed live to Bitcore, whose Dogecoin node answered with its
+  // own "Missing inputs" rejection (the relay and the signing are
+  // real; the spent UTXO is fabricated, so no funds ever moved).
+  {
+    const DOGE_NET = { bech32: "doge", pubKeyHash: 0x1e, scriptHash: 0x16, wif: 0x9e };
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON));
+    const child = root.derive("m/44'/3'/0'/0/0");
+    const pay = btcSigner.p2pkh(child.publicKey, DOGE_NET);
+    const prev = new btcSigner.Transaction();
+    prev.addInput({ txid: new Uint8Array(32).fill(7), index: 0xffffffff });
+    prev.addOutputAddress(pay.address, 200000000n, DOGE_NET);
+    ok("dogecoin: fabricated prev txid (signing fixture)", prev.id === "726f7550ab16d29bc57fc11deb795a93374281f4e13f40a4e64f6791c30cd110");
+    const built = buildSignedDogeTx({
+      privateKey: child.privateKey,
+      utxos: [{ txid: prev.id, index: 0, valueKoinu: 200000000, txHex: prev.hex }],
+      to: "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", amountKoinu: 100000000, feeKoinu: 1000000,
+      changeAddress: pay.address,
+    });
+    ok("dogecoin: signed tx byte-identical to the bitcoinjs-lib cross-check + live-relayed bytes",
+      built.hex === "010000000110d10cc391674fe6a4403fe1f4814237935a79eb1dc17fc59bd216ab50756f72000000006a47304402207111aaf1e4e4ec8ea07bb8d18731d73f8ac380796f36b515ce60faaf8183251c022060326b99a932cf0797151a874a4db3e6a3be54bea8761778be287c98e12cfd00012102cc6b0dc33aabcf3a23643e5e2919a80c50fb3dd2129ce409bbc5f0d4643d05e0ffffffff0200e1f505000000001976a914830a7420e63d76244ff7cbd1c248e94c1446325988acc09ee605000000001976a9144a483568665dcdfa68dd58a1f62893448a64333988ac00000000"
+      && built.txid === "8734540240cd208c505fd6bb056195a76d7f40ed7f3bcf3c002d9e42dd039f10");
+    ok("dogecoin: change + fee accounting", built.changeKoinu === 99000000 && built.feeKoinu === 1000000);
+    // Dust rules: change below the dust limit folds into the fee
+    // instead of creating an unspendable output; amounts below the
+    // dust limit are refused outright.
+    const folded = buildSignedDogeTx({
+      privateKey: child.privateKey,
+      utxos: [{ txid: prev.id, index: 0, valueKoinu: 200000000, txHex: prev.hex }],
+      to: "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", amountKoinu: 198500000, feeKoinu: 1000000,
+      changeAddress: pay.address,
+    });
+    ok("dogecoin: dust change folds into the fee", folded.changeKoinu === 0 && folded.feeKoinu === 1500000);
+    let refused = false;
+    try {
+      buildSignedDogeTx({ privateKey: child.privateKey, utxos: [{ txid: prev.id, index: 0, valueKoinu: 200000000, txHex: prev.hex }],
+        to: "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", amountKoinu: DOGE_DUST_KOINU - 1, feeKoinu: 1000, changeAddress: pay.address });
+    } catch { refused = true; }
+    ok("dogecoin: sub-dust amount refused", refused);
+    ok("dogecoin: legacy size estimate", dogeTxSize(1, 2) === 226 && dogeTxSize(2, 2) === 374);
+    const dogeIntent = formatDogeSendIntent({ amount: "1.5", to: "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", feeDoge: "0.00226" });
+    ok("dogecoin: intent is human-readable", dogeIntent.includes("Send 1.5 DOGE") && dogeIntent.includes("on Dogecoin") && dogeIntent.includes("Confirm?"));
+  }
 }
 
 // 28. Phase 2a — Bitcoin Cash (BIP44 coin 145, CashAddr + ForkID sighash).
@@ -544,7 +593,10 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
 // with the settlement fix of 2026-11-06: Injective derives at coin
 // type 60 (m/44'/60'/0'/0/0, the Keplr/Leap path) so the same seed
 // shows the same inj1 address in Fluid, Keplr and Leap; the other six
-// chains still share the 118 account.
+// chains still share the 118 account. Gap-closure fix, same day:
+// Injective's account bytes are Ethereum-style (keccak), not hash160
+// — the @cosmjs address cross-check below was REPLACED for Injective
+// by ethers + @injectivelabs/sdk-ts evidence (see the block).
 // Vectors for the canonical abandon…about seed: the account bytes were
 // computed with Fluid's @scure derivation and cross-checked live
 // during the build against both @cosmjs (below, re-asserted) and live
@@ -556,7 +608,7 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const VECTORS = {
     cosmoshub: "cosmos19rl4cm2hmr8afy4kldpxz3fka4jguq0auqdal4", osmosis: "osmo19rl4cm2hmr8afy4kldpxz3fka4jguq0a5m7df8",
     noble: "noble19rl4cm2hmr8afy4kldpxz3fka4jguq0a5rc48m", celestia: "celestia19rl4cm2hmr8afy4kldpxz3fka4jguq0ad2ud9c",
-    injective: "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv", sei: "sei19rl4cm2hmr8afy4kldpxz3fka4jguq0a3vute5",
+    injective: "inj1npvwllfr9dqr8erajqqr6s0vxnk2ak55re90dz", sei: "sei19rl4cm2hmr8afy4kldpxz3fka4jguq0a3vute5",
     dydx: "dydx19rl4cm2hmr8afy4kldpxz3fka4jguq0a4erelz",
   };
   const addrs = cosmosAddresses(ABANDON);
@@ -573,8 +625,8 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     const six = ["cosmoshub", "osmosis", "noble", "celestia", "sei", "dydx"].map(k => bytesOf(addrs[k]));
     ok("cosmos: same account bytes on the six 118 chains",
       six.every(h => h === "28ff5c6d57d8cfd492b6fb42614536ed648e01fd"));
-    ok("cosmos: Injective (60) account bytes are its own",
-      bytesOf(addrs.injective) === "4418d0b4d9c1ef0e53dfb99143677e1e52354622");
+    ok("cosmos: Injective (60) account bytes are its Ethereum address bytes",
+      bytesOf(addrs.injective) === "9858effd232b4033e47d90003d41ec34ecaeda94");
   }
   // Cross-check against @cosmjs derivation, two prefixes (the brief's bar)
   const HD = [Slip10RawIndex.hardened(44), Slip10RawIndex.hardened(118), Slip10RawIndex.hardened(0), Slip10RawIndex.normal(0), Slip10RawIndex.normal(0)]; // m/44'/118'/0'/0/0
@@ -593,19 +645,57 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     ok("cosmos: DirectSecp256k1Wallet from Fluid's key gives Fluid's address", acc.address === addrs.cosmoshub);
     ok("cosmos: signer pubkey is Fluid's derived pubkey", Buffer.from(acc.pubkey).toString("hex") === Buffer.from(child.publicKey).toString("hex"));
   }
-  // Injective cross-checks at coin type 60 — @cosmjs HD derivation AND
-  // a DirectSecp256k1Wallet built from Fluid's own 60 key must both
-  // land on Fluid's inj address (the Keplr-compatibility promise).
+  // Injective cross-checks at coin type 60. @cosmjs CANNOT pin the
+  // ADDRESS: DirectSecp256k1 wallets always derive hash160 addresses,
+  // which is the Cosmos rule Injective breaks — that mismatch is
+  // what shipped as Fluid's original (wrong) inj address. What
+  // @cosmjs pins is the KEY (same private key → same pubkey). The
+  // ADDRESS is pinned against two independent Ethereum derivations:
+  // ethers.computeAddress here, and @injectivelabs/sdk-ts in the
+  // gap-closure scratch work (inj1npvwll…, matching the account
+  // record injective-1 itself stores for this pubkey).
   {
-    const HD60 = [Slip10RawIndex.hardened(44), Slip10RawIndex.hardened(60), Slip10RawIndex.hardened(0), Slip10RawIndex.normal(0), Slip10RawIndex.normal(0)]; // m/44'/60'/0'/0/0
-    const w = await DirectSecp256k1HdWallet.fromMnemonic(ABANDON, { prefix: "inj", hdPaths: [HD60] });
-    const [acc] = await w.getAccounts();
-    ok("cosmos: @cosmjs derivation agrees (inj, coin type 60)", acc.address === addrs.injective);
     const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON));
     const child60 = root.derive("m/44'/60'/0'/0/0");
     const w2 = await DirectSecp256k1Wallet.fromKey(child60.privateKey, "inj");
     const [acc2] = await w2.getAccounts();
-    ok("cosmos: DirectSecp256k1Wallet from Fluid's 60 key gives Fluid's inj address", acc2.address === addrs.injective);
+    ok("cosmos: signer pubkey at coin type 60 is Fluid's derived pubkey",
+      Buffer.from(acc2.pubkey).toString("hex") === Buffer.from(child60.publicKey).toString("hex"));
+    ok("cosmos: @cosmjs hash160 address is NOT Fluid's Injective address (documented divergence)",
+      acc2.address === "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv" && acc2.address !== addrs.injective);
+    const ethAddr = ethers.computeAddress("0x" + Buffer.from(child60.privateKey).toString("hex"));
+    ok("cosmos: ethers-derived Ethereum address matches the Injective account bytes",
+      ethAddr.toLowerCase() === "0x9858effd232b4033e47d90003d41ec34ecaeda94");
+    ok("cosmos: injectiveAddressBytes is the Ethereum derivation",
+      Buffer.from(injectiveAddressBytes(child60.publicKey)).toString("hex") === "9858effd232b4033e47d90003d41ec34ecaeda94");
+  }
+  // Injective signed-transaction vector (gap-closure build): the
+  // hand-rolled signer reproduces, byte for byte, the transaction
+  // @injectivelabs/sdk-ts built for the same inputs (account number
+  // and sequence are the test account's live-read values), and the
+  // same transaction that reached the funds stage — and only the
+  // funds stage — in the live injective-1 simulate.
+  {
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON));
+    const child60 = root.derive("m/44'/60'/0'/0/0");
+    const built = buildInjectiveSignedTx({
+      privateKey: child60.privateKey, publicKey: child60.publicKey,
+      fromAddress: VECTORS.injective, toAddress: "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv",
+      denom: "inj", amountBase: "1000", feeAmountBase: "16000000000000", gasLimit: 100000,
+      accountNumber: "1680321", sequence: "2",
+    });
+    ok("injective: signed tx byte-identical to @injectivelabs/sdk-ts output",
+      Buffer.from(built.txBytes).toString("hex") === "0a88010a85010a1c2f636f736d6f732e62616e6b2e763162657461312e4d736753656e6412650a2a696e6a316e7076776c6c667239647172386572616a71717236733076786e6b32616b353572653930647a122a696e6a316773766470647865633868737535376c6878673578656d37726566723233337a6b637a6667761a0b0a03696e6a120431303030127d0a5e0a540a2d2f696e6a6563746976652e63727970746f2e763162657461312e657468736563703235366b312e5075624b657912230a210237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f29912040a0208011802121b0a150a03696e6a120e313630303030303030303030303010a08d061a40aed8aca4946263458df9f77f1f5cdc98e6e3552003704ccd33aa4989f4e04b190b17a0a39066a4d5b5d2a893fe0023b93a9bb51f1448351ea0c117f2174e122d");
+    ok("injective: tx hash is sha256 of the signed bytes",
+      Buffer.from(nobleSha256(built.txBytes)).toString("hex").toUpperCase() === "8D32E273C668241BAB0778E93D0B287CE82BE8C49079A20D5CBEEBC9386FAC98");
+    // The EthAccount digest rule, proven locally with noble: the
+    // signature verifies over keccak256(SignDoc) and NOT sha256.
+    ok("injective: signature verifies over keccak256(SignDoc)",
+      secp256k1.verify(built.signature, keccak_256(built.signDocBytes), child60.publicKey, { prehash: false }) === true);
+    ok("injective: signature does NOT verify over sha256(SignDoc)",
+      secp256k1.verify(built.signature, nobleSha256(built.signDocBytes), child60.publicKey, { prehash: false }) === false);
+    ok("injective: pubkey type URL is the EthAccount one",
+      INJECTIVE_PUBKEY_TYPE === "/injective.crypto.v1beta1.ethsecp256k1.PubKey");
   }
   // Chain table pins — every value verified against the chain registry
   // (chain ids, prefixes, denoms, decimals) before shipping.
@@ -615,8 +705,8 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   ok("cosmos: decimals (INJ and DYDX are 18, the rest 6)", COSMOS_CHAINS.map(c => c.decimals).join(",") === "6,6,6,6,18,6,18");
   ok("cosmos: noble asset is USDC (uusdc — also its fee token)",
     cosmosChain("noble").symbol === "USDC" && cosmosChain("noble").denom === "uusdc" && cosmosChain("noble").gasPrice === "0.1uusdc");
-  ok("cosmos: Injective sends disabled (EthAccount), the other six enabled",
-    cosmosChain("injective").sendEnabled === false && COSMOS_CHAINS.filter(c => c.key !== "injective").every(c => c.sendEnabled !== false));
+  ok("cosmos: all seven chains have sends enabled (no receive-only chains)",
+    COSMOS_CHAINS.every(c => c.sendEnabled !== false));
   ok("cosmos: Injective derives at coin type 60, the other six at the 118 default",
     cosmosChain("injective").coinType === 60 && COSMOS_CHAINS.filter(c => c.key !== "injective").every(c => (c.coinType || 118) === 118));
   ok("cosmos: unknown chain resolves to null", cosmosChain("nope") === null);

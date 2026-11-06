@@ -9,6 +9,7 @@ import {
   bitcoinAddress, getBitcoinBalance, sendBitcoin, payLightningInvoice,
   litecoinAddress, getLitecoinBalance, getLtcFeeRate, sendLitecoin, isValidLitecoinAddress, formatLitecoinSendIntent,
   dogecoinAddress, getDogecoinBalance, isValidDogeAddress, DOGE_MIN_OUTPUT,
+  sendDogecoin, formatDogeSendIntent, getDogeFeeInfo,
   bitcoinCashAddress, getBitcoinCashBalance, sendBitcoinCash, isValidBchAddress, formatBitcoinCashSendIntent,
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
@@ -503,7 +504,7 @@ function paintAssets() {
       const p = prices[r.symbol];
       rows.push(`<div class="row" data-cosmos="${r.key}">
         <span class="coin" style="background:${COIN_COLORS[r.symbol] || "#3b4a7a"}">${r.symbol.slice(0, 1)}</span>
-        <span class="grow"><b>${r.symbol}</b><small>${r.name}${r.sendEnabled === false ? " · receive & balance only" : ""}</small></span>
+        <span class="grow"><b>${r.symbol}</b><small>${r.name}</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>unavailable</small>`
           : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`);
@@ -517,7 +518,7 @@ function paintAssets() {
       <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>`);
   rows.push(`<div class="row" data-doge="1">
       <span class="coin" style="background:${COIN_COLORS.DOGE}">Ð</span>
-      <span class="grow"><b>Dogecoin</b><small>Legacy · receive &amp; balance (sending not yet available)</small></span>
+      <span class="grow"><b>Dogecoin</b><small>Legacy · same seed as Bitcoin</small></span>
       <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>`);
   rows.push(`<div class="row" data-bch="1">
       <span class="coin" style="background:${COIN_COLORS.BCH}">B</span>
@@ -1611,22 +1612,60 @@ function openBchSheet() {
 }
 
 // ---------- Dogecoin sheet ----------
-// Receive + live balance only. Sending is visibly disabled: no keyless
-// API offers a raw-transaction broadcast for Dogecoin (verified live
-// 2026-11-06), and Fluid never lets a server build transactions it
-// signs. The minimum-spendable note reflects Dogecoin's high dust
-// limit (0.01 DOGE).
+// Receive (QR + copy) and send in the established review → intent
+// sentence → confirm pattern. The transaction is built and signed
+// locally by sendDogecoin and relayed RAW through keyless public
+// relays (Bitcore primary, BlockCypher raw-push fallback — both
+// verified live 2026-11-06 with a locally-signed transaction; see
+// wallet-core). The minimum-amount guard reflects Dogecoin's high
+// dust limit (0.01 DOGE).
 function openDogeSheet() {
+  let pendingDoge = null;
   openSheet(`<h3>Dogecoin</h3>
     <p><b>${fmt(dogeBal, 8)} DOGE</b> · ${usd(dogeBal * (prices.DOGE || 0))}</p>
     <img class="qr" id="qrDoge2"><p class="mono">${dogeAddr}</p>
     <button class="btn ghost" id="cpDoge2">Copy address</button>
     <hr style="border-color:var(--line)">
     <h3>Send DOGE</h3>
-    <button class="btn" disabled style="opacity:.45">Sending not available yet</button>
-    <p class="tag">Sending is off for now: no public Dogecoin service lets Fluid broadcast a transaction it built and signed itself, and Fluid won't hand your transaction to a server to build. Receiving and balances work normally. Note: Dogecoin treats outputs under ${DOGE_MIN_OUTPUT} DOGE as dust — senders should keep amounts above that.</p>`);
+    <input id="gTo" placeholder="Recipient D… address" autocapitalize="none">
+    <input id="gAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="gReview">Review send</button>
+    <div id="gIntent" class="hidden">
+      <p class="seed" id="gIntentText"></p>
+      <button class="btn" id="gConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="gMsg"></p>
+    <p class="tag">Built and signed on this device, then broadcast exactly as signed through a public relay — no server ever builds your transaction. Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE. Sends are final.</p>`);
   qr("qrDoge2", dogeAddr);
   $("cpDoge2").onclick = () => copyText(dogeAddr, $("cpDoge2"));
+  $("gReview").onclick = async () => {
+    const to = $("gTo").value.trim(), amount = $("gAmt").value.trim();
+    if (!isValidDogeAddress(to)) return msg("gMsg", "That is not a valid Dogecoin address.");
+    if (!amount || Number(amount) <= 0) return msg("gMsg", "Enter an amount.");
+    if (Number(amount) < DOGE_MIN_OUTPUT) return msg("gMsg", `Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
+    if (Number(amount) > dogeBal) return msg("gMsg", "Amount is more than your balance.");
+    try {
+      msg("gMsg", "Checking the network fee…", true);
+      const info = await getDogeFeeInfo();
+      const rate = Math.max(1000, Math.floor(info.medianSatByte ?? 10000));
+      const feeDoge = (rate * 226 / 1e8).toFixed(8); // ~1-in/2-out legacy estimate for the sentence
+      pendingDoge = { to, amount };
+      $("gIntentText").textContent = formatDogeSendIntent({ amount, to, feeDoge });
+      show("gIntent"); msg("gMsg", "");
+    } catch (e) { msg("gMsg", "Could not check the fee: " + e.message); }
+  };
+  $("gConfirm").onclick = async () => {
+    if (!pendingDoge) return;
+    try {
+      msg("gMsg", "Signing locally and broadcasting…", true);
+      const { txid } = await sendDogecoin(wallet.mnemonic.phrase, { to: pendingDoge.to, amountDoge: Number(pendingDoge.amount) });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingDoge.amount, symbol: "DOGE", to: pendingDoge.to,
+        link: `https://blockchair.com/dogecoin/transaction/${txid}`, explorer: "https://blockchair.com/dogecoin", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+      pendingDoge = null; closeSheet(); renderMain();
+    } catch (e) { msg("gMsg", "Send failed: " + e.message); }
+  };
 }
 
 // ---------- Cosmos sheet ----------
@@ -1639,11 +1678,12 @@ function openDogeSheet() {
 // the selected denom. The fee in the sentence is a live simulation at
 // the chain's registry gas price, and the confirmed send broadcasts
 // with exactly that fee (fees are always paid in the native denom,
-// whatever denom is being sent). Two honest limits, stated in the
-// sheet itself: Injective sends are disabled (EthAccount signature
-// format — see wallet-core), and swaps from Cosmos chains aren't
-// available yet (LI.FI carries no Cosmos chains; Skip Go's routes
-// hide the swap inside an opaque transfer memo).
+// whatever denom is being sent). Injective rides its own hand-rolled
+// EthAccount signer inside sendCosmos/estimateCosmosFee (see
+// wallet-core) — the sheet is chain-generic and doesn't care. One
+// honest limit, stated in the sheet itself: swaps from Cosmos
+// chains aren't available yet (LI.FI carries no Cosmos chains;
+// Skip Go's routes hide the swap inside an opaque transfer memo).
 function openCosmosSheet(row) {
   const chain = row; // COSMOS_CHAINS entry + { address, amount|null, tokens|null }
   let pendingCosmos = null;
@@ -1662,11 +1702,7 @@ function openCosmosSheet(row) {
            <span>${fmt(t.amount)}${sel && t.denom === sel.denom ? ' <span class="pill">SENDING</span>' : ""}</span>
          </button>`).join("")}</div>`
     : "";
-  const sendBlock = chain.sendEnabled === false
-    ? `<h3>Send</h3>
-       <button class="btn" disabled style="opacity:.45">Sending not available yet</button>
-       <p class="tag">Sending is off for now: Injective accounts sign with a different key format (EthAccount) than the rest of Cosmos, and Fluid's Cosmos signer can't produce it yet. Receiving and balances work normally.</p>`
-    : `<h3>Send <span id="kSendSym">${esc(sel ? sel.symbol : chain.symbol)}</span></h3>
+  const sendBlock = `<h3>Send <span id="kSendSym">${esc(sel ? sel.symbol : chain.symbol)}</span></h3>
        <input id="kTo" placeholder="Recipient ${chain.prefix}1… address" autocapitalize="none">
        <input id="kAmt" inputmode="decimal" placeholder="Amount">
        <button class="btn" id="kReview">Review send</button>
@@ -1704,7 +1740,6 @@ function openCosmosSheet(row) {
       msg("kMsg", "");
     });
   }
-  if (chain.sendEnabled === false) return;
   $("kReview").onclick = async () => {
     const to = $("kTo").value.trim(), amount = $("kAmt").value.trim();
     if (!sel) return msg("kMsg", "No token selected.");

@@ -10,8 +10,14 @@ import * as btc from "@scure/btc-signer";
 import { base58, base58check, base58xrp, base64, base32, bech32, hex } from "@scure/base";
 import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
 import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
+import { TxBody as CosmosTxBody, TxRaw as CosmosTxRaw, AuthInfo as CosmosAuthInfo, SignDoc as CosmosSignDoc, SignerInfo as CosmosSignerInfo, ModeInfo as CosmosModeInfo } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+import { MsgSend as CosmosBankMsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { Any as ProtobufAny } from "cosmjs-types/google/protobuf/any";
+import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
+import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256, sha512, sha512_256 } from "@noble/hashes/sha2.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -391,12 +397,22 @@ export async function sendLitecoin(phrase, { to, amountLtc, feeRate }) {
 // Dogecoin has no SegWit in this wallet: legacy P2PKH (D… addresses,
 // pubKeyHash 0x1e, scriptHash 0x16, WIF 0x9e), cross-checked against
 // bitcoinjs-lib's Dogecoin params in scratch before shipping.
-// Sending is intentionally NOT wired: verified live 2026-11-06, no
-// keyless API offers a raw-transaction broadcast for Dogecoin
-// (dogechain's pushtx is dead; BlockCypher's /txs/send builds the
-// transaction server-side, which breaks Fluid's local-signing rule).
-// Balances and fees are live via dogechain.com; the app shows the send
-// button disabled with the reason.
+// SENDS (wired 2026-11-06, gap-closure build): the transaction is
+// built and signed locally exactly like Litecoin's, except legacy
+// P2PKH inputs carry the full previous transaction (nonWitnessUtxo)
+// from dogechain's unspent list. The signed bytes are relayed RAW —
+// no server ever builds or alters them — through two keyless public
+// relays, both verified live 2026-11-06 with a locally-signed
+// transaction spending a nonexistent UTXO: Bitcore's public API
+// (api.bitcore.io, POST /api/DOGE/mainnet/tx/send) answered with the
+// Dogecoin node's own "Missing inputs" rejection, and BlockCypher's
+// raw-push endpoint (POST /v1/doge/main/txs/push — the push endpoint
+// only; their /txs/send skeleton API builds server-side and stays
+// forbidden) answered "Transaction … orphaned, missing reference …"
+// quoting our exact txid. A signed test transaction built by this
+// code is byte-identical to bitcoinjs-lib's output for the same
+// inputs (pinned in tests). Signing was never the gap — the relay
+// was; the earlier "no keyless raw broadcast exists" note is retired.
 const DOGE_NETWORK = { bech32: "doge", pubKeyHash: 0x1e, scriptHash: 0x16, wif: 0x9e };
 function dogeKeys(phrase, account = 0) {
   const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
@@ -409,7 +425,7 @@ export function dogecoinAddress(phrase, account = 0) { return dogeKeys(phrase, a
 export function isValidDogeAddress(address) {
   try {
     const raw = base58check(sha256Bytes).decode(String(address).trim());
-    return raw.length === 21 && raw[0] === 0x1e;
+    return raw.length === 21 && (raw[0] === 0x1e || raw[0] === 0x16); // P2PKH (D…) or P2SH (A…)
   } catch { return false; }
 }
 // Dogecoin's dust limit is high (0.01 DOGE since Core 1.14.5): outputs
@@ -423,13 +439,106 @@ export async function getDogecoinBalance(address) {
   if (bal == null) throw new Error("Dogecoin balance lookup failed.");
   return Number(bal);
 }
-/** Live fee context for display (sending is disabled — see note above). */
+/** Live Dogecoin fee market (dogechain v3): the median koinu-per-byte
+ *  recent transactions actually paid. sendDogecoin builds its fee
+ *  from this; the sheet shows it in the intent sentence. */
 export async function getDogeFeeInfo() {
   try {
     const res = await fetch(`${DOGECHAIN_API}/v3/fees`);
     const d = await res.json();
     return { medianSatByte: Number(d?.data?.fee_rate_koinu_per_byte?.median) || null, medianFeeDoge: Number(d?.data?.median_fee_paid) || null };
   } catch { return { medianSatByte: null, medianFeeDoge: null }; }
+}
+// Dogecoin's dust limit in its smallest unit (1 DOGE = 1e8 koinu).
+export const DOGE_DUST_KOINU = 1_000_000;
+/** Serialized size estimate for a legacy P2PKH transaction:
+ *  10 bytes overhead + ~148 per input + ~34 per output. */
+export function dogeTxSize(nIn, nOut) { return 10 + nIn * 148 + nOut * 34; }
+/** PURE builder (unit-testable offline): assemble + sign a legacy
+ *  P2PKH Dogecoin transaction from explicit inputs. utxos carry the
+ *  full previous transaction hex (legacy signing needs it for the
+ *  sighash). Change below the dust limit is folded into the fee
+ *  rather than creating an unspendable output. Returns
+ *  { hex, txid, feeKoinu (actual, after any dust fold), changeKoinu }. */
+export function buildSignedDogeTx({ privateKey, utxos, to, amountKoinu, feeKoinu, changeAddress }) {
+  if (!(amountKoinu >= DOGE_DUST_KOINU)) {
+    throw new Error(`Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
+  }
+  const total = utxos.reduce((s, u) => s + u.valueKoinu, 0);
+  let change = total - amountKoinu - feeKoinu;
+  if (change < 0) throw new Error("Not enough confirmed DOGE to cover the amount plus network fee.");
+  let actualFee = feeKoinu;
+  if (change > 0 && change < DOGE_DUST_KOINU) { actualFee += change; change = 0; }
+  const tx = new btc.Transaction({ version: 1 }); // Dogecoin's conventional tx version
+  for (const u of utxos) {
+    tx.addInput({ txid: u.txid, index: u.index, nonWitnessUtxo: hex.decode(u.txHex), sighashType: btc.SigHash.ALL });
+  }
+  tx.addOutputAddress(to, BigInt(amountKoinu), DOGE_NETWORK);
+  if (change > 0) tx.addOutputAddress(changeAddress, BigInt(change), DOGE_NETWORK);
+  tx.sign(privateKey);
+  tx.finalize();
+  return { hex: tx.hex, txid: tx.id, feeKoinu: actualFee, changeKoinu: change };
+}
+// Keyless RAW relays for the locally-signed bytes (see the section
+// note for the live verification of both). Primary: Bitcore (BitPay's
+// public infrastructure; its error text is the node's own). Fallback:
+// BlockCypher's raw-push endpoint only — never their build-it-for-you
+// skeleton API.
+const DOGE_RELAYS = [
+  { name: "Bitcore", url: "https://api.bitcore.io/api/DOGE/mainnet/tx/send", body: (txHex) => ({ rawTx: txHex }) },
+  { name: "BlockCypher", url: "https://api.blockcypher.com/v1/doge/main/txs/push", body: (txHex) => ({ tx: txHex }) },
+];
+/** Relay a signed Dogecoin transaction hex through the public raw
+ *  relays, primary first. Returns the name of the relay that accepted
+ *  it; throws with both relays' answers when neither does. */
+export async function broadcastDogeTx(txHex) {
+  const errors = [];
+  for (const relay of DOGE_RELAYS) {
+    try {
+      const res = await fetch(relay.url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(relay.body(txHex)), signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) return relay.name;
+      errors.push(`${relay.name}: ${(await res.text().catch(() => "")).trim().slice(0, 160) || "HTTP " + res.status}`);
+    } catch (e) { errors.push(`${relay.name}: ${e.message}`); }
+  }
+  throw new Error("Dogecoin relays rejected the transaction — " + errors.join(" · "));
+}
+export function formatDogeSendIntent({ amount, to, feeDoge }) {
+  return `Send ${amount} DOGE to ${to} on Dogecoin. Network fee about ${feeDoge} DOGE. Confirm?`;
+}
+/** Build, sign and broadcast a DOGE payment. UTXOs come from
+ *  dogechain's unspent list (confirmed only, largest first); the fee
+ *  is the live dogechain median koinu/byte (floored at 1000) times
+ *  the legacy size estimate; the signed bytes go out through
+ *  broadcastDogeTx. Returns { txid, feeDoge, route }. */
+export async function sendDogecoin(phrase, { to, amountDoge, feeRateKoinuByte = null }) {
+  const { child, address } = dogeKeys(phrase);
+  if (!isValidDogeAddress(to)) throw new Error("That is not a valid Dogecoin address.");
+  const amountKoinu = Math.round(Number(amountDoge) * 1e8);
+  if (!(amountKoinu >= DOGE_DUST_KOINU)) {
+    throw new Error(`Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
+  }
+  const rate = Math.max(1000, Math.floor(feeRateKoinuByte ?? (await getDogeFeeInfo()).medianSatByte ?? 10000));
+  const res = await fetch(`${DOGECHAIN_API}/v1/address/unspent/${address}`, { signal: AbortSignal.timeout(20000) });
+  const data = await res.json().catch(() => null);
+  const raw = Array.isArray(data?.unspent_outputs) ? data.unspent_outputs : [];
+  const utxos = raw
+    .filter(u => (u.confirmations ?? 0) >= 1 && u.tx_hex && u.tx_hash)
+    .map(u => ({ txid: u.tx_hash, index: u.tx_output_n, valueKoinu: Number(u.value), txHex: u.tx_hex }))
+    .sort((a, b) => b.valueKoinu - a.valueKoinu);
+  if (!utxos.length) throw new Error("No confirmed DOGE available to spend yet.");
+  const picked = []; let sum = 0, feeKoinu = 0;
+  for (const u of utxos) {
+    picked.push(u); sum += u.valueKoinu;
+    feeKoinu = rate * dogeTxSize(picked.length, 2);
+    if (sum >= amountKoinu + feeKoinu) break;
+  }
+  if (sum < amountKoinu + feeKoinu) throw new Error("Not enough confirmed DOGE to cover the amount plus network fee.");
+  const built = buildSignedDogeTx({ privateKey: child.privateKey, utxos: picked, to, amountKoinu, feeKoinu, changeAddress: address });
+  const route = await broadcastDogeTx(built.hex);
+  return { txid: built.txid, feeDoge: built.feeKoinu / 1e8, route };
 }
 
 // ---------- Bitcoin Cash (same seed, BIP44 coin type 145, CashAddr) ----------
@@ -1508,6 +1617,16 @@ export async function sendStellar(phrase, { to, amount, token = null }) {
 // therefore differ from the other six chains'; the other six still
 // share one account at 118. The switch was made while Injective was
 // receive-only with no user balances, so no funds were stranded.
+// SECOND Injective difference, found by the gap-closure build's
+// mandated @injectivelabs/sdk-ts cross-check (2026-11-06): Injective
+// account bytes are ETHEREUM-style — the last 20 bytes of
+// keccak256(uncompressed pubkey), i.e. the account's 0x address bytes
+// — NOT the family's hash160. The chain's own account record proves
+// it: the test seed's pubkey is stored on injective-1 under the
+// eth-derived address with the ethsecp256k1 pubkey type. Fluid
+// originally printed the hash160 address for Injective (a receive
+// trap: that address is not the account this key controls there);
+// fixed in the same build, still with no user balances anywhere.
 // Denoms, chain ids, prefixes and average gas prices were verified
 // 2026-11-06 against the chain registry (github.com/cosmos/chain-registry)
 // and live endpoint reads; INJ and DYDX use 18-decimal base denoms
@@ -1516,14 +1635,28 @@ export async function sendStellar(phrase, { to, amount, token = null }) {
 // signing clients — except Sei, whose directory RPC was down (HTTP 502)
 // at build time, so Sei sends ride the Sei team's own rpc.sei-apis.com
 // (verified live, POST included).
-// Injective is the family's DOGE: receive + live balance work, sending
-// is disabled with the reason shown. Injective accounts are
-// /injective.types.v1beta1.EthAccount and expect signatures over the
-// /injective.crypto.v1beta1.ethsecp256k1.PubKey type (both verified
-// live against a validator account) — the stock CosmJS signer emits
-// the Cosmos pubkey type, which Injective's ante handler does not
-// accept, so a working Injective signer is a separate build, not a
-// config flag.
+// Injective SENDS (wired 2026-11-06, gap-closure build): stock
+// CosmJS cannot sign for Injective — its accounts are
+// /injective.types.v1beta1.EthAccount, the signer pubkey must encode
+// as /injective.crypto.v1beta1.ethsecp256k1.PubKey, and the signature
+// digest is keccak256(SignDoc bytes), Ethereum-style, not the Cosmos
+// sha256. The hand-rolled signer below (buildInjectiveSignedTx)
+// assembles TxBody/AuthInfo/SignDoc with the cosmjs-types codecs and
+// signs with @noble secp256k1 over the keccak digest. VALIDATION:
+// for identical inputs its output is BYTE-IDENTICAL to
+// @injectivelabs/sdk-ts's createTransaction + PrivateKey.sign —
+// signature included (RFC6979 makes both deterministic) — and that
+// exact transaction, simulated live against injective-1 through the
+// chain's LCD, was accepted through decoding and the account/fee
+// ante stages and failed ONLY at funds ("spendable balance 1inj is
+// smaller than 16000000000000inj", fee.go:236 — the test account
+// holds exactly 1 wei). Honest limit of that proof: Injective's
+// simulate skips signature verification (proven with corrupted- and
+// empty-signature controls, which reach the same stage), and its
+// CheckTx ante checks the fee BEFORE the signature, so no live
+// endpoint will verify a signature for an account that cannot pay a
+// fee — byte-identity with the chain's own reference SDK is the
+// load-bearing evidence, and it is pinned in tests.
 // Swaps: LI.FI carries NO Cosmos-SDK chains (its chainTypes are
 // EVM/SVM/TVM/MVM/UTXO only — checked live), and Skip Go, while it
 // answers keyless and returns real routes, packs the actual swap into
@@ -1544,7 +1677,7 @@ export const COSMOS_CHAINS = [
     rest: "https://rest.cosmos.directory/celestia", rpc: "https://rpc.cosmos.directory/celestia", explorer: "https://www.mintscan.io/celestia" },
   // coinType 60: the Keplr/Leap Injective path (see the family note
   // above) — every other chain in this table derives at the default 118.
-  { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", sendEnabled: false, coinType: 60,
+  { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", coinType: 60,
     rest: "https://rest.cosmos.directory/injective", rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
   { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei",
     rest: "https://rest.cosmos.directory/sei", rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
@@ -1563,24 +1696,40 @@ function cosmosKeys(phrase, coinType = 118) {
   const child = root.derive(`m/44'/${coinType}'/0'/0/0`);
   return { child, accountBytes: ripemd160(sha256(child.publicKey)) }; // hash160 of the compressed pubkey
 }
+/** Injective's account bytes for a compressed pubkey: Ethereum-style
+ *  — the last 20 bytes of keccak256(uncompressed pubkey), the same
+ *  bytes as the account's 0x address. Cross-checked against
+ *  @injectivelabs/sdk-ts and ethers.computeAddress (see tests) and
+ *  against the account record the chain itself stores for the test
+ *  seed's pubkey. Every other Cosmos chain uses hash160. */
+export function injectiveAddressBytes(compressedPub) {
+  const uncompressed = secp256k1.Point.fromHex(hex.encode(compressedPub)).toBytes(false);
+  return keccak_256(uncompressed.slice(1)).slice(-20);
+}
+/** The account bytes one Cosmos chain expects for this wallet's key:
+ *  hash160 everywhere except Injective (Ethereum-style, above). */
+export function cosmosAccountBytes(phrase, chain) {
+  const { child, accountBytes } = cosmosKeys(phrase, cosmosCoinType(chain));
+  return chain.key === "injective" ? injectiveAddressBytes(child.publicKey) : accountBytes;
+}
 /** The wallet's address on one Cosmos chain (bech32 of that chain's
  *  account bytes under its prefix — shared at 118 for six chains,
  *  Injective's own at 60). */
 export function cosmosAddress(phrase, chainKey) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
-  const { accountBytes } = cosmosKeys(phrase, cosmosCoinType(chain));
-  return bech32.encode(chain.prefix, bech32.toWords(accountBytes));
+  return bech32.encode(chain.prefix, bech32.toWords(cosmosAccountBytes(phrase, chain)));
 }
 /** Every Cosmos address of this wallet: { chainKey: address }.
- *  Derives once per distinct coin type in the table (118 + 60). */
+ *  Derives once per distinct account (118 shared + Injective's 60). */
 export function cosmosAddresses(phrase) {
-  const byType = new Map();
-  const wordsFor = (coinType) => {
-    if (!byType.has(coinType)) byType.set(coinType, bech32.toWords(cosmosKeys(phrase, coinType).accountBytes));
-    return byType.get(coinType);
+  const byAcct = new Map();
+  const wordsFor = (chain) => {
+    const k = chain.key === "injective" ? "injective" : String(cosmosCoinType(chain));
+    if (!byAcct.has(k)) byAcct.set(k, bech32.toWords(cosmosAccountBytes(phrase, chain)));
+    return byAcct.get(k);
   };
-  return Object.fromEntries(COSMOS_CHAINS.map(c => [c.key, bech32.encode(c.prefix, wordsFor(cosmosCoinType(c)))]));
+  return Object.fromEntries(COSMOS_CHAINS.map(c => [c.key, bech32.encode(c.prefix, wordsFor(c))]));
 }
 /** A valid address FOR THIS CHAIN: right bech32 prefix, valid checksum,
  *  20-byte (account) or 32-byte (contract) payload. */
@@ -1633,6 +1782,143 @@ async function cosmosSignerClient(phrase, chain) {
   const signer = await DirectSecp256k1Wallet.fromKey(child.privateKey, chain.prefix);
   return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice) });
 }
+
+// ---------- Injective signer (EthAccount — see the family note) ----------
+// Hand-rolled because stock CosmJS emits the Cosmos pubkey type and
+// signs sha256(SignDoc); Injective needs its own pubkey type URL and
+// keccak256(SignDoc). The protobuf assembly reuses the cosmjs-types
+// codecs (the same generated code CosmJS itself ships); the pubkey
+// Any's value is the standard { key: bytes } protobuf, which is also
+// exactly the ethsecp256k1 PubKey's wire layout.
+export const INJECTIVE_PUBKEY_TYPE = "/injective.crypto.v1beta1.ethsecp256k1.PubKey";
+/** PURE builder (unit-testable offline): assemble + sign an Injective
+ *  bank MsgSend. Deterministic (RFC6979): for identical inputs the
+ *  output is byte-identical to @injectivelabs/sdk-ts's — pinned in
+ *  tests against a transaction that was also simulated live on
+ *  injective-1. Returns { txBytes, signDocBytes, signature }. */
+export function buildInjectiveSignedTx({ privateKey, publicKey, fromAddress, toAddress, denom, amountBase, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1" }) {
+  const msgAny = ProtobufAny.fromPartial({
+    typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+    value: CosmosBankMsgSend.encode(CosmosBankMsgSend.fromPartial({
+      fromAddress, toAddress,
+      amount: [CosmosCoin.fromPartial({ denom, amount: String(amountBase) })],
+    })).finish(),
+  });
+  const bodyBytes = CosmosTxBody.encode(CosmosTxBody.fromPartial({ messages: [msgAny], memo: "" })).finish();
+  const pubKeyAny = ProtobufAny.fromPartial({
+    typeUrl: INJECTIVE_PUBKEY_TYPE,
+    value: CosmosSecp256k1PubKey.encode(CosmosSecp256k1PubKey.fromPartial({ key: publicKey })).finish(),
+  });
+  const feeCoins = String(feeAmountBase) === "0" ? [] : [CosmosCoin.fromPartial({ denom: "inj", amount: String(feeAmountBase) })];
+  const authInfoBytes = CosmosAuthInfo.encode(CosmosAuthInfo.fromPartial({
+    signerInfos: [CosmosSignerInfo.fromPartial({
+      publicKey: pubKeyAny,
+      modeInfo: CosmosModeInfo.fromPartial({ single: { mode: 1 } }), // SIGN_MODE_DIRECT
+      sequence: BigInt(sequence),
+    })],
+    fee: { amount: feeCoins, gasLimit: BigInt(gasLimit) },
+  })).finish();
+  const signDocBytes = CosmosSignDoc.encode(CosmosSignDoc.fromPartial({
+    bodyBytes, authInfoBytes, chainId, accountNumber: BigInt(accountNumber),
+  })).finish();
+  // Injective's ethsecp256k1 verification hashes the sign bytes with
+  // keccak256 (Ethereum-style) — NOT the Cosmos sha256. Proven three
+  // ways in the gap-closure build: sdk-ts source, local noble verify
+  // (keccak verifies, sha256 does not), byte-identical output vs sdk-ts.
+  const signature = secp256k1.sign(keccak_256(signDocBytes), privateKey, { prehash: false, lowS: true });
+  const txBytes = CosmosTxRaw.encode(CosmosTxRaw.fromPartial({ bodyBytes, authInfoBytes, signatures: [signature] })).finish();
+  return { txBytes, signDocBytes, signature };
+}
+/** The chain's own account record for an Injective address (EthAccount
+ *  wraps a base_account). Returns { accountNumber, sequence } as
+ *  strings, or null when the account does not exist on-chain yet —
+ *  a Cosmos account must exist before it can sign a transaction. */
+async function injectiveAccount(chain, address) {
+  const res = await fetch(`${chain.rest}/cosmos/auth/v1beta1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Injective account lookup failed (HTTP ${res.status}).`);
+  const data = await res.json().catch(() => null);
+  const acct = data?.account || {};
+  const base = acct.base_account || acct;
+  if (base.account_number == null) throw new Error("Injective returned an unreadable account record.");
+  return { accountNumber: String(base.account_number), sequence: String(base.sequence ?? "0") };
+}
+/** POST a signed transaction to the chain's simulate endpoint;
+ *  resolves with gas_info, throws the chain's own message otherwise. */
+async function injectiveSimulate(chain, txBytes) {
+  const res = await fetch(`${chain.rest}/cosmos/tx/v1beta1/simulate`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tx_bytes: base64.encode(txBytes) }), signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.gas_info) {
+    throw new Error((data?.message || `Injective simulation failed (HTTP ${res.status}).`).trim());
+  }
+  return data.gas_info;
+}
+// Injective's registry gas price is an integer amount of inj per gas
+// ("160000000inj" in the chain table) — parse the leading integer.
+function injectiveGasPricePerGas(chain) {
+  const m = /^(\d+)/.exec(chain.gasPrice || "");
+  if (!m) throw new Error("Injective gas price is not an integer price: " + chain.gasPrice);
+  return BigInt(m[1]);
+}
+/** Injective fee estimate with the same return shape as
+ *  estimateCosmosFee and the same math (simulated gas × 1.4 at the
+ *  registry price). The simulation itself is signed with a
+ *  provisional fee — Injective's ante checks the fee during
+ *  simulation too, so an account that cannot pay fails here with the
+ *  chain's insufficient-funds message, which is the honest answer
+ *  for an empty account. */
+async function estimateInjectiveFee(phrase, chain, { to, amount, denom = null, decimals = null }) {
+  const from = cosmosAddress(phrase, chain.key);
+  const acct = await injectiveAccount(chain, from);
+  if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
+  const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
+  const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals).toString();
+  const price = injectiveGasPricePerGas(chain);
+  const provisionalGas = 250000;
+  const provisional = buildInjectiveSignedTx({
+    privateKey: child.privateKey, publicKey: child.publicKey, fromAddress: from, toAddress: to,
+    denom: denom || chain.denom, amountBase: raw,
+    feeAmountBase: (price * BigInt(provisionalGas)).toString(), gasLimit: provisionalGas,
+    accountNumber: acct.accountNumber, sequence: acct.sequence, chainId: chain.chainId,
+  });
+  const gasInfo = await injectiveSimulate(chain, provisional.txBytes);
+  const gasWanted = Math.ceil(Number(gasInfo.gas_used) * 1.4);
+  const feeAmount = price * BigInt(gasWanted);
+  const fee = { amount: [{ denom: chain.denom, amount: feeAmount.toString() }], gas: String(gasWanted) };
+  return { fee, feeText: ethers.formatUnits(feeAmount, chain.decimals), feeSymbol: chain.symbol };
+}
+/** Injective send: build + sign with buildInjectiveSignedTx and
+ *  broadcast through the chain's LCD (BROADCAST_MODE_SYNC — CheckTx
+ *  runs the full ante handler; delivery is then committed by the
+ *  network). Takes the fee object from estimateInjectiveFee so the
+ *  broadcast matches exactly what the user approved. Returns { hash }. */
+async function sendInjective(phrase, chain, { to, amount, fee = null, denom = null, decimals = null }) {
+  const from = cosmosAddress(phrase, chain.key);
+  const acct = await injectiveAccount(chain, from);
+  if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
+  const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
+  const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals).toString();
+  const useFee = fee || (await estimateInjectiveFee(phrase, chain, { to, amount, denom, decimals })).fee;
+  const built = buildInjectiveSignedTx({
+    privateKey: child.privateKey, publicKey: child.publicKey, fromAddress: from, toAddress: to,
+    denom: denom || chain.denom, amountBase: raw,
+    feeAmountBase: useFee.amount?.[0]?.amount || "0", gasLimit: Number(useFee.gas || 200000),
+    accountNumber: acct.accountNumber, sequence: acct.sequence, chainId: chain.chainId,
+  });
+  const res = await fetch(`${chain.rest}/cosmos/tx/v1beta1/txs`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tx_bytes: base64.encode(built.txBytes), mode: "BROADCAST_MODE_SYNC" }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  const txr = data?.tx_response;
+  if (!res.ok || !txr) throw new Error((data?.message || `Injective broadcast failed (HTTP ${res.status}).`).trim());
+  if (Number(txr.code) !== 0) throw new Error(`Injective rejected the transaction: ${(txr.raw_log || "code " + txr.code).trim().slice(0, 240)}`);
+  return { hash: txr.txhash };
+}
 /** Simulate a MsgSend and price the fee at the chain's registry
  *  average gas price (CosmJS "auto" math: simulated gas × 1.4).
  *  Returns { fee: {amount: [{denom, amount}], gas}, feeText } where
@@ -1640,6 +1926,7 @@ async function cosmosSignerClient(phrase, chain) {
 export async function estimateCosmosFee(phrase, chainKey, { to, amount, denom = null, decimals = null }) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
+  if (chain.key === "injective") return estimateInjectiveFee(phrase, chain, { to, amount, denom, decimals });
   const from = cosmosAddress(phrase, chainKey);
   const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals).toString();
   const client = await cosmosSignerClient(phrase, chain);
@@ -1658,10 +1945,12 @@ export async function estimateCosmosFee(phrase, chainKey, { to, amount, denom = 
 export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, denom = null, decimals = null }) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
-  if (chain.sendEnabled === false) throw new Error(`Sending on ${chain.name} is not available yet.`);
   if (!isValidCosmosAddress(to, chainKey)) throw new Error(`That is not a valid ${chain.name} address (it starts with ${chain.prefix}1).`);
   const raw = ethers.parseUnits(String(amount), decimals ?? chain.decimals);
   if (raw <= 0n) throw new Error("Enter an amount.");
+  // Injective signs with its own EthAccount signer (hand-rolled
+  // above); the other six chains ride the CosmJS client below.
+  if (chain.key === "injective") return sendInjective(phrase, chain, { to, amount, fee, denom, decimals });
   const from = cosmosAddress(phrase, chainKey);
   const client = await cosmosSignerClient(phrase, chain);
   try {
