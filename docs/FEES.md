@@ -21,6 +21,17 @@ Where Fluid itself charges a fee, the fee is split:
 future swap fees), but they are *settled* the same way every time:
 accrued fees are swept, converted to BTC, and paid out to the two
 Lightning addresses in the `FEE_SPLIT` config (`src/wallet-core.js`).
+
+**The $2 rule (Ethuram, 2026-11-06):** fee profit never sits idle in
+chain assets (BNB, USDT, …). Whenever accumulated unsettled fees across
+ALL chains combined reach **$2**, the whole pot is converted to BTC on
+the Lightning Network via the easiest trade with the cheapest fee, and
+split 60/40 in the same run (`FEE_SETTLEMENT` + `feeSettlementDue()` in
+the wallet core). This repeats at every $2 mark — small, frequent,
+automatic. The 40% lands in the Drip Wallet (autonomous agent wallet,
+EVM `0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B`, BTC
+`bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn`, paired with
+@bitcoinornatin), from where the weekly drip distributes it.
 Lightning addresses: **to be provided** (treasury + DripBot).
 DripBot's 40% is not profit it keeps — it funds the weekly follower
 drip and the OGO ERA player pools; see `docs/DRIPBOT.md`. The split

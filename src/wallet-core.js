@@ -334,6 +334,9 @@ export const FEE_SPLIT = {
   currency: "BTC", rail: "lightning",
   treasury: { share: 60, label: "Ethuram (treasury)", evmWallet: "0x7d0e382D1267C38EE5d5Ce806018d93da241750e", lnAddress: null },
   dripbot: { share: 40, label: "DripBot", x: "@bitcoinornatin", hashtag: "#bitcoinornothing", lnAddress: null,
+    // Autonomous agent wallet created 2026-11-06 (agent/fluid-agent.mjs,
+    // mode: autonomous, paired with @bitcoinornatin). Public addresses only:
+    agentWallet: { evm: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", btc: "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn" },
     // The odd account, by design (docs/DRIPBOT.md): DripBot is AUTONOMOUS.
     // It has NO on/off-ramp and never sells anything. It only RECEIVES
     // BTC over Lightning (converted from platform fee assets) and PAYS
@@ -341,6 +344,13 @@ export const FEE_SPLIT = {
     // player pools. Its balance grows as Fluid usage and followers grow.
     role: "autonomous-distribution", ramps: false, receives: "BTC-Lightning only" },
 };
+// Fee settlement rule (Ethuram, 2026-11-06): fee profit must NOT sit idle
+// in chain assets (BNB/USDT/etc.). Whenever accumulated unsettled fees —
+// across all chains combined — reach the threshold ($2), the whole pot is
+// converted to BTC on the Lightning Network via the easiest/cheapest route
+// and split 60/40 (splitFee) in the same run. Repeat at every $2 mark.
+export const FEE_SETTLEMENT = { thresholdUsd: 2, target: "BTC", rail: "lightning", route: "cheapest-available", splitAtConversion: true };
+export function feeSettlementDue(accumulatedUsd) { return Number(accumulatedUsd) >= FEE_SETTLEMENT.thresholdUsd; }
 /** Split an integer amount (sats, or any smallest unit) 60/40.
  *  Rounding remainder goes to the treasury so nothing is ever lost. */
 export function splitFee(amount) {
