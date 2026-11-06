@@ -321,7 +321,13 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
 export const FEE_SPLIT = {
   currency: "BTC", rail: "lightning",
   treasury: { share: 60, label: "Ethuram (treasury)", evmWallet: "0x7d0e382D1267C38EE5d5Ce806018d93da241750e", lnAddress: null },
-  dripbot: { share: 40, label: "DripBot", x: "@bitcoinornatin", lnAddress: null },
+  dripbot: { share: 40, label: "DripBot", x: "@bitcoinornatin", hashtag: "#bitcoinornothing", lnAddress: null,
+    // The odd account, by design (docs/DRIPBOT.md): DripBot is AUTONOMOUS.
+    // It has NO on/off-ramp and never sells anything. It only RECEIVES
+    // BTC over Lightning (converted from platform fee assets) and PAYS
+    // OUT BTC over Lightning — weekly follower drips and the OGO ERA
+    // player pools. Its balance grows as Fluid usage and followers grow.
+    role: "autonomous-distribution", ramps: false, receives: "BTC-Lightning only" },
 };
 /** Split an integer amount (sats, or any smallest unit) 60/40.
  *  Rounding remainder goes to the treasury so nothing is ever lost. */

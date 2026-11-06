@@ -21,7 +21,9 @@ Where Fluid itself charges a fee, the fee is split:
 future swap fees), but they are *settled* the same way every time:
 accrued fees are swept, converted to BTC, and paid out to the two
 Lightning addresses in the `FEE_SPLIT` config (`src/wallet-core.js`).
-Lightning addresses: **to be provided** (treasury + DripBot). The split
+Lightning addresses: **to be provided** (treasury + DripBot).
+DripBot's 40% is not profit it keeps — it funds the weekly follower
+drip and the OGO ERA player pools; see `docs/DRIPBOT.md`. The split
 math (`splitFee`, remainder to treasury) is unit-tested and does not
 depend on the addresses being set.
 
