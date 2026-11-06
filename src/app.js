@@ -213,8 +213,9 @@ async function renderMain() {
   getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; paintAssets(); }).catch(() => paintAssets());
   bchAddr = bitcoinCashAddress(wallet.mnemonic.phrase);
   getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; paintAssets(); }).catch(() => paintAssets());
-  // Cosmos (Phase 3a): ONE account on seven chains — the same account
-  // bytes under seven bech32 prefixes. Rows start as "unavailable"
+  // Cosmos (Phase 3a): seven chains — six share one account's bytes
+  // under their bech32 prefixes; Injective derives at coin type 60
+  // (the Keplr path). Rows start as "unavailable"
   // (amount null) and fill in per chain as the public REST endpoints
   // answer; a chain that never answers keeps the honest null instead
   // of a fake zero (the DOGE precedent).
@@ -345,11 +346,11 @@ function paintAssets() {
     rows.push(otherGroupHtml("sui", sp.other, render));
     if (familyScanFailed.sui) rows.push(`<p class="tag">Full token scan unavailable — showing main Sui tokens only.</p>`);
   }
-  // Cosmos family rows (Phase 3a): one account, seven chains — a row
+  // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
   // shows "unavailable", never a fake zero.
   if (cosmosRows.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Cosmos — one account, seven chains</p>`);
+    rows.push(`<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>`);
     cosmosRows.forEach((r) => {
       const p = prices[r.symbol];
       rows.push(`<div class="row" data-cosmos="${r.key}">
@@ -644,7 +645,8 @@ $("netBtn").onclick = () => {
 // ---------- receive ----------
 function qr(el, text) { QRCode.toDataURL(text, { width: 180, margin: 1 }).then(u => { const i = $(el); if (i) i.src = u; }).catch(() => {}); }
 $("actReceive").onclick = () => {
-  // Cosmos: one account under seven prefixes — all seven addresses are
+  // Cosmos: seven prefixes (six over one shared account, Injective on
+  // the Keplr path) — all seven addresses are
   // listed with copy buttons; each chain's QR lives in that chain's own
   // sheet (tap its row in the asset list).
   const cosmosHtml = COSMOS_CHAINS.map(c => `
@@ -685,7 +687,7 @@ $("actReceive").onclick = () => {
     <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
     <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>
     <hr style="border-color:var(--line)">
-    <p class="tag">Cosmos addresses — the SAME account on seven chains; only the prefix differs. Send each coin only on its own chain.</p>
+    <p class="tag">Cosmos addresses — one account on six chains (only the prefix differs); Injective uses the standard Keplr path, so its address here matches Keplr/Leap for the same phrase. Send each coin only on its own chain.</p>
     ${cosmosHtml}`);
   qr("qrEvm", wallet.address); qr("qrBtc", btcAddr); qr("qrTron", tronAddr); qr("qrSol", solAddr);
   qr("qrSui", suiAddr);
@@ -1113,7 +1115,7 @@ function openCosmosSheet(row) {
     ${balLine}
     <img class="qr" id="qrCosmos"><p class="mono">${chain.address}</p>
     <button class="btn ghost" id="cpCosmos">Copy address</button>
-    <p class="tag">This is the same account you hold on every Cosmos chain — only the prefix changes (${COSMOS_CHAINS.map(c => c.prefix + "1…").join(", ")}).</p>
+    <p class="tag">One seed phrase controls all seven Cosmos addresses. Six chains share one account — only the prefix changes (${COSMOS_CHAINS.map(c => c.prefix + "1…").join(", ")}); Injective uses the standard Keplr path (coin type 60), so its address matches Keplr/Leap for the same phrase.</p>
     ${tokenList}
     <hr style="border-color:var(--line)">
     ${sendBlock}

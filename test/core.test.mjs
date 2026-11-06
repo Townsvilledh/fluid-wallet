@@ -518,7 +518,11 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
 }
 
 // 32. Phase 3a — Cosmos (one secp256k1 account, coin type 118,
-// m/44'/118'/0'/0/0, seven chains differing only in bech32 prefix).
+// m/44'/118'/0'/0/0, seven chains differing only in bech32 prefix) —
+// with the settlement fix of 2026-11-06: Injective derives at coin
+// type 60 (m/44'/60'/0'/0/0, the Keplr/Leap path) so the same seed
+// shows the same inj1 address in Fluid, Keplr and Leap; the other six
+// chains still share the 118 account.
 // Vectors for the canonical abandon…about seed: the account bytes were
 // computed with Fluid's @scure derivation and cross-checked live
 // during the build against both @cosmjs (below, re-asserted) and live
@@ -530,21 +534,25 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
   const VECTORS = {
     cosmoshub: "cosmos19rl4cm2hmr8afy4kldpxz3fka4jguq0auqdal4", osmosis: "osmo19rl4cm2hmr8afy4kldpxz3fka4jguq0a5m7df8",
     noble: "noble19rl4cm2hmr8afy4kldpxz3fka4jguq0a5rc48m", celestia: "celestia19rl4cm2hmr8afy4kldpxz3fka4jguq0ad2ud9c",
-    injective: "inj19rl4cm2hmr8afy4kldpxz3fka4jguq0akf6edd", sei: "sei19rl4cm2hmr8afy4kldpxz3fka4jguq0a3vute5",
+    injective: "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv", sei: "sei19rl4cm2hmr8afy4kldpxz3fka4jguq0a3vute5",
     dydx: "dydx19rl4cm2hmr8afy4kldpxz3fka4jguq0a4erelz",
   };
   const addrs = cosmosAddresses(ABANDON);
   for (const [key, addr] of Object.entries(VECTORS)) {
     ok(`cosmos: ${key} address vector`, addrs[key] === addr && cosmosAddress(ABANDON, key) === addr);
   }
-  // The family's whole point: identical account bytes under every prefix
+  // Six chains (coin type 118) share identical account bytes under
+  // every prefix; Injective (coin type 60) has its own account bytes.
   {
-    const hashes = Object.values(addrs).map(a => {
+    const bytesOf = (a) => {
       const dec = bech32.decode(a);
       return Buffer.from(bech32.fromWords(dec.words)).toString("hex");
-    });
-    ok("cosmos: same account bytes on all seven chains",
-      hashes.every(h => h === "28ff5c6d57d8cfd492b6fb42614536ed648e01fd"));
+    };
+    const six = ["cosmoshub", "osmosis", "noble", "celestia", "sei", "dydx"].map(k => bytesOf(addrs[k]));
+    ok("cosmos: same account bytes on the six 118 chains",
+      six.every(h => h === "28ff5c6d57d8cfd492b6fb42614536ed648e01fd"));
+    ok("cosmos: Injective (60) account bytes are its own",
+      bytesOf(addrs.injective) === "4418d0b4d9c1ef0e53dfb99143677e1e52354622");
   }
   // Cross-check against @cosmjs derivation, two prefixes (the brief's bar)
   const HD = [Slip10RawIndex.hardened(44), Slip10RawIndex.hardened(118), Slip10RawIndex.hardened(0), Slip10RawIndex.normal(0), Slip10RawIndex.normal(0)]; // m/44'/118'/0'/0/0
@@ -563,6 +571,20 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     ok("cosmos: DirectSecp256k1Wallet from Fluid's key gives Fluid's address", acc.address === addrs.cosmoshub);
     ok("cosmos: signer pubkey is Fluid's derived pubkey", Buffer.from(acc.pubkey).toString("hex") === Buffer.from(child.publicKey).toString("hex"));
   }
+  // Injective cross-checks at coin type 60 — @cosmjs HD derivation AND
+  // a DirectSecp256k1Wallet built from Fluid's own 60 key must both
+  // land on Fluid's inj address (the Keplr-compatibility promise).
+  {
+    const HD60 = [Slip10RawIndex.hardened(44), Slip10RawIndex.hardened(60), Slip10RawIndex.hardened(0), Slip10RawIndex.normal(0), Slip10RawIndex.normal(0)]; // m/44'/60'/0'/0/0
+    const w = await DirectSecp256k1HdWallet.fromMnemonic(ABANDON, { prefix: "inj", hdPaths: [HD60] });
+    const [acc] = await w.getAccounts();
+    ok("cosmos: @cosmjs derivation agrees (inj, coin type 60)", acc.address === addrs.injective);
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON));
+    const child60 = root.derive("m/44'/60'/0'/0/0");
+    const w2 = await DirectSecp256k1Wallet.fromKey(child60.privateKey, "inj");
+    const [acc2] = await w2.getAccounts();
+    ok("cosmos: DirectSecp256k1Wallet from Fluid's 60 key gives Fluid's inj address", acc2.address === addrs.injective);
+  }
   // Chain table pins — every value verified against the chain registry
   // (chain ids, prefixes, denoms, decimals) before shipping.
   ok("cosmos: seven chains", COSMOS_CHAINS.length === 7);
@@ -573,6 +595,8 @@ ok("drip wallet paired in fee config", FEE_SPLIT.dripbot.agentWallet.evm === "0x
     cosmosChain("noble").symbol === "USDC" && cosmosChain("noble").denom === "uusdc" && cosmosChain("noble").gasPrice === "0.1uusdc");
   ok("cosmos: Injective sends disabled (EthAccount), the other six enabled",
     cosmosChain("injective").sendEnabled === false && COSMOS_CHAINS.filter(c => c.key !== "injective").every(c => c.sendEnabled !== false));
+  ok("cosmos: Injective derives at coin type 60, the other six at the 118 default",
+    cosmosChain("injective").coinType === 60 && COSMOS_CHAINS.filter(c => c.key !== "injective").every(c => (c.coinType || 118) === 118));
   ok("cosmos: unknown chain resolves to null", cosmosChain("nope") === null);
 
   // Address validation is per-chain: right prefix + checksum + payload

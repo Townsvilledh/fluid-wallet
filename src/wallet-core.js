@@ -23,7 +23,7 @@ import {
 } from "@solana/web3.js";
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction as SuiTransaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { SuiGraphQLClient } from "@mysten/sui/graphql";
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -1044,7 +1044,12 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
 // backup — a third curve branch of it. Strategic double-duty: Sui is
 // also the future home of the OGO ERA Companion NFT (a Sui object), so
 // this account is the one the game will read.
-const SUI_RPC = "https://fullnode.mainnet.sui.io:443";
+// No JSON-RPC URL here any more: Mysten retired JSON-RPC on the public
+// fullnodes (every method now answers "Method not found… Please migrate
+// to gRPC or GraphQL" — verified live 2026-11-06). ALL Sui traffic —
+// reads AND transaction execution — rides the public GraphQL endpoint
+// (SUI_GRAPHQL, defined in the universal-token section below) through
+// the @mysten/sui GraphQL client.
 export const SUI_EXPLORER = "https://suiscan.xyz";
 export const SUI_COIN_TYPE = "0x2::sui::SUI";
 export const SUI_TOKENS = [
@@ -1103,8 +1108,14 @@ export function suiSuiToMist(amount) { return ethers.parseUnits(String(amount), 
 // (The raw JSON-RPC reader that used to live here is gone on purpose:
 // Mysten deprecated JSON-RPC on the public fullnodes — see the note on
 // getSuiBalances. Sui reads use the GraphQL endpoint in the universal
-// token section at the bottom of this file. sendSui still executes via
-// the SDK client below; that transport is tracked as follow-up work.)
+// token section at the bottom of this file, and sendSui executes over
+// the same GraphQL transport via the SDK client below — migrated
+// 2026-11-06 after the JSON-RPC execution method was verified dead
+// and the GraphQL execute mutation was verified live: a locally
+// signed transaction from the unfunded test account was accepted by
+// the transport and rejected at input-object/signature validation,
+// and gas selection fails an unfunded send at the balance stage —
+// chain-stage answers, never transport errors.)
 /** Sui balances shaped like getBalances(): native SUI first (address
  *  null), then the stablecoins. This is now a view over
  *  getSuiAllBalances (universal token support, bottom of this file):
@@ -1133,13 +1144,31 @@ export function formatSuiSendIntent({ amount, symbol, to }) {
 
 let _suiClient = null;
 function suiClient() {
-  if (!_suiClient) _suiClient = new SuiJsonRpcClient({ url: SUI_RPC, network: "mainnet" });
+  if (!_suiClient) _suiClient = new SuiGraphQLClient({ url: SUI_GRAPHQL, network: "mainnet" });
   return _suiClient;
 }
+/** Every coin object of one type the address holds, via the GraphQL
+ *  client's core API (paginated, capped at 10 pages) — the coin
+ *  selection source for token sends, replacing the retired JSON-RPC
+ *  getCoins. Rows are the core Coin shape: { objectId, balance, … }. */
+async function suiListAllCoins(client, owner, coinType) {
+  const out = [];
+  let cursor = null;
+  for (let page = 0; page < 10; page++) {
+    const res = await client.core.listCoins({ owner, coinType, cursor });
+    out.push(...(res.objects || []));
+    if (!res.hasNextPage || !res.cursor) break;
+    cursor = res.cursor;
+  }
+  return out;
+}
 /** Build, sign (locally, Sui intent signing via the SDK keypair) and
- *  execute a SUI transfer or a coin transfer. `token` is null for
- *  native SUI, otherwise a SUI_TOKENS {address, decimals}. Returns
- *  {hash} — the transaction digest. */
+ *  execute a SUI transfer or a coin transfer over the GraphQL
+ *  transport (the SDK client's core signAndExecuteTransaction: it
+ *  builds against the GraphQL resolver, the keypair signs locally,
+ *  and the executeTransaction mutation broadcasts). `token` is null
+ *  for native SUI, otherwise a SUI_TOKENS {address, decimals}.
+ *  Returns {hash} — the transaction digest. */
 export async function sendSui(phrase, { to, amount, token = null }) {
   if (!isValidSuiAddress(to)) throw new Error("That is not a valid Sui address.");
   const recipient = normalizeSuiAddress(to);
@@ -1151,8 +1180,8 @@ export async function sendSui(phrase, { to, amount, token = null }) {
   if (!token) {
     const mist = suiSuiToMist(amount);
     if (mist <= 0n) throw new Error("Enter an amount.");
-    const bal = await client.getBalance({ owner: from, coinType: SUI_COIN_TYPE });
-    if (mist + SUI_GAS_RESERVE_MIST > BigInt(bal.totalBalance)) {
+    const { balance } = await client.core.getBalance({ owner: from, coinType: SUI_COIN_TYPE });
+    if (mist + SUI_GAS_RESERVE_MIST > BigInt(balance.balance)) {
       throw new Error("Not enough SUI to cover the amount plus the network fee.");
     }
     // Native sends split straight off the gas coin — the canonical
@@ -1162,23 +1191,25 @@ export async function sendSui(phrase, { to, amount, token = null }) {
   } else {
     const raw = ethers.parseUnits(String(amount), token.decimals ?? 6);
     if (raw <= 0n) throw new Error("Enter an amount.");
-    const { data: coins } = await client.getCoins({ owner: from, coinType: token.address });
+    const coins = await suiListAllCoins(client, from, token.address);
     const sorted = [...coins].sort((a, b) => (BigInt(b.balance) > BigInt(a.balance) ? 1 : BigInt(b.balance) < BigInt(a.balance) ? -1 : 0));
     const picked = []; let sum = 0n;
     for (const c of sorted) { picked.push(c); sum += BigInt(c.balance); if (sum >= raw) break; }
     if (sum < raw) throw new Error(`Not enough ${token.symbol} on Sui (you have ${ethers.formatUnits(sum, token.decimals ?? 6)}).`);
     // Merge fragments into the largest coin, then split the exact
     // amount off it — the sender keeps the change automatically.
-    if (picked.length > 1) tx.mergeCoins(picked[0].coinObjectId, picked.slice(1).map(c => c.coinObjectId));
-    const [coin] = tx.splitCoins(picked[0].coinObjectId, [raw]);
+    if (picked.length > 1) tx.mergeCoins(picked[0].objectId, picked.slice(1).map(c => c.objectId));
+    const [coin] = tx.splitCoins(picked[0].objectId, [raw]);
     tx.transferObjects([coin], recipient);
   }
-  const res = await client.signAndExecuteTransaction({ signer: kp, transaction: tx, options: { showEffects: true } });
-  const status = res.effects && res.effects.status && res.effects.status.status;
-  if (status && status !== "success") {
-    throw new Error("Sui rejected the transaction: " + (res.effects.status.error || status));
+  const res = await client.core.signAndExecuteTransaction({ signer: kp, transaction: tx, include: { effects: true } });
+  const txn = res.$kind === "FailedTransaction" ? res.FailedTransaction : res.Transaction;
+  if (!txn) throw new Error("Sui returned an unreadable execution reply.");
+  if (res.$kind === "FailedTransaction" || (txn.status && txn.status.success === false)) {
+    const errMsg = (txn.status && txn.status.error && txn.status.error.message) || "execution failed";
+    throw new Error("Sui rejected the transaction: " + errMsg);
   }
-  return { hash: res.digest };
+  return { hash: txn.digest };
 }
 
 // ---------- Cosmos (one secp256k1 account, seven chains) ----------
@@ -1193,6 +1224,15 @@ export async function sendSui(phrase, { to, amount, token = null }) {
 // (see tests); sends hand that very key to CosmJS as a
 // DirectSecp256k1Wallet, so the signer is built FROM Fluid's derived
 // key, never from a second derivation.
+// ONE EXCEPTION (Ethuram's decision, 2026-11-06): Injective derives at
+// coin type 60 (m/44'/60'/0'/0/0) — the path Keplr and Leap use for
+// Injective — instead of the family's 118, so the same seed shows the
+// SAME inj1 address in Fluid, Keplr and Leap (Fluid's "if Fluid dies,
+// users keep their funds" promise: a seed imported elsewhere must find
+// every account where the user expects it). Injective's account bytes
+// therefore differ from the other six chains'; the other six still
+// share one account at 118. The switch was made while Injective was
+// receive-only with no user balances, so no funds were stranded.
 // Denoms, chain ids, prefixes and average gas prices were verified
 // 2026-11-06 against the chain registry (github.com/cosmos/chain-registry)
 // and live endpoint reads; INJ and DYDX use 18-decimal base denoms
@@ -1227,7 +1267,9 @@ export const COSMOS_CHAINS = [
     rest: "https://rest.cosmos.directory/noble", rpc: "https://rpc.cosmos.directory/noble", explorer: "https://www.mintscan.io/noble" },
   { key: "celestia", name: "Celestia", chainId: "celestia", prefix: "celestia", denom: "utia", symbol: "TIA", decimals: 6, gasPrice: "0.02utia",
     rest: "https://rest.cosmos.directory/celestia", rpc: "https://rpc.cosmos.directory/celestia", explorer: "https://www.mintscan.io/celestia" },
-  { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", sendEnabled: false,
+  // coinType 60: the Keplr/Leap Injective path (see the family note
+  // above) — every other chain in this table derives at the default 118.
+  { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", sendEnabled: false, coinType: 60,
     rest: "https://rest.cosmos.directory/injective", rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
   { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei",
     rest: "https://rest.cosmos.directory/sei", rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
@@ -1237,25 +1279,33 @@ export const COSMOS_CHAINS = [
 export function cosmosChain(chainKey) {
   return COSMOS_CHAINS.find(c => c.key === chainKey) || null;
 }
-function cosmosKeys(phrase) {
+/** The BIP44 coin type a Cosmos chain derives at: 118 for the family,
+ *  60 for Injective (the Keplr/Leap path — see the family note). */
+export function cosmosCoinType(chain) { return chain.coinType || 118; }
+function cosmosKeys(phrase, coinType = 118) {
   const seed = mnemonicToSeedSync(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
   const root = HDKey.fromMasterSeed(seed);
-  const child = root.derive("m/44'/118'/0'/0/0");
+  const child = root.derive(`m/44'/${coinType}'/0'/0/0`);
   return { child, accountBytes: ripemd160(sha256(child.publicKey)) }; // hash160 of the compressed pubkey
 }
-/** The wallet's address on one Cosmos chain (bech32 of the shared
- *  account bytes under that chain's prefix). */
+/** The wallet's address on one Cosmos chain (bech32 of that chain's
+ *  account bytes under its prefix — shared at 118 for six chains,
+ *  Injective's own at 60). */
 export function cosmosAddress(phrase, chainKey) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
-  const { accountBytes } = cosmosKeys(phrase);
+  const { accountBytes } = cosmosKeys(phrase, cosmosCoinType(chain));
   return bech32.encode(chain.prefix, bech32.toWords(accountBytes));
 }
-/** Every Cosmos address of this wallet: { chainKey: address }. */
+/** Every Cosmos address of this wallet: { chainKey: address }.
+ *  Derives once per distinct coin type in the table (118 + 60). */
 export function cosmosAddresses(phrase) {
-  const { accountBytes } = cosmosKeys(phrase);
-  const words = bech32.toWords(accountBytes);
-  return Object.fromEntries(COSMOS_CHAINS.map(c => [c.key, bech32.encode(c.prefix, words)]));
+  const byType = new Map();
+  const wordsFor = (coinType) => {
+    if (!byType.has(coinType)) byType.set(coinType, bech32.toWords(cosmosKeys(phrase, coinType).accountBytes));
+    return byType.get(coinType);
+  };
+  return Object.fromEntries(COSMOS_CHAINS.map(c => [c.key, bech32.encode(c.prefix, wordsFor(cosmosCoinType(c)))]));
 }
 /** A valid address FOR THIS CHAIN: right bech32 prefix, valid checksum,
  *  20-byte (account) or 32-byte (contract) payload. */
@@ -1304,7 +1354,7 @@ function cosmosMsgSend(chain, from, to, rawAmount, denom = chain.denom) {
            value: { fromAddress: from, toAddress: to, amount: [{ denom, amount: rawAmount }] } };
 }
 async function cosmosSignerClient(phrase, chain) {
-  const { child } = cosmosKeys(phrase);
+  const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
   const signer = await DirectSecp256k1Wallet.fromKey(child.privateKey, chain.prefix);
   return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice) });
 }
