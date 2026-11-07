@@ -103,12 +103,12 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
-ok("static links are the kept providers", ["Paybis", "Mercuryo", "Noblocks"].every(n => RAMP_STATIC_LINKS[n])
-  && RAMP_STATIC_LINKS["Noblocks"].buy === "https://noblocks.xyz/");
+ok("static links are the kept providers", ["Paybis", "Mercuryo"].every(n => RAMP_STATIC_LINKS[n])
+  && !RAMP_STATIC_LINKS["Noblocks"] && !RAMP_STATIC_LINKS["NoOnes"]);
 ok("removed providers stay removed", (() => {
   // Sweep every country × mode: no removed provider may appear by name
   // or URL — incl. the +106%-in-Nigeria provider dropped in this build.
-  const banned = /guardarian|moonpay|transak|ramp\.network|paychant/i;
+  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|noblocks/i;
   return RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDC");
     return routes.every(r => !banned.test(r.name) && !banned.test(r.url));
@@ -143,26 +143,34 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria: Fonbnk leads badged, Noblocks link-out second; the two
-  // global card ramps measured +66%/unverifiable for NGN are absent.
-  ok("NG lineup is Fonbnk+Noblocks", JSON.stringify(names("NG")) === JSON.stringify(["Fonbnk", "Noblocks"])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk", "Noblocks"]));
-  ok("NG badges Fonbnk only", JSON.stringify(badged("NG")) === JSON.stringify(["Fonbnk"]));
-  ok("NG has no Paybis or Mercuryo", !names("NG").includes("Paybis") && !names("NG").includes("Mercuryo"));
-  const ngRoutes = rampRoutesFor("NG", "buy", "bsc", "USDC").routes;
-  ok("NG Noblocks is an external link-out", ngRoutes[1].external === true && ngRoutes[1].url === "https://noblocks.xyz/" && ngRoutes[1].badge === false);
-  ok("NG Fonbnk note carries the measured rate", ngRoutes[0].note.includes("₦1,374") && ngRoutes[0].url.startsWith("https://pay.fonbnk.com/?"));
+  // Nigeria (7 Nov 2026): Fonbnk is sell-only — its buy flow forces
+  // WalletConnect and its own docs demand BVN from $1. Noblocks is
+  // gone (BVN wall + a verify step that failed live). NG buy is
+  // honestly EMPTY until a route passes the bar; NG sell is Fonbnk.
+  ok("NG lineup is empty buy / Fonbnk sell", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk"]));
+  ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
+  ok("NG has no Paybis or Mercuryo", !names("NG").includes("Paybis") && !names("NG").includes("Mercuryo")
+    && !names("NG", "sell").includes("Paybis") && !names("NG", "sell").includes("Mercuryo"));
+  ok("NG buy flags the Fonbnk buy block", rampRoutesFor("NG", "buy", "bsc", "USDC").fonbnkBuyBlocked === true
+    && rampRoutesFor("NG", "sell", "bsc", "USDC").fonbnkBuyBlocked === false);
+  const ngSell = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
+  ok("NG Fonbnk sell note is address-based, no ID", ngSell[0].note.includes("no ID check") && ngSell[0].url.startsWith("https://pay.fonbnk.com/"));
 
-  // Kenya: Fonbnk badged, Noblocks second, Mercuryo last.
-  ok("KE lineup", JSON.stringify(names("KE")) === JSON.stringify(["Fonbnk", "Noblocks", "Mercuryo"])
-    && JSON.stringify(badged("KE")) === JSON.stringify(["Fonbnk"]));
+  // Kenya: Fonbnk sell-only since 7 Nov; Mercuryo is the buy fallback.
+  ok("KE lineup", JSON.stringify(names("KE")) === JSON.stringify(["Mercuryo"])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Fonbnk", "Mercuryo"])
+    && badged("KE").length === 0 && badged("KE", "sell").length === 0);
 
   // South Africa: Mt Pelerin outranks Fonbnk on price and takes the
-  // badge; Fonbnk stays but carries the +9% warning, never the badge.
-  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Fonbnk", "Paybis", "Mercuryo"]));
-  ok("ZA badges Mt Pelerin, not Fonbnk", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"]));
-  const zaFonbnk = rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.find(r => r.name === "Fonbnk");
-  ok("ZA Fonbnk note warns +9%", zaFonbnk.badge === false && zaFonbnk.note.includes("+9%"));
+  // badge; Fonbnk is sell-only since 7 Nov 2026, never badged.
+  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Paybis", "Mercuryo"])
+    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin", "Fonbnk", "Paybis", "Mercuryo"]));
+  ok("ZA badges Mt Pelerin, not Fonbnk", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged("ZA", "sell")) === JSON.stringify(["Mt Pelerin"]));
+  const zaFonbnk = rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.find(r => r.name === "Fonbnk");
+  ok("ZA Fonbnk is sell-only and unbadged", zaFonbnk.badge === false && zaFonbnk.note.includes("check the quote")
+    && !rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"));
 
   // US: Mt Pelerin badged; Paybis kept unbadged with the ~5% card note.
   ok("US lineup + badge", JSON.stringify(names("US")) === JSON.stringify(["Mt Pelerin", "Paybis", "Mercuryo"])
@@ -185,14 +193,16 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("badge invariants hold everywhere", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDT");
     const b = routes.filter(r => r.badge);
-    return routes.length >= 1 && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
+    // NG buy is the one honestly-empty sheet (7 Nov 2026).
+    const ngBuyEmpty = c.code === "NG" && m === "buy";
+    return (routes.length >= 1 || ngBuyEmpty) && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
       && routes.every(r => r.url.startsWith("https://"));
   })));
   // Unmeasured Fonbnk corridors carry no badge (no price evidence).
-  ok("unmeasured corridors are unbadged", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code => badged(code).length === 0
-    && rampRoutesFor(code, "buy", "bsc", "USDC").routes[0].note.includes("check the quote")));
+  ok("unmeasured corridors are unbadged", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code => badged(code).length === 0 && badged(code, "sell").length === 0
+    && rampRoutesFor(code, "sell", "bsc", "USDC").routes[0].note.includes("check the quote")));
   // Fonbnk on a network it doesn't ride: row omitted, flag raised.
-  ok("fonbnk network gap is flagged", (() => { const r = rampRoutesFor("NG", "buy", "linea", "USDC");
+  ok("fonbnk network gap is flagged", (() => { const r = rampRoutesFor("NG", "sell", "linea", "USDC");
     return r.fonbnkNetworkMissing === true && !r.routes.some(x => x.name === "Fonbnk"); })());
 }
 

@@ -3443,19 +3443,37 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //  - Mercuryo is removed for Nigeria (its NGN rate is published
 //    nowhere and could not be verified) and stays elsewhere only as an
 //    unbadged secondary whose note says its price is not verified.
-//  - Paychant stays out: its guest widget returned 502, then 404.
+//  - Paychant stays out: its guest widget returned 502, then 404
+//    (502 again on the 7 Nov 2026 recheck; its docs also require a
+//    production API key, so the "guest" link was never truly keyless).
+//  - Fonbnk is SELL-ONLY since 7 Nov 2026: its buy flow forces a
+//    WalletConnect step (the owner's live tap-test) and its own KYC
+//    docs demand a BVN from $1 / photo ID from $15 in Nigeria
+//    (national ID number in Kenya, Ghana Card number in Ghana) —
+//    both barred by Fluid's rules. Its SELL flow is address-based
+//    (email code + bank details, they return a deposit address) with
+//    no Nigeria KYC, so cash-out stays. Its live NG buy quote was
+//    also ₦1,392.50/$ vs a ₦1,347 mid-market (7 Nov) — over the
+//    cheap bar before fees.
+//  - Noblocks REMOVED 7 Nov 2026: BVN wall up front, and the
+//    owner's live attempt died on its own verify button.
+//  - NoOnes is the closest surviving NG buy candidate (P2P
+//    marketplace, email-only first tier — no ID document up to
+//    $5K/day per its help pages — NGN bank transfer, no
+//    WalletConnect), but sellers set their own prices (≈₦1,397/$
+//    indicative vs ₦1,347 market, +3.7%) and coins land in its
+//    custodial wallet first. Held OUT of the sheet pending the
+//    owner's call on relaxing the cheap bar (7 Nov 2026).
 // Direct consumer links whose URL doesn't depend on the selection
 // (Fonbnk and Mt Pelerin links are built per selection above).
 export const RAMP_STATIC_LINKS = {
   "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
   "Mercuryo": { buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
-  "Noblocks": { buy: "https://noblocks.xyz/", sell: "https://noblocks.xyz/" },
 };
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
   "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
   "Mercuryo": "Price not verified — published fees: buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card",
-  "Noblocks": "Cheapest measured on 6 Nov · separate app — opens outside Fluid · pay by bank transfer",
   "Fonbnk": "Priced off the local market — check the quote before you pay",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
@@ -3463,21 +3481,19 @@ const RAMP_DEFAULT_NOTES = {
 // provider defaults above.
 export const RAMP_COUNTRY_PLAN = {
   NG: [
-    ["Fonbnk", { badge: true, note: "Priced off the local market — about ₦1,39x–₦1,40x per $ on 6 Nov (market ₦1,374) · you see the price before their login + ID check" }],
-    ["Noblocks", {}],
+    ["Fonbnk", { note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
   ],
   KE: [
-    ["Fonbnk", { badge: true, note: "Priced off the local market — measured ≈+1.6% over the official rate on 6 Nov · you see the price before their login + ID check" }],
-    ["Noblocks", {}],
+    ["Fonbnk", {}],
     ["Mercuryo", {}],
   ],
   GH: [
-    ["Fonbnk", { badge: true, note: "Priced off the local market — about ₵12 per $ on 6 Nov, inside the local bureau range · you see the price before their login + ID check" }],
+    ["Fonbnk", {}],
     ["Mercuryo", {}],
   ],
   ZA: [
     ["Mt Pelerin", { badge: true }],
-    ["Fonbnk", { note: "Pricier than market in South Africa (≈+9% on 6 Nov) — compare the quote before you pay" }],
+    ["Fonbnk", {}],
     ["Paybis", {}],
     ["Mercuryo", {}],
   ],
@@ -3508,16 +3524,20 @@ export const RAMP_COUNTRY_PLAN = {
  *  external, rank }. A Fonbnk row whose network Fonbnk doesn't ride is
  *  omitted and reported via fonbnkNetworkMissing so the sheet can say
  *  why; mtpUnavailable mirrors the Mt Pelerin fiat gate for the sheet's
- *  honest "not available for this currency" line. */
+ *  honest "not available for this currency" line. Fonbnk rows are
+ *  SELL-ONLY (its buy flow forces WalletConnect + ID checks — see the
+ *  plan notes); a buy sheet that drops one reports fonbnkBuyBlocked. */
 export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
   const c = RAMP_COUNTRIES.find(x => x.code === countryCode) || RAMP_COUNTRIES[0];
   const plan = RAMP_COUNTRY_PLAN[c.code] || [];
   const routes = [];
   let fonbnkNetworkMissing = false;
+  let fonbnkBuyBlocked = false;
   for (const [name, opts] of plan) {
     let url = null;
     if (name === "Fonbnk") {
-      url = mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, c.code) : fonbnkOfframpUrl(networkKey, asset, c.code);
+      if (mode === "buy") { fonbnkBuyBlocked = true; continue; }
+      url = fonbnkOfframpUrl(networkKey, asset, c.code);
       if (!url) { fonbnkNetworkMissing = true; continue; }
     } else if (name === "Mt Pelerin") {
       url = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
@@ -3531,11 +3551,11 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       name, url,
       note: opts.note || RAMP_DEFAULT_NOTES[name] || "",
       badge: !!opts.badge,
-      external: name === "Noblocks",
+      external: false,
       rank: routes.length,
     });
   }
-  return { country: c, routes, fonbnkNetworkMissing, mtpUnavailable: !MTPELERIN_FIATS.includes(c.fiat) };
+  return { country: c, routes, fonbnkNetworkMissing, fonbnkBuyBlocked, mtpUnavailable: !MTPELERIN_FIATS.includes(c.fiat) };
 }
 
 // ---------- Agentic wallets ----------
