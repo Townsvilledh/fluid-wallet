@@ -5333,7 +5333,20 @@ function lifiTokenShape(t) {
   const px = t.priceUSD != null && t.priceUSD !== "" ? Number(t.priceUSD) : null;
   return { symbol: t.symbol, name: t.name || t.symbol, address: t.address,
            decimals: t.decimals ?? 18, priceUSD: px != null && px > 0 ? px : null,
-           verificationStatus: t.verificationStatus || null };
+           verificationStatus: t.verificationStatus || null,
+           logoURI: typeof t.logoURI === "string" && t.logoURI ? t.logoURI : null };
+}
+/** EIP-55 checksummed form of an EVM address (null for non-addresses).
+ *  Presentation support: the Trust Wallet assets CDN keys token logos
+ *  by checksummed address, so the UI constructs logo URLs with this. */
+export function toChecksumAddress(addr) {
+  const a = String(addr || "").toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{40}$/.test(a)) return null;
+  const hash = [...keccak_256(new TextEncoder().encode(a))]
+    .map(b => b.toString(16).padStart(2, "0")).join("");
+  let out = "0x";
+  for (let i = 0; i < 40; i++) out += parseInt(hash[i], 16) >= 8 ? a[i].toUpperCase() : a[i];
+  return out;
 }
 /** Verified, for LI.FI-sourced tokens, means: in the chain's LI.FI
  *  list AND not marked "flagged" by LI.FI's own risk provider. */

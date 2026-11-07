@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>Fluid — every chain, one wallet</title>
 <meta name="description" content="Fluid is an open-source, non-custodial wallet for every blockchain — EVM chains and L2s, Bitcoin and Lightning, Stacks, Solana, Tron, Sui, Cosmos, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot, Aptos, Litecoin, Dogecoin and Bitcoin Cash. One seed phrase, no KYC, global on/off-ramps, OGO ERA built in.">
 <link rel="canonical" href="https://townsvilledh.github.io/fluid-wallet/">
-<meta name="theme-color" content="#07090f">
+<meta name="theme-color" content="#05070d">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Fluid">
 <meta property="og:title" content="Fluid — every chain, one wallet">
@@ -23,120 +23,227 @@
 <meta name="twitter:image" content="https://townsvilledh.github.io/fluid-wallet/og-image.png">
 <meta name="twitter:image:alt" content="Fluid — one wallet, every blockchain">
 <style>
-  :root{ --bg:#07090f; --panel:#0e1220; --panel2:#141a2e; --line:#1f2742; --txt:#eef1ff; --dim:#8b93b8;
-         --acc:#5b8cff; --acc2:#9d6bff; --good:#2fd08c; --bad:#ff6b7a; --r:18px; }
+  :root{
+    --bg0:#05070d; --surface-1:#0b101f; --surface-2:#111830; --surface-3:#1a2247;
+    --hairline:rgba(148,163,255,.10); --hairline-strong:rgba(148,163,255,.20);
+    --txt:#f2f5ff; --dim:#99a3c7; --faint:#646e94;
+    --brand-1:#5b8cff; --brand-2:#9d6bff; --drop:#38bdf8;
+    --grad-brand:linear-gradient(135deg,var(--brand-1),var(--brand-2));
+    --grad-drop:linear-gradient(160deg,var(--drop) 0%,var(--brand-1) 55%,var(--brand-2) 100%);
+    --good:#2fd08c; --bad:#ff6b7a; --warn:#ffb84d;
+    --sh-card:inset 0 1px 0 rgba(255,255,255,.045), 0 12px 32px rgba(0,0,0,.35);
+    --sh-pop:0 16px 48px rgba(0,0,0,.55);
+    --sh-brand:0 8px 24px rgba(91,140,255,.32);
+    --r-sm:10px; --r-md:14px; --r-lg:20px; --r-sheet:28px;
+    --ease:cubic-bezier(.32,.72,.24,1); --dur-sheet:260ms; --dur-tab:160ms; --dur-press:120ms;
+    /* compat aliases for legacy markup/inline styles */
+    --bg:var(--bg0); --panel:var(--surface-1); --panel2:var(--surface-2); --line:var(--hairline);
+    --acc:var(--brand-1); --acc2:var(--brand-2); --r:var(--r-lg);
+  }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body{ margin:0; background:radial-gradient(1200px 600px at 50% -10%, #16204a 0%, var(--bg) 55%);
-        color:var(--txt); font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  .phone{ max-width:430px; margin:0 auto; min-height:100dvh; padding:18px 16px 96px; position:relative; }
+  body{ margin:0; color:var(--txt); font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:radial-gradient(900px 480px at 50% -8%, rgba(56,130,246,.16), rgba(5,7,13,0) 60%), var(--bg0); }
+  .phone{ max-width:430px; margin:0 auto; min-height:100dvh; padding:18px 20px 96px; position:relative; }
   .hidden{ display:none !important; }
+  /* type scale */
+  .t-hero{ font-size:42px; font-weight:800; letter-spacing:-0.02em; font-variant-numeric:tabular-nums; }
+  .t-screen{ font-size:22px; font-weight:800; letter-spacing:-0.01em; }
+  .t-title{ font-size:17px; font-weight:700; }
+  .t-body{ font-size:15px; font-weight:400; line-height:1.45; }
+  .t-strong{ font-size:15px; font-weight:600; }
+  .t-label{ font-size:13px; font-weight:600; }
+  .t-cap{ font-size:12px; font-weight:500; color:var(--dim); }
+  .t-group{ font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--faint); }
+  .t-mono{ font-family:ui-monospace,monospace; font-size:12px; }
+  .mt8{ margin-top:8px; } .mt16{ margin-top:16px; } .mb8{ margin-bottom:8px; } .mb16{ margin-bottom:16px; }
   h1.logo{ font-size:30px; margin:6px 0 2px; letter-spacing:-.5px; }
-  h1.logo span{ background:linear-gradient(90deg,var(--acc),var(--acc2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .tag{ color:var(--dim); margin:0 0 14px; font-size:14px; }
-  .card{ background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--line); border-radius:var(--r); padding:16px; margin:12px 0; }
-  input,select,textarea{ width:100%; background:#0a0e1a; color:var(--txt); border:1px solid var(--line);
-        border-radius:12px; padding:13px; font-size:16px; margin:6px 0; }
-  button{ font: inherit; cursor:pointer; border:0; }
-  .btn{ width:100%; padding:14px; border-radius:14px; background:linear-gradient(90deg,var(--acc),var(--acc2)); color:#fff; font-weight:700; margin:8px 0; }
-  .btn.ghost{ background:var(--panel2); color:var(--txt); border:1px solid var(--line); font-weight:600; }
-  .btn.danger{ background:none; color:var(--bad); border:1px solid #3a1d26; }
+  h1.logo span{ background:var(--grad-brand); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tag{ color:var(--dim); margin:0 0 14px; font-size:14px; line-height:1.45; }
+  .card{ background:var(--surface-1); border:1px solid var(--hairline); border-radius:var(--r-lg); box-shadow:var(--sh-card); padding:16px; margin:12px 0; }
+  input,select,textarea{ width:100%; background:#0a0f1e; color:var(--txt); border:1px solid var(--hairline);
+        border-radius:var(--r-md); padding:14px; font-size:16px; margin:6px 0; outline:none; }
+  input:focus,select:focus,textarea:focus{ border-color:var(--brand-1); box-shadow:0 0 0 3px rgba(91,140,255,.22); }
+  button{ font:inherit; cursor:pointer; border:0; }
+  .btn{ width:100%; min-height:52px; padding:14px; border-radius:var(--r-md); background:var(--grad-brand); box-shadow:var(--sh-brand); color:#fff; font-weight:700; font-size:16px; margin:8px 0; transition:transform var(--dur-press) var(--ease); }
+  .btn:active{ transform:scale(.98); }
+  .btn.ghost{ background:var(--surface-2); color:var(--txt); border:1px solid var(--hairline); box-shadow:none; font-weight:600; }
+  .btn.danger{ background:none; color:var(--bad); border:1px solid rgba(255,107,122,.35); box-shadow:none; }
+  .btn:disabled{ opacity:.55; }
   .msg{ min-height:18px; font-size:14px; } .msg.err{ color:var(--bad);} .msg.ok{ color:var(--good);}
-  .seed{ font-family:ui-monospace,monospace; background:#0a0e1a; border:1px dashed var(--acc); border-radius:12px; padding:12px; word-break:break-word; }
-  .welcome{ font-size:24px; font-weight:800; letter-spacing:-.3px; margin:4px 0 0; }
-  .hero{ text-align:center; padding:22px 16px 8px; }
-  .hero .net{ display:inline-flex; gap:6px; align-items:center; background:var(--panel2); border:1px solid var(--line);
-        color:var(--txt); border-radius:999px; padding:7px 14px; font-size:13px; font-weight:600; }
-  .hero .total{ font-size:44px; font-weight:800; letter-spacing:-1px; margin:12px 0 2px; }
-  .hero .sub{ color:var(--dim); font-size:13px; }
-  .addr{ color:var(--dim); font-size:13px; cursor:pointer; }
-  .actions{ display:flex; justify-content:space-around; padding:10px 4px 2px; }
-  .act{ display:flex; flex-direction:column; align-items:center; gap:6px; background:none; color:var(--txt); font-size:12px; font-weight:600; }
-  .act .ic{ width:52px; height:52px; border-radius:50%; background:linear-gradient(135deg,var(--acc),var(--acc2));
-        display:grid; place-items:center; font-size:22px; box-shadow:0 6px 18px rgba(91,140,255,.35); }
-  .row{ display:flex; align-items:center; gap:12px; padding:13px 6px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .banner{ display:flex; gap:8px; align-items:flex-start; border-radius:var(--r-md); padding:10px 12px; margin:0 0 12px; font-size:14px; }
+  .banner.err{ background:rgba(255,107,122,.12); border:1px solid rgba(255,107,122,.35); color:var(--txt); }
+  .banner.ok{ background:rgba(47,208,140,.12); border:1px solid rgba(47,208,140,.35); color:var(--txt); }
+  .banner .ic{ flex:0 0 auto; margin-top:1px; }
+  .seed{ font-family:ui-monospace,monospace; background:#0a0f1e; border:1px dashed var(--brand-1); border-radius:12px; padding:12px; word-break:break-word; }
+  /* icons */
+  .ic{ width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; vertical-align:middle; }
+  .ic-sm{ width:16px; height:16px; } .ic-xl{ width:40px; height:40px; } .ic-brand{ color:var(--brand-1); }
+  .ic-wht{ color:#fff; }
+  .spinner{ display:inline-block; width:16px; height:16px; margin-right:8px; vertical-align:-3px; border-radius:50%;
+    border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  /* header (§4.1) */
+  .apphead{ display:flex; align-items:center; gap:10px; min-height:44px; }
+  .avatar{ width:36px; height:36px; border-radius:50%; background:var(--grad-drop); display:grid; place-items:center; flex:0 0 auto; }
+  .avatar svg{ width:18px; height:18px; }
+  .hdrcol{ flex:1; min-width:0; display:flex; flex-direction:column; }
+  .hdrname{ font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .addr{ color:var(--dim); font-size:12px; font-weight:500; font-family:ui-monospace,monospace; cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
+  .iconwell{ width:36px; height:36px; border-radius:12px; background:var(--surface-2); border:1px solid var(--hairline); color:var(--txt); display:grid; place-items:center; flex:0 0 auto; }
+  .iconwell .ic{ width:20px; height:20px; }
+  /* hero (§4.3) */
+  .hero{ text-align:center; padding:8px 16px 4px; }
+  .hero .net{ display:inline-flex; gap:6px; align-items:center; background:var(--surface-2); border:1px solid var(--hairline);
+        color:var(--txt); border-radius:999px; padding:7px 14px; font-size:13px; font-weight:600; margin-top:8px; }
+  .hero .total{ margin:10px 0 4px; }
+  .hero .sub{ color:var(--dim); font-size:12px; font-weight:500; }
+  /* action row (§4.4) */
+  .actions{ display:flex; justify-content:space-around; padding:14px 4px 6px; }
+  .act{ display:flex; flex-direction:column; align-items:center; gap:7px; background:none; color:var(--txt); font-size:12px; font-weight:600; }
+  .act .acircle{ width:56px; height:56px; border-radius:50%; background:linear-gradient(180deg,#232b52,#171e3a);
+        border:1px solid var(--hairline-strong); box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 10px 24px rgba(0,0,0,.35);
+        display:grid; place-items:center; color:#fff; transition:transform var(--dur-press) var(--ease); }
+  .act:active .acircle{ transform:scale(.94); }
+  /* token list (§4.5) */
+  .groupcard{ padding:6px 0; margin:0 0 12px; }
+  .ghead{ display:flex; justify-content:space-between; align-items:center; padding:10px 16px 4px; }
+  .gsub{ color:var(--dim); font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; display:inline-flex; align-items:center; gap:6px; }
+  .falert{ background:none; color:var(--warn); padding:2px; display:inline-grid; place-items:center; }
+  .row{ display:grid; grid-template-columns:40px minmax(0,1fr) auto; align-items:center; gap:12px; min-height:68px; padding:12px 16px; border-bottom:1px solid var(--hairline); cursor:pointer; transition:background var(--dur-press) var(--ease); }
   .row:last-child{ border-bottom:0; }
-  .coin{ width:42px; height:42px; border-radius:50%; display:grid; place-items:center; font-weight:800; color:#fff; flex:0 0 auto; }
-  .row .grow{ flex:1; min-width:0; } .row .amt{ text-align:right; }
-  .row b{ font-size:16px; } .row small{ color:var(--dim); display:block; font-size:12px; }
-  .tabs{ position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:min(430px,100%);
-        background:rgba(10,13,24,.92); backdrop-filter:blur(10px); border-top:1px solid var(--line);
-        display:flex; padding:8px 6px calc(8px + env(safe-area-inset-bottom)); z-index:30; }
-  .tab{ flex:1; background:none; color:var(--dim); font-size:11px; font-weight:700; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 0; }
-  .tab .ti{ font-size:20px; } .tab.on{ color:var(--txt); }
+  .row:active{ background:var(--surface-2); }
+  .logowrap{ position:relative; width:40px; height:40px; flex:0 0 auto; }
+  .coin{ width:40px; height:40px; border-radius:50%; display:grid; place-items:center; font-weight:800; color:#fff; flex:0 0 auto; }
+  .coin-img{ width:40px; height:40px; border-radius:50%; object-fit:cover; display:block; }
+  .coin-badge{ position:absolute; right:-3px; bottom:-3px; width:14px; height:14px; border-radius:50%; background:var(--surface-1); border:2px solid var(--surface-1); object-fit:cover; }
+  .row .grow{ flex:1; min-width:0; } .row .amt{ text-align:right; font-variant-numeric:tabular-nums; }
+  .row b{ font-size:15px; font-weight:600; } .row small{ color:var(--dim); display:block; font-size:12px; font-weight:500; margin-top:2px; }
+  .rname{ display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .amt b{ font-variant-numeric:tabular-nums; } .amt small{ font-variant-numeric:tabular-nums; }
+  .vchip{ font-size:11px; font-weight:700; color:var(--warn); background:var(--surface-3); border-radius:6px; padding:2px 6px; vertical-align:2px; }
+  .lnrow{ display:flex; align-items:center; gap:12px; width:100%; text-align:left; color:var(--txt); }
+  .lncoin{ background:#f7931a; }
+  /* skeletons (§4.13) */
+  .skelrow{ display:flex; align-items:center; gap:12px; min-height:68px; padding:12px 16px; }
+  .skel{ background:var(--surface-2); border-radius:8px; position:relative; overflow:hidden; }
+  .skelc{ width:40px; height:40px; border-radius:50%; flex:0 0 auto; }
+  .skelbars{ flex:1; display:flex; flex-direction:column; gap:7px; }
+  .skelb1{ height:12px; width:45%; } .skelb2{ height:10px; width:70%; }
+  .skel::after{ content:""; position:absolute; inset:0; background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.06) 50%,transparent 70%); animation:shimmer 1.2s linear infinite; }
+  @keyframes shimmer{ from{ transform:translateX(-100%); } to{ transform:translateX(100%); } }
+  /* bottom nav (§4.6) */
+  .tabs{ position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:min(430px,100%); height:calc(64px + env(safe-area-inset-bottom));
+        background:rgba(8,10,18,.86); backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%);
+        border-top:1px solid var(--hairline); display:flex; padding:6px 6px env(safe-area-inset-bottom); z-index:30; }
+  .tab{ flex:1; background:none; color:var(--faint); font-size:11px; font-weight:700; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 0; position:relative; }
+  .tab .ti{ display:grid; place-items:center; width:48px; height:30px; border-radius:999px; }
+  .tab .ti .ic{ width:24px; height:24px; }
+  .tab.on{ color:var(--txt); }
+  .tab.on .ti{ background:var(--surface-3); }
+  .navdot{ position:absolute; top:2px; right:calc(50% - 17px); width:6px; height:6px; border-radius:50%; background:var(--brand-1); }
+  /* sheets (§4.7) */
   .scrim{ position:fixed; inset:0; background:rgba(2,4,10,.65); z-index:40; }
   .sheet{ position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:min(430px,100%); max-height:86dvh; overflow:auto;
-        background:var(--panel); border:1px solid var(--line); border-radius:22px 22px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom)); z-index:41; }
+        background:var(--surface-1); border:1px solid var(--hairline); border-radius:var(--r-sheet) var(--r-sheet) 0 0; box-shadow:var(--sh-pop);
+        padding:18px 16px calc(18px + env(safe-area-inset-bottom)); z-index:41; }
   .sheet h3{ margin:2px 0 10px; font-size:19px; }
-  .x{ float:right; background:var(--panel2); color:var(--txt); width:34px; height:34px; border-radius:50%; font-size:16px; }
+  .x{ float:right; background:var(--surface-2); color:var(--txt); width:32px; height:32px; border-radius:50%; display:grid; place-items:center; }
+  .sheet[data-busy] .x{ opacity:.4; }
   .qr{ display:block; margin:10px auto; background:#fff; border-radius:14px; padding:8px; width:196px; }
   .mono{ font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; color:var(--dim); }
-  .netitem{ display:flex; justify-content:space-between; width:100%; text-align:left; background:none; color:var(--txt);
-        padding:14px 4px; border-bottom:1px solid var(--line); font-size:16px; font-weight:600; }
-  /* Ramp rows stack: provider name (+ badge) on its own line, the price
-     note beneath it in smaller text — the old side-by-side flex squeezed
-     name and note together on narrow screens. */
+  .netitem{ display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left; background:none; color:var(--txt);
+        padding:14px 4px; border-bottom:1px solid var(--hairline); font-size:16px; font-weight:600; min-height:56px; }
+  .netitem.sel{ background:var(--surface-3); border-radius:12px; }
   .rampitem{ flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:4px; }
   .rampname{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .rampnote{ color:var(--dim); font-size:13px; font-weight:400; line-height:1.45; }
   .pill{ font-size:11px; background:#1c2a1e; color:var(--good); border-radius:999px; padding:3px 9px; font-weight:700; }
-  .pill.soon{ background:#2a2140; color:#c9a8ff; }
-  .game{ background:linear-gradient(135deg,#14351f,#0e2a3a 60%,#241a4d); border:1px solid #2b4a35; }
-  .hist{ padding:10px 2px; border-bottom:1px solid var(--line); font-size:14px; } .hist a{ color:var(--acc); }
-  footer{ color:var(--dim); font-size:12px; text-align:center; margin:18px 0 4px; }
-  a{ color:var(--acc); }
-  /* ---- UI rebuild P0: view picker, send success, activity, banner/toast ---- */
-  .ic{ width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; vertical-align:middle; }
-  .ic-sm{ width:16px; height:16px; } .ic-xl{ width:40px; height:40px; } .ic-brand{ color:var(--acc); }
-  .spinner{ display:inline-block; width:16px; height:16px; margin-right:8px; vertical-align:-3px; border-radius:50%;
-    border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin 0.8s linear infinite; }
-  @keyframes spin{ to{ transform:rotate(360deg); } }
-  .banner{ display:flex; gap:8px; align-items:flex-start; border-radius:12px; padding:10px 12px; margin:0 0 12px; font-size:14px; }
-  .banner.err{ background:rgba(255,107,122,.12); border:1px solid rgba(255,107,122,.35); color:var(--txt); }
-  .banner.ok{ background:rgba(47,208,140,.12); border:1px solid rgba(47,208,140,.35); color:var(--txt); }
-  .banner .ic{ flex:0 0 auto; margin-top:1px; }
-  #toast{ position:fixed; left:50%; bottom:92px; transform:translate(-50%,8px); background:var(--panel2); color:var(--txt);
-    border:1px solid var(--line); border-radius:999px; padding:8px 16px; font-size:13px; font-weight:600; opacity:0;
+  .pill.soon{ background:var(--surface-3); color:#c9a8ff; }
+  .game{ background:linear-gradient(135deg,#123524,#0d2436 55%,#1d1745); border:1px solid var(--hairline); }
+  .hist{ padding:10px 2px; border-bottom:1px solid var(--hairline); font-size:14px; } .hist a{ color:var(--brand-1); }
+  a{ color:var(--brand-1); }
+  /* toast (§4.7) */
+  #toast{ position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); transform:translate(-50%,8px); background:var(--surface-3); color:var(--txt);
+    border:1px solid var(--hairline-strong); border-radius:999px; padding:8px 16px; font-size:13px; font-weight:600; opacity:0;
     pointer-events:none; transition:opacity .18s ease, transform .18s ease; z-index:60; }
   #toast.show{ opacity:1; transform:translate(-50%,0); }
   .balafter{ color:var(--dim); font-size:13px; margin:8px 0 0; }
-  .vgroup{ margin:14px 0 2px; font-size:12px; font-weight:700; letter-spacing:.08em; }
-  .vtotal{ color:var(--dim); font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
-  .netitem.sel{ background:var(--panel2); border-radius:12px; }
+  .vgroup{ margin:14px 0 2px; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .vtotal{ color:var(--dim); font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums; }
+  /* send success (§4.8) */
   .txsuccess{ text-align:center; padding-top:6px; }
   .txbadge{ width:72px; height:72px; margin:6px auto 4px; animation:txpop .45s cubic-bezier(.2,1.4,.4,1); }
   .txring{ width:72px; height:72px; }
-  .txring circle{ stroke-dasharray:202; stroke-dashoffset:202; animation:txdraw .5s cubic-bezier(.32,.72,.24,1) forwards; }
-  .txring path{ stroke-dasharray:40; stroke-dashoffset:40; animation:txdraw .3s cubic-bezier(.32,.72,.24,1) .35s forwards; }
+  .txring circle{ stroke-dasharray:202; stroke-dashoffset:202; animation:txdraw .5s var(--ease) forwards; }
+  .txring path{ stroke-dasharray:40; stroke-dashoffset:40; animation:txdraw .3s var(--ease) .35s forwards; }
   @keyframes txdraw{ to{ stroke-dashoffset:0; } }
   @keyframes txpop{ from{ transform:scale(.9); } to{ transform:scale(1); } }
   .txverb{ margin:6px 0 2px; } .txcap{ margin:0 0 6px; }
   .txamt{ display:flex; align-items:center; justify-content:center; gap:10px; font-size:20px; margin:8px 0; }
   .txamt .dim{ color:var(--dim); font-size:14px; }
-  .txrecap{ text-align:left; margin:12px 0; }
-  .txrow{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .txrecap{ text-align:left; margin:12px 0; background:var(--surface-2); }
+  .txrow{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--hairline); font-size:14px; }
   .txrow:last-child{ border-bottom:0; } .txrow span{ color:var(--dim); } .txrow b{ text-align:right; word-break:break-all; }
   #txCopy{ cursor:pointer; }
-  .swaplogos{ display:inline-flex; } .swaplogos .coin{ margin-left:-10px; } .swaplogos .coin:first-child{ margin-left:0; }
-  .actday{ margin:14px 0 2px; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
-  .actrow{ display:flex; align-items:center; gap:12px; min-height:64px; padding:8px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  .swaplogos{ display:inline-flex; } .swaplogos .coin, .swaplogos .coin-img{ margin-left:-10px; } .swaplogos .coin:first-child, .swaplogos .coin-img:first-child{ margin-left:0; }
+  /* activity (§4.9) */
+  .actday{ margin:14px 0 2px; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .actrow{ display:flex; align-items:center; gap:12px; min-height:64px; padding:8px 0; border-bottom:1px solid var(--hairline); cursor:pointer; }
   .actrow:last-child{ border-bottom:0; }
-  .actwell{ width:40px; height:40px; border-radius:50%; background:var(--panel2); display:grid; place-items:center; flex:0 0 auto; overflow:hidden; }
-  .actwell .coin{ width:40px; height:40px; }
+  .actwell{ width:40px; height:40px; border-radius:50%; background:var(--surface-2); display:grid; place-items:center; flex:0 0 auto; overflow:hidden; }
+  .actwell .coin, .actwell .coin-img{ width:40px; height:40px; }
   .actmain{ flex:1; min-width:0; } .actmain .hist{ border-bottom:0; padding:0; }
   .actsub{ color:var(--dim); display:block; font-size:12px; margin-top:2px; }
   .actamt{ font-weight:700; font-size:14px; text-align:right; font-variant-numeric:tabular-nums; }
   .actempty{ text-align:center; padding:28px 8px; color:var(--dim); }
-  .tab{ position:relative; }
-  .navdot{ position:absolute; top:4px; right:calc(50% - 16px); width:6px; height:6px; border-radius:50%; background:var(--acc); }
-  .tabenter{ animation:tabin .16s ease; }
+  .tabenter{ animation:tabin var(--dur-tab) var(--ease); }
   @keyframes tabin{ from{ opacity:0; transform:translateY(4px); } to{ opacity:1; transform:none; } }
   @media (prefers-reduced-motion: reduce){
-    .spinner{ animation:none; } .txring circle, .txring path{ animation:none; stroke-dashoffset:0; }
+    .spinner{ animation:none; } .skel::after{ animation:none; }
+    .txring circle, .txring path{ animation:none; stroke-dashoffset:0; }
     .txbadge{ animation:none; } .tabenter{ animation:none; } #toast{ transition:none; }
+    .btn:active, .act:active .acircle{ transform:none; }
   }
 </style>
-<meta name="fluid-build" content="50c36ea083"></head>
+<meta name="fluid-build" content="14c4ebfb9a"></head>
 <body>
+<svg width="0" height="0" style="display:none" aria-hidden="true">
+  <defs>
+    <linearGradient id="gradDrop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/><stop offset=".55" stop-color="#5b8cff"/><stop offset="1" stop-color="#9d6bff"/>
+    </linearGradient>
+  </defs>
+  <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 2.8c3.6 4.4 6.2 7.6 6.2 10.4a6.2 6.2 0 1 1-12.4 0C5.8 10.4 8.4 7.2 12 2.8z" fill="url(#gradDrop)" stroke="none"/></symbol>
+  <symbol id="i-drop-w" viewBox="0 0 24 24"><path d="M12 2.8c3.6 4.4 6.2 7.6 6.2 10.4a6.2 6.2 0 1 1-12.4 0C5.8 10.4 8.4 7.2 12 2.8z" fill="#fff" stroke="none"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><line x1="6" y1="18" x2="18" y2="6"/><polyline points="9,6 18,6 18,15"/></symbol>
+  <symbol id="i-receive" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><polyline points="15,18 6,18 6,9"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><polyline points="4,7 16,7"/><polyline points="13,4 16,7 13,10"/><polyline points="20,17 8,17"/><polyline points="11,14 8,17 11,20"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+  <symbol id="i-bank" viewBox="0 0 24 24"><polyline points="3,9 12,4 21,9"/><line x1="6" y1="10" x2="6" y2="16"/><line x1="10" y1="10" x2="10" y2="16"/><line x1="14" y1="10" x2="14" y2="16"/><line x1="18" y1="10" x2="18" y2="16"/><line x1="4" y1="20" x2="20" y2="20"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-ball" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polygon points="12,8.2 15.6,10.8 14.3,15 9.7,15 8.4,10.8"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 15.5,14"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="15" cy="8" r="2.2"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="8" cy="16" r="2.2"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><polyline points="6,9 12,15 18,9"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><polyline points="9,6 15,12 9,18"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><polyline points="4,9 4,4 9,4"/><polyline points="15,4 20,4 20,9"/><polyline points="20,15 20,20 15,20"/><polyline points="9,20 4,20 4,15"/><rect x="9.5" y="9.5" width="5" height="5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4.1 12.3a.6.6 0 0 0 .46 1H11l-1.2 7.7c-.08.5.56.77.9.34L19.9 11a.6.6 0 0 0-.46-1H13l1.17-7.66c.08-.5-.53-.78-.9-.34z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6l7-3z"/><polyline points="9,11.5 11.2,13.7 15,9.8"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16"/><path d="M9.9 6.2A9.4 9.4 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17.6 17.6 0 0 1-3.3 3.9M6 8A16.9 16.9 0 0 0 2.5 12S6 18.5 12 18.5c1.2 0 2.3-.3 3.3-.7"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><line x1="12" y1="4" x2="12" y2="15"/><polyline points="6,11 12,17 18,11"/><line x1="5" y1="20" x2="19" y2="20"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21,3 21,8 16,8"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><polyline points="14,4 20,4 20,10"/><line x1="20" y1="4" x2="11" y2="13"/><path d="M19 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4L22 20H2z"/><line x1="12" y1="10" x2="12" y2="14"/><circle cx="12" cy="17" r=".6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-9 9"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><polygon points="12,3 21,8 12,13 3,8"/><polyline points="4.5,12.5 12,16.5 19.5,12.5"/><polyline points="4.5,16.5 12,20.5 19.5,16.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3c2.7 2.6 4 5.7 4 9s-1.3 6.4-4 9c-2.7-2.6-4-5.7-4-9s1.3-6.4 4-9z"/></symbol>
+</svg>
 <div class="phone">
 
   <!-- ONBOARDING -->
@@ -178,28 +285,31 @@
   <section id="app" class="hidden">
     <!-- WALLET TAB -->
     <div id="tab-wallet">
-      <h2 class="welcome" id="welcomeText">Welcome</h2>
+      <header class="apphead">
+        <span class="avatar"><svg><use href="#i-drop-w"/></svg></span>
+        <span class="hdrcol">
+          <span class="hdrname" id="welcomeText">Welcome</span>
+          <span class="addr" id="addrText" title="Tap to copy"></span>
+        </span>
+        <button class="iconwell" id="hdrLockBtn" aria-label="Lock wallet"><svg class="ic"><use href="#i-lock"/></svg></button>
+      </header>
       <div class="hero">
         <button class="net" id="netBtn">BNB Chain ▾</button>
-        <div class="total" id="totalUsd">$0.00</div>
-        <div class="sub" id="totalSub">on this network + Bitcoin</div>
-        <div class="addr" id="addrText" title="Tap to copy"></div>
-        <div class="addr" id="nameText" style="color:var(--acc);font-weight:700"></div>
+        <div class="total t-hero" id="totalUsd">$0.00</div>
+        <div class="sub" id="totalSub">Across all networks</div>
       </div>
       <div class="actions">
-        <button class="act" id="actSend"><span class="ic">↑</span>Send</button>
-        <button class="act" id="actReceive"><span class="ic">↓</span>Receive</button>
-        <button class="act" id="actSwap"><span class="ic">⇅</span>Swap</button>
-        <button class="act" id="actBuy"><span class="ic">＋</span>Buy</button>
-        <button class="act" id="actCash"><span class="ic">🏦</span>Cash out</button>
+        <button class="act" id="actSend"><span class="acircle"><svg class="ic"><use href="#i-send"/></svg></span>Send</button>
+        <button class="act" id="actReceive"><span class="acircle"><svg class="ic"><use href="#i-receive"/></svg></span>Receive</button>
+        <button class="act" id="actSwap"><span class="acircle"><svg class="ic"><use href="#i-swap"/></svg></span>Swap</button>
+        <button class="act" id="actBuy"><span class="acircle"><svg class="ic"><use href="#i-plus"/></svg></span>Buy</button>
+        <button class="act" id="actCash"><span class="acircle"><svg class="ic"><use href="#i-bank"/></svg></span>Cash out</button>
       </div>
-      <div class="card" style="padding:4px 16px">
-        <div id="assetList">Loading assets…</div>
-      </div>
-      <button class="row" id="lightningRow" style="width:100%;background:none;color:var(--txt);text-align:left;border:0">
-        <span class="coin" style="background:#f7931a">⚡</span>
-        <span class="grow"><b>Bitcoin Lightning</b><small>Pay invoices via your own Lightning wallet (WebLN)</small></span>
-        <span>›</span>
+      <div id="assetList">Loading assets…</div>
+      <button class="card lnrow" id="lightningRow">
+        <span class="logowrap"><span class="coin lncoin"><svg class="ic ic-wht"><use href="#i-bolt"/></svg></span></span>
+        <span class="grow"><b class="rname">Bitcoin Lightning</b><small>Pay invoices via your own Lightning wallet (WebLN)</small></span>
+        <span style="color:var(--dim)"><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></span>
       </button>
       <div class="card game">
         <b>⚽ OGO ERA</b> <span class="pill soon">IN DEVELOPMENT</span>
@@ -310,14 +420,14 @@
         <p class="tag" style="margin:6px 0 0">Open source (MIT) · <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet ↗</a></p>
       </div>
       <p class="tag">Fluid is free, open source (MIT) and non-custodial. Fluid can never touch, freeze or recover your funds — by design.</p>
-      <p class="tag" style="text-align:center">Fluid · open source · <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a></p>
+      <p class="tag" style="text-align:center">Fluid · open source · <a href="https://github.com/Townsvilledh/fluid-wallet">github.com/Townsvilledh/fluid-wallet</a></p>
     </div>
 
     <nav class="tabs">
-      <button class="tab on" data-tab="wallet"><span class="ti">💧</span>Wallet</button>
-      <button class="tab" data-tab="play"><span class="ti">⚽</span>Play</button>
-      <button class="tab" data-tab="activity"><span class="ti">🕘</span>Activity<span class="navdot hidden" id="activityDot"></span></button>
-      <button class="tab" data-tab="more"><span class="ti">⚙️</span>More</button>
+      <button class="tab on" data-tab="wallet"><span class="ti"><svg class="ic"><use href="#i-wallet"/></svg></span>Wallet</button>
+      <button class="tab" data-tab="play"><span class="ti"><svg class="ic"><use href="#i-ball"/></svg></span>Play</button>
+      <button class="tab" data-tab="activity"><span class="ti"><svg class="ic"><use href="#i-activity"/></svg></span>Activity<span class="navdot hidden" id="activityDot"></span></button>
+      <button class="tab" data-tab="more"><span class="ti"><svg class="ic"><use href="#i-more"/></svg></span>More</button>
     </nav>
   </section>
 
@@ -325,10 +435,12 @@
   <div id="sheetRoot" class="hidden">
     <div class="scrim" id="scrim"></div>
     <div class="sheet">
-      <button class="x" id="sheetX">✕</button>
+      <button class="x" id="sheetX"><svg class="ic ic-sm"><use href="#i-x"/></svg></button>
       <div id="sheetBody"></div>
     </div>
   </div>
+
+  <div id="toast" role="status"></div>
 
   <!-- Crawlable intro (§4.9): inside <noscript> so search engines and
        no-JS visitors still get it, but it never renders under the app. -->
@@ -339,6 +451,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=50c36ea083"></script>
+<script src="app.bundle.js?v=14c4ebfb9a"></script>
 </body>
 </html>

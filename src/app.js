@@ -22,7 +22,7 @@ import {
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
-  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe,
+  escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks,
@@ -236,12 +236,74 @@ async function copyText(text, el) {
 
 // ---------- icons + token logos (§4.5) ----------
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
+/** The letter tile — the logo resolver's LAST resort (§4.5 step 4). */
+function letterTileHtml(sym) {
+  const s = String(sym || "?");
+  return `<span class="coin" style="background:${COIN_COLORS[s] || "#3b4a7a"}">${esc(s.slice(0, 1))}</span>`;
+}
+/** spothq cryptocurrency-icons URL for a symbol (step 3) — the symbol
+ *  is sanitised to [a-z0-9] before interpolation (hostile metadata). */
+function spothqUrl(symbol) {
+  const s = String(symbol || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return s ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@0.18.1/svg/color/${s}.svg` : null;
+}
+const TW_CHAIN = { ethereum: "ethereum", bsc: "smartchain", base: "base", arbitrum: "arbitrum",
+  polygon: "polygon", optimism: "optimism", avalanche: "avalanchec" };
 /** Token logo markup — the ONLY builder of logo <img>s (§4.5/§6).
- *  P0: the letter-tile fallback; P1 fills the validated-logoURI →
- *  Trust Wallet CDN → spothq resolution chain in this same function. */
+ *  Resolution order (first hit wins):
+ *  1. token.logoURI from a list that provides one (LI.FI), validated
+ *     with new URL() + https: before use;
+ *  2. EVM contract → Trust Wallet assets CDN, constructed here from
+ *     the checksummed address (network key → TW chain slug);
+ *  3. natives/majors by symbol → the pinned spothq icon set;
+ *  4. the letter tile.
+ *  A failed <img> walks DOWN the same chain via the delegated error
+ *  listener below (no inline onerror — the CSP forbids it). */
 function tokenLogoHtml(token, familyId) {
   const sym = String((token && token.symbol) || "?");
-  return `<span class="coin" style="background:${COIN_COLORS[sym] || "#3b4a7a"}">${esc(sym.slice(0, 1))}</span>`;
+  let src = null, step = "";
+  const uri = token && token.logoURI;
+  if (uri) {
+    try { const u = new URL(uri); if (u.protocol === "https:") { src = u.href; step = "uri"; } } catch { /* fall through */ }
+  }
+  if (!src && token && token.address) {
+    const evmKey = familyId === "evm" ? networkKey : (TW_CHAIN[familyId] ? familyId : null);
+    const tw = evmKey ? TW_CHAIN[evmKey] : null;
+    const cs = tw ? toChecksumAddress(token.address) : null;
+    if (tw && cs) { src = `https://assets.trustwalletapp.com/blockchains/${tw}/assets/${cs}/logo.png`; step = "tw"; }
+  }
+  if (!src) { src = spothqUrl(sym); step = "spothq"; }
+  if (!src) return letterTileHtml(sym);
+  return `<img class="coin-img" src="${esc(src)}" data-step="${step}" data-symbol="${esc(sym)}" width="40" height="40" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">`;
+}
+// One delegated capture-phase listener walks a failed logo DOWN the
+// resolution chain (uri/tw → spothq → letter tile) and removes failed
+// chain badges. Attached once; covers every list render.
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains("coin-badge")) { img.remove(); return; }
+  if (!img.classList.contains("coin-img")) return;
+  const step = img.dataset.step;
+  if (step === "uri" || step === "tw") {
+    const next = spothqUrl(img.dataset.symbol);
+    if (next && img.src !== next) { img.dataset.step = "spothq"; img.src = next; return; }
+  }
+  const holder = document.createElement("span");
+  holder.innerHTML = letterTileHtml(img.dataset.symbol);
+  img.replaceWith(holder.firstElementChild);
+}, true);
+// Chain badges (§4.5): a symbol living on more than one network gets
+// the network's own icon at its logo's corner in the All view.
+let dupSymbols = new Set();
+const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH",
+  tron: "TRX", solana: "SOL", sui: "SUI", stellar: "XLM", ton: "TON", near: "NEAR",
+  algorand: "ALGO", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
+function badgeHtml(b, famKey) {
+  if (viewKey !== "all" || !b || !dupSymbols.has(b.symbol)) return "";
+  const nat = famKey === "evm" ? NETWORKS[networkKey].symbol : FAMILY_NATIVE_SYM[famKey];
+  const u = nat ? spothqUrl(nat) : null;
+  return u ? `<img class="coin-badge" src="${esc(u)}" width="14" height="14" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">` : "";
 }
 
 // ---------- THE send-confirmation moment (§4.8) ----------
@@ -341,11 +403,11 @@ async function renderMain() {
   // not an empty claim form that rejects the name as "already claimed".
   renderNameSection();
   adoptRegistryNameIfMine();
-  getBitcoinBalance(btcAddr).then(b => { btcBal = b; paintAssets(); }).catch(() => paintAssets());
+  getBitcoinBalance(btcAddr).then(b => { btcBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
   // Taproot (BIP86) — a second Bitcoin account from the same seed
   // (Build B): its own address and balance, rolled into the BTC totals.
   btcTrAddr = bitcoinTaprootAddress(wallet.mnemonic.phrase);
-  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; paintAssets(); }).catch(() => paintAssets());
+  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
@@ -353,7 +415,7 @@ async function renderMain() {
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
-    .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
+    .then(rows => { if (rows) tronBalances = rows; famLoaded.add("tron"); paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
   // placeholders until the RPC answers.
@@ -361,7 +423,7 @@ async function renderMain() {
   solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana")
-    .then(rows => { if (rows) solBalances = rows; paintAssets(); });
+    .then(rows => { if (rows) solBalances = rows; famLoaded.add("solana"); paintAssets(); });
   // Sui (Phase 2b): SLIP-0010 Ed25519 branch (coin type 784) of the
   // same seed — the same derivation family as Solana, Sui's own path.
   // Also the future home of the OGO ERA Companion NFT.
@@ -369,7 +431,7 @@ async function renderMain() {
   suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
                  ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
-    .then(rows => { if (rows) suiBalances = rows; paintAssets(); });
+    .then(rows => { if (rows) suiBalances = rows; famLoaded.add("sui"); paintAssets(); });
   // Stellar (Phase 3b): SLIP-0010 Ed25519 branch (coin type 148) of
   // the same seed. The single account read IS the all-asset read
   // (XLM + every trustline). An unfunded account is a state — "not
@@ -379,8 +441,8 @@ async function renderMain() {
   stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
-    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; paintAssets(); })
-    .catch(() => { stellarLoadFailed = true; paintAssets(); });
+    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; famLoaded.add("stellar"); paintAssets(); })
+    .catch(() => { stellarLoadFailed = true; famLoaded.add("stellar"); paintAssets(); });
   // Phase 4 — payments-grade families: TON (SLIP-0010 coin 607,
   // Wallet V4R2), NEAR (coin 397, implicit account), Algorand (coin
   // 283), XRP Ledger (BIP44 secp256k1 coin 144), Polkadot Asset Hub
@@ -392,35 +454,35 @@ async function renderMain() {
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false;
   getTonAccount(tonAddr)
-    .then(acct => { tonBalances = acct.balances; tonState = acct.state; paintAssets(); })
-    .catch(() => { tonLoadFailed = true; paintAssets(); });
+    .then(acct => { tonBalances = acct.balances; tonState = acct.state; famLoaded.add("ton"); paintAssets(); })
+    .catch(() => { tonLoadFailed = true; famLoaded.add("ton"); paintAssets(); });
   nearAddr = nearAddressFromPhrase(wallet.mnemonic.phrase);
   nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
-    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; paintAssets(); })
-    .catch(() => { nearLoadFailed = true; paintAssets(); });
+    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; famLoaded.add("near"); paintAssets(); })
+    .catch(() => { nearLoadFailed = true; famLoaded.add("near"); paintAssets(); });
   algoAddr = algoAddressFromPhrase(wallet.mnemonic.phrase);
   algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
-    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; paintAssets(); })
-    .catch(() => { algoLoadFailed = true; paintAssets(); });
+    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; famLoaded.add("algorand"); paintAssets(); })
+    .catch(() => { algoLoadFailed = true; famLoaded.add("algorand"); paintAssets(); });
   xrpAddr = xrplAddressFromPhrase(wallet.mnemonic.phrase);
   xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
-    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; paintAssets(); })
-    .catch(() => { xrpLoadFailed = true; paintAssets(); });
+    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; famLoaded.add("xrpl"); paintAssets(); })
+    .catch(() => { xrpLoadFailed = true; famLoaded.add("xrpl"); paintAssets(); });
   dotAddr = dotAddressFromPhrase(wallet.mnemonic.phrase);
   dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
   getDotAccount(dotAddr)
-    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; paintAssets(); })
-    .catch(() => { dotLoadFailed = true; paintAssets(); });
+    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; famLoaded.add("polkadot"); paintAssets(); })
+    .catch(() => { dotLoadFailed = true; famLoaded.add("polkadot"); paintAssets(); });
   // Aptos (Phase 5): SLIP-0010 Ed25519 branch (coin type 637, the
   // Petra path) of the same seed. The account read reports existence
   // honestly — an address the chain has never seen is "not yet
@@ -431,8 +493,8 @@ async function renderMain() {
                    ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
   getAptosAccount(aptosAddr)
-    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; paintAssets(); })
-    .catch(() => { aptosLoadFailed = true; paintAssets(); });
+    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; famLoaded.add("aptos"); paintAssets(); })
+    .catch(() => { aptosLoadFailed = true; famLoaded.add("aptos"); paintAssets(); });
   // Stacks (Bitcoin L2): BIP44 coin-5757 branch of the same seed. STX +
   // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
   // everything else unverified (⚠) with contract-read metadata.
@@ -442,21 +504,22 @@ async function renderMain() {
   stacksLoadFailed = false; stacksScanFailed = false;
   fetchStacksAccount(stacksAddr)
     .then(acct => {
+      famLoaded.add("stacks");
       if (acct.scanFailed) { stacksScanFailed = true; paintAssets(); return; }
       stacksBalances = [{ symbol: "STX", name: "Stacks", amount: stxMicroToStx(acct.stxUstx), decimals: 6, verified: true, contract: null },
                         ...acct.tokens.map(t => ({ ...t, amount: stacksRawToAmount(t.balanceRaw, t.decimals) }))];
       paintAssets();
     })
-    .catch(() => { stacksLoadFailed = true; paintAssets(); });
+    .catch(() => { stacksLoadFailed = true; famLoaded.add("stacks"); paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
   ltcAddr = litecoinAddress(wallet.mnemonic.phrase);
-  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; paintAssets(); }).catch(() => paintAssets());
+  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; famLoaded.add("litecoin"); paintAssets(); }).catch(() => { famLoaded.add("litecoin"); paintAssets(); });
   dogeAddr = dogecoinAddress(wallet.mnemonic.phrase);
-  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; paintAssets(); }).catch(() => paintAssets());
+  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; famLoaded.add("dogecoin"); paintAssets(); }).catch(() => { famLoaded.add("dogecoin"); paintAssets(); });
   bchAddr = bitcoinCashAddress(wallet.mnemonic.phrase);
-  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; paintAssets(); }).catch(() => paintAssets());
+  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; famLoaded.add("bitcoincash"); paintAssets(); }).catch(() => { famLoaded.add("bitcoincash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -466,7 +529,7 @@ async function renderMain() {
   cosmosAddrs = cosmosAddresses(wallet.mnemonic.phrase);
   cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
   paintAssets();
-  getCosmosAllBalances(wallet.mnemonic.phrase).then(rows => { cosmosRows = rows; paintAssets(); }).catch(() => paintAssets());
+  getCosmosAllBalances(wallet.mnemonic.phrase).then(rows => { cosmosRows = rows; famLoaded.add("cosmos"); paintAssets(); }).catch(() => { famLoaded.add("cosmos"); paintAssets(); });
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
@@ -474,6 +537,7 @@ async function renderMain() {
       new Promise((_, reject) => setTimeout(() => reject(new Error("balance load timed out")), 20000)),
     ]);
   } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
+  famLoaded.add("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
   renderHistory();
@@ -626,13 +690,88 @@ function paintHeader() {
 // and fully usable under a collapsed "Other tokens (N)" group per
 // family. Token-derived strings are escaped (see esc): a token's
 // name is attacker-controlled data.
-function tokenRowHtml(b, v, sub, dataAttr) {
-  const warn = b.verified === false ? "⚠ " : "";
-  const nameLine = b.name && b.name !== b.symbol ? `${esc(b.name)} · ${sub}` : sub;
+function tokenRowHtml(b, v, sub, dataAttr, famKey) {
+  // §4.5 anatomy: logo | name (+ UNVERIFIED chip) / "SYMBOL · Network"
+  // (ONE network mention — the standard moves to the asset sheet) |
+  // amount / USD, tabular, right-aligned.
+  const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
+  const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
-      <span class="coin" style="background:${COIN_COLORS[b.symbol] || "#3b4a7a"}">${esc(String(b.symbol).slice(0, 1))}</span>
-      <span class="grow"><b>${warn}${esc(b.symbol)}</b><small>${esc(nameLine)}</small></span>
+      <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
+      <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small></span>
       <span class="amt"><b>${fmt(b.amount)}</b><small>${v != null ? usd(v) : ""}</small></span></div>`;
+}
+// ---------- zero-balance collapse + skeletons (§4.5/§4.13) ----------
+function isNativeRow(famKey, b) {
+  if (famKey === "stacks") return !b.contract;
+  return !b.address && !b.lpShare;
+}
+function isCuratedStableEvm(b) {
+  return (b.symbol === "USDC" || b.symbol === "USDT") && b.verified !== false && !b.custom;
+}
+function zeroGroupHtml(famKey, items, renderItem) {
+  if (!items.length) return "";
+  const open = expandedZero.has(famKey);
+  return `<div class="row" data-zero="${famKey}">
+      <span class="coin" style="background:#3b4a7a">…</span>
+      <span class="grow"><b>Zero balances (${items.length})</b><small>Not held right now — tap to ${open ? "hide" : "show"}.</small></span>
+      <span>${open ? "▾" : "▸"}</span></div>` + (open ? items.map(renderItem).join("") : "");
+}
+function skeletonRowsHtml(n = 3) {
+  return Array.from({ length: n }, () => `<div class="skelrow"><span class="skel skelc"></span><span class="skelbars"><span class="skel skelb1"></span><span class="skel skelb2"></span></span></div>`).join("");
+}
+/** One family's list body: skeleton while loading; otherwise the
+ *  verified/priced main rows, the "Other tokens" group, and the
+ *  collapsed "Zero balances" group (§4.5) — in that order. */
+function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
+  if (!famLoaded.has(famKey)) return skeletonRowsHtml();
+  let visible = rowsArr, zero = [];
+  if (!showZeroBalances) {
+    visible = []; zero = [];
+    for (const b of rowsArr) {
+      if (Number(b.amount) === 0 && !isNativeRow(famKey, b) && !(famKey === "evm" && isCuratedStableEvm(b))) zero.push(b);
+      else visible.push(b);
+    }
+  }
+  const sp = splitRows(visible, priceOf);
+  let html = sp.main.map(renderItem).join("");
+  html += otherGroupHtml(famKey, sp.other, renderItem);
+  if (zero.length) html += zeroGroupHtml(famKey, zero.map(b => ({ b, v: rowUsdValue(b, priceOf(b)) })), renderItem);
+  return html;
+}
+// Load/scan problems surface as a small alert in the group header
+// (§4.5) — the message + Retry live in a sheet, never as list prose.
+function familyAlertMap() {
+  const m = {};
+  if (familyScanFailed.tron) m.tron = "Full token scan unavailable — showing main Tron tokens only.";
+  if (familyScanFailed.solana) m.solana = "Full token scan unavailable — showing main Solana tokens only.";
+  if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
+  if (stellarLoadFailed) m.stellar = "Stellar balances couldn't be loaded right now.";
+  if (tonLoadFailed) m.ton = "TON balances couldn't be loaded right now.";
+  if (nearLoadFailed) m.near = "NEAR balances couldn't be loaded right now.";
+  if (algoLoadFailed) m.algorand = "Algorand balances couldn't be loaded right now.";
+  if (xrpLoadFailed) m.xrpl = "XRP Ledger balances couldn't be loaded right now.";
+  if (dotLoadFailed) m.polkadot = "Polkadot Asset Hub balances couldn't be loaded right now.";
+  if (aptosLoadFailed) m.aptos = "Aptos balances couldn't be loaded right now.";
+  else if (aptosScanFailed) m.aptos = "Full token scan unavailable — showing main Aptos tokens only.";
+  if (stacksLoadFailed || stacksScanFailed) m.stacks = "Stacks balances couldn't be loaded right now.";
+  if (evmScanState.key === networkKey && evmScanState.status === "limited")
+    m.evm = `Token scan is limited on ${NETWORKS[networkKey].name} (no Multicall3) — showing known tokens. Any token can still be added by contract address.`;
+  if (evmScanState.key === networkKey && evmScanState.status === "failed")
+    m.evm = "Token scan unavailable right now — showing known tokens.";
+  if (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null))
+    m.cosmos = "Some Cosmos chains didn't answer just now — those balances show as unavailable. Receiving still works on every chain.";
+  return m;
+}
+function openFamilyAlert(key) {
+  const text = familyAlertMap()[key];
+  if (!text) return;
+  const meta = RECEIVE_NETWORKS.find(x => x.id === key);
+  const title = key === "evm" ? NETWORKS[networkKey].name : key === "cosmos" ? "Cosmos" : (meta ? meta.name : key);
+  openSheet(`<h3>${esc(title)}</h3>
+    <p class="tag">${esc(text)}</p>
+    <button class="btn" id="famRetry">Retry</button>`);
+  $("famRetry").onclick = () => { closeSheet(); renderMain(); };
 }
 function splitRows(rows, symPriceOf) {
   const main = [], other = [];
@@ -655,147 +794,120 @@ function otherGroupHtml(famKey, items, renderItem) {
 function paintAssets() {
   paintHeader();
   const net = NETWORKS[networkKey];
+  // Chain-badge census (§4.5): symbols living on more than one network.
+  {
+    const symNets = new Map();
+    const noteSym = (sym, where) => { if (!sym) return; if (!symNets.has(sym)) symNets.set(sym, new Set()); symNets.get(sym).add(where); };
+    for (const b of balances) noteSym(b.symbol, "evm");
+    for (const b of tronBalances) noteSym(b.symbol, "tron");
+    for (const b of solBalances) noteSym(b.symbol, "solana");
+    for (const b of suiBalances) noteSym(b.symbol, "sui");
+    for (const b of stellarBalances) noteSym(b.symbol, "stellar");
+    for (const b of tonBalances) noteSym(b.symbol, "ton");
+    for (const b of nearBalances) noteSym(b.symbol, "near");
+    for (const b of algoBalances) noteSym(b.symbol, "algorand");
+    for (const b of xrpBalances) noteSym(b.symbol, "xrpl");
+    for (const b of dotBalances) noteSym(b.symbol, "polkadot");
+    for (const b of aptosBalances) noteSym(b.symbol, "aptos");
+    for (const b of stacksBalances) noteSym(b.symbol, "stacks");
+    for (const r of cosmosRows) noteSym(r.symbol, r.key);
+    dupSymbols = new Set([...symNets].filter(([, s]) => s.size > 1).map(([sym]) => sym));
+  }
   // §4.2: rows are built per family ONCE into groups, then rendered
   // per viewKey (All = fixed family order; scoped = that group only).
   const groups = [];
   const grp = (key, header, rowsArr) => groups.push({ key, header, html: rowsArr.join("") });
   // Bitcoin group (tap the row for the Bitcoin sheet)
-  grp("bitcoin", "", [`<div class="row" id="btcRow">
-      <span class="coin" style="background:${COIN_COLORS.BTC}">₿</span>
-      <span class="grow"><b>Bitcoin</b><small>Native SegWit + Taproot · same seed</small></span>
-      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>`]);
+  grp("bitcoin", "", [famLoaded.has("bitcoin") ? `<div class="row" id="btcRow">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "BTC" }, "bitcoin")}${badgeHtml({ symbol: "BTC" }, "bitcoin")}</span>
+      <span class="grow"><b class="rname">Bitcoin</b><small>BTC · SegWit + Taproot</small></span>
+      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first.
   {
     const rows = [];
-    const sp = splitRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, net.name, "");
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("evm", sp.other, render));
-    if (evmScanState.key === networkKey) {
-      if (evmScanState.status === "scanning") rows.push(`<p class="tag" style="margin:6px 0">Scanning ${esc(net.name)} for your other tokens…</p>`);
-      else if (evmScanState.status === "limited") rows.push(`<p class="tag" style="margin:6px 0">Token scan is limited on ${esc(net.name)} (no Multicall3) — showing known tokens. Any token can still be added by contract address.</p>`);
-      else if (evmScanState.status === "failed") rows.push(`<p class="tag" style="margin:6px 0">Token scan unavailable right now — showing known tokens.</p>`);
-    }
+    const render = ({ b, v }) => tokenRowHtml(b, v, net.name, "", "evm");
+    rows.push(familyRowsHtml("evm", balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render));
+    if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
     grp("evm", "", rows);
   }
   // Tron family rows (tap a row to send on Tron)
   if (tronBalances.length) {
     const rows = [];
-    const sp = splitRows(tronBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Tron${b.address ? " · TRC20" : ""}`, `data-tron="${tronBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("tron", sp.other, render));
-    if (familyScanFailed.tron) rows.push(`<p class="tag">Full token scan unavailable — showing main Tron tokens only.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Tron", `data-tron="${tronBalances.indexOf(b)}"`, "tron");
+    rows.push(familyRowsHtml("tron", tronBalances, (b) => prices[b.symbol], render));
     grp("tron", `<p class="tag" style="margin:12px 0 2px">Tron</p>`, rows);
   }
   // Solana family rows (tap a row to send on Solana)
   if (solBalances.length) {
     const rows = [];
-    const sp = splitRows(solBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Solana${b.address ? " · SPL" : ""}`, `data-sol="${solBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("solana", sp.other, render));
-    if (familyScanFailed.solana) rows.push(`<p class="tag">Full token scan unavailable — showing main Solana tokens only.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Solana", `data-sol="${solBalances.indexOf(b)}"`, "solana");
+    rows.push(familyRowsHtml("solana", solBalances, (b) => prices[b.symbol], render));
     grp("solana", `<p class="tag" style="margin:12px 0 2px">Solana</p>`, rows);
   }
   // Sui family rows (tap a row to send on Sui)
   if (suiBalances.length) {
     const rows = [];
-    const sp = splitRows(suiBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Sui${b.address ? " · Coin" : ""}`, `data-sui="${suiBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("sui", sp.other, render));
-    if (familyScanFailed.sui) rows.push(`<p class="tag">Full token scan unavailable — showing main Sui tokens only.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Sui", `data-sui="${suiBalances.indexOf(b)}"`, "sui");
+    rows.push(familyRowsHtml("sui", suiBalances, (b) => prices[b.symbol], render));
     grp("sui", `<p class="tag" style="margin:12px 0 2px">Sui</p>`, rows);
   }
   // Stellar family rows (tap a row to send on Stellar)
   if (stellarBalances.length) {
     const rows = [];
-    const sp = splitRows(stellarBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Stellar${b.address && !b.lpShare ? " · Trustline asset" : ""}`, `data-stellar="${stellarBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("stellar", sp.other, render));
-    if (stellarFunded === false) rows.push(`<p class="tag">Account not yet activated — receive at least 1 XLM to activate it.</p>`);
-    if (stellarLoadFailed) rows.push(`<p class="tag">Stellar balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Stellar", `data-stellar="${stellarBalances.indexOf(b)}"`, "stellar");
+    rows.push(familyRowsHtml("stellar", stellarBalances, (b) => prices[b.symbol], render));
     grp("stellar", `<p class="tag" style="margin:12px 0 2px">Stellar</p>`, rows);
   }
   // TON family rows (Phase 4; tap a row to send on TON)
   if (tonBalances.length) {
     const rows = [];
-    const sp = splitRows(tonBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `TON${b.address ? " · Jetton" : ""}`, `data-ton="${tonBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("ton", sp.other, render));
-    if (tonState && tonState !== "active") rows.push(`<p class="tag">Wallet not deployed yet — it deploys automatically with your first send.</p>`);
-    if (tonLoadFailed) rows.push(`<p class="tag">TON balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "TON", `data-ton="${tonBalances.indexOf(b)}"`, "ton");
+    rows.push(familyRowsHtml("ton", tonBalances, (b) => prices[b.symbol], render));
     grp("ton", `<p class="tag" style="margin:12px 0 2px">TON</p>`, rows);
   }
   // NEAR family rows (Phase 4; tap a row to send on NEAR)
   if (nearBalances.length) {
     const rows = [];
-    const sp = splitRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `NEAR${b.address ? " · NEP-141" : ""}`, `data-near="${nearBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("near", sp.other, render));
-    if (nearExists === false) rows.push(`<p class="tag">Account doesn't exist yet — it is created when it first receives at least 0.00182 NEAR.</p>`);
-    if (nearLoadFailed) rows.push(`<p class="tag">NEAR balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "NEAR", `data-near="${nearBalances.indexOf(b)}"`, "near");
+    rows.push(familyRowsHtml("near", nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol], render));
     grp("near", `<p class="tag" style="margin:12px 0 2px">NEAR</p>`, rows);
   }
   // Algorand family rows (Phase 4; tap a row to send on Algorand)
   if (algoBalances.length) {
     const rows = [];
-    const sp = splitRows(algoBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Algorand${b.address ? " · ASA " + esc(b.address) : ""}`, `data-algo="${algoBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("algorand", sp.other, render));
-    if (algoFunded === false) rows.push(`<p class="tag">Account not funded yet — receive ALGO to start using it.</p>`);
-    if (algoLoadFailed) rows.push(`<p class="tag">Algorand balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Algorand", `data-algo="${algoBalances.indexOf(b)}"`, "algorand");
+    rows.push(familyRowsHtml("algorand", algoBalances, (b) => prices[b.symbol], render));
     grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows);
   }
   // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
   if (xrpBalances.length) {
     const rows = [];
-    const sp = splitRows(xrpBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `XRP Ledger${b.address ? " · Trust line" : ""}`, `data-xrp="${xrpBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("xrpl", sp.other, render));
-    if (xrpFunded === false) rows.push(`<p class="tag">Account not activated yet — it activates when it first receives at least the network base reserve (1 XRP).</p>`);
-    if (xrpLoadFailed) rows.push(`<p class="tag">XRP Ledger balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "XRP Ledger", `data-xrp="${xrpBalances.indexOf(b)}"`, "xrpl");
+    rows.push(familyRowsHtml("xrpl", xrpBalances, (b) => prices[b.symbol], render));
     grp("xrpl", `<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`, rows);
   }
   // Polkadot Asset Hub family rows (Phase 4; tap a row to send)
   if (dotBalances.length) {
     const rows = [];
-    const sp = splitRows(dotBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Polkadot Asset Hub${b.address ? " · Asset " + esc(b.address) : ""}`, `data-dot="${dotBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("polkadot", sp.other, render));
-    if (dotLoadFailed) rows.push(`<p class="tag">Polkadot Asset Hub balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Polkadot Asset Hub", `data-dot="${dotBalances.indexOf(b)}"`, "polkadot");
+    rows.push(familyRowsHtml("polkadot", dotBalances, (b) => prices[b.symbol], render));
     grp("polkadot", `<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`, rows);
   }
   // Aptos family rows (Phase 5; tap a row to send on Aptos)
   if (aptosBalances.length) {
     const rows = [];
-    const sp = splitRows(aptosBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Aptos${b.address ? (b.standard === "coin" ? " · Coin" : " · Fungible asset") : ""}`, `data-aptos="${aptosBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("aptos", sp.other, render));
-    if (aptosExists === false) rows.push(`<p class="tag">Account not yet created — it is created when it first receives APT.</p>`);
-    if (aptosScanFailed) rows.push(`<p class="tag">Full token scan unavailable — showing main Aptos tokens only.</p>`);
-    if (aptosLoadFailed) rows.push(`<p class="tag">Aptos balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Aptos", `data-aptos="${aptosBalances.indexOf(b)}"`, "aptos");
+    rows.push(familyRowsHtml("aptos", aptosBalances, (b) => prices[b.symbol], render));
     grp("aptos", `<p class="tag" style="margin:12px 0 2px">Aptos</p>`, rows);
   }
   // Stacks family rows (Bitcoin L2; tap a row to send on Stacks)
   if (stacksBalances.length) {
     const rows = [];
-    const sp = splitRows(stacksBalances, (b) => prices[b.symbol]);
-    const render = ({ b, v }) => tokenRowHtml(b, v, `Stacks${b.contract ? " · SIP-010 token" : ""}`, `data-stacks="${stacksBalances.indexOf(b)}"`);
-    for (const item of sp.main) rows.push(render(item));
-    rows.push(otherGroupHtml("stacks", sp.other, render));
-    if (stacksScanFailed || stacksLoadFailed) rows.push(`<p class="tag">Stacks balances couldn't be loaded right now.</p>`);
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Stacks", `data-stacks="${stacksBalances.indexOf(b)}"`, "stacks");
+    rows.push(familyRowsHtml("stacks", stacksBalances, (b) => prices[b.symbol], render));
     grp("stacks", `<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`, rows);
   }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
@@ -805,9 +917,9 @@ function paintAssets() {
   // under one shared header.
   cosmosRows.forEach((r, i) => {
     const p = prices[r.symbol];
-    const rowHtml = `<div class="row" data-cosmos="${r.key}">
-        <span class="coin" style="background:${COIN_COLORS[r.symbol] || "#3b4a7a"}">${r.symbol.slice(0, 1)}</span>
-        <span class="grow"><b>${r.symbol}</b><small>${r.name}</small></span>
+    const rowHtml = (r.amount == null && !famLoaded.has("cosmos")) ? skeletonRowsHtml(1) : `<div class="row" data-cosmos="${r.key}">
+        <span class="logowrap">${tokenLogoHtml({ symbol: r.symbol }, r.key)}</span>
+        <span class="grow"><b class="rname">${esc(r.name)}</b><small>${esc(r.symbol)} · Cosmos</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>unavailable</small>`
           : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`;
@@ -816,27 +928,62 @@ function paintAssets() {
   // Lightning scoped view (§4.2): no token rows — one row into the
   // Lightning panel (the Wallet tab's Lightning button covers All).
   grp("lightning", "", [`<div class="row" data-ln="1">
-      <span class="coin" style="background:#f7931a">⚡</span>
-      <span class="grow"><b>Bitcoin Lightning</b><small>Your own node — pay invoices, offers and Lightning addresses</small></span>
+      <span class="logowrap"><span class="coin" style="background:#f7931a">${icon("bolt", "ic ic-wht")}</span></span>
+      <span class="grow"><b class="rname">Bitcoin Lightning</b><small>Your own node — pay invoices, offers and Lightning addresses</small></span>
       <span>›</span></div>`]);
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
-  grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [`<div class="row" data-ltc="1">
-      <span class="coin" style="background:${COIN_COLORS.LTC}">Ł</span>
-      <span class="grow"><b>Litecoin</b><small>Native SegWit · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>`]);
-  grp("dogecoin", "", [`<div class="row" data-doge="1">
-      <span class="coin" style="background:${COIN_COLORS.DOGE}">Ð</span>
-      <span class="grow"><b>Dogecoin</b><small>Legacy · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>`]);
-  grp("bitcoincash", "", [`<div class="row" data-bch="1">
-      <span class="coin" style="background:${COIN_COLORS.BCH}">B</span>
-      <span class="grow"><b>Bitcoin Cash</b><small>CashAddr · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>`]);
-  // Render per viewKey.
+  grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [famLoaded.has("litecoin") ? `<div class="row" data-ltc="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "LTC" }, "litecoin")}${badgeHtml({ symbol: "LTC" }, "litecoin")}</span>
+      <span class="grow"><b class="rname">Litecoin</b><small>LTC · Native SegWit</small></span>
+      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+  grp("dogecoin", "", [famLoaded.has("dogecoin") ? `<div class="row" data-doge="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "DOGE" }, "dogecoin")}${badgeHtml({ symbol: "DOGE" }, "dogecoin")}</span>
+      <span class="grow"><b class="rname">Dogecoin</b><small>DOGE · Legacy</small></span>
+      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+  grp("bitcoincash", "", [famLoaded.has("bitcoincash") ? `<div class="row" data-bch="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "BCH" }, "bitcoincash")}${badgeHtml({ symbol: "BCH" }, "bitcoincash")}</span>
+      <span class="grow"><b class="rname">Bitcoin Cash</b><small>BCH · CashAddr</small></span>
+      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+  // Render per viewKey (§4.5): each family is its OWN card with a
+  // header (name + subtotal + alert) in the All view; a scoped view
+  // renders its single group without the header. The seven Cosmos
+  // chains share one Cosmos card in the All view.
+  const totals = familyUsdTotals();
+  const alerts = familyAlertMap();
+  const titleOf = (key) => key === "evm" ? net.name : key === "bitcoin" ? "Bitcoin" : key === "cosmos" ? "Cosmos"
+    : (RECEIVE_NETWORKS.find(x => x.id === key) || {}).name || key;
+  const cardFor = (key, innerHtml, titled, totalVal) => {
+    const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${usd(totalVal || 0)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
+    return `<div class="card groupcard">${head}${innerHtml}</div>`;
+  };
   let html = "";
-  if (viewKey === "all") html = groups.filter(g => g.key !== "lightning").map(g => g.header + g.html).join("");
-  else { const g = groups.find(x => x.key === viewKey); html = g ? g.html : ""; }
+  if (viewKey === "all") {
+    const parts = [];
+    let cosmosBuf = [];
+    const flushCosmos = () => {
+      if (cosmosBuf.length) { parts.push(cardFor("cosmos", cosmosBuf.join(""), true, COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0))); cosmosBuf = []; }
+    };
+    for (const g of groups) {
+      if (g.key === "lightning") continue;
+      if (COSMOS_CHAINS.some(c => c.key === g.key)) { cosmosBuf.push(g.html); continue; }
+      flushCosmos();
+      parts.push(cardFor(g.key, g.html, true, totals[g.key]));
+    }
+    flushCosmos();
+    html = parts.join("");
+  } else {
+    const g = groups.find(x => x.key === viewKey);
+    html = g ? cardFor(g.key, g.html, false, totals[g.key]) : "";
+  }
+  html += `<button class="btn ghost" id="zeroToggle">${showZeroBalances ? "Hide zero balances" : "Show zero balances"}</button>`;
   $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
+  document.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
+  const zt = $("zeroToggle");
+  if (zt) zt.onclick = () => {
+    showZeroBalances = !showZeroBalances;
+    try { localStorage.setItem(SHOW_ZERO_LS, showZeroBalances ? "1" : "0"); } catch { /* best effort */ }
+    paintAssets();
+  };
   const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
   const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
@@ -893,6 +1040,11 @@ function paintAssets() {
   document.querySelectorAll("[data-other]").forEach(r => r.onclick = () => {
     const k = r.dataset.other;
     if (expandedOther.has(k)) expandedOther.delete(k); else expandedOther.add(k);
+    paintAssets();
+  });
+  document.querySelectorAll("[data-zero]").forEach(r => r.onclick = () => {
+    const k = r.dataset.zero;
+    if (expandedZero.has(k)) expandedZero.delete(k); else expandedZero.add(k);
     paintAssets();
   });
   const atb = $("addTokBtn");
@@ -1016,7 +1168,7 @@ async function hydrateEvmTokens() {
   const byAddr = new Map(list.map(t => [t.address.toLowerCase(), t]));
   for (const cr of customRows) {
     const t = byAddr.get(cr.address.toLowerCase());
-    if (t) { cr.verified = lifiTokenVerified(t); if (t.priceUSD != null) cr.priceUsd = t.priceUSD; }
+    if (t) { cr.verified = lifiTokenVerified(t); if (t.priceUSD != null) cr.priceUsd = t.priceUSD; if (t.logoURI) cr.logoURI = t.logoURI; }
   }
   if (prev && prev.status === "done" && Date.now() - prev.at < 5 * 60 * 1000) {
     mergeEvmRows(customRows, prev.rows);
@@ -1042,7 +1194,7 @@ async function hydrateEvmTokens() {
     const t = byAddr.get(addrLower);
     if (!t) continue;
     scannedRows.push({ symbol: t.symbol, name: t.name, amount: formatTokenAmount(raw, t.decimals),
-                       address: t.address, decimals: t.decimals, verified: lifiTokenVerified(t), priceUsd: t.priceUSD });
+                       address: t.address, decimals: t.decimals, verified: lifiTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
   }
   // 4) DexScreener prices for held rows no list could price.
   const unpriced = [...customRows, ...scannedRows].filter(r => r.priceUsd == null && Number(r.amount) > 0);
@@ -3006,7 +3158,7 @@ async function ensureSwapList(netKey) {
     if (seen.has(k)) continue;
     seen.add(k);
     merged.push({ symbol: t.symbol, name: t.name, address: t.address, decimals: t.decimals,
-                  native: false, verified: lifiTokenVerified(t), priceUSD: t.priceUSD });
+                  native: false, verified: lifiTokenVerified(t), priceUSD: t.priceUSD, logoURI: t.logoURI || null });
   }
   if (NETWORKS[netKey]) {
     for (const ct of loadCustomTokens(sc.chainId)) {
@@ -3499,6 +3651,8 @@ renderNameSection();
 $("refreshBtn").onclick = renderMain;
 function lockWallet() { wallet = null; pendingSend = null; nameAdoptTried = false; refreshGate(); }
 $("lockBtn").onclick = lockWallet;
+const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
+if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;
 
 // ---------- auto-lock ----------
 // Keys live only in memory while unlocked. After 5 minutes without

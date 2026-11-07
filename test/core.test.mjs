@@ -24,6 +24,7 @@ import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAd
   xrplAddressFromPhrase, xrplAddressFromPubkey, xrplAddressDecode, isValidXrplAddress, xrplDropsToXrp, xrplXrpToDrops, xrplCurrencyLabel, xrplSignPayment, formatXrplSendIntent, XRPL_USDC, XRPL_USDC_ISSUER,
   dotAddressFromPhrase, isValidDotAddress, dotPlanckToDot, dotDotToPlanck, formatDotSendIntent, DOT_TOKENS } from "../src/wallet-core.js";
 import { aptosAddressFromPhrase, aptosAddressFromSeed, aptosSeedFromSeed, isValidAptosAddress, normalizeAptosAddress, aptosOctasToApt, aptosAptToOctas, aptosAmountToRaw, aptosBuildRawTransaction, aptosSigningMessage, aptosSignRawTransaction, aptosPublicKeyFromPhrase, formatAptosSendIntent, APTOS_TOKENS, APTOS_COIN_TYPE } from "../src/wallet-core.js";
+import { toChecksumAddress } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
@@ -2836,6 +2837,70 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ui-p0: activity nav dot exists and is driven by the success flow",
     idxSrc.includes('id="activityDot"') && appSrc.includes("function markActivityDot()")
     && appSrc.includes("function clearActivityDot()"));
+}
+
+// ---------- UI rebuild P1: tokens, sprite, logo system, group cards ----------
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("ui-p1: CSP is exactly the baseline policy with img-src gaining https: and nothing else",
+    idxSrc.includes("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'none'"));
+  ok("ui-p1: design tokens are the spec's (Part 3)",
+    ["--bg0:#05070d", "--surface-1:#0b101f", "--surface-2:#111830", "--surface-3:#1a2247",
+     "--brand-1:#5b8cff", "--brand-2:#9d6bff", "--drop:#38bdf8",
+     "--grad-brand:linear-gradient(135deg,var(--brand-1),var(--brand-2))",
+     "--sh-card:inset 0 1px 0 rgba(255,255,255,.045), 0 12px 32px rgba(0,0,0,.35)",
+     "--r-sheet:28px", "--dur-sheet:260ms"].every(t => idxSrc.includes(t)));
+  ok("ui-p1: SVG sprite carries the full icon set",
+    ["i-drop", "i-drop-w", "i-send", "i-receive", "i-swap", "i-plus", "i-bank", "i-wallet",
+     "i-ball", "i-activity", "i-more", "i-chev-d", "i-chev-r", "i-x", "i-check", "i-copy",
+     "i-qr", "i-search", "i-bolt", "i-shield", "i-eye", "i-eye-off", "i-lock", "i-download",
+     "i-refresh", "i-external", "i-alert", "i-spinner", "i-layers", "i-globe"]
+      .every(id => idxSrc.includes(`id="${id}"`)) && idxSrc.includes('id="gradDrop"'));
+  ok("ui-p1: logo fallback chain order is logoURI → TrustWallet → spothq → letter tile",
+    (() => { const s = appSrc.indexOf("function tokenLogoHtml(");
+      const uri = appSrc.indexOf("token.logoURI", s), tw = appSrc.indexOf("assets.trustwalletapp.com", s),
+            sp = appSrc.indexOf('step = "spothq"', s), lt = appSrc.indexOf("return letterTileHtml(sym)", s);
+      return s >= 0 && uri > s && tw > uri && sp > tw && lt > sp; })());
+  ok("ui-p1: logo failures fall through ONE delegated capture-phase listener, never inline handlers",
+    appSrc.includes('document.addEventListener("error"') && appSrc.includes("coin-img")
+    && !appSrc.includes("onerror=") && !idxSrc.includes("onerror="));
+  ok("ui-p1: Trust Wallet URLs are built from EIP-55 checksummed addresses",
+    appSrc.includes("toChecksumAddress(token.address)") && coreSrc.includes("export function toChecksumAddress("));
+  ok("ui-p1: EIP-55 checksum matches the official test vectors",
+    toChecksumAddress("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed") === "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+    && toChecksumAddress("0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359") === "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
+    && toChecksumAddress("0xdbf03b407c01e7cd3cbea99509d93f8dddc8c6fb") === "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
+    && toChecksumAddress("0xd1220a0cf47c7b9be7a2e6ba89f429762e7b9adb") === "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
+    && toChecksumAddress("not an address") === null && toChecksumAddress("") === null);
+  ok("ui-p1: LI.FI token shape carries logoURI through to the UI",
+    coreSrc.includes('logoURI: typeof t.logoURI === "string"')
+    && appSrc.includes("logoURI: t.logoURI || null"));
+  ok("ui-p1: family groups render as cards with headers, subtotals and the alert button",
+    appSrc.includes("function familyRowsHtml(") && appSrc.includes("groupcard")
+    && appSrc.includes("data-famalert=") && appSrc.includes("function familyAlertMap(")
+    && appSrc.includes("function openFamilyAlert("));
+  ok("ui-p1: zero balances collapse behind the persisted global toggle + per-family group",
+    appSrc.includes('const SHOW_ZERO_LS = "fluid_show_zero_v1"') && appSrc.includes("Zero balances (")
+    && appSrc.includes('id="zeroToggle"') && appSrc.includes("function zeroGroupHtml("));
+  ok("ui-p1: unloaded families render skeleton rows, driven by famLoaded",
+    appSrc.includes("function skeletonRowsHtml(") && appSrc.includes("const famLoaded = new Set()")
+    && appSrc.includes('famLoaded.add("evm")') && appSrc.includes('famLoaded.add("cosmos")')
+    && idxSrc.includes("@keyframes shimmer"));
+  ok("ui-p1: wallet header shows name + context address with a lock button (§4.1)",
+    idxSrc.includes('class="apphead"') && idxSrc.includes('id="hdrLockBtn"')
+    && appSrc.includes("hdrLockBtn.onclick = lockWallet")
+    && idxSrc.indexOf('id="welcomeText"') > idxSrc.indexOf('id="tab-wallet"')
+    && idxSrc.indexOf('id="welcomeText"') < idxSrc.indexOf('class="hero"')
+    && !idxSrc.includes('id="nameText"'));
+  ok("ui-p1: token rows carry the chain badge only for multi-network symbols",
+    appSrc.includes("function badgeHtml(") && appSrc.includes("dupSymbols")
+    && appSrc.includes("function tokenRowHtml(") && appSrc.includes("UNVERIFIED"));
+  ok("ui-p1: bottom nav is the blurred 64px bar with SVG icons and press pill",
+    idxSrc.includes("backdrop-filter:blur(16px) saturate(140%)")
+    && idxSrc.includes('<use href="#i-wallet"/>') && idxSrc.includes('<use href="#i-ball"/>')
+    && idxSrc.includes('<use href="#i-activity"/>') && idxSrc.includes('<use href="#i-more"/>'));
 }
 
 console.log(`\n${passed} checks passed`);
