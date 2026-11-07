@@ -208,8 +208,10 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("NG NoOnes note is honest about what it is", ngBuy[0].note.includes("External marketplace")
     && ngBuy[0].note.includes("no ID documents") && ngBuy[0].note.includes("no WalletConnect")
     && ngBuy[0].note.includes("3–4% over the market rate"));
-  ok("NG NoOnes note carries the zero-sign-up honesty", ngBuy[0].note.includes("no zero-sign-up buy route")
-    && ngBuy[0].note.includes("scam risk") && ngBuy[0].note.includes("no ID documents for everyday amounts"));
+  ok("NG NoOnes note drops the retired zero-sign-up claim", !ngBuy[0].note.includes("zero-sign-up")
+    && !ngBuy[0].note.includes("zero sign-up") && !ngBuy[0].note.includes("scam risk")
+    && ngBuy[0].note.includes("no ID documents for everyday amounts")
+    && ngBuy[0].note.includes("Fluid is adding more Nigeria routes as they pass our checks"));
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
   ok("NG Fonbnk sell note is address-based, no ID", ngSell[0].note.includes("no ID check") && ngSell[0].url.startsWith("https://pay.fonbnk.com/"));
 

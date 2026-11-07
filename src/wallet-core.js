@@ -3596,7 +3596,7 @@ export const RAMP_COUNTRY_PLAN = {
     // NO badge: its price is not the cheapest measured; it leads
     // because it is the only NG buy route that takes a pasted
     // Fluid address (see the plan notes above).
-    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · email-only sign-up (name + date of birth, no ID documents for everyday amounts) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate · no zero-sign-up buy route exists in Nigeria today — anyone promising one is a scam risk" }],
+    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · email-only sign-up (name + date of birth, no ID documents for everyday amounts) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate · Fluid is adding more Nigeria routes as they pass our checks" }],
     ["Fonbnk", { note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
   ],
   KE: [
