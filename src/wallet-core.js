@@ -2707,6 +2707,10 @@ export function sanitizeNameEntry(entry) {
   if (typeof entry.evm === "string" && /^0x[0-9a-fA-F]{40}$/.test(entry.evm.trim())) out.evm = entry.evm.trim();
   if (typeof entry.btc === "string" && /^(bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/.test(entry.btc.trim())) out.btc = entry.btc.trim();
   if (typeof entry.ln === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry.ln.trim())) out.ln = entry.ln.trim();
+  // Algorand: the full address check (58-char base32 + checksum), not a
+  // shape regex — a malformed or bad-checksum `algo` field is dropped
+  // exactly like the other fields above.
+  if (typeof entry.algo === "string" && isValidAlgorandAddress(entry.algo.trim())) out.algo = entry.algo.trim();
   return Object.keys(out).length ? out : null;
 }
 export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
@@ -2727,17 +2731,22 @@ export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
 /** Reverse lookup: which registered name belongs to these addresses?
  *  EVM addresses compare case-insensitively (checksummed vs lowercase
  *  spellings of the same key); BTC addresses are case-sensitive and
- *  compare exactly. Returns { name, ...entry } or null. Lets a wallet
- *  that already owns a published name recognise it as its own instead
- *  of being told the name is "already claimed" by itself. */
-export function findNameForAddresses(registry, { evm = null, btc = null } = {}) {
+ *  compare exactly. Algorand addresses compare case-insensitively too:
+ *  the base32 encoding decodes identically in either case (the decoder
+ *  uppercases first), so case carries no information. Returns
+ *  { name, ...entry } or null. Lets a wallet that already owns a
+ *  published name recognise it as its own instead of being told the
+ *  name is "already claimed" by itself. */
+export function findNameForAddresses(registry, { evm = null, btc = null, algo = null } = {}) {
   if (!registry || typeof registry !== "object") return null;
   const evmLc = evm ? String(evm).toLowerCase() : null;
+  const algoUc = algo ? String(algo).toUpperCase() : null;
   for (const [name, rawEntry] of Object.entries(registry)) {
     const entry = sanitizeNameEntry(rawEntry);
     if (!entry) continue;
     if (evmLc && entry.evm && entry.evm.toLowerCase() === evmLc) return { name, ...entry };
     if (btc && entry.btc && entry.btc === btc) return { name, ...entry };
+    if (algoUc && entry.algo && entry.algo.toUpperCase() === algoUc) return { name, ...entry };
   }
   return null;
 }
@@ -2833,7 +2842,7 @@ export function splitFee(amount) {
   return { treasury: a - dripbot, dripbot };
 }
 /** Resolve the two settlement legs to addresses through the Fluid
- *  Names registry — the names.json object (username → {evm, btc, ln?},
+ *  Names registry — the names.json object (username → {evm, btc, ln?, algo?},
  *  the same shape buildNameEntry produces). Resolution is by USERNAME,
  *  always: the keeper looks up "ethuram" and "dripbot", never a
  *  hard-coded or hand-supplied address. `ln` is null until the name's
@@ -5808,9 +5817,13 @@ export async function algoSendPlan(fromAddress, { to, token = null } = {}) {
   } catch { /* stays null */ }
   return plan;
 }
-/** The signer principle, Algorand edition: a sentence, never a blob. */
-export function formatAlgoSendIntent({ amount, symbol, to, feeAlgo }) {
-  let s = `Send ${amount} ${symbol} to ${to} on Algorand.`;
+/** The signer principle, Algorand edition: a sentence, never a blob.
+ *  With `name` (a Fluid name the recipient was given as), the sentence
+ *  shows BOTH the name and the FULL address it resolved to — the same
+ *  disclosure formatSendIntent makes for EVM sends (audit L1). */
+export function formatAlgoSendIntent({ amount, symbol, to, feeAlgo, name = null }) {
+  const dest = name ? `${name}.${FLUID_DOMAIN} (${to})` : to;
+  let s = `Send ${amount} ${symbol} to ${dest} on Algorand.`;
   if (feeAlgo != null) s += ` Network fee ${feeAlgo} ALGO.`;
   return s + " Confirm?";
 }

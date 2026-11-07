@@ -7,8 +7,10 @@ Maps a Fluid username to wallet addresses:
 One name resolves to the wallet's keys on every family: `evm` is a single
 address valid on **all 15 EVM chains for any token** (native coins, USDC,
 USDT, any ERC-20), `btc` is the Bitcoin address, and `ln` (optional) is a
-Lightning address so the name also receives Lightning payments. Send any
-asset to the name alone — the wallet picks the right key for the asset.
+Lightning address so the name also receives Lightning payments. `algo`
+(optional) is the Algorand address, so the name also receives ALGO and
+ASA sends. Send any asset to the name alone — the wallet picks the right
+key for the asset.
 
 To claim a name: open the wallet → More → "Your Fluid name", pick a name,
 copy your entry, then add it to `names.json` in this repo via a GitHub

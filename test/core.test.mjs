@@ -1969,6 +1969,64 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     !!found && found.name === "goodname" && found.evm === EVM && found.btc === undefined);
 }
 
+// ---------- Fluid Names: the optional `algo` field ----------
+// Registry entries may carry an Algorand address. It is validated at
+// the same trust boundary as evm/btc/ln (sanitizeNameEntry) with the
+// full checksum-verifying address check, resolveFluidName carries it,
+// findNameForAddresses matches on it, and the Algorand send sheet's
+// hard-block preconditions hold at core level: an unregistered name —
+// or an entry whose only field is a malformed algo — resolves null,
+// and a registered name without algo resolves with no algo field (the
+// sheet then blocks with "no Algorand address in the registry").
+{
+  const { sanitizeNameEntry, resolveFluidName, formatAlgoSendIntent, algoAddressFromSeed } = await import("../src/wallet-core.js");
+  const ALGO = "O67U3XOR7LK42HA5DB2BCQDMSVW7WMY3QMCW6P7XXQONLRVRLESB6XAB34";
+  const EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const BTC = "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn";
+  const BAD_ALGO = ALGO.slice(0, 20) + (ALGO[20] === "A" ? "B" : "A") + ALGO.slice(21); // one pubkey char flipped → checksum fails
+  const OTHER_ALGO = algoAddressFromSeed(new Uint8Array(32).fill(7)); // a valid address nobody registered
+  ok("names-algo: a valid algo field passes sanitize intact",
+    sanitizeNameEntry({ evm: EVM, btc: BTC, algo: ALGO }).algo === ALGO);
+  ok("names-algo: a bad-checksum algo field is dropped, valid fields kept",
+    (() => { const e = sanitizeNameEntry({ evm: EVM, algo: BAD_ALGO }); return !!e && e.evm === EVM && e.algo === undefined; })());
+  ok("names-algo: a malformed algo field is dropped",
+    (() => { const e = sanitizeNameEntry({ evm: EVM, algo: "O67U3XOR" }); return !!e && e.algo === undefined; })());
+  ok("names-algo: an entry whose only field is a malformed algo is null",
+    sanitizeNameEntry({ algo: "not-an-algorand-address" }) === null);
+  const REG = { dripbot: { evm: EVM, btc: BTC, algo: ALGO }, noalgo: { evm: EVM }, badalgo: { algo: BAD_ALGO } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => REG });
+  try {
+    ok("names-algo: resolveFluidName carries the algo address",
+      (await resolveFluidName("dripbot"))?.algo === ALGO);
+    ok("names-algo: a registered name without algo resolves with no algo field",
+      (await resolveFluidName("noalgo"))?.algo === undefined);
+    ok("names-algo: an entry with only a malformed algo resolves as unregistered",
+      (await resolveFluidName("badalgo")) === null);
+    ok("names-algo: an unregistered name resolves null (the Algorand sheet hard-blocks on this)",
+      (await resolveFluidName("ghost")) === null);
+  } finally { globalThis.fetch = realFetch; }
+  ok("names-algo: reverse lookup matches by algo",
+    findNameForAddresses(REG, { algo: ALGO })?.name === "dripbot");
+  ok("names-algo: reverse lookup by algo finds nothing for an unregistered address",
+    findNameForAddresses(REG, { algo: OTHER_ALGO }) === null);
+  ok("names-algo: the intent sentence shows the name AND the full resolved address",
+    formatAlgoSendIntent({ amount: "1.5", symbol: "ALGO", to: ALGO, feeAlgo: 0.001, name: "dripbot" })
+    === `Send 1.5 ALGO to dripbot.fluid.is-a.dev (${ALGO}) on Algorand. Network fee 0.001 ALGO. Confirm?`);
+  ok("names-algo: the intent sentence without a name is unchanged",
+    formatAlgoSendIntent({ amount: "1.5", symbol: "ALGO", to: ALGO, feeAlgo: 0.001 })
+    === `Send 1.5 ALGO to ${ALGO} on Algorand. Network fee 0.001 ALGO. Confirm?`);
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("names-algo: the Algorand sheet resolves names and hard-blocks like the EVM/BTC sheets",
+    appSrc.includes("That Fluid name has no Algorand address in the registry.")
+    && appSrc.includes("formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo, name: sendName })"));
+  const published = JSON.parse(readFileSync(new URL("../names.json", import.meta.url), "utf8"));
+  ok("names-algo: the published registry carries dripbot's algo address, sanitised intact",
+    sanitizeNameEntry(published.dripbot)?.algo === ALGO);
+  ok("names-algo: the published ethuram entry carries no algo field",
+    published.ethuram.algo === undefined);
+}
+
 // ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------
 // Ranking trusted LI.FI's own toAmountUSD: a route delivering half
 // the tokens could take the CHEAPEST badge by lying about its dollar

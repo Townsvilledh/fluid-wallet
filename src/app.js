@@ -1647,7 +1647,7 @@ function openAlgoSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Algorand</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${algoAddr}</span></p>
     ${tok.address ? `<p class="tag">ASA id <span class="mono">${esc(tok.address)}</span></p>` : ""}
-    <input id="agTo" placeholder="Recipient Algorand address" autocapitalize="none">
+    <input id="agTo" placeholder="Recipient Algorand address or Fluid name (e.g. dripbot)" autocapitalize="none">
     <input id="agAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="agReview">Review send</button>
     <div id="agIntent" class="hidden">
@@ -1659,7 +1659,20 @@ function openAlgoSheet(tok) {
       ? "The recipient must already be opted into this asset — Algorand accounts can only hold assets they have opted into. Sends are final."
       : "Every Algorand account must always keep its minimum balance (0.1 ALGO plus 0.1 per asset held) — Fluid stops any send that would break that. Sends are final."}</p>`);
   $("agReview").onclick = async () => {
-    const to = $("agTo").value.trim(), amount = $("agAmt").value.trim();
+    let to = $("agTo").value.trim();
+    let sendName = null;
+    const amount = $("agAmt").value.trim();
+    // Fluid names resolve exactly as in the EVM/BTC sheets: anything
+    // that is not itself a valid Algorand address is treated as a name,
+    // resolved against the registry, and hard-blocked when the name is
+    // unregistered or carries no Algorand address.
+    if (to && !isValidAlgorandAddress(to)) {
+      msg("agMsg", "Resolving Fluid name…", true);
+      const hit = await resolveFluidName(to).catch(() => null);
+      if (!hit) return msg("agMsg", "That Fluid name is not in the registry yet.");
+      if (!hit.algo) return msg("agMsg", "That Fluid name has no Algorand address in the registry.");
+      to = hit.algo; sendName = hit.name;
+    }
     if (!isValidAlgorandAddress(to)) return msg("agMsg", "That is not a valid Algorand address.");
     if (!amount || Number(amount) <= 0) return msg("agMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("agMsg", "Amount is more than your balance.");
@@ -1673,7 +1686,7 @@ function openAlgoSheet(tok) {
         return msg("agMsg", "The recipient's Algorand account isn't funded yet, so it can't hold assets. They need to receive ALGO first.");
       }
       pendingAlgo = { to, amount };
-      $("agIntentText").textContent = formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo })
+      $("agIntentText").textContent = formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo, name: sendName })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       show("agIntent"); msg("agMsg", "");
     } catch (e) { msg("agMsg", "Could not check the recipient: " + e.message); }
@@ -2921,7 +2934,7 @@ function renderNameSection() {
   }).catch(() => {});
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
- *  a name whose EVM or BTC address is THIS wallet's, adopt it — store it
+ *  a name whose EVM, BTC or Algorand address is THIS wallet's, adopt it — store it
  *  locally and paint the owned state. Never touches names that resolve
  *  to anyone else's addresses. */
 async function adoptRegistryNameIfMine() {
@@ -2929,7 +2942,7 @@ async function adoptRegistryNameIfMine() {
   nameAdoptTried = true;
   try {
     const reg = await fetchNameRegistry();
-    const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase) });
+    const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase) });
     if (hit) {
       localStorage.setItem("fluid_name", hit.name);
       $("nameText").textContent = "@" + hit.name + " · " + hit.name + "." + FLUID_DOMAIN;
@@ -2950,7 +2963,7 @@ $("claimNameBtn").onclick = async () => {
     // Registered already — but to THIS wallet? Then it's not a conflict,
     // it's a homecoming: adopt it instead of blocking the owner.
     const mine = findNameForAddresses({ [existing.name]: existing },
-      { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase) });
+      { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase) });
     if (mine) {
       localStorage.setItem("fluid_name", name);
       msg("nameMsg", "That name is already yours — added to this wallet.", true);
