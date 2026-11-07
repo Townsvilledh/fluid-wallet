@@ -3446,41 +3446,82 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //  - Paychant stays out: its guest widget returned 502, then 404
 //    (502 again on the 7 Nov 2026 recheck; its docs also require a
 //    production API key, so the "guest" link was never truly keyless).
-//  - Fonbnk is SELL-ONLY since 7 Nov 2026: its buy flow forces a
-//    WalletConnect step (the owner's live tap-test) and its own KYC
-//    docs demand a BVN from $1 / photo ID from $15 in Nigeria
-//    (national ID number in Kenya, Ghana Card number in Ghana) —
-//    both barred by Fluid's rules. Its SELL flow is address-based
-//    (email code + bank details, they return a deposit address) with
-//    no Nigeria KYC, so cash-out stays. Its live NG buy quote was
-//    also ₦1,392.50/$ vs a ₦1,347 mid-market (7 Nov) — over the
-//    cheap bar before fees.
+//  - Fonbnk is SELL-ONLY since 7 Nov 2026, removed from every BUY
+//    list for ONE reason: its buy flow's wallet step is
+//    connect-via-WalletConnect (the owner's live tap-test) — there
+//    is no way to paste a Fluid address, so buying through it forces
+//    an external wallet and defeats Fluid's purpose. That is the
+//    owner's standing buy-route criterion (corrected 7 Nov 2026,
+//    encoded in RAMP_ADDRESS_ENTRY below): WalletConnect-only is
+//    the disqualifier; an ID check alone (its KYC docs demand a BVN
+//    from $1 / photo ID from $15 in Nigeria) would NOT disqualify a
+//    route that otherwise delivers to a pasted address. Its SELL
+//    flow needs no wallet connection at all (email code + bank
+//    details, they return a deposit address the user sends to) with
+//    no Nigeria KYC, so cash-out stays. (Its live NG buy quote also
+//    measured ₦1,392.50/$ vs a ₦1,347 mid-market on 7 Nov — over
+//    the cheap bar before fees — but price is not the removal
+//    reason; Kenya/Ghana share the same wallet screen and lose
+//    Fonbnk buy the same way.)
 //  - Noblocks REMOVED 7 Nov 2026: BVN wall up front, and the
 //    owner's live attempt died on its own verify button.
-//  - NoOnes is the closest surviving NG buy candidate (P2P
-//    marketplace, email-only first tier — no ID document up to
-//    $5K/day per its help pages — NGN bank transfer, no
-//    WalletConnect), but sellers set their own prices (≈₦1,397/$
-//    indicative vs ₦1,347 market, +3.7%) and coins land in its
-//    custodial wallet first. Held OUT of the sheet pending the
-//    owner's call on relaxing the cheap bar (7 Nov 2026).
+//  - NoOnes ADDED 7 Nov 2026 as the Nigeria BUY lead (owner's call
+//    under the corrected criterion): a plain link-out to its P2P
+//    marketplace — an external app, not a Fluid partner widget.
+//    Sign-up is email + name + date of birth only (no ID document
+//    at the starter level — up to $5K/day per its help pages);
+//    users buy USDT with an NGN bank transfer, then send it OUT to
+//    their own Fluid address (paste-address send-out, no
+//    WalletConnect). Sellers set their own prices (≈₦1,397 per $
+//    indicative vs the ₦1,347 market on 7 Nov, ≈+3.7%) and coins
+//    land in its custodial wallet first — the route note states
+//    all of that plainly. NO CHEAPEST badge: the badge is
+//    price-evidence-only and NoOnes is not the cheapest measured
+//    route — it leads the NG buy sheet because it is the only
+//    Nigeria buy route that takes a pasted address.
 // Direct consumer links whose URL doesn't depend on the selection
 // (Fonbnk and Mt Pelerin links are built per selection above).
 export const RAMP_STATIC_LINKS = {
   "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
   "Mercuryo": { buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
+  "NoOnes": { buy: "https://noones.app", sell: "https://noones.app" },
 };
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
   "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
   "Mercuryo": "Price not verified — published fees: buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card",
   "Fonbnk": "Priced off the local market — check the quote before you pay",
+  "NoOnes": "External marketplace — not a Fluid partner · sign up with email, name and date of birth only (no ID documents at the starter level) · buy with a bank transfer, then send out to your Fluid address — paste it, no WalletConnect · sellers set their own prices",
+};
+/** How each provider takes the destination address on a BUY:
+ *  "paste" = the user can type/paste their Fluid address and the
+ *  route delivers there; "walletconnect" = the flow forces a
+ *  WalletConnect connection to an external wallet instead. The
+ *  owner's standing criterion (corrected 7 Nov 2026, from his own
+ *  live tap-test): a WalletConnect-only buy route is OUT, whatever
+ *  its price — it forces users out of Fluid to buy for Fluid. An
+ *  ID check (BVN/KYC) alone does NOT disqualify a "paste" route.
+ *  rampRoutesFor's buy assembly consults this table, and the tests
+ *  pin it, so a future route cannot silently reintroduce a
+ *  WalletConnect-only buy. */
+export const RAMP_ADDRESS_ENTRY = {
+  "Fonbnk": "walletconnect",
+  "Mt Pelerin": "paste",
+  "Paybis": "paste",
+  "Mercuryo": "paste",
+  "NoOnes": "paste",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
 // the ranking (cheapest measured first); badge/note override the
 // provider defaults above.
 export const RAMP_COUNTRY_PLAN = {
   NG: [
+    // NoOnes is the buy LEAD (buy-only row — NG cash-out is Fonbnk).
+    // External link-out to its P2P marketplace, honestly labelled,
+    // NO badge: its price is not the cheapest measured; it leads
+    // because it is the only NG buy route that takes a pasted
+    // Fluid address (see the plan notes above).
+    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · sign up with email, name and date of birth only (no ID documents at the starter level) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate" }],
     ["Fonbnk", { note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
   ],
   KE: [
@@ -3524,9 +3565,15 @@ export const RAMP_COUNTRY_PLAN = {
  *  external, rank }. A Fonbnk row whose network Fonbnk doesn't ride is
  *  omitted and reported via fonbnkNetworkMissing so the sheet can say
  *  why; mtpUnavailable mirrors the Mt Pelerin fiat gate for the sheet's
- *  honest "not available for this currency" line. Fonbnk rows are
- *  SELL-ONLY (its buy flow forces WalletConnect + ID checks — see the
- *  plan notes); a buy sheet that drops one reports fonbnkBuyBlocked. */
+ *  honest "not available for this currency" line. Buy assembly applies
+ *  the owner's standing criterion via RAMP_ADDRESS_ENTRY: a
+ *  WalletConnect-only route never reaches a buy sheet (a buy sheet
+ *  that drops Fonbnk this way reports fonbnkBuyBlocked, so the sheet
+ *  can say why Fonbnk is missing). A plan row may also carry
+ *  modes: ["buy"] / ["sell"] to appear on one side only (NoOnes in NG
+ *  is buy-only — NG cash-out is Fonbnk), and external: true to render
+ *  as an external-app link-out (NoOnes is a marketplace, not a Fluid
+ *  partner widget). */
 export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
   const c = RAMP_COUNTRIES.find(x => x.code === countryCode) || RAMP_COUNTRIES[0];
   const plan = RAMP_COUNTRY_PLAN[c.code] || [];
@@ -3535,8 +3582,13 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
   let fonbnkBuyBlocked = false;
   for (const [name, opts] of plan) {
     let url = null;
+    // The buy gate: no WalletConnect-only route on a buy sheet, ever.
+    if (mode === "buy" && RAMP_ADDRESS_ENTRY[name] === "walletconnect") {
+      if (name === "Fonbnk") fonbnkBuyBlocked = true;
+      continue;
+    }
+    if (Array.isArray(opts.modes) && !opts.modes.includes(mode)) continue;
     if (name === "Fonbnk") {
-      if (mode === "buy") { fonbnkBuyBlocked = true; continue; }
       url = fonbnkOfframpUrl(networkKey, asset, c.code);
       if (!url) { fonbnkNetworkMissing = true; continue; }
     } else if (name === "Mt Pelerin") {
@@ -3551,7 +3603,7 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       name, url,
       note: opts.note || RAMP_DEFAULT_NOTES[name] || "",
       badge: !!opts.badge,
-      external: false,
+      external: !!opts.external,
       rank: routes.length,
     });
   }

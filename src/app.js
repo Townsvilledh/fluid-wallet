@@ -2505,8 +2505,8 @@ function rampSheet(mode) {
         // rides in a data attribute and is opened by the bound listener.
         // Name + badge on their own line, note beneath (stacked layout).
         `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
-      (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page, no WalletConnect, no forced ID check. We're working on it.</p>` : "") +
-      (fonbnkBuyBlocked ? `<p class="tag">Fonbnk buying is paused in Fluid — its buy flow forces a WalletConnect step and ID checks (a BVN in Nigeria), and Fluid does neither. Fonbnk cash-out still works: it runs on a plain address, no wallet connection.</p>` : "") +
+      (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
+      (fonbnkBuyBlocked ? `<p class="tag">Fonbnk buying is not offered in Fluid — its buy flow forces a WalletConnect connection to an external wallet instead of letting you paste your Fluid address, and that defeats the point of Fluid. Fonbnk cash-out still works: it runs on a plain address, no wallet connection.</p>` : "") +
       (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
       (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });

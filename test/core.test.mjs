@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -103,8 +103,8 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
-ok("static links are the kept providers", ["Paybis", "Mercuryo"].every(n => RAMP_STATIC_LINKS[n])
-  && !RAMP_STATIC_LINKS["Noblocks"] && !RAMP_STATIC_LINKS["NoOnes"]);
+ok("static links are the kept providers", ["Paybis", "Mercuryo", "NoOnes"].every(n => RAMP_STATIC_LINKS[n])
+  && !RAMP_STATIC_LINKS["Noblocks"] && RAMP_STATIC_LINKS["NoOnes"].buy === "https://noones.app");
 ok("removed providers stay removed", (() => {
   // Sweep every country × mode: no removed provider may appear by name
   // or URL — incl. the +106%-in-Nigeria provider dropped in this build.
@@ -143,19 +143,50 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (7 Nov 2026): Fonbnk is sell-only — its buy flow forces
-  // WalletConnect and its own docs demand BVN from $1. Noblocks is
-  // gone (BVN wall + a verify step that failed live). NG buy is
-  // honestly EMPTY until a route passes the bar; NG sell is Fonbnk.
-  ok("NG lineup is empty buy / Fonbnk sell", JSON.stringify(names("NG")) === JSON.stringify([])
+  // Nigeria (7 Nov 2026, owner's corrected criterion): the buy
+  // disqualifier is WalletConnect-only address entry, NOT BVN/KYC.
+  // Fonbnk buy is OUT everywhere (its wallet step is WalletConnect;
+  // there is no paste path); Fonbnk sell stays (no wallet
+  // connection). Noblocks is gone (BVN wall + a verify step that
+  // failed live). NoOnes is the NG BUY lead: an external P2P
+  // marketplace link-out, email-only starter sign-up, paste-address
+  // send-out — honestly labelled and UNBADGED (its ≈3–4% premium is
+  // not the cheapest measured; it leads on the address rule).
+  ok("NG lineup is NoOnes buy / Fonbnk sell", JSON.stringify(names("NG")) === JSON.stringify(["NoOnes"])
     && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk"]));
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
   ok("NG has no Paybis or Mercuryo", !names("NG").includes("Paybis") && !names("NG").includes("Mercuryo")
     && !names("NG", "sell").includes("Paybis") && !names("NG", "sell").includes("Mercuryo"));
   ok("NG buy flags the Fonbnk buy block", rampRoutesFor("NG", "buy", "bsc", "USDC").fonbnkBuyBlocked === true
     && rampRoutesFor("NG", "sell", "bsc", "USDC").fonbnkBuyBlocked === false);
+  const ngBuy = rampRoutesFor("NG", "buy", "bsc", "USDC").routes;
+  ok("NG NoOnes is the unbadged external lead", ngBuy.length === 1 && ngBuy[0].rank === 0
+    && ngBuy[0].url === "https://noones.app" && ngBuy[0].badge === false && ngBuy[0].external === true);
+  ok("NG NoOnes note is honest about what it is", ngBuy[0].note.includes("External marketplace")
+    && ngBuy[0].note.includes("no ID documents") && ngBuy[0].note.includes("no WalletConnect")
+    && ngBuy[0].note.includes("3–4% over the market rate"));
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
   ok("NG Fonbnk sell note is address-based, no ID", ngSell[0].note.includes("no ID check") && ngSell[0].url.startsWith("https://pay.fonbnk.com/"));
+
+  // The address-entry capability table is the standing buy gate:
+  // Fonbnk is the WalletConnect-only route; every listed buy route
+  // anywhere takes a pasted address. A future provider added to a
+  // plan without a caps entry — or flipped to "walletconnect" —
+  // fails here instead of silently reaching a buy sheet.
+  ok("address-entry caps are recorded truthfully", RAMP_ADDRESS_ENTRY["Fonbnk"] === "walletconnect"
+    && ["Mt Pelerin", "Paybis", "Mercuryo", "NoOnes"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste"));
+  ok("every planned provider has a caps entry", RAMP_COUNTRIES.every(c =>
+    RAMP_COUNTRY_PLAN[c.code].every(([n]) => typeof RAMP_ADDRESS_ENTRY[n] === "string")));
+  ok("no WalletConnect-only route on any buy sheet", RAMP_COUNTRIES.every(c =>
+    rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r => RAMP_ADDRESS_ENTRY[r.name] === "paste")));
+  ok("Fonbnk is on no buy sheet but keeps its sell sheets", RAMP_COUNTRIES.every(c =>
+    !rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"))
+    && ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
+      rampRoutesFor(code, "sell", "bsc", "USDC").routes.some(r => r.name === "Fonbnk")));
+  ok("NoOnes appears only as the NG buy lead", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
+    const has = rampRoutesFor(c.code, m, "bsc", "USDC").routes.some(r => r.name === "NoOnes");
+    return has === (c.code === "NG" && m === "buy");
+  })));
 
   // Kenya: Fonbnk sell-only since 7 Nov; Mercuryo is the buy fallback.
   ok("KE lineup", JSON.stringify(names("KE")) === JSON.stringify(["Mercuryo"])
@@ -193,9 +224,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("badge invariants hold everywhere", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDT");
     const b = routes.filter(r => r.badge);
-    // NG buy is the one honestly-empty sheet (7 Nov 2026).
-    const ngBuyEmpty = c.code === "NG" && m === "buy";
-    return (routes.length >= 1 || ngBuyEmpty) && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
+    return routes.length >= 1 && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
       && routes.every(r => r.url.startsWith("https://"));
   })));
   // Unmeasured Fonbnk corridors carry no badge (no price evidence).
