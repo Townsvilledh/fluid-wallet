@@ -2903,4 +2903,45 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && idxSrc.includes('<use href="#i-activity"/>') && idxSrc.includes('<use href="#i-more"/>'));
 }
 
+// ---------- UI rebuild P2: sheet system, Play, More, onboarding, motion ----------
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("ui-p2: sheets have the grab handle, entry/exit motion and a guarded animated close",
+    idxSrc.includes('class="grab"') && idxSrc.includes("@keyframes sheetin") && idxSrc.includes("@keyframes sheetout")
+    && idxSrc.includes("#sheetRoot.closing .sheet") && appSrc.includes('r.classList.add("closing")')
+    && appSrc.includes("sheetGen") && appSrc.includes('window.matchMedia("(prefers-reduced-motion: reduce)")'));
+  ok("ui-p2: confirm actions ride a sticky footer (intent blocks, swap, Lightning pay)",
+    idxSrc.includes('.sheet div[id$="Intent"]:not(.hidden)') && idxSrc.includes('.sheet #wConfirm:not(.hidden)')
+    && idxSrc.includes(".stickyfoot{ position:sticky")
+    && appSrc.includes('class="stickyfoot"><button class="btn" id="lnPayBtn"')
+    && appSrc.includes('class="stickyfoot"><button class="btn" id="lnPay"'));
+  ok("ui-p2: Play tab — SVG header, numbered explainer rows, plain notify label",
+    idxSrc.includes('class="playhead"') && idxSrc.includes('class="nnum">1') && idxSrc.includes('class="nnum">4')
+    && idxSrc.includes('id="notifyBtn">Notify me at launch</button>')
+    && !idxSrc.includes("⚽") && !idxSrc.includes("🔔"));
+  ok("ui-p2: More tab — grouped icon rows, About merged, danger zone last",
+    idxSrc.includes('class="mrow" id="refreshBtn"') && idxSrc.includes('class="mrow" id="backupBtn"')
+    && idxSrc.includes('class="mrow" id="showSeedBtn"') && idxSrc.includes('class="mrow" id="approvalsBtn"')
+    && idxSrc.includes('class="mrow" id="lockBtn"') && idxSrc.includes('class="mrow dangerrow" id="wipeBtn"')
+    && idxSrc.indexOf('id="wipeBtn"') > idxSrc.indexOf('id="aboutBtn"')
+    && idxSrc.includes('id="buildStamp"') && !idxSrc.includes("🤖 Agentic"));
+  ok("ui-p2: onboarding — gradient tile wordmark, one line, three chips, census gone",
+    idxSrc.includes('class="brandtile"') && idxSrc.includes('<use href="#i-drop-w"/>')
+    && idxSrc.includes('<span class="chip">Every blockchain</span>') && idxSrc.includes('<span class="chip">No KYC</span>')
+    && idxSrc.includes('<span class="chip">Keys never leave your phone</span>')
+    && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
+  ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
+    idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !anyBal')
+    && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
+  ok("ui-p2: app chrome emoji are gone — Lightning/agent/swap use the icon system",
+    !appSrc.includes("⚡ Lightning") && !appSrc.includes("🤖 Agent") && !appSrc.includes("⇅ Flip")
+    && !appSrc.includes("⬇ Received") && appSrc.includes('icon("bolt", "ic ic-brand")')
+    && appSrc.includes('icon("swap", "ic ic-sm")'));
+  ok("ui-p2: motion pass — hero cross-fade, tab fade kept, reduced motion kills sheet motion",
+    appSrc.includes('totalEl.classList.add("herofade")') && idxSrc.includes("@keyframes herofade")
+    && idxSrc.includes("#sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }"));
+}
+
 console.log(`\n${passed} checks passed`);

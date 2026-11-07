@@ -138,8 +138,20 @@ function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = t
 // While a transaction broadcasts, the sheet is NOT dismissible: the X,
 // the scrim and closeSheet() all refuse until the send settles.
 let sheetBusy = false;
-function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; const r = $("sheetRoot"); if (r) r.removeAttribute("data-busy"); $("sheetBody").innerHTML = html; show("sheetRoot"); }
-function closeSheet(force = false) { if (sheetBusy && !force) return; fireSheetCloseHook(); show("sheetRoot", false); }
+let sheetGen = 0; // guards the animated close against a same-tick reopen
+function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); }
+function closeSheet(force = false) {
+  if (sheetBusy && !force) return;
+  fireSheetCloseHook();
+  const r = $("sheetRoot");
+  if (!r || r.classList.contains("hidden")) { show("sheetRoot", false); return; }
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { show("sheetRoot", false); return; }
+  // Part 5: closing mirrors the entry (translateY + fade, ~190ms). A
+  // reopen inside the window bumps sheetGen and cancels the hide.
+  const gen = ++sheetGen;
+  r.classList.add("closing");
+  setTimeout(() => { if (sheetGen === gen) { show("sheetRoot", false); r.classList.remove("closing"); } }, 190);
+}
 $("sheetX").onclick = () => closeSheet(); $("scrim").onclick = () => closeSheet();
 /** Put a confirm button into / out of its broadcasting state:
  *  spinner + "Sending…", disabled, sheet locked (§4.8). */
@@ -668,7 +680,13 @@ function paintHeader() {
   const pill = $("netBtn");
   if (pill) pill.innerHTML = `${esc(viewDisplayName())} <svg class="ic ic-sm"><use href="#i-chev-d"/></svg>`;
   const totalEl = $("totalUsd");
-  if (totalEl) totalEl.textContent = usd(scopedTotal());
+  if (totalEl) {
+    const t = usd(scopedTotal());
+    if (totalEl.textContent !== t) { // Part 5: hero number cross-fades on change
+      totalEl.textContent = t;
+      totalEl.classList.remove("herofade"); void totalEl.offsetWidth; totalEl.classList.add("herofade");
+    }
+  }
   const sub = $("totalSub");
   if (sub) sub.textContent = viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`;
   const va = viewAddress();
@@ -984,6 +1002,16 @@ function paintAssets() {
     try { localStorage.setItem(SHOW_ZERO_LS, showZeroBalances ? "1" : "0"); } catch { /* best effort */ }
     paintAssets();
   };
+  // §4.13 home zero state: one compact card, All view only, and only
+  // once balances have actually loaded with nothing anywhere.
+  const hz = $("homeZero");
+  if (hz) {
+    const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal) > 0
+      || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
+        .some(a => a.some(b => Number(b.amount) > 0))
+      || cosmosRows.some(r => Number(r.amount) > 0);
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !anyBal && scopedTotal() === 0));
+  }
   const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
   const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
@@ -2762,7 +2790,7 @@ const lnSats = (msat) => `${(Number(msat || 0) / 1000).toLocaleString(undefined,
 $("lightningRow").onclick = () => openLightningPanel();
 
 async function openLightningPanel() {
-  openSheet(`<h3>⚡ Lightning</h3>
+  openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning</h3>
     <p class="tag">Starting your Lightning node… The first open downloads the node code (a few MB, once); after that it runs entirely on your device, from your own seed. Nobody custodies your sats.</p>
     <p class="msg" id="lnBootMsg"></p>`);
   try {
@@ -2787,9 +2815,9 @@ async function openLightningPanel() {
 }
 
 function lnEventLine(ev) {
-  if (ev.type === "payment_received") return `⬇ Received ${lnSats(ev.amountMsat)} (${esc(ev.kind || "bolt11")})`;
-  if (ev.type === "payment_sent") return "⬆ Payment sent ✓";
-  if (ev.type === "payment_failed") return "⬆ Payment failed — no funds moved";
+  if (ev.type === "payment_received") return `Received ${lnSats(ev.amountMsat)} (${esc(ev.kind || "bolt11")})`;
+  if (ev.type === "payment_sent") return "Payment sent ✓";
+  if (ev.type === "payment_failed") return "Payment failed — no funds moved";
   if (ev.type === "channel_ready") return "Channel is open and ready ✓";
   if (ev.type === "channel_pending") return "Channel funded, waiting for confirmations…";
   if (ev.type === "static_invoice_stored") return "Your offline-receive offer was registered with your holding peer ✓";
@@ -2803,7 +2831,7 @@ function paintLnPanel() {
   const chans = s.channels();
   const hist = s.history().slice(-8).reverse();
   const net = s.network;
-  openSheet(`<div id="lnPanel"><h3>⚡ Lightning — your own node</h3>
+  openSheet(`<div id="lnPanel"><h3>${icon("bolt", "ic ic-brand")} Lightning — your own node</h3>
     <p class="tag">Node <span class="mono">${esc(s.nodeId.slice(0, 16))}…</span> · network:
       <select id="lnNetSel">
         <option value="bitcoin" ${net === "bitcoin" ? "selected" : ""}>Bitcoin mainnet</option>
@@ -2815,7 +2843,7 @@ function paintLnPanel() {
     <h4>Pay</h4>
     <textarea id="lnTarget" rows="3" placeholder="lnbc… invoice, lno… offer, ₿name@domain, name@domain, or a Fluid name"></textarea>
     <input id="lnSatsIn" inputmode="numeric" placeholder="Sats (for offers / addresses / amountless invoices)">
-    <button class="btn" id="lnPayBtn">Pay with my node</button>
+    <div class="stickyfoot"><button class="btn" id="lnPayBtn">Pay with my node</button></div>
     <p class="msg err" id="lnPayMsg"></p>
     <h4>Receive</h4>
     <input id="lnRcvSats" inputmode="numeric" placeholder="Sats (optional for the offer)">
@@ -2844,7 +2872,7 @@ function paintLnPanel() {
     <button class="btn ghost" id="lnOpenBtn">Connect &amp; open channel</button>
     <p class="msg" id="lnChanMsg"></p>
     <div id="lnFundOut"></div>
-    ${hist.length ? `<h4>Recent payments</h4>${hist.map(h => `<p class="tag">${h.dir === "in" ? "⬇ +" : h.dir === "out" ? "⬆ −" : "⬆ failed "}${h.amountMsat ? lnSats(h.amountMsat) + " · " : ""}<span class="mono">${esc(String(h.paymentHash || "").slice(0, 12))}…</span></p>`).join("")}` : ""}
+    ${hist.length ? `<h4>Recent payments</h4>${hist.map(h => `<p class="tag">${h.dir === "in" ? "+" : h.dir === "out" ? "−" : "failed "}${h.amountMsat ? lnSats(h.amountMsat) + " · " : ""}<span class="mono">${esc(String(h.paymentHash || "").slice(0, 12))}…</span></p>`).join("")}` : ""}
     <h4>Fallback</h4>
     <p class="tag">Prefer an external Lightning wallet? <button class="btn ghost" id="lnFallbackBtn">Pay via WebLN / LNURL instead</button></p>
     </div>`);
@@ -3014,12 +3042,12 @@ function lnWatchFunding() {
 }
 
 function lnFallbackSheet(note) {
-  openSheet(`<h3>⚡ Lightning payment (fallback)</h3>
+  openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning payment (fallback)</h3>
     ${note ? `<p class="tag">${esc(note)}</p>` : ""}
     <p class="tag">Fluid never custodies Lightning funds. Paste an invoice — your own WebLN wallet (e.g. Alby) pays it.</p>
     <textarea id="lnInv" rows="3" placeholder="lnbc… invoice — or a Fluid name / Lightning address"></textarea>
     <input id="lnSats" inputmode="numeric" placeholder="Sats (only for name / Lightning address)">
-    <button class="btn" id="lnPay">Pay</button>
+    <div class="stickyfoot"><button class="btn" id="lnPay">Pay</button></div>
     <p class="msg err" id="lnMsg"></p>`);
   $("lnPay").onclick = async () => {
     try {
@@ -3071,7 +3099,7 @@ function rampSheet(mode) {
     // plan's price evidence, not from list position alone.
     const { country: c, routes, fonbnkNetworkMissing, fonbnkBuyBlocked, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
     $("rList").innerHTML =
-      `<p class="tag" style="margin-top:10px">⚡ Sorted by real measured price against the market rate (price checks 6–7 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
+      `<p class="tag" style="margin-top:10px">Sorted by real measured price against the market rate (price checks 6–7 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
       routes.map(r =>
         // No inline onclick (the CSP forbids inline handlers): the URL
         // rides in a data attribute and is opened by the bound listener.
@@ -3087,6 +3115,8 @@ function rampSheet(mode) {
 }
 $("actBuy").onclick = () => rampSheet("buy");
 $("actCash").onclick = () => rampSheet("sell");
+const hzBuy = $("homeBuy"); if (hzBuy) hzBuy.onclick = () => $("actBuy").click();
+const hzRcv = $("homeReceive"); if (hzRcv) hzRcv.onclick = () => $("actReceive").click();
 
 // ---------- swap (LI.FI routes: same-chain + cross-chain) ----------
 // Token pickers are searchable over the chain's FULL LI.FI token list
@@ -3205,7 +3235,7 @@ $("actSwap").onclick = () => {
       <div id="wFromList" style="max-height:240px;overflow:auto"></div>
     </div>
     <input id="wAmt" inputmode="decimal" placeholder="Amount">
-    <button class="btn ghost" id="wFlip">⇅ Flip</button>
+    <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
     <div style="display:flex;gap:8px">
       <select id="wToNet" style="flex:1.2">${netOpts(toKey0)}</select>
@@ -3895,7 +3925,7 @@ function askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday }) {
     const policyLine = price
       ? `✅ <b>Policy check passed</b> — value ≈ ${usd(usdAmt)}; caps $${a.policy.perTxCapUsd} per transfer and $${a.policy.dailyCapUsd} per day (this agent has spent ${usd(spentToday)} today).`
       : `⚠️ <b>Price unknown</b> — the dollar policy caps could not be checked for this transfer. Check the amount and destination extra carefully.`;
-    openSheet(`<h3>🤖 Agent transfer request</h3>
+    openSheet(`<h3>Agent transfer request</h3>
       <p class="tag">An agent is asking to spend from its own agent wallet. Nothing moves unless you tap Approve.</p>
       <p><b>Agent:</b> ${esc(a.name)} <span class="tag">(agent #${a.index})</span></p>
       <p><b>Send:</b> ${amt} ${esc(net.symbol)} on ${esc(net.name)}</p>
