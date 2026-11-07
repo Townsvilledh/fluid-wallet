@@ -259,16 +259,20 @@ ok("swap intent discloses fluid fee from quote numbers", (() => {
 })());
 ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmount: "1", fromSymbol: "BNB", fromNetKey: "bsc", toAmount: "100", toSymbol: "USDC", toNetKey: "bsc", toolName: "X", feeUsd: 0.1, durationSec: 30 }).includes("Fluid fee"));
 // LI.FI request construction: integrator always; fee param gated on collection being enabled
-ok("lifi collection gated off until portal registration", PLATFORM_FEE_COLLECTION_ENABLED === false);
-ok("lifi routes request carries integrator, no fee while gated", (() => {
+// (collection enabled 2026-11-07, after the "fluid-wallet" portal registration designated
+// the DripBot agent wallet as the Default EVM fee wallet)
+ok("lifi collection enabled after portal registration", PLATFORM_FEE_COLLECTION_ENABLED === true);
+ok("lifi routes request carries integrator and 0.005 fee by default", (() => {
   const r = buildLifiRoutesRequest({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: 1000n, fromAddress: "0xc", toAddress: "0xc" });
-  return r.options.integrator === LIFI_INTEGRATOR && LIFI_INTEGRATOR === "fluid-wallet" && !("fee" in r.options) && r.fromAmount === "1000";
+  return r.options.integrator === LIFI_INTEGRATOR && LIFI_INTEGRATOR === "fluid-wallet" && r.options.fee === PLATFORM_FEE_FRACTION && PLATFORM_FEE_FRACTION === 0.005 && r.fromAmount === "1000";
 })());
+ok("lifi routes request with collection explicitly off omits fee", !("fee" in buildLifiRoutesRequest({ fromChainId: 56, toChainId: 1, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false }).options));
 ok("lifi routes request with collection on carries 0.005", buildLifiRoutesRequest({ fromChainId: 56, toChainId: 1, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true }).options.fee === 0.005);
 ok("lifi quote params mirror the gating", (() => {
-  const off = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
+  const dflt = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
+  const off = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
   const on = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
-  return off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
+  return dflt.get("integrator") === "fluid-wallet" && dflt.get("fee") === "0.005" && off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
 })());
 // Settlement legs resolve by USERNAME through the names registry
 ok("fee legs are username-modelled", FEE_SPLIT.treasury.username === "ethuram" && FEE_SPLIT.treasury.share === 60 && FEE_SPLIT.dripbot.username === "dripbot" && FEE_SPLIT.dripbot.share === 40);

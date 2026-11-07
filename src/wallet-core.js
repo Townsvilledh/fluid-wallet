@@ -2803,15 +2803,17 @@ export function platformFeeApplies(kind) {
  *  pays out to the fee wallet CONFIGURED for the integrator in the
  *  LI.FI Partner Portal (portal.li.fi) — an integrator string with no
  *  portal account has no configured wallet to forward to. Fluid's
- *  "fluid-wallet" integrator is not registered yet, so collection
- *  stays OFF: quotes must never skim a fee nobody can claim. Flip to
- *  true only after the portal registration designates the DripBot
- *  agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) as the EVM fee
- *  wallet (Solana fees would go to the agent wallet's Solana address).
- *  The fee is still COMPUTED and DISCLOSED on every swap confirmation
+ *  "fluid-wallet" integrator WAS registered on 2026-11-07, with the
+ *  DripBot agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) designated
+ *  as the Default EVM fee wallet in the portal (fees forward to it
+ *  automatically; the Solana fee wallet is unset, so Solana fees are
+ *  not collected until one is added). Collection is therefore ON:
+ *  quote/route requests carry the `fee` parameter and LI.FI skims
+ *  PLATFORM_FEE_FRACTION of fromAmount to that portal wallet.
+ *  The fee is also COMPUTED and DISCLOSED on every swap confirmation
  *  (formatSwapIntent) from the same constant, so the price a user sees
- *  is the price charged the moment collection activates. */
-export const PLATFORM_FEE_COLLECTION_ENABLED = false;
+ *  is the price charged. */
+export const PLATFORM_FEE_COLLECTION_ENABLED = true;
 
 export const FEE_SPLIT = {
   currency: "BTC", rail: "lightning",
@@ -3581,8 +3583,9 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
 export const LIFI_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
 const LIFI_API = "https://li.quest/v1";
 /** Fluid's LI.FI integrator string (sent on every route/quote request).
- *  NOTE: it is not yet registered in the LI.FI Partner Portal, which is
- *  why fee collection is gated off — see PLATFORM_FEE_COLLECTION_ENABLED. */
+ *  Registered in the LI.FI Partner Portal on 2026-11-07 with the
+ *  DripBot agent wallet as the Default EVM fee wallet — see
+ *  PLATFORM_FEE_COLLECTION_ENABLED. */
 export const LIFI_INTEGRATOR = "fluid-wallet";
 /** Build the POST /v1/routes body. Pure and exported so tests can pin
  *  exactly what reaches LI.FI: the integrator string always; the `fee`
