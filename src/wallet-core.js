@@ -2636,7 +2636,11 @@ export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, den
 // mapping; only the repo (via signed GitHub commits/PRs) can publish one,
 // and a future version moves this to an on-chain registry.
 export const FLUID_DOMAIN = "fluid.is-a.dev";
-export const NAMES_REGISTRY_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
+export const NAMES_REGISTRY_URL = "https://fluidwallet.netlify.app/names.json";
+/** The same registry file on the GitHub Pages mirror — the fallback
+ *  when the primary host can't be reached (the two hosts serve the
+ *  same published names.json, so a fallback read is the same data). */
+export const NAMES_REGISTRY_FALLBACK_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
 export function validateFluidName(name) {
   return /^[a-z][a-z0-9_]{2,19}$/.test(name || "");
 }
@@ -2713,20 +2717,34 @@ export function sanitizeNameEntry(entry) {
   if (typeof entry.algo === "string" && isValidAlgorandAddress(entry.algo.trim())) out.algo = entry.algo.trim();
   return Object.keys(out).length ? out : null;
 }
+/** The one registry read both name lookups share: try the requested
+ *  URL, and — for the default registry only — fall back to the
+ *  GitHub Pages mirror when the fetch fails or the response is not
+ *  ok. A caller-supplied registry URL is fetched as-is (no surprise
+ *  second host). Returns the parsed registry, or null on failure. */
+async function fetchRegistryJson(registryUrl) {
+  const urls = registryUrl === NAMES_REGISTRY_URL
+    ? [registryUrl, NAMES_REGISTRY_FALLBACK_URL]
+    : [registryUrl];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (res && res.ok) return await res.json();
+    } catch { /* fall through to the next mirror */ }
+  }
+  return null;
+}
 export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
   const name = normalizeFluidName(input);
   if (!validateFluidName(name)) return null;
-  const res = await fetch(registryUrl, { cache: "no-store" });
-  if (!res.ok) return null;
-  const reg = await res.json();
+  const reg = await fetchRegistryJson(registryUrl);
+  if (!reg) return null;
   const entry = sanitizeNameEntry(reg[name]);
   return entry ? { name, ...entry } : null;
 }
 /** Fetch the whole name registry (null on any failure). */
 export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
-  const res = await fetch(registryUrl, { cache: "no-store" });
-  if (!res.ok) return null;
-  return res.json();
+  return fetchRegistryJson(registryUrl);
 }
 /** Reverse lookup: which registered name belongs to these addresses?
  *  EVM addresses compare case-insensitively (checksummed vs lowercase

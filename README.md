@@ -4,7 +4,7 @@
 
 Fluid is a global, open-source, **non-custodial** wallet and one-stop shop for blockchain: 15 EVM chains & L2s, Bitcoin, and Lightning from a single seed phrase, with global buy/cash-out routing — plus **OGO ERA**, the street-football game whose rewards (RAIN) and soulbound Companion live in this same wallet. No company accounts, no forms, no servers. If Fluid disappears tomorrow, your funds don't: your seed phrase works in any BIP39 wallet.
 
-**Live:** https://townsvilledh.github.io/fluid-wallet/
+**Live:** https://fluidwallet.netlify.app/
 
 ## Features
 

@@ -2388,6 +2388,53 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     sanitizeNameEntry(published.ethuram)?.algo === "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4");
 }
 
+// ---------- Fluid Names: registry host + mirror fallback ----------
+// The registry's primary home is the Netlify site; the GitHub Pages
+// mirror serves the same published names.json. When the primary
+// fetch fails (network error or a non-ok response), both registry
+// readers fall back to the mirror; a healthy primary is the only
+// fetch made, and a caller-supplied registry URL never falls back.
+{
+  const { NAMES_REGISTRY_URL, NAMES_REGISTRY_FALLBACK_URL, resolveFluidName, fetchNameRegistry } = await import("../src/wallet-core.js");
+  const EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const REG = { dripbot: { evm: EVM } };
+  ok("names-host: the primary registry URL is the Netlify site",
+    NAMES_REGISTRY_URL === "https://fluidwallet.netlify.app/names.json");
+  ok("names-host: the fallback registry URL is the GitHub Pages mirror",
+    NAMES_REGISTRY_FALLBACK_URL === "https://townsvilledh.github.io/fluid-wallet/names.json");
+  const realFetch = globalThis.fetch;
+  const withFetch = async (stub, fn) => {
+    const calls = [];
+    globalThis.fetch = async (url, opts) => { calls.push(String(url)); return stub(String(url), opts); };
+    try { return { result: await fn(), calls }; }
+    finally { globalThis.fetch = realFetch; }
+  };
+  const good = async () => ({ ok: true, json: async () => REG });
+  const boom = async () => { throw new Error("network down"); };
+  const notOk = async () => ({ ok: false, json: async () => ({}) });
+  let r = await withFetch(good, () => resolveFluidName("dripbot"));
+  ok("names-host: a healthy primary resolves without touching the mirror",
+    r.result?.evm === EVM && r.calls.length === 1 && r.calls[0] === NAMES_REGISTRY_URL);
+  r = await withFetch(async (url) => (url === NAMES_REGISTRY_URL ? boom() : good()), () => resolveFluidName("dripbot"));
+  ok("names-host: a failed primary fetch falls back to the mirror",
+    r.result?.evm === EVM && r.calls.length === 2 && r.calls[1] === NAMES_REGISTRY_FALLBACK_URL);
+  r = await withFetch(async (url) => (url === NAMES_REGISTRY_URL ? notOk() : good()), () => fetchNameRegistry());
+  ok("names-host: a non-ok primary response falls back to the mirror",
+    JSON.stringify(r.result) === JSON.stringify(REG) && r.calls.length === 2 && r.calls[1] === NAMES_REGISTRY_FALLBACK_URL);
+  r = await withFetch(boom, () => resolveFluidName("dripbot"));
+  ok("names-host: when both hosts fail, resolution is null",
+    r.result === null && r.calls.length === 2);
+  r = await withFetch(boom, () => fetchNameRegistry("https://example.com/names.json"));
+  ok("names-host: a caller-supplied registry URL never falls back",
+    r.result === null && r.calls.length === 1 && r.calls[0] === "https://example.com/names.json");
+  const html = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("names-host: the page canonical and social images point at the Netlify site",
+    html.includes('<link rel="canonical" href="https://fluidwallet.netlify.app/">')
+    && html.includes('<meta property="og:url" content="https://fluidwallet.netlify.app/">')
+    && html.includes('<meta property="og:image" content="https://fluidwallet.netlify.app/og-image.png">')
+    && html.includes('<meta name="twitter:image" content="https://fluidwallet.netlify.app/og-image.png">'));
+}
+
 // ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------
 // Ranking trusted LI.FI's own toAmountUSD: a route delivering half
 // the tokens could take the CHEAPEST badge by lying about its dollar
