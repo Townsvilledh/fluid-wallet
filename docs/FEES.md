@@ -71,11 +71,20 @@ the weekly follower drip and the OGO ERA player pools; see
    sentence — computed from the quote's actual amounts, never hidden
    in a spread. Plain sends/receives never carry it. Collection rides
    LI.FI's integrator fee into the DripBot agent wallet; LI.FI pays
-   integrator fees only to a wallet configured in its Partner Portal,
-   so collection activates once that one-time portal registration is
-   done (`PLATFORM_FEE_COLLECTION_ENABLED` in the wallet core gates
-   the parameter until then — the fee is computed and disclosed from
-   the same constant either way).
+   integrator fees only to a wallet configured in its Partner Portal.
+   That registration was completed on 2026-11-07 (integrator
+   `fluid-wallet`, DripBot agent wallet as Default EVM fee wallet) and
+   collection is ON (`PLATFORM_FEE_COLLECTION_ENABLED = true`). The
+   per-family audit (`SWAP_FEE_COVERAGE` in the wallet core, pinned
+   by tests) records the remaining gaps: EVM-sourced swaps collect
+   live; Solana-sourced swaps are executable and carry the fee, but
+   the portal's SVM fee wallet is unset (the DripBot wallet holds no
+   Solana address yet), so those fees have no configured destination;
+   Tron- and Sui-sourced routes carry the fee in every request but
+   cannot execute until those families' LI.FI step signers land.
+   Every other chain family (Bitcoin, Litecoin, Dogecoin, Bitcoin
+   Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
+   Stacks, Lightning) has no swap route at all — sends/receives only.
 
 ## What Fluid never does
 - No fee on plain sends/receives of your own money between your keys.

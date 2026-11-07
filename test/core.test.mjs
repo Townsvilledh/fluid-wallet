@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -273,6 +273,66 @@ ok("lifi quote params mirror the gating", (() => {
   const off = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
   const on = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
   return dflt.get("integrator") === "fluid-wallet" && dflt.get("fee") === "0.005" && off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
+})());
+// Per-route fee audit (2026-11-07): LI.FI is the only swap engine and the fee wiring is
+// chain-type-agnostic — every family LI.FI carries (EVM, SVM, TVM, MVM, UTXO) gets the
+// integrator + 0.005 fee attached by default on BOTH endpoints, and the explicit opt-out
+// drops the fee while keeping the integrator, whatever the chain type.
+ok("lifi fee attached for every chain type by default", (() => {
+  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
+  return ids.every(id => {
+    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
+    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
+    return r.options.integrator === "fluid-wallet" && r.options.fee === 0.005 && q.get("integrator") === "fluid-wallet" && q.get("fee") === "0.005";
+  });
+})());
+ok("lifi fee opt-out holds for every chain type", (() => {
+  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
+  return ids.every(id => {
+    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
+    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
+    return !("fee" in r.options) && r.options.integrator === "fluid-wallet" && q.get("fee") === null && q.get("integrator") === "fluid-wallet";
+  });
+})());
+// The swap universe is exactly the EVM networks + tron/solana/sui. Bitcoin (and every
+// other send-only family) is NOT swappable — pinned so adding a family to the swap
+// universe forces a fee-coverage review instead of silently shipping an unfeed route.
+ok("swap universe is evm + tron + solana + sui only", (() => {
+  const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
+  const famOk = ["tron", "solana", "sui"].every(k => swapChainOf(k) !== null);
+  const notSwappable = ["bitcoin", "litecoin", "dogecoin", "cosmoshub", "ton", "near", "xrpl", "stellar", "algorand", "aptos"].every(k => swapChainOf(k) === null);
+  return evmOk && famOk && notSwappable && BITCOIN_LIFI_CHAIN_ID === 20000000000001;
+})());
+// SWAP_FEE_COVERAGE is the audited per-family state: it names exactly the non-EVM swap
+// families plus the evm row, every row has the fee wired, and its executable flags agree
+// with swapRouteExecutable's real behaviour on synthetic routes.
+ok("swap fee coverage names every swap family", (() => {
+  const fams = SWAP_FEE_COVERAGE.map(r => r.family).sort();
+  return JSON.stringify(fams) === JSON.stringify(["evm", "solana", "sui", "tron"])
+    && SWAP_FEE_COVERAGE.every(r => r.provider === "LI.FI" && r.feeSupported === true && r.feeWired === true);
+})());
+ok("swap fee coverage: evm collecting into the dripbot agent wallet", (() => {
+  const evm = SWAP_FEE_COVERAGE.find(r => r.family === "evm");
+  return evm.executable === true && evm.collecting === true && evm.destination === FEE_SPLIT.dripbot.agentWallet.evm && evm.blocker === null;
+})());
+ok("swap fee coverage agrees with route executability", (() => {
+  const evmRoute = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56, data: "0x", value: "0" } }] };
+  const solRoute = { fromChainId: SOLANA_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
+  const trxRoute = { fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", data: "0x" } }] };
+  const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
+  const byFam = Object.fromEntries(SWAP_FEE_COVERAGE.map(r => [r.family, r.executable]));
+  return swapRouteExecutable(evmRoute).ok === byFam.evm && swapRouteExecutable(solRoute).ok === byFam.solana
+    && swapRouteExecutable(trxRoute).ok === byFam.tron && swapRouteExecutable(suiRoute).ok === byFam.sui;
+})());
+ok("swap fee coverage: solana executable but not collecting (portal svm wallet)", (() => {
+  const sol = SWAP_FEE_COVERAGE.find(r => r.family === "solana");
+  return sol.executable === true && sol.collecting === false && sol.destination === null && /SVM/.test(sol.blocker);
+})());
+// Disclosure is family-agnostic too: a Solana-sourced quote's confirm sentence carries
+// the same Fluid fee clause as an EVM one.
+ok("swap intent discloses fluid fee on a solana route", (() => {
+  const s = formatSwapIntent({ fromAmount: "2", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "150", toSymbol: "USDC", toNetKey: "base", toolName: "Jupiter", feeUsd: 0.05, durationSec: 60, platformFee: "0.01 SOL" });
+  return s.includes("Fluid fee (0.5%): 0.01 SOL") && s.includes("on Solana");
 })());
 // Settlement legs resolve by USERNAME through the names registry
 ok("fee legs are username-modelled", FEE_SPLIT.treasury.username === "ethuram" && FEE_SPLIT.treasury.share === 60 && FEE_SPLIT.dripbot.username === "dripbot" && FEE_SPLIT.dripbot.share === 40);

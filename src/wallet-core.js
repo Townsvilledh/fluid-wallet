@@ -2807,7 +2807,9 @@ export function platformFeeApplies(kind) {
  *  DripBot agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) designated
  *  as the Default EVM fee wallet in the portal (fees forward to it
  *  automatically; the Solana fee wallet is unset, so Solana fees are
- *  not collected until one is added). Collection is therefore ON:
+ *  not collected until one is added — the full per-family state,
+ *  including Tron and Sui, is pinned in SWAP_FEE_COVERAGE below).
+ *  Collection is therefore ON:
  *  quote/route requests carry the `fee` parameter and LI.FI skims
  *  PLATFORM_FEE_FRACTION of fromAmount to that portal wallet.
  *  The fee is also COMPUTED and DISCLOSED on every swap confirmation
@@ -3609,6 +3611,48 @@ export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress,
   if (includeFee) q.set("fee", String(PLATFORM_FEE_FRACTION));
   return q;
 }
+/** Per-source-family fee coverage for Fluid's ONE swap engine (LI.FI)
+ *  — the audited state of the standard fee, kept in code so a future
+ *  swap family cannot ship without declaring its row here (tests pin
+ *  this map against swapChainOf and swapRouteExecutable). The fee is
+ *  charged on the SOURCE chain's fromAmount, so the destination
+ *  family never changes collection; what varies per source family is
+ *  (a) whether Fluid can sign the route at all and (b) whether the
+ *  LI.FI portal has a fee wallet configured for that family's VM.
+ *  feeWired is true for every row because buildLifiRoutesRequest /
+ *  buildLifiQuoteParams attach integrator + fee uniformly, whatever
+ *  the chain type — wiring was never the gap; signing and portal
+ *  wallets are. Rows (audit 2026-11-07):
+ *  - evm: signable; portal Default EVM fee wallet set — collecting.
+ *  - solana: signable; LI.FI pays Solana fees directly to the
+ *    portal's SVM fee wallet, but that wallet is NOT set and the
+ *    DripBot agent wallet holds no Solana address yet — the fee is
+ *    requested on every Solana route and disclosed in the confirm
+ *    sentence, but has no configured destination to land in.
+ *  - tron: LI.FI supports partner fees on eligible Tron flows, but
+ *    Fluid cannot sign Tron-sourced steps yet (swapRouteExecutable
+ *    refuses them, route cards disabled), so no Tron swap executes
+ *    and no fee can arise. The fee is already attached to requests,
+ *    so the day the Tron step signer lands only a portal Tron fee
+ *    wallet (a DripBot Tron address) is missing.
+ *  - sui: LI.FI pays Sui fees directly to the configured wallet, but
+ *    Sui-sourced steps are unsignable here (payload shape unverified,
+ *    refused by swapRouteExecutable) — same shape as Tron.
+ *  Every other Fluid family (Bitcoin, Litecoin, Dogecoin, Bitcoin
+ *  Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
+ *  Stacks, Lightning) has NO swap route at all — swapChainOf returns
+ *  null and the swap sheet never offers them; they are sends/receives
+ *  only and fee-free by platformFeeApplies. */
+export const SWAP_FEE_COVERAGE = [
+  { family: "evm", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
+    destination: FEE_SPLIT.dripbot.agentWallet.evm, blocker: null },
+  { family: "solana", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: false,
+    destination: null, blocker: "LI.FI portal SVM (Solana) fee wallet is not set; the DripBot agent wallet holds EVM + BTC addresses only. Needed: the DripBot wallet's Solana address (derivable from its existing keystore seed with this file's solanaAddressFromPhrase) recorded in its descriptor and set as the portal's SVM fee wallet." },
+  { family: "tron", provider: "LI.FI", feeSupported: true, feeWired: true, executable: false, collecting: false,
+    destination: null, blocker: "Fluid cannot sign LI.FI steps sourced from Tron yet, so no Tron-sourced swap executes. When the Tron step signer lands: a DripBot Tron address (tronAddressFromPhrase on its keystore seed) must be set as the portal's Tron fee wallet." },
+  { family: "sui", provider: "LI.FI", feeSupported: true, feeWired: true, executable: false, collecting: false,
+    destination: null, blocker: "Fluid cannot sign LI.FI steps sourced from Sui yet (MVM payload shape unverified), so no Sui-sourced swap executes. When the Sui step signer lands: a DripBot Sui address (suiAddressFromPhrase on its keystore seed) must be set as the portal's Sui fee wallet." },
+];
 // Non-EVM families join the swap universe by their LI.FI chain id. Tron
 // (chainType TVM on LI.FI) is addressed by base58 T-addresses there —
 // its "native token" is the T-form of the zero address, NOT the EVM one.
@@ -3624,6 +3668,18 @@ export const SOLANA_SWAP_NATIVE_TOKEN = "11111111111111111111111111111111";
 // /v1/chains?chainTypes=…, which also fixed the chain id below).
 export const SUI_LIFI_CHAIN_ID = 9270000000000000;
 export const SUI_SWAP_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
+// Bitcoin (chainType UTXO on LI.FI) — LI.FI lists it (verified live
+// 2026-11-07 against /v1/chains?chainTypes=UTXO: id 20000000000001,
+// native token address "bitcoin", 8 decimals) and its docs count
+// Bitcoin among the chains whose integrator fees are paid directly to
+// the configured wallet. Fluid deliberately does NOT put Bitcoin in
+// the swap universe (swapChainOf returns null for it): a BTC-sourced
+// route's step payload is a PSBT-shaped blob Fluid has not inspected,
+// and Fluid never signs a payload shape it has not inspected. The id
+// is pinned here so the fee builders' coverage is testable across
+// every chain type LI.FI carries, and so a future BTC swap build
+// starts from the audited fee pattern, not from scratch.
+export const BITCOIN_LIFI_CHAIN_ID = 20000000000001;
 /** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
  *  a non-EVM family key ("tron", "solana", "sui"). Null when unknown. */
 export function swapChainOf(chainKey) {
