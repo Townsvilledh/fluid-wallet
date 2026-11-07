@@ -279,10 +279,12 @@ ok("lifi quote params mirror the gating", (() => {
 // attached BY DEFAULT only where the source chain's portal fee wallet
 // is registered (swapFeeCollectingChain): LI.FI rejects fee-bearing
 // requests on unconfigured chains outright (HTTP 400, code 1011 —
-// verified live 2026-11-07 for the Tron and Sui chain ids), so
-// attaching it there would break the swap, not just skip the fee.
+// verified live 2026-11-07 for the Tron and Sui chain ids before their
+// portal fee wallets were registered later that day), so attaching it
+// there would break the swap, not just skip the fee. Bitcoin has no
+// swap route at all, so it never collects.
 ok("lifi fee attached by default only on collecting chains", (() => {
-  const matrix = [[56, true], [SOLANA_LIFI_CHAIN_ID, true], [TRON_LIFI_CHAIN_ID, false], [SUI_LIFI_CHAIN_ID, false], [BITCOIN_LIFI_CHAIN_ID, false]];
+  const matrix = [[56, true], [SOLANA_LIFI_CHAIN_ID, true], [TRON_LIFI_CHAIN_ID, true], [SUI_LIFI_CHAIN_ID, true], [BITCOIN_LIFI_CHAIN_ID, false]];
   return matrix.every(([id, collecting]) => {
     const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
     const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
@@ -343,15 +345,15 @@ ok("swap fee coverage: solana collecting into the dripbot agent wallet", (() => 
   const sol = SWAP_FEE_COVERAGE.find(r => r.family === "solana");
   return sol.executable === true && sol.collecting === true && sol.destination === FEE_SPLIT.dripbot.agentWallet.solana && sol.blocker === null;
 })());
-ok("swap fee coverage: tron executable, destination recorded, portal registration pending", (() => {
+ok("swap fee coverage: tron collecting into the dripbot agent wallet", (() => {
   const t = SWAP_FEE_COVERAGE.find(r => r.family === "tron");
-  return t.executable === true && t.collecting === false && t.destination === FEE_SPLIT.dripbot.agentWallet.tron
-    && isValidTronAddress(t.destination) && /portal/i.test(t.blocker);
+  return t.executable === true && t.collecting === true && t.destination === FEE_SPLIT.dripbot.agentWallet.tron
+    && isValidTronAddress(t.destination) && t.blocker === null;
 })());
-ok("swap fee coverage: sui executable, destination recorded, portal registration pending", (() => {
+ok("swap fee coverage: sui collecting into the dripbot agent wallet", (() => {
   const s = SWAP_FEE_COVERAGE.find(r => r.family === "sui");
-  return s.executable === true && s.collecting === false && s.destination === FEE_SPLIT.dripbot.agentWallet.sui
-    && isValidSuiAddress(s.destination) && /portal/i.test(s.blocker);
+  return s.executable === true && s.collecting === true && s.destination === FEE_SPLIT.dripbot.agentWallet.sui
+    && isValidSuiAddress(s.destination) && s.blocker === null;
 })());
 // Disclosure is family-agnostic too: a Solana-sourced quote's confirm sentence carries
 // the same Fluid fee clause as an EVM one.

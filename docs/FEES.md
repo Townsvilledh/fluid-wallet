@@ -80,18 +80,17 @@ the weekly follower drip and the OGO ERA player pools; see
    live; Solana-sourced swaps collect too (the portal's Default SVM
    fee wallet was set to the DripBot agent wallet's Solana address on
    2026-11-07); Tron- and Sui-sourced swaps execute since their LI.FI
-   step signers landed on 2026-11-07, but cannot collect until the
-   agent wallet's Tron and Sui
-   addresses (derived from its keystore and recorded as the coverage
-   rows' destinations) are registered as the portal's Default Tron /
-   Sui fee wallets — an operator step in the partner portal. Until
-   then the fee is not attached to Tron/Sui requests at all: LI.FI
-   rejects fee-bearing requests on chains with no configured fee
-   wallet (HTTP 400, code 1011 — verified live on 2026-11-07), so
-   those swaps execute fee-free rather than failing. The request
-   builders gate the fee per source chain (`swapFeeCollectingChain`);
-   registering the wallets and flipping the two coverage rows to
-   collecting turns the fee on for those families in the same build.
+   step signers landed on 2026-11-07 and collect too: the agent
+   wallet's Tron and Sui addresses (derived from its keystore and
+   recorded as the coverage rows' destinations) were registered as
+   the portal's Default Tron / Sui fee wallets on 2026-11-07, and the
+   two coverage rows were flipped to collecting in the same build.
+   Before that registration the fee could not be attached to Tron/Sui
+   requests at all: LI.FI rejects fee-bearing requests on chains with
+   no configured fee wallet (HTTP 400, code 1011 — verified live on
+   2026-11-07), so those swaps executed fee-free rather than failing.
+   The request builders gate the fee per source chain
+   (`swapFeeCollectingChain`).
    Every other chain family (Bitcoin, Litecoin, Dogecoin, Bitcoin
    Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
    Stacks, Lightning) has no swap route at all — sends/receives only.

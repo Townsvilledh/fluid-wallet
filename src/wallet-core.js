@@ -2807,9 +2807,9 @@ export function platformFeeApplies(kind) {
  *  DripBot agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) designated
  *  as the Default EVM fee wallet in the portal (fees forward to it
  *  automatically; the portal's Default SVM fee wallet was set to the
- *  agent wallet's Solana address the same day; its Tron and Sui fee
- *  wallets are derived and recorded but not yet registered in the
- *  portal — and because LI.FI rejects fee-bearing requests on chains
+ *  agent wallet's Solana address the same day, and its Tron and Sui
+ *  fee wallets were registered as the portal defaults later the same
+ *  day too — and because LI.FI rejects fee-bearing requests on chains
  *  with no configured fee wallet (code 1011, verified live
  *  2026-11-07), the request builders attach the fee per source chain
  *  only where collection is actually configured
@@ -3692,10 +3692,10 @@ export const SWAP_FEE_COVERAGE = [
     destination: FEE_SPLIT.dripbot.agentWallet.evm, blocker: null },
   { family: "solana", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
     destination: FEE_SPLIT.dripbot.agentWallet.solana, blocker: null },
-  { family: "tron", provider: "LI.FI", feeSupported: true, feeWired: false, executable: true, collecting: false,
-    destination: FEE_SPLIT.dripbot.agentWallet.tron, blocker: "LI.FI portal Tron fee wallet is not registered yet: the destination (the DripBot agent wallet's Tron address, derived from its keystore 2026-11-07) must be set as the integration's Default Tron fee wallet in the partner portal — an operator step. Execution is live (executeTronSwapRoute, validated against a live quote 2026-11-07); until registration the fee is not attached to Tron requests at all, because LI.FI rejects fee-bearing requests on this chain (code 1011, verified live) — Tron swaps run fee-free meanwhile." },
-  { family: "sui", provider: "LI.FI", feeSupported: true, feeWired: false, executable: true, collecting: false,
-    destination: FEE_SPLIT.dripbot.agentWallet.sui, blocker: "LI.FI portal Sui fee wallet is not registered yet: the destination (the DripBot agent wallet's Sui address, derived from its keystore 2026-11-07) must be set as the integration's Default Sui fee wallet in the partner portal — an operator step. Execution is live (executeSuiSwapRoute, validated against a live quote 2026-11-07); until registration the fee is not attached to Sui requests at all, because LI.FI rejects fee-bearing requests on this chain (code 1011, verified live) — Sui swaps run fee-free meanwhile." },
+  { family: "tron", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
+    destination: FEE_SPLIT.dripbot.agentWallet.tron, blocker: null },
+  { family: "sui", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
+    destination: FEE_SPLIT.dripbot.agentWallet.sui, blocker: null },
 ];
 // Non-EVM families join the swap universe by their LI.FI chain id. Tron
 // (chainType TVM on LI.FI) is addressed by base58 T-addresses there —
