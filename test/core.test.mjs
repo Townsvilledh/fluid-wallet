@@ -2344,8 +2344,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const published = JSON.parse(readFileSync(new URL("../names.json", import.meta.url), "utf8"));
   ok("names-algo: the published registry carries dripbot's algo address, sanitised intact",
     sanitizeNameEntry(published.dripbot)?.algo === ALGO);
-  ok("names-algo: the published ethuram entry carries no algo field",
-    published.ethuram.algo === undefined);
+  ok("names-algo: the published registry carries ethuram's algo address, sanitised intact",
+    sanitizeNameEntry(published.ethuram)?.algo === "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4");
 }
 
 // ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------
