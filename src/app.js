@@ -371,11 +371,20 @@ $("notifyBtn").onclick = () => {
 };
 
 // ---------- gate ----------
+// Lock-screen recovery: a stored vault used to trap anyone who
+// forgot the password — the gate hid the create/import box (the only
+// import form) whenever a vault existed, and the lock screen offered
+// nothing but Unlock. Recovery needs no new flow: a confirmed detour
+// (see lockRestoreBtn) back to the SAME onboarding box, whose create
+// and import handlers remain the only paths that write the vault.
+let restoreMode = false;
 function refreshGate() {
   const hasVault = !!localStorage.getItem(VAULT_KEY);
+  if (wallet) restoreMode = false; // reaching the app ends the detour
   show("onboard", !wallet);
-  show("unlockBox", hasVault && !wallet);
-  show("createBox", !hasVault && !wallet);
+  show("unlockBox", hasVault && !wallet && !restoreMode);
+  show("createBox", (!hasVault || restoreMode) && !wallet);
+  show("restoreBackBtn", restoreMode && !wallet && hasVault);
   show("app", !!wallet);
   if (wallet) renderMain();
   // Wake-up deep link: a Lightning push notification lands on
@@ -3592,6 +3601,36 @@ $("unlockBtn").onclick = async () => {
   catch (e) { msg("onboardMsg", e.message); }
 };
 
+// ---------- lock-screen recovery ----------
+// The destructive step is not taken here: this only opens the door
+// to the existing create/import box (restoreMode), and only after
+// the user confirms — in writing, via the checkbox — that the
+// stored wallet will be replaced and its seed phrase is the only
+// way back to it. The replace itself happens inside the shared
+// createBtn/importBtn handlers above when they overwrite VAULT_KEY.
+$("lockRestoreBtn").onclick = () => {
+  openSheet(`<h3>Forgot your password?</h3>
+    <p class="tag">Fluid can't reset it — your seed phrase is the reset. Continuing takes you to the create / import screen, where importing a seed phrase (or creating a new wallet) <b>replaces the wallet currently stored on this device</b>.</p>
+    <p class="tag">The <b>only</b> way back to the wallet stored here now is <b>its own seed phrase</b>. If you don't have that seed phrase written down, stop: once replaced, that wallet is gone from this device for good. Funds on-chain are never deleted — only this device's copy.</p>
+    <label style="display:block;margin:12px 0"><input type="checkbox" id="restoreCheck" style="width:auto"> I understand restoring replaces the wallet stored on this device, and its seed phrase is the only way back to it.</label>
+    <button class="btn" id="restoreGo" style="background:#b3261e">Replace wallet &amp; continue</button>
+    <button class="btn ghost" id="restoreCancel">Keep my wallet</button>`);
+  $("restoreCancel").onclick = () => closeSheet();
+  $("restoreGo").onclick = () => {
+    if (!$("restoreCheck").checked) return showSheetError("Tick the box confirming you understand this replaces the wallet stored on this device.");
+    restoreMode = true;
+    closeSheet();
+    refreshGate();
+  };
+};
+$("restoreBackBtn").onclick = () => {
+  // Backing out abandons the detour; never leave a typed seed phrase
+  // or password sitting in the hidden form.
+  restoreMode = false;
+  for (const id of ["importPhrase", "createPw", "createPw2"]) { const el = $(id); if (el) el.value = ""; }
+  refreshGate();
+};
+
 // ---------- Fluid name: owned state + claim ----------
 // The name card has two states. OWNED: the wallet has a name (claimed on
 // this device, or adopted from the public registry by reverse lookup) —
@@ -3695,7 +3734,7 @@ renderNameSection();
 
 // ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
-function lockWallet() { wallet = null; pendingSend = null; nameAdoptTried = false; msg("onboardMsg", ""); refreshGate(); }
+function lockWallet() { wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; msg("onboardMsg", ""); refreshGate(); }
 $("lockBtn").onclick = lockWallet;
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
 if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;

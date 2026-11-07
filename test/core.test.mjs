@@ -3107,4 +3107,56 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && nameSlice.includes("publish its entry so other Fluid wallets can resolve it"));
 }
 
+// ---------- lock-screen recovery 2026-11-07 ----------
+// A stored vault trapped anyone who forgot the password: the gate
+// hid the create/import box whenever a vault existed, so the only
+// import form in the app was unreachable and the lock screen offered
+// nothing but Unlock. The fix is a confirmed detour (restoreMode)
+// back to the SAME onboarding box — no parallel import flow.
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+
+  // (a) The lock screen itself carries the recovery entry point, and
+  // the create/import box carries the way back to unlock.
+  const unlockAt = idxSrc.indexOf('id="unlockBox"');
+  const restoreBtnAt = idxSrc.indexOf('id="lockRestoreBtn"');
+  const createAt = idxSrc.indexOf('id="createBox"');
+  ok("lockfix: lock screen offers restore-from-seed inside the unlock box",
+    unlockAt !== -1 && restoreBtnAt > unlockAt && restoreBtnAt < createAt
+    && idxSrc.includes("Forgot password? Restore from seed phrase"));
+  ok("lockfix: create/import box carries a back-to-unlock affordance",
+    idxSrc.includes('id="restoreBackBtn"'));
+
+  // (b) The route is the shared gate + the existing import handler:
+  // restoreMode only re-routes which box the gate shows; the recovery
+  // handler itself never touches the vault or the import machinery.
+  const gateAt = appSrc.indexOf("function refreshGate()");
+  const gateSlice = appSrc.slice(gateAt, gateAt + 800);
+  ok("lockfix: gate routes restore mode to the existing create/import box",
+    gateSlice.includes('show("unlockBox", hasVault && !wallet && !restoreMode)')
+    && gateSlice.includes('show("createBox", (!hasVault || restoreMode) && !wallet)')
+    && gateSlice.includes('show("restoreBackBtn", restoreMode && !wallet && hasVault)'));
+  ok("lockfix: restore mode ends on unlock and on lock — no stale detour",
+    gateSlice.includes("if (wallet) restoreMode = false;")
+    && appSrc.slice(appSrc.indexOf("function lockWallet()"), appSrc.indexOf("function lockWallet()") + 220).includes("restoreMode = false;"));
+  const restoreAt = appSrc.indexOf('$("lockRestoreBtn").onclick');
+  const restoreSlice = appSrc.slice(restoreAt, restoreAt + 2600);
+  ok("lockfix: recovery handler routes through the shared gate only",
+    restoreSlice.includes("restoreMode = true;") && restoreSlice.includes("refreshGate();")
+    && !restoreSlice.includes("importVault(") && !restoreSlice.includes("setItem(VAULT_KEY"));
+  ok("lockfix: create + import remain the only vault-writing paths",
+    (appSrc.match(/localStorage\.setItem\(VAULT_KEY, v\.keystore\)/g) || []).length === 2);
+
+  // (c) The destructive replace is confirmed before the flow opens:
+  // warning copy (replaces the stored wallet; its seed phrase is the
+  // only way back) plus a checkbox the continue button enforces.
+  ok("lockfix: replace warning + seed-only-way-back copy precede the flow",
+    restoreSlice.includes("replaces the wallet currently stored on this device")
+    && restoreSlice.includes("its own seed phrase") && restoreSlice.includes('id="restoreCheck"')
+    && restoreSlice.includes("I understand restoring replaces the wallet stored on this device"));
+  ok("lockfix: continuing requires the confirmation checkbox",
+    restoreSlice.includes('if (!$("restoreCheck").checked) return showSheetError('));
+}
+
 console.log(`\n${passed} checks passed`);

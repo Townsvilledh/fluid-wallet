@@ -244,7 +244,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="a02a2e647b"></head>
+<meta name="fluid-build" content="0009aecb67"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -295,9 +295,11 @@
       <h3 style="margin-top:0">Welcome back</h3>
       <input id="unlockPw" type="password" placeholder="Wallet password" autocomplete="current-password">
       <button class="btn" id="unlockBtn">Unlock Fluid</button>
+      <button class="btn ghost" id="lockRestoreBtn" style="margin-top:8px">Forgot password? Restore from seed phrase</button>
     </div>
 
     <div class="card" id="createBox">
+      <button class="btn ghost hidden" id="restoreBackBtn" style="margin-bottom:10px">← Back to unlock</button>
       <h3 style="margin-top:0">Create or import</h3>
       <input id="createName" placeholder="Pick your Fluid username" autocapitalize="none">
       <p class="tag" style="margin:2px 0 8px">Your name on every chain: <span class="mono" id="createNamePreview">you.fluid.is-a.dev</span> — people send to your name, not a long address. Claimed when your wallet is created; first come, first served.</p>
@@ -499,6 +501,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=a02a2e647b"></script>
+<script src="app.bundle.js?v=0009aecb67"></script>
 </body>
 </html>
