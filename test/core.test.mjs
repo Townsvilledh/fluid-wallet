@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -274,16 +274,29 @@ ok("lifi quote params mirror the gating", (() => {
   const on = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
   return dflt.get("integrator") === "fluid-wallet" && dflt.get("fee") === "0.005" && off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
 })());
-// Per-route fee audit (2026-11-07): LI.FI is the only swap engine and the fee wiring is
-// chain-type-agnostic — every family LI.FI carries (EVM, SVM, TVM, MVM, UTXO) gets the
-// integrator + 0.005 fee attached by default on BOTH endpoints, and the explicit opt-out
-// drops the fee while keeping the integrator, whatever the chain type.
-ok("lifi fee attached for every chain type by default", (() => {
-  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
-  return ids.every(id => {
+// Per-route fee audit (2026-11-07): LI.FI is the only swap engine. The
+// integrator is attached for every chain type, but the 0.005 fee is
+// attached BY DEFAULT only where the source chain's portal fee wallet
+// is registered (swapFeeCollectingChain): LI.FI rejects fee-bearing
+// requests on unconfigured chains outright (HTTP 400, code 1011 —
+// verified live 2026-11-07 for the Tron and Sui chain ids), so
+// attaching it there would break the swap, not just skip the fee.
+ok("lifi fee attached by default only on collecting chains", (() => {
+  const matrix = [[56, true], [SOLANA_LIFI_CHAIN_ID, true], [TRON_LIFI_CHAIN_ID, false], [SUI_LIFI_CHAIN_ID, false], [BITCOIN_LIFI_CHAIN_ID, false]];
+  return matrix.every(([id, collecting]) => {
     const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
     const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
-    return r.options.integrator === "fluid-wallet" && r.options.fee === 0.005 && q.get("integrator") === "fluid-wallet" && q.get("fee") === "0.005";
+    return swapFeeCollectingChain(id) === collecting
+      && r.options.integrator === "fluid-wallet" && (collecting ? r.options.fee === 0.005 : !("fee" in r.options))
+      && q.get("integrator") === "fluid-wallet" && (collecting ? q.get("fee") === "0.005" : q.get("fee") === null);
+  });
+})());
+ok("lifi fee explicit include still attaches on any chain type", (() => {
+  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
+  return ids.every(id => {
+    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
+    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
+    return r.options.fee === 0.005 && q.get("fee") === "0.005";
   });
 })());
 ok("lifi fee opt-out holds for every chain type", (() => {
@@ -304,12 +317,14 @@ ok("swap universe is evm + tron + solana + sui only", (() => {
   return evmOk && famOk && notSwappable && BITCOIN_LIFI_CHAIN_ID === 20000000000001;
 })());
 // SWAP_FEE_COVERAGE is the audited per-family state: it names exactly the non-EVM swap
-// families plus the evm row, every row has the fee wired, and its executable flags agree
-// with swapRouteExecutable's real behaviour on synthetic routes.
+// families plus the evm row, and feeWired mirrors collecting on every row — the request
+// builders attach the fee exactly where a portal fee wallet is configured to receive
+// it (LI.FI rejects fee-bearing requests elsewhere, code 1011). Its executable flags
+// agree with swapRouteExecutable's real behaviour on synthetic routes.
 ok("swap fee coverage names every swap family", (() => {
   const fams = SWAP_FEE_COVERAGE.map(r => r.family).sort();
   return JSON.stringify(fams) === JSON.stringify(["evm", "solana", "sui", "tron"])
-    && SWAP_FEE_COVERAGE.every(r => r.provider === "LI.FI" && r.feeSupported === true && r.feeWired === true);
+    && SWAP_FEE_COVERAGE.every(r => r.provider === "LI.FI" && r.feeSupported === true && r.feeWired === r.collecting);
 })());
 ok("swap fee coverage: evm collecting into the dripbot agent wallet", (() => {
   const evm = SWAP_FEE_COVERAGE.find(r => r.family === "evm");
@@ -318,21 +333,39 @@ ok("swap fee coverage: evm collecting into the dripbot agent wallet", (() => {
 ok("swap fee coverage agrees with route executability", (() => {
   const evmRoute = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56, data: "0x", value: "0" } }] };
   const solRoute = { fromChainId: SOLANA_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
-  const trxRoute = { fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", data: "0x" } }] };
+  const trxRoute = { fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "TXYZ", data: "0xabcd", customData: { contractType: "TriggerSmartContract", tronTransaction: { raw_data_hex: "abcd", txID: "ef01" } } } }] };
   const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
   const byFam = Object.fromEntries(SWAP_FEE_COVERAGE.map(r => [r.family, r.executable]));
   return swapRouteExecutable(evmRoute).ok === byFam.evm && swapRouteExecutable(solRoute).ok === byFam.solana
     && swapRouteExecutable(trxRoute).ok === byFam.tron && swapRouteExecutable(suiRoute).ok === byFam.sui;
 })());
-ok("swap fee coverage: solana executable but not collecting (portal svm wallet)", (() => {
+ok("swap fee coverage: solana collecting into the dripbot agent wallet", (() => {
   const sol = SWAP_FEE_COVERAGE.find(r => r.family === "solana");
-  return sol.executable === true && sol.collecting === false && sol.destination === null && /SVM/.test(sol.blocker);
+  return sol.executable === true && sol.collecting === true && sol.destination === FEE_SPLIT.dripbot.agentWallet.solana && sol.blocker === null;
+})());
+ok("swap fee coverage: tron executable, destination recorded, portal registration pending", (() => {
+  const t = SWAP_FEE_COVERAGE.find(r => r.family === "tron");
+  return t.executable === true && t.collecting === false && t.destination === FEE_SPLIT.dripbot.agentWallet.tron
+    && isValidTronAddress(t.destination) && /portal/i.test(t.blocker);
+})());
+ok("swap fee coverage: sui executable, destination recorded, portal registration pending", (() => {
+  const s = SWAP_FEE_COVERAGE.find(r => r.family === "sui");
+  return s.executable === true && s.collecting === false && s.destination === FEE_SPLIT.dripbot.agentWallet.sui
+    && isValidSuiAddress(s.destination) && /portal/i.test(s.blocker);
 })());
 // Disclosure is family-agnostic too: a Solana-sourced quote's confirm sentence carries
 // the same Fluid fee clause as an EVM one.
 ok("swap intent discloses fluid fee on a solana route", (() => {
   const s = formatSwapIntent({ fromAmount: "2", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "150", toSymbol: "USDC", toNetKey: "base", toolName: "Jupiter", feeUsd: 0.05, durationSec: 60, platformFee: "0.01 SOL" });
   return s.includes("Fluid fee (0.5%): 0.01 SOL") && s.includes("on Solana");
+})());
+ok("swap intent discloses fluid fee on a tron route", (() => {
+  const s = formatSwapIntent({ fromAmount: "100", fromSymbol: "TRX", fromNetKey: "tron", toAmount: "9.10", toSymbol: "BNB", toNetKey: "bsc", toolName: "Symbiosis", feeUsd: 0.40, durationSec: 120, platformFee: "0.5 TRX" });
+  return s.includes("Fluid fee (0.5%): 0.5 TRX") && s.includes("on Tron");
+})());
+ok("swap intent discloses fluid fee on a sui route", (() => {
+  const s = formatSwapIntent({ fromAmount: "10", fromSymbol: "SUI", fromNetKey: "sui", toAmount: "9.40", toSymbol: "BNB", toNetKey: "bsc", toolName: "Relay", feeUsd: 0.05, durationSec: 120, platformFee: "0.05 SUI" });
+  return s.includes("Fluid fee (0.5%): 0.05 SUI") && s.includes("on Sui");
 })());
 // Settlement legs resolve by USERNAME through the names registry
 ok("fee legs are username-modelled", FEE_SPLIT.treasury.username === "ethuram" && FEE_SPLIT.treasury.share === 60 && FEE_SPLIT.dripbot.username === "dripbot" && FEE_SPLIT.dripbot.share === 40);
@@ -527,8 +560,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("tron: token constants are the canonical contracts", TRON_TOKENS[0].address === "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" && TRON_TOKENS[1].address === "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8" && TRON_TOKENS.every(t => t.decimals === 6));
   ok("tron: LI.FI chain id and native token", TRON_LIFI_CHAIN_ID === 728126428 && TRON_SWAP_NATIVE_TOKEN === "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"
     && swapChainOf("tron").chainId === 728126428 && swapChainOf("bsc").chainId === 56 && swapChainOf("nope") === null);
-  const tronRoute = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", chainId: 728126428 } }] };
-  ok("tron: swap routes sourced from Tron are not executable yet", swapRouteExecutable(tronRoute).ok === false && /can't sign/.test(swapRouteExecutable(tronRoute).reason));
+  const tronRoute = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", data: "0xabcd", customData: { contractType: "TriggerSmartContract", tronTransaction: { raw_data_hex: "abcd", txID: "ef01" } } } }] };
+  ok("tron: swap routes sourced from Tron are executable (TVM signer)", (() => {
+    const r = swapRouteExecutable(tronRoute);
+    return r.ok === true && r.tvm === true && r.steps.length === 1;
+  })());
+  const tronBare = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", data: "0x" } }] };
+  ok("tron: swap route without the verified payload shape is refused", swapRouteExecutable(tronBare).ok === false && /no signable transaction/.test(swapRouteExecutable(tronBare).reason));
 }
 
 // 26. Address-poisoning lookalike detection: same first 4 + last 4 hex
@@ -799,8 +837,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && SUI_SWAP_NATIVE_TOKEN === "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
     && swapChainOf("sui").chainId === 9270000000000000 && swapChainOf("sui").name === "Sui");
   const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus", transactionRequest: { data: "AAAA" } }] };
-  ok("sui: swap routes sourced from Sui are listed but not executable yet",
-    swapRouteExecutable(suiRoute).ok === false && /Sui/.test(swapRouteExecutable(suiRoute).reason) && /can't sign/.test(swapRouteExecutable(suiRoute).reason));
+  ok("sui: swap routes sourced from Sui are executable (MVM signer)",
+    swapRouteExecutable(suiRoute).ok === true && swapRouteExecutable(suiRoute).mvm === true && swapRouteExecutable(suiRoute).steps.length === 1);
+  const suiBare = { fromChainId: SUI_LIFI_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus" }] };
+  ok("sui: swap route without a transaction payload is refused",
+    swapRouteExecutable(suiBare).ok === false && /no signable transaction/.test(swapRouteExecutable(suiBare).reason));
   const intoSui = { fromChainId: 56, toChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
   ok("sui: routes INTO Sui from an EVM chain stay executable", swapRouteExecutable(intoSui).ok === true && swapRouteExecutable(intoSui).steps.length === 1);
 }
@@ -1881,6 +1922,209 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("rt-f02: inspection runs before signing on both tx shapes",
     coreSrc.indexOf("assertSolanaStepSafe(vtx.message.compiledInstructions") < coreSrc.indexOf("vtx.sign([kp])")
     && coreSrc.indexOf("assertSolanaStepSafe(tx.instructions") < coreSrc.indexOf("tx.partialSign(kp)"));
+}
+
+// ---------- red-team F-04: Tron swap step payload inspection ----------
+// A TVM step signs sha256(raw_data): the inspection decodes the
+// protobuf bytes themselves and refuses anything that is not exactly
+// the quoted swap — a plain TRC-20 transfer dressed as a step, a txID
+// that does not hash to the bytes, a step spending from another
+// account, value above the quote, or a fee_limit that could burn the
+// wallet's TRX. The decoder is pinned against a REAL unsigned
+// transaction built by TronGrid during the 2026-11-07 build (a USDT
+// transfer from the public BIP39 test-vector account — construction
+// only, no funds ever moved).
+{
+  const { tronSwapSteps, decodeTronRawData, checkTronSwapStepBounds } = await import("../src/wallet-core.js");
+  const OWNER = "TJ3vimbteHtgwxEvuHnbxxnSM99qQGQ5Ri"; // BIP39 "legal winner…" test vector
+  const USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+  const FIXTURE_HEX = "0a0291442208924317d58505c0aa40a894cdaa9b345aae01081f12a9010a31747970652e676f6f676c65617069732e636f6d2f70726f746f636f6c2e54726967676572536d617274436f6e747261637412740a154158a57ed9d8d624cbd12e2c467d34787555bb1b25121541a614f803b6fd780986a42c78ec9c7f77e6ded13c2244a9059cbb000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000f424070bcd2c9aa9b34900180c2d72f";
+  const FIXTURE_TXID = "42f4519ade6e7d5d9e87b4170467508a4732535327541695db321b1421fefdfe";
+  const dec = decodeTronRawData(FIXTURE_HEX);
+  ok("rt-f04: decoder reads a genuine TronGrid transaction", dec.contracts.length === 1 && dec.contracts[0].type === 31
+    && dec.contracts[0].trigger.ownerAddress === tronAddressToHex(OWNER)
+    && dec.contracts[0].trigger.contractAddress === tronAddressToHex(USDT)
+    && dec.contracts[0].trigger.callValue === 0n && dec.feeLimit === 100000000n
+    && dec.contracts[0].trigger.data.startsWith("a9059cbb"));
+  ok("rt-f04: fixture txID is sha256 of the raw bytes", ethers.sha256("0x" + FIXTURE_HEX).slice(2) === FIXTURE_TXID);
+  const fixtureStep = {
+    action: { fromToken: { address: USDT, symbol: "USDT", decimals: 6 }, fromAmount: "1000000" },
+    estimate: { gasCosts: [{ amount: "20000000" }] },
+    transactionRequest: { to: USDT, value: "0x0", gasLimit: "0x5f5e100", data: "0x" + FIXTURE_HEX,
+      customData: { contractType: "TriggerSmartContract", tronTransaction: { txID: FIXTURE_TXID, raw_data_hex: FIXTURE_HEX } } },
+  };
+  ok("rt-f04: tron steps are picked by the verified payload shape", tronSwapSteps({ fromChainId: TRON_LIFI_CHAIN_ID, steps: [fixtureStep] }).length === 1
+    && tronSwapSteps({ fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "0x" } }] }).length === 0);
+  ok("rt-f04: a plain TRC-20 transfer dressed as a step is refused",
+    !checkTronSwapStepBounds({ fromChainId: TRON_LIFI_CHAIN_ID }, fixtureStep, OWNER).ok
+    && /token being sold/.test(checkTronSwapStepBounds({ fromChainId: TRON_LIFI_CHAIN_ID }, fixtureStep, OWNER).reason));
+  // Synthetic honest payloads, assembled with a minimal protobuf writer
+  // (the decoder's inverse).
+  const pv = (n) => { const out = []; let v = BigInt(n); do { let b = Number(v & 0x7fn); v >>= 7n; if (v) b |= 0x80; out.push(b); } while (v); return out; };
+  const pfV = (f, n) => [...pv(f * 8), ...pv(n)];
+  const pfB = (f, bytes) => [...pv(f * 8 + 2), ...pv(bytes.length), ...bytes];
+  const hb = (h) => [...Buffer.from(h, "hex")];
+  const buildRaw = ({ ownerHex, contractHex, callValue = 0n, dataHex = "38ed1739" + "00".repeat(32), feeLimit = 100_000_000n }) => {
+    const tsc = [...pfB(1, hb(ownerHex)), ...pfB(2, hb(contractHex)), ...(callValue > 0n ? pfV(3, callValue) : []), ...pfB(4, hb(dataHex))];
+    const any = [...pfB(1, [...Buffer.from("type.googleapis.com/protocol.TriggerSmartContract")]), ...pfB(2, tsc)];
+    const contract = [...pfV(1, 31), ...pfB(2, any)];
+    const now = Date.now();
+    return Buffer.from([...pfB(11, contract), ...pfV(14, now), ...pfV(8, now + 600_000), ...pfV(18, feeLimit)]).toString("hex");
+  };
+  const ROUTER = tronAddressFromHex("41" + "22".repeat(20));
+  const ownerHex = tronAddressToHex(OWNER), routerHex = tronAddressToHex(ROUTER);
+  const mkStep = (rawHex, over = {}) => ({
+    action: { fromToken: { address: USDT, symbol: "USDT", decimals: 6 }, fromAmount: "1000000" },
+    estimate: { gasCosts: [{ amount: "20000000" }], approvalAddress: ROUTER },
+    transactionRequest: { to: ROUTER, value: "0x0", gasLimit: "0x5f5e100", data: "0x" + rawHex,
+      customData: { contractType: "TriggerSmartContract", tronTransaction: { txID: ethers.sha256("0x" + rawHex).slice(2), raw_data_hex: rawHex } } },
+    ...over,
+  });
+  const routeT = { fromChainId: TRON_LIFI_CHAIN_ID };
+  const goodRaw = buildRaw({ ownerHex, contractHex: routerHex });
+  ok("rt-f04: an honest router step passes inspection", checkTronSwapStepBounds(routeT, mkStep(goodRaw), OWNER).ok);
+  const badId = mkStep(goodRaw); badId.transactionRequest.customData.tronTransaction.txID = "00".repeat(32);
+  ok("rt-f04: a txID that does not hash to the bytes is refused", !checkTronSwapStepBounds(routeT, badId, OWNER).ok
+    && /does not match its contents/.test(checkTronSwapStepBounds(routeT, badId, OWNER).reason));
+  const badData = mkStep(goodRaw); badData.transactionRequest.data = "0xdeadbeef";
+  ok("rt-f04: two disagreeing transaction forms are refused", !checkTronSwapStepBounds(routeT, badData, OWNER).ok);
+  ok("rt-f04: a step spending from another account is refused",
+    !checkTronSwapStepBounds(routeT, mkStep(buildRaw({ ownerHex: "41" + "33".repeat(20), contractHex: routerHex })), OWNER).ok);
+  const bigFeeRaw = buildRaw({ ownerHex, contractHex: routerHex, feeLimit: 900_000_000n });
+  const bigFee = mkStep(bigFeeRaw); bigFee.transactionRequest.gasLimit = "0x35a4e900";
+  ok("rt-f04: a fee_limit far above the step's own estimate is refused", !checkTronSwapStepBounds(routeT, bigFee, OWNER).ok
+    && /fee limit/.test(checkTronSwapStepBounds(routeT, bigFee, OWNER).reason));
+  const nativeOver = mkStep(buildRaw({ ownerHex, contractHex: routerHex, callValue: 60_000_000n }), {
+    action: { fromToken: { address: TRON_SWAP_NATIVE_TOKEN, symbol: "TRX", decimals: 6 }, fromAmount: "50000000" },
+  });
+  nativeOver.transactionRequest.value = "0x3938700";
+  ok("rt-f04: a native step above the quoted amount is refused", !checkTronSwapStepBounds(routeT, nativeOver, OWNER).ok);
+  const nativeOk = mkStep(buildRaw({ ownerHex, contractHex: routerHex, callValue: 50_000_000n }), {
+    action: { fromToken: { address: TRON_SWAP_NATIVE_TOKEN, symbol: "TRX", decimals: 6 }, fromAmount: "50000000" },
+    estimate: { gasCosts: [{ amount: "20000000" }] },
+  });
+  nativeOk.transactionRequest.value = "0x2faf080";
+  ok("rt-f04: an honest native step passes inspection", checkTronSwapStepBounds(routeT, nativeOk, OWNER).ok);
+  const badApproval = mkStep(goodRaw); badApproval.estimate.approvalAddress = USDT;
+  ok("rt-f04: an approval addressed to the token contract is refused", !checkTronSwapStepBounds(routeT, badApproval, OWNER).ok);
+  const thirdParty = mkStep(goodRaw); thirdParty.estimate.approvalAddress = tronAddressFromHex("41" + "44".repeat(20));
+  ok("rt-f04: an approval addressed to a third-party spender is refused", !checkTronSwapStepBounds(routeT, thirdParty, OWNER).ok
+    && /unexpected spender/.test(checkTronSwapStepBounds(routeT, thirdParty, OWNER).reason));
+  const coreSrc2 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("rt-f04: bounds inspection runs before approval and signing",
+    coreSrc2.indexOf("checkTronSwapStepBounds(route, step, owner)") < coreSrc2.indexOf("signTronTxId(wallet, tt.txID)")
+    && coreSrc2.indexOf("checkTronSwapStepBounds(route, step, owner)") < coreSrc2.indexOf("tronTriggerAndBroadcast(wallet, {\n          contractAddress: fromToken.address"));
+}
+
+// ---------- red-team F-05: Sui swap step payload inspection ----------
+// An MVM step is inspected in its BUILT form — the exact bytes the
+// wallet signs — with every owned-object input resolved on-chain.
+// Refused: a foreign sender or gas owner, a gas budget beyond the
+// bound, Publish/Upgrade commands, FundsWithdrawal inputs, transfers
+// to anyone but the sender, spending a second asset, or spending more
+// of the sold coin than the quote.
+{
+  const { checkSuiSwapStepSafety, SUI_STEP_GAS_ABSOLUTE_CAP } = await import("../src/wallet-core.js");
+  const ME = "0x2695f469826971eadfea28e0f8719137482502c44140aead682d41231d60ba92"; // test-vector Sui address
+  const OTHER = "0x" + "99".repeat(32);
+  const b64 = (bytes) => Buffer.from(bytes).toString("base64");
+  const addrPure = (a) => ({ $kind: "Pure", Pure: { bytes: b64(Buffer.from(a.slice(2), "hex")) } });
+  const u64Pure = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return { $kind: "Pure", Pure: { bytes: b64(b) } }; };
+  const baseData = (over = {}) => ({
+    version: 2, sender: ME, gasData: { budget: "5000000", price: "1000", owner: null, payment: [] },
+    inputs: [], commands: [], ...over,
+  });
+  const moveCall = { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [] } };
+  const SUI_SHORT = "0x2::sui::SUI";
+  const suiSale = (splitMist, fromAmount) => baseData({
+    inputs: [u64Pure(splitMist)],
+    commands: [{ $kind: "SplitCoins", SplitCoins: { coin: { $kind: "GasCoin" }, amounts: [{ $kind: "Input", Input: 0 }] } }, moveCall],
+  });
+  ok("rt-f05: an honest SUI sale split passes", checkSuiSwapStepSafety(suiSale(1_000_000_000n, 0), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
+  ok("rt-f05: a gas-coin split above the quoted amount is refused",
+    !checkSuiSwapStepSafety(suiSale(2_000_000_000n, 0), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
+  ok("rt-f05: a transaction built for a different sender is refused",
+    !checkSuiSwapStepSafety(baseData({ sender: OTHER }), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
+  ok("rt-f05: a gas budget beyond the absolute cap is refused",
+    !checkSuiSwapStepSafety(baseData({ gasData: { budget: String(SUI_STEP_GAS_ABSOLUTE_CAP + 1n), price: "1000", owner: null, payment: [] } }),
+      { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
+  const xferTo = (addr) => baseData({ inputs: [addrPure(addr)], commands: [{ $kind: "TransferObjects", TransferObjects: { objects: [], address: { $kind: "Input", Input: 0 } } }] });
+  ok("rt-f05: a transfer to a third party is refused", !checkSuiSwapStepSafety(xferTo(OTHER), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
+  ok("rt-f05: a transfer back to the sender passes", checkSuiSwapStepSafety(xferTo(ME), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
+  ok("rt-f05: a package publish inside a swap step is refused",
+    !checkSuiSwapStepSafety(baseData({ commands: [{ $kind: "Publish", Publish: { modules: [], dependencies: [] } }] }),
+      { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
+  const coinInput = (objectId) => ({ $kind: "Object", Object: { ImmOrOwnedObject: { objectId, version: "1", digest: "x" } } });
+  const USDC_TYPE = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
+  const usdcInfo = (balance) => new Map([[0, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance }]]);
+  const callWithInput = { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }] } };
+  const usdcIn = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [moveCall] });
+  ok("rt-f05: an honest token sale input passes", checkSuiSwapStepSafety(usdcIn,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: usdcInfo(1000000n) }).ok);
+  // The aggregator pattern: the wallet's coin is merged/split INSIDE the
+  // PTB and only the quoted amount leaves it — a coin balance above the
+  // quote is not an overspend.
+  const splitFromInput = (splitAmt, balance) => ({
+    data: baseData({ inputs: [coinInput("0x" + "aa".repeat(32)), u64Pure(splitAmt)], commands: [
+      { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "Input", Input: 0 }, amounts: [{ $kind: "Input", Input: 1 }] } },
+      { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Result", Result: 0 }] } },
+    ] }),
+    info: usdcInfo(balance),
+  });
+  const honestSplit = splitFromInput(1000000n, 5000000n);
+  ok("rt-f05: a split of the quoted amount off a larger coin passes", checkSuiSwapStepSafety(honestSplit.data,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: honestSplit.info }).ok);
+  const greedySplit = splitFromInput(2000000n, 5000000n);
+  ok("rt-f05: a split above the quoted amount is refused", !checkSuiSwapStepSafety(greedySplit.data,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: greedySplit.info }).ok);
+  const mergeThen = (lastCmd) => ({
+    data: baseData({ inputs: [coinInput("0x" + "aa".repeat(32)), coinInput("0x" + "bb".repeat(32)), u64Pure(1000000n)], commands: [
+      { $kind: "MergeCoins", MergeCoins: { destination: { $kind: "Input", Input: 0 }, sources: [{ $kind: "Input", Input: 1 }] } },
+      { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "Input", Input: 0 }, amounts: [{ $kind: "Input", Input: 2 }] } },
+      lastCmd,
+    ] }),
+    info: new Map([[0, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 3000000n }], [1, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 2000000n }]]),
+  });
+  const mergedSplit = mergeThen({ $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Result", Result: 1 }] } });
+  ok("rt-f05: merge-then-split of the quoted amount passes", checkSuiSwapStepSafety(mergedSplit.data,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: mergedSplit.info }).ok);
+  const mergedWhole = mergeThen({ $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }] } });
+  ok("rt-f05: a merged pool taken whole above the quote is refused", !checkSuiSwapStepSafety(mergedWhole.data,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: mergedWhole.info }).ok);
+  const usdcByValue = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [callWithInput] });
+  ok("rt-f05: a sold coin taken whole by a call above the quote is refused", !checkSuiSwapStepSafety(usdcByValue,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: usdcInfo(2000000n) }).ok);
+  ok("rt-f05: spending a second asset inside the step is refused", !checkSuiSwapStepSafety(usdcByValue,
+    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000", inputObjects: usdcInfo(1n) }).ok);
+  const usdcByRef = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [
+    { $kind: "MoveCall", MoveCall: { package: "0x2", module: "coin", function: "value", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }], _argumentTypes: [{ reference: "immutable", body: {} }] } },
+  ] });
+  ok("rt-f05: a by-reference read of a coin exposes nothing", checkSuiSwapStepSafety(usdcByRef,
+    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000", inputObjects: usdcInfo(5000000n) }).ok);
+  const gasByValue = baseData({ commands: [
+    { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "GasCoin" }] } },
+  ] });
+  ok("rt-f05: the gas coin passed by value to a call is refused", !checkSuiSwapStepSafety(gasByValue,
+    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
+  // A SUI-denominated fee split alongside a token sale is bounded by the
+  // step's declared fees; beyond them it refuses.
+  const feeSplit = (feeAmt) => baseData({ inputs: [u64Pure(feeAmt)], commands: [
+    { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "GasCoin" }, amounts: [{ $kind: "Input", Input: 0 }] } }, moveCall,
+  ] });
+  ok("rt-f05: a gas-coin fee split within the declared fees passes", checkSuiSwapStepSafety(feeSplit(3000000n),
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", suiFeeAllowanceMist: 5000000n }).ok);
+  ok("rt-f05: a gas-coin split beyond the declared fees is refused", !checkSuiSwapStepSafety(feeSplit(9000000n),
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", suiFeeAllowanceMist: 5000000n }).ok);
+  ok("rt-f05: an unverifiable input object is refused", !checkSuiSwapStepSafety(usdcIn,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000" }).ok);
+  ok("rt-f05: a non-coin object of the wallet's is refused", !checkSuiSwapStepSafety(usdcIn,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: new Map([[0, { owner: ME, type: "0x2::kiosk::Kiosk", balance: null }]]) }).ok);
+  ok("rt-f05: an object owned by someone else is refused", !checkSuiSwapStepSafety(usdcIn,
+    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: new Map([[0, { owner: OTHER, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 1000000n }]]) }).ok);
+  const coreSrc3 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("rt-f05: built-bytes inspection runs before signing",
+    coreSrc3.indexOf("checkSuiSwapStepSafety(data, {") > -1
+    && coreSrc3.indexOf("checkSuiSwapStepSafety(data, {") < coreSrc3.indexOf("kp.signTransaction(bytes)"));
 }
 
 // ---------- red-team F-03: agent reservation release ----------

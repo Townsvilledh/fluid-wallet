@@ -2806,9 +2806,15 @@ export function platformFeeApplies(kind) {
  *  "fluid-wallet" integrator WAS registered on 2026-11-07, with the
  *  DripBot agent wallet (FEE_SPLIT.dripbot.agentWallet.evm) designated
  *  as the Default EVM fee wallet in the portal (fees forward to it
- *  automatically; the Solana fee wallet is unset, so Solana fees are
- *  not collected until one is added — the full per-family state,
- *  including Tron and Sui, is pinned in SWAP_FEE_COVERAGE below).
+ *  automatically; the portal's Default SVM fee wallet was set to the
+ *  agent wallet's Solana address the same day; its Tron and Sui fee
+ *  wallets are derived and recorded but not yet registered in the
+ *  portal — and because LI.FI rejects fee-bearing requests on chains
+ *  with no configured fee wallet (code 1011, verified live
+ *  2026-11-07), the request builders attach the fee per source chain
+ *  only where collection is actually configured
+ *  (swapFeeCollectingChain); the full per-family state is pinned in
+ *  SWAP_FEE_COVERAGE below).
  *  Collection is therefore ON:
  *  quote/route requests carry the `fee` parameter and LI.FI skims
  *  PLATFORM_FEE_FRACTION of fromAmount to that portal wallet.
@@ -2823,7 +2829,8 @@ export const FEE_SPLIT = {
   dripbot: { share: 40, label: "DripBot", username: "dripbot", x: "@bitcoinornatin", hashtag: "#bitcoinornatin",
     // Autonomous agent wallet created 2026-11-06 (agent/fluid-agent.mjs,
     // mode: autonomous, paired with @bitcoinornatin). Public addresses only:
-    agentWallet: { evm: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", btc: "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn" },
+    agentWallet: { evm: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", btc: "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn",
+      solana: "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn", tron: "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf", sui: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831" },
     // The odd account, by design (docs/DRIPBOT.md): DripBot is AUTONOMOUS.
     // It has NO on/off-ramp and never sells anything. It only RECEIVES
     // BTC over Lightning (converted from platform fee assets) and PAYS
@@ -3589,26 +3596,55 @@ const LIFI_API = "https://li.quest/v1";
  *  DripBot agent wallet as the Default EVM fee wallet — see
  *  PLATFORM_FEE_COLLECTION_ENABLED. */
 export const LIFI_INTEGRATOR = "fluid-wallet";
+/** The LI.FI family a chain id belongs to, for fee purposes: the fee
+ *  is charged on the SOURCE chain, so the source chain's family row in
+ *  SWAP_FEE_COVERAGE decides whether a request may carry it. Null for
+ *  chains outside the swap universe. */
+export function lifiFeeFamily(chainId) {
+  const id = Number(chainId);
+  if (id === SOLANA_LIFI_CHAIN_ID) return "solana";
+  if (id === TRON_LIFI_CHAIN_ID) return "tron";
+  if (id === SUI_LIFI_CHAIN_ID) return "sui";
+  if (Object.values(NETWORKS).some(n => n.chainId === id)) return "evm";
+  return null;
+}
+/** Whether LI.FI may be asked to collect the standard fee on a route
+ *  SOURCED from this chain today: collection is enabled AND the
+ *  family's portal fee wallet is registered (its SWAP_FEE_COVERAGE
+ *  row is collecting). This gate is load-bearing, not cosmetic —
+ *  verified live 2026-11-07: LI.FI REJECTS a fee-bearing quote
+ *  request for a chain whose integrator fee wallet is not configured
+ *  (HTTP 400, code 1011, for both the Tron and the Sui chain id), so
+ *  attaching the fee before registration would break those swaps
+ *  entirely instead of merely leaving the fee uncollected. */
+export function swapFeeCollectingChain(chainId) {
+  const fam = lifiFeeFamily(chainId);
+  if (!fam) return false;
+  const row = SWAP_FEE_COVERAGE.find(r => r.family === fam);
+  return !!(row && row.collecting);
+}
 /** Build the POST /v1/routes body. Pure and exported so tests can pin
  *  exactly what reaches LI.FI: the integrator string always; the `fee`
- *  fraction (PLATFORM_FEE_FRACTION of fromAmount) ONLY when collection
- *  is enabled — sending it before the portal registration would skim a
- *  fee with no configured wallet to receive it. */
-export function buildLifiRoutesRequest({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = PLATFORM_FEE_COLLECTION_ENABLED } = {}) {
+ *  fraction (PLATFORM_FEE_FRACTION of fromAmount) only when the source
+ *  chain may collect (see swapFeeCollectingChain) — an explicit
+ *  includeFee overrides the gate for tests and probes. */
+export function buildLifiRoutesRequest({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null } = {}) {
+  const withFee = includeFee ?? (PLATFORM_FEE_COLLECTION_ENABLED && swapFeeCollectingChain(fromChainId));
   const options = { integrator: LIFI_INTEGRATOR, order: "RECOMMENDED" };
-  if (includeFee) options.fee = PLATFORM_FEE_FRACTION;
+  if (withFee) options.fee = PLATFORM_FEE_FRACTION;
   return { fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount: String(fromAmount), fromAddress, toAddress, options };
 }
 /** Build the GET /v1/quote params (same fee gating as the routes body;
  *  on /quote, integrator and fee are top-level parameters). */
-export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = PLATFORM_FEE_COLLECTION_ENABLED } = {}) {
+export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null } = {}) {
+  const withFee = includeFee ?? (PLATFORM_FEE_COLLECTION_ENABLED && swapFeeCollectingChain(fromChainId));
   const q = new URLSearchParams({
     fromChain: fromChainId, toChain: toChainId,
     fromToken: fromTokenAddress, toToken: toTokenAddress,
     fromAmount: String(fromAmount), fromAddress, toAddress,
     integrator: LIFI_INTEGRATOR,
   });
-  if (includeFee) q.set("fee", String(PLATFORM_FEE_FRACTION));
+  if (withFee) q.set("fee", String(PLATFORM_FEE_FRACTION));
   return q;
 }
 /** Per-source-family fee coverage for Fluid's ONE swap engine (LI.FI)
@@ -3619,25 +3655,33 @@ export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress,
  *  family never changes collection; what varies per source family is
  *  (a) whether Fluid can sign the route at all and (b) whether the
  *  LI.FI portal has a fee wallet configured for that family's VM.
- *  feeWired is true for every row because buildLifiRoutesRequest /
- *  buildLifiQuoteParams attach integrator + fee uniformly, whatever
- *  the chain type — wiring was never the gap; signing and portal
- *  wallets are. Rows (audit 2026-11-07):
+ *  feeWired mirrors collecting exactly: buildLifiRoutesRequest /
+ *  buildLifiQuoteParams attach the fee only for source chains whose
+ *  portal fee wallet is registered (swapFeeCollectingChain), because
+ *  LI.FI rejects fee-bearing requests on unconfigured chains
+ *  outright (HTTP 400, code 1011 — verified live 2026-11-07 for both
+ *  the Tron and Sui chain ids). A family whose row flips to
+ *  collecting:true starts carrying the fee in the same build.
+ *  Rows (audit 2026-11-07):
  *  - evm: signable; portal Default EVM fee wallet set — collecting.
- *  - solana: signable; LI.FI pays Solana fees directly to the
- *    portal's SVM fee wallet, but that wallet is NOT set and the
- *    DripBot agent wallet holds no Solana address yet — the fee is
- *    requested on every Solana route and disclosed in the confirm
- *    sentence, but has no configured destination to land in.
- *  - tron: LI.FI supports partner fees on eligible Tron flows, but
- *    Fluid cannot sign Tron-sourced steps yet (swapRouteExecutable
- *    refuses them, route cards disabled), so no Tron swap executes
- *    and no fee can arise. The fee is already attached to requests,
- *    so the day the Tron step signer lands only a portal Tron fee
- *    wallet (a DripBot Tron address) is missing.
- *  - sui: LI.FI pays Sui fees directly to the configured wallet, but
- *    Sui-sourced steps are unsignable here (payload shape unverified,
- *    refused by swapRouteExecutable) — same shape as Tron.
+ *  - solana: signable; portal Default SVM fee wallet set to the
+ *    agent wallet's Solana address (2026-11-07) — collecting.
+ *  - tron: signable since the TVM signer landed 2026-11-07
+ *    (executeTronSwapRoute; the step payload is decoded from its
+ *    protobuf raw_data and inspected by checkTronSwapStepBounds
+ *    before anything is signed — validated live the same day against
+ *    a real Layerswap USDT→USDT quote). The portal has no Tron fee
+ *    wallet registered yet: the agent wallet's Tron address is
+ *    derived and recorded (destination), and until the operator
+ *    registers it the fee is NOT attached to Tron requests (LI.FI
+ *    would reject them, code 1011) — Tron swaps execute, fee-free.
+ *  - sui: signable since the MVM signer landed 2026-11-07
+ *    (executeSuiSwapRoute; each step is rebuilt against the chain and
+ *    the BUILT bytes inspected by checkSuiSwapStepSafety before
+ *    signing — validated live the same day against a real Cetus
+ *    SUI→USDC quote). LI.FI pays Sui fees directly to the configured
+ *    wallet; same portal state as Tron — destination derived and
+ *    recorded, registration pending, fee not attached meanwhile.
  *  Every other Fluid family (Bitcoin, Litecoin, Dogecoin, Bitcoin
  *  Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
  *  Stacks, Lightning) has NO swap route at all — swapChainOf returns
@@ -3646,12 +3690,12 @@ export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress,
 export const SWAP_FEE_COVERAGE = [
   { family: "evm", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
     destination: FEE_SPLIT.dripbot.agentWallet.evm, blocker: null },
-  { family: "solana", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: false,
-    destination: null, blocker: "LI.FI portal SVM (Solana) fee wallet is not set; the DripBot agent wallet holds EVM + BTC addresses only. Needed: the DripBot wallet's Solana address (derivable from its existing keystore seed with this file's solanaAddressFromPhrase) recorded in its descriptor and set as the portal's SVM fee wallet." },
-  { family: "tron", provider: "LI.FI", feeSupported: true, feeWired: true, executable: false, collecting: false,
-    destination: null, blocker: "Fluid cannot sign LI.FI steps sourced from Tron yet, so no Tron-sourced swap executes. When the Tron step signer lands: a DripBot Tron address (tronAddressFromPhrase on its keystore seed) must be set as the portal's Tron fee wallet." },
-  { family: "sui", provider: "LI.FI", feeSupported: true, feeWired: true, executable: false, collecting: false,
-    destination: null, blocker: "Fluid cannot sign LI.FI steps sourced from Sui yet (MVM payload shape unverified), so no Sui-sourced swap executes. When the Sui step signer lands: a DripBot Sui address (suiAddressFromPhrase on its keystore seed) must be set as the portal's Sui fee wallet." },
+  { family: "solana", provider: "LI.FI", feeSupported: true, feeWired: true, executable: true, collecting: true,
+    destination: FEE_SPLIT.dripbot.agentWallet.solana, blocker: null },
+  { family: "tron", provider: "LI.FI", feeSupported: true, feeWired: false, executable: true, collecting: false,
+    destination: FEE_SPLIT.dripbot.agentWallet.tron, blocker: "LI.FI portal Tron fee wallet is not registered yet: the destination (the DripBot agent wallet's Tron address, derived from its keystore 2026-11-07) must be set as the integration's Default Tron fee wallet in the partner portal — an operator step. Execution is live (executeTronSwapRoute, validated against a live quote 2026-11-07); until registration the fee is not attached to Tron requests at all, because LI.FI rejects fee-bearing requests on this chain (code 1011, verified live) — Tron swaps run fee-free meanwhile." },
+  { family: "sui", provider: "LI.FI", feeSupported: true, feeWired: false, executable: true, collecting: false,
+    destination: FEE_SPLIT.dripbot.agentWallet.sui, blocker: "LI.FI portal Sui fee wallet is not registered yet: the destination (the DripBot agent wallet's Sui address, derived from its keystore 2026-11-07) must be set as the integration's Default Sui fee wallet in the partner portal — an operator step. Execution is live (executeSuiSwapRoute, validated against a live quote 2026-11-07); until registration the fee is not attached to Sui requests at all, because LI.FI rejects fee-bearing requests on this chain (code 1011, verified live) — Sui swaps run fee-free meanwhile." },
 ];
 // Non-EVM families join the swap universe by their LI.FI chain id. Tron
 // (chainType TVM on LI.FI) is addressed by base58 T-addresses there —
@@ -3827,20 +3871,38 @@ export function swapRouteExecutable(route) {
       ? { ok: true, svm: true, steps }
       : { ok: false, reason: "This route's Solana steps carry no signable transaction — pick another route." };
   }
-  // Sui-sourced routes: LI.FI's MVM step payload shape could not be
-  // live-verified in the Phase 2b build session (LI.FI answered the
-  // /quote probes with HTTP 429 rate-limit), and Fluid never signs a
-  // payload shape it has not inspected — the same discipline that kept
-  // Tron routes disabled in Phase 1a. Routes INTO Sui from an EVM
-  // chain are unaffected: their signable steps are the EVM ones, and
-  // the bridge delivers to the Sui address.
+  // Sui-sourced routes are signable since the MVM signer landed
+  // (2026-11-07): the payload is the step's serialized transaction,
+  // which Fluid rebuilds against the chain and inspects in its BUILT
+  // form — the exact bytes that get signed — before the wallet's Sui
+  // key touches it — see executeSuiSwapRoute /
+  // checkSuiSwapStepSafety. The shape was verified live the same day:
+  // a real Cetus SUI→USDC quote's payload was rebuilt against the
+  // chain and passed the inspection end to end.
+  // Routes INTO Sui from an EVM chain are unaffected either way:
+  // their signable steps are the EVM ones, and the bridge delivers to
+  // the Sui address.
   if (Number(route?.fromChainId) === SUI_LIFI_CHAIN_ID) {
-    return { ok: false, reason: "Fluid can't sign swap steps starting on Sui yet — send from the Sui rows instead, or pick a route starting on an EVM chain or Solana." };
+    const steps = suiSwapSteps(route);
+    return steps.length
+      ? { ok: true, mvm: true, steps }
+      : { ok: false, reason: "This route's Sui steps carry no signable transaction — pick another route." };
+  }
+  // Tron-sourced routes are signable since the TVM signer landed
+  // (2026-11-07): LI.FI's documented payload — the unsigned
+  // TriggerSmartContract protobuf plus its TronWeb rendering — is
+  // decoded and inspected byte-for-byte before the wallet signs its
+  // txID — see executeTronSwapRoute / checkTronSwapStepBounds.
+  if (Number(route?.fromChainId) === TRON_LIFI_CHAIN_ID) {
+    const steps = tronSwapSteps(route);
+    return steps.length
+      ? { ok: true, tvm: true, steps }
+      : { ok: false, reason: "This route's Tron steps carry no signable transaction — pick another route." };
   }
   // Fluid signs with an EVM key on EVM chains. Routes sourced from a
-  // non-EVM family (Tron, …) may carry steps, but
-  // their signatures are a different scheme — they stay unexecutable
-  // here until that family's signer lands, never faked.
+  // non-EVM family may carry steps, but their signatures are a
+  // different scheme — they stay unexecutable here until that family's
+  // signer lands, never faked.
   const evmIds = new Set(Object.values(NETWORKS).map(n => n.chainId));
   if (!evmIds.has(Number(route?.fromChainId))) {
     return { ok: false, reason: "Fluid can't sign swap steps starting on this chain yet — send from the chain's own rows instead, or pick a route starting on an EVM chain." };
@@ -3914,6 +3976,621 @@ export async function executeSolanaSwapRoute(phrase, route, onProgress = () => {
     const sig = await solanaBroadcast(serialized, "That route");
     hashes.push(sig);
     onProgress(`Solana step ${i + 1} sent ✓`);
+  }
+  return hashes;
+}
+
+/** The TVM steps of a Tron-sourced route: LI.FI does not return an EVM
+ *  transactionRequest for them. Per LI.FI's Tron provider docs
+ *  (docs.li.fi "Tron Providers", checked 2026-11-07), the step's
+ *  transactionRequest carries the unsigned Tron transaction in two
+ *  forms that must agree: `data` — the hex protobuf raw_data of an
+ *  unsigned TriggerSmartContract transaction, 0x-prefixed (i.e. the
+ *  Tron node's raw_data_hex), and `customData.tronTransaction` — the
+ *  same transaction as a TronWeb object {txID, raw_data, raw_data_hex}
+ *  with customData.contractType "TriggerSmartContract". `to` is the
+ *  LI.FI contract on Tron (base58 T-address), `value` the TRX call
+ *  value in SUN and `gasLimit` the transaction's fee_limit in SUN,
+ *  both hex-encoded strings. */
+export function tronSwapSteps(route) {
+  if (Number(route?.fromChainId) !== TRON_LIFI_CHAIN_ID) return [];
+  return (route?.steps || []).filter(s => {
+    const tr = s.transactionRequest;
+    const tt = tr?.customData?.tronTransaction;
+    return !!tr && typeof tr.data === "string" && tr.data.length > 0
+      && tr.customData?.contractType === "TriggerSmartContract"
+      && !!tt && typeof tt.raw_data_hex === "string" && tt.raw_data_hex.length > 0
+      && typeof tt.txID === "string" && tt.txID.length > 0;
+  });
+}
+/* Minimal protobuf field reader — just enough to take apart a Tron
+ * Transaction.raw_data and inspect what would actually be signed.
+ * Tron transactions are protobuf; the wallet signs sha256(raw_data)
+ * (the txID), so the inspection decodes THE BYTES, not LI.FI's JSON
+ * rendering of them: a rendering that disagreed with the bytes would
+ * be caught by the txID check in checkTronSwapStepBounds. Only wire
+ * types 0 (varint) and 2 (length-delimited) carry meaning here; 1/5
+ * are skipped by width, anything else is malformed. */
+function pbFields(bytes) {
+  const fields = [];
+  let i = 0;
+  const readVarint = () => {
+    let v = 0n, shift = 0n;
+    for (;;) {
+      if (i >= bytes.length) throw new Error("truncated varint");
+      const b = bytes[i++];
+      v |= BigInt(b & 0x7f) << shift;
+      if (!(b & 0x80)) return v;
+      shift += 7n;
+      if (shift > 70n) throw new Error("varint too long");
+    }
+  };
+  while (i < bytes.length) {
+    const key = readVarint();
+    const num = Number(key >> 3n), wire = Number(key & 7n);
+    if (num <= 0) throw new Error("bad field number");
+    if (wire === 0) fields.push({ num, wire, value: readVarint() });
+    else if (wire === 2) {
+      const len = Number(readVarint());
+      if (len < 0 || i + len > bytes.length) throw new Error("truncated field");
+      fields.push({ num, wire, value: bytes.slice(i, i + len) });
+      i += len;
+    } else if (wire === 5) { fields.push({ num, wire, value: bytes.slice(i, i + 4) }); i += 4; }
+    else if (wire === 1) { fields.push({ num, wire, value: bytes.slice(i, i + 8) }); i += 8; }
+    else throw new Error("unsupported wire type");
+  }
+  return fields;
+}
+/** Decode a Tron Transaction.raw_data (hex, no 0x) into the parts the
+ *  swap inspection needs: each contract's type, and for
+ *  TriggerSmartContract (type 31) its owner_address / contract_address
+ *  (42-char 41-prefixed hex), call_value (SUN) and call data (hex);
+ *  plus the transaction-level fee_limit, expiration and timestamp.
+ *  Throws on malformed bytes — callers treat that as unverifiable. */
+export function decodeTronRawData(rawDataHex) {
+  const bytes = ethers.getBytes("0x" + String(rawDataHex || "").replace(/^0x/i, ""));
+  const out = { contracts: [], feeLimit: 0n, expiration: 0n, timestamp: 0n };
+  for (const f of pbFields(bytes)) {
+    if (f.wire === 0 && f.num === 18) out.feeLimit = f.value;
+    else if (f.wire === 0 && f.num === 8) out.expiration = f.value;
+    else if (f.wire === 0 && f.num === 14) out.timestamp = f.value;
+    else if (f.wire === 2 && f.num === 11) {
+      const cf = pbFields(f.value);
+      const typeF = cf.find(x => x.num === 1 && x.wire === 0);
+      const paramF = cf.find(x => x.num === 2 && x.wire === 2);
+      const contract = { type: typeF ? Number(typeF.value) : null, typeUrl: null, trigger: null };
+      if (paramF) {
+        const anyF = pbFields(paramF.value);
+        const urlF = anyF.find(x => x.num === 1 && x.wire === 2);
+        const valF = anyF.find(x => x.num === 2 && x.wire === 2);
+        contract.typeUrl = urlF ? new TextDecoder().decode(urlF.value) : null;
+        if (valF && contract.type === 31) {
+          const tf = pbFields(valF.value);
+          const bytesAt = (n) => { const g = tf.find(x => x.num === n && x.wire === 2); return g ? ethers.hexlify(g.value).slice(2) : null; };
+          const cv = tf.find(x => x.num === 3 && x.wire === 0);
+          contract.trigger = {
+            ownerAddress: bytesAt(1),
+            contractAddress: bytesAt(2),
+            callValue: cv ? cv.value : 0n,
+            data: bytesAt(4) || "",
+          };
+        }
+      }
+      out.contracts.push(contract);
+    }
+  }
+  return out;
+}
+/* Tron fee_limit bounds: LI.FI's docs call the fee_limit "a safety
+ * ceiling, not the expected cost", so the cap is looser than the EVM
+ * gas-limit multiple — 10× the step's own SUN gas estimate, floored at
+ * the 100 TRX fee_limit Fluid's own TRC-20 sends use, never above the
+ * absolute cap. fee_limit caps what a bad call could burn; it is not
+ * itself a transfer. */
+export const TRON_STEP_FEELIMIT_MULTIPLE = 10n;
+export const TRON_STEP_FEELIMIT_FALLBACK_CAP = 100_000_000n;  // 100 TRX
+export const TRON_STEP_FEELIMIT_ABSOLUTE_CAP = 1_000_000_000n; // 1,000 TRX, never
+/** The Tron edition of checkSwapStepBounds (audit M1 discipline): the
+ *  confirmed route is the only authority for what a step may do, and
+ *  the payload inspected is the exact protobuf the signature commits
+ *  to. Runs BEFORE approval and BEFORE signing. Refusals:
+ *   - the two LI.FI forms of the transaction disagree, or the txID is
+ *     not sha256(raw_data) — the JSON rendering cannot vouch for bytes
+ *     it does not hash to;
+ *   - the transaction is not exactly one TriggerSmartContract whose
+ *     owner is THIS wallet (never sign a transaction spending from
+ *     someone else's account, or a plain transfer dressed as a swap);
+ *   - the called contract is not the quote's `to`, or IS the token
+ *     being sold, or the call is a bare TRC-20 transfer/approve/
+ *     transferFrom (routers move tokens inside their own calls);
+ *   - value: native input spends at most the quoted amount + 2%; a
+ *     token-input step carries no TRX value at all;
+ *   - fee_limit beyond the bounds above, or an already-expired tx. */
+export function checkTronSwapStepBounds(route, step, ownerAddress) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const tr = step?.transactionRequest;
+  const tt = tr?.customData?.tronTransaction;
+  if (!tr || !tt) return refuse("Fluid refused this route: a step carried no Tron transaction to check. Pick another route.");
+  if (tr.customData?.contractType !== "TriggerSmartContract") return refuse("Fluid refused this route: a step was not the smart-contract call a swap step must be. Pick another route.");
+  if (typeof tr.data !== "string" || tr.data.toLowerCase() !== "0x" + String(tt.raw_data_hex).toLowerCase()) {
+    return refuse("Fluid refused this route: the step's two transaction forms disagree. Pick another route.");
+  }
+  if (ethers.sha256("0x" + tt.raw_data_hex).slice(2) !== String(tt.txID).toLowerCase()) {
+    return refuse("Fluid refused this route: the step's transaction id does not match its contents. Pick another route.");
+  }
+  let raw;
+  try { raw = decodeTronRawData(tt.raw_data_hex); } catch { return refuse("Fluid refused this route: the step's transaction could not be decoded for checking. Pick another route."); }
+  if (raw.contracts.length !== 1) return refuse("Fluid refused this route: a step must contain exactly one contract call. Pick another route.");
+  const c = raw.contracts[0];
+  if (c.type !== 31 || !c.trigger) return refuse("Fluid refused this route: a step was not a smart-contract call. Pick another route.");
+  if (!isValidTronAddress(ownerAddress) || c.trigger.ownerAddress !== tronAddressToHex(ownerAddress)) {
+    return refuse("Fluid refused this route: the step's transaction spends from a different account. Pick another route.");
+  }
+  if (!isValidTronAddress(tr.to || "") || c.trigger.contractAddress !== tronAddressToHex(tr.to)) {
+    return refuse("Fluid refused this route: the step calls a different contract than the quote names. Pick another route.");
+  }
+  const fromToken = step.action?.fromToken;
+  const isNative = !fromToken?.address || fromToken.address === TRON_SWAP_NATIVE_TOKEN;
+  let trValue = 0n;
+  if (tr.value != null) { try { trValue = BigInt(tr.value); } catch { return refuse("Fluid refused this route: a step's value could not be read as a number. Pick another route."); } }
+  if (c.trigger.callValue !== trValue) return refuse("Fluid refused this route: the step's transaction value disagrees with the quote. Pick another route.");
+  if (isNative) {
+    let base = 0n;
+    try { base = BigInt(step.action?.fromAmount ?? route?.fromAmount ?? 0); } catch { base = 0n; }
+    const maxValue = base + (base * SWAP_STEP_VALUE_TOLERANCE_BPS) / 10000n;
+    if (c.trigger.callValue > maxValue) return refuse("Fluid refused this route: a step asked to send more TRX than the amount you agreed to swap. Pick another route.");
+  } else {
+    if (c.trigger.callValue !== 0n) return refuse("Fluid refused this route: a token swap step asked to carry TRX value as well. Pick another route.");
+    if (fromToken?.address && isValidTronAddress(fromToken.address) && c.trigger.contractAddress === tronAddressToHex(fromToken.address)) {
+      return refuse("Fluid refused this route: a step targeted the token being sold instead of a swap router. Pick another route.");
+    }
+  }
+  const dataSel = (c.trigger.data || "").slice(0, 8).toLowerCase();
+  if (["a9059cbb", "095ea7b3", "23b872dd"].includes(dataSel)) {
+    return refuse("Fluid refused this route: a step tried to move or approve your tokens directly instead of swapping through a router. Pick another route.");
+  }
+  const approvalSpender = step.estimate?.approvalAddress;
+  if (approvalSpender) {
+    if (!isValidTronAddress(approvalSpender)) return refuse("Fluid refused this route: the token approval address was not a Tron address. Pick another route.");
+    if (!isNative && fromToken?.address && approvalSpender === fromToken.address) {
+      return refuse("Fluid refused this route: the token approval was addressed to the token contract itself. Pick another route.");
+    }
+    // Same rule as the EVM steps (red-team Finding A): the approval may
+    // only ever go to the contract the step itself calls — LI.FI's
+    // docs name `to` as the LI.FI contract on Tron and the executing
+    // contract as the one that pulls the tokens. A third-party spender
+    // is a substitution, however plausible it looks.
+    if (approvalSpender !== tr.to) {
+      return refuse("Fluid refused this route: the token approval was addressed to an unexpected spender, not the swap contract. Pick another route.");
+    }
+  }
+  if (tr.gasLimit != null) {
+    let gl = null;
+    try { gl = BigInt(tr.gasLimit); } catch { gl = null; }
+    if (gl != null && gl !== raw.feeLimit) return refuse("Fluid refused this route: the step's fee limit disagrees with its transaction. Pick another route.");
+  }
+  let est = 0n;
+  for (const g of step.estimate?.gasCosts || []) {
+    try { est += BigInt(g?.amount || 0); } catch { /* an unreadable gas cost grants nothing */ }
+  }
+  let cap = est > 0n ? est * TRON_STEP_FEELIMIT_MULTIPLE : TRON_STEP_FEELIMIT_FALLBACK_CAP;
+  if (cap < TRON_STEP_FEELIMIT_FALLBACK_CAP) cap = TRON_STEP_FEELIMIT_FALLBACK_CAP;
+  if (cap > TRON_STEP_FEELIMIT_ABSOLUTE_CAP) cap = TRON_STEP_FEELIMIT_ABSOLUTE_CAP;
+  if (raw.feeLimit > cap) return refuse("Fluid refused this route: a step's fee limit was far above its own estimate, which could burn your TRX on a failing call. Pick another route.");
+  if (raw.expiration > 0n && raw.expiration <= BigInt(Date.now())) return refuse("Fluid refused this route: the step's transaction had already expired. Pick another route.");
+  return { ok: true };
+}
+/** TRC-20 allowance via a constant (free, unsigned) contract call. */
+async function tronTrc20Allowance(ownerAddress, tokenAddress, spenderAddress) {
+  const parameter = tronAddressToHex(ownerAddress).slice(2).padStart(64, "0")
+    + tronAddressToHex(spenderAddress).slice(2).padStart(64, "0");
+  const data = await tronPost("/wallet/triggerconstantcontract", {
+    owner_address: tronAddressToHex(ownerAddress), contract_address: tronAddressToHex(tokenAddress),
+    function_selector: "allowance(address,address)", parameter,
+  });
+  const out = data && data.constant_result && data.constant_result[0];
+  if (!out) throw new Error("Empty Tron allowance reply.");
+  return BigInt("0x" + out);
+}
+/** Build (via TronGrid), sign (locally) and broadcast one contract
+ *  call from the wallet — the shape sendTron's token path uses,
+ *  generalised for the swap approval. Returns the txID. */
+async function tronTriggerAndBroadcast(wallet, { contractAddress, selector, parameter, feeLimit = 100_000_000, callValue = 0 }) {
+  const ownerHex = tronAddressToHex(tronAddressFromKey(wallet));
+  const data = await tronPost("/wallet/triggersmartcontract", {
+    owner_address: ownerHex, contract_address: tronAddressToHex(contractAddress),
+    function_selector: selector, parameter, fee_limit: feeLimit, call_value: callValue,
+  });
+  if (!data || !data.result || data.result.result !== true) {
+    throw new Error("Tron rejected the contract call: " + tronErrorText(data && data.result && data.result.message));
+  }
+  const tx = data.transaction;
+  if (!tx || !tx.txID || !tx.raw_data) throw new Error("Tron did not return a transaction to sign.");
+  const cast = await tronPost("/wallet/broadcasttransaction", {
+    txID: tx.txID, raw_data: tx.raw_data, raw_data_hex: tx.raw_data_hex,
+    signature: [signTronTxId(wallet, tx.txID)],
+  });
+  if (!cast || cast.result !== true) {
+    throw new Error("Tron network rejected the transaction: " + tronErrorText(cast && (cast.message || cast.code)));
+  }
+  return tx.txID;
+}
+/** Poll until a broadcast transaction is visible on-chain (Tron blocks
+ *  land every ~3s; an approval must be in before the swap step that
+ *  spends against it is broadcast). */
+async function tronWaitTxVisible(txid, tries = 12) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const d = await tronPost("/wallet/gettransactionbyid", { value: txid });
+      if (d && d.txID) return true;
+    } catch { /* not visible yet */ }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return false;
+}
+/** Revoke a TRC-20 approval on Tron: set the spender's allowance back
+ *  to zero — the Tron counterpart of revokeApproval, so approvals a
+ *  Tron swap records can be reviewed and revoked to the same standard
+ *  as EVM ones. Returns the txID. */
+export async function revokeTronApproval(wallet, tokenAddress, spender) {
+  if (!isValidTronAddress(tokenAddress) || !isValidTronAddress(spender)) throw new Error("That approval record is not a Tron approval.");
+  const parameter = tronAddressToHex(spender).slice(2).padStart(64, "0") + (0n).toString(16).padStart(64, "0");
+  return tronTriggerAndBroadcast(wallet, {
+    contractAddress: tokenAddress, selector: "approve(address,uint256)", parameter, feeLimit: 100_000_000,
+  });
+}
+/** Execute a Tron-sourced swap route: for each TVM step, inspect the
+ *  exact protobuf payload (checkTronSwapStepBounds), approve the
+ *  from-token for the exact amount where the step needs it (LI.FI's
+ *  docs: the executing contract pulls TRC-20 input against an
+ *  allowance to the step's estimate.approvalAddress; native TRX rides
+ *  as the call value and needs none), then sign the transaction id
+ *  with the wallet's key — the same key as its EVM account — and
+ *  broadcast. Returns the transaction ids. */
+export async function executeTronSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
+  const { ok, tvm, steps, reason } = swapRouteExecutable(route);
+  if (!ok || !tvm) throw new Error(reason || "That route does not start on Tron.");
+  const owner = tronAddressFromKey(wallet);
+  const hashes = [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i], tr = step.transactionRequest, tt = tr.customData.tronTransaction;
+    const bounds = checkTronSwapStepBounds(route, step, owner);
+    if (!bounds.ok) throw new Error(bounds.reason);
+    const fromToken = step.action?.fromToken;
+    const isNative = !fromToken?.address || fromToken.address === TRON_SWAP_NATIVE_TOKEN;
+    if (!isNative && step.action?.fromAmount && step.estimate?.skipApproval !== true) {
+      const need = BigInt(step.action.fromAmount);
+      const spender = step.estimate?.approvalAddress || tr.to;
+      if ((await tronTrc20Allowance(owner, fromToken.address, spender)) < need) {
+        onProgress(`Approving ${fromToken.symbol || "token"} for the route (exact amount only)…`);
+        const parameter = tronAddressToHex(spender).slice(2).padStart(64, "0") + need.toString(16).padStart(64, "0");
+        const approveTx = await tronTriggerAndBroadcast(wallet, {
+          contractAddress: fromToken.address, selector: "approve(address,uint256)", parameter, feeLimit: 100_000_000,
+        });
+        try {
+          onApprove({ chainKey: "tron", token: fromToken.address, tokenSymbol: fromToken.symbol || null, spender, amount: need.toString(), decimals: fromToken.decimals ?? null, at: Date.now() });
+        } catch { /* recording an approval must never break a swap */ }
+        if (!(await tronWaitTxVisible(approveTx))) throw new Error("The token approval didn't land on Tron in time — no swap was attempted. Try again.");
+      }
+    }
+    onProgress(`Signing Tron step ${i + 1} of ${steps.length}…`);
+    const cast = await tronPost("/wallet/broadcasttransaction", {
+      txID: tt.txID, raw_data: tt.raw_data, raw_data_hex: tt.raw_data_hex,
+      signature: [signTronTxId(wallet, tt.txID)],
+    });
+    if (!cast || cast.result !== true) {
+      throw new Error("Tron network rejected the swap transaction: " + tronErrorText(cast && (cast.message || cast.code)));
+    }
+    hashes.push(tt.txID);
+    onProgress(`Tron step ${i + 1} sent ✓`);
+  }
+  return hashes;
+}
+
+/** The MVM steps of a Sui-sourced route: like SVM steps, the payload
+ *  is the step's transactionRequest.data string — a serialized Sui
+ *  transaction (LI.FI's own SDK feeds exactly this string to
+ *  @mysten/sui's Transaction.from, then builds, signs and executes —
+ *  the flow executeSuiSwapRoute mirrors). */
+export function suiSwapSteps(route) {
+  if (Number(route?.fromChainId) !== SUI_LIFI_CHAIN_ID) return [];
+  return (route?.steps || []).filter(s =>
+    s.transactionRequest && typeof s.transactionRequest.data === "string" && s.transactionRequest.data.length > 0);
+}
+/* Sui gas budget bounds, mirroring the other families: the budget is
+ * a cap, not a spend — 5× the step's own MIST gas estimate, floored at
+ * 0.05 SUI, never above 1 SUI. (The multiple carries headroom because
+ * the SDK's builder sets the budget from its own simulation: a live
+ * Cetus quote checked 2026-11-07 estimated 14.5M MIST of gas and
+ * built a 50M MIST budget — a 3.45× ratio.) */
+export const SUI_STEP_GAS_MULTIPLE = 5n;
+export const SUI_STEP_GAS_FALLBACK_CAP = 50_000_000n;   // 0.05 SUI
+export const SUI_STEP_GAS_ABSOLUTE_CAP = 1_000_000_000n; // 1 SUI, never
+const SUI_COIN_TYPE_RE = /^0x0*2::coin::Coin<(.+)>$/;
+/** Normalise a coin type for comparison: Sui writes the SUI type with
+ *  a fully padded package address in some payloads and as "0x2" in
+ *  others; compare on the padded canonical form. */
+function suiCoinTypeNorm(t) {
+  const s = String(t || "").trim();
+  const m = s.match(/^(0x[0-9a-fA-F]+)::(.*)$/);
+  if (!m) return s.toLowerCase();
+  return "0x" + m[1].slice(2).toLowerCase().padStart(64, "0") + "::" + m[2];
+}
+/** The Sui edition of the payload inspection (audit M1 / red-team
+ *  discipline): runs on the BUILT transaction data — the exact bytes
+ *  that will be signed — and refuses any shape a swap step never
+ *  legitimately has:
+ *   - sender or gas owner other than this wallet;
+ *   - a gas budget beyond the bounds above;
+ *   - Publish / Upgrade commands, or FundsWithdrawal inputs (swap
+ *     steps move coins through calls, they do not publish packages
+ *     or draw on address balances);
+ *   - TransferObjects to any address but the sender (a bridge/DEX
+ *     step hands coins to contracts through Move calls; a direct
+ *     transfer out to a third party is a drain shape);
+ *   - value: the built inputs are resolved against the chain by the
+ *     caller (see executeSuiSwapRoute) — this pure part checks the
+ *     command/input structure those resolutions attach to.
+ *  `resolveInputObjects` maps each ImmOrOwnedObject input index to
+ *  {owner, type, balance} as read from the chain (balance for coin
+ *  objects, null otherwise); the value invariants enforced here:
+ *   - every owned-object input belongs to the sender and is a coin
+ *     (a swap step never needs another of the wallet's objects);
+ *   - value is accounted by CONSUMPTION, not by mere presence:
+ *     aggregator PTBs merge the wallet's coins and split the quoted
+ *     amount off inside the transaction, so a coin input's exposure
+ *     is the amount its commands actually take from it — the split
+ *     amounts when it is only split/merged, its full balance when a
+ *     Move call takes it by value, and zero when it is only read by
+ *     reference, left unused, or transferred back to the sender;
+ *   - the sold coin's total exposure — plus, for a SUI sale, amounts
+ *     split off the gas coin — is at most the quoted amount + 2%,
+ *     and any OTHER coin's exposure must be exactly zero (the step
+ *     may not spend a second asset of the wallet's). */
+export function checkSuiSwapStepSafety(data, { ownerAddress, fromCoinType, fromAmount, gasEstimateMist = 0n, suiFeeAllowanceMist = 0n, inputObjects = new Map() } = {}) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const me = normalizeSuiAddress(ownerAddress || "");
+  if (!me) return refuse("Fluid refused this route: the wallet's Sui address could not be read. Pick another route.");
+  if (normalizeSuiAddress(data?.sender || "") !== me) return refuse("Fluid refused this route: the step's transaction was built for a different account. Pick another route.");
+  const gas = data?.gasData || {};
+  if (gas.owner && normalizeSuiAddress(gas.owner) !== me) return refuse("Fluid refused this route: the step's gas was assigned to a different account. Pick another route.");
+  let budget = 0n;
+  try { budget = BigInt(gas.budget ?? 0); } catch { return refuse("Fluid refused this route: the step's gas budget could not be read. Pick another route."); }
+  let cap = gasEstimateMist > 0n ? gasEstimateMist * SUI_STEP_GAS_MULTIPLE : SUI_STEP_GAS_FALLBACK_CAP;
+  if (cap < SUI_STEP_GAS_FALLBACK_CAP) cap = SUI_STEP_GAS_FALLBACK_CAP;
+  if (cap > SUI_STEP_GAS_ABSOLUTE_CAP) cap = SUI_STEP_GAS_ABSOLUTE_CAP;
+  if (budget > cap) return refuse("Fluid refused this route: the step's gas budget was far above its own estimate. Pick another route.");
+  const inputs = data?.inputs || [];
+  const pureBytes = (idx) => {
+    const inp = inputs[idx];
+    if (!inp || inp.$kind !== "Pure" || typeof inp.Pure?.bytes !== "string") return null;
+    try { return base64.decode(inp.Pure.bytes); } catch { return null; }
+  };
+  const pureAddress = (arg) => {
+    if (!arg || arg.$kind !== "Input") return null;
+    const b = pureBytes(arg.Input);
+    if (!b || b.length !== 32) return null;
+    return "0x" + Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+  };
+  const pureU64 = (arg) => {
+    if (!arg || arg.$kind !== "Input") return null;
+    const b = pureBytes(arg.Input);
+    if (!b || b.length !== 8) return null;
+    let v = 0n;
+    for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(b[i]);
+    return v;
+  };
+  const fromType = suiCoinTypeNorm(fromCoinType || "");
+  const suiType = suiCoinTypeNorm(SUI_COIN_TYPE);
+  const isSuiSale = fromType === suiType;
+  // Pass 1 — validate every owned-object input and record its coin.
+  const coinInfo = new Map(); // input index -> { coinType, balance }
+  for (let i = 0; i < inputs.length; i++) {
+    const inp = inputs[i];
+    if (!inp) continue;
+    if (inp.$kind === "FundsWithdrawal") return refuse("Fluid refused this route: a step tried to draw on the wallet's address balance directly. Pick another route.");
+    if (inp.$kind !== "Object") continue;
+    const obj = inp.Object || {};
+    if (obj.Receiving) return refuse("Fluid refused this route: a step tried to consume an unreceived object. Pick another route.");
+    if (!obj.ImmOrOwnedObject) continue; // shared objects (pools, bridge state) carry no wallet value
+    const info = inputObjects.get(i);
+    if (!info) return refuse("Fluid refused this route: a step's input object could not be verified on-chain. Pick another route.");
+    if (normalizeSuiAddress(info.owner || "") !== me) return refuse("Fluid refused this route: a step tried to spend an object the wallet does not own. Pick another route.");
+    const coinMatch = SUI_COIN_TYPE_RE.exec(String(info.type || ""));
+    if (!coinMatch) return refuse("Fluid refused this route: a step tried to spend a non-coin object of the wallet's. Pick another route.");
+    if (typeof info.balance !== "bigint") return refuse("Fluid refused this route: a step coin's balance could not be read on-chain. Pick another route.");
+    coinInfo.set(i, { coinType: suiCoinTypeNorm(coinMatch[1]), balance: info.balance });
+  }
+  // Pass 2 — record how each command consumes the inputs. `usage`
+  // tracks, per input index: split amounts taken from it, whether a
+  // Move call / vector takes it BY VALUE (full exposure), which input
+  // it merges into, and which inputs merge into it.
+  const usage = new Map();
+  const use = (idx) => {
+    if (!usage.has(idx)) usage.set(idx, { split: 0n, wasSplit: false, direct: false, mergeInto: null, mergedSources: [] });
+    return usage.get(idx);
+  };
+  const inputIdxOf = (arg) => (arg && arg.$kind === "Input" && coinInfo.has(arg.Input) ? arg.Input : null);
+  let gasSplitTotal = 0n;
+  const splitAmounts = (amounts) => {
+    let sum = 0n;
+    for (const a of amounts || []) {
+      const v = pureU64(a);
+      if (v == null) return null;
+      sum += v;
+    }
+    return sum;
+  };
+  for (const cmd of data?.commands || []) {
+    if (!cmd) continue;
+    if (cmd.$kind === "Publish" || cmd.$kind === "Upgrade") {
+      return refuse("Fluid refused this route: a step tried to publish or upgrade a package. Pick another route.");
+    }
+    if (cmd.$kind === "TransferObjects") {
+      const to = pureAddress(cmd.TransferObjects?.address);
+      if (!to || normalizeSuiAddress(to) !== me) {
+        return refuse("Fluid refused this route: a step tried to transfer objects to an address that is not yours. Pick another route.");
+      }
+      continue; // transfers back to the sender expose nothing
+    }
+    if (cmd.$kind === "SplitCoins") {
+      const sc = cmd.SplitCoins || {};
+      const total = splitAmounts(sc.amounts);
+      if (total == null) return refuse("Fluid refused this route: a step's split amount could not be read. Pick another route.");
+      if (sc.coin?.$kind === "GasCoin") gasSplitTotal += total;
+      else { const idx = inputIdxOf(sc.coin); if (idx != null) { const u = use(idx); u.split += total; u.wasSplit = true; } }
+      continue;
+    }
+    if (cmd.$kind === "MergeCoins") {
+      const mc = cmd.MergeCoins || {};
+      const destIdx = inputIdxOf(mc.destination);
+      for (const src of mc.sources || []) {
+        const sIdx = inputIdxOf(src);
+        if (sIdx == null) continue;
+        const u = use(sIdx);
+        if (destIdx != null) { u.mergeInto = destIdx; use(destIdx).mergedSources.push(sIdx); }
+        else if (mc.destination?.$kind === "GasCoin") u.mergeInto = "gas";
+        else u.direct = true; // merged into a command result — untrackable, count it whole
+      }
+      continue;
+    }
+    if (cmd.$kind === "MoveCall") {
+      const mc = cmd.MoveCall || {};
+      const argTypes = Array.isArray(mc._argumentTypes) ? mc._argumentTypes : [];
+      const args = mc.arguments || [];
+      for (let p = 0; p < args.length; p++) {
+        const arg = args[p];
+        const byRef = argTypes[p] && (argTypes[p].reference === "immutable" || argTypes[p].reference === "mutable");
+        if (arg?.$kind === "GasCoin" && !byRef) {
+          // The protocol itself rejects a by-value gas coin in a Move
+          // call (InvalidGasCoinUsage) — the sanctioned path is a
+          // SplitCoins off the gas coin, accounted above.
+          return refuse("Fluid refused this route: a step tried to spend the gas coin directly through a contract call. Pick another route.");
+        }
+        const idx = inputIdxOf(arg);
+        if (idx != null && !byRef) use(idx).direct = true;
+      }
+      continue;
+    }
+    if (cmd.$kind === "MakeMoveVec") {
+      for (const el of cmd.MakeMoveVec?.elements || []) {
+        const idx = inputIdxOf(el);
+        if (idx != null) use(idx).direct = true;
+      }
+      continue;
+    }
+  }
+  // Pass 3 — resolve each coin's exposure from its recorded usage.
+  const exposure = (idx, seen = new Set()) => {
+    const info = coinInfo.get(idx);
+    if (!info) return 0n;
+    if (seen.has(idx)) return info.balance; // merge cycle — count it whole
+    seen.add(idx);
+    const u = usage.get(idx);
+    if (!u) return 0n;
+    let pool = info.balance;
+    for (const sIdx of u.mergedSources) { const si = coinInfo.get(sIdx); if (si) pool += si.balance; }
+    if (u.direct) return pool;
+    if (u.mergeInto != null) return 0n; // its value is accounted at the destination
+    if (u.wasSplit) return u.split;
+    return 0n;
+  };
+  let fromTotal = 0n, suiSideTotal = 0n;
+  for (const [idx, info] of coinInfo) {
+    const ex = exposure(idx);
+    if (ex === 0n) continue;
+    if (info.coinType === fromType) fromTotal += ex;
+    else if (info.coinType === suiType) suiSideTotal += ex;
+    else return refuse("Fluid refused this route: a step tried to spend a different asset than the one being swapped. Pick another route.");
+  }
+  if (isSuiSale) fromTotal += gasSplitTotal;
+  else suiSideTotal += gasSplitTotal;
+  let base = 0n;
+  try { base = BigInt(fromAmount ?? 0); } catch { base = 0n; }
+  const maxFrom = base + (base * SWAP_STEP_VALUE_TOLERANCE_BPS) / 10000n;
+  if (fromTotal > maxFrom) return refuse("Fluid refused this route: a step asked to spend more than the amount you agreed to swap. Pick another route.");
+  // SUI spent alongside a non-SUI sale (an aggregator/bridge fee taken
+  // in the gas coin) is bounded by the step's own declared SUI fees:
+  // its feeCosts plus its gas estimate, as passed in by the caller.
+  if (!isSuiSale && suiSideTotal > suiFeeAllowanceMist + gasEstimateMist) {
+    return refuse("Fluid refused this route: a step asked to spend more SUI alongside the swap than its own declared fees. Pick another route.");
+  }
+  return { ok: true };
+}
+/** Execute a Sui-sourced swap route, mirroring LI.FI's own SDK flow
+ *  over Fluid's GraphQL transport: rebuild the step's transaction
+ *  from its payload, build it against the chain, inspect the BUILT
+ *  bytes (the exact bytes that get signed — owned-object inputs are
+ *  resolved on-chain and valued by checkSuiSwapStepSafety), sign with
+ *  the wallet's Sui key and execute. Returns the digests. */
+export async function executeSuiSwapRoute(phrase, route, onProgress = () => {}) {
+  const { ok, mvm, steps, reason } = swapRouteExecutable(route);
+  if (!ok || !mvm) throw new Error(reason || "That route does not start on Sui.");
+  const kp = suiKeypair(phrase);
+  const myAddr = kp.getPublicKey().toSuiAddress();
+  const client = suiClient();
+  const hashes = [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i], tr = step.transactionRequest;
+    onProgress(`Preparing Sui step ${i + 1} of ${steps.length}…`);
+    const tx = SuiTransaction.from(tr.data);
+    tx.setSenderIfNotSet(myAddr);
+    const bytes = await tx.build({ client });
+    const data = SuiTransaction.from(bytes).getData();
+    // Resolve every owned-object input on-chain: owner, type and (for
+    // coins) balance — the values the safety check holds the step to.
+    const ownedIdx = [];
+    (data.inputs || []).forEach((inp, idx) => {
+      if (inp?.$kind === "Object" && inp.Object?.ImmOrOwnedObject) ownedIdx.push(idx);
+    });
+    const inputObjects = new Map();
+    if (ownedIdx.length) {
+      const ids = ownedIdx.map(idx => data.inputs[idx].Object.ImmOrOwnedObject.objectId);
+      const res = await client.core.getObjects({ objectIds: ids, include: { content: true } });
+      (res.objects || []).forEach((o, j) => {
+        if (!o || o.error || !o.objectId) return;
+        let balance = null;
+        if (SUI_COIN_TYPE_RE.test(String(o.type || "")) && o.content instanceof Uint8Array && o.content.length >= 40) {
+          // Coin<T> BCS layout: UID (32 bytes) || balance u64 LE.
+          let v = 0n;
+          for (let k = 7; k >= 0; k--) v = (v << 8n) | BigInt(o.content[32 + k]);
+          balance = v;
+        }
+        inputObjects.set(ownedIdx[j], {
+          owner: o.owner?.$kind === "AddressOwner" ? o.owner.AddressOwner : null,
+          type: o.type || null,
+          balance,
+        });
+      });
+    }
+    let gasEstimateMist = 0n;
+    for (const g of step.estimate?.gasCosts || []) {
+      try { gasEstimateMist += BigInt(g?.amount || 0); } catch { /* an unreadable gas cost grants nothing */ }
+    }
+    let suiFeeAllowanceMist = 0n;
+    for (const f of step.estimate?.feeCosts || []) {
+      try { suiFeeAllowanceMist += BigInt(f?.amount || 0); } catch { /* an unreadable fee grants nothing */ }
+    }
+    const safety = checkSuiSwapStepSafety(data, {
+      ownerAddress: myAddr,
+      fromCoinType: step.action?.fromToken?.address,
+      fromAmount: step.action?.fromAmount ?? route?.fromAmount ?? 0,
+      gasEstimateMist,
+      suiFeeAllowanceMist,
+      inputObjects,
+    });
+    if (!safety.ok) throw new Error(safety.reason);
+    onProgress(`Signing Sui step ${i + 1} of ${steps.length}…`);
+    const { signature } = await kp.signTransaction(bytes);
+    const res = await client.core.executeTransaction({ transaction: bytes, signatures: [signature], include: { effects: true } });
+    const txn = res.$kind === "FailedTransaction" ? res.FailedTransaction : res.Transaction;
+    if (!txn) throw new Error("Sui returned an unreadable execution reply.");
+    if (res.$kind === "FailedTransaction" || (txn.status && txn.status.success === false)) {
+      const errMsg = (txn.status && txn.status.error && txn.status.error.message) || "execution failed";
+      throw new Error("Sui rejected the swap transaction: " + errMsg);
+    }
+    hashes.push(txn.digest);
+    onProgress(`Sui step ${i + 1} sent ✓`);
   }
   return hashes;
 }

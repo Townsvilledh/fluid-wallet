@@ -28,8 +28,8 @@ import {
   RECEIVE_NETWORKS, filterReceiveNetworks,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn,
-  looksLikePoison, looksLikePoisonText, revokeApproval, scanOnChainAllowances, LIFI_DIAMOND,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
@@ -2753,7 +2753,11 @@ $("actSwap").onclick = () => {
         // Fluid's own fee, disclosed as its own clause in the confirm
         // sentence: computed from THIS quote's actual fromAmount with
         // the standard rate (platformFeeOn) — never a typed-in number.
-        const feeRaw = r.fromAmount != null ? platformFeeOn(r.fromAmount) : 0n;
+        // Only where the source chain actually collects: on Tron/Sui
+        // the fee is not attached to requests until their portal fee
+        // wallets are registered (LI.FI rejects it there), so no fee
+        // is charged — and none may be disclosed — on those routes.
+        const feeRaw = r.fromAmount != null && swapFeeCollectingChain(r.fromChainId) ? platformFeeOn(r.fromAmount) : 0n;
         const platformFee = feeRaw > 0n ? `${fmt(swapRawToAmount(feeRaw.toString(), fromTok.decimals))} ${fromTok.symbol}` : null;
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -2775,11 +2779,20 @@ $("actSwap").onclick = () => {
         hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
         srcExplorer = SOLANA_EXPLORER;
         srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+      } else if (fromKey === "tron") {
+        // Tron signs with the same key as the EVM account (the unlocked
+        // wallet object carries it) — never the phrase.
+        hashes = await executeTronSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+        });
+        srcExplorer = TRON_EXPLORER;
+        srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
       } else if (fromKey === "sui") {
-        // Unreachable in practice — Sui-source route cards are disabled
-        // by swapRouteExecutable — but never fall through to the EVM
-        // signer with a Sui route.
-        throw new Error("Fluid can't sign swap steps starting on Sui yet — use the Sui rows to send SUI directly.");
+        hashes = await executeSuiSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
+        srcExplorer = SUI_EXPLORER;
+        srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
       } else {
         hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
           // Keep a device record of every approval Fluid makes, so the user
@@ -3022,20 +3035,20 @@ $("approvalsBtn").onclick = () => {
     <p class="msg err" id="apMsg"></p>`);
   const emptyNote = `<p class="tag">No approvals recorded — swaps approve the exact amount needed, and they'll appear here.</p>`;
   const paint = () => {
-    const mine = loadApprovals().map((a, i) => ({ ...a, _i: i })).filter(a => a.chainKey === networkKey);
+    const mine = loadApprovals().map((a, i) => ({ ...a, _i: i })).filter(a => a.chainKey === networkKey || a.chainKey === "tron");
     // SECURITY (audit C1): approval records persist LI.FI token symbols —
     // attacker-controlled. Rows render ONLY through formatApprovalRow /
     // formatRevokePrompt (wallet-core), which escape every stored value.
     $("apList").innerHTML = mine.length ? mine.map(a => `
       <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        ${formatApprovalRow(a, fmt(a.amount), new Date(a.at).toLocaleDateString())}
+        ${formatApprovalRow(a, fmt(a.amount), new Date(a.at).toLocaleDateString())}${a.chainKey === "tron" ? ' <span class="pill">TRON</span>' : ""}
         <button class="btn ghost" data-revoke="${a._i}" style="width:auto;padding:6px 12px">Revoke</button>
       </div>`).join("") : emptyNote;
     document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = () => {
       const list = loadApprovals(); const a = list[Number(b.dataset.revoke)]; if (!a) return;
       pendingRevoke = Number(b.dataset.revoke);
       pendingChainRevoke = null;
-      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">${formatRevokePrompt(a, (NETWORKS[a.chainKey] || {}).name)}</p>
+      $("apConfirm").innerHTML = `<p class="seed" style="margin-top:10px">${formatRevokePrompt(a, (NETWORKS[a.chainKey] || (a.chainKey === "tron" ? { name: "Tron" } : {})).name)}</p>
         <button class="btn" id="apRevokeGo">Revoke approval</button>`;
       msg("apMsg", "");
       $("apRevokeGo").onclick = async () => {
@@ -3043,7 +3056,8 @@ $("approvalsBtn").onclick = () => {
         const btn = $("apRevokeGo"); btn.disabled = true;
         try {
           msg("apMsg", "Sending revoke transaction…", true);
-          await revokeApproval(wallet, rec.chainKey, rec.token, rec.spender);
+          if (rec.chainKey === "tron") await revokeTronApproval(wallet, rec.token, rec.spender);
+          else await revokeApproval(wallet, rec.chainKey, rec.token, rec.spender);
           cur.splice(pendingRevoke, 1);
           localStorage.setItem(APPROVALS_KEY, JSON.stringify(cur));
           pendingRevoke = null; $("apConfirm").innerHTML = "";

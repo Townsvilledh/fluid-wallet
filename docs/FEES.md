@@ -77,11 +77,21 @@ the weekly follower drip and the OGO ERA player pools; see
    collection is ON (`PLATFORM_FEE_COLLECTION_ENABLED = true`). The
    per-family audit (`SWAP_FEE_COVERAGE` in the wallet core, pinned
    by tests) records the remaining gaps: EVM-sourced swaps collect
-   live; Solana-sourced swaps are executable and carry the fee, but
-   the portal's SVM fee wallet is unset (the DripBot wallet holds no
-   Solana address yet), so those fees have no configured destination;
-   Tron- and Sui-sourced routes carry the fee in every request but
-   cannot execute until those families' LI.FI step signers land.
+   live; Solana-sourced swaps collect too (the portal's Default SVM
+   fee wallet was set to the DripBot agent wallet's Solana address on
+   2026-11-07); Tron- and Sui-sourced swaps execute since their LI.FI
+   step signers landed on 2026-11-07, but cannot collect until the
+   agent wallet's Tron and Sui
+   addresses (derived from its keystore and recorded as the coverage
+   rows' destinations) are registered as the portal's Default Tron /
+   Sui fee wallets — an operator step in the partner portal. Until
+   then the fee is not attached to Tron/Sui requests at all: LI.FI
+   rejects fee-bearing requests on chains with no configured fee
+   wallet (HTTP 400, code 1011 — verified live on 2026-11-07), so
+   those swaps execute fee-free rather than failing. The request
+   builders gate the fee per source chain (`swapFeeCollectingChain`);
+   registering the wallets and flipping the two coverage rows to
+   collecting turns the fee on for those families in the same build.
    Every other chain family (Bitcoin, Litecoin, Dogecoin, Bitcoin
    Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
    Stacks, Lightning) has no swap route at all — sends/receives only.
