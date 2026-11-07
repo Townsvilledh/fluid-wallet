@@ -3720,6 +3720,63 @@ export async function fetchPaycrestNgnBuyRate() {
   } catch { return null; }
 }
 
+// ---------- Nigeria BUY route board (owner's product model, 7 Nov 2026) ----------
+// The NG buy sheet is a SCROLLABLE ROUTE BOARD, not a single chosen
+// route: every legitimate, alive Nigeria buy route is displayed,
+// cheapest evidence first, and the user browses and chooses. The
+// featured NoOnes card (RAMP_COUNTRY_PLAN above) stays on top; this
+// board is the additive "All Nigeria buy routes" section below it.
+// The board's framing (owner, 7 Nov 2026) is that Fluid is WHERE THE
+// MONEY LANDS, not a signpost out: every row carries a `delivery`
+// label saying how the coins reach the user's Fluid address —
+// "Pays straight to your Fluid address" (Zap Africa, the one truly
+// address-native row), the Noblocks one-extra-hop label, or "Lands
+// in their app first — withdraw to your Fluid address" for every
+// exchange/P2P row whose funds land in the provider account first.
+// Source of truth: research_notes/fluid-ramp-master-list-20261107
+// (all figures are 7 Nov 2026 evidence — REPORTED board snapshots or
+// PUBLISHED provider figures, except Noblocks, which is Fluid's own
+// MEASURED live Paycrest rate and is labelled as such). Rates order
+// the board; they never prune it. A row is data only: { name, url,
+// rate, rateLabel, note, delivery, bvnPhone?, measured? } — rate is the ₦/$
+// board figure (null = no usable figure exists; the row then reads
+// "Rate shown at provider"). bvnPhone marks the ⚠BV rows whose BVN
+// check routes through the phone number registered on the user's
+// BVN (Quidax, CoinCola, Obiex — master list flags). Dead routes
+// (the master list's DEAD table) never appear here. URLs are the
+// providers' canonical public sites; referral substitution happens
+// per-provider elsewhere, never by editing these rows silently.
+export const NG_BUY_BOARD = [
+  { name: "Bitget P2P", url: "https://www.bitget.com", rate: 1376, rateLabel: "₦1,376", note: "Full exchange KYC — ID + face scan · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Luno", url: "https://www.luno.com", rate: 1376, rateLabel: "₦1,376", note: "BVN + code by email — no selfie · instant buy, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "OKX P2P", url: "https://www.okx.com", rate: 1377, rateLabel: "₦1,377", note: "Full exchange KYC · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Gate P2P", url: "https://www.gate.com", rate: 1378, rateLabel: "₦1,378", note: "Full exchange KYC · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Bybit P2P", url: "https://www.bybit.com", rate: 1379, rateLabel: "₦1,379", note: "Full exchange KYC, incl. a liveness check · the deepest Nigeria P2P book", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Quidax", url: "https://www.quidax.com", rate: 1381, rateLabel: "₦1,381", note: "BVN check uses the phone number on your BVN · instant buy, pay by bank transfer", bvnPhone: true , delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Noblocks", url: "https://noblocks.xyz", rate: 1385, rateLabel: "₦1,385 · measured live", note: "Email sign-in + BVN + a selfie matched to your ID record · bank transfer in; crypto lands in its built-in wallet and you send it out from there", measured: true, delivery: "One extra hop: lands in Noblocks, you send it here free" },
+  { name: "CoinCola", url: "https://www.coincola.com", rate: 1391, rateLabel: "₦1,391–1,400", note: "Email to buy; ID verification needed before you can send out · BVN check uses the phone number on your BVN", bvnPhone: true , delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "NoOnes", url: "https://noones.com", rate: 1397, rateLabel: "₦1,397", note: "Email + name + date of birth — no ID documents for everyday amounts · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Remitano", url: "https://remitano.com", rate: 1398, rateLabel: "₦1,398", note: "Email + phone at the starter level; ID + selfie above it · the Nigeria book is thin", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Fonbnk", url: "https://fonbnk.com", rate: 1414, rateLabel: "₦1,414", note: "Fonbnk buy needs a wallet connection — listed for price comparison; Fluid's working Fonbnk route is on the Sell side", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "KachiPlug", url: "https://kachiplug.com", rate: 1450, rateLabel: "₦1,450", note: "Order form only — email contact, no account, no ID · No escrow — trade with care", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Cashwyre", url: "https://cashwyre.com", rate: 1480, rateLabel: "₦1,480 · stale (Nov 2025)", note: "App-based · KYC required · the rate shown is from an old listing — check the live rate at the provider", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Mercuryo", url: "https://mercuryo.io", rate: 1499, rateLabel: "₦1,499", note: "Email + a one-time ID check and selfie on your first purchase · pay by card", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "BitValve", url: "https://www.bitvalve.com", rate: 1540, rateLabel: "₦1,540", note: "No ID needed up to $1,000 a year · thin book — most offers are gift-card trades", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "ErrandWallet", url: "https://errandwallet.com", rate: 1560, rateLabel: "₦1,560", note: "Selfie + ID scan · app-based; sends crypto to any wallet", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "LocalCoinSwap", url: "https://localcoinswap.com", rate: 1884, rateLabel: "₦1,884", note: "No ID by default · Very few live offers — price is indicative only", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Zap Africa", url: "https://zap.africa", rate: null, rateLabel: "Rate shown at provider", note: "BVN-only tier up to ₦500k per trade · non-custodial — crypto is delivered to your own wallet address", delivery: "Pays straight to your Fluid address" },
+  { name: "Roqqu", url: "https://www.roqqu.com", rate: null, rateLabel: "Rate shown at provider", note: "BVN number entry at Tier 2 · Nigerian exchange — fund by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Bitmama", url: "https://bitmama.io", rate: null, rateLabel: "Rate shown at provider", note: "ID number first, BVN before withdrawal, a selfie at the full tier · Nigerian exchange", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Busha", url: "https://busha.io", rate: null, rateLabel: "Rate shown at provider", note: "BVN or ID at Level 2 unlocks full use · Nigerian exchange — fund by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Obiex", url: "https://obiex.finance", rate: null, rateLabel: "Rate shown at provider", note: "BVN check uses the phone number on your BVN · P2P trading needs ID + a selfie video", bvnPhone: true , delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Bitnob", url: "https://bitnob.com", rate: null, rateLabel: "Rate shown at provider", note: "App only · document ID (NIN, passport or licence) — no BVN step for individuals", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "KoinKoin", url: "https://koinkoin.com", rate: null, rateLabel: "Rate shown at provider", note: "Full ID verification — a regulated Nigerian exchange · firm quote shown in its app", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "Moon Finance", url: "https://usemoon.space", rate: null, rateLabel: "Rate shown at provider", note: "ID + selfie required before trading", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "KclautX", url: "https://kclautx.com", rate: null, rateLabel: "Rate shown at provider", note: "ID + selfie — KYC for all users · app-based", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "MEXC P2P", url: "https://www.mexc.com", rate: null, rateLabel: "Rate shown at provider", note: "Full exchange KYC · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+  { name: "WEEX P2P", url: "https://www.weex.com", rate: null, rateLabel: "Rate shown at provider", note: "Full exchange KYC · P2P escrow, pay by bank transfer", delivery: "Lands in their app first — withdraw to your Fluid address" },
+];
+
 // ---------- Agentic wallets ----------
 // An agent wallet is a SEPARATE account derived from the owner's seed at a
 // reserved account range (1000+), so one seed backup covers owner + agents

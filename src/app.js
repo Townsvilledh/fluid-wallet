@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, NG_BUY_BOARD, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -3135,7 +3135,19 @@ function rampSheet(mode) {
       (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
       (fonbnkBuyBlocked ? `<p class="tag">Fonbnk buying is not offered in Fluid — its buy flow forces a WalletConnect connection to an external wallet instead of letting you paste your Fluid address, and that defeats the point of Fluid. Fonbnk cash-out still works: it runs on a plain address, no wallet connection.</p>` : "") +
       (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
-      (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
+      (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "") +
+      // Nigeria BUY route board (owner's product model, 7 Nov 2026):
+      // every alive NG buy route as a scrollable board below the
+      // featured route cards, cheapest evidence first. Rows are
+      // wallet-core data (NG_BUY_BOARD); each row's URL rides in the
+      // same data attribute the listener below binds, so board rows
+      // open exactly like the route cards above them.
+      (mode === "buy" && code === "NG" ?
+        `<h4 style="margin:16px 0 2px">All Nigeria buy routes</h4>` +
+        `<p class="tag">Every route here ends with crypto in this wallet. Pick a route, pay there, and your coins are delivered to your Fluid address — copy it from Receive. Cheapest first; rates are Fluid's latest evidence (price checks 7 Nov 2026) unless a row says "measured live". A ⚠ BVN PHONE row checks your BVN through the phone number registered on it.</p>` +
+        NG_BUY_BOARD.map(r =>
+          `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)} <span class="pill">${esc(r.rateLabel)}</span>${r.bvnPhone ? ' <span class="pill soon">⚠ BVN PHONE</span>' : ""}</span><small class="rampnote">→ ${esc(r.delivery)}</small><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
+        `<p class="tag" style="margin-top:10px">Rates move fast — the price you pay is the one shown at the provider. Fluid never holds your money on these routes.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
     paintBench();
     if (mode === "buy" && code === "NG" && !benchAsked) {
