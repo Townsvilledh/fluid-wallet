@@ -3,7 +3,13 @@ import { build } from "esbuild";
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 mkdirSync("dist", { recursive: true });
-await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js" });
+await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js"] });
+// Lightning node chunk: built separately and loaded lazily by app.js
+// only when the Lightning panel opens. The WASM binary ships beside it
+// under the exact name the chunk's init() resolves via import.meta.url.
+await build({ entryPoints: ["src/lightning-node.js"], bundle: true, minify: true, format: "esm", outfile: "dist/lightning.chunk.js" });
+copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_bg.wasm");
+copyFileSync("src/sw.js", "dist/sw.js");
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");

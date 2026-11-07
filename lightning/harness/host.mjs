@@ -85,7 +85,7 @@ export class PipeHost {
 }
 
 const hosts = [];
-export function makeNode(name, seedHex, chain) {
+export function makeNode(name, seedHex, chain, role = "wallet") {
   const host = new PipeHost(name);
   const bridges = host.install();
   // The WASM module reads a single global FluidLnHost object; with
@@ -93,7 +93,7 @@ export function makeNode(name, seedHex, chain) {
   // AND around every call. The harness wraps calls accordingly.
   globalThis.FluidLnHost = bridges;
   const tip = chain.tip();
-  const node = new ln.FluidNode(new Uint8Array(Buffer.from(seedHex, "hex")), "regtest", chain.height, tip.hash, chain.time);
+  const node = new ln.FluidNode(new Uint8Array(Buffer.from(seedHex, "hex")), "regtest", chain.height, tip.hash, chain.time, role);
   host.attach(node);
   hosts.push({ name, host, node, bridges });
   return hosts[hosts.length - 1];

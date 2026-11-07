@@ -11,4 +11,6 @@ for a in "$@"; do
   if [[ "$a" == "--target" ]]; then prev="--target"; continue; fi
   args+=("$a")
 done
-exec "${FLUID_ZIG:-zig}" cc -target wasm32-freestanding "${args[@]}"
+ZIG="${FLUID_ZIG:-zig}"
+command -v "$ZIG" >/dev/null 2>&1 || ZIG="$HOME/bin/zig"
+exec "$ZIG" cc -target wasm32-freestanding "${args[@]}"

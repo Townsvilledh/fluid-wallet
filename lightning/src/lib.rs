@@ -87,7 +87,6 @@ pub struct HostLogger {
 }
 impl Logger for HostLogger {
     fn log(&self, record: Record) {
-        // Trace/Debug/Gossip are far too chatty to cross the bridge.
         if record.level == Level::Trace || record.level == Level::Debug || record.level == Level::Gossip {
             return;
         }
@@ -265,8 +264,8 @@ pub type RouterT = DefaultRouter<
 /// diverges in ONE bounded way: the default router only builds offer
 /// paths through peers that already appear in the gossip graph (or when
 /// there is exactly one peer), which strands a light-client wallet whose
-/// graph may not yet contain its own LSP. Fluid instead builds padded
-/// blinded paths through the user's OWN connected channel peers — the
+/// graph may not yet contain its own LSP. Fluid instead builds blinded
+/// paths through the user's OWN connected channel peers — the
 /// peers the offers flow already vetted (connected, onion-message
 /// capable, with a usable channel). It never introduces strangers from
 /// the graph. See docs/LIGHTNING.md.
@@ -279,7 +278,6 @@ impl lightning::onion_message::messenger::MessageRouter for FluidMessageRouter {
         &self, sender: bitcoin::secp256k1::PublicKey, peers: Vec<bitcoin::secp256k1::PublicKey>,
         destination: lightning::onion_message::messenger::Destination,
     ) -> Result<lightning::onion_message::messenger::OnionMessagePath, ()> {
-        use lightning::onion_message::messenger::MessageRouter as _;
         self.inner.find_path(sender, peers, destination)
     }
     fn create_blinded_paths<T: bitcoin::secp256k1::Signing + bitcoin::secp256k1::Verification>(
@@ -292,12 +290,21 @@ impl lightning::onion_message::messenger::MessageRouter for FluidMessageRouter {
         if peers.is_empty() {
             return Err(());
         }
-        // Paths are built one per peer (max 3, like the default), each
-        // padded with dummy hops to the same total length (4) the
-        // default produces. One special case first: if the recipient
-        // is itself one of our connected peers, the canonical one-hop
-        // path (introduction node = the recipient, no intermediate
-        // hops) leads the list — it is the one path whose first hop is
+        // Paths are built one per peer (max 3, like the default), but
+        // WITHOUT the default's dummy-hop padding, on measured
+        // evidence: a 4-hop padded path serialises to ~671 bytes, and
+        // a BOLT 12 static-invoice payment must fit the largest path
+        // PLUS the echoed invoice request inside the fixed 1300-byte
+        // onion packet — LDK's set_max_path_length takes the largest
+        // hint, so one padded path makes the payment fail with
+        // OnionPacketSizeExceeded before routing is even attempted.
+        // A wallet's paths all start at its own LSP anyway, so the
+        // padding buys no real privacy here; the natural length
+        // (introduction peer -> recipient, 2 hops) is used instead.
+        // One special case first: if the recipient is itself one of
+        // our connected peers, the canonical one-hop path
+        // (introduction node = the recipient, no intermediate hops)
+        // leads the list — it is the one path whose first hop is
         // deliverable by construction, and several LDK call sites use
         // only the first path (e.g. reply paths on responses).
         let mut out = Vec::new();
@@ -311,6 +318,9 @@ impl lightning::onion_message::messenger::MessageRouter for FluidMessageRouter {
             ));
         }
         for peer in peers.iter().take(3) {
+            if peer.node_id == recipient {
+                continue; // already covered by the one-hop lead
+            }
             let hop = lightning::blinded_path::message::MessageForwardNode {
                 node_id: peer.node_id,
                 short_channel_id: None,
@@ -318,12 +328,57 @@ impl lightning::onion_message::messenger::MessageRouter for FluidMessageRouter {
             out.push(lightning::blinded_path::message::BlindedMessagePath::new_with_dummy_hops(
                 &[hop],
                 recipient,
-                2,
+                0,
                 local_node_receive_key,
                 context.clone(),
                 &*self.entropy,
                 secp_ctx,
             ));
+        }
+        // Async-payments special case (measured, see
+        // sis_paths_for_recipient): when these paths are destined for
+        // an async recipient's OFFER (StaticInvoiceRequested context),
+        // keep only ONE — a static-invoice payment's onion embeds the
+        // whole invoice request, which embeds the whole offer; each
+        // extra ~369-byte path pushes the payer's onion past its
+        // 1,300-byte limit and the payment is refused
+        // (OnionPacketSizeExceeded). Choice of the one path: avoid an
+        // introduction that is the async recipient itself (it is the
+        // node going offline — a path introduced by it is undeliverable
+        // exactly when it matters; the recipient is identified by the
+        // context's recipient_id when the caller uses the recipient's
+        // node-id hex there, which is this crate's convention), then
+        // avoid the path-recipient (the SIS) itself.
+        let async_recipient = match &context {
+            lightning::blinded_path::message::MessageContext::Offers(
+                lightning::blinded_path::message::OffersContext::StaticInvoiceRequested {
+                    recipient_id,
+                    ..
+                },
+            ) => unhex(&String::from_utf8_lossy(recipient_id))
+                .ok()
+                .and_then(|b| bitcoin::secp256k1::PublicKey::from_slice(&b).ok()),
+            _ => None,
+        };
+        if async_recipient.is_some() && out.len() > 1 {
+            let intro_of = |p: &lightning::blinded_path::message::BlindedMessagePath| match p
+                .introduction_node()
+            {
+                lightning::blinded_path::IntroductionNode::NodeId(id) => Some(*id),
+                _ => None,
+            };
+            let pick = out
+                .iter()
+                .position(|p| {
+                    let intro = intro_of(p);
+                    intro != async_recipient && intro != Some(recipient)
+                })
+                .or_else(|| {
+                    out.iter()
+                        .position(|p| intro_of(p) != async_recipient)
+                })
+                .unwrap_or(0);
+            out = vec![out.swap_remove(pick)];
         }
         Ok(out)
     }
@@ -467,6 +522,7 @@ pub struct NodeInner {
     pub graph: Arc<Graph>,
     pub chain_monitor: Arc<ChainMonitorT>,
     pub channel_manager: Arc<ChannelManagerT>,
+    pub onion_messenger: Arc<OnionMessengerT>,
     pub peer_manager: Arc<PeerManagerT>,
     pub filter: Arc<HostFilter>,
     pub sinks: Sinks,
@@ -529,7 +585,7 @@ impl NodeInner {
     /// keep it honest afterwards).
     pub fn new(
         host: Arc<dyn HostBridge>, seed32: &[u8; 32], network: Network, tip_height: u32,
-        tip_hash: BlockHash, now_secs: u64,
+        tip_hash: BlockHash, now_secs: u64, role_server: bool,
     ) -> Result<Arc<NodeInner>, String> {
         use lightning::util::ser::ReadableArgs;
         let keys_manager = Arc::new(KeysManager::new(seed32, now_secs, 0, true));
@@ -576,6 +632,37 @@ impl NodeInner {
         let mut config = UserConfig::default();
         config.channel_handshake_config.our_to_self_delay = 144;
         config.manually_accept_inbound_channels = false;
+        // BOLT 12 async payments (LDK's htlc_hold feature). As a payer
+        // of static invoices, ask our next hop to hold the HTLC until
+        // the recipient comes online (hold_outbound_htlcs_at_next_hop,
+        // the "private node" option) — set for both roles. Advertising
+        // that we ourselves hold HTLCs for peers (enable_htlc_hold)
+        // is a promise to be online reliably, so it is set ONLY for
+        // server-role nodes (the always-on keeper / an LSP), never
+        // for the phone wallet: a wallet that goes offline while
+        // holding someone else's HTLC would strand it until CLTV
+        // expiry. Holding is never custodial either way — the holder
+        // can delay a payment, never take or redirect it.
+        config.enable_htlc_hold = role_server;
+        config.hold_outbound_htlcs_at_next_hop = true;
+        if role_server {
+            // Server nodes (LSPs, the keeper) announce the channels
+            // THEY open, like any public Lightning node: announced
+            // channels are how payers' routers learn the LSP<->SIS
+            // hops they need to reach a blinded-path introduction
+            // beyond their own first hop. Wallet-opened channels stay
+            // private (the wallet config leaves both flags at their
+            // defaults).
+            config.channel_handshake_config.announce_for_forwarding = true;
+            config.channel_handshake_limits.force_announced_channel_preference = false;
+        }
+        // All Fluid channels are private (unannounced). BOLT 12 blinded
+        // paths exist precisely to deliver payments over private
+        // channels without revealing them, so forwarding along a
+        // blinded path over our own private channels must be allowed
+        // (privacy is preserved by the blinding itself; the LDK
+        // default of refusing exists for public routing nodes).
+        config.accept_forwards_to_priv_channels = true;
 
         // Channel monitors first: the manager read needs them.
         let monitors = lightning::util::persist::read_channel_monitors(
@@ -631,7 +718,7 @@ impl NodeInner {
             let _ = funding_txo;
         }
 
-        let onion_messenger = Arc::new(OnionMessenger::new(
+        let onion_messenger = Arc::new(OnionMessenger::new_with_offline_peer_interception(
             keys_manager.clone(),
             keys_manager.clone(),
             logger.clone(),
@@ -712,6 +799,7 @@ impl NodeInner {
             graph,
             chain_monitor,
             channel_manager,
+            onion_messenger,
             peer_manager,
             filter,
             sinks,
@@ -732,6 +820,7 @@ use lightning::events::{Event, PaymentPurpose, ReplayEvent};
 
 pub struct NodeEventHandler {
     cm: Arc<ChannelManagerT>,
+    om: Arc<OnionMessengerT>,
     sinks: Sinks,
     host: Arc<dyn HostBridge>,
 }
@@ -910,6 +999,33 @@ impl lightning::events::EventHandler for NodeEventHandler {
                 ));
             }
             Event::OnionMessagePeerConnected { peer_node_id } => {
+                // The host duty from the event's contract: forward every
+                // message stored for this peer while it was offline.
+                // Bytes are kept if any forward fails (e.g. BufferFull)
+                // so a later reconnect retries; duplicates are harmless
+                // (a repeated HeldHtlcAvailable just re-releases).
+                let key = format!("held_om/{}", peer_node_id);
+                if let Some(blob) = self.host.kv_read(&key) {
+                    let mut rest = &blob[..];
+                    let mut all_ok = true;
+                    while rest.len() >= 4 {
+                        let len = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+                        if rest.len() < 4 + len { all_ok = false; break; }
+                        let slice = &rest[4..4 + len];
+                        let mut byte_reader: &[u8] = slice;
+                        let mut flr = lightning::util::ser::FixedLengthReader::new(&mut byte_reader, slice.len() as u64);
+                        match <lightning::ln::msgs::OnionMessage as lightning::util::ser::LengthReadable>::read_from_fixed_length_buffer(&mut flr) {
+                            Ok(message) => {
+                                if self.om.forward_onion_message(message, &peer_node_id).is_err() { all_ok = false; }
+                            }
+                            Err(_) => { all_ok = false; }
+                        }
+                        rest = &rest[4 + len..];
+                    }
+                    if all_ok && rest.is_empty() {
+                        self.host.kv_remove(&key);
+                    }
+                }
                 self.ev(format!(
                     "{{\"type\":\"peer_back_online\",\"peer\":{}}}",
                     jstr(&peer_node_id.to_string()),
@@ -961,6 +1077,7 @@ impl NodeInner {
     pub fn handler(&self) -> NodeEventHandler {
         NodeEventHandler {
             cm: self.channel_manager.clone(),
+            om: self.onion_messenger.clone(),
             sinks: self.sinks.clone(),
             host: self.host.clone(),
         }
@@ -1041,6 +1158,7 @@ impl NodeInner {
         self.channel_manager.process_pending_htlc_forwards();
         self.channel_manager.process_pending_events(&handler);
         self.chain_monitor.process_pending_events(&handler);
+        self.onion_messenger.process_pending_events(&handler);
         self.peer_manager.process_events();
         self.channel_manager.process_pending_events(&handler);
         if self.dirty.swap(false, Ordering::Relaxed) {
@@ -1334,6 +1452,12 @@ impl NodeInner {
             _ => None,
         }).or(amount_msat);
         let payment_id = PaymentId(self.keys_manager.get_secure_random_bytes());
+        // Default payment params: in this no-std build the default
+        // retry strategy is Retry::Attempts(3) — retries matter here,
+        // BOLT 12 payments cross several hops and the async flow in
+        // particular races channel resumption when a recipient has
+        // just come back online; a transient first-attempt failure
+        // (ChannelNotReady at the last hop) must not be fatal.
         self.channel_manager
             .pay_for_offer(&offer, amount, payment_id, Default::default())
             .map_err(|e| format!("offer payment failed to start: {e:?}"))?;
@@ -1362,10 +1486,36 @@ impl NodeInner {
     /// SIS side: produce blinded paths a recipient uses to configure
     /// itself with us as its static invoice server.
     pub fn sis_paths_for_recipient(&self, recipient_id: &str) -> Result<String, String> {
-        let paths = self
+        let mut paths = self
             .channel_manager
             .blinded_paths_for_async_recipient(recipient_id.as_bytes().to_vec(), None)
             .map_err(|_| "could not build paths to this node (are we connected to onion-message-capable peers?)".to_string())?;
+        // These are paths TO this SIS, which the recipient uses to
+        // send its OfferPathsRequest / ServeStaticInvoice messages.
+        // Keep ONE: the set is stored by the recipient and echoed in
+        // protocol messages, and brevity keeps every later onion
+        // small. Prefer the path introduced by the recipient itself:
+        // a light wallet can always reach its own introduction point
+        // (itself, then one hop to us), whereas a path introduced by
+        // one of our other peers is only reachable for the recipient
+        // if it happens to be connected to that peer too. The
+        // recipient is identified when recipient_id is its node-id
+        // hex (this crate's convention); otherwise take the first.
+        if paths.len() > 1 {
+            let recipient_bytes = unhex(recipient_id)
+                .unwrap_or_else(|_| recipient_id.as_bytes().to_vec());
+            let recipient_pk =
+                bitcoin::secp256k1::PublicKey::from_slice(&recipient_bytes).ok();
+            let pick = recipient_pk
+                .and_then(|pk| {
+                    paths.iter().position(|p| match p.introduction_node() {
+                        lightning::blinded_path::IntroductionNode::NodeId(id) => id == &pk,
+                        _ => false,
+                    })
+                })
+                .unwrap_or(0);
+            paths = vec![paths.swap_remove(pick)];
+        }
         let mut out = String::from("[");
         for (i, p) in paths.iter().enumerate() {
             let mut bytes = Vec::new();
@@ -1554,6 +1704,7 @@ mod wasm_host {
         #[wasm_bindgen(constructor)]
         pub fn new(
             seed: &[u8], network: &str, tip_height: u32, tip_hash: &str, now_secs: f64,
+            role: &str,
         ) -> Result<FluidNode, JsValue> {
             if seed.len() != 32 {
                 return Err(JsValue::from_str("seed must be 32 bytes"));
@@ -1571,6 +1722,7 @@ mod wasm_host {
                 tip_height,
                 hash,
                 now_secs as u64,
+                role == "server",
             )
             .map_err(|e| JsValue::from_str(&e))?;
             Ok(FluidNode { inner })

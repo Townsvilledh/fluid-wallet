@@ -480,6 +480,18 @@ export async function broadcastBitcoinTx(hex) {
   if (!post.ok) throw new Error("Bitcoin network rejected the transaction: " + (await post.text()));
   return post.text();
 }
+/** Address form of a Lightning channel funding script. LDK funding
+ *  outputs are always P2WSH (0020<32-byte witness program>); anything
+ *  else is refused rather than guessed at, because the funding payment
+ *  must land on the EXACT script the channel negotiated. */
+export function fundingAddressFromScript(scriptHex, network = "bitcoin") {
+  const s = String(scriptHex || "").toLowerCase();
+  if (!/^0020[0-9a-f]{64}$/.test(s)) {
+    throw new Error("Funding script is not a P2WSH script — refusing to build a funding payment to it.");
+  }
+  const hrp = network === "bitcoin" ? "bc" : (network === "signet" || network === "testnet") ? "tb" : "bcrt";
+  return bech32.encode(hrp, [0, ...bech32.toWords(hex.decode(s.slice(4)))], 90);
+}
 /** Build + sign a BTC payment WITHOUT broadcasting, so the review sheet
  *  can show the EXACT fee before the user confirms; confirming then
  *  broadcasts these exact bytes (what was reviewed is what is sent).
@@ -2911,25 +2923,10 @@ export async function payLightningInvoice(invoice) {
 // byte-for-byte by the official BOLT 11 spec examples (see tests) and
 // cross-checked against the Rust implementation in the chunk.
 
-/** The 32-byte seed for the in-app Lightning node, derived from the
- *  wallet's BIP-39 seed with HKDF-SHA256 under a Fluid-specific domain
- *  separator. Same phrase -> same Lightning node, on any device, and
- *  independent of every other chain's keys. */
-export function deriveLightningSeed(phrase) {
-  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
-  const seed = mnemonicToSeedSync(clean);
-  return hkdf(sha256, seed, new TextEncoder().encode("fluid"), new TextEncoder().encode("fluid/lightning/ldk-seed/v1"), 32);
-}
-
-/** AES key encrypting the Lightning node's persisted state at rest
- *  (channel monitors + manager in the browser's localStorage domain).
- *  A SEPARATE HKDF branch from the node seed itself: the storage key
- *  can decrypt state blobs but is never channel key material. */
-export function deriveLightningStorageKey(phrase) {
-  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
-  const seed = mnemonicToSeedSync(clean);
-  return hkdf(sha256, seed, new TextEncoder().encode("fluid"), new TextEncoder().encode("fluid/lightning/storage/v1"), 32);
-}
+/** The Lightning seed/storage derivations live in src/ln-derive.js
+ *  (re-exported here) so the lazy Lightning chunk can import them
+ *  without bundling all of wallet-core. */
+export { deriveLightningSeed, deriveLightningStorageKey } from "./ln-derive.js";
 
 // --- 5-bit word <-> byte helpers (BOLT 11 packs its data part as a bit
 // stream: words are concatenated as bits and zero-padded to bytes). ---

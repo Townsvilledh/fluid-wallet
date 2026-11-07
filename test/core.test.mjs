@@ -2191,7 +2191,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 {
   const { parseBolt11, encodeBolt11, bolt11IsExpired, parseBolt12Offer, resolveBip353Address,
     classifyLightningTarget, deriveLightningSeed, deriveLightningStorageKey, ASYNC_PAY_HOLD, validateHoldHours,
-    holdWindowCopy, summariseHeldPayments } = await import("../src/wallet-core.js");
+    holdWindowCopy, summariseHeldPayments, fundingAddressFromScript } = await import("../src/wallet-core.js");
   const { bech32m } = await import("@scure/base");
   const PRIV = "e126f68f7eafcc8b74f54d269fe206be715000f94dac067d1c04a8ca3b2db734";
   const PAYEE = "03e7156ae33b0a208d0744199163177e909e80176e55d97a2f221ede0f934dd9ad";
@@ -2348,6 +2348,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ], 1000);
   ok("ln: held-payment summary totals, expiry ordering and lapse counting",
     sh.count === 3 && sh.totalMsat === 4000n && sh.nextExpirySec === 1500 && sh.expiredUnswept === 1);
+  // Funding-script -> address: the all-zero P2WSH program's address is
+  // independently produced by @scure/btc-signer's Address encoder (two
+  // code paths, same string) — pinned here from that cross-check.
+  ok("ln: fundingAddressFromScript maps P2WSH to its bech32 address (cross-checked vs @scure/btc-signer)",
+    fundingAddressFromScript("0020" + "00".repeat(32)) ===
+      "bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqthqst8" &&
+    fundingAddressFromScript("0020" + "00".repeat(32), "signet").startsWith("tb1q"));
+  assert.throws(() => fundingAddressFromScript("0014" + "00".repeat(20)), /not a P2WSH/);
+  ok("ln: fundingAddressFromScript refuses non-P2WSH scripts", true);
 }
 
 console.log(`\n${passed} checks passed`);

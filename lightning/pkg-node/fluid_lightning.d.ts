@@ -17,7 +17,7 @@ export class FluidNode {
     drain_events(): string;
     funding_tx_ready(user_channel_id: string, raw_tx_hex: string): void;
     history(): string;
-    constructor(seed: Uint8Array | number[], network: string, tip_height: number, tip_hash: string, now_secs: number);
+    constructor(seed: Uint8Array | number[], network: string, tip_height: number, tip_hash: string, now_secs: number, role: string);
     node_id(): string;
     open_channel(pubkey: string, amount_sat: bigint, push_msat: bigint): string;
     pay_invoice(invoice: string, amount_msat?: bigint | null): string;

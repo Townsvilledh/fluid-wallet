@@ -22,4 +22,5 @@ bitcoin-io = "=0.1.101"
 
 [profile.release]
 opt-level = 2
+strip = "symbols"
 panic = "abort"
