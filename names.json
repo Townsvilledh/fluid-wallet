@@ -1,7 +1,8 @@
 {
   "ethuram": {
     "evm": "0x0EBf5563F905E3B9D58718E28E08143511DC763b",
-    "btc": "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw"
+    "btc": "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw",
+    "algo": "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4"
   },
   "dripbot": {
     "evm": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
