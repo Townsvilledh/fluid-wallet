@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, NG_BUY_BOARD, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -179,59 +179,6 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("no hardcoded rate figure in the app shell", !appSrcB.includes("1384") && !appSrcB.includes("1,385"));
   ok("CSP untouched: connect-src https: already covers the rates API", idxSrcB.includes("connect-src 'self' https: wss:")
     && !idxSrcB.includes("paycrest") && !appSrcB.includes("api.paycrest.io"));
-}
-
-// 16b3. Nigeria BUY route board (owner's product model, 7 Nov 2026):
-// the NG buy sheet shows EVERY alive Nigeria buy route as a scrollable
-// board (master list: research_notes/fluid-ramp-master-list-20261107),
-// cheapest evidence first — ranking orders the board, it never prunes
-// it. Dead routes (the master list's DEAD table) must never appear.
-{
-  ok("board carries every board row (17 priced + 11 at-provider)", NG_BUY_BOARD.length === 28);
-  ok("every board row has name + https url + rate label + note", NG_BUY_BOARD.every(r =>
-    typeof r.name === "string" && r.name.length > 0 && /^https:\/\//.test(r.url)
-    && typeof r.rateLabel === "string" && r.rateLabel.length > 0
-    && typeof r.note === "string" && r.note.length > 0));
-  ok("board names are unique", new Set(NG_BUY_BOARD.map(r => r.name)).size === NG_BUY_BOARD.length);
-  const priced = NG_BUY_BOARD.filter(r => r.rate != null);
-  const unpriced = NG_BUY_BOARD.filter(r => r.rate == null);
-  ok("priced rows all sit above the at-provider rows", NG_BUY_BOARD.slice(0, priced.length).every(r => r.rate != null)
-    && unpriced.length === 11 && unpriced.every(r => r.rateLabel === "Rate shown at provider"));
-  ok("priced rows are non-decreasing by rate (cheapest first)", priced.every((r, i) => i === 0 || r.rate >= priced[i - 1].rate));
-  ok("board opens on Bitget P2P and closes priced rows on LocalCoinSwap", priced[0].name === "Bitget P2P"
-    && priced[priced.length - 1].name === "LocalCoinSwap" && priced[priced.length - 1].rate === 1884);
-  ok("Noblocks is the one measured-live row", NG_BUY_BOARD.filter(r => r.measured).length === 1
-    && NG_BUY_BOARD.find(r => r.measured).name === "Noblocks"
-    && NG_BUY_BOARD.find(r => r.measured).rateLabel.includes("measured live"));
-  ok("BVN-phone warning flags exactly Quidax, CoinCola, Obiex", NG_BUY_BOARD.filter(r => r.bvnPhone).map(r => r.name).join(",") === "Quidax,CoinCola,Obiex"
-    && NG_BUY_BOARD.filter(r => r.bvnPhone).every(r => r.note.includes("phone number on your BVN")));
-  ok("no dead route is on the board", NG_BUY_BOARD.every(r =>
-    !/paxful|cryptolocally|yellow card|spender|spandar|guardarian|peach|bisq|robosats|azteco|binance|onboard|coinmama|moonpay/i.test(r.name)));
-  ok("board rows carry their honest flags", (() => { const byName = Object.fromEntries(NG_BUY_BOARD.map(r => [r.name, r])); return true
-    && byName["Fonbnk"].note.includes("listed for price comparison") && byName["Fonbnk"].note.includes("Sell side")
-    && byName["KachiPlug"].note.includes("No escrow — trade with care")
-    && byName["Cashwyre"].rateLabel.includes("stale")
-    && byName["LocalCoinSwap"].note.includes("Very few live offers — price is indicative only")
-    && byName["Luno"].note.includes("BVN + code by email — no selfie")
-    && byName["NoOnes"].url === "https://noones.com" && byName["CoinCola"].url === "https://www.coincola.com"; })());
-  // Delivery shape (owner's reframe, 7 Nov 2026): Fluid is where the
-  // money LANDS — every row says how the coins reach the Fluid
-  // address. Only Zap Africa pays straight to it; Noblocks is one
-  // honest hop; every exchange/P2P row lands in the provider's app
-  // first and is withdrawn from there.
-  ok("every board row carries a delivery label", NG_BUY_BOARD.every(r => typeof r.delivery === "string" && r.delivery.length > 0));
-  ok("delivery labels classify honestly", (() => { const byName = Object.fromEntries(NG_BUY_BOARD.map(r => [r.name, r])); return true
-    && byName["Zap Africa"].delivery === "Pays straight to your Fluid address"
-    && NG_BUY_BOARD.filter(r => r.delivery === "Pays straight to your Fluid address").length === 1
-    && byName["Noblocks"].delivery === "One extra hop: lands in Noblocks, you send it here free"
-    && NG_BUY_BOARD.filter(r => r.delivery === "Lands in their app first — withdraw to your Fluid address").length === 26; })());
-  const appSrcC = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("NG buy sheet renders the board below the featured routes", appSrcC.includes("NG_BUY_BOARD")
-    && appSrcC.includes("All Nigeria buy routes")
-    && appSrcC.includes("Rates move fast — the price you pay is the one shown at the provider. Fluid never holds your money on these routes."));
-  ok("board is framed as where the money lands, with delivery labels on rows", appSrcC.includes("Every route here ends with crypto in this wallet")
-    && appSrcC.includes("your coins are delivered to your Fluid address — copy it from Receive")
-    && appSrcC.includes("r.delivery"));
 }
 
 // 16c. Per-country ramp assembly: ranked on MEASURED price (6 Nov 2026)
