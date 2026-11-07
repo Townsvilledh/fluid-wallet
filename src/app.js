@@ -41,6 +41,22 @@ const VAULT_KEY = "fluid_vault_v1";
 const HISTORY_KEY = "fluid_history_v1";
 const APPROVALS_KEY = "fluid_approvals_v1";
 const CHAINS_KEY = "fluid_chains_v1";
+const HISTORY_MAX = 100; // §4.9: history storage cap (was 20)
+// ---------- view context (§4.2 universal network picker) ----------
+// viewKey scopes the WHOLE wallet view: "all" | "evm" (the EVM network
+// in networkKey, behaviour unchanged) | a family id from
+// RECEIVE_NETWORKS / COSMOS_CHAINS. Persisted per device.
+const VIEW_KEY_LS = "fluid_view_v1";
+const SHOW_ZERO_LS = "fluid_show_zero_v1";
+let viewKey = "all";
+try { const v = localStorage.getItem(VIEW_KEY_LS); if (v) viewKey = v; } catch { /* storage unavailable */ }
+let showZeroBalances = false;
+try { showZeroBalances = localStorage.getItem(SHOW_ZERO_LS) === "1"; } catch { /* storage unavailable */ }
+const expandedZero = new Set();   // family keys whose "Zero balances" group is expanded
+const famLoaded = new Set();      // families whose balance read settled this render (§4.13 skeletons)
+function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
+const viewMeta = () => RECEIVE_NETWORKS.find(m => m.id === viewKey) || null;
+const isCosmosView = () => COSMOS_CHAINS.some(c => c.key === viewKey);
 // Snapshot BEFORE discovery merges anything: these are the 15 canonical
 // built-ins. Some surfaces (ramps) intentionally list only these.
 const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
@@ -118,9 +134,72 @@ function lifiCacheSet(chainId, tokens) {
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
-function openSheet(html) { fireSheetCloseHook(); $("sheetBody").innerHTML = html; show("sheetRoot"); }
-function closeSheet() { fireSheetCloseHook(); show("sheetRoot", false); }
-$("sheetX").onclick = closeSheet; $("scrim").onclick = closeSheet;
+// ---------- sheet chrome: busy lock, error banner, toast (§4.7/§4.8) ----------
+// While a transaction broadcasts, the sheet is NOT dismissible: the X,
+// the scrim and closeSheet() all refuse until the send settles.
+let sheetBusy = false;
+function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; const r = $("sheetRoot"); if (r) r.removeAttribute("data-busy"); $("sheetBody").innerHTML = html; show("sheetRoot"); }
+function closeSheet(force = false) { if (sheetBusy && !force) return; fireSheetCloseHook(); show("sheetRoot", false); }
+$("sheetX").onclick = () => closeSheet(); $("scrim").onclick = () => closeSheet();
+/** Put a confirm button into / out of its broadcasting state:
+ *  spinner + "Sending…", disabled, sheet locked (§4.8). */
+function setSendBusy(btn, on) {
+  if (!btn) return;
+  sheetBusy = !!on;
+  const root = $("sheetRoot"); if (root) { if (on) root.setAttribute("data-busy", "1"); else root.removeAttribute("data-busy"); }
+  if (on) {
+    if (btn.dataset.label == null) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner" aria-hidden="true"></span>Sending…`;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.label != null) { btn.innerHTML = btn.dataset.label; delete btn.dataset.label; }
+  }
+}
+/** A broadcast failure: sheet stays open, the error lands in a banner
+ *  at the TOP of the sheet — never a silent close (§4.8). */
+function showSheetError(text) {
+  const body = $("sheetBody"); if (!body) return;
+  let b = $("sheetBanner");
+  if (!b) { b = document.createElement("div"); b.id = "sheetBanner"; body.prepend(b); }
+  b.className = "banner err";
+  b.innerHTML = `<svg class="ic"><use href="#i-alert"/></svg><span></span>`;
+  b.querySelector("span").textContent = text;
+}
+/** Send-confirm failure path shared by every family sheet. */
+function sendFailed(btn, msgId, e, prefix = "Send failed: ") {
+  setSendBusy(btn, false);
+  if (msgId) msg(msgId, "");
+  showSheetError(prefix + ((e && (e.shortMessage || e.message)) || e));
+}
+/** Tiny toast for micro-confirmations ("Copied", "Name resolved"). */
+let toastTimer = null;
+function toast(text) {
+  let t = $("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
+}
+/** The review step's balance-impact line (§4.8, Pera-style): rendered
+ *  as its own line UNDER the intent sentence. fee is subtracted only
+ *  when it is denominated in the sent asset; otherwise the line is
+ *  labelled "before network fee" — never a wrong number. */
+function setBalanceAfter(intentTextEl, { balance, amount, fee = null, symbol, decimals = 6 }) {
+  if (!intentTextEl || !intentTextEl.parentElement) return;
+  let el = intentTextEl.parentElement.querySelector(".balafter");
+  if (!el) { el = document.createElement("p"); el.className = "balafter"; intentTextEl.after(el); }
+  const bal = Number(balance), amt = Number(amount);
+  if (!Number.isFinite(bal) || !Number.isFinite(amt)) { el.textContent = ""; return; }
+  const f = fee != null && Number.isFinite(Number(fee)) ? Number(fee) : null;
+  const after = f != null ? bal - amt - f : bal - amt;
+  el.textContent = `Balance after: ${fmt(after, decimals)} ${symbol}` + (f == null ? " (before network fee)" : "");
+}
+/** Activity nav dot (§4.6): set on a completed send, cleared when the
+ *  Activity tab is opened. */
+function markActivityDot() { const d = $("activityDot"); if (d) d.classList.remove("hidden"); }
+function clearActivityDot() { const d = $("activityDot"); if (d) d.classList.add("hidden"); }
 // One-shot hook fired when the current sheet goes away — via the X, the
 // scrim, closeSheet(), or being replaced by another sheet. Promise-based
 // sheets (the agent-transfer approval) register one so a dismissal settles
@@ -155,10 +234,60 @@ async function copyText(text, el) {
   return done;
 }
 
+// ---------- icons + token logos (§4.5) ----------
+const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
+/** Token logo markup — the ONLY builder of logo <img>s (§4.5/§6).
+ *  P0: the letter-tile fallback; P1 fills the validated-logoURI →
+ *  Trust Wallet CDN → spothq resolution chain in this same function. */
+function tokenLogoHtml(token, familyId) {
+  const sym = String((token && token.symbol) || "?");
+  return `<span class="coin" style="background:${COIN_COLORS[sym] || "#3b4a7a"}">${esc(sym.slice(0, 1))}</span>`;
+}
+
+// ---------- THE send-confirmation moment (§4.8) ----------
+// One shared success view for EVERY send path and swap completion.
+// The caller writes history exactly as before (same entry shape)
+// BEFORE calling this; the helper replaces the sheet content with the
+// animated check + recap, and Done returns to a refreshed wallet.
+function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName, feeText, explorerUrl, txid, pending }) {
+  setSendBusy(null, false); sheetBusy = false;
+  const root = $("sheetRoot"); if (root) root.removeAttribute("data-busy");
+  try { navigator.vibrate && navigator.vibrate(15); } catch { /* unsupported — fine */ }
+  const usdPart = (() => {
+    const p = prices[String(symbol || "").split("→")[0]];
+    const a = Number(amount);
+    return p != null && Number.isFinite(a) ? ` <span class="dim">≈ ${usd(a * p)}</span>` : "";
+  })();
+  const short = (a) => { const s = String(a || ""); return s.length > 14 ? s.slice(0, 8) + "…" + s.slice(-6) : s; };
+  const toLine = toName ? `${esc(toName)}.${FLUID_DOMAIN} · ${esc(short(to))}` : esc(short(to));
+  const txShort = txid ? esc(short(txid)) : "";
+  openSheet(`<div class="txsuccess">
+    <div class="txbadge"><svg viewBox="0 0 72 72" class="txring"><defs><linearGradient id="txgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b8cff"/><stop offset="1" stop-color="#9d6bff"/></linearGradient></defs><circle cx="36" cy="36" r="32" fill="none" stroke="url(#txgrad)" stroke-width="3"/><path d="M24 37.5 32.5 46 49 28" fill="none" stroke="url(#txgrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <h3 class="t-screen txverb">${esc(verb || "Sent")}</h3>
+    ${pending ? `<p class="tag txcap">Confirming on ${esc(familyName || "the network")} — follow it in Activity</p>` : ""}
+    ${amount != null && amount !== "" ? `<p class="txamt">${logoHtml || ""}<span><b>${esc(fmt(amount, 8))} ${esc(symbol || "")}</b>${usdPart}</span></p>` : ""}
+    <div class="card txrecap">
+      ${to ? `<div class="txrow"><span>To</span><b>${toLine}</b></div>` : ""}
+      ${familyName ? `<div class="txrow"><span>Network</span><b>${esc(familyName)}</b></div>` : ""}
+      ${feeText ? `<div class="txrow"><span>Fee</span><b>${esc(feeText)}</b></div>` : ""}
+      ${txid ? `<div class="txrow"><span>Tx</span><b class="mono" id="txCopy" title="Tap to copy the full transaction id">${txShort} ⧉</b></div>` : ""}
+    </div>
+    ${explorerUrl ? `<button class="btn ghost" id="txExplorer">View on explorer ↗</button>` : ""}
+    <button class="btn" id="txDone">Done</button>
+  </div>`);
+  if (txid) { const c = $("txCopy"); if (c) c.onclick = () => { copyText(String(txid), c); toast("Copied"); }; }
+  const ex = $("txExplorer");
+  if (ex && explorerUrl) ex.onclick = () => window.open(explorerUrl, "_blank", "noopener");
+  $("txDone").onclick = () => { closeSheet(true); markActivityDot(); renderMain(); };
+}
+
 // ---------- tabs ----------
 function goTab(name) {
   for (const t of ["wallet", "play", "activity", "more"]) show("tab-" + t, t === name);
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  if (name === "activity") clearActivityDot();
+  const pane = $("tab-" + name);
+  if (pane) { pane.classList.remove("tabenter"); void pane.offsetWidth; pane.classList.add("tabenter"); }
 }
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => goTab(b.dataset.tab));
 $("playJump").onclick = () => goTab("play");
@@ -198,13 +327,11 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
 }
 
 async function renderMain() {
-  $("addrText").textContent = wallet.address.slice(0, 8) + "…" + wallet.address.slice(-6) + " ⧉ tap to copy";
   const myName = localStorage.getItem("fluid_name");
-  $("nameText").textContent = myName ? "@" + myName + " · " + myName + "." + FLUID_DOMAIN : "";
   if (myName && $("namePreview")) $("namePreview").textContent = myName + "." + FLUID_DOMAIN;
   renderAgents();
-  $("addrText").onclick = () => copyText(wallet.address, $("addrText"));
-  $("netBtn").textContent = NETWORKS[networkKey].name + " ▾";
+  famLoaded.clear();
+  paintHeader();
   try { prices = await getPrices(); } catch { prices = {}; }
   // Bitcoin first (all chains, one wallet)
   btcAddr = bitcoinAddress(wallet.mnemonic.phrase);
@@ -225,7 +352,6 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
-  $("totalSub").textContent = "on this network + Bitcoin + Litecoin + Dogecoin + Bitcoin Cash + Tron + Solana + Sui + Stellar + Cosmos (7 chains) + TON + NEAR + Algorand + XRP Ledger + Polkadot Asset Hub + Aptos + Stacks";
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
     .then(rows => { if (rows) tronBalances = rows; paintAssets(); });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -415,6 +541,85 @@ function heroTotal() {
   return t;
 }
 
+// ---------- view scoping (§4.2): per-family USD totals ----------
+// Reads the SAME per-family balance variables heroTotal() sums — no
+// new fetching. heroTotal() stays the "all" total; scoped views read
+// their slice here.
+function familyUsdTotals() {
+  const sumRows = (rows, priceFn) => rows.reduce((t, b) => {
+    const p = priceOfRow(b, priceFn(b)); return p != null ? t + Number(b.amount) * p : t;
+  }, 0);
+  const m = {};
+  m.bitcoin = (btcBal + btcTrBal) * (prices.BTC || 0);
+  m.litecoin = ltcBal * (prices.LTC || 0);
+  m.dogecoin = dogeBal * (prices.DOGE || 0);
+  m.bitcoincash = bchBal * (prices.BCH || 0);
+  const net = NETWORKS[networkKey];
+  m.evm = sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
+  m.tron = sumRows(tronBalances, (b) => prices[b.symbol]);
+  m.solana = sumRows(solBalances, (b) => prices[b.symbol]);
+  m.sui = sumRows(suiBalances, (b) => prices[b.symbol]);
+  m.stellar = sumRows(stellarBalances, (b) => prices[b.symbol]);
+  m.ton = sumRows(tonBalances, (b) => prices[b.symbol]);
+  m.near = sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+  m.algorand = sumRows(algoBalances, (b) => prices[b.symbol]);
+  m.xrpl = sumRows(xrpBalances, (b) => prices[b.symbol]);
+  m.polkadot = sumRows(dotBalances, (b) => prices[b.symbol]);
+  m.aptos = sumRows(aptosBalances, (b) => prices[b.symbol]);
+  m.stacks = sumRows(stacksBalances, (b) => prices[b.symbol]);
+  m.lightning = lnSession ? (Number(lnSession.balance().spendableMsat || 0) / 1e11) * (prices.BTC || 0) : null;
+  for (const r of cosmosRows) m[r.key] = r.amount == null ? 0 : Number(r.amount) * (prices[r.symbol] || 0);
+  return m;
+}
+function scopedTotal() {
+  if (viewKey === "all") return heroTotal();
+  const m = familyUsdTotals();
+  if (viewKey === "evm") return m.evm;
+  return m[viewKey] != null ? m[viewKey] : 0;
+}
+function viewDisplayName() {
+  if (viewKey === "all") return "All networks";
+  if (viewKey === "evm") return NETWORKS[networkKey].name;
+  const meta = viewMeta();
+  return meta ? meta.name : viewKey;
+}
+/** The header address line for the current view (§4.1/§4.2):
+ *  { text, copy } — copy is the full address, or null when the view
+ *  has no single copyable address (Lightning). */
+function viewAddress() {
+  const short = (a) => { const s = String(a || ""); return s.length > 14 ? s.slice(0, 8) + "…" + s.slice(-6) : s; };
+  if (viewKey === "all" || viewKey === "evm") return { text: short(wallet.address), copy: wallet.address };
+  const byKey = {
+    bitcoin: btcAddr, tron: tronAddr, solana: solAddr, sui: suiAddr, stellar: stellarAddr,
+    ton: tonAddr, near: nearAddr, algorand: algoAddr, xrpl: xrpAddr, polkadot: dotAddr,
+    aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr,
+  };
+  if (viewKey === "lightning") return { text: "Your own Lightning node", copy: null };
+  const a = isCosmosView() ? cosmosAddrs[viewKey] : byKey[viewKey];
+  return a ? { text: short(a), copy: a } : { text: "", copy: null };
+}
+/** Header (§4.1) + hero (§4.3) + pill (§4.2) for the current view. */
+function paintHeader() {
+  if (!wallet) return;
+  const pill = $("netBtn");
+  if (pill) pill.innerHTML = `${esc(viewDisplayName())} <svg class="ic ic-sm"><use href="#i-chev-d"/></svg>`;
+  const totalEl = $("totalUsd");
+  if (totalEl) totalEl.textContent = usd(scopedTotal());
+  const sub = $("totalSub");
+  if (sub) sub.textContent = viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`;
+  const va = viewAddress();
+  const addrEl = $("addrText");
+  if (addrEl) {
+    addrEl.innerHTML = va.text ? `${esc(va.text)} <svg class="ic ic-sm"><use href="#i-copy"/></svg>` : "";
+    addrEl.onclick = va.copy ? () => { copyText(va.copy, addrEl); toast("Copied"); } : null;
+  }
+  const nameEl = $("welcomeText");
+  if (nameEl) {
+    const n = localStorage.getItem("fluid_name");
+    nameEl.onclick = n ? () => { copyText(n + "." + FLUID_DOMAIN, nameEl); toast("Copied"); } : null;
+  }
+}
+
 // ---------- universal tokens: asset-list presentation ----------
 // Priced + verified tokens form the main list, sorted by USD value.
 // Everything else — unverified, or held but unpriced — stays visible
@@ -448,17 +653,22 @@ function otherGroupHtml(famKey, items, renderItem) {
 }
 
 function paintAssets() {
-  $("totalUsd").textContent = usd(heroTotal());
+  paintHeader();
   const net = NETWORKS[networkKey];
-  const rows = [];
-  rows.push(`<div class="row" id="btcRow">
+  // §4.2: rows are built per family ONCE into groups, then rendered
+  // per viewKey (All = fixed family order; scoped = that group only).
+  const groups = [];
+  const grp = (key, header, rowsArr) => groups.push({ key, header, html: rowsArr.join("") });
+  // Bitcoin group (tap the row for the Bitcoin sheet)
+  grp("bitcoin", "", [`<div class="row" id="btcRow">
       <span class="coin" style="background:${COIN_COLORS.BTC}">₿</span>
       <span class="grow"><b>Bitcoin</b><small>Native SegWit + Taproot · same seed</small></span>
-      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>`);
+      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>`]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first.
   {
+    const rows = [];
     const sp = splitRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
     const render = ({ b, v }) => tokenRowHtml(b, v, net.name, "");
     for (const item of sp.main) rows.push(render(item));
@@ -469,96 +679,106 @@ function paintAssets() {
       else if (evmScanState.status === "failed") rows.push(`<p class="tag" style="margin:6px 0">Token scan unavailable right now — showing known tokens.</p>`);
     }
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
+    grp("evm", "", rows);
   }
   // Tron family rows (tap a row to send on Tron)
   if (tronBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Tron</p>`);
+    const rows = [];
     const sp = splitRows(tronBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Tron${b.address ? " · TRC20" : ""}`, `data-tron="${tronBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("tron", sp.other, render));
     if (familyScanFailed.tron) rows.push(`<p class="tag">Full token scan unavailable — showing main Tron tokens only.</p>`);
+    grp("tron", `<p class="tag" style="margin:12px 0 2px">Tron</p>`, rows);
   }
   // Solana family rows (tap a row to send on Solana)
   if (solBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Solana</p>`);
+    const rows = [];
     const sp = splitRows(solBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Solana${b.address ? " · SPL" : ""}`, `data-sol="${solBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("solana", sp.other, render));
     if (familyScanFailed.solana) rows.push(`<p class="tag">Full token scan unavailable — showing main Solana tokens only.</p>`);
+    grp("solana", `<p class="tag" style="margin:12px 0 2px">Solana</p>`, rows);
   }
   // Sui family rows (tap a row to send on Sui)
   if (suiBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Sui</p>`);
+    const rows = [];
     const sp = splitRows(suiBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Sui${b.address ? " · Coin" : ""}`, `data-sui="${suiBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("sui", sp.other, render));
     if (familyScanFailed.sui) rows.push(`<p class="tag">Full token scan unavailable — showing main Sui tokens only.</p>`);
+    grp("sui", `<p class="tag" style="margin:12px 0 2px">Sui</p>`, rows);
   }
   // Stellar family rows (tap a row to send on Stellar)
   if (stellarBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Stellar</p>`);
+    const rows = [];
     const sp = splitRows(stellarBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Stellar${b.address && !b.lpShare ? " · Trustline asset" : ""}`, `data-stellar="${stellarBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("stellar", sp.other, render));
     if (stellarFunded === false) rows.push(`<p class="tag">Account not yet activated — receive at least 1 XLM to activate it.</p>`);
     if (stellarLoadFailed) rows.push(`<p class="tag">Stellar balances couldn't be loaded right now.</p>`);
+    grp("stellar", `<p class="tag" style="margin:12px 0 2px">Stellar</p>`, rows);
   }
   // TON family rows (Phase 4; tap a row to send on TON)
   if (tonBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">TON</p>`);
+    const rows = [];
     const sp = splitRows(tonBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `TON${b.address ? " · Jetton" : ""}`, `data-ton="${tonBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("ton", sp.other, render));
     if (tonState && tonState !== "active") rows.push(`<p class="tag">Wallet not deployed yet — it deploys automatically with your first send.</p>`);
     if (tonLoadFailed) rows.push(`<p class="tag">TON balances couldn't be loaded right now.</p>`);
+    grp("ton", `<p class="tag" style="margin:12px 0 2px">TON</p>`, rows);
   }
   // NEAR family rows (Phase 4; tap a row to send on NEAR)
   if (nearBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">NEAR</p>`);
+    const rows = [];
     const sp = splitRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `NEAR${b.address ? " · NEP-141" : ""}`, `data-near="${nearBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("near", sp.other, render));
     if (nearExists === false) rows.push(`<p class="tag">Account doesn't exist yet — it is created when it first receives at least 0.00182 NEAR.</p>`);
     if (nearLoadFailed) rows.push(`<p class="tag">NEAR balances couldn't be loaded right now.</p>`);
+    grp("near", `<p class="tag" style="margin:12px 0 2px">NEAR</p>`, rows);
   }
   // Algorand family rows (Phase 4; tap a row to send on Algorand)
   if (algoBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Algorand</p>`);
+    const rows = [];
     const sp = splitRows(algoBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Algorand${b.address ? " · ASA " + esc(b.address) : ""}`, `data-algo="${algoBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("algorand", sp.other, render));
     if (algoFunded === false) rows.push(`<p class="tag">Account not funded yet — receive ALGO to start using it.</p>`);
     if (algoLoadFailed) rows.push(`<p class="tag">Algorand balances couldn't be loaded right now.</p>`);
+    grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows);
   }
   // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
   if (xrpBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`);
+    const rows = [];
     const sp = splitRows(xrpBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `XRP Ledger${b.address ? " · Trust line" : ""}`, `data-xrp="${xrpBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("xrpl", sp.other, render));
     if (xrpFunded === false) rows.push(`<p class="tag">Account not activated yet — it activates when it first receives at least the network base reserve (1 XRP).</p>`);
     if (xrpLoadFailed) rows.push(`<p class="tag">XRP Ledger balances couldn't be loaded right now.</p>`);
+    grp("xrpl", `<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`, rows);
   }
   // Polkadot Asset Hub family rows (Phase 4; tap a row to send)
   if (dotBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`);
+    const rows = [];
     const sp = splitRows(dotBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Polkadot Asset Hub${b.address ? " · Asset " + esc(b.address) : ""}`, `data-dot="${dotBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("polkadot", sp.other, render));
     if (dotLoadFailed) rows.push(`<p class="tag">Polkadot Asset Hub balances couldn't be loaded right now.</p>`);
+    grp("polkadot", `<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`, rows);
   }
   // Aptos family rows (Phase 5; tap a row to send on Aptos)
   if (aptosBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Aptos</p>`);
+    const rows = [];
     const sp = splitRows(aptosBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Aptos${b.address ? (b.standard === "coin" ? " · Coin" : " · Fungible asset") : ""}`, `data-aptos="${aptosBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
@@ -566,50 +786,62 @@ function paintAssets() {
     if (aptosExists === false) rows.push(`<p class="tag">Account not yet created — it is created when it first receives APT.</p>`);
     if (aptosScanFailed) rows.push(`<p class="tag">Full token scan unavailable — showing main Aptos tokens only.</p>`);
     if (aptosLoadFailed) rows.push(`<p class="tag">Aptos balances couldn't be loaded right now.</p>`);
+    grp("aptos", `<p class="tag" style="margin:12px 0 2px">Aptos</p>`, rows);
   }
   // Stacks family rows (Bitcoin L2; tap a row to send on Stacks)
   if (stacksBalances.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`);
+    const rows = [];
     const sp = splitRows(stacksBalances, (b) => prices[b.symbol]);
     const render = ({ b, v }) => tokenRowHtml(b, v, `Stacks${b.contract ? " · SIP-010 token" : ""}`, `data-stacks="${stacksBalances.indexOf(b)}"`);
     for (const item of sp.main) rows.push(render(item));
     rows.push(otherGroupHtml("stacks", sp.other, render));
     if (stacksScanFailed || stacksLoadFailed) rows.push(`<p class="tag">Stacks balances couldn't be loaded right now.</p>`);
+    grp("stacks", `<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`, rows);
   }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
-  // shows "unavailable", never a fake zero.
-  if (cosmosRows.length) {
-    rows.push(`<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>`);
-    cosmosRows.forEach((r) => {
-      const p = prices[r.symbol];
-      rows.push(`<div class="row" data-cosmos="${r.key}">
+  // shows "unavailable", never a fake zero. Each chain is its OWN
+  // view group (§4.2); in the All view they render consecutively
+  // under one shared header.
+  cosmosRows.forEach((r, i) => {
+    const p = prices[r.symbol];
+    const rowHtml = `<div class="row" data-cosmos="${r.key}">
         <span class="coin" style="background:${COIN_COLORS[r.symbol] || "#3b4a7a"}">${r.symbol.slice(0, 1)}</span>
         <span class="grow"><b>${r.symbol}</b><small>${r.name}</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>unavailable</small>`
-          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`);
-    });
-  }
+          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`;
+    grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [rowHtml]);
+  });
+  // Lightning scoped view (§4.2): no token rows — one row into the
+  // Lightning panel (the Wallet tab's Lightning button covers All).
+  grp("lightning", "", [`<div class="row" data-ln="1">
+      <span class="coin" style="background:#f7931a">⚡</span>
+      <span class="grow"><b>Bitcoin Lightning</b><small>Your own node — pay invoices, offers and Lightning addresses</small></span>
+      <span>›</span></div>`]);
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
-  rows.push(`<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`);
-  rows.push(`<div class="row" data-ltc="1">
+  grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [`<div class="row" data-ltc="1">
       <span class="coin" style="background:${COIN_COLORS.LTC}">Ł</span>
       <span class="grow"><b>Litecoin</b><small>Native SegWit · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>`);
-  rows.push(`<div class="row" data-doge="1">
+      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>`]);
+  grp("dogecoin", "", [`<div class="row" data-doge="1">
       <span class="coin" style="background:${COIN_COLORS.DOGE}">Ð</span>
       <span class="grow"><b>Dogecoin</b><small>Legacy · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>`);
-  rows.push(`<div class="row" data-bch="1">
+      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>`]);
+  grp("bitcoincash", "", [`<div class="row" data-bch="1">
       <span class="coin" style="background:${COIN_COLORS.BCH}">B</span>
       <span class="grow"><b>Bitcoin Cash</b><small>CashAddr · same seed as Bitcoin</small></span>
-      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>`);
-  $("assetList").innerHTML = rows.join("");
-  $("btcRow").onclick = openBtcSheet;
-  document.querySelector("[data-ltc]").onclick = openLtcSheet;
-  document.querySelector("[data-doge]").onclick = openDogeSheet;
-  document.querySelector("[data-bch]").onclick = openBchSheet;
+      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>`]);
+  // Render per viewKey.
+  let html = "";
+  if (viewKey === "all") html = groups.filter(g => g.key !== "lightning").map(g => g.header + g.html).join("");
+  else { const g = groups.find(x => x.key === viewKey); html = g ? g.html : ""; }
+  $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
+  const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
+  const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
+  const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
+  const bchEl = document.querySelector("[data-bch]"); if (bchEl) bchEl.onclick = openBchSheet;
+  const lnEl = document.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
     if (b) openTronSheet(b);
@@ -877,17 +1109,31 @@ async function selectNetwork(key) {
   networkKey = key; closeSheet(); renderMain();
 }
 $("netBtn").onclick = () => {
-  openSheet(`<h3>Choose network</h3>
+  // §4.2 universal picker: All networks / EVM networks / Other
+  // networks (every family + each Cosmos chain). Search matches EVM
+  // rows on name as today, family rows via the receive alias matcher
+  // (receiveNetworkMatches — "btc" finds Bitcoin, not Bitcoin Cash).
+  openSheet(`<h3>Network</h3>
     <input id="netSearch" placeholder="Search networks…" autocapitalize="none">
     <div id="netList"></div>
     <p class="msg err" id="netMsg"></p>`);
+  const totals = familyUsdTotals();
+  const total = (v) => v == null ? "—" : usd(v);
+  const check = `<svg class="ic ic-sm ic-brand"><use href="#i-check"/></svg>`;
   const paint = () => {
     const q = $("netSearch").value.trim().toLowerCase();
     // SECURITY (audit M3): discovered-chain names/symbols are registry
     // data — escaped here even though gateChains also sanitises them.
-    const item = (k, label, sub) =>
-      `<button class="netitem" data-net="${k}"><span>${esc(label)}${sub ? ` <small style="color:var(--dim)">${esc(sub)}</small>` : ""}</span>${k === networkKey ? '<span class="pill">ACTIVE</span>' : ""}</button>`;
-    let html = BUILTIN_NETWORK_KEYS
+    const item = (k, label, sub) => {
+      const sel = viewKey === "evm" && k === networkKey;
+      return `<button class="netitem${sel ? " sel" : ""}" data-net="${k}"><span>${esc(label)}${sub ? ` <small style="color:var(--dim)">${esc(sub)}</small>` : ""}</span><span class="vtotal">${k === networkKey ? total(totals.evm) : "—"}${sel ? " " + check : ""}</span></button>`;
+    };
+    let html = "";
+    if (receiveNetworkMatches({ name: "All networks", aliases: ["all", "everything", "networks"] }, q)) {
+      const sel = viewKey === "all";
+      html += `<button class="netitem${sel ? " sel" : ""}" data-viewall="1"><span><svg class="ic ic-sm"><use href="#i-layers"/></svg> All networks</span><span class="vtotal">${total(heroTotal())}${sel ? " " + check : ""}</span></button>`;
+    }
+    let evmHtml = BUILTIN_NETWORK_KEYS
       .filter(k => !q || NETWORKS[k].name.toLowerCase().includes(q))
       .map(k => item(k, NETWORKS[k].name)).join("");
     // Display-tier chains are listed outright; discoverable-tier chains
@@ -896,11 +1142,30 @@ $("netBtn").onclick = () => {
       (q ? true : d.tier === "display") &&
       (!q || d.name.toLowerCase().includes(q) || d.symbol.toLowerCase() === q));
     if (disc.length) {
-      html += `<p class="tag" style="margin:12px 0 4px">More networks — discovered automatically, checked live before switching</p>` +
+      evmHtml += `<p class="tag" style="margin:12px 0 4px">More networks — discovered automatically, checked live before switching</p>` +
         disc.map(d => item(d.key, d.name, d.symbol)).join("");
     }
+    if (evmHtml) html += `<p class="tag vgroup">EVM NETWORKS</p>` + evmHtml;
+    const fams = RECEIVE_NETWORKS.filter(m => m.id !== "evm" && receiveNetworkMatches(m, q));
+    if (fams.length) {
+      html += `<p class="tag vgroup">OTHER NETWORKS</p>` + fams.map(m => {
+        const sel = viewKey === m.id;
+        return `<button class="netitem${sel ? " sel" : ""}" data-viewfam="${m.id}"><span>${esc(m.name)}${m.sub ? ` <small style="color:var(--dim)">${esc(m.sub)}</small>` : ""}</span><span class="vtotal">${total(totals[m.id])}${sel ? " " + check : ""}</span></button>`;
+      }).join("");
+    }
     $("netList").innerHTML = html || `<p class="tag">No networks match.</p>`;
-    document.querySelectorAll("[data-net]").forEach(b => b.onclick = () => selectNetwork(b.dataset.net));
+    document.querySelectorAll("[data-net]").forEach(b => b.onclick = async () => {
+      viewKey = "evm"; saveViewKey();
+      const before = networkKey;
+      await selectNetwork(b.dataset.net);
+      if (networkKey === before) { closeSheet(); renderMain(); } // same network: selectNetwork only closed the sheet
+    });
+    document.querySelectorAll("[data-viewall]").forEach(b => b.onclick = () => {
+      viewKey = "all"; saveViewKey(); closeSheet(); renderMain();
+    });
+    document.querySelectorAll("[data-viewfam]").forEach(b => b.onclick = () => {
+      viewKey = b.dataset.viewfam; saveViewKey(); closeSheet(); renderMain();
+    });
   };
   $("netSearch").addEventListener("input", paint);
   paint();
@@ -1037,9 +1302,10 @@ $("actReceive").onclick = () => {
       document.querySelectorAll("[data-cpcosmos]").forEach(b => b.onclick = () => copyText(cosmosAddrs[b.dataset.cpcosmos], b));
     };
   }
-  // Default: the context the user came from — the active network is an
-  // EVM chain, whose receive entry is the shared EVM panel.
-  let selected = "evm";
+  // Default: the context the user came from (§4.2) — a family view
+  // preselects that family's entry; All/EVM preselect the shared EVM
+  // panel (the active network is an EVM chain).
+  let selected = (viewKey === "all" || viewKey === "evm") ? "evm" : viewKey;
   openSheet(`<h3>Receive</h3>
     <input id="rcvSearch" placeholder="Search networks…" autocapitalize="none">
     <div id="rcvPanel"></div>
@@ -1068,7 +1334,31 @@ $("actReceive").onclick = () => {
 };
 
 // ---------- send (EVM) ----------
+// §4.2: the Send button dispatches on the current view — a family
+// view opens that family's own send sheet; All/EVM open the EVM sheet.
 $("actSend").onclick = () => {
+  if (viewKey === "all" || viewKey === "evm") return openEvmSendSheet();
+  if (viewKey === "bitcoin") return openBtcSheet();
+  if (viewKey === "lightning") return openLightningPanel();
+  if (viewKey === "litecoin") return openLtcSheet();
+  if (viewKey === "dogecoin") return openDogeSheet();
+  if (viewKey === "bitcoincash") return openBchSheet();
+  if (isCosmosView()) { const row = cosmosRows.find(r => r.key === viewKey); if (row) return openCosmosSheet(row); return openEvmSendSheet(); }
+  const nativeOf = (rows) => rows.find(b => !b.address && !b.contract) || rows[0];
+  if (viewKey === "tron") return openTronSheet(nativeOf(tronBalances));
+  if (viewKey === "solana") return openSolanaSheet(nativeOf(solBalances));
+  if (viewKey === "sui") return openSuiSheet(nativeOf(suiBalances));
+  if (viewKey === "stellar") return openStellarSheet(nativeOf(stellarBalances));
+  if (viewKey === "ton") return openTonSheet(nativeOf(tonBalances));
+  if (viewKey === "near") return openNearSheet(nativeOf(nearBalances));
+  if (viewKey === "algorand") return openAlgoSheet(nativeOf(algoBalances));
+  if (viewKey === "xrpl") return openXrplSheet(nativeOf(xrpBalances));
+  if (viewKey === "polkadot") return openDotSheet(nativeOf(dotBalances));
+  if (viewKey === "aptos") return openAptosSheet(nativeOf(aptosBalances));
+  if (viewKey === "stacks") return openStacksSheet(nativeOf(stacksBalances));
+  return openEvmSendSheet();
+};
+function openEvmSendSheet() {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
     <input id="sTo" placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
@@ -1089,6 +1379,7 @@ $("actSend").onclick = () => {
       const hit = await resolveFluidName(to).catch(() => null);
       if (!hit || !hit.evm) return msg("sMsg", "That Fluid name is not in the registry yet.");
       to = hit.evm; sendName = hit.name;
+      toast("Name resolved");
       msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
     }
     const resolvedNote = sendName ? sendName + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "… · " : "";
@@ -1107,24 +1398,32 @@ $("actSend").onclick = () => {
     try {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
-      pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol, name: sendName };
+      pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol, name: sendName, feeNative: Number(fee) };
       $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6), name: sendName })
         + (b.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("sIntentText"), { balance: b.amount, amount, fee: b.address ? null : Number(fee), symbol: b.symbol });
       show("sIntent"); msg("sMsg", poisonNote);
     } catch (e) { msg("sMsg", warnPrefix + "Could not estimate: " + (e.shortMessage || e.message)); }
   };
   $("sConfirm").onclick = async () => {
     if (!pendingSend) return;
+    const btn = $("sConfirm");
     try {
+      setSendBusy(btn, true);
       msg("sMsg", "Sending…", true);
       const tx = await executeSend(wallet, networkKey, pendingSend);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: tx.hash, amount: pendingSend.amount, symbol: pendingSend.symbol, to: pendingSend.to, explorer: NETWORKS[networkKey].explorer, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingSend = null; closeSheet(); renderMain();
-    } catch (e) { msg("sMsg", "Send failed: " + (e.shortMessage || e.message)); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingSend; pendingSend = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: done.symbol,
+        logoHtml: tokenLogoHtml({ symbol: done.symbol, address: done.token ? done.token.address : null }, "evm"),
+        to: done.to, toName: done.name, familyName: NETWORKS[networkKey].name,
+        feeText: done.feeNative != null ? `≈ ${done.feeNative.toFixed(6)} ${NETWORKS[networkKey].symbol}` : null,
+        explorerUrl: historyTxUrl({ hash: tx.hash, explorer: NETWORKS[networkKey].explorer }), txid: tx.hash, pending: false });
+    } catch (e) { sendFailed(btn, "sMsg", e); }
   };
-};
+}
 
 // ---------- Bitcoin sheet ----------
 // Mirrors the other family sheets: review → human-readable sentence →
@@ -1229,21 +1528,26 @@ function openBtcSheet() {
         pendingRune = { to, amountWhole, plan };
         const note = feeRateNote(plan.rateInfo);
         $("rIntentText").textContent = `Send ${amountWhole} ${r.name} (rune ${r.runeId}) to ${to} on Bitcoin. Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${plan.protectedCount ? ` ${plan.protectedCount} inscription-bearing coin(s) left untouched.` : ""}${note ? ` Note: ${note}.` : ""} Confirm?`;
+        setBalanceAfter($("rIntentText"), { balance: r.amount, amount: amountWhole, fee: null, symbol: sanitizePersistedSymbol(r.name), decimals: 0 });
         show("rIntent"); msg("rMsg", "");
       } catch (e) { msg("rMsg", e.message); }
     };
     $("rConfirm").onclick = async () => {
       if (!pendingRune) return;
+      const btn = $("rConfirm");
       try {
+        setSendBusy(btn, true);
         msg("rMsg", "Broadcasting the transfer you reviewed…", true);
         const txid = await broadcastBitcoinTx(pendingRune.plan.hex);
         const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
         h.unshift({ hash: txid, amount: pendingRune.amountWhole, symbol: sanitizePersistedSymbol(r.name), to: pendingRune.to, explorer: "https://mempool.space", at: Date.now() });
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-        pendingRune = null;
-        msg("rMsg", "Broadcast ✓ txid " + txid.slice(0, 16) + "…", true);
-        renderMain();
-      } catch (e) { msg("rMsg", e.message); }
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        const done = pendingRune; pendingRune = null;
+        showTxSuccess({ verb: "Broadcast", amount: done.amountWhole, symbol: sanitizePersistedSymbol(r.name),
+          logoHtml: tokenLogoHtml({ symbol: r.name }, "bitcoin"), to: done.to, familyName: "Bitcoin · Runes",
+          feeText: `${done.plan.feeBtc.toFixed(8)} BTC`,
+          explorerUrl: historyTxUrl({ hash: txid, explorer: "https://mempool.space" }), txid, pending: true });
+      } catch (e) { sendFailed(btn, "rMsg", e, ""); }
     };
   };
   $("bSend").onclick = async () => {
@@ -1273,7 +1577,8 @@ function openBtcSheet() {
       // never change between what the user read and what gets signed.
       msg("bMsg", "Checking the network fee…", true);
       const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount, kind: $("bFrom").value });
-      pendingBtc = { to, amount, plan };
+      pendingBtc = { to, amount, plan, name: sendName };
+      if (sendName) toast("Name resolved");
       // Same disclosure as formatSendIntent: when the recipient was given
       // as a Fluid name, the sentence shows the name AND the FULL address
       // it resolved to — the user confirms the resolution, not the name.
@@ -1286,21 +1591,26 @@ function openBtcSheet() {
         ? " Note: the inscription check could not run, so Fluid could not verify that none of the coins spent carry inscriptions."
         : plan.protectedCount > 0 ? ` ${plan.protectedCount} inscription-bearing coin(s) left untouched.` : "";
       $("bIntentText").textContent = `Send ${amount} BTC to ${dest} on Bitcoin (from your ${plan.kind === "taproot" ? "Taproot" : "SegWit"} account). Network fee ${plan.feeBtc.toFixed(8)} BTC (${usd(plan.feeBtc * (prices.BTC || 0))}).${note ? ` Note: ${note}.` : ""}${protNote} Confirm?`;
+      setBalanceAfter($("bIntentText"), { balance: plan.kind === "taproot" ? btcTrBal : btcBal, amount, fee: plan.feeBtc, symbol: "BTC", decimals: 8 });
       show("bIntent"); msg("bMsg", poisonNote);
     } catch (e) { msg("bMsg", e.message); }
   };
   $("bConfirm").onclick = async () => {
     if (!pendingBtc) return;
+    const btn = $("bConfirm");
     try {
+      setSendBusy(btn, true);
       msg("bMsg", "Broadcasting the transaction you reviewed…", true);
       const txid = await broadcastBitcoinTx(pendingBtc.plan.hex);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingBtc.amount, symbol: "BTC", to: pendingBtc.to, explorer: "https://mempool.space", at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingBtc = null;
-      msg("bMsg", "Broadcast ✓ txid " + txid.slice(0, 16) + "…", true);
-      renderMain();
-    } catch (e) { msg("bMsg", e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingBtc; pendingBtc = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "BTC",
+        logoHtml: tokenLogoHtml({ symbol: "BTC" }, "bitcoin"), to: done.to, toName: done.name, familyName: "Bitcoin",
+        feeText: `${done.plan.feeBtc.toFixed(8)} BTC`,
+        explorerUrl: historyTxUrl({ hash: txid, explorer: "https://mempool.space" }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "bMsg", e, ""); }
   };
 }
 
@@ -1330,11 +1640,14 @@ function openTronSheet(tok) {
     pendingTron = { to, amount };
     $("tIntentText").textContent = formatTronSendIntent({ amount, symbol: tok.symbol, to })
       + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+    setBalanceAfter($("tIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
     show("tIntent"); msg("tMsg", "");
   };
   $("tConfirm").onclick = async () => {
     if (!pendingTron) return;
+    const btn = $("tConfirm");
     try {
+      setSendBusy(btn, true);
       msg("tMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendTron(wallet, {
         to: pendingTron.to, amount: pendingTron.amount,
@@ -1343,9 +1656,12 @@ function openTronSheet(tok) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingTron.amount, symbol: tok.symbol, to: pendingTron.to,
         link: `https://tronscan.org/#/transaction/${hash}`, explorer: "https://tronscan.org", at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingTron = null; closeSheet(); renderMain();
-    } catch (e) { msg("tMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingTron; pendingTron = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "tron"), to: done.to, familyName: "Tron", feeText: null,
+        explorerUrl: historyTxUrl({ link: `https://tronscan.org/#/transaction/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "tMsg", e); }
   };
 }
 
@@ -1379,12 +1695,15 @@ function openSolanaSheet(tok) {
       pendingSol = { to, amount };
       $("oIntentText").textContent = formatSolanaSendIntent({ amount, symbol: tok.symbol, to, createsAta: plan.createsAta })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("oIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
       show("oIntent"); msg("oMsg", "");
     } catch (e) { msg("oMsg", "Could not check the recipient: " + e.message); }
   };
   $("oConfirm").onclick = async () => {
     if (!pendingSol) return;
+    const btn = $("oConfirm");
     try {
+      setSendBusy(btn, true);
       msg("oMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendSolana(wallet.mnemonic.phrase, {
         to: pendingSol.to, amount: pendingSol.amount,
@@ -1393,9 +1712,12 @@ function openSolanaSheet(tok) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingSol.amount, symbol: tok.symbol, to: pendingSol.to,
         link: `${SOLANA_EXPLORER}/tx/${hash}`, explorer: SOLANA_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingSol = null; closeSheet(); renderMain();
-    } catch (e) { msg("oMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingSol; pendingSol = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "solana"), to: done.to, familyName: "Solana", feeText: null,
+        explorerUrl: historyTxUrl({ link: `${SOLANA_EXPLORER}/tx/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "oMsg", e); }
   };
 }
 
@@ -1427,11 +1749,14 @@ function openSuiSheet(tok) {
     pendingSui = { to, amount };
     $("uIntentText").textContent = formatSuiSendIntent({ amount, symbol: tok.symbol, to })
       + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+    setBalanceAfter($("uIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
     show("uIntent"); msg("uMsg", "");
   };
   $("uConfirm").onclick = async () => {
     if (!pendingSui) return;
+    const btn = $("uConfirm");
     try {
+      setSendBusy(btn, true);
       msg("uMsg", "Signing locally and executing…", true);
       const { hash } = await sendSui(wallet.mnemonic.phrase, {
         to: pendingSui.to, amount: pendingSui.amount,
@@ -1440,9 +1765,12 @@ function openSuiSheet(tok) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingSui.amount, symbol: tok.symbol, to: pendingSui.to,
         link: `${SUI_EXPLORER}/mainnet/tx/${hash}`, explorer: SUI_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingSui = null; closeSheet(); renderMain();
-    } catch (e) { msg("uMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingSui; pendingSui = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "sui"), to: done.to, familyName: "Sui", feeText: null,
+        explorerUrl: historyTxUrl({ link: `${SUI_EXPLORER}/mainnet/tx/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "uMsg", e); }
   };
 }
 
@@ -1494,17 +1822,20 @@ function openStellarSheet(tok) {
       } else if (plan.destFunded === false && Number(amount) < 1) {
         return msg("stMsg", "That account doesn't exist yet — creating it needs a starting balance of at least 1 XLM.");
       }
-      pendingStellar = { to, amount };
+      pendingStellar = { to, amount, feeXlm: plan.feeXlm };
       $("stIntentText").textContent = formatStellarSendIntent({
         amount, symbol: tok.symbol, to, feeXlm: plan.feeXlm,
         createsAccount: !assetTok && plan.destFunded === false,
       }) + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("stIntentText"), { balance: tok.amount, amount, fee: assetTok ? null : Number(plan.feeXlm), symbol: tok.symbol, decimals: 7 });
       show("stIntent"); msg("stMsg", "");
     } catch (e) { msg("stMsg", "Could not check the recipient: " + e.message); }
   };
   $("stConfirm").onclick = async () => {
     if (!pendingStellar) return;
+    const btn = $("stConfirm");
     try {
+      setSendBusy(btn, true);
       msg("stMsg", "Signing locally and submitting…", true);
       const { hash } = await sendStellar(wallet.mnemonic.phrase, {
         to: pendingStellar.to, amount: pendingStellar.amount, token: assetTok,
@@ -1512,9 +1843,13 @@ function openStellarSheet(tok) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingStellar.amount, symbol: tok.symbol, to: pendingStellar.to,
         link: `${STELLAR_EXPLORER}/tx/${hash}`, explorer: STELLAR_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingStellar = null; closeSheet(); renderMain();
-    } catch (e) { msg("stMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingStellar; pendingStellar = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "stellar"), to: done.to, familyName: "Stellar",
+        feeText: done.feeXlm != null ? `${done.feeXlm} XLM` : null,
+        explorerUrl: historyTxUrl({ link: `${STELLAR_EXPLORER}/tx/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "stMsg", e); }
   };
 }
 
@@ -1551,20 +1886,26 @@ function openTonSheet(tok) {
       pendingTon = { to, amount };
       $("tnIntentText").textContent = formatTonSendIntent({ amount, symbol: tok.symbol, to, isJetton: !!tokenArg })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("tnIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
       show("tnIntent"); msg("tnMsg", "");
     } catch (e) { msg("tnMsg", "Could not check: " + e.message); }
   };
   $("tnConfirm").onclick = async () => {
     if (!pendingTon) return;
+    const btn = $("tnConfirm");
     try {
+      setSendBusy(btn, true);
       msg("tnMsg", "Signing locally and submitting…", true);
       const { hash } = await sendTon(wallet.mnemonic.phrase, { to: pendingTon.to, amount: pendingTon.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingTon.amount, symbol: tok.symbol, to: pendingTon.to,
         link: `${TON_EXPLORER}/address/${tonAddr}`, explorer: TON_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingTon = null; closeSheet(); renderMain();
-    } catch (e) { msg("tnMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingTon; pendingTon = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "ton"), to: done.to, familyName: "TON", feeText: null,
+        explorerUrl: historyTxUrl({ link: `${TON_EXPLORER}/address/${tonAddr}` }), txid: hash, pending: true });
+    } catch (e) { sendFailed(btn, "tnMsg", e); }
   };
 }
 
@@ -1615,20 +1956,26 @@ function openNearSheet(tok) {
         createsAccount: !tokenArg && plan.destExists === false,
         registerCostNear: tokenArg ? plan.registerNear : null,
       }) + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("nrIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
       show("nrIntent"); msg("nrMsg", "");
     } catch (e) { msg("nrMsg", "Could not check the recipient: " + e.message); }
   };
   $("nrConfirm").onclick = async () => {
     if (!pendingNear) return;
+    const btn = $("nrConfirm");
     try {
+      setSendBusy(btn, true);
       msg("nrMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendNear(wallet.mnemonic.phrase, { to: pendingNear.to, amount: pendingNear.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingNear.amount, symbol: tok.symbol, to: pendingNear.to,
         link: `${NEAR_EXPLORER}/txns/${hash}`, explorer: NEAR_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingNear = null; closeSheet(); renderMain();
-    } catch (e) { msg("nrMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingNear; pendingNear = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "near"), to: done.to, familyName: "NEAR", feeText: null,
+        explorerUrl: historyTxUrl({ link: `${NEAR_EXPLORER}/txns/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "nrMsg", e); }
   };
 }
 
@@ -1672,6 +2019,7 @@ function openAlgoSheet(tok) {
       if (!hit) return msg("agMsg", "That Fluid name is not in the registry yet.");
       if (!hit.algo) return msg("agMsg", "That Fluid name has no Algorand address in the registry.");
       to = hit.algo; sendName = hit.name;
+      toast("Name resolved");
     }
     if (!isValidAlgorandAddress(to)) return msg("agMsg", "That is not a valid Algorand address.");
     if (!amount || Number(amount) <= 0) return msg("agMsg", "Enter an amount.");
@@ -1685,23 +2033,30 @@ function openAlgoSheet(tok) {
       if (tokenArg && plan.destFunded === false) {
         return msg("agMsg", "The recipient's Algorand account isn't funded yet, so it can't hold assets. They need to receive ALGO first.");
       }
-      pendingAlgo = { to, amount };
+      pendingAlgo = { to, amount, feeAlgo: plan.feeAlgo, name: sendName };
       $("agIntentText").textContent = formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo, name: sendName })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("agIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(plan.feeAlgo), symbol: tok.symbol });
       show("agIntent"); msg("agMsg", "");
     } catch (e) { msg("agMsg", "Could not check the recipient: " + e.message); }
   };
   $("agConfirm").onclick = async () => {
     if (!pendingAlgo) return;
+    const btn = $("agConfirm");
     try {
+      setSendBusy(btn, true);
       msg("agMsg", "Signing locally and submitting…", true);
       const { hash } = await sendAlgorand(wallet.mnemonic.phrase, { to: pendingAlgo.to, amount: pendingAlgo.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingAlgo.amount, symbol: tok.symbol, to: pendingAlgo.to,
         link: `${ALGO_EXPLORER}/tx/${hash}`, explorer: ALGO_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingAlgo = null; closeSheet(); renderMain();
-    } catch (e) { msg("agMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingAlgo; pendingAlgo = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "algorand"), to: done.to, toName: done.name, familyName: "Algorand",
+        feeText: done.feeAlgo != null ? `${done.feeAlgo} ALGO` : null,
+        explorerUrl: historyTxUrl({ link: `${ALGO_EXPLORER}/tx/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "agMsg", e); }
   };
 }
 
@@ -1748,15 +2103,18 @@ function openXrplSheet(tok) {
       if (!tokenArg && plan.destFunded === false && plan.baseReserveXrp != null && Number(amount) < Number(plan.baseReserveXrp)) {
         return msg("xrMsg", `That account doesn't exist yet — creating it needs a starting balance of at least ${plan.baseReserveXrp} XRP (the network base reserve).`);
       }
-      pendingXrp = { to, amount, destinationTag };
+      pendingXrp = { to, amount, destinationTag, feeXrp: plan.feeXrp };
       $("xrIntentText").textContent = formatXrplSendIntent({ amount, symbol: tok.symbol, to, feeXrp: plan.feeXrp, destinationTag })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("xrIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(plan.feeXrp), symbol: tok.symbol });
       show("xrIntent"); msg("xrMsg", "");
     } catch (e) { msg("xrMsg", "Could not check the recipient: " + e.message); }
   };
   $("xrConfirm").onclick = async () => {
     if (!pendingXrp) return;
+    const btn = $("xrConfirm");
     try {
+      setSendBusy(btn, true);
       msg("xrMsg", "Signing locally and submitting…", true);
       const { hash } = await sendXrpl(wallet.mnemonic.phrase, {
         to: pendingXrp.to, amount: pendingXrp.amount, token: tokenArg, destinationTag: pendingXrp.destinationTag,
@@ -1764,9 +2122,13 @@ function openXrplSheet(tok) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingXrp.amount, symbol: tok.symbol, to: pendingXrp.to,
         link: `${XRPL_EXPLORER}/tx/${hash}`, explorer: XRPL_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingXrp = null; closeSheet(); renderMain();
-    } catch (e) { msg("xrMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingXrp; pendingXrp = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "xrpl"), to: done.to, familyName: "XRP Ledger",
+        feeText: done.feeXrp != null ? `${done.feeXrp} XRP` : null,
+        explorerUrl: historyTxUrl({ link: `${XRPL_EXPLORER}/tx/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "xrMsg", e); }
   };
 }
 
@@ -1797,23 +2159,30 @@ function openDotSheet(tok) {
     try {
       msg("dtMsg", "Estimating the network fee…", true);
       const plan = await dotSendPlan(wallet.mnemonic.phrase, { to, amount, token: tokenArg });
-      pendingDot = { to, amount };
+      pendingDot = { to, amount, feeDot: plan.feeDot };
       $("dtIntentText").textContent = formatDotSendIntent({ amount, symbol: tok.symbol, to, feeDot: plan.feeDot })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("dtIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(plan.feeDot), symbol: tok.symbol });
       show("dtIntent"); msg("dtMsg", "");
     } catch (e) { msg("dtMsg", "Could not estimate: " + e.message); }
   };
   $("dtConfirm").onclick = async () => {
     if (!pendingDot) return;
+    const btn = $("dtConfirm");
     try {
+      setSendBusy(btn, true);
       msg("dtMsg", "Signing locally and submitting…", true);
       const { hash } = await sendDot(wallet.mnemonic.phrase, { to: pendingDot.to, amount: pendingDot.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingDot.amount, symbol: tok.symbol, to: pendingDot.to,
         link: `${DOT_EXPLORER}/extrinsic/${hash}`, explorer: DOT_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingDot = null; closeSheet(); renderMain();
-    } catch (e) { msg("dtMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingDot; pendingDot = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "polkadot"), to: done.to, familyName: "Polkadot Asset Hub",
+        feeText: done.feeDot != null ? `${done.feeDot} DOT` : null,
+        explorerUrl: historyTxUrl({ link: `${DOT_EXPLORER}/extrinsic/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "dtMsg", e); }
   };
 }
 
@@ -1853,23 +2222,30 @@ function openAptosSheet(tok) {
       const plan = await aptosSendPlan(aptosAddr, { to, amountRaw: aptosAmountToRaw(amount, tok.decimals ?? 8), token: tokenArg, publicKey: aptosPublicKeyFromPhrase(wallet.mnemonic.phrase) });
       if (!plan.exists) return msg("apMsg", "Your Aptos account doesn't exist on-chain yet — receive some APT first, then you can send.");
       if (!plan.simSuccess) return msg("apMsg", "The network says this send would fail: " + (plan.simStatus || "simulation failed"));
-      pendingAptos = { to, amount };
+      pendingAptos = { to, amount, feeApt: aptosOctasToApt(plan.estimatedFeeOctas) };
       $("apIntentText").textContent = formatAptosSendIntent({ amount, symbol: tok.symbol, to, feeApt: aptosOctasToApt(plan.estimatedFeeOctas) })
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("apIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(aptosOctasToApt(plan.estimatedFeeOctas)), symbol: tok.symbol, decimals: 8 });
       show("apIntent"); msg("apMsg", "");
     } catch (e) { msg("apMsg", "Could not simulate the send: " + e.message); }
   };
   $("apConfirm").onclick = async () => {
     if (!pendingAptos) return;
+    const btn = $("apConfirm");
     try {
+      setSendBusy(btn, true);
       msg("apMsg", "Signing locally and submitting…", true);
       const { hash } = await sendAptos(wallet.mnemonic.phrase, { to: pendingAptos.to, amount: pendingAptos.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingAptos.amount, symbol: tok.symbol, to: pendingAptos.to,
         link: `${APTOS_EXPLORER}/transaction/${hash}`, explorer: APTOS_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingAptos = null; closeSheet(); renderMain();
-    } catch (e) { msg("apMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingAptos; pendingAptos = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "aptos"), to: done.to, familyName: "Aptos",
+        feeText: done.feeApt != null ? `${done.feeApt} APT` : null,
+        explorerUrl: historyTxUrl({ link: `${APTOS_EXPLORER}/transaction/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "apMsg", e); }
   };
 }
 
@@ -1902,22 +2278,29 @@ function openStacksSheet(tok) {
     try {
       msg("sxMsg", "Checking with the network…", true);
       const plan = await planStacksSend(wallet.mnemonic.phrase, { to, amountText: amount, token: tokenArg });
-      pendingStacks = { to, amount };
+      pendingStacks = { to, amount, feeUstx: plan.feeUstx };
       $("sxIntentText").textContent = plan.intent + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("sxIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(stacksRawToAmount(plan.feeUstx, 6)), symbol: tok.symbol });
       show("sxIntent"); msg("sxMsg", "");
     } catch (e) { msg("sxMsg", e.message); }
   };
   $("sxConfirm").onclick = async () => {
     if (!pendingStacks) return;
+    const btn = $("sxConfirm");
     try {
+      setSendBusy(btn, true);
       msg("sxMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendStacks(wallet.mnemonic.phrase, { to: pendingStacks.to, amountText: pendingStacks.amount, token: tokenArg });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingStacks.amount, symbol: sanitizePersistedSymbol(tok.symbol), to: pendingStacks.to,
         link: stacksExplorerTxUrl(hash), explorer: STACKS_EXPLORER, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingStacks = null; closeSheet(); renderMain();
-    } catch (e) { msg("sxMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingStacks; pendingStacks = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: tok.symbol,
+        logoHtml: tokenLogoHtml(tok, "stacks"), to: done.to, familyName: "Stacks",
+        feeText: done.feeUstx != null ? `${stacksRawToAmount(done.feeUstx, 6)} STX` : null,
+        explorerUrl: historyTxUrl({ link: stacksExplorerTxUrl(hash) }), txid: hash, pending: true });
+    } catch (e) { sendFailed(btn, "sxMsg", e); }
   };
 }
 
@@ -1953,20 +2336,27 @@ function openLtcSheet() {
         amount, to, feeLtc: plan.feeLtc.toFixed(8),
         feeUsd: usd(plan.feeLtc * (prices.LTC || 0)), note: feeRateNote(plan.rateInfo),
       });
+      setBalanceAfter($("lIntentText"), { balance: ltcBal, amount, fee: plan.feeLtc, symbol: "LTC", decimals: 8 });
       show("lIntent"); msg("lMsg", "");
     } catch (e) { msg("lMsg", "Could not check the fee: " + e.message); }
   };
   $("lConfirm").onclick = async () => {
     if (!pendingLtc) return;
+    const btn = $("lConfirm");
     try {
+      setSendBusy(btn, true);
       msg("lMsg", "Broadcasting the transaction you reviewed…", true);
       const txid = await broadcastLitecoinTx(pendingLtc.plan.hex);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingLtc.amount, symbol: "LTC", to: pendingLtc.to,
         explorer: "https://litecoinspace.org", at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingLtc = null; closeSheet(); renderMain();
-    } catch (e) { msg("lMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingLtc; pendingLtc = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "LTC",
+        logoHtml: tokenLogoHtml({ symbol: "LTC" }, "litecoin"), to: done.to, familyName: "Litecoin",
+        feeText: `${done.plan.feeLtc.toFixed(8)} LTC`,
+        explorerUrl: historyTxUrl({ hash: txid, explorer: "https://litecoinspace.org" }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "lMsg", e); }
   };
 }
 // ---------- Bitcoin Cash sheet ----------
@@ -2001,20 +2391,27 @@ function openBchSheet() {
       $("cIntentText").textContent = formatBitcoinCashSendIntent({
         amount, to, feeBch: plan.feeBch.toFixed(8), feeUsd: usd(plan.feeBch * (prices.BCH || 0)),
       });
+      setBalanceAfter($("cIntentText"), { balance: bchBal, amount, fee: plan.feeBch, symbol: "BCH", decimals: 8 });
       show("cIntent"); msg("cMsg", "");
     } catch (e) { msg("cMsg", "Could not check the fee: " + e.message); }
   };
   $("cConfirm").onclick = async () => {
     if (!pendingBch) return;
+    const btn = $("cConfirm");
     try {
+      setSendBusy(btn, true);
       msg("cMsg", "Broadcasting the transaction you reviewed…", true);
       const txid = await broadcastBitcoinCashTx(pendingBch.plan.hex, pendingBch.plan.txid);
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingBch.amount, symbol: "BCH", to: pendingBch.to,
         link: `https://blockchair.com/bitcoin-cash/transaction/${txid}`, explorer: "https://blockchair.com/bitcoin-cash", at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingBch = null; closeSheet(); renderMain();
-    } catch (e) { msg("cMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingBch; pendingBch = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "BCH",
+        logoHtml: tokenLogoHtml({ symbol: "BCH" }, "bitcoincash"), to: done.to, familyName: "Bitcoin Cash",
+        feeText: `${done.plan.feeBch.toFixed(8)} BCH`,
+        explorerUrl: historyTxUrl({ link: `https://blockchair.com/bitcoin-cash/transaction/${txid}` }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "cMsg", e); }
   };
 }
 
@@ -2061,21 +2458,28 @@ function openDogeSheet() {
         amount, to, feeDoge: plan.feeDoge.toFixed(8), feeUsd: usd(plan.feeDoge * (prices.DOGE || 0)),
         note: plan.clamped ? "the live fee quote was unusually high, so Fluid capped the rate — the fee shown is exactly what will be paid" : "",
       });
+      setBalanceAfter($("gIntentText"), { balance: dogeBal, amount, fee: plan.feeDoge, symbol: "DOGE", decimals: 8 });
       show("gIntent"); msg("gMsg", "");
     } catch (e) { msg("gMsg", "Could not check the fee: " + e.message); }
   };
   $("gConfirm").onclick = async () => {
     if (!pendingDoge) return;
+    const btn = $("gConfirm");
     try {
+      setSendBusy(btn, true);
       msg("gMsg", "Relaying the transaction you reviewed…", true);
       await broadcastDogeTx(pendingDoge.plan.hex);
       const txid = pendingDoge.plan.txid;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: txid, amount: pendingDoge.amount, symbol: "DOGE", to: pendingDoge.to,
         link: `https://blockchair.com/dogecoin/transaction/${txid}`, explorer: "https://blockchair.com/dogecoin", at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingDoge = null; closeSheet(); renderMain();
-    } catch (e) { msg("gMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingDoge; pendingDoge = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "DOGE",
+        logoHtml: tokenLogoHtml({ symbol: "DOGE" }, "dogecoin"), to: done.to, familyName: "Dogecoin",
+        feeText: `${done.plan.feeDoge.toFixed(8)} DOGE`,
+        explorerUrl: historyTxUrl({ link: `https://blockchair.com/dogecoin/transaction/${txid}` }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "gMsg", e); }
   };
 }
 
@@ -2161,17 +2565,21 @@ function openCosmosSheet(row) {
     try {
       msg("kMsg", "Estimating fee…", true);
       const est = await estimateCosmosFee(wallet.mnemonic.phrase, chain.key, { to, amount, denom: sel.denom, decimals: sel.decimals });
-      pendingCosmos = { to, amount, fee: est.fee, denom: sel.denom, decimals: sel.decimals, symbol: sel.symbol };
+      pendingCosmos = { to, amount, fee: est.fee, denom: sel.denom, decimals: sel.decimals, symbol: sel.symbol,
+        feeText: `${Number(est.feeText).toFixed(6)} ${est.feeSymbol}`, feeAmt: Number(est.feeText) };
       $("kIntentText").textContent = formatCosmosSendIntent({
         amount, symbol: sel.symbol, to, chainName: chain.name,
         feeAmount: Number(est.feeText).toFixed(6), feeSymbol: est.feeSymbol })
         + (sel.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("kIntentText"), { balance: sel.amount, amount, fee: sel.denom === chain.denom ? Number(est.feeText) : null, symbol: sel.symbol });
       show("kIntent"); msg("kMsg", "");
     } catch (e) { msg("kMsg", "Could not estimate the fee: " + e.message); }
   };
   $("kConfirm").onclick = async () => {
     if (!pendingCosmos) return;
+    const btn = $("kConfirm");
     try {
+      setSendBusy(btn, true);
       msg("kMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendCosmos(wallet.mnemonic.phrase, chain.key, {
         to: pendingCosmos.to, amount: pendingCosmos.amount, fee: pendingCosmos.fee,
@@ -2179,9 +2587,13 @@ function openCosmosSheet(row) {
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingCosmos.amount, symbol: pendingCosmos.symbol, to: pendingCosmos.to,
         link: `${chain.explorer}/txs/${hash}`, explorer: chain.explorer, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingCosmos = null; closeSheet(); renderMain();
-    } catch (e) { msg("kMsg", "Send failed: " + e.message); }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingCosmos; pendingCosmos = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: done.symbol,
+        logoHtml: tokenLogoHtml({ symbol: done.symbol }, chain.key), to: done.to, familyName: chain.name,
+        feeText: done.feeText || null,
+        explorerUrl: historyTxUrl({ link: `${chain.explorer}/txs/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "kMsg", e); }
   };
 }
 
@@ -2299,11 +2711,13 @@ async function lnPayWithNode() {
   const sats = Number($("lnSatsIn").value) || 0;
   const msat = sats > 0 ? BigInt(Math.round(sats * 1000)) : null;
   if (!target) return msg("lnPayMsg", "Paste an invoice, offer, address or Fluid name first.");
+  let paidMsat = msat;
   try {
     const kind = classifyLightningTarget(target).kind;
     msg("lnPayMsg", "Paying…", true);
     if (kind === "bolt11") {
       const parsed = parseBolt11(target);
+      if (parsed.amountMsat != null) paidMsat = BigInt(Math.round(Number(parsed.amountMsat)));
       lnSession.payInvoice(target, parsed.amountMsat != null ? null : msat);
     } else if (kind === "bolt12") {
       lnSession.payOffer(target, msat);
@@ -2326,7 +2740,9 @@ async function lnPayWithNode() {
     } else {
       return msg("lnPayMsg", "That doesn't look like a Lightning invoice, offer, address or Fluid name.");
     }
-    msg("lnPayMsg", "Payment sent to the network — watch Recent payments / status above.", true);
+    showTxSuccess({ verb: "Paid", amount: paidMsat != null ? Number(paidMsat) / 1000 : null, symbol: "sats",
+      logoHtml: tokenLogoHtml({ symbol: "BTC" }, "lightning"), to: target, familyName: "Lightning",
+      feeText: null, explorerUrl: null, txid: null, pending: true });
   } catch (e) { msg("lnPayMsg", "Payment failed: " + e.message); }
 }
 
@@ -2469,7 +2885,11 @@ function lnFallbackSheet(note) {
         invoice = await lightningInvoiceForAddress(lnAddr, sats);
       }
       await payLightningInvoice(invoice);
-      msg("lnMsg", "Paid ✓", true);
+      let paidSats = null;
+      try { const p = parseBolt11(invoice); if (p.amountMsat != null) paidSats = Number(p.amountMsat) / 1000; } catch { /* amount unknown — the recap omits it */ }
+      showTxSuccess({ verb: "Paid", amount: paidSats, symbol: "sats",
+        logoHtml: tokenLogoHtml({ symbol: "BTC" }, "lightning"), to: target, familyName: "Lightning",
+        feeText: null, explorerUrl: null, txid: null, pending: false });
     } catch (e) { msg("lnMsg", e.message); }
   };
 }
@@ -2614,10 +3034,15 @@ $("actSwap").onclick = () => {
   pendingSwap = null;
   const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui"];
   const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
-  const fromKey0 = networkKey === "sepolia" ? "bsc" : networkKey;
+  const fromKey0 = (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
+  // §4.2: from a non-swappable family view the sheet still opens —
+  // with a one-line caption, never a dead button.
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron and Sui — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     <p class="tag">One search across every Fluid chain (routes by LI.FI). Cheapest = most received after fees; you approve the exact sentence before anything is signed.</p>
+    ${swapViewCaption}
     <label class="tag">From</label>
     <div style="display:flex;gap:8px">
       <select id="wFromNet" style="flex:1.2">${netOpts(fromKey0)}</select>
@@ -2774,7 +3199,7 @@ $("actSwap").onclick = () => {
   $("wDo").onclick = async () => {
     if (!pendingSwap) return;
     const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
-    const btn = $("wDo"); btn.disabled = true;
+    const btn = $("wDo"); setSendBusy(btn, true);
     try {
       let hashes, srcExplorer, srcLink;
       if (fromKey === "solana") {
@@ -2808,14 +3233,15 @@ $("actSwap").onclick = () => {
       const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
-      pendingSwap = null; show("wConfirm", false);
-      msg("wMsg", fromKey === toKey
-        ? `Swap done ✓ tx ${hashes[hashes.length - 1].slice(0, 16)}…`
-        : `Swap sent ✓ — your ${toTok.symbol} will arrive on ${swapChainName(toKey)} via the bridge shortly. First tx ${hashes[0].slice(0, 16)}…`, true);
-      renderMain();
-    } catch (e) { msg("wMsg", "Swap failed: " + (e.shortMessage || e.message)); }
-    btn.disabled = false;
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      pendingSwap = null;
+      showTxSuccess({ verb: "Swapped", amount, symbol: `${fromTok.symbol}→${toTok.symbol}`,
+        logoHtml: `<span class="swaplogos">${tokenLogoHtml(fromTok, fromKey)}${tokenLogoHtml(toTok, toKey)}</span>`,
+        to: destAddr, familyName: swapChainName(toKey),
+        feeText: route.gasCostUSD != null ? `≈ ${usd(route.gasCostUSD)} network fees` : null,
+        explorerUrl: srcLink ? historyTxUrl({ link: srcLink }) : historyTxUrl({ hash: hashes[0], explorer: srcExplorer }),
+        txid: hashes[0], pending: fromKey !== toKey });
+    } catch (e) { sendFailed(btn, "wMsg", e, "Swap failed: "); }
   };
 };
 
@@ -2825,11 +3251,82 @@ $("actSwap").onclick = () => {
 // formatHistoryEntry (wallet-core), which escapes every value and rebuilds
 // the explorer link from a validated hash / clean https URL. Never
 // interpolate a stored history field into innerHTML directly here.
+function relTime(at) {
+  const s = Math.max(0, (Date.now() - Number(at || 0)) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+function historyDayLabel(at) {
+  const d = new Date(at), now = new Date();
+  const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+const HISTORY_FAMILY_BY_HOST = [
+  ["litecoinspace.org", "Litecoin"], ["blockchair.com/dogecoin", "Dogecoin"],
+  ["blockchair.com/bitcoin-cash", "Bitcoin Cash"], ["mempool.space", "Bitcoin"],
+  ["blockstream.info", "Bitcoin"], ["tronscan.org", "Tron"], ["solscan.io", "Solana"],
+  ["suiscan.xyz", "Sui"], ["stellar.expert", "Stellar"], ["tonviewer.io", "TON"],
+  ["nearblocks.io", "NEAR"], ["perawallet", "Algorand"], ["xrpscan.com", "XRP Ledger"],
+  ["subscan.io", "Polkadot Asset Hub"], ["aptoscan.com", "Aptos"], ["explorer.hiro.so", "Stacks"],
+  ["mintscan.io/cosmos", "Cosmos Hub"], ["mintscan.io/osmosis", "Osmosis"],
+  ["mintscan.io/noble", "Noble"], ["mintscan.io/celestia", "Celestia"],
+  ["mintscan.io/injective", "Injective"], ["mintscan.io/sei", "Sei"], ["mintscan.io/dydx", "dYdX"],
+];
+/** Family name for an Activity row's sub-line, derived from the
+ *  entry's own explorer (presentation only — entries keep their
+ *  original shape; nothing is re-stored). */
+function historyFamilyLabel(x) {
+  if (x && x.explorer) for (const k of Object.keys(NETWORKS)) if (NETWORKS[k].explorer === x.explorer) return NETWORKS[k].name;
+  const src = String((x && (x.link || x.explorer)) || "");
+  for (const [frag, label] of HISTORY_FAMILY_BY_HOST) if (src.includes(frag)) return label;
+  return "";
+}
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  $("history").innerHTML = h.length
-    ? h.map(formatHistoryEntry).join("")
-    : "No sends yet from this browser.";
+  const host = $("history");
+  if (!h.length) {
+    host.innerHTML = `<div class="actempty">${icon("activity", "ic ic-xl")}<p class="t-title" style="margin:10px 0 4px">Nothing here yet</p><p class="tag">Sends, swaps and Lightning payments will show up here.</p><button class="btn" id="actFirstSend">Make your first send</button></div>`;
+    const b = $("actFirstSend"); if (b) b.onclick = () => $("actSend").click();
+    return;
+  }
+  // Sentences render ONLY through formatHistoryEntry (audit C1); the
+  // row chrome (icon well, day groups, relative time, amount column)
+  // is filled via textContent below — no stored field is interpolated
+  // into markup here.
+  const rendered = h.map(formatHistoryEntry);
+  const groups = new Map();
+  h.forEach((x, i) => {
+    const label = historyDayLabel(x && x.at);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(i);
+  });
+  let html = "";
+  for (const [label, idxs] of groups) {
+    html += `<p class="tag actday">${esc(label)}</p>`;
+    for (const i of idxs) {
+      const x = h[i];
+      const isSwap = String((x && x.symbol) || "").includes("→");
+      const well = isSwap ? icon("swap") : (x && x.symbol ? tokenLogoHtml({ symbol: x.symbol }, null) : icon("send"));
+      html += `<div class="actrow" data-actrow="${i}"><span class="actwell">${well}</span><span class="actmain">${rendered[i]}<small class="actsub"></small></span><span class="actamt"></span></div>`;
+    }
+  }
+  host.innerHTML = html;
+  host.querySelectorAll("[data-actrow]").forEach(row => {
+    const x = h[Number(row.dataset.actrow)];
+    if (!x) return;
+    const sub = row.querySelector(".actsub");
+    if (sub) sub.textContent = [relTime(x.at), historyFamilyLabel(x)].filter(Boolean).join(" · ");
+    const amt = row.querySelector(".actamt");
+    if (amt) amt.textContent = x.amount != null ? String(x.amount) + " " + String(x.symbol || "") : "";
+    const url = historyTxUrl(x);
+    if (url) row.onclick = (e) => { if (e.target.closest("a")) return; window.open(url, "_blank", "noopener"); };
+  });
 }
 
 // ---------- onboarding ----------
@@ -2960,8 +3457,8 @@ async function adoptRegistryNameIfMine() {
     const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase) });
     if (hit) {
       localStorage.setItem("fluid_name", hit.name);
-      $("nameText").textContent = "@" + hit.name + " · " + hit.name + "." + FLUID_DOMAIN;
       renderNameSection();
+      paintHeader();
     }
   } catch { /* registry unreachable — the claim form stays, nothing breaks */ }
 }
@@ -3127,6 +3624,15 @@ $("approvalsBtn").onclick = () => {
   })();
 };
 
+// ---------- About (§4.9/§4.11): the essay, for humans, in More ----------
+$("aboutBtn").onclick = () => {
+  openSheet(`<h3>What is Fluid?</h3>
+    <p class="tag">Fluid is a free, open-source (MIT), non-custodial wallet for every blockchain. One seed phrase derives your accounts on EVM chains and L2s (15 built in, more auto-discovered), Bitcoin and Lightning, Stacks (the Bitcoin L2), Litecoin, Dogecoin, Bitcoin Cash, Tron, Solana, Sui, seven Cosmos chains, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot Asset Hub and Aptos — and every chain both sends and receives.</p>
+    <p class="tag">Fluid never holds your keys or your funds: your keys stay encrypted on your own device, there is no account, no sign-up and no KYC, and if Fluid disappeared tomorrow your seed phrase would restore everything in any standard wallet.</p>
+    <p class="tag">Buy and cash out worldwide at the cheapest available route, swap between chains, and send to a simple name — like you.fluid.is-a.dev — instead of a long address.</p>
+    <p class="tag">Source code: <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a></p>`);
+};
+
 // ---------- build stamp ----------
 // dist pages carry <meta name="fluid-build"> with the bundle hash; showing
 // it lets anyone verify the running code matches the open-source build.
@@ -3286,7 +3792,7 @@ window.FluidAgent = {
     if (price) recordAgentSpend(a.index, usdAmt);
     const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
     h.unshift({ hash: tx.hash, amount: String(amt), symbol: net.symbol, to, explorer: net.explorer, at: Date.now(), agent: a.name });
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, 20)));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
     return { hash: tx.hash, from: a.keys.evm, network: netKey };
   },
 };

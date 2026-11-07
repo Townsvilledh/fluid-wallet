@@ -2767,4 +2767,75 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ln: fundingAddressFromScript refuses non-P2WSH scripts", true);
 }
 
+// ---------- UI rebuild P0: view model, send-success helper, activity ----------
+// The §4.2 view context: one persisted key scoping pill, hero, header
+// address, asset list, send and receive. app.js is DOM-bound, so the
+// model is pinned at source level (the same style as the C1/M3 pins).
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("ui-p0: viewKey model exists with the persisted key and default",
+    appSrc.includes('const VIEW_KEY_LS = "fluid_view_v1"')
+    && appSrc.includes('let viewKey = "all"')
+    && appSrc.includes("localStorage.getItem(VIEW_KEY_LS)")
+    && appSrc.includes("function saveViewKey()"));
+  ok("ui-p0: family ids come from the RECEIVE_NETWORKS taxonomy",
+    appSrc.includes("RECEIVE_NETWORKS.find(m => m.id === viewKey)")
+    && appSrc.includes("receiveNetworkMatches(m, q)")
+    && appSrc.includes("COSMOS_CHAINS.some(c => c.key === viewKey)"));
+  ok("ui-p0: scoped hero sums read the per-family totals, all = heroTotal()",
+    appSrc.includes("function familyUsdTotals()")
+    && appSrc.includes('if (viewKey === "all") return heroTotal();')
+    && appSrc.includes("function scopedTotal()"));
+  ok("ui-p0: hero caption is the one-line scope caption, census deleted",
+    appSrc.includes('"Across all networks"')
+    && !appSrc.includes("on this network + Bitcoin + Litecoin"));
+  ok("ui-p0: picker offers All / EVM / Other sections with totals",
+    appSrc.includes('data-viewall="1"') && appSrc.includes("EVM NETWORKS") && appSrc.includes("OTHER NETWORKS")
+    && appSrc.includes('data-viewfam="${m.id}"'));
+  ok("ui-p0: selecting an EVM row keeps selectNetwork (probe path intact)",
+    appSrc.includes("await selectNetwork(b.dataset.net)"));
+  ok("ui-p0: receive preselects the current view's entry",
+    appSrc.includes('let selected = (viewKey === "all" || viewKey === "evm") ? "evm" : viewKey;'));
+  ok("ui-p0: send dispatches to the family's own sheet from a family view",
+    appSrc.includes('if (viewKey === "algorand") return openAlgoSheet')
+    && appSrc.includes('if (viewKey === "bitcoin") return openBtcSheet()')
+    && appSrc.includes("function openEvmSendSheet()"));
+  // §4.8: the shared success helper is wired into every send family.
+  ok("ui-p0: showTxSuccess is defined once and called by every family",
+    appSrc.includes("function showTxSuccess({")
+    && (appSrc.match(/showTxSuccess\(\{/g) || []).length >= 20);
+  ok("ui-p0: success verbs cover Sent / Broadcast / Paid / Swapped",
+    appSrc.includes('verb: "Sent"') && appSrc.includes('verb: "Broadcast"')
+    && appSrc.includes('verb: "Paid"') && appSrc.includes('verb: "Swapped"'));
+  ok("ui-p0: every family names itself in the success recap",
+    ["Bitcoin", "Litecoin", "Dogecoin", "Bitcoin Cash", "Tron", "Solana", "Sui", "Stellar", "TON", "NEAR",
+     "Algorand", "XRP Ledger", "Polkadot Asset Hub", "Aptos", "Stacks", "Lightning"]
+      .every(n => appSrc.includes(`familyName: "${n}"`) || appSrc.includes(`familyName: chain.name`)));
+  ok("ui-p0: balance-after line is computed in the review step (§4.8 P10)",
+    appSrc.includes("function setBalanceAfter(")
+    && (appSrc.match(/setBalanceAfter\(\$/g) || []).length >= 18
+    && appSrc.includes("Balance after: "));
+  ok("ui-p0: broadcasting locks the sheet and failures land in a banner",
+    appSrc.includes("function setSendBusy(") && appSrc.includes('root.setAttribute("data-busy", "1")')
+    && appSrc.includes("function showSheetError(") && appSrc.includes("if (sheetBusy && !force) return;"));
+  ok("ui-p0: history cap is the HISTORY_MAX constant at every write site",
+    appSrc.includes("const HISTORY_MAX = 100")
+    && !appSrc.includes("h.slice(0, 20)")
+    && (appSrc.match(/h\.slice\(0, HISTORY_MAX\)/g) || []).length >= 20);
+  ok("ui-p0: activity groups by day with relative time + family sub-line",
+    appSrc.includes("function historyDayLabel(") && appSrc.includes("function relTime(")
+    && appSrc.includes("function historyFamilyLabel(") && appSrc.includes('data-actrow="${i}"')
+    && appSrc.includes("Nothing here yet") && appSrc.includes("Make your first send"));
+  ok("ui-p0: essay lives in <noscript> for crawlers and in More for humans",
+    idxSrc.includes("<noscript>") && idxSrc.includes("What is Fluid?")
+    && idxSrc.indexOf("What is Fluid?", idxSrc.indexOf("<noscript>")) > idxSrc.indexOf("<noscript>")
+    && idxSrc.indexOf("non-custodial wallet for every blockchain", idxSrc.indexOf("<noscript>")) > idxSrc.indexOf("<noscript>")
+    && idxSrc.includes('id="aboutBtn"') && appSrc.includes('$("aboutBtn").onclick')
+    && !idxSrc.includes("<footer>"));
+  ok("ui-p0: activity nav dot exists and is driven by the success flow",
+    idxSrc.includes('id="activityDot"') && appSrc.includes("function markActivityDot()")
+    && appSrc.includes("function clearActivityDot()"));
+}
+
 console.log(`\n${passed} checks passed`);
