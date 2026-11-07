@@ -95,6 +95,14 @@ the weekly follower drip and the OGO ERA player pools; see
    Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
    Stacks, Lightning) has no swap route at all — sends/receives only.
 
+## Ramp referrals
+- Mt Pelerin: every buy/sell link carries the owner's referral code
+  (`rfr`, single-source `MTPELERIN_REFERRAL_CODE` in
+  src/wallet-core.js, wired 2026-11-07). Mt Pelerin pays 25% of the
+  fees it charges referred users out of its own cut, monthly in USDC
+  on Polygon to the address registered in the owner's Bridge Wallet.
+  The user's price is unchanged.
+
 ## What Fluid never does
 - No fee on plain sends/receives of your own money between your keys.
 - No hidden spread on ramps: providers pay referral or not, the user

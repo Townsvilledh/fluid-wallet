@@ -3407,16 +3407,22 @@ const MTPELERIN_SLUGS = {
   USDT: { buy: "buy-tether-usdt", sell: "sell-tether-usdt" },
   USDC: { buy: "buy-usdc", sell: "sell-usdc" },
 };
+// Mt Pelerin referral code (Ethuram's own account, supplied 2026-11-07).
+// Mt Pelerin pays 25% of the fees it charges referred users back to the
+// referrer, taken from ITS cut — the user's price never changes. Paid
+// monthly in USDC on Polygon to the address registered in his Bridge
+// Wallet. Keyless: just the rfr param on the links Fluid already builds.
+export const MTPELERIN_REFERRAL_CODE = "Fp3dGFX3";
 export function mtpelerinBuyUrl(asset = "USDT", fiat = "EUR") {
   const slugs = MTPELERIN_SLUGS[asset];
   if (!slugs || !MTPELERIN_FIATS.includes(fiat)) return null;
-  const p = new URLSearchParams({ bsc: fiat, bdc: asset });
+  const p = new URLSearchParams({ bsc: fiat, bdc: asset, rfr: MTPELERIN_REFERRAL_CODE });
   return `https://www.mtpelerin.com/${slugs.buy}?${p.toString()}`;
 }
 export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
   const slugs = MTPELERIN_SLUGS[asset];
   if (!slugs || !MTPELERIN_FIATS.includes(fiat)) return null;
-  const p = new URLSearchParams({ ssc: asset, sdc: fiat });
+  const p = new URLSearchParams({ ssc: asset, sdc: fiat, rfr: MTPELERIN_REFERRAL_CODE });
   return `https://www.mtpelerin.com/${slugs.sell}?${p.toString()}`;
 }
 // ---------- Per-country ramp plan: ranked on MEASURED price ----------
