@@ -25,7 +25,7 @@ import {
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
-  RECEIVE_NETWORKS, filterReceiveNetworks,
+  RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
@@ -2683,9 +2683,11 @@ function openCosmosSheet(row) {
   const chain = row; // COSMOS_CHAINS entry + { address, amount|null, tokens|null }
   let pendingCosmos = null;
   const tokens = Array.isArray(chain.tokens) ? chain.tokens : null;
-  let sel = tokens
-    ? (tokens.find(t => t.denom === chain.denom) || tokens[0] || null)
-    : { denom: chain.denom, symbol: chain.symbol, name: chain.name, decimals: chain.decimals, amount: chain.amount, verified: true, ibc: false };
+  // Default selection lives in wallet-core (cosmosSendSelection): the
+  // native denom in every balance state — including an EMPTY token
+  // list, which used to leave sel null and kill every review with
+  // "No token selected." (QA 2026-11-07).
+  let sel = cosmosSendSelection(chain, chain.tokens);
   const balLine = chain.amount == null
     ? `<p><b>Balance unavailable right now</b> — ${chain.name}'s public API didn't answer. Receiving still works; sending needs a live balance read first.</p>`
     : `<p><b>${fmt(chain.amount)} ${chain.symbol}</b> · ${usd(Number(chain.amount) * (prices[chain.symbol] || 0))}</p>`;
@@ -3610,6 +3612,13 @@ function renderNameSection() {
   show("ownedNameBox", true);
   $("namePreview").textContent = stored + "." + FLUID_DOMAIN;
   $("ownedNameText").textContent = stored + "." + FLUID_DOMAIN;
+  // Truthfulness (QA 2026-11-07): the note under the name states the
+  // LOCAL state by default. The public-registry wording is earned
+  // only when the registry lookup below resolves the name to THIS
+  // wallet — a name claimed on-device but never published must not
+  // be described as registered.
+  const noteEl = $("ownedNameNote");
+  if (noteEl) noteEl.textContent = "This name is saved on this device — publish its entry so other Fluid wallets can resolve it.";
   // Prefill from this wallet's own keys right away; the registry entry
   // (what senders actually resolve) refines the fields when it loads.
   if (wallet) {
@@ -3625,6 +3634,13 @@ function renderNameSection() {
     if (hit.btc) $("ownedBtc").textContent = hit.btc;
     if (hit.ln) { $("ownedLn").textContent = hit.ln; show("ownedLnRow", true); }
     else show("ownedLnRow", false);
+    if (noteEl && wallet && hit.evm) {
+      if (String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
+        noteEl.textContent = "This name is registered to this wallet in the public registry — anyone can send to it on any chain.";
+      } else {
+        noteEl.textContent = "Saved on this device — but the public registry currently resolves this name to a different wallet.";
+      }
+    }
   }).catch(() => {});
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
@@ -3679,7 +3695,7 @@ renderNameSection();
 
 // ---------- more tab ----------
 $("refreshBtn").onclick = renderMain;
-function lockWallet() { wallet = null; pendingSend = null; nameAdoptTried = false; refreshGate(); }
+function lockWallet() { wallet = null; pendingSend = null; nameAdoptTried = false; msg("onboardMsg", ""); refreshGate(); }
 $("lockBtn").onclick = lockWallet;
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
 if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;

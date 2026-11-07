@@ -1678,7 +1678,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const u = String(url);
     if (u.includes("/v1/fees/recommended")) return { ok: true, json: async () => ({ halfHourFee: 10 }) };
     if (u.includes("blockstream.info/api/fee-estimates")) return { ok: true, json: async () => ({ "3": 11, "6": 8 }) };
-    if (u.includes("/utxos")) return { ok: true, json: async () => utxoSet };
+    if (u.includes("/address/") && u.endsWith("/utxo")) return { ok: true, json: async () => utxoSet };
     throw new Error("unexpected fetch " + u);
   };
   try {
@@ -2545,7 +2545,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     if (u.includes("blockstream.info/api/fee-estimates")) return { ok: true, json: async () => ({ "3": 11 }) };
     if (u.includes("turbo.ordinalswallet.com") && u.endsWith("/inscriptions")) return { ok: true, json: async () => inscriptions };
     if (u.includes("turbo.ordinalswallet.com")) return { ok: true, json: async () => ({ inscription_balance: aggBalance, inscriptions: [] }) };
-    if (u.includes("/utxos")) return { ok: true, json: async () => ([
+    if (u.includes("/address/") && u.endsWith("/utxo")) return { ok: true, json: async () => ([
       { txid: bigTx, vout: 0, value: 500000, status: { confirmed: true } },
       { txid: smallTx, vout: 1, value: 100000, status: { confirmed: true } },
     ]) };
@@ -2569,7 +2569,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.includes("turbo.ordinalswallet.com")) throw new Error("index down");
-      if (u.includes("/utxos")) return { ok: true, json: async () => ([{ txid: smallTx, vout: 1, value: 100000, status: { confirmed: true } }]) };
+      if (u.includes("/address/") && u.endsWith("/utxo")) return { ok: true, json: async () => ([{ txid: smallTx, vout: 1, value: 100000, status: { confirmed: true } }]) };
       throw new Error("unexpected fetch " + u);
     };
     const plan2 = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005, feeRate: 10 });
@@ -2608,7 +2608,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       if (u.endsWith("/inscriptions")) return { ok: true, json: async () => [] };
       return { ok: true, json: async () => ({ inscription_balance: 0 }) };
     }
-    if (u.includes("/address/") && u.includes("/utxos")) {
+    if (u.includes("/address/") && u.endsWith("/utxo")) {
       const addr = u.split("/address/")[1].split("/")[0];
       return { ok: true, json: async () => (utxosByAddr[addr] || []) };
     }
@@ -2999,6 +2999,112 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ui-p2: motion pass — hero cross-fade, tab fade kept, reduced motion kills sheet motion",
     appSrc.includes('totalEl.classList.add("herofade")') && idxSrc.includes("@keyframes herofade")
     && idxSrc.includes("#sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }"));
+}
+
+// ---------- live-QA fixes 2026-11-07 (picker / BTC review / Cosmos / lock / name copy) ----------
+// A full live QA in a fresh throwaway wallet found five defects the
+// existing pins had missed. Defect 1 and the BTC fallback were proven
+// in a headless browser against the built dist before/after; the pins
+// here lock the failure mechanisms at the level CI can run.
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const { cosmosSendSelection, fetchBtcUtxos, planBitcoinSend, bitcoinAddress } = await import("../src/wallet-core.js");
+
+  // Defect 1: the network picker called receiveNetworkMatches, which
+  // app.js never imported — a runtime ReferenceError on every open,
+  // so #netList stayed empty for every query. Reproduced headlessly:
+  // "ReferenceError: receiveNetworkMatches is not defined" thrown from
+  // the netBtn handler before paint() could write innerHTML.
+  const importBlock = appSrc.slice(appSrc.indexOf("import {"), appSrc.indexOf('} from "./wallet-core.js"'));
+  ok("qa1: app.js imports receiveNetworkMatches from wallet-core",
+    /(^|[,\s])receiveNetworkMatches\s*,/.test(importBlock));
+  // The failure CLASS, not just the instance: any wallet-core export
+  // app.js calls as a bare identifier must be imported (or defined
+  // locally in app.js) — anything else is a latent ReferenceError.
+  const coreExports = [...coreSrc.matchAll(/export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/g)].map(m => m[1]);
+  const importedNames = new Set([...importBlock.matchAll(/([A-Za-z_$][\w$]*)/g)].map(m => m[1]));
+  const localDefs = new Set([
+    ...[...appSrc.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]),
+    ...[...appSrc.matchAll(/(?:^|\n)\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)].map(m => m[1]),
+  ]);
+  // Scan code only: a name mentioned in comment prose is not a call.
+  const appCode = appSrc.replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n").filter(l => !l.trimStart().startsWith("//")).join("\n");
+  const unimported = [...new Set(coreExports)].filter(n =>
+    new RegExp(`(?<![\\w$.])${n}\\s*\\(`).test(appCode) && !importedNames.has(n) && !localDefs.has(n));
+  ok("qa1: no wallet-core export is called in app.js without being imported", unimported.length === 0);
+  if (unimported.length) console.log("   unimported calls:", unimported.join(", "));
+
+  // Defect 2: the BTC send review fetched the PLURAL /utxos route —
+  // a 404 whose plain-text body ("endpoint does not exist …") hit an
+  // unguarded .json() and surfaced as a raw parse error.
+  ok("qa2: the plural /utxos fetch route is gone from wallet-core",
+    !/address\/\$\{[^}]*\}\/utxos/.test(coreSrc) && coreSrc.includes("fetchBtcUtxos(address)"));
+  const realFetch = globalThis.fetch;
+  const oneUtxo = [{ txid: "aa".repeat(32), vout: 0, value: 100000, status: { confirmed: true, block_height: 800000 } }];
+  const textPage = { ok: true, json: async () => { throw new SyntaxError("Unexpected token 'e', \"endpoint d\"... is not valid JSON"); } };
+  try {
+    // Source A (mempool.space) answers text/HTML 200 for everything;
+    // source B (blockstream.info) answers valid JSON. Fees AND the
+    // UTXO set must both fall back to B and the review must proceed:
+    // rate 11 from B only (sources 1), fee = 140 vB × 11 = 1540.
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("ordinalswallet")) return { ok: false, json: async () => ({}) };
+      if (u.includes("mempool.space")) return textPage;
+      if (u.includes("blockstream.info/api/fee-estimates")) return { ok: true, json: async () => ({ "3": 11 }) };
+      if (u.includes("blockstream.info/api/address/")) return { ok: true, json: async () => oneUtxo };
+      throw new Error("unexpected fetch " + u);
+    };
+    const dest = bitcoinAddress(KNOWN_PHRASE);
+    const plan = await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005 });
+    ok("qa2: text-200 primary → review proceeds on the fallback source",
+      plan.rate === 11 && plan.rateInfo.sources === 1 && plan.feeSat === 1540 && /^[0-9a-f]{64}$/.test(plan.txid));
+    const utxos = await fetchBtcUtxos(dest);
+    ok("qa2: fetchBtcUtxos normalises the fallback set",
+      utxos.length === 1 && utxos[0].value === 100000 && utxos[0].status.confirmed === true);
+    // Both sources dead → ONE plain-language error, never raw parse text.
+    globalThis.fetch = async (url) => (String(url).includes("ordinalswallet") ? { ok: false, json: async () => ({}) } : textPage);
+    let err = null;
+    try { await planBitcoinSend(KNOWN_PHRASE, { to: dest, amountBtc: 0.0005 }); } catch (e) { err = e; }
+    ok("qa2: both sources dead → plain-language error, no raw parse text",
+      !!err && err.message === "Couldn't reach the fee sources — check your connection and try again"
+      && !/Unexpected token|not valid JSON/.test(err.message));
+  } finally { globalThis.fetch = realFetch; }
+
+  // Defect 3: an EMPTY Cosmos token list left the send selection null.
+  const hub = { key: "cosmoshub", denom: "uatom", symbol: "ATOM", name: "Cosmos Hub", decimals: 6, amount: "1.5" };
+  ok("qa3: empty token list defaults to the native denom",
+    cosmosSendSelection(hub, []).denom === "uatom" && cosmosSendSelection(hub, []).amount === "1.5");
+  ok("qa3: missing token list defaults to the native denom",
+    cosmosSendSelection(hub, null).denom === "uatom" && cosmosSendSelection(hub, undefined).symbol === "ATOM");
+  const foreign = { denom: "uosmo", symbol: "OSMO", amount: "3" };
+  const nativeTok = { denom: "uatom", symbol: "ATOM", amount: "2" };
+  ok("qa3: populated list prefers the native entry, else the first token",
+    cosmosSendSelection(hub, [foreign, nativeTok]) === nativeTok && cosmosSendSelection(hub, [foreign]) === foreign);
+  ok("qa3: the Cosmos sheet selects through the shared helper",
+    appSrc.includes("cosmosSendSelection(chain, chain.tokens)"));
+
+  // Defect 4: the green "Wallet created…" message survived onto the
+  // lock/unlock screen because locking never cleared onboardMsg.
+  const lockAt = appSrc.indexOf("function lockWallet()");
+  const lockSlice = appSrc.slice(lockAt, lockAt + 220);
+  ok("qa4: locking clears the transient onboarding message",
+    lockSlice.includes('msg("onboardMsg", "")'));
+
+  // Defect 5: the owned-name card claimed public registration for a
+  // name that was only claimed locally and never published.
+  ok("qa5: the owned-name note no longer claims registration statically",
+    idxSrc.includes('id="ownedNameNote"') && !idxSrc.includes("This name is registered to this wallet in the public registry")
+    && idxSrc.includes("saved on this device"));
+  const nameAt = appSrc.indexOf("function renderNameSection()");
+  const nameSlice = appSrc.slice(nameAt, nameAt + 3400);
+  ok("qa5: registered wording is set only when the registry resolves the name to this wallet",
+    nameSlice.includes('$("ownedNameNote")')
+    && nameSlice.includes("String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()")
+    && nameSlice.includes("publish its entry so other Fluid wallets can resolve it"));
 }
 
 console.log(`\n${passed} checks passed`);

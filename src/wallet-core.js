@@ -466,10 +466,53 @@ const _feeGrab = async (fn) => { try { const v = await fn(); return Number.isFin
  *  target ≈ the same half hour), resolved + ceiling-clamped. */
 export async function getBtcFeeRateInfo() {
   const [primary, secondary] = await Promise.all([
-    _feeGrab(async () => { const r = await fetch(`${MEMPOOL}/v1/fees/recommended`); const d = await r.json(); return Number(d.halfHourFee); }),
-    _feeGrab(async () => { const r = await fetch("https://blockstream.info/api/fee-estimates"); const d = await r.json(); return Number(d["3"]); }),
+    _feeGrab(async () => { const r = await fetch(`${MEMPOOL}/v1/fees/recommended`); if (!r.ok) return null; const d = await r.json(); return Number(d?.halfHourFee); }),
+    _feeGrab(async () => { const r = await fetch("https://blockstream.info/api/fee-estimates"); if (!r.ok) return null; const d = await r.json(); return Number(d?.["3"]); }),
   ]);
   return resolveFeeRate({ primary, secondary, ceiling: BTC_FEE_CEILING_SATVB, fallback: 5 });
+}
+/** Fetch a JSON body, or null on ANY failure — never throws. A non-OK
+ *  status, a non-JSON body (proxy block pages and rate-limit notices
+ *  are plain text) and a network error all read the same way: this
+ *  source failed, fall back to the next one. (QA 2026-11-07: the BTC
+ *  send review died with the raw parse error `Unexpected token 'e',
+ *  "endpoint d"… is not valid JSON` when a source answered text.) */
+async function fetchJsonOrNull(url) {
+  try {
+    const r = await fetch(url);
+    if (!r || !r.ok) return null;
+    return await r.json().catch(() => null);
+  } catch { return null; }
+}
+/** Validate + normalise an Esplora UTXO set (hostile input: entries
+ *  are kept only with a well-formed txid/vout/value, and reduced to
+ *  the fields the planners read). A non-array, or an array whose every
+ *  entry is malformed, is a failed source (null), not an empty set. */
+function validUtxoSet(d) {
+  if (!Array.isArray(d)) return null;
+  const out = [];
+  for (const u of d) {
+    if (u && typeof u.txid === "string" && /^[0-9a-f]{64}$/i.test(u.txid)
+      && Number.isInteger(u.vout) && u.vout >= 0 && Number.isFinite(u.value) && u.value >= 0) {
+      out.push({ txid: u.txid, vout: u.vout, value: u.value, status: { confirmed: !!(u.status && u.status.confirmed === true) } });
+    }
+  }
+  return d.length && !out.length ? null : out;
+}
+/** The address's UTXO set from two independent Esplora sources —
+ *  mempool.space first, Blockstream as fallback (identical JSON
+ *  shape). NOTE the route is the SINGULAR /utxo: the plural /utxos
+ *  answers 404 with a plain-text body ("endpoint does not exist …")
+ *  on both, verified live 2026-11-07 — the old plural fetch is what
+ *  crashed the send review. If neither source produces a valid set,
+ *  the caller gets ONE plain-language error, never a raw parse
+ *  message. */
+export async function fetchBtcUtxos(address) {
+  for (const base of [MEMPOOL, "https://blockstream.info/api"]) {
+    const list = validUtxoSet(await fetchJsonOrNull(`${base}/address/${address}/utxo`));
+    if (list) return list;
+  }
+  throw new Error("Couldn't reach the fee sources — check your connection and try again");
 }
 export async function getBtcFeeRate() {
   return (await getBtcFeeRateInfo()).rate;
@@ -511,8 +554,7 @@ export async function planBitcoinSend(phrase, { to, amountBtc, feeRate, kind = "
   if (!feeRate) { rateInfo = await getBtcFeeRateInfo(); feeRate = rateInfo.rate; }
   const rate = feeRate;
   const prot = await getInscriptionProtection(address);
-  const res = await fetch(`${MEMPOOL}/address/${address}/utxos`);
-  const confirmed = (await res.json()).filter(u => u.status && u.status.confirmed === true);
+  const confirmed = (await fetchBtcUtxos(address)).filter(u => u.status.confirmed === true);
   const utxos = confirmed.filter(u => !prot.outpoints.has(`${u.txid}:${u.vout}`))
     .sort((a, b) => b.value - a.value);
   const protectedCount = confirmed.length - utxos.length;
@@ -798,9 +840,8 @@ export async function planRuneTransfer(phrase, { runeId, to, amountWhole, feeRat
     const prot = await getInscriptionProtection(acct.address);
     if (!prot.ok) throw new Error("The inscription check could not run, so Fluid won't build a rune transfer: its fee coins could not be verified inscription-free. Try again when the index is reachable.");
     protectedCount += prot.count;
-    const uRes = await fetch(`${MEMPOOL}/address/${acct.address}/utxos`);
-    const utxoMap = new Map(((await uRes.json()) || [])
-      .filter(u => u.status && u.status.confirmed === true).map(u => [`${u.txid}:${u.vout}`, u.value]));
+    const utxoMap = new Map((await fetchBtcUtxos(acct.address))
+      .filter(u => u.status.confirmed === true).map(u => [`${u.txid}:${u.vout}`, u.value]));
     const runeHeldOutpoints = new Set();
     if (entry) {
       if (divisibility === null) { divisibility = entry.divisibility; runeName = entry.name; }
@@ -942,8 +983,9 @@ export async function planLitecoinSend(phrase, { to, amountLtc, feeRate }) {
   let rateInfo = null;
   if (!feeRate) { rateInfo = await getLtcFeeRateInfo(); feeRate = rateInfo.rate; }
   const rate = feeRate;
-  // NB: litecoinspace's UTXO route is the singular /utxo (mempool.space
-  // uses the plural /utxos) — verified live before wiring.
+  // NB: the Esplora UTXO route is the singular /utxo on BOTH
+  // litecoinspace and mempool.space — the plural /utxos is a 404
+  // plain-text body (re-verified live 2026-11-07; see fetchBtcUtxos).
   const res = await fetch(`${LTC_API}/address/${address}/utxo`);
   const utxos = (await res.json()).filter(u => u.status && u.status.confirmed === true)
     .sort((a, b) => b.value - a.value);
@@ -2424,6 +2466,18 @@ export async function getCosmosBalance(chainKey, address) {
   if (!data || !Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
   const hit = data.balances.find(b => b.denom === chain.denom);
   return ethers.formatUnits(BigInt(hit ? hit.amount : "0"), chain.decimals);
+}
+/** Which token a Cosmos chain's send sheet starts with. The native
+ *  denom is the default in EVERY balance state — a populated token
+ *  list that lacks it, an EMPTY list, and no list at all (QA
+ *  2026-11-07: an empty array on a fresh wallet left the selection
+ *  null and every review died with "No token selected."). A populated
+ *  list keeps the native entry when present, else its first token —
+ *  the sheet's token list is how the user picks anything else. */
+export function cosmosSendSelection(chain, tokens) {
+  const native = { denom: chain.denom, symbol: chain.symbol, name: chain.name, decimals: chain.decimals, amount: chain.amount ?? null, verified: true, ibc: false };
+  if (!Array.isArray(tokens) || tokens.length === 0) return native;
+  return tokens.find(t => t.denom === chain.denom) || tokens[0] || native;
 }
 /** All seven balances, one entry per chain, fault-tolerant per chain:
  *  a chain whose read fails reports amount: null (the UI shows
