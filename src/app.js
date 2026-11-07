@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -26,7 +26,8 @@ import {
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
+  lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
@@ -34,6 +35,8 @@ import {
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
+  detectScanFamily, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
+  formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -357,7 +360,7 @@ function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName,
 
 // ---------- tabs ----------
 function goTab(name) {
-  for (const t of ["wallet", "play", "activity", "more"]) show("tab-" + t, t === name);
+  for (const t of ["wallet", "play", "activity", "scan", "more"]) show("tab-" + t, t === name);
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   if (name === "activity") clearActivityDot();
   const pane = $("tab-" + name);
@@ -378,6 +381,7 @@ $("notifyBtn").onclick = () => {
 // (see lockRestoreBtn) back to the SAME onboarding box, whose create
 // and import handlers remain the only paths that write the vault.
 let restoreMode = false;
+let gateWasLocked = true;
 function refreshGate() {
   const hasVault = !!localStorage.getItem(VAULT_KEY);
   if (wallet) restoreMode = false; // reaching the app ends the detour
@@ -386,6 +390,12 @@ function refreshGate() {
   show("createBox", (!hasVault || restoreMode) && !wallet);
   show("restoreBackBtn", restoreMode && !wallet && hasVault);
   show("app", !!wallet);
+  // Entering the app (create, import, or unlock) always lands on
+  // the Wallet home (QA F14): the tab panes are DOM state, so
+  // without this an import finished after browsing Settings would
+  // reopen on Settings, unlike a fresh create.
+  if (wallet && gateWasLocked) goTab("wallet");
+  gateWasLocked = !wallet;
   if (wallet) renderMain();
   // Wake-up deep link: a Lightning push notification lands on
   // /#lightning — open the node panel once per arrival so held
@@ -496,7 +506,14 @@ async function renderMain() {
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
     .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; famLoaded.add("xrpl"); paintAssets(); })
-    .catch(() => { xrpLoadFailed = true; famLoaded.add("xrpl"); paintAssets(); });
+    .catch(() => {
+      // A failed read is UNKNOWN, not zero (QA F12): the row carries
+      // amount null and renders "couldn't load" — never a $0.00
+      // presented as a loaded balance.
+      xrpLoadFailed = true;
+      xrpBalances = [{ symbol: "XRP", name: "XRP", amount: null, address: null, decimals: 6, verified: true }];
+      famLoaded.add("xrpl"); paintAssets();
+    });
   dotAddr = dotAddressFromPhrase(wallet.mnemonic.phrase);
   dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
@@ -723,10 +740,15 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
   // amount / USD, tabular, right-aligned.
   const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
   const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
+  // amount null = the read failed: the balance is unknown, and the
+  // row says so instead of dressing a placeholder zero as fact.
+  const amt = b.amount == null
+    ? `<b>—</b><small>couldn't load</small>`
+    : `<b>${fmt(b.amount)}</b><small>${v != null ? usd(v) : ""}</small>`;
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
       <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
       <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small></span>
-      <span class="amt"><b>${fmt(b.amount)}</b><small>${v != null ? usd(v) : ""}</small></span></div>`;
+      <span class="amt">${amt}</span></div>`;
 }
 // ---------- zero-balance collapse + skeletons (§4.5/§4.13) ----------
 function isNativeRow(famKey, b) {
@@ -796,9 +818,53 @@ function openFamilyAlert(key) {
   const meta = RECEIVE_NETWORKS.find(x => x.id === key);
   const title = key === "evm" ? NETWORKS[networkKey].name : key === "cosmos" ? "Cosmos" : (meta ? meta.name : key);
   openSheet(`<h3>${esc(title)}</h3>
-    <p class="tag">${esc(text)}</p>
+    <p class="tag" id="famAlertText">${esc(text)}</p>
     <button class="btn" id="famRetry">Retry</button>`);
-  $("famRetry").onclick = () => { closeSheet(); renderMain(); };
+  $("famRetry").onclick = () => retryFamily(key, title);
+}
+/** Retry that VISIBLY re-runs and reports its outcome (QA F12/F13):
+ *  the button spins in place; success closes the sheet with a
+ *  confirmation toast and the refreshed list behind it; failure
+ *  restates the problem in the sheet and re-arms the button. The
+ *  old behaviour — close silently and reload everything — told the
+ *  user nothing about whether the retry did anything. XRPL and the
+ *  Solana scan re-run their own reads deterministically; other
+ *  families reload fully and are judged by whether their alert
+ *  clears. */
+async function retryFamily(key, title) {
+  const btn = $("famRetry");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span>Retrying…`;
+  const fail = (what) => {
+    btn.disabled = false;
+    btn.textContent = "Retry";
+    const t = $("famAlertText");
+    if (t) t.textContent = `${what} still couldn't be loaded right now — check your connection and try again.`;
+  };
+  const done = (what) => { closeSheet(); toast(what); };
+  try {
+    if (key === "xrpl") {
+      try {
+        const acct = await getXrplAccount(xrpAddr);
+        xrpBalances = acct.balances; xrpFunded = acct.funded; xrpLoadFailed = false;
+        paintAssets();
+        return done("XRP Ledger balances updated");
+      } catch { return fail("XRP Ledger balances"); }
+    }
+    if (key === "solana") {
+      familyScanFailed.solana = false;
+      const rows = await loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana");
+      if (rows) solBalances = rows;
+      paintAssets();
+      if (!familyScanFailed.solana) return done("Solana token scan updated");
+      return fail("The full Solana token scan");
+    }
+    await renderMain();
+    await new Promise(r => setTimeout(r, 2500));
+    if (!familyAlertMap()[key]) return done(`${title} balances updated`);
+    return fail(`${title} balances`);
+  } catch { return fail(`${title} balances`); }
 }
 function splitRows(rows, symPriceOf) {
   const main = [], other = [];
@@ -1810,7 +1876,7 @@ function openTronSheet(tok) {
   let pendingTron = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Tron</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${tronAddr}</span></p>
-    <input id="tTo" placeholder="Recipient T… address" autocapitalize="none">
+    <input id="tTo" placeholder="Recipient T… address or Fluid name" autocapitalize="none">
     <input id="tAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="tReview">Review send</button>
     <div id="tIntent" class="hidden">
@@ -1821,9 +1887,19 @@ function openTronSheet(tok) {
     <p class="tag">${tok.address
       ? "Token sends burn a little TRX for energy — keep some TRX in this wallet."
       : "Tron network fees are paid in TRX (bandwidth/energy). Sends are final."}</p>`);
-  $("tReview").onclick = () => {
-    const to = $("tTo").value.trim(), amount = $("tAmt").value.trim();
-    if (!isValidTronAddress(to)) return msg("tMsg", "That is not a valid Tron address (it starts with T).");
+  $("tReview").onclick = async () => {
+    let to = $("tTo").value.trim();
+    const amount = $("tAmt").value.trim();
+    // Fluid names resolve via the shared registry path (QA F3–F5):
+    // a valid T… address passes untouched; a name is looked up and
+    // hard-blocked with the chain-specific registry message.
+    if (to && !isValidTronAddress(to)) {
+      msg("tMsg", "Resolving Fluid name…", true);
+      try {
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidTronAddress, field: null, chainLabel: "Tron" });
+        to = r.to; toast("Name resolved");
+      } catch (e) { return msg("tMsg", e.message); }
+    }
     if (!amount || Number(amount) <= 0) return msg("tMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("tMsg", "Amount is more than your balance.");
     pendingTron = { to, amount };
@@ -1862,7 +1938,7 @@ function openSolanaSheet(tok) {
   let pendingSol = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Solana</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${solAddr}</span></p>
-    <input id="oTo" placeholder="Recipient Solana address" autocapitalize="none">
+    <input id="oTo" placeholder="Recipient Solana address or Fluid name" autocapitalize="none">
     <input id="oAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="oReview">Review send</button>
     <div id="oIntent" class="hidden">
@@ -1874,8 +1950,17 @@ function openSolanaSheet(tok) {
       ? "Token sends pay a small SOL fee. If the recipient has no " + esc(tok.symbol) + " account yet, one is created for them and you pay about 0.002 SOL rent for it — the review sentence tells you when that applies."
       : "A Solana account must always keep at least 0.00089 SOL (the rent-exempt minimum) or be emptied completely — sends that would strand less than that are blocked. Sends are final."}</p>`);
   $("oReview").onclick = async () => {
-    const to = $("oTo").value.trim(), amount = $("oAmt").value.trim();
-    if (!isValidSolanaAddress(to)) return msg("oMsg", "That is not a valid Solana address.");
+    let to = $("oTo").value.trim();
+    const amount = $("oAmt").value.trim();
+    // Fluid names resolve via the shared registry path (QA F3–F5),
+    // exactly as on the other family sheets.
+    if (to && !isValidSolanaAddress(to)) {
+      msg("oMsg", "Resolving Fluid name…", true);
+      try {
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidSolanaAddress, field: null, chainLabel: "Solana" });
+        to = r.to; toast("Name resolved");
+      } catch (e) { return msg("oMsg", e.message); }
+    }
     if (!amount || Number(amount) <= 0) return msg("oMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("oMsg", "Amount is more than your balance.");
     try {
@@ -1919,7 +2004,7 @@ function openSuiSheet(tok) {
   let pendingSui = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Sui</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${suiAddr}</span></p>
-    <input id="uTo" placeholder="Recipient Sui address (0x…)" autocapitalize="none">
+    <input id="uTo" placeholder="Recipient Sui address (0x…) or Fluid name" autocapitalize="none">
     <input id="uAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="uReview">Review send</button>
     <div id="uIntent" class="hidden">
@@ -1930,9 +2015,18 @@ function openSuiSheet(tok) {
     <p class="tag">${tok.address
       ? "Token sends pay a small SUI fee — keep some SUI in this wallet."
       : "Sui network fees are paid in SUI and are tiny (about 0.001 SUI). Sends are final."}</p>`);
-  $("uReview").onclick = () => {
-    const to = $("uTo").value.trim(), amount = $("uAmt").value.trim();
-    if (!isValidSuiAddress(to)) return msg("uMsg", "That is not a valid Sui address (0x + hex).");
+  $("uReview").onclick = async () => {
+    let to = $("uTo").value.trim();
+    const amount = $("uAmt").value.trim();
+    // Fluid names resolve via the shared registry path (QA F3–F5),
+    // exactly as on the other family sheets.
+    if (to && !isValidSuiAddress(to)) {
+      msg("uMsg", "Resolving Fluid name…", true);
+      try {
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidSuiAddress, field: null, chainLabel: "Sui" });
+        to = r.to; toast("Name resolved");
+      } catch (e) { return msg("uMsg", e.message); }
+    }
     if (!amount || Number(amount) <= 0) return msg("uMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("uMsg", "Amount is more than your balance.");
     pendingSui = { to, amount };
@@ -2198,17 +2292,19 @@ function openAlgoSheet(tok) {
     let to = $("agTo").value.trim();
     let sendName = null;
     const amount = $("agAmt").value.trim();
-    // Fluid names resolve exactly as in the EVM/BTC sheets: anything
-    // that is not itself a valid Algorand address is treated as a name,
-    // resolved against the registry, and hard-blocked when the name is
+    // Recipient handling is the shared resolveChainRecipient path
+    // (QA F2): a valid Algorand address — the checksum-verified zero
+    // address included — is recognised as an address BEFORE any name
+    // lookup; anything else is treated as a Fluid name, resolved
+    // against the registry, and hard-blocked when the name is
     // unregistered or carries no Algorand address.
     if (to && !isValidAlgorandAddress(to)) {
       msg("agMsg", "Resolving Fluid name…", true);
-      const hit = await resolveFluidName(to).catch(() => null);
-      if (!hit) return msg("agMsg", "That Fluid name is not in the registry yet.");
-      if (!hit.algo) return msg("agMsg", "That Fluid name has no Algorand address in the registry.");
-      to = hit.algo; sendName = hit.name;
-      toast("Name resolved");
+      try {
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand" });
+        to = r.to; sendName = r.name;
+        toast("Name resolved");
+      } catch (e) { return msg("agMsg", e.message); }
     }
     if (!isValidAlgorandAddress(to)) return msg("agMsg", "That is not a valid Algorand address.");
     if (!amount || Number(amount) <= 0) return msg("agMsg", "Enter an amount.");
@@ -2895,6 +2991,11 @@ function paintLnPanel() {
   $("lnWakeBtn").onclick = lnEnableWakeUp;
   $("lnOpenBtn").onclick = lnOpenChannel;
   $("lnFallbackBtn").onclick = () => lnFallbackSheet("");
+  // The event pump repaints this whole panel; the receive and
+  // offline-offer displays are state-driven, so repaint them from
+  // their state — a rendered offer must never be wiped blank (F6).
+  paintLnReceive();
+  paintLnSis();
 }
 
 async function lnPayWithNode() {
@@ -2934,43 +3035,91 @@ async function lnPayWithNode() {
     showTxSuccess({ verb: "Paid", amount: paidMsat != null ? Number(paidMsat) / 1000 : null, symbol: "sats",
       logoHtml: tokenLogoHtml({ symbol: "BTC" }, "lightning"), to: target, familyName: "Lightning",
       feeText: null, explorerUrl: null, txid: null, pending: true });
-  } catch (e) { msg("lnPayMsg", "Payment failed: " + e.message); }
+  } catch (e) { msg("lnPayMsg", "Payment failed: " + lnErrorText(e)); }
 }
 
-function lnShowReceive(which) {
+// Receive + offline-offer displays live in core-driven state
+// (lnReceiveTransition/lnReceiveView) and are REPAINTED from that
+// state after every panel repaint — the node's event pump repaints
+// the whole panel, and a display held only in the DOM was wiped
+// blank (QA F6). Errors go through lnErrorText: the WASM node
+// throws plain strings, and reading .message off one used to
+// render an empty error paragraph — a silent blank.
+let lnReceiveState = { status: "idle" };
+let lnReceiveWhich = "invoice";
+let lnSisState = { status: "idle" };
+function paintLnReceive() {
   const out = $("lnRcvOut"); if (!out) return;
+  const v = lnReceiveView(lnReceiveState);
+  if (v.status === "working") {
+    out.innerHTML = `<p class="tag"><span class="spinner"></span> Building your ${lnReceiveWhich === "offer" ? "reusable offer" : "invoice"}…</p>`;
+  } else if (v.status === "ready") {
+    out.innerHTML = `<img class="qr" id="qrLnRcv"><p class="mono">${esc(v.text)}</p>
+      <button class="btn ghost" id="cpLnRcv">Copy</button>
+      ${lnReceiveWhich === "offer" ? `<p class="tag">This offer is your shareable Lightning address — anyone can pay it any number of times. (For payments while Fluid is closed, use the offline-receive offer below.)</p>` : ""}`;
+    qr("qrLnRcv", v.text);
+    $("cpLnRcv").onclick = () => copyText(v.text, $("cpLnRcv"));
+  } else if (v.status === "failed") {
+    out.innerHTML = `<p class="msg err">${esc(v.message)}</p>
+      <button class="btn ghost" id="lnRcvRetry">Try again</button>`;
+    $("lnRcvRetry").onclick = () => lnShowReceive(lnReceiveWhich);
+  } else out.innerHTML = "";
+}
+function paintLnSis() {
+  const out = $("lnSisOut"); if (!out) return;
+  const v = lnReceiveView(lnSisState);
+  if (v.status === "working") {
+    out.innerHTML = `<p class="tag"><span class="spinner"></span> Paths set. Building your offline-receive offer — this takes a short exchange with your peer…</p>`;
+  } else if (v.status === "ready") {
+    out.innerHTML = `<img class="qr" id="qrLnSis"><p class="mono">${esc(v.text)}</p>
+      <button class="btn ghost" id="cpLnSis">Copy offline-receive offer</button>
+      <p class="tag">${esc(holdWindowCopy(24))}</p>`;
+    qr("qrLnSis", v.text);
+    $("cpLnSis").onclick = () => copyText(v.text, $("cpLnSis"));
+  } else if (v.status === "failed") {
+    out.innerHTML = `<p class="msg err">${esc(v.message)}</p>`;
+  } else out.innerHTML = "";
+}
+function lnShowReceive(which) {
+  if (!$("lnRcvOut")) return;
+  lnReceiveWhich = which;
   const sats = Number($("lnRcvSats").value) || 0;
   const desc = $("lnRcvDesc").value.trim() || "Fluid payment";
+  lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "request" });
+  paintLnReceive();
   try {
     const text = which === "invoice"
       ? lnSession.createInvoice(sats > 0 ? Math.round(sats * 1000) : null, desc)
       : lnSession.createOffer(sats > 0 ? Math.round(sats * 1000) : null, desc);
-    out.innerHTML = `<img class="qr" id="qrLnRcv"><p class="mono">${esc(text)}</p>
-      <button class="btn ghost" id="cpLnRcv">Copy</button>
-      ${which === "offer" ? `<p class="tag">This offer is your shareable Lightning address — anyone can pay it any number of times. (For payments while Fluid is closed, use the offline-receive offer below.)</p>` : ""}`;
-    qr("qrLnRcv", text);
-    $("cpLnRcv").onclick = () => copyText(text, $("cpLnRcv"));
+    lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "success", text });
   } catch (e) {
-    out.innerHTML = `<p class="msg err">${esc(e.message)}</p>`;
+    lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "failure", error: e });
   }
+  paintLnReceive();
 }
 
 async function lnSetupOfflineOffer() {
-  const out = $("lnSisOut"); if (!out) return;
-  try {
-    const paths = JSON.parse($("lnSisPaths").value.trim());
-    if (!Array.isArray(paths) || !paths.length) throw new Error("Paste the blinded-path list from your holding peer first.");
-    lnSession.setSisPaths(paths);
-    out.innerHTML = `<p class="tag">Paths set. Building your offline-receive offer — this takes a short exchange with your peer; if it isn't ready yet, wait a minute and tap again.</p>`;
-    const offer = lnSession.asyncReceiveOffer();
-    out.innerHTML = `<img class="qr" id="qrLnSis"><p class="mono">${esc(offer)}</p>
-      <button class="btn ghost" id="cpLnSis">Copy offline-receive offer</button>
-      <p class="tag">${esc(holdWindowCopy(24))}</p>`;
-    qr("qrLnSis", offer);
-    $("cpLnSis").onclick = () => copyText(offer, $("cpLnSis"));
-  } catch (e) {
-    out.innerHTML = `<p class="msg err">${esc(e.message)}</p>`;
+  if (!$("lnSisOut")) return;
+  // Validate BEFORE JSON.parse ever sees the text (QA F7): empty or
+  // malformed input gets a friendly, specific message — never the
+  // raw "Unexpected end of JSON input" SyntaxError text.
+  let paths;
+  try { paths = parseSisPathsInput($("lnSisPaths").value); }
+  catch (e) {
+    lnSisState = lnReceiveTransition(lnSisState, { type: "failure", error: e });
+    paintLnSis();
+    return;
   }
+  lnSisState = lnReceiveTransition(lnSisState, { type: "request" });
+  paintLnSis();
+  try {
+    lnSession.setSisPaths(paths);
+    const offer = lnSession.asyncReceiveOffer();
+    lnSisState = lnReceiveTransition(lnSisState, { type: "success", text: offer });
+  } catch (e) {
+    lnSisState = lnReceiveTransition(lnSisState, { type: "failure", error: e });
+  }
+  paintLnSis();
 }
 
 async function lnEnableWakeUp() {
@@ -2983,7 +3132,7 @@ async function lnEnableWakeUp() {
     }
     const { webhookUrl } = await lnChunk.subscribeWakeUp({ relayUrl, nodeId: lnSession.nodeId });
     msg("lnWakeMsg", "Wake-ups on ✓ Give this webhook URL to your holding peer: " + webhookUrl, true);
-  } catch (e) { msg("lnWakeMsg", e.message); }
+  } catch (e) { msg("lnWakeMsg", lnErrorText(e)); }
 }
 
 async function lnOpenChannel() {
@@ -3003,7 +3152,7 @@ async function lnOpenChannel() {
     lnSession.openChannel(pubkey, sats, 0);
     msg("lnChanMsg", "Channel requested. The funding step appears below when the node is ready for it.", true);
     lnWatchFunding();
-  } catch (e) { msg("lnChanMsg", "Open channel failed: " + e.message); }
+  } catch (e) { msg("lnChanMsg", "Open channel failed: " + lnErrorText(e)); }
 }
 
 // Poll for the node's funding request; on mainnet offer the in-app BTC
@@ -3081,7 +3230,7 @@ function lnFallbackSheet(note) {
       showTxSuccess({ verb: "Paid", amount: paidSats, symbol: "sats",
         logoHtml: tokenLogoHtml({ symbol: "BTC" }, "lightning"), to: target, familyName: "Lightning",
         feeText: null, explorerUrl: null, txid: null, pending: false });
-    } catch (e) { msg("lnMsg", e.message); }
+    } catch (e) { msg("lnMsg", lnErrorText(e)); }
   };
 }
 
@@ -3102,18 +3251,25 @@ function rampSheet(mode) {
     <select id="rAsset"><option>USDC</option><option>USDT</option></select>
     <p class="tag" id="rBench" style="display:none;margin-top:10px"></p>
     <div id="rList"></div>`);
-  // Live market benchmark, Nigeria BUY sheet only: Paycrest's keyless
-  // rates API (a price source, not a route — see wallet-core), fetched
-  // fresh for this sheet opening and never persisted. Any failure
-  // leaves the line hidden rather than showing a stale/wrong figure.
-  let benchRate = null, benchAsked = false;
+  // Live market benchmark: Paycrest's keyless rates API (a price
+  // source, not a route — see wallet-core), fetched fresh for this
+  // sheet opening and never persisted. Served corridors: Nigeria
+  // (buy AND sell — QA F9) and Kenya (same surface, QA F10). Any
+  // failure leaves the line hidden rather than showing a stale or
+  // wrong figure.
+  const BENCH = { NG: { fiat: "NGN", sym: "₦", dec: 0 }, KE: { fiat: "KES", sym: "KSh ", dec: 2 } };
+  let benchRate = null, benchKey = "";
   const paintBench = () => {
     const el = $("rBench"); if (!el) return;
     const cEl = $("rCountry");
-    if (mode === "buy" && cEl && cEl.value === "NG" && benchRate != null) {
+    const b = cEl && BENCH[cEl.value];
+    if (b && benchKey === cEl.value + ":" + mode && benchRate != null) {
       // benchRate is a number parsed + band-checked in wallet-core;
       // the line is built from that number, never from raw response text.
-      el.textContent = `Market rate now: ≈ ₦${Math.round(benchRate).toLocaleString("en-US")} per $1 (live)`;
+      const num = benchRate.toLocaleString("en-US", { minimumFractionDigits: b.dec, maximumFractionDigits: b.dec });
+      el.textContent = mode === "buy"
+        ? `Market rate now: ≈ ${b.sym}${num} per $1 (live)`
+        : `Market sell rate now: ≈ ${b.sym}${num} per $1 (live)`;
       el.style.display = "";
     } else el.style.display = "none";
   };
@@ -3127,24 +3283,29 @@ function rampSheet(mode) {
     const { country: c, routes, fonbnkNetworkMissing, fonbnkBuyBlocked, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
     $("rList").innerHTML =
       `<p class="tag" style="margin-top:10px">Sorted by real measured price against the market rate (price checks 6–7 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
-      routes.map(r =>
+      routes.map(r => r.unavailable
+        // Unavailable-for-this-corridor rows (QA F8) render as plain
+        // rows with the reason visible — never as live links.
+        ? `<div class="netitem rampitem"><span class="rampname">${esc(r.name)} <span class="pill soon">UNAVAILABLE</span></span><small class="rampnote">${esc(r.note)}</small></div>`
         // No inline onclick (the CSP forbids inline handlers): the URL
         // rides in a data attribute and is opened by the bound listener.
         // Name + badge on their own line, note beneath (stacked layout).
-        `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
+        : `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
       (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
       (fonbnkBuyBlocked ? `<p class="tag">Fonbnk buying is not offered in Fluid — its buy flow forces a WalletConnect connection to an external wallet instead of letting you paste your Fluid address, and that defeats the point of Fluid. Fonbnk cash-out still works: it runs on a plain address, no wallet connection.</p>` : "") +
       (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
       (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
     paintBench();
-    if (mode === "buy" && code === "NG" && !benchAsked) {
-      benchAsked = true;
-      const benchEl = $("rBench");
-      fetchPaycrestNgnBuyRate().then(rate => {
-        benchRate = rate;
-        // Only paint if this sheet's element is still on screen.
-        if (benchEl && benchEl.isConnected) paintBench();
+    const bMeta = BENCH[code];
+    if (bMeta && benchKey !== code + ":" + mode) {
+      benchKey = code + ":" + mode;
+      benchRate = null;
+      const benchEl = $("rBench"), key = benchKey;
+      fetchPaycrestRate(bMeta.fiat, mode).then(rate => {
+        // Only paint if this sheet's element is still on screen and
+        // the user hasn't switched corridor since the fetch started.
+        if (benchEl && benchEl.isConnected && benchKey === key) { benchRate = rate; paintBench(); }
       });
     }
   };
@@ -3548,12 +3709,119 @@ function renderHistory() {
   });
 }
 
+// ---------- scan ----------
+// Fluid Scan: the in-wallet explorer. All chain reads and every row's
+// HTML live in wallet-core (formatScanFeedEntry is the only render
+// path for chain-supplied strings — audit C1); this controller only
+// resolves the input, paints the chrome (badges, balance headers,
+// honest per-chain notes) and wires clicks. A search that finds
+// nothing, or a chain that fails, says so in words — never a silent
+// blank, never a dead button.
+let scanSeq = 0;
+function scanMsg(text, isErr) {
+  const el = $("scanMsg");
+  el.textContent = text || "";
+  el.className = "msg" + (isErr ? " err" : "");
+}
+function renderScanResults(heading, sub, results) {
+  const host = $("scanResults");
+  const feed = mergeScanRows(results.map(r => r.rows));
+  let html = `<div class="card" style="padding:6px 16px"><p class="t-title" style="margin:8px 0 2px">${esc(heading)}</p>`;
+  if (sub) html += `<p class="tag" style="margin:0 0 6px">${esc(sub)}</p>`;
+  for (const r of results) {
+    const t = r.target;
+    const amt = r.balanceText != null ? `${esc(r.balanceText)} ${esc(r.balanceSymbol || "")}`
+      : (r.ok ? `<span style="color:var(--dim)">balance unavailable</span>` : `<span style="color:var(--bad)">couldn't load</span>`);
+    html += `<div class="scanbal"><span class="scanbadge">${esc(t.badge)}</span><span class="grow"><b>${esc(t.label)}</b><small class="mono">${esc(shortAddr(t.address))}</small></span><span class="amt">${amt}</span></div>`;
+    const note = scanChainStatusText(r);
+    if (note) {
+      const addrUrl = r.note === "no-history-index" ? scanAddressUrl(t.chainKey, t.address) : null;
+      html += `<p class="scannote">${esc(note)}${addrUrl ? ` <a href="${esc(addrUrl)}" target="_blank" rel="noopener">View on the explorer ↗</a>` : ""}</p>`;
+    }
+  }
+  html += `</div>`;
+  if (feed.length) {
+    html += `<div class="card" style="padding:4px 16px">`;
+    feed.forEach((row, i) => {
+      const well = row.direction === "in" ? icon("receive") : icon("send");
+      html += `<div class="actrow" data-scanrow="${i}"><span class="actwell">${well}</span><span class="actmain">${formatScanFeedEntry(row, row.pending || !row.time ? "pending" : relTime(row.time))}</span><span class="scanbadge">${esc(scanChainBadge(row.chainKey))}</span></div>`;
+    });
+    html += `</div>`;
+  } else if (results.length && results.every(r => !r.ok)) {
+    html += `<div class="actempty">${icon("alert", "ic ic-xl")}<p class="t-title" style="margin:10px 0 4px">Couldn't load any chain</p><p class="tag">Check your connection and search again.</p></div>`;
+  } else {
+    html += `<div class="actempty">${icon("search", "ic ic-xl")}<p class="t-title" style="margin:10px 0 4px">No activity found</p><p class="tag">Nothing public on-chain for this lookup yet — the per-chain notes above say what each chain reported.</p></div>`;
+  }
+  host.innerHTML = html;
+  host.querySelectorAll("[data-scanrow]").forEach(el => {
+    const row = feed[Number(el.dataset.scanrow)];
+    if (!row) return;
+    const url = scanTxUrl(row.chainKey, row.txid);
+    if (url) el.onclick = () => window.open(url, "_blank", "noopener");
+  });
+}
+const shortAddr = (a) => a && a.length > 14 ? a.slice(0, 8) + "…" + a.slice(-6) : String(a || "");
+async function runScan() {
+  const input = $("scanInput").value.trim();
+  if (!input) { scanMsg("Type a Fluid name or paste a wallet address first.", true); return; }
+  const seq = ++scanSeq;
+  const btn = $("scanBtn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span>Scanning`;
+  scanMsg("");
+  $("scanResults").innerHTML = "";
+  let targets = [], heading = "", sub = "";
+  const detected = detectScanFamily(input);
+  if (detected) {
+    targets = scanTargetsForAddress(detected);
+    heading = shortAddr(detected.address);
+    sub = detected.family === "evm" ? "This address, swept across Fluid's main EVM networks" : `${scanChainBadge(detected.family)} address`;
+  } else {
+    const entry = await resolveFluidName(input).catch(() => null);
+    if (seq !== scanSeq) return;
+    if (!entry) {
+      btn.disabled = false; btn.textContent = "Search";
+      const name = normalizeFluidName(input);
+      scanMsg(validateFluidName(name)
+        ? `No Fluid name "${name}" is registered — check the spelling, or paste a wallet address instead.`
+        : "That doesn't look like a Fluid name or a wallet address.", true);
+      return;
+    }
+    targets = scanTargetsForName(entry);
+    heading = `${entry.name}.${FLUID_DOMAIN}`;
+    sub = "Registered addresses only — what this name has published";
+  }
+  if (!targets.length) {
+    btn.disabled = false; btn.textContent = "Search";
+    scanMsg("Nothing scannable was found for that input.", true);
+    return;
+  }
+  $("scanResults").innerHTML = `<div class="card"><b>${esc(heading)}</b><p class="tag" style="margin:6px 0 0">Scanning ${targets.length} chain${targets.length === 1 ? "" : "s"}…</p></div>`;
+  const results = await fetchScan(targets).catch(() => []);
+  if (seq !== scanSeq) return;
+  btn.disabled = false; btn.textContent = "Search";
+  renderScanResults(heading, sub, results);
+}
+$("scanBtn").onclick = () => runScan();
+$("scanInput").addEventListener("keydown", (e) => { if (e.key === "Enter") runScan(); });
+
 // ---------- onboarding ----------
 let pendingName = null;
 $("createName").addEventListener("input", () => {
   const n = normalizeFluidName($("createName").value);
   $("createNamePreview").textContent = (n || "you") + "." + FLUID_DOMAIN;
 });
+// A password error must not outlive the fix (cosmetic, QA
+// 2026-11-07): as soon as the typed password is valid (and the
+// confirmation matches, once typed), the stale error clears.
+for (const id of ["createPw", "createPw2"]) {
+  $(id).addEventListener("input", () => {
+    const m = $("onboardMsg").textContent || "";
+    if (!/at least 12 characters|12\+ characters|Passwords do not match/.test(m)) return;
+    const pw = $("createPw").value, pw2 = $("createPw2").value;
+    if (validatePassword(pw) && (pw2 === "" || pw === pw2)) msg("onboardMsg", "");
+  });
+}
 $("createBtn").onclick = async () => {
   const pw = $("createPw").value;
   if (!validatePassword(pw)) return msg("onboardMsg", "Password needs at least 12 characters.");
@@ -3583,7 +3851,7 @@ $("createBtn").onclick = async () => {
     wallet = await unlockVault(v.keystore, pw);
     if (pendingName) {
       localStorage.setItem("fluid_name", pendingName);
-      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null);
+      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase));
       const entryText = JSON.stringify(entry).slice(1, -1) + ",";
       const claimed = pendingName; pendingName = null;
       setTimeout(() => {
@@ -3689,16 +3957,52 @@ function renderNameSection() {
   if (wallet) {
     $("ownedEvm").textContent = wallet.address;
     $("ownedBtc").textContent = btcAddr || bitcoinAddress(wallet.mnemonic.phrase);
+    $("ownedAlgo").textContent = algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase);
   }
   $("copyOwnedEvm").onclick = () => copyText($("ownedEvm").textContent, $("copyOwnedEvm"));
   $("copyOwnedBtc").onclick = () => copyText($("ownedBtc").textContent, $("copyOwnedBtc"));
+  $("copyOwnedAlgo").onclick = () => copyText($("ownedAlgo").textContent, $("copyOwnedAlgo"));
   $("copyOwnedLn").onclick = () => copyText($("ownedLn").textContent, $("copyOwnedLn"));
+  // The owned box shows the SAME fields the claim form takes (QA
+  // F11): EVM, Bitcoin, Algorand, and Lightning in both states. The
+  // Lightning row is always present — the registered address when
+  // the registry carries one, an add form when it doesn't (the
+  // Receive sheet sends users here for exactly this).
+  const paintOwnedLn = (ln, unknown = false) => {
+    if (ln) {
+      $("ownedLn").textContent = ln;
+      show("copyOwnedLn", true); show("ownedLnAdd", false);
+    } else if (unknown) {
+      $("ownedLn").textContent = "Couldn't check the registry just now";
+      show("copyOwnedLn", false); show("ownedLnAdd", false);
+    } else {
+      $("ownedLn").textContent = "Not registered yet";
+      show("copyOwnedLn", false); show("ownedLnAdd", true);
+    }
+  };
+  paintOwnedLn(null);
+  $("ownedLn").textContent = "Checking the registry…";
+  show("copyOwnedLn", false); show("ownedLnAdd", false);
+  $("ownedLnAddBtn").onclick = () => {
+    if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
+    const ln = $("ownedLnInput").value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ln)) return msg("nameMsg", "That doesn't look like a Lightning address (name@domain).");
+    const entry = buildNameEntry(stored,
+      $("ownedEvm").textContent || wallet.address,
+      $("ownedBtc").textContent || btcAddr || bitcoinAddress(wallet.mnemonic.phrase),
+      ln,
+      $("ownedAlgo").textContent || algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase));
+    $("ownedEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
+    show("ownedEntryBox", true);
+    msg("nameMsg", "Lightning address added to your entry — publish it so the change resolves everywhere.", true);
+  };
+  $("copyOwnedEntryBtn").onclick = () => copyText($("ownedEntry").textContent, $("copyOwnedEntryBtn"));
   resolveFluidName(stored).then(hit => {
-    if (!hit) return;
+    if (!hit) { paintOwnedLn(null, true); return; }
     if (hit.evm) $("ownedEvm").textContent = hit.evm;
     if (hit.btc) $("ownedBtc").textContent = hit.btc;
-    if (hit.ln) { $("ownedLn").textContent = hit.ln; show("ownedLnRow", true); }
-    else show("ownedLnRow", false);
+    if (hit.algo) $("ownedAlgo").textContent = hit.algo;
+    paintOwnedLn(hit.ln || null);
     if (noteEl && wallet && hit.evm) {
       if (String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
         noteEl.textContent = "This name is registered to this wallet in the public registry — anyone can send to it on any chain.";
@@ -3749,7 +4053,7 @@ $("claimNameBtn").onclick = async () => {
     return msg("nameMsg", "That name is already claimed. Try another.");
   }
   localStorage.setItem("fluid_name", name);
-  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null);
+  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null, algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase));
   $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
   show("claimBox");
   msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
@@ -3759,7 +4063,25 @@ $("copyEntryBtn").onclick = () => copyText($("nameEntry").textContent, $("copyEn
 renderNameSection();
 
 // ---------- more tab ----------
-$("refreshBtn").onclick = renderMain;
+// Refresh with visible feedback (cosmetic, QA 2026-11-07): the row
+// shows its working state and a completion toast — never a tap that
+// looks like nothing happened.
+$("refreshBtn").onclick = async () => {
+  const btn = $("refreshBtn");
+  if (btn.dataset.busy) return;
+  btn.dataset.busy = "1";
+  const label = btn.querySelector(".grow");
+  const old = label ? label.textContent : "";
+  if (label) label.innerHTML = `<span class="spinner"></span> Refreshing…`;
+  try {
+    await renderMain();
+    await new Promise(r => setTimeout(r, 900));
+    toast("Balances refreshed");
+  } finally {
+    if (label) label.textContent = old || "Refresh balances";
+    delete btn.dataset.busy;
+  }
+};
 function lockWallet() { wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; msg("onboardMsg", ""); refreshGate(); }
 $("lockBtn").onclick = lockWallet;
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
@@ -3945,6 +4267,10 @@ $("wipeBtn").onclick = () => {
     $("seedOut").textContent = ""; show("seedBox", false);
     $("seedCheck").checked = false;
     for (const id of ["createPw", "createPw2", "importPhrase", "unlockPw", "createName"]) { const el = $(id); if (el) el.value = ""; }
+    // The gate's username preview is only repainted on input events,
+    // so reset it explicitly — it must not keep showing the removed
+    // wallet's name (cosmetic, QA 2026-11-07).
+    $("createNamePreview").textContent = "you." + FLUID_DOMAIN;
     msg("onboardMsg", "");
     closeSheet(); refreshGate();
   };

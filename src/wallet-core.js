@@ -1627,17 +1627,36 @@ export function isValidSolanaAddress(address) {
 export function solLamportsToSol(lamports) { return ethers.formatUnits(BigInt(lamports), 9); }
 export function solSolToLamports(amount) { return ethers.parseUnits(String(amount), 9); }
 
+/** Keyless public Solana RPCs, tried in order (QA F13,
+ *  2026-11-07): the public mainnet-beta endpoint refuses
+ *  getTokenAccountsByOwner from many networks (HTTP 403 "Access
+ *  forbidden"), which killed the full token scan for entire
+ *  sessions while the curated read limped on. All three endpoints
+ *  are keyless and run the same JSON-RPC — including
+ *  getTokenAccountsByOwner — so one endpoint's refusal falls
+ *  through to the next instead of failing the scan. The last
+ *  endpoint that answered is tried first next time. */
+const SOLANA_RPCS = [SOLANA_RPC, "https://solana-rpc.publicnode.com", "https://solana.drpc.org"];
+let _solRpcGood = 0;
 async function solanaRpc(method, params) {
-  const res = await fetch(SOLANA_RPC, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) throw new Error("Solana network error (HTTP " + res.status + ").");
-  const data = await res.json().catch(() => null);
-  if (!data) throw new Error("Solana returned an unreadable reply.");
-  if (data.error) throw new Error("Solana rejected the request: " + (data.error.message || "unknown error"));
-  return data.result;
+  let lastErr = null;
+  for (let n = 0; n < SOLANA_RPCS.length; n++) {
+    const idx = (_solRpcGood + n) % SOLANA_RPCS.length;
+    try {
+      const res = await fetch(SOLANA_RPCS[idx], {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) throw new Error("Solana network error (HTTP " + res.status + ").");
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error("Solana returned an unreadable reply.");
+      if (data.error) throw new Error("Solana rejected the request: " + (data.error.message || "unknown error"));
+      _solRpcGood = idx;
+      return data.result;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("Solana network error.");
 }
 /** Solana balances shaped like getBalances(): native SOL first (address
  *  null), then the SPL tokens. A failed token read degrades to that
@@ -2709,10 +2728,15 @@ export function normalizeFluidName(input) {
  *  (native, USDC, USDT, any ERC-20), `btc` is the Bitcoin key, and `ln`
  *  is an optional Lightning address for invoice-less Lightning sends.
  *  New families (sui, sol) get added as fields — old entries keep working. */
-export function buildNameEntry(name, evm, btc, ln = null) {
+export function buildNameEntry(name, evm, btc, ln = null, algo = null) {
   if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   const entry = { evm, btc };
   if (ln) entry.ln = ln;
+  // Algorand rides along when the caller has the wallet's ALGO
+  // address: published entries (ethuram, dripbot) carry all four
+  // fields, and a claim/update entry should match that shape so the
+  // name resolves on every chain the registry schema covers.
+  if (algo && isValidAlgorandAddress(algo)) entry.algo = algo;
   return { [name]: entry };
 }
 /** Fetch a Lightning invoice for a Lightning address (LNURL-pay, LUD-16).
@@ -2795,6 +2819,32 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
   if (!reg) return null;
   const entry = sanitizeNameEntry(reg[name]);
   return entry ? { name, ...entry } : null;
+}
+/** Resolve a SEND-sheet recipient for one chain — the one path every
+ *  family sheet shares (QA F2/F3–F5, 2026-11-07). Order matters:
+ *  1. A string that IS a valid address for the chain is an address,
+ *     full stop — the name lookup never runs for it. (The Algorand
+ *     zero address AAAA…Y5HFKQ is checksum-valid and must not be
+ *     treated as an unregistered Fluid name.)
+ *  2. Anything else is treated as a Fluid name and resolved through
+ *     the shared registry (resolveFluidName). An unregistered name is
+ *     a hard block: "That Fluid name is not in the registry yet."
+ *  3. A registered name with no address for this chain is the other
+ *     hard block, worded exactly like the Bitcoin sheet's:
+ *     "That Fluid name has no <Chain> address in the registry."
+ *     Chains the registry schema doesn't carry (field: null —
+ *     Solana, Tron, Sui today) always land here for known names.
+ *  Returns { to, name } — name is null for a raw address. Throws an
+ *  Error carrying the user-facing message otherwise. `lookupName`
+ *  is injectable for tests. */
+export async function resolveChainRecipient(input, { isValidAddress, field = null, chainLabel, lookupName } = {}) {
+  const raw = String(input || "").trim();
+  if (typeof isValidAddress === "function" && isValidAddress(raw)) return { to: raw, name: null };
+  const lookup = lookupName || resolveFluidName;
+  const hit = await lookup(raw).catch(() => null);
+  if (!hit) throw new Error("That Fluid name is not in the registry yet.");
+  if (!field || !hit[field]) throw new Error(`That Fluid name has no ${chainLabel} address in the registry.`);
+  return { to: hit[field], name: hit.name };
 }
 /** Fetch the whole name registry (null on any failure). */
 export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
@@ -3423,6 +3473,67 @@ export function summariseHeldPayments(held, nowSec = Math.floor(Date.now() / 100
   return { count: list.length, totalMsat, nextExpirySec, expiredUnswept: expired };
 }
 
+/** Normalise ANY thrown value from the Lightning node into a
+ *  displayable message (QA F6, 2026-11-07). The WASM node throws
+ *  plain STRINGS (JsValue), not Error objects — reading `.message`
+ *  off one yields undefined and the panel rendered a silent blank.
+ *  This never returns an empty string: unknown failures get a plain
+ *  fallback with a recovery verb. */
+export function lnErrorText(e) {
+  let s = "";
+  if (typeof e === "string") s = e;
+  else if (e && typeof e.message === "string") s = e.message;
+  s = String(s || "").trim();
+  if (!s || s === "undefined" || s === "null") return "Something went wrong — please try again.";
+  return s;
+}
+/** Validate the offline-offer blinded-paths input BEFORE it reaches
+ *  JSON.parse (QA F7, 2026-11-07): an empty box used to surface the
+ *  raw "Unexpected end of JSON input" SyntaxError. Every failure
+ *  here is a friendly, specific message; success returns the list of
+ *  hex path strings the node expects. */
+export function parseSisPathsInput(text) {
+  const t = String(text || "").trim();
+  if (!t) throw new Error("Paste the blinded-path list from your holding peer first.");
+  let parsed;
+  try { parsed = JSON.parse(t); }
+  catch { throw new Error("That doesn't look like the blinded-path list — paste the full JSON list from your holding peer, exactly as they gave it."); }
+  if (!Array.isArray(parsed) || !parsed.length) throw new Error("Paste the blinded-path list from your holding peer first.");
+  for (const p of parsed) {
+    if (typeof p !== "string" || !/^(?:[0-9a-fA-F]{2})+$/.test(p.trim())) {
+      throw new Error("One of those entries isn't a blinded path — paste the list exactly as your holding peer gave it.");
+    }
+  }
+  return parsed.map(p => p.trim());
+}
+/** The Lightning receive display as a tiny state machine (QA F6):
+ *  idle → working → ready | failed. The panel renders ONLY from
+ *  lnReceiveView(state), so there is no path to a silent blank:
+ *  working always shows its spinner line, ready always carries a
+ *  non-empty payload (an empty payload from the node is a failure,
+ *  not a blank QR), and failed always carries a message. */
+export function lnReceiveTransition(state, action) {
+  if (!action || typeof action.type !== "string") return state || { status: "idle" };
+  if (action.type === "request") return { status: "working" };
+  if (action.type === "success") {
+    const text = String(action.text || "").trim();
+    if (!text) return { status: "failed", message: "The node returned an empty result — wait a moment and try again." };
+    return { status: "ready", text };
+  }
+  if (action.type === "failure") return { status: "failed", message: lnErrorText(action.error) };
+  if (action.type === "reset") return { status: "idle" };
+  return state || { status: "idle" };
+}
+/** What the panel paints for a receive state: exactly one of a
+ *  spinner flag, a payload, or a message is live at a time. */
+export function lnReceiveView(state) {
+  const s = state && typeof state.status === "string" ? state : { status: "idle" };
+  if (s.status === "working") return { status: "working", spinner: true, text: null, message: null };
+  if (s.status === "ready") return { status: "ready", spinner: false, text: s.text, message: null };
+  if (s.status === "failed") return { status: "failed", spinner: false, text: null, message: s.message || "Something went wrong — please try again." };
+  return { status: "idle", spinner: false, text: null, message: null };
+}
+
 // ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
 // Local-currency rails: pick a country, Fluid builds the provider link with
 // that country's ISO code so the user deposits/withdraws in THEIR currency
@@ -3625,7 +3736,7 @@ export const RAMP_COUNTRY_PLAN = {
     // EXCLUDES US persons, so it can no longer lead or badge here;
     // it stays listed, flagged, for non-US users paying in USD.
     ["Spritz", { badge: true, external: true }],
-    ["Mt Pelerin", { note: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" }],
+    ["Mt Pelerin", { unavailable: true, note: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" }],
     ["Paybis", { note: "Card purchases cost ~5% all-in (measured 1 Nov) · free email account + quick ID check — paste your Fluid address" }],
     ["Mercuryo", {}],
   ],
@@ -3680,10 +3791,17 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       url = mode === "buy" ? links.buy : links.sell;
     }
     routes.push({
-      name, url,
+      name,
+      // A plan row flagged unavailable (QA F8: Mt Pelerin in the US
+      // corridor) keeps its explanatory note but carries NO url —
+      // the sheet renders it as a non-navigating row, so a corridor
+      // can be honest about a provider without linking anyone to a
+      // service that will refuse them.
+      url: opts.unavailable ? null : url,
       note: opts.note || RAMP_DEFAULT_NOTES[name] || "",
       badge: !!opts.badge,
       external: !!opts.external,
+      unavailable: !!opts.unavailable,
       rank: routes.length,
     });
   }
@@ -3704,20 +3822,44 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
  *  wrong figure. Nothing is cached anywhere: each call fetches
  *  fresh, and the sheet fetches once per opening. */
 export const PAYCREST_NGN_USDT_RATE_URL = "https://api.paycrest.io/v2/rates/base/USDT/50/NGN";
-export function parsePaycrestNgnBuyRate(json) {
+/** Fiats the benchmark line serves, with the sane per-$ band each
+ *  rate must fall inside (same hostile-data discipline as NGN: a
+ *  finite number inside the band or "no benchmark"). KES was
+ *  verified live on this same keyless surface 2026-11-07 (buy
+ *  130.94 / sell 128.79 per USDT) — QA F10. The SELL side of the
+ *  same payload powers the Nigeria sell sheet's line — QA F9. */
+export const PAYCREST_RATE_BANDS = { NGN: [500, 5000], KES: [50, 500] };
+export function paycrestRateUrl(fiat) {
+  return `https://api.paycrest.io/v2/rates/base/USDT/50/${fiat}`;
+}
+/** Parse one side ("buy" or "sell") of a Paycrest rates payload for
+ *  a supported fiat. Null for unsupported fiats, failed payloads,
+ *  missing sides, and out-of-band numbers. */
+export function parsePaycrestRate(json, fiat, side) {
+  const band = PAYCREST_RATE_BANDS[fiat];
+  if (!band || (side !== "buy" && side !== "sell")) return null;
   if (!json || json.status !== "success") return null;
-  const rate = Number(json.data && json.data.buy && json.data.buy.rate);
-  if (!Number.isFinite(rate) || rate < 500 || rate > 5000) return null;
+  const rate = Number(json.data && json.data[side] && json.data[side].rate);
+  if (!Number.isFinite(rate) || rate < band[0] || rate > band[1]) return null;
   return rate;
+}
+export function parsePaycrestNgnBuyRate(json) {
+  return parsePaycrestRate(json, "NGN", "buy");
+}
+/** The live Paycrest rate for a supported fiat + side, or null on
+ *  ANY failure — never throws, so the sheet can fire-and-forget it. */
+export async function fetchPaycrestRate(fiat, side) {
+  if (!PAYCREST_RATE_BANDS[fiat]) return null;
+  try {
+    const r = await fetch(paycrestRateUrl(fiat), { signal: AbortSignal.timeout(4000) });
+    if (!r || !r.ok) return null;
+    return parsePaycrestRate(await r.json().catch(() => null), fiat, side);
+  } catch { return null; }
 }
 /** The live Paycrest NGN/USDT buy rate, or null on ANY failure —
  *  never throws, so the sheet can fire-and-forget it. */
 export async function fetchPaycrestNgnBuyRate() {
-  try {
-    const r = await fetch(PAYCREST_NGN_USDT_RATE_URL, { signal: AbortSignal.timeout(4000) });
-    if (!r || !r.ok) return null;
-    return parsePaycrestNgnBuyRate(await r.json().catch(() => null));
-  } catch { return null; }
+  return fetchPaycrestRate("NGN", "buy");
 }
 
 // ---------- Agentic wallets ----------
@@ -6842,7 +6984,13 @@ export async function sendAlgorand(phrase, { to, amount, token = null }) {
 // the hash the network reports. Reserve rules are read LIVE from
 // server_info on every load — never hardcoded — and enforced in
 // code before signing.
-const XRPL_RPCS = ["https://s2.ripple.com:51234", "https://xrplcluster.com"];
+// Endpoint order matters (QA F12, 2026-11-07): s2.ripple.com's Clio
+// sends NO CORS headers and refuses the preflight, so in a browser
+// every call burned its first attempt there. xrplcluster.com and
+// xrpl.ws both answer with Access-Control-Allow-Origin: * (verified
+// live) — they lead; s2 stays as a last resort for non-browser
+// contexts.
+const XRPL_RPCS = ["https://xrplcluster.com", "https://xrpl.ws", "https://s2.ripple.com:51234"];
 export const XRPL_EXPLORER = "https://xrpscan.com";
 // Circle's USDC issuer on XRPL — verified live 2026-11-06 via
 // gateway_balances on THIS address (≈5.52M USDC of obligations
@@ -6918,7 +7066,17 @@ async function xrplRpc(method, params) {
         throw e;
       }
       return data.result;
-    } catch (e) { lastErr = e; }
+    } catch (e) {
+      // A ledger-level error (actNotFound and friends) is a
+      // DEFINITIVE answer, identical on every endpoint — retrying
+      // it elsewhere only re-asks the same question, and wrapping
+      // it in the aggregate below used to strip the xrplError code
+      // getXrplAccount branches on, so every unfunded account read
+      // as a network failure (QA F12). Rethrow it untouched. Only
+      // transport failures fall through to the next endpoint.
+      if (e && e.xrplError) throw e;
+      lastErr = e;
+    }
   }
   throw new Error("XRP Ledger network error (" + (lastErr?.message || "unreachable") + ").");
 }
@@ -8211,4 +8369,638 @@ export async function sendStacks(phrase, draft, network = "mainnet") {
   let txid = plan.txid;
   try { const j = JSON.parse(text); if (typeof j === "string" && /^0x[0-9a-f]{64}$/i.test(j)) txid = j; } catch { /* plain-text txid */ }
   return { hash: txid, plan };
+}
+
+// ---------- Fluid Scan: the in-wallet explorer (owner's idea, 2026-11-07) ----------
+// "Like BscScan, but ours": type a Fluid name or any wallet address and
+// see that wallet's PUBLIC on-chain activity across chains in one feed.
+// Everything Scan shows is public chain data read from keyless public
+// sources — the same class of endpoints the wallet already reads
+// balances from (Blockstream/Esplora, public RPCs, the AlgoNode
+// indexer). A name resolves through the SAME public names registry the
+// send sheets use: only a name's REGISTERED addresses are scanned —
+// the privacy truth the Scan pane states in plain words (unregistered
+// addresses stay private because nothing anywhere links them to the
+// name). Every source response is hostile data: the normalisers below
+// validate shape field by field and keep only what parses, and every
+// rendered string passes escapeHtml before it reaches markup (the
+// formatScanFeedEntry render path, audit-C1 discipline).
+
+/** The EVM networks Scan sweeps for an EVM address, in display order. */
+export const SCAN_EVM_NETWORKS = ["ethereum", "bsc", "base", "polygon", "arbitrum"];
+/** Keyless Blockscout API v2 roots per EVM network — the open-source
+ *  explorer whose public instances need no API key. BNB Chain has NO
+ *  Blockscout instance and no other keyless history index (the
+ *  Etherscan-family API made BSC paid-only, verified 2026-11-07):
+ *  Scan still reads the BSC balance over the chain's own public RPC
+ *  and says plainly that its activity list isn't available keylessly
+ *  yet, linking out to BscScan instead of pretending. */
+export const SCAN_BLOCKSCOUT_APIS = {
+  ethereum: "https://eth.blockscout.com",
+  base: "https://base.blockscout.com",
+  polygon: "https://polygon.blockscout.com",
+  arbitrum: "https://arbitrum.blockscout.com",
+};
+const SCAN_ALGO_INDEXER = "https://mainnet-idx.algonode.cloud";
+export const SCAN_TX_LIMIT = 20;    // newest transactions kept per chain
+export const SCAN_FEED_LIMIT = 120; // newest rows kept in the merged feed
+const SCAN_TIMEOUT_MS = 15000;
+
+const SCAN_FAMILY_LABELS = { btc: "Bitcoin", algo: "Algorand", solana: "Solana", tron: "Tron", sui: "Sui" };
+const SCAN_BADGES = { ethereum: "ETH", bsc: "BSC", base: "BASE", polygon: "POL", arbitrum: "ARB",
+  btc: "BTC", algo: "ALGO", solana: "SOL", tron: "TRON", sui: "SUI" };
+/** Human chain name for a Scan chain key (an EVM network key or a family id). */
+export function scanChainLabel(chainKey) {
+  if (NETWORKS[chainKey]) return NETWORKS[chainKey].name;
+  return SCAN_FAMILY_LABELS[chainKey] || String(chainKey || "");
+}
+/** Short chain badge ("BSC", "BTC", …) shown on Scan rows and headers. */
+export function scanChainBadge(chainKey) {
+  return SCAN_BADGES[chainKey] || scanChainLabel(chainKey).toUpperCase().slice(0, 5);
+}
+
+/** One Scan target: a chain to read + the address to read on it. */
+export function scanTarget(chainKey, address, family) {
+  return { chainKey, family: family || (NETWORKS[chainKey] ? "evm" : chainKey),
+           address, label: scanChainLabel(chainKey), badge: scanChainBadge(chainKey) };
+}
+/** Targets for a resolved Fluid name: its REGISTERED addresses only —
+ *  the EVM address swept across SCAN_EVM_NETWORKS, plus BTC and
+ *  Algorand when the entry carries them. The raw registry entry is
+ *  sanitised first (the send sheets' trust boundary). */
+export function scanTargetsForName(entry) {
+  const e = sanitizeNameEntry(entry);
+  if (!e) return [];
+  const out = [];
+  if (e.evm) for (const k of SCAN_EVM_NETWORKS) out.push(scanTarget(k, e.evm, "evm"));
+  if (e.btc) out.push(scanTarget("btc", e.btc, "btc"));
+  if (e.algo) out.push(scanTarget("algo", e.algo, "algo"));
+  return out;
+}
+/** Targets for a raw address: an EVM address gets the same
+ *  multi-network sweep; every other family scans its own chain. */
+export function scanTargetsForAddress(detected) {
+  if (!detected || !detected.address) return [];
+  if (detected.family === "evm") return SCAN_EVM_NETWORKS.map(k => scanTarget(k, detected.address, "evm"));
+  if (["btc", "algo", "solana", "tron", "sui"].includes(detected.family)) {
+    return [scanTarget(detected.family, detected.address, detected.family)];
+  }
+  return [];
+}
+
+/* Address-family detection for a pasted address. Checks run in an
+ * order that resolves the charset overlaps honestly: Sui is the only
+ * 0x-prefixed 64-hex family; Bitcoin legacy is verified by its
+ * base58check checksum + version byte (a Solana address of similar
+ * shape fails the checksum); Tron is verified by isValidTronAddress
+ * (its own checksum) before the bare-base58 Solana check. */
+const scanBtcB58Check = base58check(sha256Bytes);
+export function isValidBitcoinAddress(address) {
+  const s = String(address || "").trim();
+  if (/^bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20,71}$/.test(s)) {
+    try { const d = bech32.decode(s, 90); if (d.prefix === "bc" && d.words && d.words[0] === 0) return true; } catch { /* not bech32 */ }
+    try { const d = bech32m.decode(s, 90); if (d.prefix === "bc" && d.words && d.words[0] === 1) return true; } catch { /* not bech32m */ }
+    return false;
+  }
+  try {
+    const raw = scanBtcB58Check.decode(s);
+    return raw.length === 21 && (raw[0] === 0x00 || raw[0] === 0x05);
+  } catch { return false; }
+}
+/** Detect which chain family a pasted address belongs to, or null.
+ *  Returns { family, address } with the address normalised where the
+ *  family has a canonical form (Sui checksummed-long, Algorand
+ *  uppercase base32). */
+export function detectScanFamily(input) {
+  const s = String(input || "").trim();
+  if (!s) return null;
+  if (/^0x[0-9a-fA-F]{40}$/.test(s)) return { family: "evm", address: s };
+  if (/^0x[0-9a-fA-F]{64}$/.test(s)) {
+    const n = normalizeSuiAddress(s);
+    if (n) return { family: "sui", address: n };
+  }
+  if (isValidBitcoinAddress(s)) return { family: "btc", address: s };
+  if (isValidAlgorandAddress(s)) return { family: "algo", address: s.toUpperCase() };
+  if (isValidTronAddress(s)) return { family: "tron", address: s };
+  if (isValidSolanaAddress(s)) return { family: "solana", address: s };
+  return null;
+}
+
+/** Canonical explorer transaction URL for a Scan row — or null when
+ *  the txid doesn't match the family's id shape (a hostile or garbled
+ *  id never becomes a link). Paths mirror the ones the send flows
+ *  already link out to. */
+export function scanTxUrl(chainKey, txid) {
+  const id = String(txid || "").trim();
+  if (NETWORKS[chainKey]) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(id)) return null;
+    return historyTxUrl({ hash: id, explorer: NETWORKS[chainKey].explorer });
+  }
+  switch (chainKey) {
+    case "btc":
+      if (!/^[0-9a-fA-F]{64}$/.test(id)) return null;
+      return historyTxUrl({ hash: id, explorer: "https://mempool.space" });
+    case "algo":
+      if (!/^[A-Z2-7]{52}$/.test(id)) return null;
+      return historyTxUrl({ hash: id, explorer: ALGO_EXPLORER });
+    case "solana":
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,100}$/.test(id)) return null;
+      return historyTxUrl({ hash: id, explorer: SOLANA_EXPLORER });
+    case "tron":
+      if (!/^[0-9a-fA-F]{64}$/.test(id)) return null;
+      return historyTxUrl({ link: TRON_EXPLORER + "/#/transaction/" + id });
+    case "sui":
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,50}$/.test(id)) return null;
+      return historyTxUrl({ hash: id, explorer: SUI_EXPLORER + "/mainnet" });
+    default: return null;
+  }
+}
+/** Canonical explorer ADDRESS page — only where the path shape is the
+ *  explorer family's standard one (used for the BNB Chain note's
+ *  "view on BscScan" link). Null anywhere else rather than a guess. */
+export function scanAddressUrl(chainKey, address) {
+  const a = String(address || "").trim();
+  if (NETWORKS[chainKey]) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) return null;
+    try { const u = new URL(NETWORKS[chainKey].explorer + "/address/" + a); return u.protocol === "https:" ? u.href : null; } catch { return null; }
+  }
+  if (chainKey === "btc" && isValidBitcoinAddress(a)) return "https://mempool.space/address/" + a;
+  return null;
+}
+
+// ---------- Scan normalisers: hostile source JSON -> feed rows ----------
+// A feed row: { chainKey, family, txid, direction: "in"|"out"|"self",
+// amountText, symbol, counterparty|null, time (ms epoch | null),
+// pending?: true }. Rows with an unparseable amount or id are dropped,
+// never rendered as guesses.
+
+function scanIsoTime(s) { const t = Date.parse(String(s || "")); return Number.isFinite(t) ? t : null; }
+function scanDir(from, to, me, foldCase = true) {
+  // EVM hex and Algorand base32 compare case-insensitively; Tron's
+  // base58check addresses are case-SENSITIVE and must not be folded.
+  const norm = (x) => foldCase ? String(x || "").toLowerCase() : String(x || "");
+  const f = norm(from) === norm(me), t = norm(to) === norm(me);
+  if (f && t) return "self";
+  if (t) return "in";
+  if (f) return "out";
+  return null;
+}
+
+/** Blockscout API v2 /addresses/{a}/transactions -> native-coin rows. */
+export function normalizeBlockscoutTxs(json, { networkKey, address } = {}) {
+  const items = Array.isArray(json?.items) ? json.items : [];
+  const me = String(address || "").toLowerCase();
+  const rows = [];
+  for (const tx of items) {
+    if (!tx || typeof tx.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(tx.hash)) continue;
+    if (tx.status && tx.status !== "ok") continue; // a failed tx moved no value
+    let value;
+    try { value = BigInt(tx.value ?? "0"); } catch { continue; }
+    if (value <= 0n) continue; // contract calls with no value aren't transfers
+    const direction = scanDir(tx.from?.hash, tx.to?.hash, me);
+    if (!direction) continue;
+    rows.push({ chainKey: networkKey, family: "evm", txid: tx.hash, direction,
+      amountText: formatTokenAmount(value, 18), symbol: NETWORKS[networkKey]?.symbol || "",
+      counterparty: direction === "in" ? (tx.from?.hash || null) : direction === "out" ? (tx.to?.hash || null) : null,
+      time: scanIsoTime(tx.timestamp) });
+  }
+  return rows;
+}
+/** Blockscout API v2 /addresses/{a}/token-transfers -> token rows. */
+export function normalizeBlockscoutTokenTransfers(json, { networkKey, address } = {}) {
+  const items = Array.isArray(json?.items) ? json.items : [];
+  const me = String(address || "").toLowerCase();
+  const rows = [];
+  for (const tr of items) {
+    if (!tr || typeof tr.transaction_hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(tr.transaction_hash)) continue;
+    const direction = scanDir(tr.from?.hash, tr.to?.hash, me);
+    if (!direction) continue;
+    const decRaw = Number(tr.total?.decimals ?? tr.token?.decimals ?? 0);
+    const decimals = Number.isInteger(decRaw) && decRaw >= 0 && decRaw <= 36 ? decRaw : 0;
+    let amountText;
+    try { amountText = formatTokenAmount(BigInt(tr.total?.value ?? "0"), decimals); } catch { continue; }
+    rows.push({ chainKey: networkKey, family: "evm", txid: tr.transaction_hash, direction,
+      amountText, symbol: String(tr.token?.symbol || "Token").slice(0, 32),
+      counterparty: direction === "in" ? (tr.from?.hash || null) : direction === "out" ? (tr.to?.hash || null) : null,
+      time: scanIsoTime(tr.timestamp) });
+  }
+  return rows;
+}
+
+/** Esplora /address/{a}/txs -> BTC rows. Net value to/from the address
+ *  decides direction and amount (change back to self is excluded by
+ *  the netting); the counterparty is named only when exactly one
+ *  external address sits on the other side. */
+export function normalizeEsploraTxs(json, { address } = {}) {
+  if (!Array.isArray(json)) return [];
+  const rows = [];
+  for (const tx of json) {
+    if (!tx || typeof tx.txid !== "string" || !/^[0-9a-fA-F]{64}$/.test(tx.txid)) continue;
+    let inSum = 0, outSum = 0;
+    const inFrom = new Set(), outTo = new Set();
+    for (const vin of Array.isArray(tx.vin) ? tx.vin : []) {
+      const p = vin?.prevout;
+      if (!p || typeof p.scriptpubkey_address !== "string" || !Number.isFinite(p.value)) continue;
+      if (p.scriptpubkey_address === address) inSum += p.value; else inFrom.add(p.scriptpubkey_address);
+    }
+    for (const vout of Array.isArray(tx.vout) ? tx.vout : []) {
+      if (!vout || typeof vout.scriptpubkey_address !== "string" || !Number.isFinite(vout.value)) continue;
+      if (vout.scriptpubkey_address === address) outSum += vout.value; else outTo.add(vout.scriptpubkey_address);
+    }
+    const net = outSum - inSum;
+    if (net === 0) continue;
+    const direction = net > 0 ? "in" : "out";
+    const cps = direction === "in" ? [...inFrom] : [...outTo];
+    const confirmed = !!(tx.status && tx.status.confirmed === true);
+    rows.push({ chainKey: "btc", family: "btc", txid: tx.txid, direction,
+      amountText: formatTokenAmount(Math.abs(net), 8), symbol: "BTC",
+      counterparty: cps.length === 1 ? cps[0] : null,
+      time: confirmed && Number.isFinite(tx.status?.block_time) ? tx.status.block_time * 1000 : null,
+      pending: !confirmed });
+  }
+  return rows;
+}
+
+/** AlgoNode indexer /accounts/{a}/transactions -> ALGO + ASA rows.
+ *  Payments and asset transfers only; zero-amount transfers (opt-ins)
+ *  are not money movement and are skipped. Circle's USDC ASA is the
+ *  one ASA whose decimals Scan states; any other ASA shows its raw
+ *  unit count under an "ASA <id>" label rather than a guessed scale. */
+export function normalizeAlgoIndexerTxs(json, { address } = {}) {
+  const txs = Array.isArray(json?.transactions) ? json.transactions : [];
+  const rows = [];
+  for (const tx of txs) {
+    if (!tx || typeof tx.id !== "string" || !tx.id) continue;
+    const kind = tx["tx-type"];
+    let amount = null, decimals = 6, symbol = "ALGO", receiver = null;
+    if (kind === "pay" && tx["payment-transaction"]) {
+      amount = tx["payment-transaction"].amount; receiver = tx["payment-transaction"].receiver;
+    } else if (kind === "axfer" && tx["asset-transfer-transaction"]) {
+      const at = tx["asset-transfer-transaction"];
+      amount = at.amount; receiver = at.receiver;
+      if (Number(at["asset-id"]) === ALGO_USDC_ASA) { symbol = "USDC"; decimals = 6; }
+      else { symbol = "ASA " + String(at["asset-id"]); decimals = 0; }
+    } else continue;
+    if (!Number.isFinite(amount) || amount === 0 || typeof receiver !== "string") continue;
+    const sender = typeof tx.sender === "string" ? tx.sender : null;
+    const direction = scanDir(sender, receiver, String(address || ""));
+    if (!direction) continue;
+    rows.push({ chainKey: "algo", family: "algo", txid: tx.id, direction,
+      amountText: formatTokenAmount(amount, decimals), symbol,
+      counterparty: direction === "in" ? sender : direction === "out" ? receiver : null,
+      time: Number.isFinite(tx["round-time"]) ? tx["round-time"] * 1000 : null });
+  }
+  return rows;
+}
+
+/** One Solana getTransaction (jsonParsed) result -> rows: the native
+ *  SOL balance delta for the address (fee added back for the payer, so
+ *  a pure fee payment yields no row) plus one row per SPL mint whose
+ *  balance for the address changed. */
+export function normalizeSolanaTx(parsed, signature, { address } = {}) {
+  if (!parsed || typeof parsed !== "object" || !parsed.meta || parsed.meta.err) return [];
+  if (typeof signature !== "string" || !signature) return [];
+  const keys = Array.isArray(parsed.transaction?.message?.accountKeys) ? parsed.transaction.message.accountKeys : [];
+  const keyStr = (k) => typeof k === "string" ? k : (k && typeof k.pubkey === "string" ? k.pubkey : null);
+  const idx = keys.findIndex(k => keyStr(k) === address);
+  const time = Number.isFinite(parsed.blockTime) ? parsed.blockTime * 1000 : null;
+  const rows = [];
+  if (idx >= 0) {
+    const pre = Number(parsed.meta.preBalances?.[idx]), post = Number(parsed.meta.postBalances?.[idx]);
+    if (Number.isFinite(pre) && Number.isFinite(post)) {
+      const isPayer = idx === 0;
+      const delta = post - pre + (isPayer ? (Number(parsed.meta.fee) || 0) : 0);
+      if (delta !== 0) {
+        let counterparty = null;
+        for (const ix of Array.isArray(parsed.transaction.message.instructions) ? parsed.transaction.message.instructions : []) {
+          if (ix?.program === "system" && ix?.parsed?.type === "transfer") {
+            const info = ix.parsed.info || {};
+            if (info.destination === address && info.source !== address) counterparty = info.source;
+            if (info.source === address && info.destination !== address) counterparty = info.destination;
+          }
+        }
+        rows.push({ chainKey: "solana", family: "solana", txid: signature, direction: delta > 0 ? "in" : "out",
+          amountText: formatTokenAmount(Math.abs(delta), 9), symbol: "SOL", counterparty, time });
+      }
+    }
+  }
+  const byMint = new Map();
+  const fold = (list, sign) => {
+    for (const b of Array.isArray(list) ? list : []) {
+      if (!b || b.owner !== address || typeof b.mint !== "string") continue;
+      const amt = b.uiTokenAmount?.amount;
+      if (typeof amt !== "string" || !/^[0-9]+$/.test(amt)) continue;
+      const cur = byMint.get(b.mint) || { delta: 0n, decimals: Number(b.uiTokenAmount?.decimals ?? 0) };
+      cur.delta += sign * BigInt(amt);
+      byMint.set(b.mint, cur);
+    }
+  };
+  fold(parsed.meta.preTokenBalances, -1n);
+  fold(parsed.meta.postTokenBalances, 1n);
+  for (const [mint, { delta, decimals }] of byMint) {
+    if (delta === 0n) continue;
+    const known = SOLANA_TOKENS.find(t => t.address === mint);
+    rows.push({ chainKey: "solana", family: "solana", txid: signature, direction: delta > 0n ? "in" : "out",
+      amountText: formatTokenAmount(delta > 0n ? delta : -delta, known ? known.decimals : (Number.isInteger(decimals) ? decimals : 0)),
+      symbol: known ? known.symbol : "SPL token", counterparty: null, time });
+  }
+  return rows;
+}
+
+/** TronGrid /v1/accounts/{a}/transactions -> native TRX rows
+ *  (TransferContract only — other contract types carry no reliably
+ *  readable value here and are left to the TRC20 list below). */
+export function normalizeTronTxs(json, { address } = {}) {
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const rows = [];
+  for (const tx of data) {
+    const c = tx?.raw_data?.contract?.[0];
+    if (!tx || typeof tx.txID !== "string" || !/^[0-9a-fA-F]{64}$/.test(tx.txID)) continue;
+    if (!c || c.type !== "TransferContract") continue;
+    const v = c.parameter?.value || {};
+    let owner = null, to = null;
+    try { owner = tronAddressFromHex(v.owner_address); } catch { /* unreadable */ }
+    try { to = tronAddressFromHex(v.to_address); } catch { /* unreadable */ }
+    if (!owner || !to || !Number.isFinite(v.amount)) continue;
+    const direction = scanDir(owner, to, String(address || ""), false);
+    if (!direction) continue;
+    rows.push({ chainKey: "tron", family: "tron", txid: tx.txID, direction,
+      amountText: formatTokenAmount(v.amount, 6), symbol: "TRX",
+      counterparty: direction === "in" ? owner : direction === "out" ? to : null,
+      time: Number.isFinite(tx.block_timestamp) ? tx.block_timestamp : null });
+  }
+  return rows;
+}
+/** TronGrid /v1/accounts/{a}/transactions/trc20 -> token rows. */
+export function normalizeTronTrc20Txs(json, { address } = {}) {
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const rows = [];
+  for (const tr of data) {
+    if (!tr || typeof tr.transaction_id !== "string" || !/^[0-9a-fA-F]{64}$/.test(tr.transaction_id)) continue;
+    const direction = scanDir(tr.from, tr.to, String(address || ""), false);
+    if (!direction) continue;
+    const decRaw = Number(tr.token_info?.decimals ?? 0);
+    const decimals = Number.isInteger(decRaw) && decRaw >= 0 && decRaw <= 36 ? decRaw : 0;
+    let amountText;
+    try { amountText = formatTokenAmount(BigInt(tr.value ?? "0"), decimals); } catch { continue; }
+    rows.push({ chainKey: "tron", family: "tron", txid: tr.transaction_id, direction,
+      amountText, symbol: String(tr.token_info?.symbol || "Token").slice(0, 32),
+      counterparty: direction === "in" ? (tr.from || null) : direction === "out" ? (tr.to || null) : null,
+      time: Number.isFinite(tr.block_timestamp) ? tr.block_timestamp : null });
+  }
+  return rows;
+}
+
+/** Sui GraphQL transactions page -> rows, from the effects'
+ *  balance changes for the scanned address. Counterparty: for an
+ *  outflow, the single other owner who gained the same coin; for an
+ *  inflow, the transaction sender (or the single owner who lost it). */
+export function normalizeSuiTxPage(json, { address } = {}) {
+  const nodes = Array.isArray(json?.data?.transactions?.nodes) ? json.data.transactions.nodes : [];
+  const me = normalizeSuiAddress(address);
+  if (!me) return [];
+  const rows = [];
+  for (const node of nodes) {
+    if (!node || typeof node.digest !== "string" || !node.digest) continue;
+    const changesRaw = node.effects?.balanceChanges;
+    const changes = Array.isArray(changesRaw) ? changesRaw : (Array.isArray(changesRaw?.nodes) ? changesRaw.nodes : []);
+    const byCoin = new Map();
+    for (const c of changes) {
+      const repr = typeof c?.coinType === "string" ? c.coinType : (typeof c?.coinType?.repr === "string" ? c.coinType.repr : null);
+      const owner = typeof c?.owner === "string" ? c.owner : (typeof c?.owner?.address === "string" ? c.owner.address : null);
+      if (!repr || !owner || typeof c.amount !== "string" || !/^-?[0-9]+$/.test(c.amount)) continue;
+      const cur = byCoin.get(repr) || [];
+      cur.push({ owner: normalizeSuiAddress(owner) || owner, amount: BigInt(c.amount) });
+      byCoin.set(repr, cur);
+    }
+    const sender = typeof node.sender?.address === "string" ? (normalizeSuiAddress(node.sender.address) || node.sender.address) : null;
+    for (const [repr, list] of byCoin) {
+      const mine = list.filter(x => x.owner === me).reduce((a, x) => a + x.amount, 0n);
+      if (mine === 0n) continue;
+      const direction = mine > 0n ? "in" : "out";
+      let counterparty = null;
+      const others = list.filter(x => x.owner !== me && (direction === "in" ? x.amount < 0n : x.amount > 0n));
+      if (others.length === 1) counterparty = others[0].owner;
+      else if (direction === "in" && sender && sender !== me) counterparty = sender;
+      const known = repr === SUI_COIN_TYPE ? { symbol: "SUI", decimals: 9 }
+        : SUI_TOKENS.find(t => t.address === repr);
+      rows.push({ chainKey: "sui", family: "sui", txid: node.digest, direction,
+        amountText: formatTokenAmount(mine > 0n ? mine : -mine, known ? known.decimals : 0),
+        symbol: known ? known.symbol : (repr.split("::").pop() || "Coin").slice(0, 32),
+        counterparty, time: scanIsoTime(node.effects?.timestamp ?? node.timestamp) });
+    }
+  }
+  return rows;
+}
+
+/** Merge per-chain row lists into one feed: exact duplicates dropped
+ *  (the same transfer can surface in two source lists), newest first
+ *  (pending rows, which carry no time yet, sort as newest), capped. */
+export function mergeScanRows(lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists || []) {
+    for (const row of list || []) {
+      if (!row || !row.txid) continue;
+      const key = [row.chainKey, row.txid, row.direction, row.symbol, row.amountText, row.counterparty || ""].join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+    }
+  }
+  out.sort((a, b) => {
+    const ta = a.time == null ? Infinity : a.time, tb = b.time == null ? Infinity : b.time;
+    return ta === tb ? 0 : (tb > ta ? 1 : -1);
+  });
+  return out.slice(0, SCAN_FEED_LIMIT);
+}
+
+/** One feed row's inner HTML — the ONLY render path for Scan rows
+ *  (audit-C1 discipline: every interpolated value is escaped here, in
+ *  core, so app.js never interpolates a chain-supplied string). */
+export function formatScanFeedEntry(row, timeLabel) {
+  if (!row || typeof row !== "object") return "";
+  const dir = row.direction === "in" ? "Received" : row.direction === "out" ? "Sent" : "Self transfer";
+  const amt = row.amountText != null && row.amountText !== ""
+    ? ` <b>${escapeHtml(row.amountText)} ${escapeHtml(row.symbol || "")}</b>` : "";
+  const cp = row.counterparty
+    ? ` <small style="color:var(--dim)">${row.direction === "in" ? "from" : "to"} ${escapeHtml(shortAddrLabel(row.counterparty))}</small>` : "";
+  const time = timeLabel ? ` <small style="color:var(--dim)">· ${escapeHtml(timeLabel)}</small>` : "";
+  return `<div class="hist">${dir}${amt}${cp}${time}</div>`;
+}
+
+/** The honest per-chain status line for a finished Scan read: a
+ *  failure names the chain, an empty chain says so, and the one chain
+ *  with no keyless history index says exactly that. "" when the chain
+ *  produced rows and needs no note. */
+export function scanChainStatusText(result) {
+  if (!result || !result.target) return "";
+  const label = scanChainLabel(result.target.chainKey);
+  if (!result.ok) return `Couldn't load ${label} — check your connection and try again.`;
+  if (result.note === "no-history-index") return `${label}: balance shown — full activity isn't available from a keyless source yet.`;
+  if (!result.rows || !result.rows.length) return `No activity found on ${label}.`;
+  return "";
+}
+
+// ---------- Scan fetchers: one read per target, never throwing ----------
+// Each returns { target, ok, balanceText, balanceSymbol, rows, note }.
+// ok=false + note "failed" is the honest per-chain failure state;
+// note "no-history-index" marks the chain whose balance is readable
+// but whose history has no keyless index (BNB Chain today).
+
+/** GET/POST a JSON body with the Scan timeout, or null on ANY
+ *  failure (the fetchJsonOrNull discipline: a source that answers
+ *  text, an error status, or nothing has simply failed). */
+async function scanFetchJson(url, opts = {}) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(SCAN_TIMEOUT_MS), ...opts });
+    if (!res || !res.ok) return null;
+    return await res.json().catch(() => null);
+  } catch { return null; }
+}
+function scanFailed(target, balanceSymbol) {
+  return { target, ok: false, balanceText: null, balanceSymbol: balanceSymbol || "", rows: [], note: "failed" };
+}
+function scanSortSlice(rows) {
+  return mergeScanRows([rows]).slice(0, SCAN_TX_LIMIT);
+}
+
+async function fetchScanEvmTarget(target) {
+  const net = NETWORKS[target.chainKey];
+  const api = SCAN_BLOCKSCOUT_APIS[target.chainKey];
+  if (!api) {
+    // No keyless history index for this chain: balance over the
+    // chain's own public RPC (the same RPC the wallet reads through),
+    // and the honest note instead of a fabricated feed.
+    let balanceText = null;
+    const data = await scanFetchJson(net.rpc, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [target.address, "latest"] }) });
+    if (data && typeof data.result === "string") {
+      try { balanceText = formatTokenAmount(BigInt(data.result), 18); } catch { /* stays null */ }
+    }
+    return { target, ok: true, balanceText, balanceSymbol: net.symbol, rows: [], note: "no-history-index" };
+  }
+  const base = `${api}/api/v2/addresses/${target.address}`;
+  const [info, txs, transfers] = await Promise.all([
+    scanFetchJson(base), scanFetchJson(base + "/transactions"), scanFetchJson(base + "/token-transfers"),
+  ]);
+  if (!txs && !transfers) return scanFailed(target, net.symbol);
+  let balanceText = null;
+  if (info && info.coin_balance != null) {
+    try { balanceText = formatTokenAmount(BigInt(info.coin_balance), 18); } catch { /* stays null */ }
+  }
+  const rows = mergeScanRows([
+    normalizeBlockscoutTxs(txs, { networkKey: target.chainKey, address: target.address }),
+    normalizeBlockscoutTokenTransfers(transfers, { networkKey: target.chainKey, address: target.address }),
+  ]).slice(0, SCAN_TX_LIMIT);
+  return { target, ok: true, balanceText, balanceSymbol: net.symbol, rows, note: null };
+}
+
+async function fetchScanBtcTarget(target) {
+  // Two independent Esplora sources, the wallet's own pattern.
+  for (const base of [MEMPOOL, "https://blockstream.info/api"]) {
+    const [info, txs] = await Promise.all([
+      scanFetchJson(`${base}/address/${target.address}`),
+      scanFetchJson(`${base}/address/${target.address}/txs`),
+    ]);
+    if (info && Array.isArray(txs)) {
+      const sats = Math.max(0,
+        (Number(info.chain_stats?.funded_txo_sum) || 0) - (Number(info.chain_stats?.spent_txo_sum) || 0)
+        + (Number(info.mempool_stats?.funded_txo_sum) || 0) - (Number(info.mempool_stats?.spent_txo_sum) || 0));
+      return { target, ok: true, balanceText: formatTokenAmount(sats, 8), balanceSymbol: "BTC",
+        rows: scanSortSlice(normalizeEsploraTxs(txs, { address: target.address })), note: null };
+    }
+  }
+  return scanFailed(target, "BTC");
+}
+
+async function fetchScanAlgoTarget(target) {
+  const [acct, txs] = await Promise.all([
+    scanFetchJson(`${SCAN_ALGO_INDEXER}/v2/accounts/${target.address}`),
+    scanFetchJson(`${SCAN_ALGO_INDEXER}/v2/accounts/${target.address}/transactions?limit=40`),
+  ]);
+  if (!txs || !Array.isArray(txs.transactions)) return scanFailed(target, "ALGO");
+  // A 404 account is an unfunded address, not a failure: zero balance.
+  const amount = Number(acct?.account?.amount);
+  return { target, ok: true, balanceText: formatTokenAmount(Number.isFinite(amount) ? amount : 0, 6),
+    balanceSymbol: "ALGO",
+    rows: scanSortSlice(normalizeAlgoIndexerTxs(txs, { address: target.address })), note: null };
+}
+
+async function fetchScanSolanaTarget(target) {
+  const rpc = async (method, params) => {
+    const data = await scanFetchJson(SOLANA_RPC, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+    return data && !data.error ? data.result : null;
+  };
+  const [bal, sigs] = await Promise.all([
+    rpc("getBalance", [target.address]),
+    rpc("getSignaturesForAddress", [target.address, { limit: SCAN_TX_LIMIT }]),
+  ]);
+  if (!Array.isArray(sigs)) return scanFailed(target, "SOL");
+  const live = sigs.filter(s => s && !s.err && typeof s.signature === "string");
+  const parsed = await Promise.all(live.map(s =>
+    rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }])));
+  const rows = live.flatMap((s, i) => normalizeSolanaTx(parsed[i], s.signature, { address: target.address }));
+  return { target, ok: true, balanceText: bal && Number.isFinite(bal.value) ? formatTokenAmount(bal.value, 9) : null,
+    balanceSymbol: "SOL", rows: scanSortSlice(rows), note: null };
+}
+
+async function fetchScanTronTarget(target) {
+  const [acct, txs, trc20] = await Promise.all([
+    scanFetchJson(`${TRONGRID}/v1/accounts/${target.address}`),
+    scanFetchJson(`${TRONGRID}/v1/accounts/${target.address}/transactions?limit=${SCAN_TX_LIMIT}&only_confirmed=true&order_by=block_timestamp,desc`),
+    scanFetchJson(`${TRONGRID}/v1/accounts/${target.address}/transactions/trc20?limit=${SCAN_TX_LIMIT}&only_confirmed=true`),
+  ]);
+  if (!txs && !trc20) return scanFailed(target, "TRX");
+  const balRaw = acct?.data?.[0]?.balance;
+  const rows = mergeScanRows([
+    normalizeTronTxs(txs, { address: target.address }),
+    normalizeTronTrc20Txs(trc20, { address: target.address }),
+  ]).slice(0, SCAN_TX_LIMIT);
+  return { target, ok: true, balanceText: Number.isFinite(balRaw) ? formatTokenAmount(balRaw, 6) : "0",
+    balanceSymbol: "TRX", rows, note: null };
+}
+
+async function fetchScanSuiTarget(target) {
+  const gql = async (query, variables) => {
+    const data = await scanFetchJson(SUI_GRAPHQL, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }) });
+    return data && !data.errors ? data.data : null;
+  };
+  const [balData, txData] = await Promise.all([
+    gql(`query($a: SuiAddress!) { address(address: $a) { balance(coinType: "0x2::sui::SUI") { totalBalance } } }`, { a: target.address }),
+    gql(`query($a: SuiAddress!, $n: Int!) { transactions(first: $n, filter: { affectedAddress: $a }) {
+      nodes { digest sender { address } effects { timestamp balanceChanges { nodes { coinType { repr } amount owner { address } } } } } } }`,
+      { a: target.address, n: SCAN_TX_LIMIT }),
+  ]);
+  if (!txData && !balData) return scanFailed(target, "SUI");
+  const total = balData?.address?.balance?.totalBalance;
+  return { target, ok: !!txData, balanceText: typeof total === "string" && /^[0-9]+$/.test(total) ? formatTokenAmount(BigInt(total), 9) : null,
+    balanceSymbol: "SUI",
+    rows: txData ? scanSortSlice(normalizeSuiTxPage({ data: txData }, { address: target.address })) : [],
+    note: txData ? null : "failed" };
+}
+
+/** Read one Scan target. NEVER throws — a bad source is a per-chain
+ *  "failed" result the UI shows honestly, not a crashed search. */
+export async function fetchScanTarget(target) {
+  try {
+    if (!target || typeof target.address !== "string" || !target.address) return scanFailed(target, "");
+    switch (target.family) {
+      case "evm": return await fetchScanEvmTarget(target);
+      case "btc": return await fetchScanBtcTarget(target);
+      case "algo": return await fetchScanAlgoTarget(target);
+      case "solana": return await fetchScanSolanaTarget(target);
+      case "tron": return await fetchScanTronTarget(target);
+      case "sui": return await fetchScanSuiTarget(target);
+      default: return scanFailed(target, "");
+    }
+  } catch { return scanFailed(target, ""); }
+}
+/** Read every target in parallel (each with its own timeout); the
+ *  results come back in target order for the balance headers, and the
+ *  caller merges .rows for the unified feed. */
+export async function fetchScan(targets) {
+  return Promise.all((Array.isArray(targets) ? targets : []).map(t => fetchScanTarget(t)));
 }

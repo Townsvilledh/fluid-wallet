@@ -25,6 +25,11 @@ import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAd
   dotAddressFromPhrase, isValidDotAddress, dotPlanckToDot, dotDotToPlanck, formatDotSendIntent, DOT_TOKENS } from "../src/wallet-core.js";
 import { aptosAddressFromPhrase, aptosAddressFromSeed, aptosSeedFromSeed, isValidAptosAddress, normalizeAptosAddress, aptosOctasToApt, aptosAptToOctas, aptosAmountToRaw, aptosBuildRawTransaction, aptosSigningMessage, aptosSignRawTransaction, aptosPublicKeyFromPhrase, formatAptosSendIntent, APTOS_TOKENS, APTOS_COIN_TYPE } from "../src/wallet-core.js";
 import { toChecksumAddress } from "../src/wallet-core.js";
+import { detectScanFamily, isValidBitcoinAddress, scanTargetsForName, scanTargetsForAddress, scanTarget,
+  scanTxUrl, scanAddressUrl, scanChainLabel, scanChainBadge, scanChainStatusText, formatScanFeedEntry,
+  normalizeBlockscoutTxs, normalizeBlockscoutTokenTransfers, normalizeEsploraTxs, normalizeAlgoIndexerTxs,
+  normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
+  SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
@@ -172,10 +177,10 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   } finally { globalThis.fetch = realFetch; }
   const appSrcB = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const idxSrcB = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
-  ok("NG buy sheet renders the benchmark line from the parsed number", appSrcB.includes('id="rBench"')
-    && appSrcB.includes("fetchPaycrestNgnBuyRate") && appSrcB.includes("Market rate now:")
-    && appSrcB.includes("per $1 (live)") && appSrcB.includes("Math.round(benchRate)")
-    && appSrcB.includes('mode === "buy" && code === "NG"'));
+  ok("benchmark line renders from the parsed number (NG buy+sell F9, KE F10)", appSrcB.includes('id="rBench"')
+    && appSrcB.includes("fetchPaycrestRate") && appSrcB.includes("Market rate now:")
+    && appSrcB.includes("Market sell rate now:") && appSrcB.includes("per $1 (live)")
+    && appSrcB.includes('NG: { fiat: "NGN"') && appSrcB.includes('KE: { fiat: "KES"'));
   ok("no hardcoded rate figure in the app shell", !appSrcB.includes("1384") && !appSrcB.includes("1,385"));
   ok("CSP untouched: connect-src https: already covers the rates API", idxSrcB.includes("connect-src 'self' https: wss:")
     && !idxSrcB.includes("paycrest") && !appSrcB.includes("api.paycrest.io"));
@@ -276,14 +281,25 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
   // Global invariants over all 18 countries × buy/sell: at most one
   // badge per sheet, a badge only ever sits on the first route, every
-  // URL is https, and every plan country assembles at least one route.
+  // NAVIGATING route's URL is https (a route flagged unavailable —
+  // QA F8 — carries url null instead and must say why in its note),
+  // and every plan country assembles at least one route.
   ok("plan covers all ramp countries", RAMP_COUNTRIES.every(c => Array.isArray(RAMP_COUNTRY_PLAN[c.code]) && RAMP_COUNTRY_PLAN[c.code].length >= 1));
   ok("badge invariants hold everywhere", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDT");
     const b = routes.filter(r => r.badge);
     return routes.length >= 1 && b.length <= 1 && (b.length === 0 || routes[0].badge === true)
-      && routes.every(r => r.url.startsWith("https://"));
+      && routes.every(r => r.unavailable ? (r.url === null && r.note.length > 0) : r.url.startsWith("https://"));
   })));
+  // QA F8: Mt Pelerin in the US corridor is labelled unavailable —
+  // it must reach the sheet as a non-navigating row (no URL) with
+  // its note intact, on both sides; everywhere else it navigates.
+  ok("F8: US Mt Pelerin is a non-navigating unavailable row", ["buy", "sell"].every(m => {
+    const r = rampRoutesFor("US", m, "bsc", "USDC").routes.find(x => x.name === "Mt Pelerin");
+    return r && r.unavailable === true && r.url === null && r.note.includes("Not available to US residents");
+  }));
+  ok("F8: no other corridor's Mt Pelerin is unavailable", ["ZA", "GB", "DE", "MX"].every(code =>
+    rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => !r.unavailable && r.url.startsWith("https://"))));
   // Unmeasured Fonbnk corridors carry no badge (no price evidence).
   ok("unmeasured corridors are unbadged", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code => badged(code).length === 0 && badged(code, "sell").length === 0
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes[0].note.includes("check the quote")));
@@ -2424,8 +2440,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     formatAlgoSendIntent({ amount: "1.5", symbol: "ALGO", to: ALGO, feeAlgo: 0.001 })
     === `Send 1.5 ALGO to ${ALGO} on Algorand. Network fee 0.001 ALGO. Confirm?`);
   const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const coreSrcNa = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("names-algo: the Algorand sheet resolves names and hard-blocks like the EVM/BTC sheets",
-    appSrc.includes("That Fluid name has no Algorand address in the registry.")
+    appSrc.includes('resolveChainRecipient(to, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand" })')
+    && coreSrcNa.includes("That Fluid name has no ${chainLabel} address in the registry.")
     && appSrc.includes("formatAlgoSendIntent({ amount, symbol: tok.symbol, to, feeAlgo: plan.feeAlgo, name: sendName })"));
   const published = JSON.parse(readFileSync(new URL("../names.json", import.meta.url), "utf8"));
   ok("names-algo: the published registry carries dripbot's algo address, sanitised intact",
@@ -3150,7 +3168,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     idxSrc.includes('id="ownedNameNote"') && !idxSrc.includes("This name is registered to this wallet in the public registry")
     && idxSrc.includes("saved on this device"));
   const nameAt = appSrc.indexOf("function renderNameSection()");
-  const nameSlice = appSrc.slice(nameAt, nameAt + 3400);
+  const nameSlice = appSrc.slice(nameAt, nameAt + 6500);
   ok("qa5: registered wording is set only when the registry resolves the name to this wallet",
     nameSlice.includes('$("ownedNameNote")')
     && nameSlice.includes("String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()")
@@ -3207,6 +3225,378 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && restoreSlice.includes("I understand restoring replaces the wallet stored on this device"));
   ok("lockfix: continuing requires the confirmation checkbox",
     restoreSlice.includes('if (!$("restoreCheck").checked) return showSheetError('));
+}
+
+// ---------- Fluid Scan (in-wallet explorer, 2026-11-07) ----------
+{
+  const DRIP_EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const DRIP_BTC = "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn";
+  const ETHU_BTC = "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw";
+  const DRIP_ALGO = "O67U3XOR7LK42HA5DB2BCQDMSVW7WMY3QMCW6P7XXQONLRVRLESB6XAB34";
+  const ETHU_ALGO = "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4";
+  const DRIP_TRON = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  const USDT_TRON = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; // Tether's USDT contract — a real Tron address
+  const DRIP_SOL = "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn";
+  const DRIP_SUI = "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831";
+  const OTHER_EVM = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const HASH64 = "0x" + "ab".repeat(32);
+  const TXID64 = "cd".repeat(32);
+
+  // Family detection — every family, plus the overlap traps.
+  ok("scan: detects an EVM address", detectScanFamily(DRIP_EVM)?.family === "evm");
+  ok("scan: detects a Sui address (0x + 64 hex, NOT evm)", detectScanFamily(DRIP_SUI)?.family === "sui"
+    && detectScanFamily(DRIP_SUI)?.address === DRIP_SUI);
+  ok("scan: detects bech32 BTC", detectScanFamily(DRIP_BTC)?.family === "btc");
+  ok("scan: detects legacy BTC by checksum (Satoshi address)", detectScanFamily("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")?.family === "btc");
+  ok("scan: detects P2SH BTC", detectScanFamily("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")?.family === "btc");
+  ok("scan: detects taproot BTC", detectScanFamily("bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297")?.family === "btc");
+  ok("scan: a corrupted bech32 BTC address is NOT detected", detectScanFamily(DRIP_BTC.slice(0, -1) + "x") === null
+    && isValidBitcoinAddress(DRIP_BTC.slice(0, -1) + "x") === false);
+  ok("scan: detects Algorand (58-char base32 + checksum)", detectScanFamily(DRIP_ALGO)?.family === "algo");
+  ok("scan: detects Tron before Solana (its own checksum decides)", detectScanFamily(DRIP_TRON)?.family === "tron");
+  ok("scan: detects Solana base58", detectScanFamily(DRIP_SOL)?.family === "solana");
+  ok("scan: garbage and empty input detect as nothing", detectScanFamily("hello world") === null
+    && detectScanFamily("") === null && detectScanFamily("0x123") === null && detectScanFamily(null) === null);
+
+  // Targets: a name scans its REGISTERED addresses only.
+  const nameTargets = scanTargetsForName({ evm: DRIP_EVM, btc: DRIP_BTC, algo: DRIP_ALGO });
+  ok("scan: a full name entry yields the 5-network EVM sweep + BTC + Algo", nameTargets.length === 7
+    && nameTargets.slice(0, 5).every(t => t.family === "evm") && nameTargets[5].chainKey === "btc" && nameTargets[6].chainKey === "algo");
+  ok("scan: the sweep order is the pinned main-five", JSON.stringify(SCAN_EVM_NETWORKS) === JSON.stringify(["ethereum", "bsc", "base", "polygon", "arbitrum"]));
+  ok("scan: an evm-only entry yields just the sweep", scanTargetsForName({ evm: DRIP_EVM }).length === 5);
+  ok("scan: a hostile entry is sanitised before targeting", scanTargetsForName({ evm: "not-an-address", btc: DRIP_BTC }).length === 1
+    && scanTargetsForName(null).length === 0 && scanTargetsForName({}).length === 0);
+  ok("scan: a raw EVM address gets the same sweep; BTC gets one target",
+    scanTargetsForAddress(detectScanFamily(DRIP_EVM)).length === 5
+    && scanTargetsForAddress(detectScanFamily(DRIP_BTC)).length === 1
+    && scanTargetsForAddress(null).length === 0);
+  ok("scan: BSC has NO Blockscout entry (no keyless history index exists — pinned honesty)",
+    !("bsc" in SCAN_BLOCKSCOUT_APIS) && Object.values(SCAN_BLOCKSCOUT_APIS).every(u => u.startsWith("https://")));
+  ok("scan: chain labels and badges", scanChainLabel("bsc") === "BNB Chain" && scanChainLabel("btc") === "Bitcoin"
+    && scanChainBadge("bsc") === "BSC" && scanChainBadge("algo") === "ALGO");
+
+  // Blockscout normalisation.
+  const bsIn = normalizeBlockscoutTxs({ items: [
+    { hash: HASH64, from: { hash: OTHER_EVM }, to: { hash: DRIP_EVM }, value: "500000000000000000", status: "ok", timestamp: "2026-11-07T10:00:00.000Z" },
+    { hash: HASH64, from: { hash: DRIP_EVM }, to: { hash: OTHER_EVM }, value: "0", status: "ok", timestamp: "2026-11-07T11:00:00.000Z" },
+    { hash: HASH64, from: { hash: DRIP_EVM }, to: { hash: OTHER_EVM }, value: "1000000000000000000", status: "error", timestamp: "2026-11-07T12:00:00.000Z" },
+    { hash: "garbage", from: { hash: OTHER_EVM }, to: { hash: DRIP_EVM }, value: "1", status: "ok" },
+    { hash: HASH64, from: { hash: OTHER_EVM }, to: { hash: OTHER_EVM }, value: "1000", status: "ok" },
+  ] }, { networkKey: "bsc", address: DRIP_EVM });
+  ok("scan: blockscout native rows keep only real value moves to/from the address", bsIn.length === 1
+    && bsIn[0].direction === "in" && bsIn[0].amountText === "0.5" && bsIn[0].symbol === "BNB"
+    && bsIn[0].counterparty === OTHER_EVM && bsIn[0].time === Date.parse("2026-11-07T10:00:00.000Z"));
+  const bsTok = normalizeBlockscoutTokenTransfers({ items: [
+    { transaction_hash: HASH64, from: { hash: OTHER_EVM }, to: { hash: DRIP_EVM },
+      total: { value: "100500000", decimals: "6" }, token: { symbol: "USDC" }, timestamp: "2026-11-07T10:00:00.000Z" },
+    { transaction_hash: HASH64, from: { hash: DRIP_EVM }, to: { hash: OTHER_EVM },
+      total: { value: "not-a-number", decimals: "6" }, token: { symbol: "USDC" } },
+  ] }, { networkKey: "base", address: DRIP_EVM });
+  ok("scan: blockscout token rows scale by the transfer's own decimals; unparseable values drop",
+    bsTok.length === 1 && bsTok[0].amountText === "100.5" && bsTok[0].symbol === "USDC" && bsTok[0].direction === "in");
+
+  // Esplora normalisation: netting excludes change; direction follows the net.
+  const esp = normalizeEsploraTxs([
+    { txid: TXID64, vin: [{ prevout: { scriptpubkey_address: ETHU_BTC, value: 100000 } }],
+      vout: [{ scriptpubkey_address: DRIP_BTC, value: 90000 }, { scriptpubkey_address: ETHU_BTC, value: 9000 }],
+      status: { confirmed: true, block_time: 1762000000 } },
+    { txid: TXID64, vin: [{ prevout: { scriptpubkey_address: DRIP_BTC, value: 90000 } }],
+      vout: [{ scriptpubkey_address: ETHU_BTC, value: 50000 }, { scriptpubkey_address: DRIP_BTC, value: 39000 }],
+      status: { confirmed: false } },
+    { txid: "zz", vin: [], vout: [] },
+  ], { address: DRIP_BTC });
+  ok("scan: esplora rows net out change and name the single counterparty", esp.length === 2
+    && esp[0].direction === "in" && esp[0].amountText === "0.0009" && esp[0].counterparty === ETHU_BTC
+    && esp[1].direction === "out" && esp[1].amountText === "0.00051" && esp[1].counterparty === ETHU_BTC);
+  ok("scan: an unconfirmed esplora tx is pending with no time", esp[1].pending === true && esp[1].time === null);
+
+  // Algorand indexer normalisation.
+  const algoTxId = "U7SYRJGWQIF6U3M5PPQG7SUOGUEPQBN4G3MVL5KI6T6HWVAXMZ4Q";
+  const algoRows = normalizeAlgoIndexerTxs({ transactions: [
+    { id: algoTxId, "tx-type": "pay", sender: ETHU_ALGO, "round-time": 1762000000, "payment-transaction": { receiver: DRIP_ALGO, amount: 500000 } },
+    { id: algoTxId, "tx-type": "axfer", sender: DRIP_ALGO, "round-time": 1762000100, "asset-transfer-transaction": { receiver: ETHU_ALGO, amount: 2500000, "asset-id": 31566704 } },
+    { id: algoTxId, "tx-type": "axfer", sender: DRIP_ALGO, "round-time": 1762000200, "asset-transfer-transaction": { receiver: ETHU_ALGO, amount: 42, "asset-id": 123456 } },
+    { id: algoTxId, "tx-type": "pay", sender: DRIP_ALGO, "round-time": 1762000300, "payment-transaction": { receiver: DRIP_ALGO, amount: 0 } },
+    { id: algoTxId, "tx-type": "appl", sender: DRIP_ALGO, "round-time": 1762000400 },
+  ] }, { address: DRIP_ALGO });
+  ok("scan: algo rows cover pay in, USDC axfer out, and a raw ASA row; zero + appl drop", algoRows.length === 3
+    && algoRows[0].direction === "in" && algoRows[0].amountText === "0.5" && algoRows[0].symbol === "ALGO"
+    && algoRows[1].direction === "out" && algoRows[1].amountText === "2.5" && algoRows[1].symbol === "USDC"
+    && algoRows[2].symbol === "ASA 123456" && algoRows[2].amountText === "42");
+
+  // Solana parsed-tx normalisation.
+  const solSig = "1".repeat(88);
+  const solRows = normalizeSolanaTx({
+    blockTime: 1762000000,
+    transaction: { message: { accountKeys: [{ pubkey: "4Nd1mPzV3kVZfzMGkFBPBjVzFnXc7PfKkzVbBBVMzvHV" }, { pubkey: DRIP_SOL }],
+      instructions: [{ program: "system", parsed: { type: "transfer", info: { source: "4Nd1mPzV3kVZfzMGkFBPBjVzFnXc7PfKkzVbBBVMzvHV", destination: DRIP_SOL, lamports: 500000000 } } }] } },
+    meta: { err: null, fee: 5000, preBalances: [2000000000, 100000000], postBalances: [1499995000, 600000000],
+      preTokenBalances: [{ accountIndex: 2, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", owner: DRIP_SOL, uiTokenAmount: { amount: "1000000", decimals: 6 } }],
+      postTokenBalances: [{ accountIndex: 2, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", owner: DRIP_SOL, uiTokenAmount: { amount: "3500000", decimals: 6 } }] },
+  }, solSig, { address: DRIP_SOL });
+  const solNative = solRows.find(r => r.symbol === "SOL"), solTok = solRows.find(r => r.symbol === "USDC");
+  ok("scan: solana native delta + parsed-instruction counterparty", !!solNative && solNative.direction === "in"
+    && solNative.amountText === "0.5" && solNative.counterparty === "4Nd1mPzV3kVZfzMGkFBPBjVzFnXc7PfKkzVbBBVMzvHV");
+  ok("scan: solana token delta resolves the known mint's symbol", !!solTok && solTok.direction === "in" && solTok.amountText === "2.5");
+  ok("scan: a failed solana tx yields no rows", normalizeSolanaTx({ meta: { err: { InstructionError: [0, "Custom"] } }, transaction: { message: { accountKeys: [] } } }, solSig, { address: DRIP_SOL }).length === 0);
+
+  // Tron normalisation (fixtures built with the wallet's own codec).
+  const tronHex = (a) => tronAddressToHex(a);
+  const tronRows = normalizeTronTxs({ data: [
+    { txID: TXID64, block_timestamp: 1762000000000, raw_data: { contract: [{ type: "TransferContract",
+      parameter: { value: { owner_address: tronHex(USDT_TRON), to_address: tronHex(DRIP_TRON), amount: 2500000 } } }] } },
+    { txID: TXID64, block_timestamp: 1762000000000, raw_data: { contract: [{ type: "TriggerSmartContract",
+      parameter: { value: { owner_address: tronHex(DRIP_TRON), contract_address: tronHex(USDT_TRON) } } }] } },
+  ] }, { address: DRIP_TRON });
+  ok("scan: tron native rows read TransferContract only, hex decoded to base58", tronRows.length === 1
+    && tronRows[0].direction === "in" && tronRows[0].amountText === "2.5" && tronRows[0].symbol === "TRX"
+    && tronRows[0].counterparty === USDT_TRON);
+  const trc20Rows = normalizeTronTrc20Txs({ data: [
+    { transaction_id: TXID64, block_timestamp: 1762000000000, from: DRIP_TRON, to: USDT_TRON, value: "100000000",
+      token_info: { symbol: "USDT", decimals: 6 } },
+  ] }, { address: DRIP_TRON });
+  ok("scan: tron TRC20 rows scale by token decimals", trc20Rows.length === 1 && trc20Rows[0].direction === "out"
+    && trc20Rows[0].amountText === "100.0" && trc20Rows[0].symbol === "USDT");
+
+  // Sui GraphQL normalisation.
+  const suiDigest = "7".repeat(44);
+  const suiRows = normalizeSuiTxPage({ data: { transactions: { nodes: [
+    { digest: suiDigest, sender: { address: DRIP_SUI }, effects: { timestamp: "2026-11-07T10:00:00.000Z",
+      balanceChanges: { nodes: [
+        { coinType: { repr: "0x2::sui::SUI" }, amount: "-1500000000", owner: { address: DRIP_SUI } },
+        { coinType: { repr: "0x2::sui::SUI" }, amount: "1000000000", owner: { address: "0x" + "11".repeat(32) } },
+      ] } } },
+    { digest: suiDigest, sender: { address: "0x" + "22".repeat(32) }, effects: { timestamp: "2026-11-07T11:00:00.000Z",
+      balanceChanges: { nodes: [
+        { coinType: { repr: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC" }, amount: "2500000", owner: { address: DRIP_SUI } },
+      ] } } },
+  ] } } }, { address: DRIP_SUI });
+  ok("scan: sui rows come from balance changes, counterparty paired by coin", suiRows.length === 2
+    && suiRows[0].direction === "out" && suiRows[0].amountText === "1.5" && suiRows[0].symbol === "SUI"
+    && suiRows[0].counterparty === "0x" + "11".repeat(32)
+    && suiRows[1].direction === "in" && suiRows[1].amountText === "2.5" && suiRows[1].symbol === "USDC"
+    && suiRows[1].counterparty === "0x" + "22".repeat(32));
+
+  // Merge: dedupe, newest first, pending (timeless) first, capped.
+  const merged = mergeScanRows([
+    [{ chainKey: "btc", txid: TXID64, direction: "in", symbol: "BTC", amountText: "0.1", counterparty: null, time: 1000 },
+     { chainKey: "btc", txid: TXID64, direction: "in", symbol: "BTC", amountText: "0.1", counterparty: null, time: 1000 }],
+    [{ chainKey: "algo", txid: algoTxId, direction: "out", symbol: "ALGO", amountText: "1", counterparty: null, time: 2000 },
+     { chainKey: "btc", txid: TXID64, direction: "out", symbol: "BTC", amountText: "0.2", counterparty: null, time: null, pending: true }],
+  ]);
+  ok("scan: merge dedupes, sorts newest-first, pending first", merged.length === 3
+    && merged[0].pending === true && merged[1].time === 2000 && merged[2].time === 1000);
+
+  // Explorer URLs: built only for well-shaped ids.
+  ok("scan: tx urls per family", scanTxUrl("bsc", HASH64) === "https://bscscan.com/tx/" + HASH64
+    && scanTxUrl("btc", TXID64) === "https://mempool.space/tx/" + TXID64
+    && scanTxUrl("algo", algoTxId) === "https://explorer.perawallet.app/tx/" + algoTxId
+    && scanTxUrl("solana", solSig) === "https://solscan.io/tx/" + solSig
+    && scanTxUrl("tron", TXID64) === "https://tronscan.org/#/transaction/" + TXID64
+    && scanTxUrl("sui", suiDigest) === "https://suiscan.xyz/mainnet/tx/" + suiDigest);
+  ok("scan: malformed ids never become links", scanTxUrl("btc", "xyz") === null && scanTxUrl("ethereum", "0x123") === null
+    && scanTxUrl("algo", "lowercase-not-base32") === null && scanTxUrl("nope", TXID64) === null);
+  ok("scan: address urls only where the path shape is standard", scanAddressUrl("bsc", DRIP_EVM) === "https://bscscan.com/address/" + DRIP_EVM
+    && scanAddressUrl("btc", DRIP_BTC) === "https://mempool.space/address/" + DRIP_BTC
+    && scanAddressUrl("solana", DRIP_SOL) === null);
+
+  // Rendering: every chain-supplied string is escaped in core.
+  const hostile = formatScanFeedEntry({ direction: "in", amountText: "1", symbol: "<img src=x onerror=alert(1)>",
+    counterparty: 'a"><svg x' }, "3h ago");
+  ok("scan: feed entry escapes hostile symbol + counterparty", hostile.includes("&lt;img") && hostile.includes("&lt;svg")
+    && hostile.includes("&quot;&gt;") && !hostile.includes("<img") && !hostile.includes("<svg")
+    && hostile.startsWith('<div class="hist">Received'));
+  ok("scan: feed entry words for out + self", formatScanFeedEntry({ direction: "out", amountText: "2", symbol: "ALGO", counterparty: null }, "").includes("Sent <b>2 ALGO</b>")
+    && formatScanFeedEntry({ direction: "self", amountText: "2", symbol: "ALGO", counterparty: null }, "").includes("Self transfer"));
+
+  // Honest per-chain status lines.
+  const tgt = scanTarget("base", DRIP_EVM, "evm");
+  ok("scan: status text — failure names the chain", scanChainStatusText({ target: tgt, ok: false, rows: [], note: "failed" }).includes("Couldn't load Base"));
+  ok("scan: status text — empty chain says so", scanChainStatusText({ target: tgt, ok: true, rows: [], note: null }) === "No activity found on Base.");
+  ok("scan: status text — no-history-index explains itself", scanChainStatusText({ target: scanTarget("bsc", DRIP_EVM, "evm"), ok: true, rows: [], note: "no-history-index" }).includes("keyless source"));
+  ok("scan: status text — a chain with rows needs no note", scanChainStatusText({ target: tgt, ok: true, rows: [{}], note: null }) === "");
+
+  // Source pins: the pane, the tab, the privacy truth, the wiring.
+  const scanAppSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const scanIdxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("scan: pane + input + button + tab exist in the page", scanIdxSrc.includes('id="tab-scan"') && scanIdxSrc.includes('id="scanInput"')
+    && scanIdxSrc.includes('id="scanBtn"') && scanIdxSrc.includes('data-tab="scan"'));
+  ok("scan: the privacy truth is printed under the search box, verbatim",
+    scanIdxSrc.includes("Scan shows what is public on-chain for a name's registered addresses. Unregistered addresses stay private."));
+  ok("scan: goTab knows the scan pane", scanAppSrc.includes('["wallet", "play", "activity", "scan", "more"]'));
+  ok("scan: the controller resolves names via the shared registry path and addresses via detection",
+    scanAppSrc.includes("resolveFluidName(input)") && scanAppSrc.includes("detectScanFamily(input)")
+    && scanAppSrc.includes("scanTargetsForName(entry)") && scanAppSrc.includes("fetchScan(targets)"));
+  ok("scan: per-chain cap is a small constant", SCAN_TX_LIMIT === 20);
+}
+
+// ---------- QA fix build 2026-11-07 (F2–F14 + cosmetics) ----------
+// Findings from the full first-user QA walk of the live site (147
+// controls). F1 was closed as a bad QA fixture (the wallet was
+// right); everything below pins a real fix.
+{
+  const core = await import("../src/wallet-core.js");
+  const { resolveChainRecipient, isValidAlgorandAddress, isValidTronAddress, isValidSolanaAddress, isValidSuiAddress,
+    lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
+    parsePaycrestRate, paycrestRateUrl, fetchPaycrestRate, getXrplAccount, xrplAddressFromPhrase, getSolanaAllTokens } = core;
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const ALGO_ZERO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AY5HFKQ".replace(" ", "");
+  const ALGO_REAL = "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4";
+  const throwsMsg = async (fn, want) => { try { await fn(); return false; } catch (e) { return e.message === want; } };
+
+  // F2: a valid Algorand address is recognised BEFORE any name lookup.
+  {
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    const r = await resolveChainRecipient(ALGO_ZERO, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand", lookupName: spy });
+    ok("F2: the checksum-valid Algorand zero address resolves as an address", r.to === ALGO_ZERO && r.name === null);
+    ok("F2: no name lookup runs for a valid Algorand address", lookups === 0);
+  }
+  // F3–F5: name resolution on every chain, exact registry wording.
+  {
+    const reg = async (n) => n === "ethuram" ? { name: "ethuram", evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", btc: "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw", algo: ALGO_REAL } : null;
+    ok("F3–F5: a known name resolves its Algorand address",
+      (await resolveChainRecipient("ethuram", { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand", lookupName: reg })).to === ALGO_REAL);
+    ok("F3: Solana name error is the exact registry wording", await throwsMsg(
+      () => resolveChainRecipient("ethuram", { isValidAddress: isValidSolanaAddress, field: null, chainLabel: "Solana", lookupName: reg }),
+      "That Fluid name has no Solana address in the registry."));
+    ok("F4: Tron name error is the exact registry wording", await throwsMsg(
+      () => resolveChainRecipient("ethuram", { isValidAddress: isValidTronAddress, field: null, chainLabel: "Tron", lookupName: reg }),
+      "That Fluid name has no Tron address in the registry."));
+    ok("F5: Sui name error is the exact registry wording", await throwsMsg(
+      () => resolveChainRecipient("ethuram", { isValidAddress: isValidSuiAddress, field: null, chainLabel: "Sui", lookupName: reg }),
+      "That Fluid name has no Sui address in the registry."));
+    ok("F3–F5: an unknown name is hard-blocked as unregistered", await throwsMsg(
+      () => resolveChainRecipient("ghost", { isValidAddress: isValidSolanaAddress, field: null, chainLabel: "Solana", lookupName: reg }),
+      "That Fluid name is not in the registry yet."));
+    ok("F3–F5: a valid Tron address passes untouched, no lookup", await (async () => {
+      let n = 0; const spy = async () => { n++; return null; };
+      const tronAddr = core.tronAddressFromPhrase(KNOWN_PHRASE); // (the QA walk's fixture T-address had a bad checksum — F1)
+      const r = await resolveChainRecipient(tronAddr, { isValidAddress: isValidTronAddress, field: null, chainLabel: "Tron", lookupName: spy });
+      return r.to === tronAddr && n === 0;
+    })());
+    ok("F3–F5: all three sheets route through the shared resolver", appSrc.includes('chainLabel: "Tron"')
+      && appSrc.includes('chainLabel: "Solana"') && appSrc.includes('chainLabel: "Sui"'));
+  }
+  // F6: Lightning receive can never render a silent blank.
+  {
+    ok("F6: a thrown WASM string becomes the message", lnErrorText("an offer needs blinded paths") === "an offer needs blinded paths");
+    ok("F6: undefined/null errors get a plain fallback", lnErrorText(undefined).length > 0 && lnErrorText(null).length > 0 && lnErrorText(new Error("")).length > 0);
+    let s = { status: "idle" };
+    s = lnReceiveTransition(s, { type: "request" });
+    ok("F6: request → working with a spinner", lnReceiveView(s).status === "working" && lnReceiveView(s).spinner === true);
+    s = lnReceiveTransition(s, { type: "success", text: "lno1example" });
+    ok("F6: success → ready with the offer", lnReceiveView(s).text === "lno1example");
+    s = lnReceiveTransition(s, { type: "request" });
+    s = lnReceiveTransition(s, { type: "success", text: "" });
+    ok("F6: an empty offer is a failure, never a blank QR", lnReceiveView(s).status === "failed" && lnReceiveView(s).message.length > 0);
+    s = lnReceiveTransition(s, { type: "failure", error: "node says no" });
+    ok("F6: a string failure surfaces verbatim", lnReceiveView(s).message === "node says no");
+    ok("F6: the panel repaints receive + offline displays from state", appSrc.includes("paintLnReceive();") && appSrc.includes("paintLnSis();"));
+  }
+  // F7: the offline-offer input is validated before JSON.parse.
+  {
+    ok("F7: empty input gets the friendly paste message", await throwsMsg(async () => parseSisPathsInput("  "), "Paste the blinded-path list from your holding peer first."));
+    ok("F7: malformed JSON gets a friendly message, not a SyntaxError", await throwsMsg(async () => parseSisPathsInput("{oops"), "That doesn't look like the blinded-path list — paste the full JSON list from your holding peer, exactly as they gave it."));
+    ok("F7: an empty list gets the paste message", await throwsMsg(async () => parseSisPathsInput("[]"), "Paste the blinded-path list from your holding peer first."));
+    ok("F7: a non-hex entry is called out", await throwsMsg(async () => parseSisPathsInput('["zz"]'), "One of those entries isn't a blinded path — paste the list exactly as your holding peer gave it."));
+    ok("F7: a real list passes through", JSON.stringify(parseSisPathsInput('["ab12", "CD34"]')) === '["ab12","CD34"]');
+    ok("F7: the sheet validates via the core helper, never raw JSON.parse on the input",
+      appSrc.includes("parseSisPathsInput($(\"lnSisPaths\").value)") && !appSrc.includes("JSON.parse($(\"lnSisPaths\")"));
+  }
+  // F9/F10: Paycrest sell side + the KES pair on the same surface.
+  {
+    const payload = { status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } };
+    ok("F9: the NGN sell rate parses from the same payload", parsePaycrestRate(payload, "NGN", "sell") === 1369.35);
+    ok("F10: the KES pair parses (buy + sell)", parsePaycrestRate({ status: "success", data: { buy: { rate: "130.94" }, sell: { rate: "128.79" } } }, "KES", "buy") === 130.94
+      && parsePaycrestRate({ status: "success", data: { buy: { rate: "130.94" }, sell: { rate: "128.79" } } }, "KES", "sell") === 128.79);
+    ok("F10: the KES sanity band rejects absurd rates", parsePaycrestRate({ status: "success", data: { buy: { rate: "49.99" } } }, "KES", "buy") === null
+      && parsePaycrestRate({ status: "success", data: { buy: { rate: "500.01" } } }, "KES", "buy") === null);
+    ok("F9/F10: unsupported fiats and bad payloads read as no benchmark", parsePaycrestRate(payload, "GHS", "buy") === null
+      && parsePaycrestRate(null, "NGN", "sell") === null && parsePaycrestRate({ status: "error" }, "NGN", "sell") === null);
+    ok("F10: the KES rates URL is the same keyless surface", paycrestRateUrl("KES") === "https://api.paycrest.io/v2/rates/base/USDT/50/KES");
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => ({ ok: true, json: async () => payload });
+      ok("F9: fetchPaycrestRate resolves the NGN sell rate", await fetchPaycrestRate("NGN", "sell") === 1369.35);
+      globalThis.fetch = async () => { throw new Error("offline"); };
+      ok("F9: fetch failure reads as no benchmark, never throws", await fetchPaycrestRate("NGN", "sell") === null);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // F11: the name section shows the same fields in both states.
+  {
+    ok("F11: a built entry carries the Algorand address when given a valid one",
+      buildNameEntry("someone", "0x0EBf5563F905E3B9D58718E28E08143511DC763b", "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw", null, ALGO_REAL).someone.algo === ALGO_REAL);
+    ok("F11: a malformed Algorand value never reaches an entry",
+      buildNameEntry("someone", "0x0EBf5563F905E3B9D58718E28E08143511DC763b", "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw", null, "not-an-address").someone.algo === undefined);
+    ok("F11: the owned box lists EVM + Bitcoin + Algorand + Lightning", idxSrc.includes('id="ownedEvm"') && idxSrc.includes('id="ownedBtc"')
+      && idxSrc.includes('id="ownedAlgo"') && idxSrc.includes('id="ownedLn"'));
+    ok("F11: the owned state has the Lightning field the Receive sheet promises",
+      idxSrc.includes('id="ownedLnInput"') && idxSrc.includes('id="ownedLnAddBtn"')
+      && appSrc.includes("under “Your Fluid name” in the More tab"));
+    ok("F11: the Lightning row is not hidden away in the owned state", !idxSrc.includes('class="hist hidden" id="ownedLnRow"'));
+  }
+  // F12: XRPL — ledger errors are answers, endpoints are CORS-usable.
+  {
+    const addr = xrplAddressFromPhrase(KNOWN_PHRASE);
+    const realFetch = globalThis.fetch;
+    const seen = [];
+    try {
+      globalThis.fetch = async (url, opts) => {
+        seen.push(String(url));
+        const body = JSON.parse(opts.body);
+        if (body.method === "server_info") return { ok: true, json: async () => ({ result: { info: { validated_ledger: { reserve_base_xrp: 1, reserve_inc_xrp: 0.2 } } } }) };
+        if (body.method === "account_info") return { ok: true, json: async () => ({ result: { error: "actNotFound", error_message: "Account not found.", status: "error" } }) };
+        throw new Error("unexpected method " + body.method);
+      };
+      const acct = await getXrplAccount(addr);
+      ok("F12: an unfunded account reads as funded:false, not a network failure", acct.funded === false && acct.balances[0].amount === "0");
+      ok("F12: the first endpoint tried is the CORS-clean cluster", seen[0] === "https://xrplcluster.com");
+      seen.length = 0;
+      globalThis.fetch = async (url, opts) => {
+        seen.push(String(url));
+        if (String(url).includes("xrplcluster")) throw new Error("connection refused");
+        const body = JSON.parse(opts.body);
+        if (body.method === "server_info") return { ok: true, json: async () => ({ result: { info: { validated_ledger: { reserve_base_xrp: 1, reserve_inc_xrp: 0.2 } } } }) };
+        if (body.method === "account_info") return { ok: true, json: async () => ({ result: { error: "actNotFound", error_message: "Account not found.", status: "error" } }) };
+        throw new Error("unexpected method " + body.method);
+      };
+      const acct2 = await getXrplAccount(addr);
+      ok("F12: a dead first endpoint falls through to the next", acct2.funded === false && seen.some(u => u.includes("xrpl.ws")));
+    } finally { globalThis.fetch = realFetch; }
+    ok("F12: a failed XRPL load renders as unknown, never a dressed-up zero",
+      appSrc.includes('amount: null, address: null, decimals: 6, verified: true }];') && appSrc.includes("couldn't load"));
+    ok("F12/F13: Retry re-runs in place with an outcome", appSrc.includes("async function retryFamily(")
+      && appSrc.includes("Retrying…") && appSrc.includes("still couldn't be loaded"));
+  }
+  // F13: Solana scan survives one RPC refusing the token scan.
+  {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url, opts) => {
+        if (String(url).includes("api.mainnet-beta")) return { ok: false, status: 403, json: async () => ({}) };
+        const body = JSON.parse(opts.body);
+        if (body.method === "getBalance") return { ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: { value: 0 } }) };
+        if (body.method === "getTokenAccountsByOwner") return { ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: { value: [] } }) };
+        throw new Error("unexpected " + body.method);
+      };
+      const rows = await getSolanaAllTokens("11111111111111111111111111111111");
+      ok("F13: the full token scan completes via the fallback RPC", Array.isArray(rows) && rows.length === 3 && rows[0].symbol === "SOL");
+      globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
+      let threw = false;
+      try { await getSolanaAllTokens("11111111111111111111111111111111"); } catch { threw = true; }
+      ok("F13: when every RPC refuses, the scan still fails honestly (fallback rows take over)", threw === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // F14 + cosmetics.
+  ok("F14: entering the app lands on Wallet home", appSrc.includes('if (wallet && gateWasLocked) goTab("wallet");'));
+  ok("cosmetic i: a stale password error clears once the password is valid",
+    appSrc.includes('for (const id of ["createPw", "createPw2"])') && appSrc.includes("Passwords do not match"));
+  ok("cosmetic ii: removing the wallet resets the gate username preview",
+    appSrc.includes('$("createNamePreview").textContent = "you." + FLUID_DOMAIN;'));
+  ok("cosmetic iii: Refresh balances shows working + done feedback",
+    appSrc.includes("Refreshing…") && appSrc.includes('toast("Balances refreshed")'));
 }
 
 console.log(`\n${passed} checks passed`);

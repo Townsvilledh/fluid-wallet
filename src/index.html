@@ -198,6 +198,13 @@
   .actempty{ text-align:center; padding:28px 8px; color:var(--dim); }
   .tabenter{ animation:tabin var(--dur-tab) var(--ease); }
   @keyframes tabin{ from{ opacity:0; transform:translateY(4px); } to{ opacity:1; transform:none; } }
+  /* scan (§4.9b) */
+  .scanbadge{ font-size:10px; font-weight:800; letter-spacing:.04em; color:var(--dim); background:var(--surface-3); border-radius:6px; padding:3px 7px; flex:0 0 auto; }
+  .scanbal{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--hairline); }
+  .scanbal:last-child{ border-bottom:0; }
+  .scanbal .grow{ flex:1; min-width:0; } .scanbal small{ display:block; color:var(--dim); }
+  .scanbal .amt{ font-weight:700; font-size:14px; text-align:right; font-variant-numeric:tabular-nums; }
+  .scannote{ color:var(--dim); font-size:12px; line-height:1.45; padding:1px 0 9px; }
   /* sheets: grab handle, entry/exit motion, sticky confirm footer (§4.7, Part 5) */
   .grab{ width:36px; height:4px; border-radius:999px; background:var(--surface-3); margin:0 auto 12px; }
   .sheet{ animation:sheetin var(--dur-sheet) var(--ease); }
@@ -396,6 +403,19 @@
       <div class="card" style="padding:4px 16px"><div id="history">No sends yet from this browser.</div></div>
     </div>
 
+    <!-- SCAN TAB -->
+    <div id="tab-scan" class="hidden">
+      <h2 style="margin:8px 0">Scan</h2>
+      <p class="tag">Fluid's own explorer. Look up any Fluid name — or any wallet address — and see its public on-chain activity across chains, in one feed.</p>
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <input id="scanInput" placeholder="Fluid name or wallet address" autocapitalize="none" style="flex:1;margin:0">
+        <button class="btn" id="scanBtn" style="width:auto;margin:0;padding:14px 20px">Search</button>
+      </div>
+      <p class="tag" style="margin:8px 0">Scan shows what is public on-chain for a name's registered addresses. Unregistered addresses stay private.</p>
+      <p class="msg" id="scanMsg"></p>
+      <div id="scanResults"></div>
+    </div>
+
     <!-- MORE TAB -->
     <div id="tab-more" class="hidden">
       <h2 style="margin:8px 0">Settings &amp; safety</h2>
@@ -421,9 +441,23 @@
             <span><b>Bitcoin</b><br><small class="mono" id="ownedBtc" style="word-break:break-all"></small></span>
             <button class="btn ghost" id="copyOwnedBtc" style="width:auto;padding:6px 12px;flex:none">Copy</button>
           </div>
-          <div class="hist hidden" id="ownedLnRow" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><b>Algorand</b><br><small class="mono" id="ownedAlgo" style="word-break:break-all"></small></span>
+            <button class="btn ghost" id="copyOwnedAlgo" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div class="hist" id="ownedLnRow" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
             <span><b>Lightning</b><br><small class="mono" id="ownedLn" style="word-break:break-all"></small></span>
             <button class="btn ghost" id="copyOwnedLn" style="width:auto;padding:6px 12px;flex:none">Copy</button>
+          </div>
+          <div id="ownedLnAdd">
+            <input id="ownedLnInput" placeholder="Lightning address (e.g. you@getalby.com)" autocapitalize="none">
+            <button class="btn ghost" id="ownedLnAddBtn" style="width:auto;padding:6px 12px">Add Lightning address</button>
+            <p class="tag" style="margin:6px 0">No Lightning address is registered to this name yet — add one and publish the updated entry so people can pay your name over Lightning.</p>
+          </div>
+          <div id="ownedEntryBox" class="hidden">
+            <p class="tag">Publish this updated entry into <b>names.json</b> in the GitHub repo so every Fluid wallet resolves the change:</p>
+            <div class="seed" id="ownedEntry" style="font-size:12px"></div>
+            <button class="btn ghost" id="copyOwnedEntryBtn">Copy updated entry</button>
           </div>
         </div>
         <div id="claimForm">
@@ -476,6 +510,7 @@
       <button class="tab on" data-tab="wallet"><span class="ti"><svg class="ic"><use href="#i-wallet"/></svg></span>Wallet</button>
       <button class="tab" data-tab="play"><span class="ti"><svg class="ic"><use href="#i-ball"/></svg></span>Play</button>
       <button class="tab" data-tab="activity"><span class="ti"><svg class="ic"><use href="#i-activity"/></svg></span>Activity<span class="navdot hidden" id="activityDot"></span></button>
+      <button class="tab" data-tab="scan"><span class="ti"><svg class="ic"><use href="#i-search"/></svg></span>Scan</button>
       <button class="tab" data-tab="more"><span class="ti"><svg class="ic"><use href="#i-more"/></svg></span>More</button>
     </nav>
   </section>
