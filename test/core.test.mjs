@@ -3031,13 +3031,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && idxSrc.includes('id="buildStamp"') && !idxSrc.includes("🤖 Agentic"));
   ok("ui-p2: onboarding — gradient tile wordmark, one line, three chips, census gone",
     idxSrc.includes('class="brandtile"') && idxSrc.includes('<use href="#i-drop-w"/>')
-    && idxSrc.includes('<span class="chip">Every blockchain</span>') && idxSrc.includes('<span class="chip">No KYC</span>')
+    && idxSrc.includes('<span class="chip">Every blockchain</span>') && idxSrc.includes('<span class="chip">No account</span>')
     && idxSrc.includes('<span class="chip">Keys never leave your phone</span>')
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
     && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
+  ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
+    !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
+    && idxSrc.includes("no KYC on Fluid's side — buy and sell routes run their own quick checks")
+    && appSrc.includes("no KYC on Fluid's side — buy and sell routes run their own quick checks"));
   ok("ui-p2: app chrome emoji are gone — Lightning/agent/swap use the icon system",
     !appSrc.includes("⚡ Lightning") && !appSrc.includes("🤖 Agent") && !appSrc.includes("⇅ Flip")
     && !appSrc.includes("⬇ Received") && appSrc.includes('icon("bolt", "ic ic-brand")')

@@ -3893,7 +3893,7 @@ $("approvalsBtn").onclick = () => {
 $("aboutBtn").onclick = () => {
   openSheet(`<h3>What is Fluid?</h3>
     <p class="tag">Fluid is a free, open-source (MIT), non-custodial wallet for every blockchain. One seed phrase derives your accounts on EVM chains and L2s (15 built in, more auto-discovered), Bitcoin and Lightning, Stacks (the Bitcoin L2), Litecoin, Dogecoin, Bitcoin Cash, Tron, Solana, Sui, seven Cosmos chains, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot Asset Hub and Aptos — and every chain both sends and receives.</p>
-    <p class="tag">Fluid never holds your keys or your funds: your keys stay encrypted on your own device, there is no account, no sign-up and no KYC, and if Fluid disappeared tomorrow your seed phrase would restore everything in any standard wallet.</p>
+    <p class="tag">Fluid never holds your keys or your funds: your keys stay encrypted on your own device, there is no account, no sign-up and no KYC on Fluid's side — buy and sell routes run their own quick checks — and if Fluid disappeared tomorrow your seed phrase would restore everything in any standard wallet.</p>
     <p class="tag">Buy and cash out worldwide at the cheapest available route, swap between chains, and send to a simple name — like you.fluid.is-a.dev — instead of a long address.</p>
     <p class="tag">Source code: <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a></p>`);
 };
