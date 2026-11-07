@@ -104,7 +104,7 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
-ok("static links are the kept providers", ["Paybis", "Mercuryo", "NoOnes"].every(n => RAMP_STATIC_LINKS[n])
+ok("static links are the kept providers", ["Paybis", "Mercuryo", "NoOnes", "Spritz"].every(n => RAMP_STATIC_LINKS[n])
   && !RAMP_STATIC_LINKS["Noblocks"] && RAMP_STATIC_LINKS["NoOnes"].buy === "https://noones.app");
 ok("removed providers stay removed", (() => {
   // Sweep every country × mode: no removed provider may appear by name
@@ -175,7 +175,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // plan without a caps entry — or flipped to "walletconnect" —
   // fails here instead of silently reaching a buy sheet.
   ok("address-entry caps are recorded truthfully", RAMP_ADDRESS_ENTRY["Fonbnk"] === "walletconnect"
-    && ["Mt Pelerin", "Paybis", "Mercuryo", "NoOnes"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste"));
+    && ["Mt Pelerin", "Paybis", "Mercuryo", "NoOnes", "Spritz"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste"));
   ok("every planned provider has a caps entry", RAMP_COUNTRIES.every(c =>
     RAMP_COUNTRY_PLAN[c.code].every(([n]) => typeof RAMP_ADDRESS_ENTRY[n] === "string")));
   ok("no WalletConnect-only route on any buy sheet", RAMP_COUNTRIES.every(c =>
@@ -187,6 +187,10 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("NoOnes appears only as the NG buy lead", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const has = rampRoutesFor(c.code, m, "bsc", "USDC").routes.some(r => r.name === "NoOnes");
     return has === (c.code === "NG" && m === "buy");
+  })));
+  ok("Spritz appears only in the US lineup", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
+    const has = rampRoutesFor(c.code, m, "bsc", "USDC").routes.some(r => r.name === "Spritz");
+    return has === (c.code === "US");
   })));
 
   // Kenya: Fonbnk sell-only since 7 Nov; Mercuryo is the buy fallback.
@@ -204,10 +208,16 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("ZA Fonbnk is sell-only and unbadged", zaFonbnk.badge === false && zaFonbnk.note.includes("check the quote")
     && !rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"));
 
-  // US: Mt Pelerin badged; Paybis kept unbadged with the ~5% card note.
-  ok("US lineup + badge", JSON.stringify(names("US")) === JSON.stringify(["Mt Pelerin", "Paybis", "Mercuryo"])
-    && JSON.stringify(badged("US")) === JSON.stringify(["Mt Pelerin"]));
-  ok("US Paybis note is the dated card figure", rampRoutesFor("US", "buy", "bsc", "USDC").routes[1].note.includes("~5% all-in"));
+  // US: Spritz leads + badges (cheapest verified US route, global
+  // research 7 Nov 2026); Mt Pelerin stays listed but flagged non-US
+  // (it excludes US persons); Paybis keeps the ~5% card note.
+  ok("US lineup + badge", JSON.stringify(names("US")) === JSON.stringify(["Spritz", "Mt Pelerin", "Paybis", "Mercuryo"])
+    && JSON.stringify(badged("US")) === JSON.stringify(["Spritz"])
+    && JSON.stringify(names("US", "sell")) === JSON.stringify(["Spritz", "Mt Pelerin", "Paybis", "Mercuryo"])
+    && JSON.stringify(badged("US", "sell")) === JSON.stringify(["Spritz"]));
+  ok("US Spritz is the external lead, Mt Pelerin flags non-US", (() => { const us = rampRoutesFor("US", "buy", "bsc", "USDC").routes;
+    return us[0].external === true && us[0].url === "https://app.spritz.finance" && us[1].note.includes("Not available to US residents"); })());
+  ok("US Paybis note is the dated card figure", rampRoutesFor("US", "buy", "bsc", "USDC").routes[2].note.includes("~5% all-in"));
 
   // Brazil: Paybis measured at market — kept, badged, ahead of Mercuryo.
   ok("BR lineup + badge", JSON.stringify(names("BR")) === JSON.stringify(["Paybis", "Mercuryo"])

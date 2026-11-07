@@ -3485,6 +3485,7 @@ export const RAMP_STATIC_LINKS = {
   "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
   "Mercuryo": { buy: "https://mercuryo.io/", sell: "https://mercuryo.io/" },
   "NoOnes": { buy: "https://noones.app", sell: "https://noones.app" },
+  "Spritz": { buy: "https://app.spritz.finance", sell: "https://app.spritz.finance" },
 };
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
@@ -3492,6 +3493,7 @@ const RAMP_DEFAULT_NOTES = {
   "Mercuryo": "Price not verified — published fees: buy 3.95% · sell 2.95% · ID required · selling pays EUR/USD/GBP to a card",
   "Fonbnk": "Priced off the local market — check the quote before you pay",
   "NoOnes": "External marketplace — not a Fluid partner · sign up with email, name and date of birth only (no ID documents at the starter level) · buy with a bank transfer, then send out to your Fluid address — paste it, no WalletConnect · sellers set their own prices",
+  "Spritz": "US app — opens outside Fluid · buy 1% by ACH · sell 0.5% by ACH (min $2) — the cheapest verified US sell rate · send out to your Fluid address",
 };
 /** How each provider takes the destination address on a BUY:
  *  "paste" = the user can type/paste their Fluid address and the
@@ -3510,6 +3512,7 @@ export const RAMP_ADDRESS_ENTRY = {
   "Paybis": "paste",
   "Mercuryo": "paste",
   "NoOnes": "paste",
+  "Spritz": "paste",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
 // the ranking (cheapest measured first); badge/note override the
@@ -3545,7 +3548,12 @@ export const RAMP_COUNTRY_PLAN = {
   CI: [["Fonbnk", {}], ["Mercuryo", {}]],
   ZM: [["Fonbnk", {}], ["Mercuryo", {}]],
   US: [
-    ["Mt Pelerin", { badge: true }],
+    // Spritz leads (global ramp research, 7 Nov 2026): the cheapest
+    // verified US route — buy 1% / sell 0.5% by ACH. Mt Pelerin
+    // EXCLUDES US persons, so it can no longer lead or badge here;
+    // it stays listed, flagged, for non-US users paying in USD.
+    ["Spritz", { badge: true, external: true }],
+    ["Mt Pelerin", { note: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" }],
     ["Paybis", { note: "Card purchases cost ~5% all-in (measured 1 Nov) · free email account + quick ID check — paste your Fluid address" }],
     ["Mercuryo", {}],
   ],
