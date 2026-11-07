@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, getPrices,
+  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -3100,7 +3100,23 @@ function rampSheet(mode) {
     <select id="rNet">${BUILTIN_NETWORK_KEYS.filter(k => k !== "sepolia").map(k => `<option value="${k}" ${k === rampDefault ? "selected" : ""}>${NETWORKS[k].name}</option>`).join("")}</select>
     <label class="tag" id="rAssetLabel">Coin (on ${NETWORKS[rampDefault].name})</label>
     <select id="rAsset"><option>USDC</option><option>USDT</option></select>
+    <p class="tag" id="rBench" style="display:none;margin-top:10px"></p>
     <div id="rList"></div>`);
+  // Live market benchmark, Nigeria BUY sheet only: Paycrest's keyless
+  // rates API (a price source, not a route — see wallet-core), fetched
+  // fresh for this sheet opening and never persisted. Any failure
+  // leaves the line hidden rather than showing a stale/wrong figure.
+  let benchRate = null, benchAsked = false;
+  const paintBench = () => {
+    const el = $("rBench"); if (!el) return;
+    const cEl = $("rCountry");
+    if (mode === "buy" && cEl && cEl.value === "NG" && benchRate != null) {
+      // benchRate is a number parsed + band-checked in wallet-core;
+      // the line is built from that number, never from raw response text.
+      el.textContent = `Market rate now: ≈ ₦${Math.round(benchRate).toLocaleString("en-US")} per $1 (live)`;
+      el.style.display = "";
+    } else el.style.display = "none";
+  };
   const paint = () => {
     const code = $("rCountry").value, asset = $("rAsset").value, netKey = $("rNet").value;
     localStorage.setItem("fluid_country", code);
@@ -3121,6 +3137,16 @@ function rampSheet(mode) {
       (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
       (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
+    paintBench();
+    if (mode === "buy" && code === "NG" && !benchAsked) {
+      benchAsked = true;
+      const benchEl = $("rBench");
+      fetchPaycrestNgnBuyRate().then(rate => {
+        benchRate = rate;
+        // Only paint if this sheet's element is still on screen.
+        if (benchEl && benchEl.isConnected) paintBench();
+      });
+    }
   };
   $("rCountry").onchange = paint; $("rAsset").onchange = paint; $("rNet").onchange = paint; paint();
 }

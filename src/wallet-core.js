@@ -3596,7 +3596,7 @@ export const RAMP_COUNTRY_PLAN = {
     // NO badge: its price is not the cheapest measured; it leads
     // because it is the only NG buy route that takes a pasted
     // Fluid address (see the plan notes above).
-    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · sign up with email, name and date of birth only (no ID documents at the starter level) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate" }],
+    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · email-only sign-up (name + date of birth, no ID documents for everyday amounts) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate · no zero-sign-up buy route exists in Nigeria today — anyone promising one is a scam risk" }],
     ["Fonbnk", { note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
   ],
   KE: [
@@ -3688,6 +3688,36 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
     });
   }
   return { country: c, routes, fonbnkNetworkMissing, fonbnkBuyBlocked, mtpUnavailable: !MTPELERIN_FIATS.includes(c.fiat) };
+}
+
+/** Paycrest's keyless public rates API — the cheapest verifiable NG
+ *  machine price (buy ₦1,384.52/USDT, measured live 7 Nov 2026) —
+ *  is a PRICE SOURCE for Fluid, never a route: its consumer face
+ *  (Noblocks) is BVN-walled and order creation is KYB-gated, so it
+ *  fails the route criteria on both counts. The NG buy sheet polls
+ *  it to show a live "market rate now" benchmark next to the NoOnes
+ *  route, so users can judge sellers' prices against the market
+ *  themselves. The payload is hostile remote data: the parse keeps
+ *  only a finite number inside a sane ₦/$ band, and every failure
+ *  mode (offline, non-200, unparseable, out-of-band) reads as "no
+ *  benchmark" — the sheet then shows no line rather than a stale or
+ *  wrong figure. Nothing is cached anywhere: each call fetches
+ *  fresh, and the sheet fetches once per opening. */
+export const PAYCREST_NGN_USDT_RATE_URL = "https://api.paycrest.io/v2/rates/base/USDT/50/NGN";
+export function parsePaycrestNgnBuyRate(json) {
+  if (!json || json.status !== "success") return null;
+  const rate = Number(json.data && json.data.buy && json.data.buy.rate);
+  if (!Number.isFinite(rate) || rate < 500 || rate > 5000) return null;
+  return rate;
+}
+/** The live Paycrest NGN/USDT buy rate, or null on ANY failure —
+ *  never throws, so the sheet can fire-and-forget it. */
+export async function fetchPaycrestNgnBuyRate() {
+  try {
+    const r = await fetch(PAYCREST_NGN_USDT_RATE_URL, { signal: AbortSignal.timeout(4000) });
+    if (!r || !r.ok) return null;
+    return parsePaycrestNgnBuyRate(await r.json().catch(() => null));
+  } catch { return null; }
 }
 
 // ---------- Agentic wallets ----------

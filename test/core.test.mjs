@@ -1,7 +1,7 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -139,6 +139,48 @@ ok("mtpelerin referral code rides every link", MTPELERIN_REFERRAL_CODE === "Fp3d
 ok("mtpelerin null for unsupported fiat", mtpelerinBuyUrl("USDT", "NGN") === null && mtpelerinSellUrl("USDC", "KES") === null);
 ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
+// 16b2. NG live benchmark: Paycrest's keyless rate as a price SOURCE
+// only (research 7 Nov 2026 — Paycrest is not a route: its consumer
+// face is BVN-walled, order creation KYB-gated). The NG buy sheet
+// shows the live market rate next to the NoOnes route; every failure
+// mode must read as "no benchmark", never a stale or wrong figure,
+// and no rate is ever hardcoded or cached.
+{
+  ok("paycrest endpoint is the measured keyless rates URL", PAYCREST_NGN_USDT_RATE_URL === "https://api.paycrest.io/v2/rates/base/USDT/50/NGN");
+  ok("paycrest parse reads the buy rate", parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } }) === 1384.52
+    && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: 1400 } } }) === 1400);
+  ok("paycrest parse rejects junk payloads", [null, undefined, 42, {}, { status: "error", data: { buy: { rate: "1400" } } },
+    { status: "success" }, { status: "success", data: {} }, { status: "success", data: { buy: {} } },
+    { status: "success", data: { buy: { rate: "abc" } } }, { status: "success", data: { buy: { rate: "" } } }]
+    .every(x => parsePaycrestNgnBuyRate(x) === null));
+  ok("paycrest sanity band ₦500–₦5,000 rejects absurd rates", parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "499.99" } } }) === null
+    && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "5000.01" } } }) === null
+    && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "500" } } }) === 500
+    && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "5000" } } }) === 5000);
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: "success", data: { buy: { rate: "1401.25" } } }) });
+    ok("paycrest fetch resolves the live rate", await fetchPaycrestNgnBuyRate() === 1401.25);
+    globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+    ok("paycrest fetch: non-200 → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = async () => ({ ok: true, json: async () => { throw new Error("not json"); } });
+    ok("paycrest fetch: unparseable body → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = async () => { throw new Error("offline"); };
+    ok("paycrest fetch: network failure → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: "success", data: { buy: { rate: "99999" } } }) });
+    ok("paycrest fetch: out-of-band rate → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+  } finally { globalThis.fetch = realFetch; }
+  const appSrcB = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrcB = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("NG buy sheet renders the benchmark line from the parsed number", appSrcB.includes('id="rBench"')
+    && appSrcB.includes("fetchPaycrestNgnBuyRate") && appSrcB.includes("Market rate now:")
+    && appSrcB.includes("per $1 (live)") && appSrcB.includes("Math.round(benchRate)")
+    && appSrcB.includes('mode === "buy" && code === "NG"'));
+  ok("no hardcoded rate figure in the app shell", !appSrcB.includes("1384") && !appSrcB.includes("1,385"));
+  ok("CSP untouched: connect-src https: already covers the rates API", idxSrcB.includes("connect-src 'self' https: wss:")
+    && !idxSrcB.includes("paycrest") && !appSrcB.includes("api.paycrest.io"));
+}
+
 // 16c. Per-country ramp assembly: ranked on MEASURED price (6 Nov 2026)
 {
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
@@ -166,6 +208,8 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("NG NoOnes note is honest about what it is", ngBuy[0].note.includes("External marketplace")
     && ngBuy[0].note.includes("no ID documents") && ngBuy[0].note.includes("no WalletConnect")
     && ngBuy[0].note.includes("3–4% over the market rate"));
+  ok("NG NoOnes note carries the zero-sign-up honesty", ngBuy[0].note.includes("no zero-sign-up buy route")
+    && ngBuy[0].note.includes("scam risk") && ngBuy[0].note.includes("no ID documents for everyday amounts"));
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
   ok("NG Fonbnk sell note is address-based, no ID", ngSell[0].note.includes("no ID check") && ngSell[0].url.startsWith("https://pay.fonbnk.com/"));
 
