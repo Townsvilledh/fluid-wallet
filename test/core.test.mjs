@@ -2764,8 +2764,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const { NAMES_REGISTRY_URL, NAMES_REGISTRY_FALLBACK_URL, resolveFluidName, fetchNameRegistry } = await import("../src/wallet-core.js");
   const EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
   const REG = { dripbot: { evm: EVM } };
-  ok("names-host: the primary registry URL is the GitHub Pages site",
-    NAMES_REGISTRY_URL === "https://townsvilledh.github.io/fluid-wallet/names.json");
+  ok("names-host: the primary registry URL is the Fluid domain",
+    NAMES_REGISTRY_URL === "https://fluidwallet.dpdns.org/names.json");
   ok("names-host: the fallback registry URL is the Netlify site",
     NAMES_REGISTRY_FALLBACK_URL === "https://fluidwallet.netlify.app/names.json");
   const realFetch = globalThis.fetch;
@@ -2794,11 +2794,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("names-host: a caller-supplied registry URL never falls back",
     r.result === null && r.calls.length === 1 && r.calls[0] === "https://example.com/names.json");
   const html = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
-  ok("names-host: the page canonical and social images point at the Netlify site",
-    html.includes('<link rel="canonical" href="https://fluidwallet.netlify.app/">')
-    && html.includes('<meta property="og:url" content="https://fluidwallet.netlify.app/">')
-    && html.includes('<meta property="og:image" content="https://fluidwallet.netlify.app/og-image.png">')
-    && html.includes('<meta name="twitter:image" content="https://fluidwallet.netlify.app/og-image.png">'));
+  ok("names-host: the page canonical and social images point at the Fluid domain",
+    html.includes('<link rel="canonical" href="https://fluidwallet.dpdns.org/">')
+    && html.includes('<meta property="og:url" content="https://fluidwallet.dpdns.org/">')
+    && html.includes('<meta property="og:image" content="https://fluidwallet.dpdns.org/og-image.png">')
+    && html.includes('<meta name="twitter:image" content="https://fluidwallet.dpdns.org/og-image.png">'));
 }
 
 // ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------

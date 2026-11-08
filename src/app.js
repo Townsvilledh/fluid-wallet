@@ -3312,8 +3312,8 @@ async function wcBoot() {
     metadata: {
       name: "Fluid",
       description: "Fluid — every chain, one wallet. Non-custodial, open source.",
-      url: "https://fluidwallet.netlify.app",
-      icons: ["https://fluidwallet.netlify.app/og-image.png"],
+      url: "https://fluidwallet.dpdns.org",
+      icons: ["https://fluidwallet.dpdns.org/og-image.png"],
     },
     onProposal: (p) => wcOnProposal(p),
     onRequest: (ev) => { wcOnRequest(ev).catch(() => {}); },
@@ -3343,7 +3343,7 @@ async function openWcPanel() {
     paintWcPanel();
   } catch (e) {
     openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
-      <p class="tag">WalletConnect isn't available in this build (${esc((e && e.message) || e)}). The single-file build can't load it — open Fluid at <b>fluidwallet.netlify.app</b> to connect to dApps.</p>`);
+      <p class="tag">WalletConnect isn't available in this build (${esc((e && e.message) || e)}). The single-file build can't load it — open Fluid at <b>fluidwallet.dpdns.org</b> to connect to dApps.</p>`);
   }
 }
 

@@ -2800,15 +2800,15 @@ export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, den
 // mapping; only the repo (via signed GitHub commits/PRs) can publish one,
 // and a future version moves this to an on-chain registry.
 export const FLUID_DOMAIN = "fluid.is-a.dev";
-export const NAMES_REGISTRY_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
+export const NAMES_REGISTRY_URL = "https://fluidwallet.dpdns.org/names.json";
 /** The same registry file on the Netlify site — the fallback when
  *  the primary host can't be reached (the two hosts serve the same
  *  published names.json, so a fallback read is the same data). The
- *  primary used to be Netlify; it was swapped on 2026-11-08 because
- *  Netlify deploys pause whenever the team's build credits run out,
- *  which froze the registry it served while GitHub Pages kept
- *  publishing — the Pages copy is the one that can be stale only by
- *  minutes, never by a billing cycle. */
+ *  primary was the Pages URL until 2026-11-08, when the front door
+ *  moved to fluidwallet.dpdns.org (GitHub Pages behind the domain);
+ *  before that it was Netlify, swapped because Netlify deploys pause
+ *  whenever the team's build credits run out, which froze the
+ *  registry it served while GitHub Pages kept publishing. */
 export const NAMES_REGISTRY_FALLBACK_URL = "https://fluidwallet.netlify.app/names.json";
 export function validateFluidName(name) {
   return /^[a-z][a-z0-9_]{2,19}$/.test(name || "");
