@@ -39,6 +39,7 @@ import {
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
+  sortHomeFamilies, sortHomeRows,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -841,7 +842,10 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
   if (!showZeroBalances) {
     visible = []; zero = [];
     for (const b of rowsArr) {
-      if (Number(b.amount) === 0 && !isNativeRow(famKey, b) && !(famKey === "evm" && isCuratedStableEvm(b))) zero.push(b);
+      // amount null is a FAILED read (unknown), never a zero: it
+      // stays visible as a "couldn't load" row instead of hiding
+      // inside the collapsed Zero balances group.
+      if (b.amount != null && Number(b.amount) === 0 && !isNativeRow(famKey, b) && !(famKey === "evm" && isCuratedStableEvm(b))) zero.push(b);
       else visible.push(b);
     }
   }
@@ -945,8 +949,11 @@ function splitRows(rows, symPriceOf) {
     const v = rowUsdValue(b, symPriceOf(b));
     if (b.verified !== false && v != null) main.push({ b, v }); else other.push({ b, v });
   }
-  main.sort((x, y) => y.v - x.v);
-  return { main, other };
+  // Home ordering: held rows first (USD value descending), then
+  // couldn't-load rows (amount null), then true zeros in their
+  // given order. The Other group (unverified / unpriced) keeps its
+  // given order — that quarantine is a separate axis.
+  return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };
 }
 function otherGroupHtml(famKey, items, renderItem) {
   if (!items.length) return "";
@@ -1132,6 +1139,23 @@ function paintAssets() {
   // chains share one Cosmos card in the All view.
   const totals = familyUsdTotals();
   const alerts = familyAlertMap();
+  // Home ordering (owner request, 2026-11-08): what you hold comes
+  // first. A family's load failure is read from its flag — several
+  // families keep a $0 total on failure (the scalar coins, Tron),
+  // while EVM/Bitcoin report a null total; sortHomeFamilies treats
+  // both as "unknown", ranked below held value and above true
+  // zeros. Solana/Sui have no load-failed flag (their main reads
+  // either land or the group never renders), so they sort purely
+  // on their totals. Cosmos counts as failed only when no chain
+  // holds anything and at least one read came back unavailable.
+  const famFailed = {
+    bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,
+    dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, tron: tronLoadFailed,
+    stellar: stellarLoadFailed, ton: tonLoadFailed, near: nearLoadFailed,
+    algorand: algoLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
+    aptos: aptosLoadFailed, stacks: stacksLoadFailed,
+    cosmos: famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),
+  };
   const titleOf = (key) => key === "evm" ? net.name : key === "bitcoin" ? "Bitcoin" : key === "cosmos" ? "Cosmos"
     : (RECEIVE_NETWORKS.find(x => x.id === key) || {}).name || key;
   const cardFor = (key, innerHtml, titled, totalVal) => {
@@ -1140,19 +1164,29 @@ function paintAssets() {
   };
   let html = "";
   if (viewKey === "all") {
-    const parts = [];
+    const cards = [];
     let cosmosBuf = [];
     const flushCosmos = () => {
-      if (cosmosBuf.length) { parts.push(cardFor("cosmos", cosmosBuf.join(""), true, COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0))); cosmosBuf = []; }
+      if (!cosmosBuf.length) return;
+      const total = COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0);
+      // The seven chain rows inside the shared Cosmos card follow
+      // the same within-family order as every other family.
+      const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join("");
+      cards.push({ key: "cosmos", totalUsd: total, failed: famFailed.cosmos, html: cardFor("cosmos", inner, true, total) });
+      cosmosBuf = [];
     };
     for (const g of groups) {
       if (g.key === "lightning") continue;
-      if (COSMOS_CHAINS.some(c => c.key === g.key)) { cosmosBuf.push(g.html); continue; }
+      if (COSMOS_CHAINS.some(c => c.key === g.key)) {
+        const r = cosmosRows.find(x => x.key === g.key);
+        cosmosBuf.push({ html: g.html, amount: r ? r.amount : null, valueUsd: totals[g.key] });
+        continue;
+      }
       flushCosmos();
-      parts.push(cardFor(g.key, g.html, true, totals[g.key]));
+      cards.push({ key: g.key, totalUsd: totals[g.key], failed: !!famFailed[g.key], html: cardFor(g.key, g.html, true, totals[g.key]) });
     }
     flushCosmos();
-    html = parts.join("");
+    html = sortHomeFamilies(cards).map(c => c.html).join("");
   } else {
     const g = groups.find(x => x.key === viewKey);
     html = g ? cardFor(g.key, g.html, false, totals[g.key]) : "";

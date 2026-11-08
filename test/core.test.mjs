@@ -32,6 +32,7 @@ import { detectScanFamily, isValidBitcoinAddress, scanTargetsForName, scanTarget
   normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
+import { sortHomeFamilies, sortHomeRows } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
@@ -4485,6 +4486,84 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcBtc.includes('if (dogeLoadFailed) return msg("gMsg", "Balance couldn\'t load right now'));
   ok("btc load-failed: refresh toast reflects a Bitcoin failure",
     appSrcBtc.includes('toast((evmLoadFailed || btcLoadFailed) ? "Balances couldn\'t load'));
+}
+
+// 63. Home asset-list ordering (owner request, 2026-11-08): opening
+// the wallet used to bury what you HOLD under zero-balance families
+// in a fixed chain order. Family cards now sort held-value first
+// (USD total descending), then load-failed families (unknown is not
+// zero), then all-zero families in their given order; rows within a
+// family sort positives (USD descending) → couldn't-load (amount
+// null) → true zeros in their given order. Pure helpers in core,
+// presentation only — the fixtures below pin the rules end to end.
+{
+  const fam = (key, totalUsd, failed = false) => ({ key, totalUsd, failed });
+  // paintAssets builds the groups in this fixed order today.
+  const FIXED = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
+    "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash"];
+  const keys = (arr) => arr.map(e => e.key);
+
+  // A held asset on a late family surfaces above every zero family,
+  // and the zero families keep their relative order behind it.
+  const suiHeld = FIXED.map(k => fam(k, k === "sui" ? 42.5 : 0));
+  ok("home order: a held Sui balance renders the Sui family first",
+    keys(sortHomeFamilies(suiHeld)).join() === ["sui", ...FIXED.filter(k => k !== "sui")].join());
+  const btcHeld = FIXED.map(k => fam(k, k === "bitcoin" ? 7 : 0));
+  ok("home order: a held Bitcoin balance stays on top",
+    keys(sortHomeFamilies(btcHeld)).join() === FIXED.join());
+
+  // Valued families sort by USD total descending; ties keep the
+  // order they were given.
+  const valued = [fam("bitcoin", 10), fam("evm", 300), fam("sui", 10), fam("tron", 0)];
+  ok("home order: valued families sort by total descending, ties stable",
+    keys(sortHomeFamilies(valued)).join() === "evm,bitcoin,sui,tron");
+
+  // A failed family sits between valued and zero families — both
+  // failure shapes (null total, and flag-set with a $0 total, the
+  // scalar-coin pattern), plus a bare null total (unknown).
+  const mixed = [fam("evm", null, true), fam("bitcoin", 12), fam("sui", 0),
+    fam("litecoin", 0, true), fam("tron", 0), fam("stellar", null)];
+  ok("home order: failed families sit between valued and zero families",
+    keys(sortHomeFamilies(mixed)).join() === "bitcoin,evm,litecoin,stellar,sui,tron");
+
+  // The all-zero fresh wallet renders in exactly today's order.
+  const freshWallet = FIXED.map(k => fam(k, 0));
+  ok("home order: an all-zero wallet's family order is unchanged",
+    keys(sortHomeFamilies(freshWallet)).join() === FIXED.join());
+  ok("home order: sorting does not mutate the input array",
+    keys(freshWallet).join() === FIXED.join() && sortHomeFamilies(freshWallet) !== freshWallet);
+
+  // Within a family: positives by USD value descending, then
+  // couldn't-load rows, then true zeros — each later tier in its
+  // given order. Rows use splitRows' { b, v } shape, as the app does.
+  const row = (id, amount, v) => ({ id, b: { amount }, v });
+  const rowsIn = [row("zero1", 0, 0), row("heldSmall", 2, 10), row("failed1", null, 0),
+    row("zero2", "0", 0), row("heldBig", 5, 30), row("failed2", null, null), row("heldUnpriced", 1, null)];
+  const rowsOut = sortHomeRows(rowsIn, (x) => x.b.amount, (x) => x.v).map(x => x.id);
+  ok("home rows: held token precedes zero tokens, couldn't-load rows between",
+    rowsOut.join() === "heldBig,heldSmall,heldUnpriced,failed1,failed2,zero1,zero2");
+  const zeroRows = [row("a", 0, 0), row("b", 0, 0), row("c", 0, 0)];
+  ok("home rows: an all-zero family's row order is unchanged",
+    sortHomeRows(zeroRows, (x) => x.b.amount, (x) => x.v).map(x => x.id).join() === "a,b,c");
+
+  // app.js wiring (source pins, as in sections 61/62).
+  const appSrcHome = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("home order: paintAssets renders the All view through sortHomeFamilies",
+    appSrcHome.includes("html = sortHomeFamilies(cards).map(c => c.html).join(\"\");")
+    && appSrcHome.includes("sortHomeFamilies, sortHomeRows,"));
+  ok("home order: family failure is read from the load-failed flags",
+    appSrcHome.includes("bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,")
+    && appSrcHome.includes("cosmos: famLoaded.has(\"cosmos\") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),"));
+  ok("home order: splitRows main list runs through sortHomeRows, old value-only sort gone",
+    appSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };")
+    && !appSrcHome.includes("main.sort((x, y) => y.v - x.v);"));
+  ok("home order: Cosmos rows sort inside their shared card",
+    appSrcHome.includes("const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join(\"\");"));
+  ok("home order: a null amount is never classified as a zero balance",
+    appSrcHome.includes("if (b.amount != null && Number(b.amount) === 0 && !isNativeRow(famKey, b)"));
+  ok("home order: ordering helpers are used by the home list only (send sheets untouched)",
+    (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 1
+    && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 2);
 }
 
 console.log(`\n${passed} checks passed`);

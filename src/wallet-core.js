@@ -8090,6 +8090,54 @@ export async function sendAptos(phrase, { to, amount, token = null }) {
   return { hash, pending: true };
 }
 
+/* ================= Home asset-list ordering (owner request, 2026-11-08) =================
+ * What you HOLD belongs at the top of the home list: opening the
+ * wallet used to bury a held asset under zero-balance families in a
+ * fixed chain order. These two pure helpers are the whole ordering
+ * rule — presentation only; they read totals/amounts, never fetch.
+ * Both are stable: entries that tie keep the order they were given,
+ * so an all-zero wallet renders in exactly the order it always has. */
+
+/** Order home family cards: families holding value first (USD
+ *  total descending); then families whose balances FAILED to load
+ *  (total null, or the family's load-failed flag set) — unknown is
+ *  not zero, so they stay visible above the true zeros; then the
+ *  all-zero families in their given order.
+ *  entries: [{ key, totalUsd (number|null), failed (boolean) }] */
+export function sortHomeFamilies(entries) {
+  const tier = (e) => {
+    if (e.totalUsd != null && e.totalUsd > 0) return 0;
+    if (e.totalUsd == null || e.failed) return 1;
+    return 2;
+  };
+  return entries.map((e, i) => [e, i]).sort((a, b) => {
+    const ta = tier(a[0]), tb = tier(b[0]);
+    if (ta !== tb) return ta - tb;
+    if (ta === 0) { const d = b[0].totalUsd - a[0].totalUsd; if (d !== 0) return d; }
+    return a[1] - b[1];
+  }).map(([e]) => e);
+}
+
+/** Order rows within one family: positive balances first (USD
+ *  value descending), then couldn't-load rows (amount null — the
+ *  balance is unknown, never a dressed-up zero), then true-zero
+ *  rows in their given order. amountOf/valueOf read the caller's
+ *  row shape; an unpriced positive counts as value 0 among the
+ *  positives. */
+export function sortHomeRows(items, amountOf, valueOf) {
+  const tier = (x) => {
+    const a = amountOf(x);
+    if (a == null) return 1;
+    return Number(a) > 0 ? 0 : 2;
+  };
+  return items.map((x, i) => [x, i]).sort((p, q) => {
+    const tp = tier(p[0]), tq = tier(q[0]);
+    if (tp !== tq) return tp - tq;
+    if (tp === 0) { const d = (valueOf(q[0]) || 0) - (valueOf(p[0]) || 0); if (d !== 0) return d; }
+    return p[1] - q[1];
+  }).map(([x]) => x);
+}
+
 /* ================= Persisted-metadata safety (security audit 2026-11-06, C1) =================
  * Token symbols/names come from ERC-20 metadata and LI.FI — attacker-
  * controlled strings. Fluid PERSISTS some of them (send history
