@@ -1,0 +1,15 @@
+# Netlify response headers (QA round 2, stale-build caching): the
+# HTML documents are the entry points that reference the ?v=-stamped
+# bundle, so THEY must revalidate on every load — a browser that
+# caches the HTML keeps booting the previous build until a manual
+# reload. Scoped to the HTML entries only: the stamped assets
+# (app.bundle.js?v=<hash>, chunks, wasm) keep their default caching,
+# which is safe precisely because their URLs change every build.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+/recovery.html
+  Cache-Control: public, max-age=0, must-revalidate
+/fluid-wallet.html
+  Cache-Control: public, max-age=0, must-revalidate
