@@ -193,22 +193,26 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
   // Nigeria (7 Nov 2026, owner's corrected criterion): the buy
   // disqualifier is WalletConnect-only address entry, NOT BVN/KYC.
-  // Fonbnk buy is OUT everywhere (its wallet step is WalletConnect;
-  // there is no paste path); Fonbnk sell stays (no wallet
-  // connection). Noblocks is gone (BVN wall + a verify step that
-  // failed live). NoOnes is the NG BUY lead: an external P2P
-  // marketplace link-out, email-only starter sign-up, paste-address
-  // send-out — honestly labelled and UNBADGED (its ≈3–4% premium is
-  // not the cheapest measured; it leads on the address rule).
-  ok("NG lineup is NoOnes buy / Fonbnk sell", JSON.stringify(names("NG")) === JSON.stringify(["NoOnes"])
+  // Fonbnk sell stays everywhere (no wallet connection). Noblocks
+  // is gone (BVN wall + a verify step that failed live). NoOnes is
+  // the NG BUY lead: an external P2P marketplace link-out,
+  // email-only starter sign-up, paste-address send-out — honestly
+  // labelled and UNBADGED (its ≈3–4% premium is not the cheapest
+  // measured; it leads on the address rule). Fonbnk BUY is back
+  // for NG only (reinstated 8 Nov 2026): the deep-dive showed
+  // paste is a documented delivery path there, so the NG buy row
+  // overrides the provider's WalletConnect default; every other
+  // corridor keeps Fonbnk sell-only.
+  ok("NG lineup is NoOnes + Fonbnk buy / Fonbnk sell", JSON.stringify(names("NG")) === JSON.stringify(["NoOnes", "Fonbnk"])
     && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk"]));
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
   ok("NG has no Paybis or Mercuryo", !names("NG").includes("Paybis") && !names("NG").includes("Mercuryo")
     && !names("NG", "sell").includes("Paybis") && !names("NG", "sell").includes("Mercuryo"));
-  ok("NG buy flags the Fonbnk buy block", rampRoutesFor("NG", "buy", "bsc", "USDC").fonbnkBuyBlocked === true
-    && rampRoutesFor("NG", "sell", "bsc", "USDC").fonbnkBuyBlocked === false);
+  ok("NG buy is NOT Fonbnk-blocked (row override); KE buy still is", rampRoutesFor("NG", "buy", "bsc", "USDC").fonbnkBuyBlocked === false
+    && rampRoutesFor("NG", "sell", "bsc", "USDC").fonbnkBuyBlocked === false
+    && rampRoutesFor("KE", "buy", "bsc", "USDC").fonbnkBuyBlocked === true);
   const ngBuy = rampRoutesFor("NG", "buy", "bsc", "USDC").routes;
-  ok("NG NoOnes is the unbadged external lead", ngBuy.length === 1 && ngBuy[0].rank === 0
+  ok("NG NoOnes is the unbadged external lead", ngBuy.length === 2 && ngBuy[0].rank === 0
     && ngBuy[0].url === "https://noones.app" && ngBuy[0].badge === false && ngBuy[0].external === true);
   ok("NG NoOnes note is honest about what it is", ngBuy[0].note.includes("External marketplace")
     && ngBuy[0].note.includes("no ID documents") && ngBuy[0].note.includes("no WalletConnect")
@@ -217,22 +221,54 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     && !ngBuy[0].note.includes("zero sign-up") && !ngBuy[0].note.includes("scam risk")
     && ngBuy[0].note.includes("no ID documents for everyday amounts")
     && ngBuy[0].note.includes("Fluid is adding more Nigeria routes as they pass our checks"));
+  // Fonbnk NG buy (reinstated 8 Nov 2026): the widget ROOT URL
+  // built by the same builder as everywhere else, carrying only
+  // the non-gated params; the route's effective address entry is
+  // the row's "paste" override while the provider default stays
+  // "walletconnect"; the note states the cap, Fonbnk's own ID
+  // check and the minutes-not-instant fulfilment plainly.
+  const ngFonbnkBuy = ngBuy.find(r => r.name === "Fonbnk");
+  ok("NG Fonbnk buy route opens the plain on-ramp widget", !!ngFonbnkBuy && ngFonbnkBuy.rank === 1
+    && ngFonbnkBuy.url === fonbnkOnrampUrl("bsc", "USDC", "NG")
+    && ngFonbnkBuy.url.startsWith("https://pay.fonbnk.com/?") && !ngFonbnkBuy.url.includes("/offramp")
+    && ngFonbnkBuy.badge === false && ngFonbnkBuy.external === false);
+  ok("NG Fonbnk buy carries the paste override, default untouched", ngFonbnkBuy.addressEntry === "paste"
+    && RAMP_ADDRESS_ENTRY["Fonbnk"] === "walletconnect");
+  ok("NG Fonbnk buy note is honest: paste, $500 cap, own ID check, minutes", ngFonbnkBuy.note.includes("address you paste")
+    && ngFonbnkBuy.note.includes("no WalletConnect needed") && ngFonbnkBuy.note.includes("$500 per order")
+    && ngFonbnkBuy.note.includes("Fonbnk runs its own ID check (BVN number + photo ID)")
+    && ngFonbnkBuy.note.includes("usually in minutes — not instant"));
+  ok("NG Fonbnk buy flags the in-sheet address + copy affordance", ngFonbnkBuy.pasteAddress === true
+    && ngBuy[0].pasteAddress === false);
+  const appSrcR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("app sheet renders the paste-address copy block at the route", appSrcR.includes('id="rCopyAddr"')
+    && appSrcR.includes("pasteAddress") && appSrcR.includes("Copy address")
+    && appSrcR.includes("paste it into Fonbnk when it asks where to deliver"));
+  ok("NG Fonbnk buy drops off a network Fonbnk doesn't ride", (() => { const r = rampRoutesFor("NG", "buy", "linea", "USDC");
+    return r.fonbnkNetworkMissing === true && !r.routes.some(x => x.name === "Fonbnk")
+      && r.routes.some(x => x.name === "NoOnes"); })());
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
   ok("NG Fonbnk sell note is address-based, no ID", ngSell[0].note.includes("no ID check") && ngSell[0].url.startsWith("https://pay.fonbnk.com/"));
+  ok("NG Fonbnk sell wiring is unchanged (offramp URL, no paste block)", ngSell.length === 1
+    && ngSell[0].url === fonbnkOfframpUrl("bsc", "USDC", "NG") && ngSell[0].pasteAddress === false
+    && ngSell[0].addressEntry === "walletconnect");
 
   // The address-entry capability table is the standing buy gate:
-  // Fonbnk is the WalletConnect-only route; every listed buy route
-  // anywhere takes a pasted address. A future provider added to a
-  // plan without a caps entry — or flipped to "walletconnect" —
-  // fails here instead of silently reaching a buy sheet.
+  // Fonbnk's provider default is the WalletConnect-only one; every
+  // listed buy route anywhere takes a pasted address — by default,
+  // or by a per-corridor row override whose effective entry the
+  // route object carries as addressEntry (NG Fonbnk buy). A future
+  // provider added to a plan without a caps entry — or flipped to
+  // "walletconnect" — fails here instead of silently reaching a
+  // buy sheet.
   ok("address-entry caps are recorded truthfully", RAMP_ADDRESS_ENTRY["Fonbnk"] === "walletconnect"
     && ["Mt Pelerin", "Paybis", "Mercuryo", "NoOnes", "Spritz"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste"));
   ok("every planned provider has a caps entry", RAMP_COUNTRIES.every(c =>
     RAMP_COUNTRY_PLAN[c.code].every(([n]) => typeof RAMP_ADDRESS_ENTRY[n] === "string")));
   ok("no WalletConnect-only route on any buy sheet", RAMP_COUNTRIES.every(c =>
-    rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r => RAMP_ADDRESS_ENTRY[r.name] === "paste")));
-  ok("Fonbnk is on no buy sheet but keeps its sell sheets", RAMP_COUNTRIES.every(c =>
-    !rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"))
+    rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r => r.addressEntry === "paste")));
+  ok("Fonbnk buy is NG-only; it keeps its sell sheets", RAMP_COUNTRIES.every(c =>
+    rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk") === (c.code === "NG"))
     && ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
       rampRoutesFor(code, "sell", "bsc", "USDC").routes.some(r => r.name === "Fonbnk")));
   ok("NoOnes appears only as the NG buy lead", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {

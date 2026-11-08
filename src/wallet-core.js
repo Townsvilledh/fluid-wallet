@@ -3704,6 +3704,26 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //    the cheap bar before fees — but price is not the removal
 //    reason; Kenya/Ghana share the same wallet screen and lose
 //    Fonbnk buy the same way.)
+//    CORRECTION (deep-dive of 7 Nov 2026, fluid-noblocks-class-
+//    20261107; NG buy reinstated 8 Nov 2026): Fonbnk's own docs
+//    and live widget show address-paste is a first-class delivery
+//    path on the buy side — WalletConnect is offered, not
+//    mandatory — so the tap-test reading above does not hold for
+//    Nigeria. NG Fonbnk buy is back as a plan-row override
+//    (addressEntry: "paste" on the NG buy row only; the provider
+//    default in RAMP_ADDRESS_ENTRY stays "walletconnect", and
+//    corridors the deep-dive didn't cover keep the sell-only
+//    stance). NG buy facts from the same dive: $500 per-order
+//    cap, Fonbnk-side KYC topping out at BVN number + hosted
+//    photo ID, and agent fulfilment in minutes (not instant).
+//    Address PRE-FILL is not possible keylessly: Fonbnk's docs
+//    gate the address / source / signature URL params behind a
+//    verified merchant (KYB) account, so the NG buy sheet shows
+//    the user's own address with a copy button at the route
+//    instead (the route's pasteAddress flag) and the widget
+//    opens un-prefilled. Fluid earns nothing from this route
+//    today (partner fees are KYB/JWT-gated) — no note implies
+//    otherwise.
 //  - Noblocks REMOVED 7 Nov 2026: BVN wall up front, and the
 //    owner's live attempt died on its own verify button.
 //  - NoOnes ADDED 7 Nov 2026 as the Nigeria BUY lead (owner's call
@@ -3746,7 +3766,12 @@ const RAMP_DEFAULT_NOTES = {
  *  ID check (BVN/KYC) alone does NOT disqualify a "paste" route.
  *  rampRoutesFor's buy assembly consults this table, and the tests
  *  pin it, so a future route cannot silently reintroduce a
- *  WalletConnect-only buy. */
+ *  WalletConnect-only buy. A plan row may override the provider
+ *  default for its ONE corridor via `addressEntry` where
+ *  corridor-level evidence shows a paste path the global reading
+ *  missed (NG Fonbnk buy, reinstated 8 Nov 2026 — see the plan
+ *  notes); the override is per-row, never global, and every route
+ *  object carries its effective entry as `addressEntry`. */
 export const RAMP_ADDRESS_ENTRY = {
   "Fonbnk": "walletconnect",
   "Mt Pelerin": "paste",
@@ -3766,7 +3791,16 @@ export const RAMP_COUNTRY_PLAN = {
     // because it is the only NG buy route that takes a pasted
     // Fluid address (see the plan notes above).
     ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · email-only sign-up (name + date of birth, no ID documents for everyday amounts) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate · Fluid is adding more Nigeria routes as they pass our checks" }],
-    ["Fonbnk", { note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], note: "Cash out to your bank — you send to an address they give you, and Nigeria sell orders need no ID check · priced off the local market — check the quote before you send" }],
+    // Fonbnk BUY (reinstated 8 Nov 2026 — see the CORRECTION in
+    // the plan notes above): paste-address delivery is documented
+    // for Nigeria, so this row overrides the provider's
+    // WalletConnect default for NG only, and carries pasteAddress
+    // so the sheet shows the user's own address + a copy button at
+    // the route (the widget can't be pre-filled keylessly). NO
+    // badge: no price evidence puts it ahead of the lead, and
+    // Fluid earns nothing from it.
+    ["Fonbnk", { modes: ["buy"], addressEntry: "paste", pasteAddress: true, note: "Buy USDC or USDT with a bank transfer — Fonbnk delivers to the address you paste, no WalletConnect needed · up to $500 per order · Fonbnk runs its own ID check (BVN number + photo ID) · a local agent fills the order, usually in minutes — not instant · priced off the local market — check the quote before you pay" }],
   ],
   KE: [
     ["Fonbnk", {}],
@@ -3811,7 +3845,7 @@ export const RAMP_COUNTRY_PLAN = {
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +
  *  asset, in ranked order. Each route: { name, url, note, badge,
- *  external, rank }. A Fonbnk row whose network Fonbnk doesn't ride is
+ *  external, addressEntry, pasteAddress, rank }. A Fonbnk row whose network Fonbnk doesn't ride is
  *  omitted and reported via fonbnkNetworkMissing so the sheet can say
  *  why; mtpUnavailable mirrors the Mt Pelerin fiat gate for the sheet's
  *  honest "not available for this currency" line. Buy assembly applies
@@ -3820,7 +3854,12 @@ export const RAMP_COUNTRY_PLAN = {
  *  that drops Fonbnk this way reports fonbnkBuyBlocked, so the sheet
  *  can say why Fonbnk is missing). A plan row may also carry
  *  modes: ["buy"] / ["sell"] to appear on one side only (NoOnes in NG
- *  is buy-only — NG cash-out is Fonbnk), and external: true to render
+ *  is buy-only — NG cash-out is Fonbnk), addressEntry to override the
+ *  provider's default address entry for its corridor (NG Fonbnk buy),
+ *  pasteAddress: true to have the sheet show the user's own receive
+ *  address with a copy button at the route (for paste routes whose
+ *  widget can't be pre-filled keylessly — Fonbnk's address param is
+ *  merchant-gated), and external: true to render
  *  as an external-app link-out (NoOnes is a marketplace, not a Fluid
  *  partner widget). */
 export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
@@ -3831,14 +3870,17 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
   let fonbnkBuyBlocked = false;
   for (const [name, opts] of plan) {
     let url = null;
+    if (Array.isArray(opts.modes) && !opts.modes.includes(mode)) continue;
     // The buy gate: no WalletConnect-only route on a buy sheet, ever.
-    if (mode === "buy" && RAMP_ADDRESS_ENTRY[name] === "walletconnect") {
+    // A row may override the provider default for its corridor
+    // (opts.addressEntry — NG Fonbnk buy is the one override).
+    const addressEntry = opts.addressEntry || RAMP_ADDRESS_ENTRY[name];
+    if (mode === "buy" && addressEntry === "walletconnect") {
       if (name === "Fonbnk") fonbnkBuyBlocked = true;
       continue;
     }
-    if (Array.isArray(opts.modes) && !opts.modes.includes(mode)) continue;
     if (name === "Fonbnk") {
-      url = fonbnkOfframpUrl(networkKey, asset, c.code);
+      url = mode === "buy" ? fonbnkOnrampUrl(networkKey, asset, c.code) : fonbnkOfframpUrl(networkKey, asset, c.code);
       if (!url) { fonbnkNetworkMissing = true; continue; }
     } else if (name === "Mt Pelerin") {
       url = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
@@ -3860,6 +3902,8 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       badge: !!opts.badge,
       external: !!opts.external,
       unavailable: !!opts.unavailable,
+      addressEntry,
+      pasteAddress: !!opts.pasteAddress,
       rank: routes.length,
     });
   }
