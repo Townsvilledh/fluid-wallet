@@ -2725,18 +2725,26 @@ export function normalizeFluidName(input) {
 }
 /** A name resolves to the wallet's KEYS (addresses) on every family:
  *  `evm` is one address valid on ALL 15 EVM chains/L2s for ANY token
- *  (native, USDC, USDT, any ERC-20), `btc` is the Bitcoin key, and `ln`
- *  is an optional Lightning address for invoice-less Lightning sends.
- *  New families (sui, sol) get added as fields — old entries keep working. */
-export function buildNameEntry(name, evm, btc, ln = null, algo = null) {
+ *  (native, USDC, USDT, any ERC-20), `btc` is the Bitcoin key, `ln`
+ *  is an optional Lightning address for invoice-less Lightning sends,
+ *  and `algo`, `sol`, `tron`, `sui` carry the wallet's Algorand,
+ *  Solana, Tron and Sui addresses. Every field beyond evm/btc is
+ *  optional — an entry carries the families its wallet uses, and
+ *  entries published before a field existed keep working. */
+export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null) {
   if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   const entry = { evm, btc };
   if (ln) entry.ln = ln;
-  // Algorand rides along when the caller has the wallet's ALGO
-  // address: published entries (ethuram, dripbot) carry all four
-  // fields, and a claim/update entry should match that shape so the
-  // name resolves on every chain the registry schema covers.
+  // The non-EVM families ride along when the caller has the wallet's
+  // address for them, each behind its own full validator (the same
+  // checks sanitizeNameEntry applies at read time): published
+  // entries carry the fields, and a claim/update entry should match
+  // that shape so the name resolves on every chain the registry
+  // schema covers.
   if (algo && isValidAlgorandAddress(algo)) entry.algo = algo;
+  if (sol && isValidSolanaAddress(sol)) entry.sol = sol;
+  if (tron && isValidTronAddress(tron)) entry.tron = tron;
+  if (sui && isValidSuiAddress(sui)) entry.sui = sui;
   return { [name]: entry };
 }
 /** Fetch a Lightning invoice for a Lightning address (LNURL-pay, LUD-16).
@@ -2793,6 +2801,17 @@ export function sanitizeNameEntry(entry) {
   // shape regex — a malformed or bad-checksum `algo` field is dropped
   // exactly like the other fields above.
   if (typeof entry.algo === "string" && isValidAlgorandAddress(entry.algo.trim())) out.algo = entry.algo.trim();
+  // Solana / Tron / Sui: the same treatment — each field is carried
+  // only when it passes the chain's REAL validator (Base58 32-byte
+  // decode, Base58Check + 0x41 prefix, Sui hex shape), never a shape
+  // regex alone. The Base58 families are stored exactly as published
+  // (their checksummed mixed-case form IS the canonical form); Sui
+  // is stored in its canonical form (0x + 64 lowercase hex — the
+  // form normalizeSuiAddress defines and Scan's raw-address path
+  // emits), so every consumer sees one spelling.
+  if (typeof entry.sol === "string" && isValidSolanaAddress(entry.sol.trim())) out.sol = entry.sol.trim();
+  if (typeof entry.tron === "string" && isValidTronAddress(entry.tron.trim())) out.tron = entry.tron.trim();
+  if (typeof entry.sui === "string") { const n = normalizeSuiAddress(entry.sui); if (n) out.sui = n; }
   return Object.keys(out).length ? out : null;
 }
 /** The one registry read both name lookups share: try the requested
@@ -2832,8 +2851,8 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
  *  3. A registered name with no address for this chain is the other
  *     hard block, worded exactly like the Bitcoin sheet's:
  *     "That Fluid name has no <Chain> address in the registry."
- *     Chains the registry schema doesn't carry (field: null —
- *     Solana, Tron, Sui today) always land here for known names.
+ *     A chain the registry schema doesn't carry (field: null)
+ *     always lands here for known names.
  *  Returns { to, name } — name is null for a raw address. Throws an
  *  Error carrying the user-facing message otherwise. `lookupName`
  *  is injectable for tests. */
@@ -2886,20 +2905,28 @@ export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
  *  spellings of the same key); BTC addresses are case-sensitive and
  *  compare exactly. Algorand addresses compare case-insensitively too:
  *  the base32 encoding decodes identically in either case (the decoder
- *  uppercases first), so case carries no information. Returns
+ *  uppercases first), so case carries no information. Solana and Tron
+ *  addresses are Base58 — case is significant there, so they compare
+ *  exactly, like BTC. Sui addresses compare in canonical form (0x +
+ *  64 lowercase hex, via normalizeSuiAddress — entries are already
+ *  stored canonically by sanitizeNameEntry). Returns
  *  { name, ...entry } or null. Lets a wallet that already owns a
  *  published name recognise it as its own instead of being told the
  *  name is "already claimed" by itself. */
-export function findNameForAddresses(registry, { evm = null, btc = null, algo = null } = {}) {
+export function findNameForAddresses(registry, { evm = null, btc = null, algo = null, sol = null, tron = null, sui = null } = {}) {
   if (!registry || typeof registry !== "object") return null;
   const evmLc = evm ? String(evm).toLowerCase() : null;
   const algoUc = algo ? String(algo).toUpperCase() : null;
+  const suiNorm = sui ? normalizeSuiAddress(sui) : null;
   for (const [name, rawEntry] of Object.entries(registry)) {
     const entry = sanitizeNameEntry(rawEntry);
     if (!entry) continue;
     if (evmLc && entry.evm && entry.evm.toLowerCase() === evmLc) return { name, ...entry };
     if (btc && entry.btc && entry.btc === btc) return { name, ...entry };
     if (algoUc && entry.algo && entry.algo.toUpperCase() === algoUc) return { name, ...entry };
+    if (sol && entry.sol && entry.sol === sol) return { name, ...entry };
+    if (tron && entry.tron && entry.tron === tron) return { name, ...entry };
+    if (suiNorm && entry.sui && entry.sui === suiNorm) return { name, ...entry };
   }
   return null;
 }
@@ -8456,9 +8483,11 @@ export function scanTarget(chainKey, address, family) {
            address, label: scanChainLabel(chainKey), badge: scanChainBadge(chainKey) };
 }
 /** Targets for a resolved Fluid name: its REGISTERED addresses only —
- *  the EVM address swept across SCAN_EVM_NETWORKS, plus BTC and
- *  Algorand when the entry carries them. The raw registry entry is
- *  sanitised first (the send sheets' trust boundary). */
+ *  the EVM address swept across SCAN_EVM_NETWORKS, plus BTC, Algorand,
+ *  Solana, Tron and Sui when the entry carries them. The raw registry
+ *  entry is sanitised first (the send sheets' trust boundary). The
+ *  non-EVM targets use chainKey === family, exactly the shape
+ *  scanTargetsForAddress builds for a pasted address of the family. */
 export function scanTargetsForName(entry) {
   const e = sanitizeNameEntry(entry);
   if (!e) return [];
@@ -8466,6 +8495,9 @@ export function scanTargetsForName(entry) {
   if (e.evm) for (const k of SCAN_EVM_NETWORKS) out.push(scanTarget(k, e.evm, "evm"));
   if (e.btc) out.push(scanTarget("btc", e.btc, "btc"));
   if (e.algo) out.push(scanTarget("algo", e.algo, "algo"));
+  if (e.sol) out.push(scanTarget("solana", e.sol, "solana"));
+  if (e.tron) out.push(scanTarget("tron", e.tron, "tron"));
+  if (e.sui) out.push(scanTarget("sui", e.sui, "sui"));
   return out;
 }
 /** Targets for a raw address: an EVM address gets the same

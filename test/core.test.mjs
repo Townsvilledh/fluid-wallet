@@ -2452,6 +2452,124 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     sanitizeNameEntry(published.ethuram)?.algo === "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4");
 }
 
+// ---------- Fluid Names: the `sol`, `tron` and `sui` fields ----------
+// The registry schema now carries Solana, Tron and Sui alongside
+// evm/btc/ln/algo. Same rules as the algo field: each is validated at
+// the trust boundary with the chain's REAL validator (never a shape
+// regex), resolveFluidName carries them, the three send sheets
+// resolve names through them (field "sol"/"tron"/"sui" — no longer
+// field: null), findNameForAddresses matches on them, Scan targets
+// them for a name exactly as it does for a pasted address, and
+// buildNameEntry emits them behind the same validators. Sui is the
+// one canonicalisation: entries store 0x + 64 lowercase hex (the
+// form normalizeSuiAddress defines), whatever spelling was published.
+{
+  const { sanitizeNameEntry, resolveFluidName, resolveChainRecipient,
+    isValidSolanaAddress, isValidTronAddress, isValidSuiAddress,
+    scanTargetsForName, scanTargetsForAddress, detectScanFamily } = await import("../src/wallet-core.js");
+  const EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const BTC = "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn";
+  const SOL = "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn";
+  const TRON = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  const SUI = "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831";
+  const BAD_SOL = SOL.slice(0, -1); // truncated → decodes to 31 bytes, not a key
+  const BAD_TRON = TRON.slice(0, 10) + (TRON[10] === "A" ? "B" : "A") + TRON.slice(11); // payload char flipped → Base58Check fails
+  const BAD_SUI = "0x" + "zz".repeat(32); // non-hex
+  const throwsMsg = async (fn, want) => { try { await fn(); return false; } catch (e) { return e.message === want; } };
+
+  // sanitizeNameEntry: valid fields carried, malformed dropped.
+  ok("names-sol-tron-sui: a valid sol field passes sanitize intact",
+    sanitizeNameEntry({ evm: EVM, sol: SOL }).sol === SOL);
+  ok("names-sol-tron-sui: a valid tron field passes sanitize intact",
+    sanitizeNameEntry({ evm: EVM, tron: TRON }).tron === TRON);
+  ok("names-sol-tron-sui: a valid sui field passes sanitize intact",
+    sanitizeNameEntry({ evm: EVM, sui: SUI }).sui === SUI);
+  ok("names-sol-tron-sui: a short-form sui field is stored canonicalised",
+    sanitizeNameEntry({ sui: "0x2" }).sui === "0x" + "0".repeat(63) + "2");
+  ok("names-sol-tron-sui: a malformed sol field is dropped, valid fields kept",
+    (() => { const e = sanitizeNameEntry({ evm: EVM, sol: BAD_SOL }); return !!e && e.evm === EVM && e.sol === undefined; })());
+  ok("names-sol-tron-sui: a bad-checksum tron field is dropped, valid fields kept",
+    (() => { const e = sanitizeNameEntry({ evm: EVM, tron: BAD_TRON }); return !!e && e.evm === EVM && e.tron === undefined; })());
+  ok("names-sol-tron-sui: a malformed sui field is dropped, valid fields kept",
+    (() => { const e = sanitizeNameEntry({ evm: EVM, sui: BAD_SUI }); return !!e && e.evm === EVM && e.sui === undefined; })());
+  ok("names-sol-tron-sui: an entry whose only fields are malformed sol/tron/sui is null",
+    sanitizeNameEntry({ sol: BAD_SOL }) === null && sanitizeNameEntry({ tron: BAD_TRON }) === null && sanitizeNameEntry({ sui: BAD_SUI }) === null);
+
+  // resolveFluidName carries the new fields from a fetched registry.
+  const REG = { dripbot: { evm: EVM, btc: BTC, sol: SOL, tron: TRON, sui: SUI }, evmonly: { evm: EVM } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => REG });
+  try {
+    const hit = await resolveFluidName("dripbot");
+    ok("names-sol-tron-sui: resolveFluidName carries sol, tron and sui",
+      hit?.sol === SOL && hit?.tron === TRON && hit?.sui === SUI);
+  } finally { globalThis.fetch = realFetch; }
+
+  // resolveChainRecipient through the sheets' real field names.
+  const reg = async (n) => n === "dripbot" ? { name: "dripbot", ...REG.dripbot } : (n === "evmonly" ? { name: "evmonly", ...REG.evmonly } : null);
+  ok("names-sol-tron-sui: a known name resolves its Solana address",
+    (await resolveChainRecipient("dripbot", { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana", lookupName: reg })).to === SOL);
+  ok("names-sol-tron-sui: a known name resolves its Tron address",
+    (await resolveChainRecipient("dripbot", { isValidAddress: isValidTronAddress, field: "tron", chainLabel: "Tron", lookupName: reg })).to === TRON);
+  ok("names-sol-tron-sui: a known name resolves its Sui address",
+    (await resolveChainRecipient("dripbot", { isValidAddress: isValidSuiAddress, field: "sui", chainLabel: "Sui", lookupName: reg })).to === SUI);
+  ok("names-sol-tron-sui: a name without sol gets the exact Solana registry error", await throwsMsg(
+    () => resolveChainRecipient("evmonly", { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana", lookupName: reg }),
+    "That Fluid name has no Solana address in the registry."));
+  ok("names-sol-tron-sui: a name without tron gets the exact Tron registry error", await throwsMsg(
+    () => resolveChainRecipient("evmonly", { isValidAddress: isValidTronAddress, field: "tron", chainLabel: "Tron", lookupName: reg }),
+    "That Fluid name has no Tron address in the registry."));
+  ok("names-sol-tron-sui: a name without sui gets the exact Sui registry error", await throwsMsg(
+    () => resolveChainRecipient("evmonly", { isValidAddress: isValidSuiAddress, field: "sui", chainLabel: "Sui", lookupName: reg }),
+    "That Fluid name has no Sui address in the registry."));
+  const appSrcSts = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("names-sol-tron-sui: the three sheets resolve via their registry fields",
+    appSrcSts.includes('resolveChainRecipient(to, { isValidAddress: isValidTronAddress, field: "tron", chainLabel: "Tron" })')
+    && appSrcSts.includes('resolveChainRecipient(to, { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana" })')
+    && appSrcSts.includes('resolveChainRecipient(to, { isValidAddress: isValidSuiAddress, field: "sui", chainLabel: "Sui" })'));
+
+  // Scan: a name's new-family targets are the raw-address targets.
+  const fullTargets = scanTargetsForName({ evm: EVM, btc: BTC, sol: SOL, tron: TRON, sui: SUI });
+  ok("names-sol-tron-sui: a full entry yields the sweep + BTC + Solana + Tron + Sui targets",
+    fullTargets.length === 9
+    && fullTargets.some(t => t.chainKey === "solana" && t.family === "solana" && t.address === SOL && t.label === "Solana" && t.badge === "SOL")
+    && fullTargets.some(t => t.chainKey === "tron" && t.family === "tron" && t.address === TRON && t.label === "Tron" && t.badge === "TRON")
+    && fullTargets.some(t => t.chainKey === "sui" && t.family === "sui" && t.address === SUI && t.label === "Sui" && t.badge === "SUI"));
+  ok("names-sol-tron-sui: name targets are byte-identical to the raw-address targets",
+    JSON.stringify(scanTargetsForName({ sol: SOL })) === JSON.stringify(scanTargetsForAddress(detectScanFamily(SOL)))
+    && JSON.stringify(scanTargetsForName({ tron: TRON })) === JSON.stringify(scanTargetsForAddress(detectScanFamily(TRON)))
+    && JSON.stringify(scanTargetsForName({ sui: SUI })) === JSON.stringify(scanTargetsForAddress(detectScanFamily(SUI))));
+  ok("names-sol-tron-sui: an entry without the new fields yields no solana/tron/sui targets",
+    scanTargetsForName({ evm: EVM, btc: BTC }).every(t => !["solana", "tron", "sui"].includes(t.chainKey)));
+
+  // Reverse lookup: exact for the Base58 families, canonical for Sui.
+  ok("names-sol-tron-sui: reverse lookup matches by sol",
+    findNameForAddresses(REG, { sol: SOL })?.name === "dripbot");
+  ok("names-sol-tron-sui: reverse lookup matches by tron",
+    findNameForAddresses(REG, { tron: TRON })?.name === "dripbot");
+  ok("names-sol-tron-sui: reverse lookup matches by sui",
+    findNameForAddresses(REG, { sui: SUI })?.name === "dripbot");
+  ok("names-sol-tron-sui: reverse lookup by sui ignores case (canonical compare)",
+    findNameForAddresses(REG, { sui: "0x" + SUI.slice(2).toUpperCase() })?.name === "dripbot");
+  ok("names-sol-tron-sui: reverse lookup stays case-sensitive for the Base58 families",
+    findNameForAddresses(REG, { sol: "D" + SOL.slice(1) }) === null
+    && findNameForAddresses(REG, { tron: "Tm" + TRON.slice(2) }) === null);
+
+  // buildNameEntry: the new fields ride along behind their validators,
+  // and the app's claim flows pass the wallet's own derived addresses.
+  ok("names-sol-tron-sui: a built entry carries valid sol, tron and sui",
+    (() => { const e = buildNameEntry("someone", EVM, BTC, null, null, SOL, TRON, SUI).someone; return e.sol === SOL && e.tron === TRON && e.sui === SUI; })());
+  ok("names-sol-tron-sui: malformed sol/tron/sui never reach a built entry",
+    (() => { const e = buildNameEntry("someone", EVM, BTC, null, null, BAD_SOL, BAD_TRON, BAD_SUI).someone; return e.sol === undefined && e.tron === undefined && e.sui === undefined; })());
+  ok("names-sol-tron-sui: a built entry keeps a valid field beside a malformed one",
+    (() => { const e = buildNameEntry("someone", EVM, BTC, null, null, SOL, BAD_TRON, SUI).someone; return e.sol === SOL && e.tron === undefined && e.sui === SUI; })());
+  ok("names-sol-tron-sui: the claim flows build entries from the wallet's own derived addresses",
+    appSrcSts.includes("solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase)")
+    && appSrcSts.includes("tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase)")
+    && appSrcSts.includes("suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase)")
+    && appSrcSts.includes("solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase))"));
+}
+
 // ---------- Fluid Names: registry host + mirror fallback ----------
 // The registry's primary home is the Netlify site; the GitHub Pages
 // mirror serves the same published names.json. When the primary

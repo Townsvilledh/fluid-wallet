@@ -1898,7 +1898,7 @@ function openTronSheet(tok) {
     if (to && !isValidTronAddress(to)) {
       msg("tMsg", "Resolving Fluid name…", true);
       try {
-        const r = await resolveChainRecipient(to, { isValidAddress: isValidTronAddress, field: null, chainLabel: "Tron" });
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidTronAddress, field: "tron", chainLabel: "Tron" });
         to = r.to; toast("Name resolved");
       } catch (e) { return msg("tMsg", e.message); }
     }
@@ -1959,7 +1959,7 @@ function openSolanaSheet(tok) {
     if (to && !isValidSolanaAddress(to)) {
       msg("oMsg", "Resolving Fluid name…", true);
       try {
-        const r = await resolveChainRecipient(to, { isValidAddress: isValidSolanaAddress, field: null, chainLabel: "Solana" });
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana" });
         to = r.to; toast("Name resolved");
       } catch (e) { return msg("oMsg", e.message); }
     }
@@ -2025,7 +2025,7 @@ function openSuiSheet(tok) {
     if (to && !isValidSuiAddress(to)) {
       msg("uMsg", "Resolving Fluid name…", true);
       try {
-        const r = await resolveChainRecipient(to, { isValidAddress: isValidSuiAddress, field: null, chainLabel: "Sui" });
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidSuiAddress, field: "sui", chainLabel: "Sui" });
         to = r.to; toast("Name resolved");
       } catch (e) { return msg("uMsg", e.message); }
     }
@@ -3859,7 +3859,7 @@ $("createBtn").onclick = async () => {
     wallet = await unlockVault(v.keystore, pw);
     if (pendingName) {
       localStorage.setItem("fluid_name", pendingName);
-      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase));
+      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase), solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase));
       const entryText = JSON.stringify(entry).slice(1, -1) + ",";
       const claimed = pendingName; pendingName = null;
       setTimeout(() => {
@@ -4038,7 +4038,10 @@ function renderNameSection() {
       $("ownedEvm").textContent || wallet.address,
       $("ownedBtc").textContent || bitcoinAddress(wallet.mnemonic.phrase),
       ln,
-      $("ownedAlgo").textContent || algoAddressFromPhrase(wallet.mnemonic.phrase));
+      $("ownedAlgo").textContent || algoAddressFromPhrase(wallet.mnemonic.phrase),
+      solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase),
+      tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase),
+      suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase));
     $("ownedEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
     show("ownedEntryBox", true);
     msg("nameMsg", "Lightning address added to your entry — publish it so the change resolves everywhere.", true);
@@ -4073,15 +4076,15 @@ function renderNameSection() {
   }).catch(() => { if (stillCurrent()) paintOwnedLn(null, true); });
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
- *  a name whose EVM, BTC or Algorand address is THIS wallet's, adopt it — store it
- *  locally and paint the owned state. Never touches names that resolve
- *  to anyone else's addresses. */
+ *  a name whose EVM, BTC, Algorand, Solana, Tron or Sui address is THIS
+ *  wallet's, adopt it — store it locally and paint the owned state.
+ *  Never touches names that resolve to anyone else's addresses. */
 async function adoptRegistryNameIfMine() {
   if (!wallet || nameAdoptTried || localStorage.getItem("fluid_name")) return;
   nameAdoptTried = true;
   try {
     const reg = await fetchNameRegistry();
-    const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase) });
+    const hit = findNameForAddresses(reg, { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase), sol: solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase), tron: tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase), sui: suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase) });
     if (hit) {
       localStorage.setItem("fluid_name", hit.name);
       renderNameSection();
@@ -4102,7 +4105,7 @@ $("claimNameBtn").onclick = async () => {
     // Registered already — but to THIS wallet? Then it's not a conflict,
     // it's a homecoming: adopt it instead of blocking the owner.
     const mine = findNameForAddresses({ [existing.name]: existing },
-      { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase) });
+      { evm: wallet.address, btc: btcAddr || bitcoinAddress(wallet.mnemonic.phrase), algo: algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase), sol: solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase), tron: tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase), sui: suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase) });
     if (mine) {
       localStorage.setItem("fluid_name", name);
       msg("nameMsg", "That name is already yours — added to this wallet.", true);
@@ -4113,7 +4116,7 @@ $("claimNameBtn").onclick = async () => {
     return msg("nameMsg", "That name is already claimed. Try another.");
   }
   localStorage.setItem("fluid_name", name);
-  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null, algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase));
+  const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null, algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase), solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase));
   $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
   show("claimBox");
   msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
