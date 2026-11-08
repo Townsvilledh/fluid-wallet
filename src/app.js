@@ -29,7 +29,7 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -3730,6 +3730,11 @@ function swapTokenList(netKey) {
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
 }
 function swapRouteName(route) {
+  // Relay (the primary router) returns a single solver quote, not
+  // LI.FI-style tool steps — its router name is simply "Relay", and
+  // the confirm sentence names it so the user always sees which
+  // router will move their money.
+  if (route && route.provider === "relay") return "Relay";
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
   return names.join(" → ") || "LI.FI route";
 }
@@ -3802,7 +3807,7 @@ $("actSwap").onclick = () => {
   const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui"].includes(viewKey))
     ? `<p class="tag">Swaps run on EVM, Solana, Tron and Sui — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
-    <p class="tag">One search across every Fluid chain (routes by LI.FI). Cheapest = most received after fees; you approve the exact sentence before anything is signed.</p>
+    <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't). Cheapest = most received after fees; you approve the exact sentence before anything is signed.</p>
     ${swapViewCaption}
     <label class="tag">From</label>
     <div style="display:flex;gap:8px">
@@ -3941,11 +3946,15 @@ $("actSwap").onclick = () => {
         // Fluid's own fee, disclosed as its own clause in the confirm
         // sentence: computed from THIS quote's actual fromAmount with
         // the standard rate (platformFeeOn) — never a typed-in number.
-        // Only where the source chain actually collects: on Tron/Sui
-        // the fee is not attached to requests until their portal fee
-        // wallets are registered (LI.FI rejects it there), so no fee
-        // is charged — and none may be disclosed — on those routes.
-        const feeRaw = r.fromAmount != null && swapFeeCollectingChain(r.fromChainId) ? platformFeeOn(r.fromAmount) : 0n;
+        // Only where the route actually collects: LI.FI attaches the
+        // fee per source chain only where its portal fee wallet is
+        // registered (swapFeeCollectingChain); Relay attaches its App
+        // Fee on every quote but may skip collecting dust-sized fees,
+        // and its quote says so (platformFeeCollecting, parsed from
+        // the quote's own fees.app) — no fee is disclosed on a route
+        // that will not charge it.
+        const collects = r.provider === "relay" ? r.platformFeeCollecting === true : swapFeeCollectingChain(r.fromChainId);
+        const feeRaw = r.fromAmount != null && collects ? platformFeeOn(r.fromAmount) : 0n;
         const platformFee = feeRaw > 0n ? `${fmt(swapRawToAmount(feeRaw.toString(), fromTok.decimals))} ${fromTok.symbol}` : null;
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -3963,7 +3972,20 @@ $("actSwap").onclick = () => {
     const btn = $("wDo"); setSendBusy(btn, true);
     try {
       let hashes, srcExplorer, srcLink;
-      if (fromKey === "solana") {
+      // Keep a device record of every approval Fluid makes, so the user
+      // can review and revoke them later (More → Token approvals).
+      // Shared by both EVM executors (Relay and LI.FI).
+      const recordEvmApproval = (rec) => {
+        const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+        list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+        localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+      };
+      if (route.provider === "relay") {
+        // Relay route (primary router): EVM source by construction —
+        // its steps are complete transactions, bounds-checked in core.
+        hashes = await executeRelaySwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+        srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (fromKey === "solana") {
         hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
         srcExplorer = SOLANA_EXPLORER;
         srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
@@ -3982,13 +4004,7 @@ $("actSwap").onclick = () => {
         srcExplorer = SUI_EXPLORER;
         srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
       } else {
-        hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
-          // Keep a device record of every approval Fluid makes, so the user
-          // can review and revoke them later (More → Token approvals).
-          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
-          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
-          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
-        });
+        hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
         srcExplorer = NETWORKS[fromKey].explorer;
       }
       const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;

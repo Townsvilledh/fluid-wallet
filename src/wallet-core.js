@@ -4101,9 +4101,10 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
   return tx;
 }
 
-// ---------- Swaps (LI.FI aggregator: one search across every chain) ----------
-// Fluid does not run its own DEX. A swap is a route search at LI.FI
-// (public API, no key): same-chain DEX swaps and cross-chain bridge+swap
+// ---------- Swaps (Relay primary, LI.FI fallback: one search across every chain) ----------
+// Fluid does not run its own DEX. A swap is a route search — Relay
+// first (cheapest on Fluid's core lanes; the Relay section below),
+// LI.FI where Relay has no route: same-chain DEX swaps and cross-chain bridge+swap
 // routes come back together, Fluid ranks them cheapest (best net USD
 // received after gas) and fastest, shows the user a plain sentence, and
 // only then signs — step by step, from the user's own wallet, on the
@@ -4167,7 +4168,7 @@ export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress,
   if (withFee) q.set("fee", String(PLATFORM_FEE_FRACTION));
   return q;
 }
-/** Per-source-family fee coverage for Fluid's ONE swap engine (LI.FI)
+/** Per-source-family fee coverage for Fluid's LI.FI swap engine
  *  — the audited state of the standard fee, kept in code so a future
  *  swap family cannot ship without declaring its row here (tests pin
  *  this map against swapChainOf and swapRouteExecutable). The fee is
@@ -4276,8 +4277,10 @@ function quoteStepToRoute(step) {
  *  in the from-token's smallest unit. Primary path is POST /v1/routes
  *  (several competing routes). That endpoint can be very slow, so on a
  *  timeout or empty answer Fluid falls back to GET /v1/quote, which
- *  returns the single recommended route as one executable step. */
-export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }) {
+ *  returns the single recommended route as one executable step. This
+ *  is the FALLBACK engine now — getSwapRoutes tries Relay first and
+ *  lands here only for pairs Relay can't serve or when Relay fails. */
+export async function getLifiSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }) {
   const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
   if (!from || !to) throw new Error("Unknown network in swap.");
   const destAddress = toAddress || fromAddress;
@@ -4298,6 +4301,322 @@ export async function getSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress
   const step = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Route search failed: " + (step.message || ("HTTP " + res.status)));
   return [quoteStepToRoute(step)];
+}
+
+// ---------- Relay (PRIMARY swap router; LI.FI above is the fallback) ----------
+// Router verdict 2026-11-08 (research_notes/fluid-router-comparison-
+// 20261108/, live quotes): Relay is the cheapest quotable router on
+// Fluid's core lanes (Base↔Arbitrum all-in $0.025–0.035 at $1–$100,
+// ~1 s intent fills) and its App Fees carry Fluid's exact 0.5% with no
+// second percentage layer underneath (LI.FI adds its own 0.25%).
+// Cheapest route wins: getSwapRoutes quotes Relay FIRST for every
+// pair Relay can serve and falls back to LI.FI only where Relay has
+// no route (above all Sui — Relay has no Sui chain) or when Relay
+// quoting itself fails. Relay is a plain REST API (POST /quote/v2 on
+// api.relay.link, keyless today) — no SDK, no new dependency.
+//
+// Chain coverage (GET /chains snapshot, verified live 2026-11-08):
+// 57 chains — every Fluid EVM network except Fuse (122) and B² (223),
+// plus Solana (Relay id 792703809), Tron (728126428 — the same id
+// LI.FI uses) and on-chain Bitcoin (not in Fluid's swap universe).
+// Relay token addresses match the ones the app already passes: EVM
+// contracts, Solana mints (native = the System Program id, exactly
+// LI.FI's SOLANA_SWAP_NATIVE_TOKEN) and Tron base58 (native =
+// TRON_SWAP_NATIVE_TOKEN — verified live 2026-11-08, a TRX→Base quote
+// priced against it).
+//
+// EXECUTION is wired for EVM sources only. Relay's EVM steps are
+// complete transactions ({from,to,data,value,chainId}) Fluid bounds-
+// checks and signs with its EVM key (executeRelaySwapRoute). Its SVM
+// steps arrive as UNASSEMBLED instruction JSON ({instructions,
+// addressLookupTableAddresses}) and its TVM steps as a TronWeb
+// contract parameter — neither is a payload shape Fluid has audited
+// (Fluid's Solana/Tron signers sign prebuilt payloads after
+// inspection), so Solana- and Tron-SOURCED swaps stay on LI.FI.
+// Destinations never sign: EVM→Solana and EVM→Tron route via Relay.
+//
+// FEE GAP vs LI.FI (deliberate, owner's rules): Relay App Fee
+// recipients must be an EVM address even for non-EVM chains, and fees
+// accrue OFF-CHAIN in USDC to that one claim address — Relay cannot
+// pay per-chain fee wallets the way LI.FI's portal does. So on Relay
+// routes the whole 0.5% accrues to the DripBot EVM collection wallet
+// (RELAY_APP_FEE_RECIPIENT) as USDC, whatever the source/destination
+// chains, and is claimed from Relay's App Balance by that wallet
+// (claiming needs that wallet's signature via Relay's /execute/permit
+// flow — an operator action, not app code). That fits Fluid's
+// settlement model (all fees convert to BTC over Lightning anyway),
+// but it is a real difference from LI.FI's per-chain pots: on Relay
+// lanes there is no Solana/Tron fee pot to sweep, only the USDC App
+// Balance. Documented caveat (docs.relay.link/features/app-fees,
+// checked 2026-11-08): on same-chain swaps whose fee would be worth
+// ≤ $0.025 Relay may skip collection; the quote says so up front
+// (fees.app.amount is 0), and Fluid discloses the fee only when the
+// quote says it will actually be collected (platformFeeCollecting).
+const RELAY_API = "https://api.relay.link";
+/** Relay's chain id for Solana (LI.FI uses a different one). */
+export const RELAY_SOLANA_CHAIN_ID = 792703809;
+/** Relay's chain id for Tron — the same id LI.FI uses. */
+export const RELAY_TRON_CHAIN_ID = 728126428;
+/** The one Relay App Fees claim address: the DripBot collection
+ *  wallet's EVM address. Relay requires an EVM recipient even for
+ *  non-EVM chains and settles all app fees to it in USDC, off-chain. */
+export const RELAY_APP_FEE_RECIPIENT = FEE_SPLIT.dripbot.agentWallet.evm;
+/** Relay's EVM chain ids (GET /chains snapshot, verified live
+ *  2026-11-08). A Fluid network whose chain id is absent (Fuse 122,
+ *  B² 223, Sepolia) is a LI.FI lane. */
+export const RELAY_EVM_CHAIN_IDS = new Set([
+  1, 10, 25, 56, 100, 130, 137, 143, 146, 169, 196, 288, 324, 360,
+  480, 747, 988, 999, 1088, 1337, 1868, 2020, 2741, 2818, 4217,
+  4326, 4663, 5000, 5031, 5042, 8453, 9745, 33139, 34443, 42018,
+  42161, 42220, 43114, 48900, 57073, 59144, 60808, 80094, 97477,
+  98866, 534352, 685689, 747474, 7777777,
+]);
+/** Resolve a swap-side chain key to Relay's {chainId, name}. Null
+ *  when Relay has no such chain — Sui above all (Relay has none). */
+export function relayChainOf(chainKey) {
+  if (chainKey === "tron") return { chainId: RELAY_TRON_CHAIN_ID, name: "Tron" };
+  if (chainKey === "solana") return { chainId: RELAY_SOLANA_CHAIN_ID, name: "Solana" };
+  if (chainKey === "sui") return null;
+  const n = NETWORKS[chainKey];
+  if (!n) return null;
+  return RELAY_EVM_CHAIN_IDS.has(n.chainId) ? { chainId: n.chainId, name: n.name } : null;
+}
+/** Whether getSwapRoutes should quote Relay for this pair: Relay
+ *  covers both chains AND the source family's Relay execution is
+ *  wired (EVM sources only — see the section header). Solana/Tron
+ *  sources and any Sui pair go straight to LI.FI. */
+export function relaySupportsPair(fromChainKey, toChainKey) {
+  if (!relayChainOf(fromChainKey) || !relayChainOf(toChainKey)) return false;
+  return !!NETWORKS[fromChainKey];
+}
+/** Build the POST /quote/v2 body. Pure and exported so tests can pin
+ *  exactly what reaches Relay: the App Fees entry carries Fluid's
+ *  standard fee as basis points (PLATFORM_FEE_BPS = 50 → "50") to the
+ *  DripBot EVM claim address whenever collection is enabled — Relay
+ *  needs no per-chain portal registration, so unlike LI.FI there is
+ *  no per-chain gate. An explicit includeFee overrides for tests.
+ *  Returns null for pairs Relay doesn't cover. */
+export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null } = {}) {
+  const from = relayChainOf(fromChainKey), to = relayChainOf(toChainKey);
+  if (!from || !to) return null;
+  const withFee = includeFee ?? PLATFORM_FEE_COLLECTION_ENABLED;
+  const body = {
+    user: fromAddress,
+    originChainId: from.chainId,
+    destinationChainId: to.chainId,
+    originCurrency: fromTokenAddress,
+    destinationCurrency: toTokenAddress,
+    amount: String(fromAmount),
+    tradeType: "EXACT_INPUT",
+  };
+  const destAddress = toAddress || fromAddress;
+  if (destAddress && destAddress !== fromAddress) body.recipient = destAddress;
+  if (withFee) body.appFees = [{ recipient: RELAY_APP_FEE_RECIPIENT, fee: String(PLATFORM_FEE_BPS) }];
+  return body;
+}
+/** Parse a Relay /quote/v2 response into Fluid's route shape (the
+ *  same fields rankSwapRoutes and the swap sheet consume for LI.FI
+ *  routes), keeping the raw quote on route.relay for execution.
+ *  Pure; returns null when the response is unusable or disagrees
+ *  with the request it answers (amount or sender mismatch — API
+ *  data is hostile, and a quote for a different trade must never
+ *  reach the signer). Chain ids on the returned route are in
+ *  Fluid's own id space (swapChainOf), NOT Relay's, so every
+ *  existing consumer (fee gates, explorers, ranking) sees the ids
+ *  it expects; Relay's ids live on route.relay. */
+export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = null, fromAddress = null } = {}) {
+  const d = quote?.details;
+  if (!d || !Array.isArray(quote?.steps) || !quote.steps.length) return null;
+  const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
+  const relayFrom = relayChainOf(fromChainKey), relayTo = relayChainOf(toChainKey);
+  if (!from || !to || !relayFrom || !relayTo) return null;
+  const inAmt = d.currencyIn?.amount, outAmt = d.currencyOut?.amount;
+  if (inAmt == null || outAmt == null) return null;
+  if (fromAmount != null && String(inAmt) !== String(fromAmount)) return null;
+  if (fromAddress && d.sender) {
+    const a = String(fromAddress), b = String(d.sender);
+    const same = (a.startsWith("0x") && b.startsWith("0x")) ? a.toLowerCase() === b.toLowerCase() : a === b;
+    if (!same) return null;
+  }
+  const tok = (c, chainId) => (c && c.address != null)
+    ? { address: c.address, symbol: c.symbol || null, name: c.name || null, decimals: c.decimals ?? null, chainId }
+    : null;
+  const appFeeRaw = quote.fees?.app?.amount != null ? String(quote.fees.app.amount) : "0";
+  let appFeeCollecting = false;
+  try { appFeeCollecting = BigInt(appFeeRaw) > 0n; } catch { appFeeCollecting = false; }
+  return {
+    provider: "relay",
+    id: "relay:" + (quote.requestId || ""),
+    type: "relay",
+    fromChainId: from.chainId, toChainId: to.chainId,
+    fromAmount: String(inAmt),
+    fromToken: tok(d.currencyIn?.currency, from.chainId),
+    toToken: tok(d.currencyOut?.currency, to.chainId),
+    toAmount: String(outAmt),
+    toAmountMin: d.currencyOut?.minimumAmount != null ? String(d.currencyOut.minimumAmount) : null,
+    toAmountUSD: d.currencyOut?.amountUsd,
+    fromAmountUSD: d.currencyIn?.amountUsd,
+    gasCostUSD: Number(quote.fees?.gas?.amountUsd || 0),
+    executionDuration: d.timeEstimate,
+    platformFeeRaw: appFeeRaw,
+    platformFeeUsd: Number(quote.fees?.app?.amountUsd || 0),
+    platformFeeCollecting: appFeeCollecting,
+    steps: [],
+    relay: {
+      requestId: quote.requestId || null,
+      originChainId: relayFrom.chainId, destinationChainId: relayTo.chainId,
+      sender: d.sender || null, steps: quote.steps,
+    },
+  };
+}
+/** The Relay steps Fluid can actually sign: transaction steps with
+ *  complete EVM transaction items, on an EVM source chain. Anything
+ *  else (signature-kind steps, non-EVM sources) yields []. */
+export function relayExecutableSteps(route) {
+  if (route?.provider !== "relay") return [];
+  const evmIds = new Set(Object.values(NETWORKS).map(n => n.chainId));
+  if (!evmIds.has(Number(route?.relay?.originChainId))) return [];
+  return (route.relay.steps || []).filter(s =>
+    s && s.kind === "transaction" && Array.isArray(s.items) && s.items.length > 0
+    && s.items.every(it => it && it.data && typeof it.data.to === "string" && typeof it.data.data === "string"));
+}
+/** Ask Relay for its single executable quote and parse it into
+ *  route shape. Throws on any failure (HTTP error, unusable or
+ *  unsignable quote) — getSwapRoutes catches and falls back. */
+async function getRelaySwapRoute(args) {
+  const body = buildRelayQuoteRequest(args);
+  if (!body) return null;
+  const res = await fetch(`${RELAY_API}/quote/v2`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(20000),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("Relay route search failed: " + (data.message || data.error || ("HTTP " + res.status)));
+  const route = parseRelayQuote(data, args);
+  if (!route) throw new Error("Relay returned no usable route for that pair.");
+  if (!relayExecutableSteps(route).length) throw new Error("Relay's route for that pair carries no steps Fluid can sign.");
+  return route;
+}
+/** The one route search the swap sheet calls. Cheapest route wins:
+ *  Relay is quoted FIRST for every pair it can serve (see
+ *  relaySupportsPair); LI.FI answers only where Relay has no route
+ *  (Sui, Fuse, B², Solana/Tron sources) or when Relay quoting fails
+ *  — a Relay outage must never become a failed swap. */
+export async function getSwapRoutes(args) {
+  if (relaySupportsPair(args.fromChainKey, args.toChainKey)) {
+    try {
+      const route = await getRelaySwapRoute(args);
+      if (route) return [route];
+    } catch { /* Relay failed or has no route — LI.FI below is the fallback */ }
+  }
+  return getLifiSwapRoutes(args);
+}
+/** Bounds-check one Relay step item BEFORE anything is signed (the
+ *  Relay twin of checkSwapStepBounds). Relay builds complete
+ *  transactions; Fluid signs only a transaction that is exactly the
+ *  trade the user approved:
+ *   - it must be FROM the user's own address, on the route's origin
+ *     chain, with hex calldata;
+ *   - an approve step must call approve() on the FROM-TOKEN contract
+ *     itself, naming the deposit step's contract as spender, for
+ *     EXACTLY the route's fromAmount — an unlimited or inflated
+ *     approval is refused, always;
+ *   - a non-approve step must never target the token being sold
+ *     (the LI.FI M1 lesson) and must carry value only when the sold
+ *     asset is the chain's native coin — and then exactly fromAmount. */
+export function checkRelayStepBounds(route, step, item, owner) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this route: " + m + " Pick another route." });
+  const data = item?.data;
+  if (!data) return refuse("a Relay step carried no transaction to inspect.");
+  if (!owner || String(data.from || "").toLowerCase() !== String(owner).toLowerCase())
+    return refuse("a Relay step was built for a different account than yours.");
+  if (Number(data.chainId) !== Number(route?.relay?.originChainId))
+    return refuse("a Relay step targeted a different chain than the swap's source.");
+  if (typeof data.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(data.data) || data.data.length < 10)
+    return refuse("a Relay step carried calldata Fluid couldn't inspect.");
+  const fromToken = route?.fromToken;
+  const isNative = !fromToken?.address || /^0x0{40}$/i.test(fromToken.address);
+  let value = null;
+  try { value = BigInt(data.value ?? "0"); } catch { return refuse("a Relay step carried an unreadable value."); }
+  if (step?.id === "approve") {
+    if (isNative) return refuse("a Relay route asked for a token approval on a native-coin swap.");
+    if (String(data.to || "").toLowerCase() !== String(fromToken.address).toLowerCase())
+      return refuse("a Relay approval targeted a contract that is not the token being sold.");
+    let decoded = null;
+    try { decoded = new ethers.Interface(SWAP_ERC20).decodeFunctionData("approve", data.data); }
+    catch { return refuse("a Relay approval step's calldata did not decode as an ERC-20 approval."); }
+    const spender = decoded?.[0], amount = decoded?.[1];
+    const depositTo = (route.relay.steps || [])
+      .filter(s => s && s.id !== "approve")
+      .flatMap(s => (s.items || []).map(it => it?.data?.to))
+      .find(t => typeof t === "string" && t);
+    if (!depositTo || String(spender || "").toLowerCase() !== String(depositTo).toLowerCase())
+      return refuse("a Relay approval was addressed to an unexpected spender, not the swap's deposit contract.");
+    let want = null;
+    try { want = BigInt(route.fromAmount); } catch { want = null; }
+    if (want == null || amount == null || BigInt(amount) !== want)
+      return refuse("a Relay approval asked for more than the exact amount being swapped.");
+    if (value !== 0n) return refuse("a Relay approval step carried native value it should not have.");
+    return { ok: true };
+  }
+  if (!ethers.isAddress(data.to || "")) return refuse("a Relay step targeted an address Fluid couldn't verify.");
+  if (!isNative && String(data.to).toLowerCase() === String(fromToken.address).toLowerCase())
+    return refuse("a Relay step targeted the token being sold instead of the swap's deposit contract.");
+  if (isNative) {
+    let want = null;
+    try { want = BigInt(route.fromAmount); } catch { want = null; }
+    if (want == null || value !== want)
+      return refuse("a Relay step's value did not match the exact amount being swapped.");
+  } else if (value !== 0n) {
+    return refuse("a Relay step carried native value on a token swap.");
+  }
+  return { ok: true };
+}
+/** Execute a chosen Relay route: send each step's transaction in
+ *  order from the user's wallet on the source chain, awaiting each
+ *  receipt (Relay includes its own exact-amount approve step when
+ *  one is needed — Fluid never improvises approvals). Every item is
+ *  bounds-checked BEFORE it is signed (checkRelayStepBounds), and
+ *  approvals are reported through onApprove exactly like LI.FI's, so
+ *  the approvals screen keeps a complete record. EVM sources only;
+ *  destination delivery is Relay's solver network, not a step. */
+export async function executeRelaySwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
+  const fromKey = Object.keys(NETWORKS).find(k => NETWORKS[k].chainId === Number(route?.relay?.originChainId));
+  if (!fromKey) throw new Error("Relay swap source chain is not a Fluid network.");
+  const { ok, steps, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const provider = providerFor(fromKey);
+  const signer = wallet.connect(provider);
+  const total = steps.reduce((s, st) => s + st.items.length, 0);
+  const hashes = [];
+  let n = 0;
+  for (const step of steps) {
+    for (const item of step.items) {
+      const bounds = checkRelayStepBounds(route, step, item, wallet.address);
+      if (!bounds.ok) throw new Error(bounds.reason);
+      const data = item.data;
+      n++;
+      onProgress(step.id === "approve"
+        ? `Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`
+        : `Signing step ${n} of ${total}…`);
+      const txReq = { to: data.to, data: data.data || "0x", value: data.value != null ? BigInt(data.value) : 0n };
+      if (data.gas != null) { try { txReq.gasLimit = BigInt(data.gas); } catch { /* let the node estimate */ } }
+      if (data.maxFeePerGas != null) { try { txReq.maxFeePerGas = BigInt(data.maxFeePerGas); } catch { /* node default */ } }
+      if (data.maxPriorityFeePerGas != null) { try { txReq.maxPriorityFeePerGas = BigInt(data.maxPriorityFeePerGas); } catch { /* node default */ } }
+      const tx = await signer.sendTransaction(txReq);
+      hashes.push(tx.hash);
+      if (step.id === "approve") {
+        try {
+          const decoded = new ethers.Interface(SWAP_ERC20).decodeFunctionData("approve", data.data);
+          onApprove({ chainKey: fromKey, token: route.fromToken?.address, tokenSymbol: route.fromToken?.symbol || null, spender: decoded[0], amount: decoded[1].toString(), decimals: route.fromToken?.decimals ?? null, at: Date.now() });
+        } catch { /* recording an approval must never break a swap */ }
+      }
+      onProgress(`Step ${n} sent — waiting for it to mine…`);
+      await tx.wait();
+    }
+  }
+  return hashes;
 }
 
 function swapRouteGasUsd(route) {
@@ -4382,6 +4701,18 @@ export function solanaSwapSteps(route) {
     s.transactionRequest && typeof s.transactionRequest.data === "string" && s.transactionRequest.data.length > 0);
 }
 export function swapRouteExecutable(route) {
+  // Relay routes (the primary router since 2026-11-08): executable
+  // when their source is an EVM chain and every step is a complete
+  // transaction Fluid can bounds-check and sign — see
+  // relayExecutableSteps. Relay routes from a non-EVM source are
+  // never produced by getSwapRoutes (their step shapes are not
+  // audited payloads) and are refused here as defence in depth.
+  if (route?.provider === "relay") {
+    const steps = relayExecutableSteps(route);
+    return steps.length
+      ? { ok: true, relay: true, steps }
+      : { ok: false, reason: "This Relay route's steps aren't signable by Fluid — pick another route." };
+  }
   // Solana-sourced routes are signable since Phase 1b: the step payload
   // is a serialized transaction Fluid deserializes, signs with the
   // wallet's Solana key and broadcasts — see executeSolanaSwapRoute.

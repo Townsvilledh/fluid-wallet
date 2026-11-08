@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -4564,6 +4564,197 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("home order: ordering helpers are used by the home list only (send sheets untouched)",
     (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 1
     && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 2);
+}
+
+// 64. Relay as PRIMARY swap router (router verdict, 2026-11-08):
+// live quotes showed Relay cheapest on Fluid's core lanes and its App
+// Fees carry Fluid's exact 0.5% with no second percentage layer, so
+// getSwapRoutes quotes Relay first and keeps LI.FI for the pairs
+// Relay can't serve (above all Sui) and as the fallback when Relay
+// quoting fails. The quote fixture below is a REAL Relay /quote/v2
+// response (Base USDC → Arbitrum USDC, $5, App Fees requested),
+// captured live 2026-11-08 — the same shape parseRelayQuote consumes
+// in production.
+{
+  const RELAY_QUOTE = {
+    requestId: "0x1794173710e8c7672b9eb248b8d49ec5122942c084b83c899211416bb41ffd93",
+    steps: [
+      { id: "approve", kind: "transaction", items: [{ status: "incomplete", data: { from: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", data: "0x095ea7b30000000000000000000000004cd00e387622c35bddb9b4c962c136462338bc3100000000000000000000000000000000000000000000000000000000004c4b40", value: "0", chainId: 8453, gas: "73112", maxFeePerGas: "6500000", maxPriorityFeePerGas: "1000000" } }] },
+      { id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0xe80179520000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee34000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291300000000000000000000000000000000000000000000000000000000004c4b40eec44d2440310e29e71d76ffbd114ab3ee3e5bd7427703a17ac10abcac44395d", value: "0", chainId: 8453, gas: "76194", maxFeePerGas: "6500000", maxPriorityFeePerGas: "1000000" } }] },
+    ],
+    fees: {
+      gas: { currency: { chainId: 8453, address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18 }, amount: "496052710134", amountFormatted: "0.000000496052710134", amountUsd: "0.001102", minimumAmount: "496052710134" },
+      app: { currency: { chainId: 8453, address: "0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913", symbol: "USDC", decimals: 6 }, amount: "25000", amountFormatted: "0.025", amountUsd: "0.024994", minimumAmount: "25000" },
+    },
+    details: {
+      operation: "swap",
+      sender: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+      recipient: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+      currencyIn: { currency: { chainId: 8453, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "5000000", amountFormatted: "5.0", amountUsd: "4.998895", minimumAmount: "5000000" },
+      currencyOut: { currency: { chainId: 42161, address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "4950786", amountFormatted: "4.950786", amountUsd: "4.949722", minimumAmount: "4851771" },
+      timeEstimate: 1,
+      expandedPriceImpact: { swap: { usd: "-0.000470" }, execution: { usd: "-0.023709" }, relay: { usd: "0" }, app: { usd: "-0.024994" }, sponsored: { usd: "0" } },
+      totalImpact: { usd: "-0.049173", percent: "-0.98" },
+    },
+  };
+  const RUSER = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", ARB_USDC = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+
+  // Chain mapping: Relay ids for the families it covers; Sui never.
+  ok("relay: chain ids for evm/solana/tron, none for sui",
+    relayChainOf("base").chainId === 8453 && relayChainOf("bsc").chainId === 56
+    && relayChainOf("solana").chainId === RELAY_SOLANA_CHAIN_ID && RELAY_SOLANA_CHAIN_ID === 792703809
+    && relayChainOf("tron").chainId === RELAY_TRON_CHAIN_ID && RELAY_TRON_CHAIN_ID === 728126428
+    && relayChainOf("sui") === null && relayChainOf("fuse") === null && relayChainOf("b2") === null && relayChainOf("sepolia") === null);
+  // Router selection: Relay serves EVM-sourced pairs to any chain it
+  // covers (destinations don't sign); Sui pairs and non-EVM sources
+  // stay on LI.FI, whose step payloads Fluid has audited.
+  ok("relay: selection — relay-supported pairs go to relay",
+    relaySupportsPair("base", "arbitrum") === true && relaySupportsPair("base", "base") === true
+    && relaySupportsPair("base", "solana") === true && relaySupportsPair("bsc", "tron") === true);
+  ok("relay: selection — sui pairs and non-evm sources stay on lifi",
+    relaySupportsPair("base", "sui") === false && relaySupportsPair("sui", "base") === false
+    && relaySupportsPair("solana", "base") === false && relaySupportsPair("tron", "base") === false
+    && relaySupportsPair("fuse", "base") === false);
+
+  // Request construction: App Fees carry Fluid's exact 0.5% (50 bps)
+  // to the DripBot EVM claim address; opt-out omits them entirely.
+  const rreq = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5000000", fromAddress: RUSER, toAddress: RUSER });
+  ok("relay: quote request carries app fee of exactly 0.5% to the dripbot evm wallet",
+    rreq.originChainId === 8453 && rreq.destinationChainId === 42161 && rreq.amount === "5000000" && rreq.tradeType === "EXACT_INPUT"
+    && Array.isArray(rreq.appFees) && rreq.appFees.length === 1
+    && rreq.appFees[0].recipient === RELAY_APP_FEE_RECIPIENT && RELAY_APP_FEE_RECIPIENT === FEE_SPLIT.dripbot.agentWallet.evm
+    && rreq.appFees[0].fee === String(PLATFORM_FEE_BPS) && PLATFORM_FEE_BPS === 50 && !(("recipient") in rreq));
+  ok("relay: quote request fee opt-out omits appFees; foreign recipient is named",
+    !("appFees" in buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5", fromAddress: RUSER, toAddress: RUSER }, { includeFee: false }))
+    && buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "solana", fromTokenAddress: BASE_USDC, toTokenAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", fromAmount: "5", fromAddress: RUSER, toAddress: "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn" }).recipient === "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn");
+  ok("relay: quote request is null where relay has no chain",
+    buildRelayQuoteRequest({ fromChainKey: "sui", toChainKey: "base", fromTokenAddress: "0x2::sui::SUI", toTokenAddress: BASE_USDC, fromAmount: "5", fromAddress: RUSER, toAddress: RUSER }) === null);
+
+  // Quote parsing: amounts, costs and the fee come from the quote's
+  // own fields; the extracted fee equals 0.5% of the input exactly.
+  const rroute = parseRelayQuote(RELAY_QUOTE, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER });
+  ok("relay: quote parses into route shape with relay costs",
+    rroute !== null && rroute.provider === "relay" && rroute.fromChainId === 8453 && rroute.toChainId === 42161
+    && rroute.fromAmount === "5000000" && rroute.toAmount === "4950786" && rroute.toAmountMin === "4851771"
+    && rroute.toAmountUSD === "4.949722" && Math.abs(rroute.gasCostUSD - 0.001102) < 1e-9 && rroute.executionDuration === 1
+    && rroute.fromToken.symbol === "USDC" && rroute.toToken.symbol === "USDC" && rroute.relay.originChainId === 8453);
+  ok("relay: extracted app fee is exactly 0.5% of the input",
+    rroute.platformFeeCollecting === true && rroute.platformFeeRaw === "25000"
+    && BigInt(rroute.platformFeeRaw) === platformFeeOn(rroute.fromAmount)
+    && Math.abs(rroute.platformFeeUsd - 0.024994) < 1e-9);
+  ok("relay: quote for a different amount or sender is refused",
+    parseRelayQuote({ ...RELAY_QUOTE, details: { ...RELAY_QUOTE.details, currencyIn: { ...RELAY_QUOTE.details.currencyIn, amount: "5000001" } } }, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER }) === null
+    && parseRelayQuote({ ...RELAY_QUOTE, details: { ...RELAY_QUOTE.details, sender: "0x0000000000000000000000000000000000000001" } }, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER }) === null
+    && parseRelayQuote({ ...RELAY_QUOTE, steps: [] }, { fromChainKey: "base", toChainKey: "arbitrum" }) === null);
+  ok("relay: a skipped app fee parses as not collecting",
+    (() => { const q = structuredClone(RELAY_QUOTE); q.fees.app = { ...q.fees.app, amount: "0", amountUsd: "0" };
+      const r = parseRelayQuote(q, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER });
+      return r !== null && r.platformFeeCollecting === false && r.platformFeeRaw === "0"; })());
+
+  // Executability + step bounds: the live fixture passes; tampered
+  // approvals (wrong spender, inflated amount) and foreign steps are
+  // refused before anything could be signed.
+  const rex = swapRouteExecutable(rroute);
+  ok("relay: evm route is executable with its quoted steps",
+    rex.ok === true && rex.relay === true && rex.steps.length === 2 && relayExecutableSteps(rroute).length === 2);
+  ok("relay: live fixture steps pass the bounds check",
+    checkRelayStepBounds(rroute, rroute.relay.steps[0], rroute.relay.steps[0].items[0], RUSER).ok === true
+    && checkRelayStepBounds(rroute, rroute.relay.steps[1], rroute.relay.steps[1].items[0], RUSER).ok === true);
+  {
+    const erc20 = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+    const clone = () => structuredClone(rroute);
+    const inflated = clone();
+    inflated.relay.steps[0].items[0].data.data = erc20.encodeFunctionData("approve", ["0x4cd00e387622c35bddb9b4c962c136462338bc31", 5000001n]);
+    const wrongSpender = clone();
+    wrongSpender.relay.steps[0].items[0].data.data = erc20.encodeFunctionData("approve", ["0x000000000000000000000000000000000000dEaD", 5000000n]);
+    const foreign = clone();
+    foreign.relay.steps[1].items[0].data.from = "0x0000000000000000000000000000000000000001";
+    ok("relay: inflated approval amount is refused",
+      checkRelayStepBounds(inflated, inflated.relay.steps[0], inflated.relay.steps[0].items[0], RUSER).ok === false
+      && /exact amount/.test(checkRelayStepBounds(inflated, inflated.relay.steps[0], inflated.relay.steps[0].items[0], RUSER).reason));
+    ok("relay: approval to an unexpected spender is refused",
+      checkRelayStepBounds(wrongSpender, wrongSpender.relay.steps[0], wrongSpender.relay.steps[0].items[0], RUSER).ok === false);
+    ok("relay: a step built for a different account is refused",
+      checkRelayStepBounds(foreign, foreign.relay.steps[1], foreign.relay.steps[1].items[0], RUSER).ok === false
+      && checkRelayStepBounds(rroute, rroute.relay.steps[0], rroute.relay.steps[0].items[0], "0x0000000000000000000000000000000000000001").ok === false);
+    // Native-coin route: the single deposit step must carry exactly
+    // the swapped amount as value — no more, no less.
+    const native = clone();
+    native.fromToken = { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18, chainId: 8453 };
+    native.relay.steps = [native.relay.steps[1]];
+    native.relay.steps[0].items[0].data.value = "5000000";
+    const nativeShort = structuredClone(native);
+    nativeShort.relay.steps[0].items[0].data.value = "4999999";
+    ok("relay: native step value must equal the exact swap amount",
+      checkRelayStepBounds(native, native.relay.steps[0], native.relay.steps[0].items[0], RUSER).ok === true
+      && checkRelayStepBounds(nativeShort, nativeShort.relay.steps[0], nativeShort.relay.steps[0].items[0], RUSER).ok === false);
+  }
+  // Source pin (house style): the bounds check runs before signing.
+  const coreSrcRelay = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("relay: bounds check precedes signing in the executor",
+    coreSrcRelay.indexOf("checkRelayStepBounds(route, step, item, wallet.address)") > -1
+    && coreSrcRelay.indexOf("checkRelayStepBounds(route, step, item, wallet.address)") < coreSrcRelay.indexOf("const tx = await signer.sendTransaction(txReq);", coreSrcRelay.indexOf("executeRelaySwapRoute")));
+
+  // Review-sheet intent: the router is named and the fee is its own
+  // clause — the same sentence shape LI.FI routes produce.
+  ok("relay: intent names the relay router and discloses the 0.5% fee",
+    (() => { const s = formatSwapIntent({ fromAmount: "5", fromSymbol: "USDC", fromNetKey: "base", toAmount: "4.950786", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: rroute.gasCostUSD, durationSec: rroute.executionDuration, platformFee: "0.025 USDC" });
+      return s.includes("via Relay") && s.includes("Fluid fee (0.5%): 0.025 USDC"); })());
+  const appSrcRelay = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("relay: app names relay routes, gates fee disclosure on the quote, executes via the relay executor",
+    appSrcRelay.includes('if (route && route.provider === "relay") return "Relay";')
+    && appSrcRelay.includes('r.provider === "relay" ? r.platformFeeCollecting === true : swapFeeCollectingChain(r.fromChainId)')
+    && appSrcRelay.includes('if (route.provider === "relay")')
+    && appSrcRelay.includes("executeRelaySwapRoute(wallet, route"));
+
+  // Router selection end-to-end, fetch stubbed per host: a Relay-
+  // supported pair is answered by Relay alone; a Relay failure falls
+  // back to LI.FI; a Sui pair never asks Relay at all.
+  const realFetch = globalThis.fetch;
+  const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const lifiStep = (fromChainId, toChainId) => ({ id: "lifi-quote", type: "swap",
+    action: { fromChainId, toChainId, fromAmount: "1000000", fromToken: { address: "0xa", symbol: "A", decimals: 6 }, toToken: { address: "0xb", symbol: "B", decimals: 6 } },
+    estimate: { toAmount: "999000", toAmountMin: "990000", toAmountUSD: "1.0", fromAmountUSD: "1.0", gasCosts: [], executionDuration: 30 },
+    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: fromChainId } });
+  try {
+    let relayCalls = 0, lifiCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) { relayCalls++; return jsonRes(RELAY_QUOTE); }
+      if (u.includes("li.quest")) { lifiCalls++; throw new Error("lifi must not be called"); }
+      throw new Error("unexpected url " + u);
+    };
+    const viaRelay = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5000000", fromAddress: RUSER, toAddress: RUSER });
+    ok("relay: supported pair is answered by relay alone",
+      viaRelay.length === 1 && viaRelay[0].provider === "relay" && relayCalls === 1 && lifiCalls === 0);
+
+    relayCalls = 0; lifiCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) { relayCalls++; return jsonRes({ message: "No route found for this pair" }, false, 400); }
+      if (u.includes("li.quest/v1/routes")) { lifiCalls++; return jsonRes({ routes: [] }); }
+      if (u.includes("li.quest/v1/quote")) { lifiCalls++; return jsonRes(lifiStep(8453, 42161)); }
+      throw new Error("unexpected url " + u);
+    };
+    const viaFallback = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5000000", fromAddress: RUSER, toAddress: RUSER });
+    ok("relay: a relay failure falls back to lifi rather than failing the swap",
+      relayCalls === 1 && lifiCalls >= 1 && viaFallback.length === 1 && viaFallback[0].provider !== "relay" && viaFallback[0].steps.length === 1);
+
+    relayCalls = 0; lifiCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) { relayCalls++; throw new Error("relay must not be called for sui"); }
+      if (u.includes("li.quest/v1/routes")) { lifiCalls++; return jsonRes({ routes: [] }); }
+      if (u.includes("li.quest/v1/quote")) { lifiCalls++; return jsonRes(lifiStep(9270000000000000, 56)); }
+      throw new Error("unexpected url " + u);
+    };
+    const viaSui = await getSwapRoutes({ fromChainKey: "sui", toChainKey: "bsc", fromTokenAddress: "0x2::sui::SUI", toTokenAddress: "0x55d398326f99059fF775485246999027B3197955", fromAmount: "1000000", fromAddress: "0xsuiaddr", toAddress: RUSER });
+    ok("relay: a sui pair goes straight to lifi",
+      relayCalls === 0 && lifiCalls >= 1 && viaSui.length === 1 && viaSui[0].provider !== "relay");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 console.log(`\n${passed} checks passed`);
