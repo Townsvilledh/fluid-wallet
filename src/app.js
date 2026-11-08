@@ -75,7 +75,7 @@ const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFract
 const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, btcTrAddr = null, btcTrBal = 0, pendingSend = null;
-let tronAddr = null, tronBalances = [];
+let tronAddr = null, tronBalances = [], tronLoadFailed = false;
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
 let stellarAddr = null, stellarBalances = [], stellarFunded = null, stellarLoadFailed = false;
@@ -86,9 +86,9 @@ let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
 let dotAddr = null, dotBalances = [], dotExists = null, dotLoadFailed = false;
 let aptosAddr = null, aptosBalances = [], aptosExists = null, aptosLoadFailed = false, aptosScanFailed = false;
 let stacksAddr = null, stacksBalances = [], stacksLoadFailed = false, stacksScanFailed = false;
-let ltcAddr = null, ltcBal = 0;
-let dogeAddr = null, dogeBal = 0;
-let bchAddr = null, bchBal = 0;
+let ltcAddr = null, ltcBal = 0, ltcLoadFailed = false;
+let dogeAddr = null, dogeBal = 0, dogeLoadFailed = false;
+let bchAddr = null, bchBal = 0, bchLoadFailed = false;
 let cosmosAddrs = {}, cosmosRows = [];
 
 // ---------- universal tokens: shared presentation state ----------
@@ -460,8 +460,21 @@ async function renderMain() {
   tronAddr = tronAddressFromPhrase(w.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
+  tronLoadFailed = false;
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
-    .then(rows => { if (rows) tronBalances = rows; famLoaded.add("tron"); paintAssets(); });
+    .then(rows => {
+      if (rows) tronBalances = rows;
+      else {
+        // BOTH the scan and the curated read failed (TronGrid 429s
+        // did exactly this on sweep day): the placeholders above are
+        // NOT balances. Mark the curated rows unknown (null) so they
+        // render "couldn't load" under a load-failure alert — never
+        // silent zeros dressed as a loaded wallet.
+        tronLoadFailed = true;
+        tronBalances = tronBalances.map(b => ({ ...b, amount: null }));
+      }
+      famLoaded.add("tron"); paintAssets();
+    });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
   // placeholders until the RPC answers.
@@ -568,11 +581,11 @@ async function renderMain() {
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
   ltcAddr = litecoinAddress(w.mnemonic.phrase);
-  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; famLoaded.add("litecoin"); paintAssets(); }).catch(() => { famLoaded.add("litecoin"); paintAssets(); });
+  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; ltcLoadFailed = false; famLoaded.add("litecoin"); paintAssets(); }).catch(() => { ltcLoadFailed = true; famLoaded.add("litecoin"); paintAssets(); });
   dogeAddr = dogecoinAddress(w.mnemonic.phrase);
-  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; famLoaded.add("dogecoin"); paintAssets(); }).catch(() => { famLoaded.add("dogecoin"); paintAssets(); });
+  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; famLoaded.add("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; famLoaded.add("dogecoin"); paintAssets(); });
   bchAddr = bitcoinCashAddress(w.mnemonic.phrase);
-  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; famLoaded.add("bitcoincash"); paintAssets(); }).catch(() => { famLoaded.add("bitcoincash"); paintAssets(); });
+  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; famLoaded.add("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; famLoaded.add("bitcoincash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -807,7 +820,11 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
 // (§4.5) — the message + Retry live in a sheet, never as list prose.
 function familyAlertMap() {
   const m = {};
-  if (familyScanFailed.tron) m.tron = "Full token scan unavailable — showing main Tron tokens only.";
+  if (tronLoadFailed) m.tron = "Main Tron balances couldn't be loaded right now.";
+  else if (familyScanFailed.tron) m.tron = "Full token scan unavailable — showing main Tron tokens only.";
+  if (ltcLoadFailed) m.litecoin = "Litecoin balances couldn't be loaded right now.";
+  if (dogeLoadFailed) m.dogecoin = "Dogecoin balances couldn't be loaded right now.";
+  if (bchLoadFailed) m.bitcoincash = "Bitcoin Cash balances couldn't be loaded right now.";
   if (familyScanFailed.solana) m.solana = "Full token scan isn't available from the free public Solana endpoints right now — showing main Solana tokens only. Your main tokens above are up to date; the full scan needs an endpoint that serves indexed token lookups, which the free ones currently refuse.";
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
   if (stellarLoadFailed) m.stellar = "Stellar balances couldn't be loaded right now.";
@@ -901,6 +918,16 @@ function otherGroupHtml(famKey, items, renderItem) {
       <span class="coin" style="background:#3b4a7a">…</span>
       <span class="grow"><b>Other tokens (${items.length})</b><small>Unverified or unpriced — tap to ${open ? "hide" : "show"}. Fully usable; check contract addresses carefully.</small></span>
       <span>${open ? "▾" : "▸"}</span></div>` + (open ? items.map(renderItem).join("") : "");
+}
+
+/** Amount cell for the scalar-balance families (LTC/DOGE/BCH):
+ *  a failed read renders the same "couldn't load" state as a null
+ *  token row (tokenRowHtml) — the balance is unknown, never a
+ *  dressed-up zero. */
+function scalarAmtHtml(failed, bal, price) {
+  return failed
+    ? `<b>—</b><small>couldn't load</small>`
+    : `<b>${fmt(bal, 8)}</b><small>${usd(bal * (price || 0))}</small>`;
 }
 
 function paintAssets() {
@@ -1047,15 +1074,15 @@ function paintAssets() {
   grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [famLoaded.has("litecoin") ? `<div class="row" data-ltc="1">
       <span class="logowrap">${tokenLogoHtml({ symbol: "LTC" }, "litecoin")}${badgeHtml({ symbol: "LTC" }, "litecoin")}</span>
       <span class="grow"><b class="rname">Litecoin</b><small>LTC · Native SegWit</small></span>
-      <span class="amt"><b>${fmt(ltcBal, 8)}</b><small>${usd(ltcBal * (prices.LTC || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+      <span class="amt">${scalarAmtHtml(ltcLoadFailed, ltcBal, prices.LTC)}</span></div>` : skeletonRowsHtml(1)]);
   grp("dogecoin", "", [famLoaded.has("dogecoin") ? `<div class="row" data-doge="1">
       <span class="logowrap">${tokenLogoHtml({ symbol: "DOGE" }, "dogecoin")}${badgeHtml({ symbol: "DOGE" }, "dogecoin")}</span>
       <span class="grow"><b class="rname">Dogecoin</b><small>DOGE · Legacy</small></span>
-      <span class="amt"><b>${fmt(dogeBal, 8)}</b><small>${usd(dogeBal * (prices.DOGE || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+      <span class="amt">${scalarAmtHtml(dogeLoadFailed, dogeBal, prices.DOGE)}</span></div>` : skeletonRowsHtml(1)]);
   grp("bitcoincash", "", [famLoaded.has("bitcoincash") ? `<div class="row" data-bch="1">
       <span class="logowrap">${tokenLogoHtml({ symbol: "BCH" }, "bitcoincash")}${badgeHtml({ symbol: "BCH" }, "bitcoincash")}</span>
       <span class="grow"><b class="rname">Bitcoin Cash</b><small>BCH · CashAddr</small></span>
-      <span class="amt"><b>${fmt(bchBal, 8)}</b><small>${usd(bchBal * (prices.BCH || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+      <span class="amt">${scalarAmtHtml(bchLoadFailed, bchBal, prices.BCH)}</span></div>` : skeletonRowsHtml(1)]);
   // Render per viewKey (§4.5): each family is its OWN card with a
   // header (name + subtotal + alert) in the All view; a scoped view
   // renders its single group without the header. The seven Cosmos
@@ -2626,7 +2653,7 @@ function openStacksSheet(tok) {
 function openLtcSheet() {
   let pendingLtc = null;
   openSheet(`<h3>Send LTC on Litecoin</h3>
-    <p><b>${fmt(ltcBal, 8)} LTC</b> · from <span class="mono">${ltcAddr}</span></p>
+    <p><b>${ltcLoadFailed ? "Balance couldn't load" : fmt(ltcBal, 8) + " LTC"}</b> · from <span class="mono">${ltcAddr}</span></p>
     <input id="lTo" placeholder="Recipient ltc1… address" autocapitalize="none">
     <input id="lAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="lReview">Review send</button>
@@ -2682,7 +2709,7 @@ function openLtcSheet() {
 function openBchSheet() {
   let pendingBch = null;
   openSheet(`<h3>Send BCH on Bitcoin Cash</h3>
-    <p><b>${fmt(bchBal, 8)} BCH</b> · from <span class="mono">${bchAddr}</span></p>
+    <p><b>${bchLoadFailed ? "Balance couldn't load" : fmt(bchBal, 8) + " BCH"}</b> · from <span class="mono">${bchAddr}</span></p>
     <input id="cTo" placeholder="Recipient bitcoincash:q… or legacy address" autocapitalize="none">
     <input id="cAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="cReview">Review send</button>
@@ -2741,7 +2768,7 @@ function openBchSheet() {
 function openDogeSheet() {
   let pendingDoge = null;
   openSheet(`<h3>Dogecoin</h3>
-    <p><b>${fmt(dogeBal, 8)} DOGE</b> · ${usd(dogeBal * (prices.DOGE || 0))}</p>
+    <p><b>${dogeLoadFailed ? "Balance couldn't load" : fmt(dogeBal, 8) + " DOGE"}</b>${dogeLoadFailed ? "" : ` · ${usd(dogeBal * (prices.DOGE || 0))}`}</p>
     <img class="qr" id="qrDoge2"><p class="mono">${dogeAddr}</p>
     <button class="btn ghost" id="cpDoge2">Copy address</button>
     <hr style="border-color:var(--line)">

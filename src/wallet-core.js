@@ -946,12 +946,36 @@ export function isValidLitecoinAddress(address) {
 }
 
 const LTC_API = "https://litecoinspace.org/api"; // Esplora (mempool-style), keyless
+/** BlockCypher's address-balance shape (LTC/DOGE endpoints): amounts
+ *  are satoshi-denominated; final_balance is the confirmed balance
+ *  plus any unconfirmed change. Pure parser — throws on a bad shape
+ *  so a garbled reply can never become a number. */
+export function parseBlockcypherBalance(d) {
+  const sat = d?.final_balance ?? d?.balance;
+  if (sat == null || !Number.isFinite(Number(sat))) throw new Error("BlockCypher balance lookup failed.");
+  return Number(sat) / 1e8;
+}
+/** BlockCypher balance read (coin = "ltc" | "doge"). BlockCypher
+ *  answers from a browser Origin — verified live 2026-11-08 from the
+ *  live Fluid origin, where dogechain/chain.so are CORS-blocked —
+ *  which is why it is the fallback for both UTXO altcoin reads. */
+async function blockcypherBalance(coin, address) {
+  const res = await fetch(`https://api.blockcypher.com/v1/${coin}/main/addrs/${address}/balance`);
+  if (!res.ok) throw new Error("BlockCypher balance lookup failed (HTTP " + res.status + ").");
+  return parseBlockcypherBalance(await res.json());
+}
 export async function getLitecoinBalance(address) {
-  const res = await fetch(`${LTC_API}/address/${address}`);
-  const d = await res.json();
-  const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
-  const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
-  return (funded - spent) / 1e8;
+  try {
+    const res = await fetch(`${LTC_API}/address/${address}`);
+    const d = await res.json();
+    const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
+    const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
+    return (funded - spent) / 1e8;
+  } catch {
+    // Fallback (see blockcypherBalance): both reads failing THROWS,
+    // so the UI shows "couldn't load" instead of a fake zero.
+    return blockcypherBalance("ltc", address);
+  }
 }
 /** LTC fee rate, cross-checked (audit H1): litecoinspace's halfHourFee
  *  against BlockCypher's independent LTC fee stats (medium_fee_per_kb,
@@ -1052,11 +1076,21 @@ export function isValidDogeAddress(address) {
 export const DOGE_MIN_OUTPUT = 0.01;
 const DOGECHAIN_API = "https://dogechain.com/api";
 export async function getDogecoinBalance(address) {
-  const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`);
-  const d = await res.json();
-  const bal = d?.balance ?? d?.data?.balance;
-  if (bal == null) throw new Error("Dogecoin balance lookup failed.");
-  return Number(bal);
+  try {
+    const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`);
+    const d = await res.json();
+    const bal = d?.balance ?? d?.data?.balance;
+    if (bal == null) throw new Error("Dogecoin balance lookup failed.");
+    return Number(bal);
+  } catch {
+    // dogechain is CORS-blocked from browsers (verified live
+    // 2026-11-08: the request dies before any response is readable),
+    // so in the shipped app this fallback IS the balance read.
+    // BlockCypher answers from a browser Origin; chain.so does not
+    // (also verified). Both sources failing THROWS, so the UI shows
+    // "couldn't load" instead of the fake zero this replaces.
+    return blockcypherBalance("doge", address);
+  }
 }
 /** Live Dogecoin fee market (dogechain v3): the median koinu-per-byte
  *  recent transactions actually paid. sendDogecoin builds its fee
@@ -1481,8 +1515,9 @@ async function tronTrc20Balance(ownerAddress, token) {
   return BigInt("0x" + out);
 }
 /** Tron balances shaped like getBalances(): native TRX first (address
- *  null), then the TRC-20 tokens. A failed token read degrades to the
- *  native balance only — it never fails the whole lookup. */
+ *  null), then the TRC-20 tokens. A failed NATIVE read fails the
+ *  whole lookup (the caller marks every curated row unknown); a
+ *  failed token read marks only that row unknown (amount null). */
 export async function getTronBalances(address) {
   if (!isValidTronAddress(address)) throw new Error("That is not a valid Tron address.");
   const out = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 }];
@@ -1492,11 +1527,14 @@ export async function getTronBalances(address) {
   const acct = data && Array.isArray(data.data) ? data.data[0] : null;
   out[0].amount = tronSunToTrx((acct && acct.balance) ?? 0); // no account on-chain yet = 0
   for (const t of TRON_TOKENS) {
-    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
+    // A failed token read marks the row unknown (amount null — the
+    // UI renders "couldn't load"), never a fake zero; the native
+    // balance above still stands on its own read.
+    const row = { symbol: t.symbol, amount: null, address: t.address, decimals: t.decimals };
     try {
       const raw = await tronTrc20Balance(address, t);
       row.amount = ethers.formatUnits(raw, t.decimals);
-    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
+    } catch { /* stays null — unknown, not zero */ }
     out.push(row);
   }
   return out;
@@ -2159,12 +2197,25 @@ async function horizonJson(path) {
   return { status: res.status, data };
 }
 /** The Horizon account record, or null when Horizon says 404 — the
- *  account simply doesn't exist yet (unfunded). Other failures throw. */
+ *  account simply doesn't exist yet (unfunded). Other failures throw.
+ *  In-flight reads are DEDUPED per address: the app's double render
+ *  used to fire two identical account requests, and when the
+ *  duplicate was aborted the load was flagged failed even though the
+ *  surviving read succeeded — a false "couldn't load" badge on a
+ *  healthy (e.g. brand-new, unfunded) account. One shared request
+ *  means every concurrent caller sees the same single outcome. */
+const stellarAccountInflight = new Map(); // address -> Promise<record|null>
 async function stellarFetchAccount(address) {
-  const { status, data } = await horizonJson("/accounts/" + address);
-  if (status === 404) return null;
-  if (status !== 200 || !data) throw new Error("Stellar network error (HTTP " + status + ").");
-  return data;
+  const existing = stellarAccountInflight.get(address);
+  if (existing) return existing;
+  const p = (async () => {
+    const { status, data } = await horizonJson("/accounts/" + address);
+    if (status === 404) return null;
+    if (status !== 200 || !data) throw new Error("Stellar network error (HTTP " + status + ").");
+    return data;
+  })();
+  stellarAccountInflight.set(address, p);
+  try { return await p; } finally { stellarAccountInflight.delete(address); }
 }
 /** Recommended base fee (stroops per operation): the fee_stats
  *  fee_charged p50 — the same figure the SDK's fetchBaseFee returns —

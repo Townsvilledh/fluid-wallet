@@ -1292,6 +1292,92 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcSol.includes("the free public Solana endpoints aren't serving full scans"));
 }
 
+// 32b. UTXO altcoin + Tron/Stellar honesty (live home-screen sweep of
+// build 459d3740bf): the same defect class as the Solana fix above —
+// a family read fails in a real browser and the UI silently shows 0.
+// dogechain is CORS-blocked from the live origin, so DOGE's read
+// falls back to BlockCypher (its DOGE and LTC endpoints were verified
+// browser-viable live from the live origin; chain.so is CORS-blocked
+// too and is deliberately NOT used). Both sources failing must THROW
+// so the app can show "couldn't load" (family alert + failed row)
+// instead of a fake zero. Fetch is stubbed with per-source fixtures.
+{
+  const { getDogecoinBalance, getLitecoinBalance, parseBlockcypherBalance, getStellarAccount, stellarAddressFromPhrase } =
+    await import("../src/wallet-core.js");
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const DOGE_ADDR = "DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC";
+  const LTC_ADDR = "ltc1qjmxnz78nmc8nq77wuxh25n2es7rzm5c2rkk4wh";
+  ok("blockcypher parse: final_balance satoshis become whole coins",
+    parseBlockcypherBalance({ final_balance: 123456789 }) === 1.23456789
+    && parseBlockcypherBalance({ balance: 200000000 }) === 2);
+  let badShape = false;
+  try { parseBlockcypherBalance({}); } catch { badShape = true; }
+  ok("blockcypher parse: a garbled reply throws instead of becoming a number", badShape);
+  const realFetch = globalThis.fetch;
+  const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  try {
+    // dogechain answers: its own shape wins, no fallback call.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("dogechain.com")) return jsonRes({ balance: "42.5" });
+      throw new Error("fallback must not be called");
+    };
+    ok("doge balance: dogechain shape parses", (await getDogecoinBalance(DOGE_ADDR)) === 42.5);
+    // dogechain dies the way CORS kills it (fetch rejects outright):
+    // BlockCypher's fixture shape takes over (final_balance in koinu).
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("dogechain.com")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("api.blockcypher.com/v1/doge/")) return jsonRes({ address: DOGE_ADDR, final_balance: 315000000, balance: 300000000 });
+      throw new Error("unexpected url " + url);
+    };
+    ok("doge balance: CORS-dead primary falls back to BlockCypher final_balance",
+      (await getDogecoinBalance(DOGE_ADDR)) === 3.15);
+    // Both dead: the read rejects — the app shows "couldn't load".
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getDogecoinBalance(DOGE_ADDR));
+    ok("doge balance: total failure throws instead of returning a fake zero", true);
+    // LTC: litecoinspace (Esplora) shape is the primary read...
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("litecoinspace.org")) return jsonRes({ chain_stats: { funded_txo_sum: 55210668, spent_txo_sum: 210668 }, mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0 } });
+      throw new Error("fallback must not be called");
+    };
+    ok("ltc balance: litecoinspace funded-minus-spent parses", (await getLitecoinBalance(LTC_ADDR)) === 0.55);
+    // ...and BlockCypher takes over when Esplora dies.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("litecoinspace.org")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("api.blockcypher.com/v1/ltc/")) return jsonRes({ address: LTC_ADDR, final_balance: 55000000 });
+      throw new Error("unexpected url " + url);
+    };
+    ok("ltc balance: dead primary falls back to BlockCypher", (await getLitecoinBalance(LTC_ADDR)) === 0.55);
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getLitecoinBalance(LTC_ADDR));
+    ok("ltc balance: total failure throws instead of returning a fake zero", true);
+    // Stellar dedupe: two CONCURRENT account reads share ONE Horizon
+    // request (the double-render duplicate that used to trip the
+    // failure flag); a 404 still reads as unfunded/zero, not failure.
+    let horizonCalls = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("horizon.stellar.org/accounts/")) { horizonCalls++; return { status: 404, json: async () => ({}) }; }
+      throw new Error("unexpected url " + url);
+    };
+    const XLM_ADDR = stellarAddressFromPhrase(ABANDON);
+    const [a1, a2] = await Promise.all([getStellarAccount(XLM_ADDR), getStellarAccount(XLM_ADDR)]);
+    ok("stellar: concurrent account reads are deduped to one Horizon request",
+      horizonCalls === 1 && a1.funded === false && a2.funded === false && a1.balances[0].amount === "0");
+  } finally { globalThis.fetch = realFetch; }
+  const appSrcAlt = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("altcoin honesty: failed LTC/DOGE/BCH reads raise family alerts",
+    appSrcAlt.includes("m.litecoin = \"Litecoin balances couldn't be loaded right now.\"")
+    && appSrcAlt.includes("m.dogecoin = \"Dogecoin balances couldn't be loaded right now.\"")
+    && appSrcAlt.includes("m.bitcoincash = \"Bitcoin Cash balances couldn't be loaded right now.\""));
+  ok("altcoin honesty: failed reads render the couldn't-load row state, not zero",
+    appSrcAlt.includes("scalarAmtHtml(ltcLoadFailed, ltcBal, prices.LTC)")
+    && appSrcAlt.includes("scalarAmtHtml(dogeLoadFailed, dogeBal, prices.DOGE)")
+    && appSrcAlt.includes("scalarAmtHtml(bchLoadFailed, bchBal, prices.BCH)"));
+  ok("tron honesty: total read failure marks the curated rows unknown and alerts on the load, not the scan",
+    appSrcAlt.includes("m.tron = \"Main Tron balances couldn't be loaded right now.\"")
+    && appSrcAlt.includes("tronBalances = tronBalances.map(b => ({ ...b, amount: null }))"));
+}
+
 // 33. Phase 3b — Stellar (SLIP-0010 Ed25519, coin type 148,
 // m/44'/148'/0'). Vectors cross-checked three independent ways:
 // Fluid's SLIP-0010 + hand-rolled StrKey codec (below), the
