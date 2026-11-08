@@ -11,5 +11,9 @@
     "sol": "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn",
     "tron": "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf",
     "sui": "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831"
+  },
+  "muse": {
+    "evm": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+    "btc": "bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr"
   }
 }
