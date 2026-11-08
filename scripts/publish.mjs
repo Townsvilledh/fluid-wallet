@@ -45,7 +45,7 @@ import { join } from "node:path";
 const ROOT = new URL("..", import.meta.url).pathname;
 const WORKTREE = "/tmp/fluid-gh-pages";
 const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "fluid-wallet.html",
-  "names.json", "robots.txt", "sitemap.xml", "og-image.png",
+  "names.json", "robots.txt", "sitemap.xml", "og-image.png", "_headers",
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js"];
 const SSH = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/config" };
 // Directories whose NEW (untracked) files belong in a release commit.

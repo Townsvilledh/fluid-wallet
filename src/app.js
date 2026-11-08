@@ -2298,14 +2298,20 @@ function openAlgoSheet(tok) {
     // lookup; anything else is treated as a Fluid name, resolved
     // against the registry, and hard-blocked when the name is
     // unregistered or carries no Algorand address.
-    if (to && !isValidAlgorandAddress(to)) {
-      msg("agMsg", "Resolving Fluid name…", true);
-      try {
-        const r = await resolveChainRecipient(to, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand" });
-        to = r.to; sendName = r.name;
-        toast("Name resolved");
-      } catch (e) { return msg("agMsg", e.message); }
-    }
+    // Round 2: the sheet hands the trimmed input to that ONE shared
+    // function unconditionally — it no longer pre-gates on its own
+    // isValidAlgorandAddress check first. The address-vs-name
+    // decision lives in exactly one place (the place the suite pins
+    // end-to-end), so the sheet's behaviour can never diverge from
+    // the pinned core path for any input shape.
+    if (!to) return msg("agMsg", "That is not a valid Algorand address.");
+    msg("agMsg", "Resolving…", true);
+    try {
+      const r = await resolveChainRecipient(to, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand" });
+      to = r.to; sendName = r.name;
+      if (sendName) toast("Name resolved");
+      msg("agMsg", "");
+    } catch (e) { return msg("agMsg", e.message); }
     if (!isValidAlgorandAddress(to)) return msg("agMsg", "That is not a valid Algorand address.");
     if (!amount || Number(amount) <= 0) return msg("agMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("agMsg", "Amount is more than your balance.");
@@ -3873,6 +3879,13 @@ $("importBtn").onclick = async () => {
     msg("onboardMsg", "Importing…", true);
     const v = await importVault($("importPhrase").value, pw);
     localStorage.setItem(VAULT_KEY, v.keystore);
+    // The device-saved name belonged to the wallet being replaced —
+    // unbind it (QA F11 round 2): a name is scoped to the wallet it
+    // was claimed/adopted with, never carried across an import. The
+    // imported wallet starts nameless here; renderMain's reverse
+    // lookup re-attaches its own published name if it has one.
+    localStorage.removeItem("fluid_name");
+    nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
     refreshGate();
   } catch (e) { msg("onboardMsg", e.message); }
@@ -3934,8 +3947,21 @@ $("restoreBackBtn").onclick = () => {
 // browser previously saw an empty form, and claiming its own name back
 // was hard-blocked as "already claimed" — by itself.
 let nameAdoptTried = false;
+// Render generation for the name section (QA F11 round 2): the
+// registry refine below is async, and a wallet switch (create /
+// import / remove / unlock) can land while it is in flight. Every
+// render bumps the generation; a refine that resolves against a
+// stale generation — or a different name/wallet than it started
+// with — is dropped instead of painting the old wallet's data into
+// the new wallet's section.
+let nameSectionGen = 0;
 function renderNameSection() {
+  const gen = ++nameSectionGen;
   const stored = localStorage.getItem("fluid_name");
+  const myAddr = wallet ? wallet.address : null;
+  const stillCurrent = () => gen === nameSectionGen
+    && localStorage.getItem("fluid_name") === stored
+    && (wallet ? wallet.address : null) === myAddr;
   // The home header greets by Fluid name (Ethuram's requirement): set it
   // here because every name-state change (claim, adoption, removal)
   // flows through this function, and renderMain calls it on unlock.
@@ -3952,12 +3978,19 @@ function renderNameSection() {
   // be described as registered.
   const noteEl = $("ownedNameNote");
   if (noteEl) noteEl.textContent = "This name is saved on this device — publish its entry so other Fluid wallets can resolve it.";
-  // Prefill from this wallet's own keys right away; the registry entry
-  // (what senders actually resolve) refines the fields when it loads.
+  // Prefill from THIS wallet's own keys right away; the registry
+  // entry (what senders actually resolve) refines the fields when
+  // it loads. The addresses are derived from the current wallet's
+  // phrase at render time — never read from the family globals
+  // (btcAddr / algoAddr), which are populated for whichever wallet
+  // the balance loaders last ran against and can still hold the
+  // PREVIOUS wallet's addresses right after a switch (QA F11
+  // round 2: a fresh wallet's section showed the replaced wallet's
+  // Algorand address until a page reload).
   if (wallet) {
     $("ownedEvm").textContent = wallet.address;
-    $("ownedBtc").textContent = btcAddr || bitcoinAddress(wallet.mnemonic.phrase);
-    $("ownedAlgo").textContent = algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase);
+    $("ownedBtc").textContent = bitcoinAddress(wallet.mnemonic.phrase);
+    $("ownedAlgo").textContent = algoAddressFromPhrase(wallet.mnemonic.phrase);
   }
   $("copyOwnedEvm").onclick = () => copyText($("ownedEvm").textContent, $("copyOwnedEvm"));
   $("copyOwnedBtc").onclick = () => copyText($("ownedBtc").textContent, $("copyOwnedBtc"));
@@ -3966,15 +3999,19 @@ function renderNameSection() {
   // The owned box shows the SAME fields the claim form takes (QA
   // F11): EVM, Bitcoin, Algorand, and Lightning in both states. The
   // Lightning row is always present — the registered address when
-  // the registry carries one, an add form when it doesn't (the
-  // Receive sheet sends users here for exactly this).
+  // the registry carries one, and the add form whenever it doesn't
+  // (the Receive sheet sends users here for exactly this). Round 2:
+  // the form ALSO renders when the registry couldn't be checked —
+  // the entry is built locally from the user's own keys, so a
+  // failed registry read must never suppress it; the honest note
+  // and the form appear together.
   const paintOwnedLn = (ln, unknown = false) => {
     if (ln) {
       $("ownedLn").textContent = ln;
       show("copyOwnedLn", true); show("ownedLnAdd", false);
     } else if (unknown) {
       $("ownedLn").textContent = "Couldn't check the registry just now";
-      show("copyOwnedLn", false); show("ownedLnAdd", false);
+      show("copyOwnedLn", false); show("ownedLnAdd", true);
     } else {
       $("ownedLn").textContent = "Not registered yet";
       show("copyOwnedLn", false); show("ownedLnAdd", true);
@@ -3989,16 +4026,29 @@ function renderNameSection() {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ln)) return msg("nameMsg", "That doesn't look like a Lightning address (name@domain).");
     const entry = buildNameEntry(stored,
       $("ownedEvm").textContent || wallet.address,
-      $("ownedBtc").textContent || btcAddr || bitcoinAddress(wallet.mnemonic.phrase),
+      $("ownedBtc").textContent || bitcoinAddress(wallet.mnemonic.phrase),
       ln,
-      $("ownedAlgo").textContent || algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase));
+      $("ownedAlgo").textContent || algoAddressFromPhrase(wallet.mnemonic.phrase));
     $("ownedEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
     show("ownedEntryBox", true);
     msg("nameMsg", "Lightning address added to your entry — publish it so the change resolves everywhere.", true);
   };
   $("copyOwnedEntryBtn").onclick = () => copyText($("ownedEntry").textContent, $("copyOwnedEntryBtn"));
-  resolveFluidName(stored).then(hit => {
-    if (!hit) { paintOwnedLn(null, true); return; }
+  resolveFluidName(stored).then(async (hit) => {
+    if (!stillCurrent()) return;
+    if (!hit) {
+      // No entry resolved — two different truths hide behind it:
+      // the registry couldn't be read at all, or this name simply
+      // isn't published yet (the normal state of a freshly created
+      // wallet). Round 1 collapsed both into "couldn't check" and
+      // hid the Lightning add form (QA F11 round 2). Tell them
+      // apart with the canonical registry read; either way the
+      // form renders — only the note differs.
+      const reg = await fetchNameRegistry().catch(() => null);
+      if (!stillCurrent()) return;
+      paintOwnedLn(null, !reg);
+      return;
+    }
     if (hit.evm) $("ownedEvm").textContent = hit.evm;
     if (hit.btc) $("ownedBtc").textContent = hit.btc;
     if (hit.algo) $("ownedAlgo").textContent = hit.algo;
@@ -4010,7 +4060,7 @@ function renderNameSection() {
         noteEl.textContent = "Saved on this device — but the public registry currently resolves this name to a different wallet.";
       }
     }
-  }).catch(() => {});
+  }).catch(() => { if (stillCurrent()) paintOwnedLn(null, true); });
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
  *  a name whose EVM, BTC or Algorand address is THIS wallet's, adopt it — store it
@@ -4261,7 +4311,7 @@ $("wipeBtn").onclick = () => {
     const allKeys = [];
     for (let i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i));
     for (const k of fluidStorageKeysToWipe(allKeys)) localStorage.removeItem(k);
-    wallet = null; pendingSend = null;
+    wallet = null; pendingSend = null; nameAdoptTried = false;
     // Leave no trace of the removed wallet on the onboarding screen:
     // a seed phrase or password must never linger in the form after removal.
     $("seedOut").textContent = ""; show("seedBox", false);

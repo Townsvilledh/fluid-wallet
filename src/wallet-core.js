@@ -8881,9 +8881,24 @@ async function fetchScanEvmTarget(target) {
     return { target, ok: true, balanceText, balanceSymbol: net.symbol, rows: [], note: "no-history-index" };
   }
   const base = `${api}/api/v2/addresses/${target.address}`;
-  const [info, txs, transfers] = await Promise.all([
+  const loadPass = () => Promise.all([
     scanFetchJson(base), scanFetchJson(base + "/transactions"), scanFetchJson(base + "/token-transfers"),
   ]);
+  let [info, txs, transfers] = await loadPass();
+  // ONE retry for whichever pieces are missing (Scan round 2): the
+  // Blockscout instances throttle bursts, and a name search fires
+  // more parallel targets than a raw-address search (the sweep plus
+  // BTC and Algorand) — its balance (info) requests were the ones
+  // dropped, painting "balance unavailable" for chains the raw
+  // search loaded fine seconds later in the same session. Both
+  // paths share this fetcher and these targets, so the retry
+  // budget is identical for both; only the missing pieces re-run.
+  if (!info || info.coin_balance == null || (!txs && !transfers)) {
+    const [info2, txs2, transfers2] = await loadPass();
+    if ((!info || info.coin_balance == null) && info2 && info2.coin_balance != null) info = info2;
+    if (!txs) txs = txs2;
+    if (!transfers) transfers = transfers2;
+  }
   if (!txs && !transfers) return scanFailed(target, net.symbol);
   let balanceText = null;
   if (info && info.coin_balance != null) {

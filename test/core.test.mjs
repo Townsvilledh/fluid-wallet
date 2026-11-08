@@ -3599,4 +3599,133 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrc.includes("Refreshing…") && appSrc.includes('toast("Balances refreshed")'));
 }
 
+// ---------- QA round 2 (2026-11-08): app-path pins, not core-only ----------
+// Round 1's lesson: a core-level pin is not proof — the live sheet
+// disagreed with the pinned core function. Every pin below ties the
+// fix to the exact handler/branch the UI calls.
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const { resolveChainRecipient, isValidAlgorandAddress, algoAddressFromPhrase,
+    fetchNameRegistry, resolveFluidName, NAMES_REGISTRY_URL, NAMES_REGISTRY_FALLBACK_URL,
+    fetchScanTarget, scanTargetsForName, scanTargetsForAddress, detectScanFamily } = await import("../src/wallet-core.js");
+
+  // R2-A (F2): the Algorand sheet's own handler is the pinned path.
+  const agStart = appSrc.indexOf('$("agReview").onclick');
+  const agSeg = appSrc.slice(agStart, appSrc.indexOf("algoSendPlan", agStart));
+  ok("R2-A: the Algorand sheet calls the shared resolver with no validity pre-gate of its own",
+    agSeg.includes('resolveChainRecipient(to, { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand" })')
+    && !agSeg.includes("if (to && !isValidAlgorandAddress(to))"));
+  const ALGO_ZERO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+  ok("R2-A: the pinned zero address is exactly 58 chars (one dropped 'A' is invisible — the pin guards the string itself)",
+    ALGO_ZERO.length === 58);
+  let lookups = 0;
+  const spy = async () => { lookups++; return null; };
+  // The sheet's exact data flow: input value → trim → the shared call.
+  const sheetPath = (raw) => resolveChainRecipient(String(raw || "").trim(),
+    { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand", lookupName: spy });
+  const rz = await sheetPath(ALGO_ZERO);
+  ok("R2-A: the exact string the sheet passes for the zero address resolves as an address, no lookup",
+    rz.to === ALGO_ZERO && rz.name === null && lookups === 0);
+  const ALGO_DERIVED = algoAddressFromPhrase("absent law burger minor breeze age tooth target report piece orchard close");
+  const rd = await sheetPath(ALGO_DERIVED);
+  ok("R2-A: a valid non-zero Algorand address (derived from the QA phrase) resolves as an address via the same path",
+    rd.to === ALGO_DERIVED && rd.name === null && lookups === 0);
+  let shortBlocked = false;
+  try { await sheetPath(ALGO_ZERO.slice(1)); } catch { shortBlocked = true; }
+  ok("R2-A: a 57-char near-miss does NOT resolve as an address (the transcription sensitivity, documented)",
+    shortBlocked === true && lookups === 1);
+
+  // R2-B1 (F11): the name section is scoped to the current wallet.
+  const nsStart = appSrc.indexOf("function renderNameSection()");
+  const nsSeg = appSrc.slice(nsStart, appSrc.indexOf("async function adoptRegistryNameIfMine", nsStart));
+  ok("R2-B1: the owned Algorand row derives from the CURRENT wallet's phrase, never the family global",
+    nsSeg.includes('$("ownedAlgo").textContent = algoAddressFromPhrase(wallet.mnemonic.phrase);')
+    && !nsSeg.includes("algoAddr ||"));
+  ok("R2-B1: the owned Bitcoin row derives from the current wallet's phrase too",
+    nsSeg.includes('$("ownedBtc").textContent = bitcoinAddress(wallet.mnemonic.phrase);')
+    && !nsSeg.includes("btcAddr ||"));
+  ok("R2-B1: the async registry refine is generation + identity guarded against wallet switches",
+    appSrc.includes("let nameSectionGen = 0;") && appSrc.includes("stillCurrent()"));
+  ok("R2-B1: importing a wallet unbinds the replaced wallet's device-saved name",
+    appSrc.includes('localStorage.removeItem("fluid_name");'));
+
+  // R2-B2 (F11): the Lightning add form renders in both states,
+  // including after a failed registry read; and the app can tell
+  // "name not published" apart from "registry unreachable".
+  const lnStart = appSrc.indexOf("const paintOwnedLn");
+  const lnSeg = appSrc.slice(lnStart, appSrc.indexOf("paintOwnedLn(null);", lnStart));
+  ok("R2-B2: both no-Lightning branches (not-registered AND registry-unknown) render the add form",
+    lnSeg.includes("} else if (unknown) {") && (lnSeg.match(/show\("ownedLnAdd", true\)/g) || []).length >= 2);
+  {
+    const realFetch = globalThis.fetch;
+    const REG = { ethuram: { evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b" } };
+    try {
+      globalThis.fetch = async () => ({ ok: true, json: async () => REG });
+      ok("R2-B2: an unpublished name resolves null while the registry itself reads fine (not 'unreachable')",
+        (await resolveFluidName("freshname")) === null
+        && JSON.stringify(await fetchNameRegistry()) === JSON.stringify(REG));
+      globalThis.fetch = async () => { throw new Error("offline"); };
+      ok("R2-B2: an unreachable registry reads as null from the registry fetch itself",
+        (await fetchNameRegistry()) === null);
+      const calls = [];
+      globalThis.fetch = async (url) => {
+        calls.push(String(url));
+        if (String(url) === NAMES_REGISTRY_URL) return { ok: true, json: async () => { throw new Error("html, not json"); } };
+        return { ok: true, json: async () => REG };
+      };
+      const hit = await resolveFluidName("ethuram");
+      ok("R2-B2: a non-JSON primary body (an HTML redirect page) falls through to the mirror",
+        hit?.evm === REG.ethuram.evm && calls.length === 2 && calls[1] === NAMES_REGISTRY_FALLBACK_URL);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // R2-C (Scan): name and raw paths — identical targets, one shared
+  // fetcher, one retry budget.
+  const DRIP_EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const nameBase = scanTargetsForName({ evm: DRIP_EVM }).find(t => t.chainKey === "base");
+  const rawBase = scanTargetsForAddress(detectScanFamily(DRIP_EVM)).find(t => t.chainKey === "base");
+  ok("R2-C: the name path and the raw path build the IDENTICAL Base target",
+    JSON.stringify(nameBase) === JSON.stringify(rawBase));
+  ok("R2-C: runScan converges both branches on a single fetchScan call",
+    (appSrc.match(/await fetchScan\(targets\)/g) || []).length === 1
+    && appSrc.includes("scanTargetsForName(entry)") && appSrc.includes("scanTargetsForAddress(detected)"));
+  {
+    const realFetch = globalThis.fetch;
+    let infoCalls = 0;
+    try {
+      globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.endsWith("/transactions") || u.endsWith("/token-transfers")) return { ok: true, json: async () => ({ items: [] }) };
+        if (u.includes("base.blockscout.com")) {
+          infoCalls++;
+          if (infoCalls === 1) return { ok: false, status: 429, json: async () => ({}) };
+          return { ok: true, json: async () => ({ coin_balance: "1000000000000000000" }) };
+        }
+        throw new Error("unexpected " + u);
+      };
+      const rName = await fetchScanTarget(nameBase);
+      ok("R2-C: the name path recovers a throttled balance via the shared retry",
+        rName.ok === true && rName.balanceText === "1.0" && infoCalls === 2);
+      infoCalls = 0;
+      const rRaw = await fetchScanTarget(rawBase);
+      ok("R2-C: the raw path gets the identical result on the identical retry budget",
+        rRaw.ok === true && rRaw.balanceText === "1.0" && infoCalls === 2);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // R2-D (stale build): HTML entries must revalidate; assets may not
+  // be touched by the rule.
+  const headersSrc = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
+  ok("R2-D: the HTML entries carry a must-revalidate cache rule",
+    headersSrc.includes("/index.html") && headersSrc.includes("/recovery.html")
+    && headersSrc.includes("/fluid-wallet.html")
+    && headersSrc.includes("Cache-Control: public, max-age=0, must-revalidate"));
+  const headerRules = headersSrc.split("\n").filter(l => !l.trim().startsWith("#")).join("\n");
+  ok("R2-D: the rule is scoped to HTML documents only — no wildcard, no asset paths",
+    !headerRules.includes("/*") && !headerRules.includes("app.bundle.js") && !headerRules.includes("lightning.chunk.js"));
+  const buildSrc = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  ok("R2-D: the build ships _headers into dist (Netlify's publish dir)",
+    buildSrc.includes('copyFileSync("public/_headers", "dist/_headers")'));
+}
+
 console.log(`\n${passed} checks passed`);

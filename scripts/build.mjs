@@ -13,6 +13,7 @@ copyFileSync("src/sw.js", "dist/sw.js");
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");
+copyFileSync("public/_headers", "dist/_headers");
 copyFileSync("public/robots.txt", "dist/robots.txt");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");
