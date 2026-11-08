@@ -2853,7 +2853,20 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
  *  branch. Cleaning lives HERE, in the one shared resolver, so
  *  every chain sheet gets it. */
 export function cleanRecipientInput(input) {
-  return String(input || "").replace(/[\u200B-\u200D\u2060\u00AD\uFEFF]/g, "").trim();
+  // Round 4 widening: the strip set is no longer an enumerated few.
+  // It now covers ALL whitespace (including a mid-string space or
+  // NBSP left by a line-wrapped paste) and the WHOLE Unicode format
+  // class (\p{Cf}: zero-width chars, bidi controls, joiners, the
+  // combining grapheme joiner U+034F, the Arabic letter mark U+061C,
+  // …) plus U+180E, a format char in older Unicode. This is safe to
+  // widen without limit: no valid address on any chain Fluid speaks
+  // (base32/base58/bech32/hex) and no valid Fluid name ([a-z0-9_])
+  // contains whitespace or a format character, so stripping them
+  // can never alter a legitimate input — it can only rescue a
+  // pasted delivery that was carrying invisible weight. Look-alike
+  // LETTERS (e.g. a Cyrillic А) are deliberately NOT touched: they
+  // fail the checksum and hard-block, loudly, as they should.
+  return String(input || "").replace(/[\s\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\p{Cf}]/gu, "").trim();
 }
 export async function resolveChainRecipient(input, { isValidAddress, field = null, chainLabel, lookupName } = {}) {
   const raw = cleanRecipientInput(input);

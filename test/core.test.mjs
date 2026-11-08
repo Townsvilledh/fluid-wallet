@@ -3795,4 +3795,84 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     wipeSeg.includes("wallet = null;") && wipeSeg.includes("renderNameSection();"));
 }
 
+// QA F2 ROUND 4 — the experiment matrix release. Every faithful
+// execution of the shipped code (source in node, the extracted
+// bundle functions, the full app driven in jsdom on BOTH the round-3
+// and round-2 bundles, against the REAL live registry) takes the
+// address branch for the canonical zero address with ZERO registry
+// fetches; the live tab's (a)/(b) failures are mutually inconsistent
+// with its own (c) pass under any deterministic execution of that
+// code with identical post-clean strings, localising the divergence
+// to the browser session's input/click delivery, not to a shipped
+// line. The one code-side surface the evidence still implicates is
+// the cleaner's ENUMERATED strip set (round 3): a pasted delivery
+// carrying an invisible character outside that enumeration (a
+// combining grapheme joiner, a bidi control, a mid-string NBSP from
+// a wrapped paste) still fell through to the name path. Round 4
+// widens the cleaner to all whitespace + the whole Unicode format
+// class — provably behaviour-preserving for legitimate input, since
+// no valid address or Fluid name contains either. The pins below
+// execute the resolver (the convicted layer) with crafted
+// leading-zero Algorand addresses and the exotic-invisible set.
+{
+  const { resolveChainRecipient, isValidAlgorandAddress, algoAddressFromPubkey, cleanRecipientInput, detectScanFamily } =
+    await import("../src/wallet-core.js");
+  const ALGO_ZERO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+  const algoOpts = (spy) => ({ isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand", lookupName: spy });
+  const throwsMsg = async (fn, want) => { try { await fn(); return false; } catch (e) { return e.message === want; } };
+
+  // E2 set: crafted public keys with increasing leading zero bytes.
+  const keyOne = new Uint8Array(32); keyOne[31] = 1;
+  const keyHalf = new Uint8Array(32); for (let i = 0; i < 16; i++) keyHalf[16 + i] = i + 1;
+  const keySeq = new Uint8Array(32); for (let i = 0; i < 32; i++) keySeq[i] = i + 1;
+  const crafted = [
+    ["all-zero key (the canonical zero address)", ALGO_ZERO, algoAddressFromPubkey(new Uint8Array(32))],
+    ["key = 31 zero bytes + 0x01 (51 leading A's)", null, algoAddressFromPubkey(keyOne)],
+    ["key = 16 zero bytes + 16 fixed bytes (26 leading A's)", null, algoAddressFromPubkey(keyHalf)],
+    ["key = bytes 1..32 (a normal address)", null, algoAddressFromPubkey(keySeq)],
+  ];
+  for (const [label, literal, addr] of crafted) {
+    if (literal) ok(`R4: crafted ${label} matches the canonical literal`, addr === literal);
+    ok(`R4: crafted ${label} is checksum-valid`, isValidAlgorandAddress(addr) === true);
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    const r = await resolveChainRecipient(addr, algoOpts(spy));
+    ok(`R4: crafted ${label} — address branch, no lookup`, r.to === addr && r.name === null && lookups === 0);
+    ok(`R4: Scan classifies crafted ${label} as an Algorand address`, detectScanFamily(addr)?.family === "algo");
+  }
+
+  // The exotic-invisible set: outside round 3's enumeration, inside
+  // round 4's widened class. Each must land in the address branch.
+  const exotics = [
+    ["trailing U+034F (combining grapheme joiner)", ALGO_ZERO + "\u034F"],
+    ["trailing U+202E (right-to-left override)", ALGO_ZERO + "\u202E"],
+    ["trailing U+180E (Mongolian vowel separator)", ALGO_ZERO + "\u180E"],
+    ["mid-string U+00A0 (wrapped-paste NBSP)", ALGO_ZERO.slice(0, 30) + "\u00A0" + ALGO_ZERO.slice(30)],
+    ["mid-string space (wrapped paste)", ALGO_ZERO.slice(0, 30) + " " + ALGO_ZERO.slice(30)],
+  ];
+  for (const [label, s] of exotics) {
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    const r = await resolveChainRecipient(s, algoOpts(spy));
+    ok(`R4: zero address + ${label} — cleaned, address branch, no lookup`, r.to === ALGO_ZERO && r.name === null && lookups === 0);
+  }
+
+  ok("R4: the cleaner strips the full format class + internal whitespace, and nothing else",
+    cleanRecipientInput("a\u2066b\u061Cc\u034Fd") === "abcd"
+    && cleanRecipientInput("et huram") === "ethuram"
+    && cleanRecipientInput(ALGO_ZERO) === ALGO_ZERO);
+
+  // The fence: look-alike LETTERS are not the cleaner's business.
+  // A Cyrillic А (U+0410) keeps the string at 58 chars and visually
+  // identical, but it is not base32 — it must hard-block through the
+  // name path, never silently resolve.
+  {
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    const homoglyph = "\u0410" + ALGO_ZERO.slice(1);
+    ok("R4: a Cyrillic-А look-alike still hard-blocks as an unregistered name (no silent normalising)",
+      await throwsMsg(() => resolveChainRecipient(homoglyph, algoOpts(spy)), "That Fluid name is not in the registry yet.") && lookups === 1);
+  }
+}
+
 console.log(`\n${passed} checks passed`);
