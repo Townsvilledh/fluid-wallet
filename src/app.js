@@ -101,6 +101,11 @@ const expandedOther = new Set();  // family keys whose "Other tokens" group is e
 let familyScanFailed = {};        // tron/solana/sui -> true when the all-token read fell back to curated rows
 let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|failed, for the ACTIVE chain
 let evmLoadFailed = false; // the curated EVM balance load failed — rows are UNKNOWN, never zero (DOGE precedent)
+// Bitcoin has TWO balance reads (SegWit + Taproot) feeding one row:
+// each account tracks its own failure, and the family flag is the
+// OR — the combined total is unknown if either account is unknown.
+let btcSegwitFailed = false, btcTaprootFailed = false, btcLoadFailed = false;
+function syncBtcLoadFailed() { btcLoadFailed = btcSegwitFailed || btcTaprootFailed; }
 // A row's own priceUsd (present on discovered rows, null when no
 // source prices them) always wins over the symbol table — a scam
 // token can call itself "USDC", it cannot borrow USDC's price here.
@@ -459,11 +464,15 @@ async function renderMain() {
   // not an empty claim form that rejects the name as "already claimed".
   renderNameSection();
   adoptRegistryNameIfMine();
-  getBitcoinBalance(btcAddr).then(b => { btcBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
+  // A failed Bitcoin load is UNKNOWN, not zero (EVM precedent): each
+  // account tracks its own failure, and the family flag is the OR.
+  // Flags reset at load start so a Refresh can clear them.
+  btcSegwitFailed = btcTaprootFailed = false; btcLoadFailed = false;
+  getBitcoinBalance(btcAddr).then(b => { btcBal = b; btcSegwitFailed = false; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { btcSegwitFailed = true; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); });
   // Taproot (BIP86) — a second Bitcoin account from the same seed
   // (Build B): its own address and balance, rolled into the BTC totals.
   btcTrAddr = bitcoinTaprootAddress(w.mnemonic.phrase);
-  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
+  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; btcTaprootFailed = false; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { btcTaprootFailed = true; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); });
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
@@ -631,7 +640,9 @@ async function renderMain() {
 
 function heroTotal() {
   const net = NETWORKS[networkKey];
-  let t = (btcBal + btcTrBal) * (prices.BTC || 0)
+  // A failed Bitcoin load is unknown, not $0.00: its contribution
+  // stays out of the total (same discipline as the EVM family).
+  let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)
     + ltcBal * (prices.LTC || 0) + dogeBal * (prices.DOGE || 0) + bchBal * (prices.BCH || 0);
   for (const b of balances) {
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
@@ -699,7 +710,9 @@ function familyUsdTotals() {
     const p = priceOfRow(b, priceFn(b)); return p != null ? t + Number(b.amount) * p : t;
   }, 0);
   const m = {};
-  m.bitcoin = (btcBal + btcTrBal) * (prices.BTC || 0);
+  // A failed Bitcoin load is unknown, not $0.00: the card total is
+  // null (renders "—") and the unknown rows stay out of the total.
+  m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);
   m.litecoin = ltcBal * (prices.LTC || 0);
   m.dogecoin = dogeBal * (prices.DOGE || 0);
   m.bitcoincash = bchBal * (prices.BCH || 0);
@@ -847,6 +860,7 @@ function familyAlertMap() {
   if (ltcLoadFailed) m.litecoin = "Litecoin balances couldn't be loaded right now.";
   if (dogeLoadFailed) m.dogecoin = "Dogecoin balances couldn't be loaded right now.";
   if (bchLoadFailed) m.bitcoincash = "Bitcoin Cash balances couldn't be loaded right now.";
+  if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn't be loaded right now.";
   if (familyScanFailed.solana) m.solana = "Full token scan isn't available from the free public Solana endpoints right now — showing main Solana tokens only. Your main tokens above are up to date; the full scan needs an endpoint that serves indexed token lookups, which the free ones currently refuse.";
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
   if (stellarLoadFailed) m.stellar = "Stellar balances couldn't be loaded right now.";
@@ -983,7 +997,7 @@ function paintAssets() {
   grp("bitcoin", "", [famLoaded.has("bitcoin") ? `<div class="row" id="btcRow">
       <span class="logowrap">${tokenLogoHtml({ symbol: "BTC" }, "bitcoin")}${badgeHtml({ symbol: "BTC" }, "bitcoin")}</span>
       <span class="grow"><b class="rname">Bitcoin</b><small>BTC · SegWit + Taproot</small></span>
-      <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
+      <span class="amt">${scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)}</span></div>` : skeletonRowsHtml(1)]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first. A failed load
@@ -1160,7 +1174,7 @@ function paintAssets() {
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !anyBal && scopedTotal() === 0));
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !anyBal && scopedTotal() === 0));
   }
   const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
@@ -1774,11 +1788,11 @@ function openEvmSendSheet() {
 function openBtcSheet() {
   let pendingBtc = null;
   openSheet(`<h3>Bitcoin</h3>
-    <p><b>${fmt(btcBal + btcTrBal, 8)} BTC</b> · ${usd((btcBal + btcTrBal) * (prices.BTC || 0))} across two accounts from the same seed</p>
-    <p class="tag">Native SegWit (bc1q…) · ${fmt(btcBal, 8)} BTC</p>
+    <p><b>${btcLoadFailed ? "Balance couldn't load" : fmt(btcBal + btcTrBal, 8) + " BTC"}</b>${btcLoadFailed ? "" : ` · ${usd((btcBal + btcTrBal) * (prices.BTC || 0))} across two accounts from the same seed`}</p>
+    <p class="tag">Native SegWit (bc1q…) · ${btcSegwitFailed ? "couldn't load" : fmt(btcBal, 8) + " BTC"}</p>
     <img class="qr" id="qrBtc2"><p class="mono">${btcAddr}</p>
     <button class="btn ghost" id="cpBtc2">Copy SegWit address</button>
-    <p class="tag">Taproot (bc1p…) · ${fmt(btcTrBal, 8)} BTC</p>
+    <p class="tag">Taproot (bc1p…) · ${btcTaprootFailed ? "couldn't load" : fmt(btcTrBal, 8) + " BTC"}</p>
     <img class="qr" id="qrBtcTr2"><p class="mono">${btcTrAddr}</p>
     <button class="btn ghost" id="cpBtcTr2">Copy Taproot address</button>
     <hr style="border-color:var(--line)">
@@ -1902,6 +1916,13 @@ function openBtcSheet() {
       to = hit.btc; sendName = hit.name;
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
+    // A failed balance load is UNKNOWN, not zero: never plan a send
+    // against the account whose balance didn't load (EVM precedent).
+    // The gate is per account — a loaded SegWit account still sends
+    // when only Taproot failed, and vice versa.
+    const sendKind = $("bFrom").value;
+    if (sendKind === "taproot" ? btcTaprootFailed : btcSegwitFailed)
+      return msg("bMsg", "Balances couldn't load right now — tap More → Refresh and try again.");
     // Address-poisoning check (red-team Finding D): the EVM sheet has
     // always warned on lookalike recipients; the Bitcoin sheet — the
     // highest-value target for poisoning — showed nothing. Mirror it:
@@ -1918,7 +1939,7 @@ function openBtcSheet() {
       // fee, and Confirm broadcasts exactly these bytes — the fee can
       // never change between what the user read and what gets signed.
       msg("bMsg", "Checking the network fee…", true);
-      const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount, kind: $("bFrom").value });
+      const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: amount, kind: sendKind });
       pendingBtc = { to, amount, plan, name: sendName };
       if (sendName) toast("Name resolved");
       // Same disclosure as formatSendIntent: when the recipient was given
@@ -2708,6 +2729,9 @@ function openLtcSheet() {
     const to = $("lTo").value.trim(), amount = $("lAmt").value.trim();
     if (!isValidLitecoinAddress(to)) return msg("lMsg", "That is not a valid Litecoin address.");
     if (!amount || Number(amount) <= 0) return msg("lMsg", "Enter an amount.");
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (ltcLoadFailed) return msg("lMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
     if (Number(amount) > ltcBal) return msg("lMsg", "Amount is more than your balance.");
     try {
       // Build now, show the EXACT fee, broadcast the same bytes on
@@ -2764,6 +2788,9 @@ function openBchSheet() {
     const to = $("cTo").value.trim(), amount = $("cAmt").value.trim();
     if (!isValidBchAddress(to)) return msg("cMsg", "That is not a valid Bitcoin Cash address.");
     if (!amount || Number(amount) <= 0) return msg("cMsg", "Enter an amount.");
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (bchLoadFailed) return msg("cMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
     if (Number(amount) > bchBal) return msg("cMsg", "Amount is more than your balance.");
     try {
       // Build now, show the EXACT fee, broadcast the same bytes on
@@ -2830,6 +2857,9 @@ function openDogeSheet() {
     if (!isValidDogeAddress(to)) return msg("gMsg", "That is not a valid Dogecoin address.");
     if (!amount || Number(amount) <= 0) return msg("gMsg", "Enter an amount.");
     if (Number(amount) < DOGE_MIN_OUTPUT) return msg("gMsg", `Dogecoin's minimum spendable output is ${DOGE_MIN_OUTPUT} DOGE — send at least that much.`);
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (dogeLoadFailed) return msg("gMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
     if (Number(amount) > dogeBal) return msg("gMsg", "Amount is more than your balance.");
     try {
       // Build now, show the EXACT fee, relay the same bytes on confirm
@@ -4450,8 +4480,11 @@ $("refreshBtn").onclick = async () => {
     await new Promise(r => setTimeout(r, 900));
     // The old toast claimed success even when the EVM load had just
     // failed again — the refresh looked like it worked while nothing
-    // had loaded. Report the load outcome, not the tap.
-    toast(evmLoadFailed ? "Balances couldn't load — check your connection and try again" : "Balances refreshed");
+    // had loaded. Report the load outcome, not the tap. (Caveat: the
+    // Bitcoin loads are fire-and-forget, so the toast can only
+    // reflect a BTC failure that has already landed when it fires —
+    // a slow timeout still surfaces on the row + alert, not here.)
+    toast((evmLoadFailed || btcLoadFailed) ? "Balances couldn't load — check your connection and try again" : "Balances refreshed");
   } finally {
     if (label) label.textContent = old || "Refresh balances";
     delete btn.dataset.busy;

@@ -430,12 +430,29 @@ function btcKeys(phrase, account = 0) {
 export function bitcoinAddress(phrase, account = 0) { return btcKeys(phrase, account).address; }
 
 const MEMPOOL = "https://mempool.space/api";
+const BLOCKSTREAM = "https://blockstream.info/api";
+/** Bitcoin balance, mempool.space first with Blockstream's Esplora as
+ *  fallback — the two answer the IDENTICAL address JSON shape
+ *  (chain_stats / mempool_stats), so one parser serves both (the
+ *  same pairing fetchBtcUtxos already uses for UTXOs). A non-OK
+ *  status, a garbled body, or a network error all read as "this
+ *  source failed, try the next one". Both failing THROWS, so the UI
+ *  shows "couldn't load" instead of a fake zero (the DOGE/EVM
+ *  precedent). Fallback verified live 2026-11-08: Blockstream's
+ *  /address/ answered HTTP 200 for a bc1q address with the Fluid
+ *  origin (BlockCypher's BTC balance endpoint also answered 200). */
 export async function getBitcoinBalance(address) {
-  const res = await fetch(`${MEMPOOL}/address/${address}`);
-  const d = await res.json();
-  const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
-  const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
-  return (funded - spent) / 1e8;
+  for (const base of [MEMPOOL, BLOCKSTREAM]) {
+    try {
+      const res = await fetch(`${base}/address/${address}`);
+      if (!res.ok) continue;
+      const d = await res.json();
+      const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
+      const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
+      return (funded - spent) / 1e8;
+    } catch { /* this source failed — try the next one */ }
+  }
+  throw new Error("Bitcoin balance lookup failed.");
 }
 
 /* Fee-rate resolution (audit H1, 2026-11-06): a fee oracle is an input
@@ -528,7 +545,7 @@ function validUtxoSet(d) {
  *  the caller gets ONE plain-language error, never a raw parse
  *  message. */
 export async function fetchBtcUtxos(address) {
-  for (const base of [MEMPOOL, "https://blockstream.info/api"]) {
+  for (const base of [MEMPOOL, BLOCKSTREAM]) {
     const list = validUtxoSet(await fetchJsonOrNull(`${base}/address/${address}/utxo`));
     if (list) return list;
   }

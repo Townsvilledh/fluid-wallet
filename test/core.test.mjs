@@ -3357,7 +3357,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
-    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !anyBal')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
   ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
     !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
@@ -3899,7 +3899,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("cosmetic ii: removing the wallet resets the gate username preview",
     appSrc.includes('$("createNamePreview").textContent = "you." + FLUID_DOMAIN;'));
   ok("cosmetic iii: Refresh balances shows working + done feedback",
-    appSrc.includes("Refreshing…") && appSrc.includes('toast(evmLoadFailed ? "Balances couldn\'t load — check your connection and try again" : "Balances refreshed")'));
+    appSrc.includes("Refreshing…") && appSrc.includes('toast((evmLoadFailed || btcLoadFailed) ? "Balances couldn\'t load — check your connection and try again" : "Balances refreshed")'));
 }
 
 // ---------- QA round 2 (2026-11-08): app-path pins, not core-only ----------
@@ -4396,8 +4396,95 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcEvm.includes("Balances couldn't load right now — tap More → Refresh and try again.")
     && appSrcEvm.includes("if (evmLoadFailed) return msg(\"sMsg\", warnPrefix + resolvedNote + \"Balances couldn't load right now"));
   ok("evm load-failed: refresh reports the load outcome, prices can't stall the render",
-    appSrcEvm.includes("toast(evmLoadFailed ? \"Balances couldn't load — check your connection and try again\" : \"Balances refreshed\")")
+    appSrcEvm.includes("toast((evmLoadFailed || btcLoadFailed) ? \"Balances couldn't load — check your connection and try again\" : \"Balances refreshed\")")
     && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 10000)'));
+}
+
+// 62. Bitcoin silent-zero fix (EVM re-walk, 2026-11-08): the same
+// defect class as the EVM bug — getBitcoinBalance was mempool.space
+// only, and during the walk both mempool reads timed out while the
+// Bitcoin row showed an undisclosed 0. The balance now falls back
+// to Blockstream's Esplora (identical address JSON shape), and the
+// app carries per-account btcSegwitFailed/btcTaprootFailed flags
+// with a derived btcLoadFailed that renders "couldn't load" rows +
+// an alert instead of a zero. Fetch is stubbed with per-source
+// fixtures, as in section 32b.
+{
+  const { getBitcoinBalance } = await import("../src/wallet-core.js");
+  const BTC_ADDR = "bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr";
+  const esplora = (funded, spent) => ({ chain_stats: { funded_txo_sum: funded, spent_txo_sum: spent }, mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0 } });
+  const realFetch = globalThis.fetch;
+  const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  try {
+    // mempool.space answers: its own shape wins, no fallback call.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("mempool.space")) return jsonRes(esplora(155210668, 210668));
+      throw new Error("fallback must not be called");
+    };
+    ok("btc balance: mempool funded-minus-spent parses", (await getBitcoinBalance(BTC_ADDR)) === 1.55);
+    // mempool dies the way a timeout kills it (fetch rejects outright):
+    // Blockstream's identical shape takes over.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("mempool.space")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("blockstream.info")) return jsonRes(esplora(155210668, 210668));
+      throw new Error("unexpected url " + url);
+    };
+    ok("btc balance: dead mempool falls back to Blockstream", (await getBitcoinBalance(BTC_ADDR)) === 1.55);
+    // mempool answers non-OK (a 429/500): the fallback is tried.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("mempool.space")) return jsonRes({}, false, 429);
+      if (String(url).includes("blockstream.info")) return jsonRes(esplora(200000000, 0));
+      throw new Error("unexpected url " + url);
+    };
+    ok("btc balance: non-OK mempool falls back to Blockstream", (await getBitcoinBalance(BTC_ADDR)) === 2);
+    // Both dead: the read rejects — the app shows "couldn't load".
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getBitcoinBalance(BTC_ADDR));
+    ok("btc balance: total failure throws instead of returning a fake zero", true);
+    // A garbled Blockstream body (a proxy block page with no
+    // chain_stats) is a failed source, not a number.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("mempool.space")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("blockstream.info")) return jsonRes({ error: "endpoint does not exist" });
+      throw new Error("unexpected url " + url);
+    };
+    await assert.rejects(() => getBitcoinBalance(BTC_ADDR));
+    ok("btc balance: garbled fallback body throws instead of becoming a number", true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // app.js: the failure state is honest end-to-end (source pins).
+  const appSrcBtc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("btc load-failed: per-account flags and derived family flag declared",
+    appSrcBtc.includes("let btcSegwitFailed = false, btcTaprootFailed = false, btcLoadFailed = false;")
+    && appSrcBtc.includes("function syncBtcLoadFailed() { btcLoadFailed = btcSegwitFailed || btcTaprootFailed; }"));
+  ok("btc load-failed: load callbacks set/clear the per-account flags",
+    appSrcBtc.includes("btcSegwitFailed = false; syncBtcLoadFailed();")
+    && appSrcBtc.includes("btcSegwitFailed = true; syncBtcLoadFailed();")
+    && appSrcBtc.includes("btcTaprootFailed = false; syncBtcLoadFailed();")
+    && appSrcBtc.includes("btcTaprootFailed = true; syncBtcLoadFailed();"));
+  ok("btc load-failed: family alert names Bitcoin",
+    appSrcBtc.includes('if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn\'t be loaded right now.";'));
+  ok("btc load-failed: row renders couldn't-load, total is null, hero total excludes BTC",
+    appSrcBtc.includes("scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)")
+    && appSrcBtc.includes("m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
+    && appSrcBtc.includes("let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)"));
+  ok("btc load-failed: home-zero card stays hidden while Bitcoin is unknown",
+    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !anyBal"));
+  ok("btc load-failed: sheet header shows couldn't-load per account",
+    appSrcBtc.includes('btcLoadFailed ? "Balance couldn\'t load"')
+    && appSrcBtc.includes('btcSegwitFailed ? "couldn\'t load"')
+    && appSrcBtc.includes('btcTaprootFailed ? "couldn\'t load"'));
+  ok("btc load-failed: Review gates on the selected account's flag",
+    appSrcBtc.includes("const sendKind = $(\"bFrom\").value;")
+    && appSrcBtc.includes('if (sendKind === "taproot" ? btcTaprootFailed : btcSegwitFailed)'));
+  ok("btc load-failed: scalar sheets gate Review on their load flags",
+    appSrcBtc.includes('if (ltcLoadFailed) return msg("lMsg", "Balance couldn\'t load right now')
+    && appSrcBtc.includes('if (bchLoadFailed) return msg("cMsg", "Balance couldn\'t load right now')
+    && appSrcBtc.includes('if (dogeLoadFailed) return msg("gMsg", "Balance couldn\'t load right now'));
+  ok("btc load-failed: refresh toast reflects a Bitcoin failure",
+    appSrcBtc.includes('toast((evmLoadFailed || btcLoadFailed) ? "Balances couldn\'t load'));
 }
 
 console.log(`\n${passed} checks passed`);
