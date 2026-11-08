@@ -420,8 +420,10 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
 }
 
 async function renderMain() {
-  const myName = localStorage.getItem("fluid_name");
-  if (myName && $("namePreview")) $("namePreview").textContent = myName + "." + FLUID_DOMAIN;
+  // The name-section description (#namePreview) is painted by
+  // renderNameSection() below — its only writer (QA round 3). A
+  // set-only write here used to leave the previous wallet's name
+  // in the description across a remove + import.
   renderAgents();
   famLoaded.clear();
   paintHeader();
@@ -3966,10 +3968,18 @@ function renderNameSection() {
   // here because every name-state change (claim, adoption, removal)
   // flows through this function, and renderMain calls it on unlock.
   $("welcomeText").textContent = formatWelcomeHeader(stored);
+  // The section DESCRIPTION names the current wallet's name or the
+  // generic placeholder — painted HERE, unconditionally, on every
+  // render and in both states (QA round 3): it used to be written
+  // only on the owned branch below (and set-only in renderMain), so
+  // the claim state never repainted it — after remove + import in
+  // one session it kept the REMOVED wallet's name until a page
+  // reload reset the DOM to the static placeholder. This function
+  // is now the description's ONLY writer.
+  $("namePreview").textContent = stored ? stored + "." + FLUID_DOMAIN : "you." + FLUID_DOMAIN;
   if (!stored) { show("ownedNameBox", false); show("claimForm", true); return; }
   show("claimForm", false);
   show("ownedNameBox", true);
-  $("namePreview").textContent = stored + "." + FLUID_DOMAIN;
   $("ownedNameText").textContent = stored + "." + FLUID_DOMAIN;
   // Truthfulness (QA 2026-11-07): the note under the name states the
   // LOCAL state by default. The public-registry wording is earned
@@ -4312,6 +4322,12 @@ $("wipeBtn").onclick = () => {
     for (let i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i));
     for (const k of fluidStorageKeysToWipe(allKeys)) localStorage.removeItem(k);
     wallet = null; pendingSend = null; nameAdoptTried = false;
+    // Repaint the name section for the no-wallet state NOW (QA
+    // round 3): its description is only repainted by
+    // renderNameSection, and the next wallet's renderMain is not
+    // guaranteed to be the first thing the user sees — the section
+    // must not describe the removed wallet in the meantime.
+    renderNameSection();
     // Leave no trace of the removed wallet on the onboarding screen:
     // a seed phrase or password must never linger in the form after removal.
     $("seedOut").textContent = ""; show("seedBox", false);

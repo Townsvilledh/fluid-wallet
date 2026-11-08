@@ -2837,8 +2837,26 @@ export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) 
  *  Returns { to, name } — name is null for a raw address. Throws an
  *  Error carrying the user-facing message otherwise. `lookupName`
  *  is injectable for tests. */
+/** Recipient-input hygiene (QA F2 round 3, convicted by execution):
+ *  invisible format characters — zero-width space U+200B, ZWNJ
+ *  U+200C, ZWJ U+200D, word joiner U+2060, soft hyphen U+00AD, and
+ *  a mid-string BOM U+FEFF — ride along in addresses copied from
+ *  web pages, PDFs and generated text. They are invisible in the
+ *  field, are NOT stripped by String.trim() or by an <input>'s
+ *  value sanitisation (which removes line breaks only), and fail
+ *  every checksum-strict validator — so a pasted, genuinely valid
+ *  address carrying one was silently misrouted to the name path
+ *  and hard-blocked as "That Fluid name is not in the registry
+ *  yet." while the bare string resolved fine. The canonical zero
+ *  address + a trailing U+200B reproduces that exact live error
+ *  against the pre-fix resolver; the bare string takes the address
+ *  branch. Cleaning lives HERE, in the one shared resolver, so
+ *  every chain sheet gets it. */
+export function cleanRecipientInput(input) {
+  return String(input || "").replace(/[\u200B-\u200D\u2060\u00AD\uFEFF]/g, "").trim();
+}
 export async function resolveChainRecipient(input, { isValidAddress, field = null, chainLabel, lookupName } = {}) {
-  const raw = String(input || "").trim();
+  const raw = cleanRecipientInput(input);
   if (typeof isValidAddress === "function" && isValidAddress(raw)) return { to: raw, name: null };
   const lookup = lookupName || resolveFluidName;
   const hit = await lookup(raw).catch(() => null);

@@ -3728,4 +3728,71 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     buildSrc.includes('copyFileSync("public/_headers", "dist/_headers")'));
 }
 
+// ---------- QA round 3 (2026-11-08): invisible-character recipients + name-description state ----------
+// R3-A (F2, third strike): the canonical zero address was STILL
+// rejected live as an unregistered name, while every pinned path
+// resolved it. Executing the chain against inputs carrying
+// INVISIBLE FORMAT characters convicted the class: a trailing
+// zero-width space (U+200B) — invisible in the field, not stripped
+// by .trim() or by an <input>'s value sanitisation — reproduces
+// the exact live error against the pre-fix resolver, and the bare
+// string resolves. The fix cleans the input in the ONE shared
+// resolver; the pins below execute that full chain (the sheet's
+// exact data flow: field value → trim → the shared call).
+{
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const { resolveChainRecipient, isValidAlgorandAddress, algoAddressFromPhrase, cleanRecipientInput } =
+    await import("../src/wallet-core.js");
+  const ALGO_ZERO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+  const sheetPath = (raw, lookupName) => resolveChainRecipient(String(raw || "").trim(),
+    { isValidAddress: isValidAlgorandAddress, field: "algo", chainLabel: "Algorand", lookupName });
+  const throwsMsg = async (fn, want) => { try { await fn(); return false; } catch (e) { return e.message === want; } };
+
+  ok("R3-A: the cleaner strips the invisible format set and nothing else",
+    cleanRecipientInput("ab\u200Bc\u200Cd\u200De\u2060f\u00ADg\uFEFFh") === "abcdefgh"
+    && cleanRecipientInput("  ethuram  ") === "ethuram"
+    && cleanRecipientInput(ALGO_ZERO) === ALGO_ZERO);
+  {
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    const bare = await sheetPath(ALGO_ZERO, spy);
+    ok("R3-A: canonical zero address — address branch, no lookup (control)",
+      bare.to === ALGO_ZERO && bare.name === null && lookups === 0);
+    const zwsp = await sheetPath(ALGO_ZERO + "\u200B", spy);
+    ok("R3-A: zero address + trailing U+200B resolves as the address, cleaned, no lookup (the live failure, convicted)",
+      zwsp.to === ALGO_ZERO && zwsp.name === null && lookups === 0);
+    const mid = await sheetPath(ALGO_ZERO.slice(0, 20) + "\u200C" + ALGO_ZERO.slice(20), spy);
+    ok("R3-A: zero address + mid-string U+200C resolves as the address, no lookup",
+      mid.to === ALGO_ZERO && mid.name === null && lookups === 0);
+    const derived = algoAddressFromPhrase("absent law burger minor breeze age tooth target report piece orchard close");
+    const rd = await sheetPath(derived + "\u200D", spy);
+    ok("R3-A: a normal address + trailing U+200D resolves as the address, no lookup",
+      rd.to === derived && rd.name === null && lookups === 0);
+    ok("R3-A: a 57-char near-miss still routes to name handling and hard-blocks as unregistered",
+      await throwsMsg(() => sheetPath(ALGO_ZERO.slice(0, 57), spy), "That Fluid name is not in the registry yet.") && lookups === 1);
+    const reg = async (n) => n === "ethuram" ? { name: "ethuram", algo: ALGO_ZERO } : null;
+    ok("R3-A: a real name still resolves through the lookup after cleaning",
+      (await sheetPath("ethuram\u200B", reg)).to === ALGO_ZERO);
+  }
+
+  // R3-B (name description): the description's DOM text was the one
+  // name store with set-only writers — after remove + import in one
+  // session it kept the removed wallet's name until reload. The fix
+  // makes renderNameSection its only writer, painting it in BOTH
+  // states before the branch, and repaints it on wipe.
+  const nsStart = appSrc.indexOf("function renderNameSection()");
+  const nsSeg = appSrc.slice(nsStart, appSrc.indexOf("async function adoptRegistryNameIfMine", nsStart));
+  const paintAt = nsSeg.indexOf('$("namePreview").textContent = stored ? stored + "." + FLUID_DOMAIN : "you." + FLUID_DOMAIN;');
+  ok("R3-B: renderNameSection paints the description from current state in both states",
+    paintAt > -1 && paintAt < nsSeg.indexOf('if (!stored)'));
+  ok("R3-B: the description has exactly ONE writer left in app.js",
+    (appSrc.match(/\$\("namePreview"\)\.textContent =/g) || []).length === 1);
+  ok("R3-B: renderMain no longer writes the description set-only",
+    !appSrc.includes('if (myName && $("namePreview"))'));
+  const wipeAt = appSrc.indexOf('$("wipeGo").onclick');
+  const wipeSeg = appSrc.slice(wipeAt, appSrc.indexOf("refreshGate();", wipeAt));
+  ok("R3-B: the wipe handler repaints the name section for the no-wallet state",
+    wipeSeg.includes("wallet = null;") && wipeSeg.includes("renderNameSection();"));
+}
+
 console.log(`\n${passed} checks passed`);
