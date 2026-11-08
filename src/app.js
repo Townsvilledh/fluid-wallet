@@ -37,6 +37,8 @@ import {
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
   detectScanFamily, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
+  WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
+  decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -3239,6 +3241,227 @@ function lnFallbackSheet(note) {
         logoHtml: tokenLogoHtml({ symbol: "BTC" }, "lightning"), to: target, familyName: "Lightning",
         feeText: null, explorerUrl: null, txid: null, pending: false });
     } catch (e) { msg("lnMsg", lnErrorText(e)); }
+  };
+}
+
+// ---------- WalletConnect ----------
+// Fluid as a wallet for OTHER apps: paste a wc: URI, review the
+// session proposal, and every later signing request comes back here
+// as a human-readable intent (core's decodeWcRequest — F-01: the
+// payload is inspected, never just the envelope). Transport is the
+// lazy walletconnect.chunk.js (Reown WalletKit); every decision and
+// signature happens here + wallet-core, with the unlocked vault's
+// key. While Fluid is locked, requests are refused to the dApp —
+// the keys only exist in memory while unlocked.
+let wcChunk = null, wcClient = null;
+
+$("wcBtn").onclick = () => openWcPanel();
+
+async function wcBoot() {
+  if (wcClient) return wcClient;
+  if (!wcChunk) wcChunk = await import("./walletconnect.chunk.js");
+  wcClient = await wcChunk.bootWalletConnect({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    metadata: {
+      name: "Fluid",
+      description: "Fluid — every chain, one wallet. Non-custodial, open source.",
+      url: "https://fluidwallet.netlify.app",
+      icons: ["https://fluidwallet.netlify.app/og-image.png"],
+    },
+    onProposal: (p) => wcOnProposal(p),
+    onRequest: (ev) => { wcOnRequest(ev).catch(() => {}); },
+    onSessionDelete: () => { toast("An app disconnected from Fluid"); if ($("wcSessions")) paintWcSessions(); },
+    onAuthenticate: (auth) => {
+      wcClient.rejectAuthenticate(auth.id).catch(() => {});
+      toast("An app asked for one-tap sign-in, which Fluid doesn't support yet — rejected");
+    },
+  });
+  // Replay anything that arrived while the panel was closed — same
+  // review sheets as live items, never silently answered.
+  for (const p of Object.values(wcClient.pendingProposals() || {})) wcOnProposal(p);
+  for (const r of Object.values(wcClient.pendingRequests() || {})) wcOnRequest(r).catch(() => {});
+  return wcClient;
+}
+
+async function openWcPanel() {
+  if (!walletConnectConfigured()) {
+    openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+      <p class="tag">WalletConnect isn't configured in this build yet — it needs a Reown project ID, and none is set. Nothing is broken: every other part of Fluid works as normal, and this panel will light up as soon as the ID is added.</p>`);
+    return;
+  }
+  openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+    <p class="tag">Starting WalletConnect… the first open downloads its code (once); after that it loads from your device.</p>`);
+  try {
+    await wcBoot();
+    paintWcPanel();
+  } catch (e) {
+    openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+      <p class="tag">WalletConnect isn't available in this build (${esc((e && e.message) || e)}). The single-file build can't load it — open Fluid at <b>fluidwallet.netlify.app</b> to connect to dApps.</p>`);
+  }
+}
+
+function paintWcPanel() {
+  openSheet(`<div id="wcPanel"><h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+    <p class="tag">Connect Fluid to an app: open the app, choose WalletConnect, copy its pairing code (it starts with <span class="mono">wc:</span>) and paste it here. You'll review the connection before anything is shared. (Pairing codes are copied text for now — Fluid has no camera scanner yet.)</p>
+    <textarea id="wcUri" rows="3" placeholder="wc:… pairing code from the app" autocapitalize="none"></textarea>
+    <div class="stickyfoot"><button class="btn" id="wcConnectBtn">Connect</button></div>
+    <p class="msg err" id="wcMsg"></p>
+    <h4>Connected apps</h4>
+    <div id="wcSessions"></div>
+    </div>`);
+  $("wcConnectBtn").onclick = wcConnect;
+  paintWcSessions();
+}
+
+async function wcConnect() {
+  const uri = $("wcUri").value.trim();
+  if (!parseWcUri(uri)) return msg("wcMsg", "That doesn't look like a WalletConnect pairing code — it should start with wc: and come fresh from the app's WalletConnect screen.");
+  const btn = $("wcConnectBtn"); btn.disabled = true;
+  try {
+    msg("wcMsg", "Pairing — waiting for the app's connection request…", true);
+    await wcClient.pair(uri);
+    msg("wcMsg", "Paired. The app's connection request appears here for your review.", true);
+  } catch (e) {
+    msg("wcMsg", "Pairing failed: " + ((e && e.message) || e) + " — pairing codes expire fast; copy a fresh one and try again.");
+  } finally { btn.disabled = false; }
+}
+
+function paintWcSessions() {
+  const host = $("wcSessions");
+  if (!host || !wcClient) return;
+  const sessions = Object.values(wcClient.sessions() || {});
+  if (!sessions.length) {
+    host.innerHTML = `<p class="tag">No apps connected. Connections you approve will appear here, and you can disconnect them any time.</p>`;
+    return;
+  }
+  host.innerHTML = sessions.map(s => {
+    const sum = wcSessionSummary(s);
+    const chainNames = sum.chainIds.map(id => { const k = evmNetworkKeyForChainId(id); return k ? NETWORKS[k].name : `Chain ${id}`; });
+    return `<div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span><b>${esc(sum.name || "Unnamed app")}</b>${sum.url ? `<br><small class="mono">${esc(sum.url)}</small>` : ""}<br><small style="color:var(--dim)">${esc(chainNames.join(", ") || "No chains")}</small></span>
+      <button class="btn ghost" data-wc-disconnect="${esc(sum.topic)}" style="width:auto;padding:6px 12px;flex:none">Disconnect</button>
+    </div>`;
+  }).join("");
+  host.querySelectorAll("[data-wc-disconnect]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await wcClient.disconnect(b.dataset.wcDisconnect); toast("Disconnected"); }
+    catch (e) { toast("Disconnect failed: " + ((e && e.message) || e)); }
+    paintWcSessions();
+  });
+}
+
+function wcOnProposal(proposal) {
+  const d = describeWcProposal(proposal);
+  const iconHtml = d.icon ? `<img src="${esc(d.icon)}" alt="" width="44" height="44" style="border-radius:10px;vertical-align:middle;margin-right:10px" referrerpolicy="no-referrer">` : "";
+  openSheet(`<div id="wcProposal"><h3>${icon("layers", "ic ic-brand")} Connection request</h3>
+    <p>${iconHtml}<b style="font-size:17px">${esc(d.name || "Unnamed app")}</b></p>
+    ${d.url ? `<p class="tag mono">${esc(d.url)}</p>` : ""}
+    ${d.description ? `<p class="tag">${esc(d.description)}</p>` : ""}
+    <p class="tag">This app is asking to connect to your Fluid wallet. If you approve, it can see your EVM address and ask you to sign messages and transactions — every request still comes back here for your review before anything is signed.</p>
+    <h4>Chains</h4>
+    ${d.chains.length ? d.chains.map(c => `<p class="tag">${esc(c.name)} <span class="mono">(chain ${c.chainId})</span>${c.required ? "" : " · optional"}${c.supported ? "" : " · NOT supported by Fluid"}</p>`).join("") : `<p class="tag">All Fluid EVM chains</p>`}
+    <h4>It may ask you to</h4>
+    ${d.methods.length ? d.methods.map(m => `<p class="tag mono">${esc(m)}</p>`).join("") : `<p class="tag">View your address</p>`}
+    ${d.otherNamespaces.length ? `<p class="tag">It also asks for: ${esc(d.otherNamespaces.join(", "))} — Fluid doesn't support ${d.otherNamespaces.length === 1 ? "that family" : "those families"} yet.</p>` : ""}
+    ${d.refusal ? `<p class="banner err">${icon("alert", "ic ic-sm")}<span>${esc(d.refusal)}</span></p>
+      <div class="stickyfoot"><button class="btn danger" id="wcPropReject">Reject</button></div>`
+    : `<div class="stickyfoot"><button class="btn" id="wcPropApprove">Connect</button>
+      <button class="btn danger" id="wcPropReject">Reject</button></div>`}
+    <p class="msg err" id="wcPropMsg"></p></div>`);
+  $("wcPropReject").onclick = async () => {
+    try { await wcClient.rejectSession(proposal.id); } catch { /* already expired — nothing to tell the dApp */ }
+    toast("Connection rejected");
+    paintWcPanel();
+  };
+  const ap = $("wcPropApprove");
+  if (ap) ap.onclick = async () => {
+    if (!wallet) return msg("wcPropMsg", "Fluid locked itself — unlock it, then ask the app for a fresh connection request.");
+    ap.disabled = true;
+    try {
+      const namespaces = buildWcNamespaces({ proposal, address: wallet.address });
+      await wcClient.approveSession(proposal.id, namespaces);
+      toast("Connected to " + (d.name || "the app"));
+      paintWcPanel();
+    } catch (e) {
+      ap.disabled = false;
+      msg("wcPropMsg", "Couldn't connect: " + ((e && e.message) || e));
+    }
+  };
+}
+
+async function wcOnRequest(event) {
+  const { id, topic } = event;
+  const req = (event.params && event.params.request) || {};
+  const chainId = event.params && event.params.chainId;
+  const session = wcClient && wcClient.sessions() ? wcClient.sessions()[topic] : null;
+  const sum = session ? wcSessionSummary(session) : null;
+  const dappName = (sum && sum.name) || "A connected app";
+  if (!wallet) {
+    try { await wcClient.respondError(topic, id, 4100, "Fluid is locked — unlock it to review requests."); } catch { /* relay gone */ }
+    return;
+  }
+  const decoded = decodeWcRequest({ method: req.method, params: req.params, chainId, ownAddress: wallet.address });
+  if (!decoded.ok) {
+    try { await wcClient.respondError(topic, id, 4200, decoded.reason); } catch { /* relay gone */ }
+    openSheet(`<h3>${icon("alert", "ic ic-brand")} Request refused</h3>
+      <p class="tag"><b>${esc(dappName)}</b> asked Fluid to run <span class="mono">${esc(String(req.method || "an unknown method"))}</span>.</p>
+      <p class="banner err">${icon("alert", "ic ic-sm")}<span>${esc(decoded.reason)}</span></p>
+      <p class="tag">Nothing was signed. The refusal has been sent back to the app.</p>
+      <div class="stickyfoot"><button class="btn" id="wcRefusedOk">OK</button></div>`);
+    $("wcRefusedOk").onclick = () => paintWcPanel();
+    return;
+  }
+  if (decoded.auto) {
+    // Read-only answers the approved session already granted.
+    try {
+      if (decoded.kind === "accounts") await wcClient.respondResult(topic, id, [wallet.address]);
+      else if (decoded.kind === "chainId") await wcClient.respondResult(topic, id, "0x" + Number(decoded.chainId || 1).toString(16));
+    } catch { /* relay gone */ }
+    return;
+  }
+  const netName = decoded.networkKey ? NETWORKS[decoded.networkKey].name : (decoded.chainId ? `Chain ${decoded.chainId}` : "");
+  const rowsHtml = decoded.rows.map(r => r.label === "Message"
+    ? `<p class="tag" style="margin:10px 0 2px">${esc(r.label)}</p><p class="seed" style="white-space:pre-wrap">${esc(r.value)}</p>`
+    : `<div class="txrow"><span>${esc(r.label)}</span><b>${esc(r.value)}</b></div>`).join("");
+  openSheet(`<div id="wcRequest"><h3>${icon("layers", "ic ic-brand")} ${decoded.kind === "transaction" ? "Transaction request" : "Sign request"}</h3>
+    <p class="tag">From <b>${esc(dappName)}</b>${sum && sum.url ? ` · <span class="mono">${esc(sum.url)}</span>` : ""}${netName ? ` · on ${esc(netName)}` : ""}</p>
+    <p class="seed" style="white-space:pre-wrap">${esc(decoded.intent)}</p>
+    ${rowsHtml}
+    ${decoded.warning ? `<p class="banner err">${icon("alert", "ic ic-sm")}<span>${esc(decoded.warning)}</span></p>` : ""}
+    <div class="stickyfoot"><button class="btn" id="wcReqApprove">${decoded.kind === "transaction" ? "Send transaction" : "Sign"}</button>
+    <button class="btn danger" id="wcReqReject">Reject</button></div>
+    <p class="msg err" id="wcReqMsg"></p></div>`);
+  $("wcReqReject").onclick = async () => {
+    try { await wcClient.respondError(topic, id, 4001, "User rejected the request."); } catch { /* relay gone */ }
+    toast("Request rejected");
+    paintWcPanel();
+  };
+  $("wcReqApprove").onclick = async () => {
+    const btn = $("wcReqApprove");
+    if (!wallet) return msg("wcReqMsg", "Fluid locked itself — unlock and ask the app to retry.");
+    if (decoded.kind === "transaction") setSendBusy(btn, true); else btn.disabled = true;
+    try {
+      if (decoded.kind === "personal_sign") {
+        const sig = await signWcMessage(wallet, decoded.sign);
+        await wcClient.respondResult(topic, id, sig);
+        toast("Message signed");
+        paintWcPanel();
+      } else if (decoded.kind === "typed_data") {
+        const sig = await signWcTypedData(wallet, decoded.sign);
+        await wcClient.respondResult(topic, id, sig);
+        toast("Typed data signed");
+        paintWcPanel();
+      } else if (decoded.kind === "transaction") {
+        const tx = await executeWcTransaction(wallet, decoded.sign);
+        await wcClient.respondResult(topic, id, tx.hash);
+        setSendBusy(btn, false);
+        showTxSuccess({ verb: "Sent", amount: null, symbol: "", to: decoded.sign.tx.to, familyName: netName, txid: tx.hash, pending: true });
+      }
+    } catch (e) {
+      if (decoded.kind === "transaction") setSendBusy(btn, false); else btn.disabled = false;
+      try { await wcClient.respondError(topic, id, 5000, "Fluid couldn't complete it: " + ((e && (e.shortMessage || e.message)) || e)); } catch { /* relay gone */ }
+      showSheetError("Failed: " + ((e && (e.shortMessage || e.message)) || e));
+    }
   };
 }
 

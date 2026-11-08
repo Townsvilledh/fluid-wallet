@@ -3,11 +3,14 @@ import { build } from "esbuild";
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 mkdirSync("dist", { recursive: true });
-await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js"] });
+await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js", "./walletconnect.chunk.js"] });
 // Lightning node chunk: built separately and loaded lazily by app.js
 // only when the Lightning panel opens. The WASM binary ships beside it
 // under the exact name the chunk's init() resolves via import.meta.url.
 await build({ entryPoints: ["src/lightning-node.js"], bundle: true, minify: true, format: "esm", outfile: "dist/lightning.chunk.js" });
+// WalletConnect chunk: the Reown/WalletKit SDK, built separately and
+// loaded lazily by app.js only when the WalletConnect panel opens.
+await build({ entryPoints: ["src/walletconnect.js"], bundle: true, minify: true, format: "esm", outfile: "dist/walletconnect.chunk.js" });
 copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_bg.wasm");
 copyFileSync("src/sw.js", "dist/sw.js");
 copyFileSync("src/index.html", "dist/index.html");

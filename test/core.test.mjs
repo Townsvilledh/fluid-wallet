@@ -30,6 +30,7 @@ import { detectScanFamily, isValidBitcoinAddress, scanTargetsForName, scanTarget
   normalizeBlockscoutTxs, normalizeBlockscoutTokenTransfers, normalizeEsploraTxs, normalizeAlgoIndexerTxs,
   normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
+import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
@@ -3119,8 +3120,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
   const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
-  ok("ui-p1: CSP is exactly the baseline policy with img-src gaining https: and nothing else",
-    idxSrc.includes("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'none'"));
+  ok("ui-p1: CSP is exactly the baseline policy with img-src gaining https: and connect-src naming the WalletConnect relay/verify endpoints (script-src stays 'self')",
+    idxSrc.includes("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss: wss://relay.walletconnect.com https://relay.walletconnect.com https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://pulse.walletconnect.com; object-src 'none'; base-uri 'self'; form-action 'none'"));
   ok("ui-p1: design tokens are the spec's (Part 3)",
     ["--bg0:#05070d", "--surface-1:#0b101f", "--surface-2:#111830", "--surface-3:#1a2247",
      "--brand-1:#5b8cff", "--brand-2:#9d6bff", "--drop:#38bdf8",
@@ -4027,6 +4028,121 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("R4: a Cyrillic-А look-alike still hard-blocks as an unregistered name (no silent normalising)",
       await throwsMsg(() => resolveChainRecipient(homoglyph, algoOpts(spy)), "That Fluid name is not in the registry yet.") && lookups === 1);
   }
+}
+
+// 60. WalletConnect v2 (wallet side): URI validation, namespace
+// planning, and the F-01 request decoder — every refusal case pinned.
+{
+  const throwsWc = (fn, re) => { try { fn(); return false; } catch (e) { return re.test(e.message); } };
+  const ME = known.address;
+  const OTHER = freshUnlocked.address;
+
+  // -- pairing URI --
+  const SYM = "a".repeat(64), TOPIC = "b".repeat(64);
+  const parsed = parseWcUri(`wc:${TOPIC}@2?relay-protocol=irn&relay-data=eyJ0eXAiOiJKV1QifQ&symKey=${SYM}&methods=wc_sessionPropose,eth_sendTransaction`);
+  ok("WC: valid v2 URI parses", !!parsed && parsed.topic === TOPIC && parsed.symKey === SYM && parsed.relayProtocol === "irn" && parsed.methods.includes("eth_sendTransaction"));
+  ok("WC: v1 URI refused", parseWcUri(`wc:${TOPIC}@1?bridge=https%3A%2F%2Fexample.com&key=${SYM}`) === null);
+  ok("WC: missing symKey refused", parseWcUri(`wc:${TOPIC}@2?relay-protocol=irn`) === null);
+  ok("WC: short symKey refused", parseWcUri(`wc:${TOPIC}@2?relay-protocol=irn&symKey=abcd`) === null);
+  ok("WC: wrong relay protocol refused", parseWcUri(`wc:${TOPIC}@2?relay-protocol=waku&symKey=${SYM}`) === null);
+  ok("WC: garbage refused", parseWcUri("hello") === null && parseWcUri("") === null && parseWcUri(null) === null && parseWcUri(42) === null);
+  ok("WC: shipped project id means configured", walletConnectConfigured() === true && /^[0-9a-f]{32}$/.test(WALLETCONNECT_PROJECT_ID));
+  ok("WC: relay is the official Reown relay", WALLETCONNECT_RELAY_URL === "wss://relay.walletconnect.com");
+  ok("WC: eth_sign is NOT in the inspectable method set", !WC_EIP155_METHODS.includes("eth_sign") && !WC_EIP155_METHODS.includes("eth_signTransaction"));
+
+  // -- session namespaces --
+  const prop = (required, optional) => ({ id: 1, params: { proposer: { metadata: { name: "Test dApp", description: "A test", url: "https://dapp.example", icons: ["https://dapp.example/i.png"] } }, requiredNamespaces: required, optionalNamespaces: optional } });
+  const basic = prop({ eip155: { chains: ["eip155:1", "eip155:8453"], methods: ["eth_sendTransaction", "personal_sign"], events: ["chainChanged"] } });
+  const ns = buildWcNamespaces({ proposal: basic, address: ME });
+  ok("WC: namespaces carry exactly the approved chains", ns.eip155.chains.join() === "eip155:1,eip155:8453");
+  ok("WC: accounts carry the user address on every approved chain", ns.eip155.accounts.length === 2 && ns.eip155.accounts.includes(`eip155:8453:${ME}`));
+  const desc = describeWcProposal(basic);
+  ok("WC: proposal description reads metadata + chains", desc.name === "Test dApp" && desc.url === "https://dapp.example" && desc.chains.length === 2 && desc.chains[0].name === "Ethereum" && desc.chains[1].name === "Base" && desc.refusal === null);
+  const optBad = prop(
+    { eip155: { chains: ["eip155:1"], methods: ["personal_sign"], events: [] } },
+    { eip155: { chains: ["eip155:999999"], methods: ["eth_sign"], events: [] } });
+  const nsOpt = buildWcNamespaces({ proposal: optBad, address: ME });
+  ok("WC: unsupported OPTIONAL chain/method trimmed, not fatal", nsOpt.eip155.chains.join() === "eip155:1" && !nsOpt.eip155.methods.includes("eth_sign"));
+  ok("WC: required unsupported chain refused", throwsWc(() => buildWcNamespaces({ proposal: prop({ eip155: { chains: ["eip155:999999"], methods: [], events: [] } }), address: ME }), /chain id 999999/));
+  ok("WC: required non-EVM family refused", throwsWc(() => buildWcNamespaces({ proposal: prop({ solana: { chains: ["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"], methods: ["solana_signMessage"], events: [] } }), address: ME }), /solana/));
+  ok("WC: describeWcProposal surfaces the same refusal", /solana/.test(describeWcProposal(prop({ solana: { chains: [], methods: [], events: [] } })).refusal || ""));
+  ok("WC: required uninspectable method refused (eth_sign)", throwsWc(() => buildWcNamespaces({ proposal: prop({ eip155: { chains: ["eip155:1"], methods: ["eth_sign"], events: [] } }), address: ME }), /eth_sign/));
+  ok("WC: chain-specific namespace keys understood", buildWcNamespaces({ proposal: prop({ "eip155:137": { methods: ["personal_sign"], events: [] } }), address: ME }).eip155.chains.join() === "eip155:137");
+  ok("WC: invalid own address refused", throwsWc(() => buildWcNamespaces({ proposal: basic, address: "0x123" }), /valid EVM address/));
+  ok("WC: plan defaults fill a bare connect (no chains/methods named)", (() => { const p = planWcNamespaces(prop({ eip155: { chains: [], methods: [], events: [] } })); return p.chains.length === wcSupportedChainIds().length && p.methods.includes("personal_sign"); })());
+
+  // -- personal_sign --
+  const helloHex = ethers.hexlify(ethers.toUtf8Bytes("Hello Fluid"));
+  const ps = decodeWcRequest({ method: "personal_sign", params: [helloHex, ME], chainId: "eip155:1", ownAddress: ME });
+  ok("WC: personal_sign hex decodes to the readable message", ps.ok && ps.kind === "personal_sign" && ps.rows[0].value === "Hello Fluid" && ps.sign.hex === helloHex);
+  const sigMsg = await signWcMessage(unlocked, ps.sign);
+  ok("WC: personal_sign signature verifies against the wallet address", ethers.verifyMessage(ethers.getBytes(helloHex), sigMsg) === ME);
+  const ps2 = decodeWcRequest({ method: "personal_sign", params: ["Sign in to Example", ME], chainId: 1, ownAddress: ME });
+  ok("WC: personal_sign plain text ok", ps2.ok && ps2.sign.text === "Sign in to Example" && ps2.sign.hex === null);
+  const ps3 = decodeWcRequest({ method: "personal_sign", params: [ME, "legacy order"], chainId: 1, ownAddress: ME });
+  ok("WC: personal_sign legacy [address, message] order handled", ps3.ok && ps3.sign.text === "legacy order");
+  ok("WC: personal_sign non-text bytes refused", !decodeWcRequest({ method: "personal_sign", params: ["0xdeadbeef00112233", ME], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: personal_sign control characters refused", !decodeWcRequest({ method: "personal_sign", params: ["hi\u0001there", ME], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: personal_sign for another account refused", !decodeWcRequest({ method: "personal_sign", params: ["hi", OTHER], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: personal_sign empty refused", !decodeWcRequest({ method: "personal_sign", params: ["0x", ME], chainId: 1, ownAddress: ME }).ok);
+
+  // -- typed data --
+  const typed = {
+    domain: { name: "Ether Mail", version: "1", chainId: 1, verifyingContract: "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC" },
+    types: { Mail: [{ name: "from", type: "address" }, { name: "contents", type: "string" }] },
+    primaryType: "Mail",
+    message: { from: ME, contents: "Hello, Bob!" },
+  };
+  const td = decodeWcRequest({ method: "eth_signTypedData_v4", params: [ME, JSON.stringify(typed)], chainId: "eip155:1", ownAddress: ME });
+  ok("WC: typed data decodes with every field visible", td.ok && td.kind === "typed_data" && td.rows.some(r => r.label === "contents" && r.value === "Hello, Bob!") && td.rows.some(r => r.label === "Domain name" && r.value === "Ether Mail"));
+  ok("WC: typed data sign payload drops EIP712Domain", td.sign && !("EIP712Domain" in td.sign.types));
+  const sigCore = await signWcTypedData(unlocked, td.sign);
+  const sigDirect = await unlocked.signTypedData(typed.domain, typed.types, typed.message);
+  ok("WC: typed data signature matches ethers direct signing", sigCore === sigDirect);
+  ok("WC: typed data domain/chain mismatch refused", !decodeWcRequest({ method: "eth_signTypedData_v4", params: [ME, JSON.stringify({ ...typed, domain: { ...typed.domain, chainId: 56 } })], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: typed data bad JSON refused", !decodeWcRequest({ method: "eth_signTypedData_v4", params: [ME, "{nope"], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: typed data unknown primary type refused", !decodeWcRequest({ method: "eth_signTypedData_v4", params: [ME, JSON.stringify({ types: {}, primaryType: "Nope", domain: {}, message: {} })], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: typed data for another account refused", !decodeWcRequest({ method: "eth_signTypedData_v4", params: [OTHER, JSON.stringify(typed)], chainId: 1, ownAddress: ME }).ok);
+  const permit = {
+    domain: { name: "USD Coin", version: "2", chainId: 8453, verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+    types: { Permit: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }] },
+    primaryType: "Permit",
+    message: { owner: ME, spender: OTHER, value: "1000000", nonce: "0", deadline: "9999999999" },
+  };
+  const pd = decodeWcRequest({ method: "eth_signTypedData_v4", params: [ME, JSON.stringify(permit)], chainId: 8453, ownAddress: ME });
+  ok("WC: Permit typed data carries the permit warning", pd.ok && /PERMIT/.test(pd.warning || ""));
+
+  // -- eth_sendTransaction --
+  const txPlain = decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: OTHER, value: "0xde0b6b3a7640000" }], chainId: "eip155:8453", ownAddress: ME });
+  ok("WC: plain transfer decodes to a send sentence", txPlain.ok && txPlain.kind === "transaction" && txPlain.networkKey === "base" && /Send 1\.0 ETH/.test(txPlain.intent) && txPlain.sign.tx.to === OTHER && txPlain.sign.tx.value === "0xde0b6b3a7640000");
+  const erc20Abi = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)", "function approve(address spender, uint256 amount) returns (bool)", "function transferFrom(address from, address to, uint256 amount) returns (bool)"]);
+  const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const txTok = decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: USDC_BASE, value: "0x0", data: erc20Abi.encodeFunctionData("transfer", [OTHER, 25000000n]) }], chainId: 8453, ownAddress: ME });
+  ok("WC: ERC20 transfer decodes with the known token's amount", txTok.ok && /25\.0 USDC/.test(txTok.intent) && txTok.rows.some(r => r.label === "To" && r.value === OTHER));
+  const txAppr = decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: USDC_BASE, data: erc20Abi.encodeFunctionData("approve", [OTHER, ethers.MaxUint256]) }], chainId: 8453, ownAddress: ME });
+  ok("WC: unlimited approve decoded + warned", txAppr.ok && txAppr.rows.some(r => r.label === "Allowance" && r.value === "UNLIMITED") && /UNLIMITED/.test(txAppr.warning || ""));
+  const txTf = decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: USDC_BASE, data: erc20Abi.encodeFunctionData("transferFrom", [ME, OTHER, 5000000n]) }], chainId: 8453, ownAddress: ME });
+  ok("WC: transferFrom decodes with its warning", txTf.ok && !!txTf.warning && /5\.0 USDC/.test(txTf.intent));
+  ok("WC: unknown contract selector refused (no blind signing)", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: OTHER, data: "0x12345678" + "00".repeat(32) }], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: contract creation refused", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, value: "0x0", data: "0x6000" }], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: unsupported chain refused", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: OTHER, value: "0x1" }], chainId: 999999, ownAddress: ME }).ok);
+  ok("WC: tx chainId mismatch refused", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: OTHER, value: "0x1", chainId: "0x38" }], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: tx from another account refused", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: OTHER, to: ME, value: "0x1" }], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: token call carrying native value refused", !decodeWcRequest({ method: "eth_sendTransaction", params: [{ from: ME, to: USDC_BASE, value: "0x1", data: erc20Abi.encodeFunctionData("transfer", [OTHER, 1n]) }], chainId: 8453, ownAddress: ME }).ok);
+
+  // -- refusals for everything else --
+  ok("WC: eth_sign refused as an unreadable hash", /unreadable hash/.test(decodeWcRequest({ method: "eth_sign", params: [ME, "0xabc"], chainId: 1, ownAddress: ME }).reason || ""));
+  ok("WC: eth_signTransaction refused", !decodeWcRequest({ method: "eth_signTransaction", params: [{}], chainId: 1, ownAddress: ME }).ok);
+  ok("WC: unknown method refused by name", /wallet_sendCalls/.test(decodeWcRequest({ method: "wallet_sendCalls", params: [], chainId: 1, ownAddress: ME }).reason || ""));
+  const acc = decodeWcRequest({ method: "eth_accounts", params: [], chainId: "eip155:1", ownAddress: ME });
+  ok("WC: eth_accounts is a read-only auto answer", acc.ok && acc.auto === true && acc.sign === null);
+  const cid = decodeWcRequest({ method: "eth_chainId", params: [], chainId: "eip155:137", ownAddress: ME });
+  ok("WC: eth_chainId is a read-only auto answer", cid.ok && cid.auto === true && cid.chainId === 137);
+
+  // -- sessions list summary --
+  const sum = wcSessionSummary({ topic: "topic123", expiry: 1899999999, peer: { metadata: { name: "D", url: "https://d.example", icons: [] } }, namespaces: { eip155: { accounts: [`eip155:1:${ME}`, `eip155:8453:${ME}`], chains: ["eip155:1"], methods: [], events: [] } } });
+  ok("WC: session summary extracts identity + chains", sum.topic === "topic123" && sum.chainIds.join() === "1,8453" && sum.name === "D");
+  ok("WC: evmNetworkKeyForChainId resolves + refuses", evmNetworkKeyForChainId(8453) === "base" && evmNetworkKeyForChainId(1) === "ethereum" && evmNetworkKeyForChainId(999999) === null);
 }
 
 console.log(`\n${passed} checks passed`);

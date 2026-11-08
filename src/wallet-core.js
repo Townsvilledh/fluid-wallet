@@ -9126,3 +9126,472 @@ export async function fetchScanTarget(target) {
 export async function fetchScan(targets) {
   return Promise.all((Array.isArray(targets) ? targets : []).map(t => fetchScanTarget(t)));
 }
+
+// ---------- WalletConnect v2 (wallet side; EVM/eip155 in v1) ----------
+// Fluid as a WALLET for other apps: a dApp hands the user a wc: URI,
+// the user pastes it into Fluid, and Fluid pairs through the
+// WalletConnect relay (Reown WalletKit, lazy chunk —
+// src/walletconnect.js). The transport lives in the chunk; EVERY
+// decision lives here, pure and unit-tested:
+//
+//   * parseWcUri — is this string really a v2 pairing URI?
+//   * planWcNamespaces / buildWcNamespaces — what would approving a
+//     session proposal grant? Only chains/methods Fluid actually has.
+//   * decodeWcRequest — the F-01 rule (red-team, 2026-11-06): the
+//     signer inspects the PAYLOAD, never just the envelope. Every
+//     session request is decoded into a human-readable intent BEFORE
+//     anything is signed; anything that cannot be decoded is REFUSED
+//     here, in core, so no UI path can sign it blind.
+//
+// Scope v1: EVM (eip155) only — that is what dApp connect screens and
+// the Fonbnk-class flows need. Solana and the other families are
+// future work; proposals that REQUIRE another family are refused
+// outright, never half-met.
+
+/** The Reown (WalletConnect Cloud) project id — the "Fluid Wallet"
+ *  project's public client id (Reown dashboard, created 2026-11-08).
+ *  A placeholder value here would mean "not configured", and the
+ *  WalletConnect panel says so honestly instead of failing silently.
+ *  This is the ONLY place the id lives. */
+export const WALLETCONNECT_PROJECT_ID = "220705e3c4dc16fd3c8aaf353b2e0daa";
+export function walletConnectConfigured() {
+  return typeof WALLETCONNECT_PROJECT_ID === "string"
+    && WALLETCONNECT_PROJECT_ID.trim() !== ""
+    && WALLETCONNECT_PROJECT_ID !== "REPLACE_WITH_REOWN_PROJECT_ID";
+}
+export const WALLETCONNECT_RELAY_URL = "wss://relay.walletconnect.com";
+
+/** Methods Fluid will sign or answer over WalletConnect in v1.
+ *  eth_sign is deliberately ABSENT: it signs an opaque hash the user
+ *  cannot read, which the F-01 rule forbids. eth_signTransaction is
+ *  absent too — a partial transaction's missing fields cannot be
+ *  inspected, so there is nothing honest to approve. */
+export const WC_EIP155_METHODS = Object.freeze([
+  "eth_sendTransaction",
+  "personal_sign",
+  "eth_signTypedData",
+  "eth_signTypedData_v3",
+  "eth_signTypedData_v4",
+  "eth_accounts",
+  "eth_chainId",
+]);
+export const WC_EIP155_EVENTS = Object.freeze(["chainChanged", "accountsChanged"]);
+
+/** The NETWORKS key for an EVM chain id (built-ins plus any runtime-
+ *  discovered chains), or null when Fluid doesn't know the chain. */
+export function evmNetworkKeyForChainId(chainId) {
+  const id = Number(chainId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return Object.keys(NETWORKS).find(k => NETWORKS[k].chainId === id) || null;
+}
+/** Every EVM chain id Fluid can sign for right now. */
+export function wcSupportedChainIds() {
+  return Object.values(NETWORKS).map(n => n.chainId);
+}
+
+/** Parse + validate a WalletConnect v2 pairing URI. Returns
+ *  { topic, version: 2, symKey, relayProtocol, relayData, methods }
+ *  or null — anything malformed, any v1 URI, or a URI missing its
+ *  symmetric key is not pairable, full stop. */
+export function parseWcUri(uri) {
+  if (typeof uri !== "string") return null;
+  const m = /^wc:([0-9a-fA-F]{64})@2\?(.+)$/.exec(uri.trim());
+  if (!m) return null;
+  let q;
+  try { q = new URLSearchParams(m[2]); } catch { return null; }
+  const symKey = q.get("symKey") || "";
+  if (!/^[0-9a-fA-F]{64}$/.test(symKey)) return null;
+  if (q.get("relay-protocol") !== "irn") return null;
+  return {
+    topic: m[1], version: 2, symKey,
+    relayProtocol: "irn",
+    relayData: q.get("relay-data"),
+    methods: (q.get("methods") || "").split(",").map(s => s.trim()).filter(Boolean),
+  };
+}
+
+function wcCaipChainId(caip) {
+  if (typeof caip === "number" && Number.isFinite(caip)) return caip;
+  const m = /^eip155:(\d+)$/.exec(String(caip || "").trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** Collect chains/methods/events out of a namespaces map (proposal
+ *  required/optional), keyed by bare family ("eip155") or by CAIP-2
+ *  chain ("eip155:1"). Non-EVM families land in .other. */
+function wcCollect(nsMap) {
+  const out = { chains: new Set(), methods: new Set(), events: new Set(), other: new Set() };
+  for (const [key, ns] of Object.entries(nsMap || {})) {
+    const base = key.includes(":") ? key.slice(0, key.indexOf(":")) : key;
+    if (base !== "eip155") { out.other.add(base); continue; }
+    const keyChain = wcCaipChainId(key);
+    if (keyChain != null) out.chains.add(keyChain);
+    for (const c of (ns && ns.chains) || []) { const id = wcCaipChainId(c); if (id != null) out.chains.add(id); }
+    for (const mth of (ns && ns.methods) || []) if (typeof mth === "string") out.methods.add(mth);
+    for (const ev of (ns && ns.events) || []) if (typeof ev === "string") out.events.add(ev);
+  }
+  return out;
+}
+
+function wcProposalParams(proposal) {
+  if (!proposal || typeof proposal !== "object") return {};
+  // WalletKit emits { id, params }; accept the params struct directly too.
+  return proposal.params && typeof proposal.params === "object" ? proposal.params : proposal;
+}
+
+/** Work out what approving a session proposal would grant. Throws an
+ *  Error with a user-readable reason when the proposal asks for
+ *  anything Fluid cannot or will not do (a required non-EVM family, a
+ *  required chain Fluid doesn't support, a required method outside
+ *  the inspectable v1 set). Optional extras are trimmed, never fatal. */
+export function planWcNamespaces(proposal) {
+  const params = wcProposalParams(proposal);
+  const req = wcCollect(params.requiredNamespaces);
+  const opt = wcCollect(params.optionalNamespaces);
+  if (req.other.size) {
+    throw new Error(`This app requires ${[...req.other].join(", ")} support — Fluid's WalletConnect speaks EVM (eip155) only for now, so it can't connect safely.`);
+  }
+  const supported = new Set(wcSupportedChainIds());
+  const badChains = [...req.chains].filter(id => !supported.has(id));
+  if (badChains.length) {
+    throw new Error(`This app requires chain id ${badChains.join(", ")} — Fluid doesn't support ${badChains.length === 1 ? "that chain" : "those chains"}.`);
+  }
+  const badMethods = [...req.methods].filter(m => !WC_EIP155_METHODS.includes(m));
+  if (badMethods.length) {
+    throw new Error(`This app requires the method ${badMethods.join(", ")} — Fluid won't sign what it can't show you, and it can't inspect that method.`);
+  }
+  const chains = new Set(req.chains);
+  for (const id of opt.chains) if (supported.has(id)) chains.add(id);
+  // No chain named at all: the account is the same key on every EVM
+  // chain Fluid knows — approve the full set, listed on the sheet.
+  if (!chains.size) for (const id of supported) chains.add(id);
+  const methods = new Set([...req.methods, ...opt.methods].filter(m => WC_EIP155_METHODS.includes(m)));
+  if (!methods.size) for (const m of ["eth_sendTransaction", "personal_sign", "eth_signTypedData_v4", "eth_accounts", "eth_chainId"]) methods.add(m);
+  const events = new Set([...req.events, ...opt.events].filter(e => WC_EIP155_EVENTS.includes(e)));
+  if (!events.size) for (const e of WC_EIP155_EVENTS) events.add(e);
+  return { chains: [...chains], methods: [...methods], events: [...events] };
+}
+
+/** Everything the proposal sheet renders, pre-digested: dApp identity
+ *  (HOSTILE strings — returned raw; the UI must escape them), the
+ *  requested chains with Fluid's names + support flags, the requested
+ *  methods, and the refusal reason if approving is impossible. */
+export function describeWcProposal(proposal) {
+  const params = wcProposalParams(proposal);
+  const md = (params.proposer && params.proposer.metadata) || {};
+  const req = wcCollect(params.requiredNamespaces);
+  const opt = wcCollect(params.optionalNamespaces);
+  const chainRow = (id, required) => {
+    const key = evmNetworkKeyForChainId(id);
+    return { chainId: id, name: key ? NETWORKS[key].name : `Chain ${id}`, supported: !!key, required };
+  };
+  let refusal = null;
+  try { planWcNamespaces(proposal); } catch (e) { refusal = e.message; }
+  return {
+    name: typeof md.name === "string" ? md.name : "",
+    description: typeof md.description === "string" ? md.description : "",
+    url: typeof md.url === "string" ? md.url : "",
+    icon: Array.isArray(md.icons) && typeof md.icons[0] === "string" ? md.icons[0] : "",
+    chains: [
+      ...[...req.chains].map(id => chainRow(id, true)),
+      ...[...opt.chains].filter(id => !req.chains.has(id)).map(id => chainRow(id, false)),
+    ],
+    methods: [...new Set([...req.methods, ...opt.methods])],
+    otherNamespaces: [...new Set([...req.other, ...opt.other])],
+    refusal,
+  };
+}
+
+/** The namespaces object handed to WalletKit.approveSession when the
+ *  user approves: only Fluid-supported chains, only inspectable
+ *  methods, the user's one EVM address on every approved chain. */
+export function buildWcNamespaces({ proposal, address }) {
+  if (!ethers.isAddress(address)) throw new Error("WalletConnect needs a valid EVM address to connect.");
+  const plan = planWcNamespaces(proposal);
+  const acct = ethers.getAddress(address);
+  return {
+    eip155: {
+      chains: plan.chains.map(id => `eip155:${id}`),
+      methods: plan.methods,
+      events: plan.events,
+      accounts: plan.chains.map(id => `eip155:${id}:${acct}`),
+    },
+  };
+}
+
+/** One row for the connected-sessions list. Metadata strings are
+ *  dApp-supplied and hostile — returned raw; the UI escapes them. */
+export function wcSessionSummary(session) {
+  const md = (session && session.peer && session.peer.metadata) || {};
+  const ns = (session && session.namespaces) || {};
+  const chainIds = new Set();
+  for (const nsVal of Object.values(ns)) {
+    for (const acct of (nsVal && nsVal.accounts) || []) {
+      const parts = String(acct).split(":");
+      if (parts[0] === "eip155") { const id = Number(parts[1]); if (Number.isFinite(id)) chainIds.add(id); }
+    }
+    for (const c of (nsVal && nsVal.chains) || []) { const id = wcCaipChainId(c); if (id != null) chainIds.add(id); }
+  }
+  return {
+    topic: session && session.topic ? String(session.topic) : "",
+    name: typeof md.name === "string" ? md.name : "",
+    url: typeof md.url === "string" ? md.url : "",
+    icon: Array.isArray(md.icons) && typeof md.icons[0] === "string" ? md.icons[0] : "",
+    chainIds: [...chainIds],
+    expiry: session && session.expiry ? Number(session.expiry) : null,
+  };
+}
+
+const WC_MAX_REVIEW_CHARS = 10000;
+const wcRefuse = (reason) => ({ ok: false, reason });
+function wcHexQty(v) {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return BigInt(Math.trunc(v));
+  if (typeof v === "string" && /^0x[0-9a-fA-F]+$/.test(v)) { try { return BigInt(v); } catch { return null; } }
+  if (typeof v === "string" && /^[0-9]+$/.test(v)) { try { return BigInt(v); } catch { return null; } }
+  return null;
+}
+
+function wcDecodePersonalSign(params, ownAddress) {
+  if (!Array.isArray(params) || params.length < 2) return wcRefuse("The sign request is malformed (personal_sign needs a message and an address).");
+  let rawMsg = params[0], rawAddr = params[1];
+  // Legacy order [address, message]: some dApps still send it. Only
+  // trust the swap when param 0 is exactly OUR address and param 1 is
+  // not an address at all — a 20-byte hex message stays ambiguous and
+  // keeps the spec order.
+  if (typeof rawMsg === "string" && ethers.isAddress(rawMsg) && ownAddress
+      && rawMsg.toLowerCase() === ownAddress.toLowerCase()
+      && typeof rawAddr === "string" && !ethers.isAddress(rawAddr)) {
+    [rawMsg, rawAddr] = [rawAddr, rawMsg];
+  }
+  if (typeof rawAddr === "string" && ethers.isAddress(rawAddr) && ownAddress && rawAddr.toLowerCase() !== ownAddress.toLowerCase())
+    return wcRefuse("This request asks you to sign for a different account than yours.");
+  let text = null, hex = null;
+  if (typeof rawMsg === "string" && /^0x[0-9a-fA-F]*$/.test(rawMsg) && rawMsg.length % 2 === 0) {
+    hex = rawMsg;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(ethers.getBytes(rawMsg)); }
+    catch { return wcRefuse("The message isn't readable text — Fluid never signs a message it can't show you."); }
+  } else if (typeof rawMsg === "string") {
+    text = rawMsg;
+  }
+  if (text == null) return wcRefuse("The message isn't text — Fluid never signs a message it can't show you.");
+  if (!text.length) return wcRefuse("The message is empty — nothing to sign.");
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text)) return wcRefuse("The message contains hidden control characters — Fluid won't sign it.");
+  if (text.length > WC_MAX_REVIEW_CHARS) return wcRefuse("The message is too long to review in full — Fluid won't sign what you can't read end to end.");
+  return {
+    ok: true, kind: "personal_sign",
+    intent: "Sign a message with your wallet. This moves no funds, but a signature proves you control this wallet — and some sites treat it as a login or an agreement. Read every word:",
+    rows: [{ label: "Message", value: text }],
+    warning: null,
+    sign: { type: "message", text, hex },
+  };
+}
+
+function wcFlattenTyped(prefix, value, rows) {
+  if (value == null) { rows.push({ label: prefix, value: String(value) }); return; }
+  if (Array.isArray(value)) {
+    if (!value.length) { rows.push({ label: prefix, value: "[]" }); return; }
+    value.forEach((v, i) => wcFlattenTyped(`${prefix}[${i}]`, v, rows));
+    return;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (!keys.length) { rows.push({ label: prefix, value: "{}" }); return; }
+    for (const k of keys) wcFlattenTyped(prefix ? `${prefix}.${k}` : k, value[k], rows);
+    return;
+  }
+  rows.push({ label: prefix, value: String(value) });
+}
+
+function wcDecodeTypedData(params, chainId, ownAddress) {
+  if (!Array.isArray(params) || params.length < 2) return wcRefuse("The typed-data request is malformed.");
+  const [rawAddr, rawData] = params;
+  if (typeof rawAddr === "string" && ethers.isAddress(rawAddr) && ownAddress && rawAddr.toLowerCase() !== ownAddress.toLowerCase())
+    return wcRefuse("This request asks you to sign for a different account than yours.");
+  let data = rawData;
+  if (typeof rawData === "string") {
+    try { data = JSON.parse(rawData); }
+    catch { return wcRefuse("The typed data isn't valid JSON — Fluid can't show it to you, so it won't sign it."); }
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return wcRefuse("The typed data is malformed.");
+  const { types, primaryType, domain, message } = data;
+  if (!types || typeof types !== "object" || typeof primaryType !== "string" || !Array.isArray(types[primaryType]))
+    return wcRefuse("The typed data doesn't name a valid primary type — Fluid can't verify it.");
+  if (!message || typeof message !== "object" || Array.isArray(message)) return wcRefuse("The typed data has no message object to review.");
+  const dom = domain && typeof domain === "object" && !Array.isArray(domain) ? domain : {};
+  if (dom.chainId != null && Number(dom.chainId) !== Number(chainId))
+    return wcRefuse(`The typed data is for chain ${dom.chainId}, but the request came in on chain ${chainId} — a mismatch Fluid won't sign.`);
+  const signTypes = { ...types };
+  delete signTypes.EIP712Domain;
+  // Verify the payload actually encodes under EIP-712 before anyone
+  // is asked to sign it — malformed typed data is refused here, not
+  // at the key.
+  try { ethers.TypedDataEncoder.hash(dom, signTypes, message); }
+  catch (e) { return wcRefuse("Fluid couldn't verify this typed data (" + ((e && (e.shortMessage || e.message)) || "invalid") + ") — refusing to sign it."); }
+  const rows = [];
+  for (const k of ["name", "version", "chainId", "verifyingContract", "salt"]) if (dom[k] != null) rows.push({ label: `Domain ${k}`, value: String(dom[k]) });
+  wcFlattenTyped("", message, rows);
+  const totalChars = rows.reduce((n, r) => n + r.label.length + r.value.length, 0);
+  if (totalChars > WC_MAX_REVIEW_CHARS) return wcRefuse("The typed data is too large to review in full — Fluid won't sign what you can't read end to end.");
+  const looksPermit = /permit/i.test(primaryType) || ("spender" in message && "value" in message && "deadline" in message);
+  return {
+    ok: true, kind: "typed_data",
+    intent: `Sign typed data (${primaryType})${dom.name ? ` for ${dom.name}` : ""}. This is an off-chain signature: it moves no funds by itself, but it can authorise real actions elsewhere. Check every field:`,
+    rows,
+    warning: looksPermit ? "This looks like a token PERMIT: signing it can let the spender named in the fields move your tokens without a separate approval transaction." : null,
+    sign: { type: "typedData", domain: dom, types: signTypes, value: message },
+  };
+}
+
+const WC_ERC20_SELECTORS = { "0xa9059cbb": "transfer", "0x23b872dd": "transferFrom", "0x095ea7b3": "approve" };
+function wcDecodeTx(params, chainId, ownAddress) {
+  if (!Array.isArray(params) || !params[0] || typeof params[0] !== "object") return wcRefuse("The transaction request is malformed.");
+  const tx = params[0];
+  const networkKey = evmNetworkKeyForChainId(chainId);
+  if (!networkKey) return wcRefuse(`Fluid doesn't support chain ${chainId}, so it can't send this transaction.`);
+  const net = NETWORKS[networkKey];
+  if (tx.chainId != null) {
+    const cid = wcHexQty(tx.chainId);
+    if (cid == null || Number(cid) !== Number(chainId)) return wcRefuse("The transaction's chain doesn't match the chain the request came in on — refusing.");
+  }
+  if (typeof tx.from === "string" && ownAddress && tx.from.toLowerCase() !== ownAddress.toLowerCase())
+    return wcRefuse("This transaction is from a different account than yours.");
+  if (tx.to == null) return wcRefuse("This transaction creates a new contract — Fluid can't show you what deployed code will do, so it won't sign it.");
+  if (!ethers.isAddress(tx.to)) return wcRefuse("The transaction's destination isn't a valid address.");
+  const to = ethers.getAddress(tx.to);
+  const value = tx.value == null ? 0n : wcHexQty(tx.value);
+  if (value == null) return wcRefuse("The transaction's value is malformed.");
+  const data = typeof tx.data === "string" ? tx.data : "0x";
+  if (!/^0x([0-9a-fA-F]{2})*$/.test(data)) return wcRefuse("The transaction's data is malformed.");
+  // Gas fields: pass through only the well-formed ones, and show them.
+  const gasRows = [];
+  const signTx = { to, value: "0x" + value.toString(16), data, chainId: Number(chainId) };
+  const gasRaw = tx.gas != null ? tx.gas : tx.gasLimit;
+  const gasLimit = gasRaw != null ? wcHexQty(gasRaw) : null;
+  if (gasRaw != null && gasLimit == null) return wcRefuse("The transaction's gas limit is malformed.");
+  if (gasLimit != null) { signTx.gasLimit = "0x" + gasLimit.toString(16); gasRows.push({ label: "Gas limit (set by the app)", value: gasLimit.toLocaleString("en-US") }); }
+  for (const f of ["gasPrice", "maxFeePerGas", "maxPriorityFeePerGas"]) {
+    if (tx[f] != null) {
+      const q = wcHexQty(tx[f]);
+      if (q == null) return wcRefuse(`The transaction's ${f} is malformed.`);
+      signTx[f] = "0x" + q.toString(16);
+      gasRows.push({ label: f, value: `${ethers.formatUnits(q, "gwei")} gwei` });
+    }
+  }
+  const sym = net.symbol;
+  if (data === "0x") {
+    return {
+      ok: true, kind: "transaction", networkKey,
+      intent: `Send ${ethers.formatEther(value)} ${sym} to ${to} on ${net.name}.`,
+      rows: [{ label: "To", value: to }, { label: "Amount", value: `${ethers.formatEther(value)} ${sym}` }, { label: "Network", value: net.name }, ...gasRows],
+      warning: null,
+      sign: { type: "transaction", networkKey, tx: signTx },
+    };
+  }
+  const selector = data.slice(0, 10).toLowerCase();
+  const fn = WC_ERC20_SELECTORS[selector];
+  if (!fn) return wcRefuse(`Fluid can't decode this contract call (function ${selector}) — it refuses to sign what it can't show you.`);
+  // A token call that ALSO carries native currency is an anomaly —
+  // never sign the combination in v1.
+  if (value !== 0n) return wcRefuse("This contract call also carries native currency — an unusual combination Fluid won't sign.");
+  let args;
+  try {
+    args = ethers.AbiCoder.defaultAbiCoder().decode(
+      fn === "transferFrom" ? ["address", "address", "uint256"] : ["address", "uint256"],
+      "0x" + data.slice(10));
+  } catch { return wcRefuse("The contract call's arguments are malformed — refusing to sign it."); }
+  const token = (net.tokens || []).find(t => t.address.toLowerCase() === to.toLowerCase()) || null;
+  const amount = fn === "transferFrom" ? args[2] : args[1];
+  const amountText = token
+    ? `${ethers.formatUnits(amount, token.decimals)} ${token.symbol}`
+    : `${amount.toString()} base units of the token at ${to} (Fluid doesn't know this token, so it can't convert the amount)`;
+  const tokenRow = { label: "Token contract", value: token ? `${to} (${token.symbol})` : to };
+  const base = { ok: true, kind: "transaction", networkKey, sign: { type: "transaction", networkKey, tx: signTx } };
+  if (fn === "transfer") {
+    const dest = ethers.getAddress(args[0]);
+    return { ...base,
+      intent: `Transfer ${amountText} to ${dest} on ${net.name}.`,
+      rows: [tokenRow, { label: "To", value: dest }, { label: "Amount", value: amountText }, { label: "Network", value: net.name }, ...gasRows],
+      warning: null };
+  }
+  if (fn === "transferFrom") {
+    const from = ethers.getAddress(args[0]), dest = ethers.getAddress(args[1]);
+    return { ...base,
+      intent: `Move ${amountText} from ${from} to ${dest} on ${net.name}, spending an allowance (transferFrom).`,
+      rows: [tokenRow, { label: "From", value: from }, { label: "To", value: dest }, { label: "Amount", value: amountText }, { label: "Network", value: net.name }, ...gasRows],
+      warning: "transferFrom moves tokens OUT of the From account using an allowance it granted — make sure that account and this amount are what you expect." };
+  }
+  // approve
+  const spender = ethers.getAddress(args[0]);
+  const unlimited = amount === (2n ** 256n - 1n);
+  return { ...base,
+    intent: `Approve ${spender} to spend ${unlimited ? "an UNLIMITED amount" : amountText} of this token from your wallet on ${net.name}.`,
+    rows: [tokenRow, { label: "Spender", value: spender }, { label: "Allowance", value: unlimited ? "UNLIMITED" : amountText }, { label: "Network", value: net.name }, ...gasRows],
+    warning: unlimited
+      ? "UNLIMITED allowance: this spender can move ALL of this token from your wallet, at any time, until you revoke it."
+      : "An approval lets the spender move this token from your wallet up to the allowance — it is not a transfer yet, but treat it like one." };
+}
+
+/** Decode one WalletConnect session request into a human-readable
+ *  intent (F-01: inspect the payload, not the envelope). Returns
+ *  { ok:false, reason } — the request must be rejected with that
+ *  reason and NOTHING may be signed — or { ok:true, kind, intent,
+ *  rows, warning, sign } where `sign` is the exact payload the core
+ *  sign helpers below will sign. Read-only kinds (eth_accounts /
+ *  eth_chainId) come back with auto:true and sign:null — they reveal
+ *  only what the approved session already granted. chainId accepts
+ *  1, "1" or "eip155:1". */
+export function decodeWcRequest({ method, params, chainId, ownAddress } = {}) {
+  const cidNum = typeof chainId === "string" && chainId.includes(":") ? wcCaipChainId(chainId) : Number(chainId);
+  switch (method) {
+    case "eth_accounts":
+      return { ok: true, kind: "accounts", auto: true, intent: "", rows: [], warning: null, sign: null, chainId: cidNum };
+    case "eth_chainId":
+      return { ok: true, kind: "chainId", auto: true, intent: "", rows: [], warning: null, sign: null, chainId: cidNum };
+    case "personal_sign": {
+      const d = wcDecodePersonalSign(params, ownAddress);
+      return d.ok ? { ...d, chainId: cidNum } : d;
+    }
+    case "eth_signTypedData": case "eth_signTypedData_v3": case "eth_signTypedData_v4": {
+      const d = wcDecodeTypedData(params, cidNum, ownAddress);
+      return d.ok ? { ...d, chainId: cidNum } : d;
+    }
+    case "eth_sendTransaction": {
+      const d = wcDecodeTx(params, cidNum, ownAddress);
+      return d.ok ? { ...d, chainId: cidNum } : d;
+    }
+    case "eth_sign":
+      return wcRefuse("eth_sign asks for a signature over an unreadable hash — Fluid never signs what it can't show you.");
+    case "eth_signTransaction":
+      return wcRefuse("Fluid doesn't sign raw transactions over WalletConnect in v1 — the app should use eth_sendTransaction so the send can be reviewed in full and broadcast properly.");
+    case "wallet_switchEthereumChain":
+      return wcRefuse("Fluid keeps its own network view — chain switching from a dApp isn't supported in v1.");
+    case "wallet_addEthereumChain":
+      return wcRefuse("Fluid discovers EVM chains itself — adding chains from a dApp isn't supported.");
+    default:
+      return wcRefuse(`Fluid doesn't support the method "${String(method)}" over WalletConnect yet.`);
+  }
+}
+
+/** Sign a decoded personal_sign payload (from decodeWcRequest). When
+ *  the dApp sent the message as hex, the BYTES are signed, so the
+ *  signature matches the exact payload that was reviewed. */
+export async function signWcMessage(wallet, sign) {
+  if (!sign || sign.type !== "message") throw new Error("Not a decoded message payload.");
+  return sign.hex ? wallet.signMessage(ethers.getBytes(sign.hex)) : wallet.signMessage(sign.text);
+}
+
+/** Sign a decoded EIP-712 typed-data payload (from decodeWcRequest). */
+export async function signWcTypedData(wallet, sign) {
+  if (!sign || sign.type !== "typedData") throw new Error("Not a decoded typed-data payload.");
+  return wallet.signTypedData(sign.domain, sign.types, sign.value);
+}
+
+/** Broadcast a decoded eth_sendTransaction through Fluid's own RPC
+ *  for that chain — the same provider every Fluid send uses. Returns
+ *  the ethers transaction response; the caller awaits .wait(). */
+export async function executeWcTransaction(wallet, sign) {
+  if (!sign || sign.type !== "transaction") throw new Error("Not a decoded transaction payload.");
+  const signer = wallet.connect(providerFor(sign.networkKey));
+  return signer.sendTransaction({ ...sign.tx });
+}

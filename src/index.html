@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss: wss://relay.walletconnect.com https://relay.walletconnect.com https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://pulse.walletconnect.com; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>Fluid — every chain, one wallet</title>
 <meta name="description" content="Fluid is an open-source, non-custodial wallet for every blockchain — EVM chains and L2s, Bitcoin and Lightning, Stacks, Solana, Tron, Sui, Cosmos, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot, Aptos, Litecoin, Dogecoin and Bitcoin Cash. One seed phrase, no account — Fluid never KYCs you. Global on/off-ramps, OGO ERA built in.">
 <link rel="canonical" href="https://fluidwallet.netlify.app/">
@@ -425,6 +425,8 @@
         <p class="tag" style="margin:2px 0 8px">The backup file is only as strong as your password — anyone who gets the file can guess at it offline, for as long as it takes. Guard it like the seed phrase.</p>
         <button class="mrow" id="showSeedBtn"><span class="mwell"><svg class="ic"><use href="#i-eye"/></svg></span><span class="grow t-strong">Reveal seed phrase</span><svg class="ic ic-sm" style="color:var(--faint)"><use href="#i-chev-r"/></svg></button>
         <button class="mrow" id="approvalsBtn"><span class="mwell"><svg class="ic"><use href="#i-shield"/></svg></span><span class="grow t-strong">Token approvals</span><svg class="ic ic-sm" style="color:var(--faint)"><use href="#i-chev-r"/></svg></button>
+        <button class="mrow" id="wcBtn"><span class="mwell"><svg class="ic"><use href="#i-layers"/></svg></span><span class="grow t-strong">WalletConnect</span><svg class="ic ic-sm" style="color:var(--faint)"><use href="#i-chev-r"/></svg></button>
+        <p class="tag" style="margin:2px 0 8px">Connect Fluid to other apps (dApps) that offer WalletConnect. You review and approve every connection and every signature here in Fluid — nothing is ever signed sight unseen.</p>
         <button class="mrow" id="lockBtn"><span class="mwell"><svg class="ic"><use href="#i-lock"/></svg></span><span class="grow t-strong">Lock wallet</span><svg class="ic ic-sm" style="color:var(--faint)"><use href="#i-chev-r"/></svg></button>
       </div>
       <div class="card">
