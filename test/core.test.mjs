@@ -1212,6 +1212,86 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
        !== solanaAtaAddress(owner.toBase58(), mint.toBase58()));
 }
 
+// ---------- Solana ATA reads: balances without indexed RPC methods ----------
+// (2026-11-08) The keyless endpoints that serve browsers refuse the
+// indexed token methods (getTokenAccountsByOwner with ANY filter —
+// and the old { mint, programId } pair was rejected by the RPC
+// itself), so curated reads derive the ATA locally, read it with
+// plain getAccountInfo, and parse the amount out of the account
+// bytes. A refused read must surface as failure/unknown, never as a
+// fake zero. Fetch is stubbed and answers JSON-RPC by request body.
+{
+  const { getSolanaTokenBalance, getSolanaBalances, parseSolanaTokenAccountAmount, SOLANA_TOKEN_PROGRAM, SOLANA_TOKEN2022_PROGRAM } =
+    await import("../src/wallet-core.js");
+  const OWNER = "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk";
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  // A 165-byte SPL token account fixture: mint | owner | amount u64 LE @64.
+  const tokenAccountBytes = (mintB58, ownerB58, raw) => {
+    const b = Buffer.alloc(165);
+    Buffer.from(new SolPublicKey(mintB58).toBytes()).copy(b, 0);
+    Buffer.from(new SolPublicKey(ownerB58).toBytes()).copy(b, 32);
+    b.writeBigUInt64LE(BigInt(raw), 64);
+    return b;
+  };
+  ok("solana ata read: amount parses from the account bytes (offset 64, u64 LE)",
+    parseSolanaTokenAccountAmount(tokenAccountBytes(USDC, OWNER, 1109540000n)) === 1109540000n);
+  ok("solana ata read: short/garbage bytes parse to null, not a number",
+    parseSolanaTokenAccountAmount(Buffer.alloc(10)) === null && parseSolanaTokenAccountAmount(null) === null);
+  const accountEntry = (mintB58, ownerB58, raw, program) => ({
+    lamports: 2039280, owner: program, executable: false,
+    data: [tokenAccountBytes(mintB58, ownerB58, raw).toString("base64"), "base64"],
+  });
+  const realFetch = globalThis.fetch;
+  const rpcStub = (accounts, failAccounts = false) => async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    const reply = (result) => ({ ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result }) });
+    if (body.method === "getBalance") return reply({ value: 0 });
+    if (body.method === "getAccountInfo") {
+      if (failAccounts) throw new Error("endpoint down");
+      return reply({ value: accounts.get(body.params[0]) || null });
+    }
+    throw new Error("unexpected method " + body.method);
+  };
+  try {
+    // USDC held under the legacy program: 1,109,540,000 raw = 1109.54.
+    globalThis.fetch = rpcStub(new Map([
+      [solanaAtaAddress(OWNER, USDC), accountEntry(USDC, OWNER, 1109540000n, SOLANA_TOKEN_PROGRAM)],
+    ]));
+    ok("solana ata read: legacy ATA balance reads through getAccountInfo",
+      (await getSolanaTokenBalance(OWNER, USDC, 6)) === "1109.54");
+    ok("solana ata read: an unheld mint is a true zero (no ATA anywhere)",
+      (await getSolanaTokenBalance(OWNER, USDT, 6)) === "0.0");
+    const rows = await getSolanaBalances(OWNER);
+    ok("solana ata read: balance list carries the ATA-read amounts",
+      rows.find(r => r.address === USDC)?.amount === "1109.54" && rows.find(r => r.address === USDT)?.amount === "0.0");
+    // USDT held ONLY under Token-2022: the legacy probe finds no
+    // account, the 2022 probe finds the funds.
+    globalThis.fetch = rpcStub(new Map([
+      [solanaAtaAddress(OWNER, USDT, SOLANA_TOKEN2022_PROGRAM), accountEntry(USDT, OWNER, 2500000n, SOLANA_TOKEN2022_PROGRAM)],
+    ]));
+    ok("solana ata read: Token-2022 ATA is probed when the legacy one is absent",
+      (await getSolanaTokenBalance(OWNER, USDT, 6)) === "2.5");
+    // Every endpoint down: failure must NOT collapse into "0".
+    globalThis.fetch = rpcStub(new Map(), true);
+    await assert.rejects(() => getSolanaTokenBalance(OWNER, USDC, 6));
+    ok("solana ata read: transport failure throws instead of returning a fake zero", true);
+    const failRows = await getSolanaBalances(OWNER);
+    ok("solana ata read: balance list marks a failed token read unknown (null), never zero",
+      failRows.find(r => r.address === USDC)?.amount === null
+      && failRows.find(r => r.address === USDT)?.amount === null
+      && failRows[0].amount === "0.0");
+  } finally { globalThis.fetch = realFetch; }
+  const appSrcSol = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("solana send sheet: the confirm passes the token's program to sendSolana",
+    appSrcSol.includes("token: tok.address ? { address: tok.address, decimals: tok.decimals, program: tok.program } : null"));
+  ok("renderMain: the render snapshots the wallet and abandons itself after a mid-render lock",
+    appSrcSol.includes("const w = wallet;") && appSrcSol.includes("if (wallet !== w) return;"));
+  ok("solana scan copy: endpoint refusal is stated honestly, not blamed on the connection",
+    appSrcSol.includes("isn't available from the free public Solana endpoints")
+    && appSrcSol.includes("the free public Solana endpoints aren't serving full scans"));
+}
+
 // 33. Phase 3b — Stellar (SLIP-0010 Ed25519, coin type 148,
 // m/44'/148'/0'). Vectors cross-checked three independent ways:
 // Fluid's SLIP-0010 + hand-rolled StrKey codec (below), the
@@ -2608,19 +2688,22 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 }
 
 // ---------- Fluid Names: registry host + mirror fallback ----------
-// The registry's primary home is the Netlify site; the GitHub Pages
-// mirror serves the same published names.json. When the primary
-// fetch fails (network error or a non-ok response), both registry
-// readers fall back to the mirror; a healthy primary is the only
-// fetch made, and a caller-supplied registry URL never falls back.
+// The registry's primary home is the GitHub Pages site; the Netlify
+// site serves the same published names.json as the fallback (the
+// order was swapped 2026-11-08 — Netlify deploys pause when build
+// credits run out, which froze its copy of the registry). When the
+// primary fetch fails (network error or a non-ok response), both
+// registry readers fall back to the other host; a healthy primary
+// is the only fetch made, and a caller-supplied registry URL never
+// falls back.
 {
   const { NAMES_REGISTRY_URL, NAMES_REGISTRY_FALLBACK_URL, resolveFluidName, fetchNameRegistry } = await import("../src/wallet-core.js");
   const EVM = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
   const REG = { dripbot: { evm: EVM } };
-  ok("names-host: the primary registry URL is the Netlify site",
-    NAMES_REGISTRY_URL === "https://fluidwallet.netlify.app/names.json");
-  ok("names-host: the fallback registry URL is the GitHub Pages mirror",
-    NAMES_REGISTRY_FALLBACK_URL === "https://townsvilledh.github.io/fluid-wallet/names.json");
+  ok("names-host: the primary registry URL is the GitHub Pages site",
+    NAMES_REGISTRY_URL === "https://townsvilledh.github.io/fluid-wallet/names.json");
+  ok("names-host: the fallback registry URL is the Netlify site",
+    NAMES_REGISTRY_FALLBACK_URL === "https://fluidwallet.netlify.app/names.json");
   const realFetch = globalThis.fetch;
   const withFetch = async (stub, fn) => {
     const calls = [];

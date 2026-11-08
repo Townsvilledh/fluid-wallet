@@ -1627,16 +1627,23 @@ export function isValidSolanaAddress(address) {
 export function solLamportsToSol(lamports) { return ethers.formatUnits(BigInt(lamports), 9); }
 export function solSolToLamports(amount) { return ethers.parseUnits(String(amount), 9); }
 
-/** Keyless public Solana RPCs, tried in order (QA F13,
- *  2026-11-07): the public mainnet-beta endpoint refuses
- *  getTokenAccountsByOwner from many networks (HTTP 403 "Access
- *  forbidden"), which killed the full token scan for entire
- *  sessions while the curated read limped on. All three endpoints
- *  are keyless and run the same JSON-RPC — including
- *  getTokenAccountsByOwner — so one endpoint's refusal falls
- *  through to the next instead of failing the scan. The last
- *  endpoint that answered is tried first next time. */
-const SOLANA_RPCS = [SOLANA_RPC, "https://solana-rpc.publicnode.com", "https://solana.drpc.org"];
+/** Keyless public Solana RPCs, tried in order. ORDER MATTERS
+ *  (revised 2026-11-08): PublicNode goes FIRST because it is the
+ *  endpoint that actually serves browsers — the canonical
+ *  mainnet-beta endpoint answers every request carrying a browser
+ *  Origin header with HTTP 403 "Access forbidden", so from the app
+ *  (a browser page) it only ever burns a round-trip before the
+ *  fall-through; it stays on the list as the fallback for
+ *  non-browser contexts, where it works fine. PublicNode refuses
+ *  INDEXED methods (getTokenAccountsByOwner, getTokenAccountBalance)
+ *  without a personal token, so every curated token read below is
+ *  built on plain getAccountInfo of the locally derived ATA — the
+ *  indexed methods survive only in the best-effort full scan
+ *  (getSolanaAllTokens). solana.drpc.org was dropped: it no longer
+ *  serves Solana on its free plan at all (HTTP 400 on every
+ *  method). The last endpoint that answered is tried first next
+ *  time. */
+const SOLANA_RPCS = ["https://solana-rpc.publicnode.com", SOLANA_RPC];
 let _solRpcGood = 0;
 async function solanaRpc(method, params) {
   let lastErr = null;
@@ -1659,24 +1666,25 @@ async function solanaRpc(method, params) {
   throw lastErr || new Error("Solana network error.");
 }
 /** Solana balances shaped like getBalances(): native SOL first (address
- *  null), then the SPL tokens. A failed token read degrades to that
- *  token's zero — it never fails the whole lookup. */
+ *  null), then the SPL tokens. Token reads go through the ATAs
+ *  (plain getAccountInfo — see solanaMintRawBalance), NOT the
+ *  indexed getTokenAccountsByOwner the keyless endpoints refuse. A
+ *  token whose read fails on every endpoint gets amount null — the
+ *  codebase's "balance unknown" marker (the row renders "couldn't
+ *  load" and stays out of totals) — never a fake zero; the native
+ *  balance still stands. */
 export async function getSolanaBalances(address) {
   if (!isValidSolanaAddress(address)) throw new Error("That is not a valid Solana address.");
   const out = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 }];
   const bal = await solanaRpc("getBalance", [address]);
   out[0].amount = solLamportsToSol((bal && bal.value) ?? 0); // no account on-chain yet = 0
   for (const t of SOLANA_TOKENS) {
-    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals };
+    const row = { symbol: t.symbol, amount: "0", address: t.address, decimals: t.decimals, program: SOLANA_PROGRAMS.token };
     try {
-      const r = await solanaRpc("getTokenAccountsByOwner", [address, { mint: t.address }, { encoding: "jsonParsed" }]);
-      let sum = 0n;
-      for (const acc of (r && r.value) || []) {
-        const amt = acc?.account?.data?.parsed?.info?.tokenAmount?.amount;
-        if (amt != null) sum += BigInt(amt);
-      }
-      row.amount = ethers.formatUnits(sum, t.decimals);
-    } catch { /* token read failed — the row stays at 0, the native balance stands */ }
+      const held = await solanaMintRawBalance(address, t.address);
+      row.amount = ethers.formatUnits(held.raw, t.decimals);
+      row.program = held.program;
+    } catch { row.amount = null; /* every endpoint refused — unknown, not zero */ }
     out.push(row);
   }
   return out;
@@ -1698,6 +1706,48 @@ export function solanaAtaAddress(ownerAddress, mintAddress, programId = SOLANA_P
 async function solanaAccountExists(address) {
   const r = await solanaRpc("getAccountInfo", [address, { encoding: "base64" }]);
   return !!(r && r.value);
+}
+/** The raw amount in an SPL token account's data bytes, or null
+ *  when the bytes are too short to hold one. The token-account
+ *  layout is mint (32) | owner (32) | amount (u64 little-endian at
+ *  byte offset 64); a legacy token account is exactly 165 bytes and
+ *  Token-2022 accounts share the same prefix. Exported for tests. */
+export function parseSolanaTokenAccountAmount(bytes) {
+  if (!bytes || bytes.length < 72) return null;
+  return new DataView(bytes.buffer, bytes.byteOffset + 64, 8).getBigUint64(0, true);
+}
+/** One token account's raw balance via getAccountInfo of its ATA —
+ *  a PLAIN (non-indexed) read, because the keyless endpoints that
+ *  serve browsers refuse the indexed token methods
+ *  (getTokenAccountsByOwner / getTokenAccountBalance) outright.
+ *  Returns the raw amount, 0n when the account does not exist (a
+ *  true zero — nothing was ever held under that program), and
+ *  THROWS when no endpoint answers, so no caller ever mistakes a
+ *  transport failure for an empty account. The account's own mint
+ *  and owner fields are checked before its amount is trusted. */
+async function solanaAtaRawBalance(ownerAddress, mintAddress, programId) {
+  const ata = solanaAtaAddress(ownerAddress, mintAddress, programId);
+  const r = await solanaRpc("getAccountInfo", [ata, { encoding: "base64" }]);
+  if (!r || !r.value) return 0n;
+  if (r.value.owner && r.value.owner !== programId) return 0n;
+  const data = Array.isArray(r.value.data) ? r.value.data[0] : null;
+  if (typeof data !== "string" || !data) return 0n;
+  const bytes = base64.decode(data);
+  if (base58.encode(bytes.slice(0, 32)) !== mintAddress) return 0n;
+  if (base58.encode(bytes.slice(32, 64)) !== ownerAddress) return 0n;
+  return parseSolanaTokenAccountAmount(bytes) ?? 0n;
+}
+/** A mint's balance for an owner across BOTH token programs, read
+ *  via the ATAs: probe the legacy Token program first, then
+ *  Token-2022 — the program whose ATA holds funds is the mint's
+ *  program (a mint lives under exactly one). Returns { raw,
+ *  program }; throws when no endpoint answers. */
+async function solanaMintRawBalance(ownerAddress, mintAddress) {
+  const legacy = await solanaAtaRawBalance(ownerAddress, mintAddress, SOLANA_PROGRAMS.token);
+  if (legacy > 0n) return { raw: legacy, program: SOLANA_PROGRAMS.token };
+  const t22 = await solanaAtaRawBalance(ownerAddress, mintAddress, SOLANA_PROGRAMS.token2022);
+  if (t22 > 0n) return { raw: t22, program: SOLANA_PROGRAMS.token2022 };
+  return { raw: 0n, program: SOLANA_PROGRAMS.token };
 }
 /** Would sending this token to `to` need a new token account created
  *  (sender-paid rent)? Drives both the pre-confirm plan and the send. */
@@ -1802,12 +1852,12 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
     const program = token.program || SOLANA_PROGRAMS.token;
     const is2022 = program === SOLANA_PROGRAMS.token2022;
     const fromAta = solanaAtaAddress(fromAddr, token.address, program);
-    let held = 0n;
-    try {
-      const tb = await solanaRpc("getTokenAccountBalance", [fromAta]);
-      held = BigInt(tb?.value?.amount ?? 0);
-    } catch { held = 0n; } // no token account yet = holds none
-    if (held < raw) throw new Error(`Not enough ${token.symbol} on Solana (you have ${ethers.formatUnits(held, token.decimals ?? 6)}).`);
+    // Held-check via the ATA's own account data (plain getAccountInfo):
+    // getTokenAccountBalance is an indexed read the keyless endpoints
+    // refuse, and a refused read must never pose as "you hold none" —
+    // a missing ATA is the true zero; a transport failure throws.
+    const held = await solanaAtaRawBalance(fromAddr, token.address, program);
+    if (held < raw) throw new Error(`Not enough ${token.symbol || "tokens"} on Solana (you have ${ethers.formatUnits(held, token.decimals ?? 6)}).`);
     const plan = await solanaSendPlan(fromAddr, { to, token });
     createsAta = plan.createsAta;
     const solNeeded = SOLANA_BASE_FEE_LAMPORTS + BigInt(plan.ataRentLamports);
@@ -2709,11 +2759,16 @@ export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, den
 // mapping; only the repo (via signed GitHub commits/PRs) can publish one,
 // and a future version moves this to an on-chain registry.
 export const FLUID_DOMAIN = "fluid.is-a.dev";
-export const NAMES_REGISTRY_URL = "https://fluidwallet.netlify.app/names.json";
-/** The same registry file on the GitHub Pages mirror — the fallback
- *  when the primary host can't be reached (the two hosts serve the
- *  same published names.json, so a fallback read is the same data). */
-export const NAMES_REGISTRY_FALLBACK_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
+export const NAMES_REGISTRY_URL = "https://townsvilledh.github.io/fluid-wallet/names.json";
+/** The same registry file on the Netlify site — the fallback when
+ *  the primary host can't be reached (the two hosts serve the same
+ *  published names.json, so a fallback read is the same data). The
+ *  primary used to be Netlify; it was swapped on 2026-11-08 because
+ *  Netlify deploys pause whenever the team's build credits run out,
+ *  which froze the registry it served while GitHub Pages kept
+ *  publishing — the Pages copy is the one that can be stale only by
+ *  minutes, never by a billing cycle. */
+export const NAMES_REGISTRY_FALLBACK_URL = "https://fluidwallet.netlify.app/names.json";
 export function validateFluidName(name) {
   return /^[a-z][a-z0-9_]{2,19}$/.test(name || "");
 }
@@ -5835,27 +5890,21 @@ export async function getSolanaAllTokens(address) {
   return rows;
 }
 /** One Solana balance for the swap sheet's targeted check: native SOL
- *  when `mint` is null, else the summed balance of that mint across
- *  both token programs, formatted with the given decimals. */
+ *  when `mint` is null, else that mint's balance, formatted with the
+ *  given decimals. The mint read goes through the ATAs (see
+ *  solanaMintRawBalance) — the previous implementation filtered
+ *  getTokenAccountsByOwner by { mint, programId } together, a filter
+ *  shape the RPC itself rejects, and swallowed the rejection into a
+ *  false "0.0" (it returned 0 for an address holding 1109.54 USDC).
+ *  A transport failure now THROWS, so the swap sheet's pre-flight
+ *  sees "couldn't check" (its null path) instead of a fake zero. */
 export async function getSolanaTokenBalance(address, mint = null, decimals = 6) {
   if (!mint) {
     const bal = await solanaRpc("getBalance", [address]);
     return solLamportsToSol((bal && bal.value) ?? 0);
   }
-  let sum = 0n, dec = decimals;
-  for (const program of [SOLANA_PROGRAMS.token, SOLANA_PROGRAMS.token2022]) {
-    try {
-      const r = await solanaRpc("getTokenAccountsByOwner", [address, { mint, programId: program }, { encoding: "jsonParsed" }]);
-      for (const acc of (r && r.value) || []) {
-        const ta = acc && acc.account && acc.account.data && acc.account.data.parsed &&
-                   acc.account.data.parsed.info && acc.account.data.parsed.info.tokenAmount;
-        if (!ta) continue;
-        sum += BigInt(ta.amount || "0");
-        if (ta.decimals != null) dec = ta.decimals;
-      }
-    } catch { /* that program holds none / didn't answer */ }
-  }
-  return ethers.formatUnits(sum, dec);
+  const held = await solanaMintRawBalance(address, mint);
+  return ethers.formatUnits(held.raw, decimals);
 }
 
 // ----- Sui: every coin type, via the public GraphQL endpoint -----

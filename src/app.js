@@ -422,6 +422,16 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
 }
 
 async function renderMain() {
+  // Snapshot the wallet for the whole render: this function awaits
+  // (prices, balances) while the auto-lock / lock button can null
+  // the global at any moment, and every derivation below reads
+  // w.mnemonic. Without the snapshot, a lock landing mid-render
+  // threw "Cannot read properties of null (reading 'mnemonic')"
+  // as an unhandled rejection (live WC QA walk, 2026-11-08) — the
+  // gate already owned the screen by then, so the correct move is
+  // to abandon the stale render, never to dereference the lock.
+  const w = wallet;
+  if (!w) return;
   // The name-section description (#namePreview) is painted by
   // renderNameSection() below — its only writer (QA round 3). A
   // set-only write here used to leave the previous wallet's name
@@ -430,8 +440,9 @@ async function renderMain() {
   famLoaded.clear();
   paintHeader();
   try { prices = await getPrices(); } catch { prices = {}; }
+  if (wallet !== w) return; // locked (or wallet switched) while prices loaded
   // Bitcoin first (all chains, one wallet)
-  btcAddr = bitcoinAddress(wallet.mnemonic.phrase);
+  btcAddr = bitcoinAddress(w.mnemonic.phrase);
   // Fluid name: paint the owned/claim state, then (once per session) try
   // to adopt a registry name that already belongs to this wallet — a
   // restored wallet whose name was published earlier should SEE its name,
@@ -441,12 +452,12 @@ async function renderMain() {
   getBitcoinBalance(btcAddr).then(b => { btcBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
   // Taproot (BIP86) — a second Bitcoin account from the same seed
   // (Build B): its own address and balance, rolled into the BTC totals.
-  btcTrAddr = bitcoinTaprootAddress(wallet.mnemonic.phrase);
+  btcTrAddr = bitcoinTaprootAddress(w.mnemonic.phrase);
   getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { famLoaded.add("bitcoin"); paintAssets(); });
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
-  tronAddr = tronAddressFromPhrase(wallet.mnemonic.phrase);
+  tronAddr = tronAddressFromPhrase(w.mnemonic.phrase);
   tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
@@ -454,7 +465,7 @@ async function renderMain() {
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
   // placeholders until the RPC answers.
-  solAddr = solanaAddressFromPhrase(wallet.mnemonic.phrase);
+  solAddr = solanaAddressFromPhrase(w.mnemonic.phrase);
   solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana")
@@ -462,7 +473,7 @@ async function renderMain() {
   // Sui (Phase 2b): SLIP-0010 Ed25519 branch (coin type 784) of the
   // same seed — the same derivation family as Solana, Sui's own path.
   // Also the future home of the OGO ERA Companion NFT.
-  suiAddr = suiAddressFromPhrase(wallet.mnemonic.phrase);
+  suiAddr = suiAddressFromPhrase(w.mnemonic.phrase);
   suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
                  ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
@@ -472,7 +483,7 @@ async function renderMain() {
   // (XLM + every trustline). An unfunded account is a state — "not
   // yet activated" — painted honestly; a failed read keeps the
   // placeholder row plus a "couldn't load" note, never a fake zero.
-  stellarAddr = stellarAddressFromPhrase(wallet.mnemonic.phrase);
+  stellarAddr = stellarAddressFromPhrase(w.mnemonic.phrase);
   stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
@@ -484,28 +495,28 @@ async function renderMain() {
   // (Sr25519, Substrate derivation). Each follows the Stellar
   // discipline: placeholder rows, honest state notes on failure —
   // never a fake zero presented as a loaded balance.
-  tonAddr = tonAddressFromPhrase(wallet.mnemonic.phrase);
+  tonAddr = tonAddressFromPhrase(w.mnemonic.phrase);
   tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false;
   getTonAccount(tonAddr)
     .then(acct => { tonBalances = acct.balances; tonState = acct.state; famLoaded.add("ton"); paintAssets(); })
     .catch(() => { tonLoadFailed = true; famLoaded.add("ton"); paintAssets(); });
-  nearAddr = nearAddressFromPhrase(wallet.mnemonic.phrase);
+  nearAddr = nearAddressFromPhrase(w.mnemonic.phrase);
   nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
     .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; famLoaded.add("near"); paintAssets(); })
     .catch(() => { nearLoadFailed = true; famLoaded.add("near"); paintAssets(); });
-  algoAddr = algoAddressFromPhrase(wallet.mnemonic.phrase);
+  algoAddr = algoAddressFromPhrase(w.mnemonic.phrase);
   algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
     .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; famLoaded.add("algorand"); paintAssets(); })
     .catch(() => { algoLoadFailed = true; famLoaded.add("algorand"); paintAssets(); });
-  xrpAddr = xrplAddressFromPhrase(wallet.mnemonic.phrase);
+  xrpAddr = xrplAddressFromPhrase(w.mnemonic.phrase);
   xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
@@ -518,7 +529,7 @@ async function renderMain() {
       xrpBalances = [{ symbol: "XRP", name: "XRP", amount: null, address: null, decimals: 6, verified: true }];
       famLoaded.add("xrpl"); paintAssets();
     });
-  dotAddr = dotAddressFromPhrase(wallet.mnemonic.phrase);
+  dotAddr = dotAddressFromPhrase(w.mnemonic.phrase);
   dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
@@ -530,7 +541,7 @@ async function renderMain() {
   // honestly — an address the chain has never seen is "not yet
   // created", not a fake zero — and a failed read keeps the
   // placeholder rows plus a note.
-  aptosAddr = aptosAddressFromPhrase(wallet.mnemonic.phrase);
+  aptosAddr = aptosAddressFromPhrase(w.mnemonic.phrase);
   aptosBalances = [{ symbol: "APT", name: "Aptos", amount: "0", address: null, decimals: 8, verified: true },
                    ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
@@ -540,7 +551,7 @@ async function renderMain() {
   // Stacks (Bitcoin L2): BIP44 coin-5757 branch of the same seed. STX +
   // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
   // everything else unverified (⚠) with contract-read metadata.
-  stacksAddr = stacksAddressFromPhrase(wallet.mnemonic.phrase);
+  stacksAddr = stacksAddressFromPhrase(w.mnemonic.phrase);
   stacksBalances = [{ symbol: "STX", name: "Stacks", amount: "0", decimals: 6, verified: true, contract: null },
                     ...STACKS_TOKENS.map(t => ({ ...t, amount: "0", balanceRaw: "0", verified: true }))];
   stacksLoadFailed = false; stacksScanFailed = false;
@@ -556,11 +567,11 @@ async function renderMain() {
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
-  ltcAddr = litecoinAddress(wallet.mnemonic.phrase);
+  ltcAddr = litecoinAddress(w.mnemonic.phrase);
   getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; famLoaded.add("litecoin"); paintAssets(); }).catch(() => { famLoaded.add("litecoin"); paintAssets(); });
-  dogeAddr = dogecoinAddress(wallet.mnemonic.phrase);
+  dogeAddr = dogecoinAddress(w.mnemonic.phrase);
   getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; famLoaded.add("dogecoin"); paintAssets(); }).catch(() => { famLoaded.add("dogecoin"); paintAssets(); });
-  bchAddr = bitcoinCashAddress(wallet.mnemonic.phrase);
+  bchAddr = bitcoinCashAddress(w.mnemonic.phrase);
   getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; famLoaded.add("bitcoincash"); paintAssets(); }).catch(() => { famLoaded.add("bitcoincash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
@@ -568,14 +579,14 @@ async function renderMain() {
   // (amount null) and fill in per chain as the public REST endpoints
   // answer; a chain that never answers keeps the honest null instead
   // of a fake zero (the DOGE precedent).
-  cosmosAddrs = cosmosAddresses(wallet.mnemonic.phrase);
+  cosmosAddrs = cosmosAddresses(w.mnemonic.phrase);
   cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
   paintAssets();
-  getCosmosAllBalances(wallet.mnemonic.phrase).then(rows => { cosmosRows = rows; famLoaded.add("cosmos"); paintAssets(); }).catch(() => { famLoaded.add("cosmos"); paintAssets(); });
+  getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; famLoaded.add("cosmos"); paintAssets(); }).catch(() => { famLoaded.add("cosmos"); paintAssets(); });
   $("assetList").innerHTML = "Loading assets…";
   try {
     balances = await Promise.race([
-      getBalances(wallet, networkKey),
+      getBalances(w, networkKey),
       new Promise((_, reject) => setTimeout(() => reject(new Error("balance load timed out")), 20000)),
     ]);
   } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
@@ -797,7 +808,7 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
 function familyAlertMap() {
   const m = {};
   if (familyScanFailed.tron) m.tron = "Full token scan unavailable — showing main Tron tokens only.";
-  if (familyScanFailed.solana) m.solana = "Full token scan unavailable — showing main Solana tokens only.";
+  if (familyScanFailed.solana) m.solana = "Full token scan isn't available from the free public Solana endpoints right now — showing main Solana tokens only. Your main tokens above are up to date; the full scan needs an endpoint that serves indexed token lookups, which the free ones currently refuse.";
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
   if (stellarLoadFailed) m.stellar = "Stellar balances couldn't be loaded right now.";
   if (tonLoadFailed) m.ton = "TON balances couldn't be loaded right now.";
@@ -840,11 +851,11 @@ async function retryFamily(key, title) {
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span>Retrying…`;
-  const fail = (what) => {
+  const fail = (what, note) => {
     btn.disabled = false;
     btn.textContent = "Retry";
     const t = $("famAlertText");
-    if (t) t.textContent = `${what} still couldn't be loaded right now — check your connection and try again.`;
+    if (t) t.textContent = note || `${what} still couldn't be loaded right now — check your connection and try again.`;
   };
   const done = (what) => { closeSheet(); toast(what); };
   try {
@@ -862,7 +873,11 @@ async function retryFamily(key, title) {
       if (rows) solBalances = rows;
       paintAssets();
       if (!familyScanFailed.solana) return done("Solana token scan updated");
-      return fail("The full Solana token scan");
+      // Not a connection problem: the free public Solana endpoints
+      // refuse the indexed lookups a full scan needs. Say that,
+      // plainly — the retry above really did re-run the scan.
+      return fail("The full Solana token scan",
+        "The full Solana token scan still isn't available — the free public Solana endpoints aren't serving full scans right now. Your main Solana tokens above are up to date.");
     }
     await renderMain();
     await new Promise(r => setTimeout(r, 2500));
@@ -1985,7 +2000,12 @@ function openSolanaSheet(tok) {
       msg("oMsg", "Signing locally and broadcasting…", true);
       const { hash } = await sendSolana(wallet.mnemonic.phrase, {
         to: pendingSol.to, amount: pendingSol.amount,
-        token: tok.address ? { address: tok.address, decimals: tok.decimals } : null,
+        // The token's program rides along: the review plan was built
+        // with it (Token-2022 mints derive a different ATA and use a
+        // different transfer instruction), so execution must use the
+        // same program the user reviewed — dropping it silently
+        // rebuilt the send against the legacy program.
+        token: tok.address ? { address: tok.address, decimals: tok.decimals, program: tok.program } : null,
       });
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash, amount: pendingSol.amount, symbol: tok.symbol, to: pendingSol.to,
