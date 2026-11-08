@@ -5,8 +5,12 @@ Fluid routes, it does not sell. For every deposit/withdrawal the wallet
 ranks providers by their documented typical fees and puts the cheapest
 first (the ramp sheet shows a CHEAPEST badge; the provider still shows
 the final live quote before the user pays). Current typical-fee order
-for African local-currency corridors: Fonbnk (flat ~$0.12 documented
-fee) → Ramp Network → Transak → MoonPay. When free-tier live quote APIs
+for African local-currency corridors: none in the wallet right now —
+Fonbnk (flat ~$0.12 documented fee) was PULLED 2026-11-08 because it
+pays Fluid nothing collectable without KYB / server-side signing
+(owner's rule: no pay, no route; wiring facts kept in the wallet-core
+ramp notes). Older experiments ranked Ramp Network → Transak →
+MoonPay. When free-tier live quote APIs
 become available to the project, ranking switches from typical fees to
 live quotes automatically — the ranking function (`rankRoutes`) is the
 single place that changes.

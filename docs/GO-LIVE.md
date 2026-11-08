@@ -5,6 +5,7 @@
 
 **A) Fluid live for YOUR personal use — NO partner form needed.**
 As a normal consumer you can cash out through Fonbnk's public widget today: you KYC *as a user* inside Fonbnk (ID + selfie, like any Nigerian using a cash-out app), they pay your bank. Combined with the wallets you already have (Binance Agentic Wallet + scout wallet) and the Fluid recovery/router prototypes, that's a working personal Fluid this week. The partner form only matters when *other people* use Fluid under your brand and you earn the referral cut.
+**Update 2026-11-08:** the in-wallet Fonbnk *route* was PULLED (owner's rule: no pay, no route — Fonbnk pays Fluid nothing collectable without the KYB track below). Personal use of their public widget is unaffected; Track 1 below is now only the re-add path, to run if a collectable programme ever makes the route worth restoring.
 
 **B) Fluid live as a product (partner/production keys) — the form below.**
 Every provider's production KYB has the same gate: **a registered legal entity**. No entity, no live keys — from anyone.
@@ -19,6 +20,7 @@ Every provider's production KYB has the same gate: **a registered legal entity**
 - Recommendation: if Fluid is going public, go straight to **Ltd** and skip doing paperwork twice.
 
 ## Track 1 — Fonbnk (fastest, do this first)
+> **STATUS — PULLED 2026-11-08 until a collectable programme exists.** Fonbnk was removed from Fluid's ramp routes on 2026-11-08 (owner's decision): its partner fees are KYB + server-signed-JWT gated, so Fluid earned nothing — and the rule is no pay, no route. The wiring facts (widget root = buy, `/offramp` = sell, address param merchant-KYB-gated) are preserved in the wallet-core ramp notes. This track is what re-adding would require; don't run it unless the route decision is revisited.
 1. **Sandbox (today, ~minutes, no KYB, no company):** register at `sandbox-dashboard.fonbnk.com/register-initiate`, grab API signature secret + client ID from API Settings, test with the sandbox pay widget (their docs even provide a Nigeria sandbox test account). No real money.
 2. **Production account:** register at `dashboard.fonbnk.com/register-initiate`.
 3. **KYB:** after registering, contact Fonbnk support and complete KYB. This unlocks the production powers: signed widget URLs, pre-setting the user's wallet address, webhooks.

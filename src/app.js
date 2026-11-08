@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  fonbnkOfframpUrl, fonbnkOnrampUrl, mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
+  mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -1218,7 +1218,7 @@ function applyDiscovered(list) {
     if (!d || !d.key || !d.rpc || BUILTIN_CHAIN_IDS.has(d.chainId)) continue;
     discoveredChains[d.key] = d;
     reg[d.key] = { name: d.name, chainId: d.chainId, symbol: d.symbol, priceSym: d.symbol,
-      rpc: d.rpc, explorer: d.explorer, fonbnkNetwork: null, tokens: d.tokens || [], discovered: true };
+      rpc: d.rpc, explorer: d.explorer, tokens: d.tokens || [], discovered: true };
   }
   registerNetworks(reg);
 }
@@ -3558,7 +3558,7 @@ function rampSheet(mode) {
     // Per-country lineup ranked on MEASURED price vs the market rate
     // (rampRoutesFor in wallet-core). The CHEAPEST badge comes from the
     // plan's price evidence, not from list position alone.
-    const { country: c, routes, fonbnkNetworkMissing, fonbnkBuyBlocked, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
+    const { country: c, routes, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
     $("rList").innerHTML =
       `<p class="tag" style="margin-top:10px">Sorted by real measured price against the market rate (price checks 6–7 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
       routes.map(r => r.unavailable
@@ -3569,18 +3569,9 @@ function rampSheet(mode) {
         // rides in a data attribute and is opened by the bound listener.
         // Name + badge on their own line, note beneath (stacked layout).
         : `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
-      // A paste route whose widget can't be pre-filled keylessly
-      // (Fonbnk NG buy: its address param is merchant-gated) gets
-      // the user's own receive address + a copy button right at the
-      // route, so the paste is one tap away.
-      (routes.some(r => r.pasteAddress) && wallet ? `<div class="netitem rampitem"><span class="rampname">Your ${esc(asset)} address on ${esc(NETWORKS[netKey].name)}</span><small class="rampnote">Copy it here and paste it into Fonbnk when it asks where to deliver — the widget opens un-prefilled.</small><small class="rampnote mono">${esc(wallet.address)}</small><button class="btn ghost" id="rCopyAddr">Copy address</button></div>` : "") +
       (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
-      (fonbnkBuyBlocked ? `<p class="tag">Fonbnk buying is not offered in Fluid — its buy flow forces a WalletConnect connection to an external wallet instead of letting you paste your Fluid address, and that defeats the point of Fluid. Fonbnk cash-out still works: it runs on a plain address, no wallet connection.</p>` : "") +
-      (fonbnkNetworkMissing ? `<p class="tag">Fonbnk doesn't ride on ${NETWORKS[netKey].name} — pick a network it supports above (e.g. BNB Chain or Base), or use another route instead.</p>` : "") +
       (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
-    const cpAddr = $("rCopyAddr");
-    if (cpAddr) cpAddr.onclick = () => { copyText(wallet.address, cpAddr); toast("Copied"); };
     paintBench();
     const bMeta = BENCH[code];
     if (bMeta && benchKey !== code + ":" + mode) {

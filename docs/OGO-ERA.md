@@ -47,7 +47,7 @@ directly.
 When you play, you spend and earn from the same wallet. No separate
 in-game currency you can't withdraw. RAIN is real, on Arc chain,
 convertible to local currency through the wallet's global ramp routing
-(Nigeria: Busha/Moove corridors and Fonbnk; globally: the ramp providers
+(Nigeria: Busha/Moove corridors; globally: the ramp providers
 in the wallet's Ramps sheet).
 
 **No login server:** the game reads the Companion SBT object on Sui. If

@@ -17,7 +17,7 @@ Fluid is a global, open-source, **non-custodial** wallet and one-stop shop for b
 - **Balances** for the native coin + USDC + USDT where listed
 - **Send with a human-readable confirmation** — "Send 0.05 BNB to 0x… on BNB Chain. Network fee about 0.000105 BNB. Confirm?" — never a blind hex blob
 - **Receive** by address or QR code
-- **Global buy & cash-out routing** — MoonPay, Ramp Network and Transak (180+ countries) plus Fonbnk for Nigeria (bank & airtime). You verify with the provider; they settle fiat directly; Fluid never touches fiat and needs no partner agreement
+- **Global buy & cash-out routing** — MoonPay, Ramp Network and Transak (180+ countries). You verify with the provider; they settle fiat directly; Fluid never touches fiat and needs no partner agreement
 - **⚽ OGO ERA built in** — a Play tab in the wallet: the street-football game, soulbound Companion progression, and RAIN claims that land here. See `docs/OGO-ERA.md`
 - **🤖 Agentic wallets** — give an AI agent its own wallet: full blockchain access, **no KYC and no on/off-ramps by design**, spending caps enforced in code. Two modes: owner-assisted (derived account + `window.FluidAgent` intent API; owner approves, wallet signs) and **fully autonomous** (`agent/fluid-agent.mjs` — the agent generates its own seed and wallet with zero human steps and signs within its caps). See `docs/AGENTIC.md`
 - **Backup** as a downloadable encrypted keystore file; seed reveal is password-gated
