@@ -20,6 +20,7 @@ copyFileSync("public/_headers", "dist/_headers");
 copyFileSync("public/robots.txt", "dist/robots.txt");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");
+copyFileSync("public/CNAME", "dist/CNAME");
 // Cache-bust the bundle: stamp dist/index.html with app.bundle.js?v=<hash> so
 // every deploy is a new URL and browsers never sit on a stale bundle.
 const bundleHash = createHash("sha256").update(readFileSync("dist/app.bundle.js")).digest("hex").slice(0, 10);
