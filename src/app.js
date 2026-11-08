@@ -100,6 +100,7 @@ const UNVERIFIED_CAUTION = "This token isn't on a verified list — check the co
 const expandedOther = new Set();  // family keys whose "Other tokens" group is expanded
 let familyScanFailed = {};        // tron/solana/sui -> true when the all-token read fell back to curated rows
 let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|failed, for the ACTIVE chain
+let evmLoadFailed = false; // the curated EVM balance load failed — rows are UNKNOWN, never zero (DOGE precedent)
 // A row's own priceUsd (present on discovered rows, null when no
 // source prices them) always wins over the symbol table — a scam
 // token can call itself "USDC", it cannot borrow USDC's price here.
@@ -439,7 +440,16 @@ async function renderMain() {
   renderAgents();
   famLoaded.clear();
   paintHeader();
-  try { prices = await getPrices(); } catch { prices = {}; }
+  // Bounded: getPrices has no timeout of its own, and renderMain awaits
+  // it before ANY balance load fires — a stalled price fetch used to
+  // stall the whole render (and the More-tab Refresh with it) while
+  // looking like nothing happened. Prices degrade to {} on timeout.
+  try {
+    prices = await Promise.race([
+      getPrices(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 10000)),
+    ]);
+  } catch { prices = {}; }
   if (wallet !== w) return; // locked (or wallet switched) while prices loaded
   // Bitcoin first (all chains, one wallet)
   btcAddr = bitcoinAddress(w.mnemonic.phrase);
@@ -597,12 +607,21 @@ async function renderMain() {
   paintAssets();
   getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; famLoaded.add("cosmos"); paintAssets(); }).catch(() => { famLoaded.add("cosmos"); paintAssets(); });
   $("assetList").innerHTML = "Loading assets…";
+  evmLoadFailed = false;
   try {
     balances = await Promise.race([
       getBalances(w, networkKey),
       new Promise((_, reject) => setTimeout(() => reject(new Error("balance load timed out")), 20000)),
     ]);
-  } catch { balances = []; $("assetList").innerHTML = "Could not load balances (network busy — tap More → Refresh)."; }
+  } catch {
+    // A failed load is UNKNOWN, not zero: the flag makes paintAssets
+    // render "couldn't load" rows under a load-failure alert. (The old
+    // code wrote an honest message into #assetList here — and the
+    // paintAssets() call on the very next line erased it, which is
+    // how the silent $0.00 shipped. The message now lives in the
+    // alert, where rendering can't clobber it.)
+    evmLoadFailed = true; balances = [];
+  }
   famLoaded.add("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
@@ -685,7 +704,10 @@ function familyUsdTotals() {
   m.dogecoin = dogeBal * (prices.DOGE || 0);
   m.bitcoincash = bchBal * (prices.BCH || 0);
   const net = NETWORKS[networkKey];
-  m.evm = sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
+  // A failed EVM load is unknown, not $0.00: the card total is null
+  // (renders "—") and the unknown rows stay out of the total, the
+  // same discipline as Cosmos' unavailable chains.
+  m.evm = evmLoadFailed ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
   m.tron = sumRows(tronBalances, (b) => prices[b.symbol]);
   m.solana = sumRows(solBalances, (b) => prices[b.symbol]);
   m.sui = sumRows(suiBalances, (b) => prices[b.symbol]);
@@ -836,9 +858,10 @@ function familyAlertMap() {
   if (aptosLoadFailed) m.aptos = "Aptos balances couldn't be loaded right now.";
   else if (aptosScanFailed) m.aptos = "Full token scan unavailable — showing main Aptos tokens only.";
   if (stacksLoadFailed || stacksScanFailed) m.stacks = "Stacks balances couldn't be loaded right now.";
-  if (evmScanState.key === networkKey && evmScanState.status === "limited")
+  if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;
+  else if (evmScanState.key === networkKey && evmScanState.status === "limited")
     m.evm = `Token scan is limited on ${NETWORKS[networkKey].name} (no Multicall3) — showing known tokens. Any token can still be added by contract address.`;
-  if (evmScanState.key === networkKey && evmScanState.status === "failed")
+  else if (evmScanState.key === networkKey && evmScanState.status === "failed")
     m.evm = "Token scan unavailable right now — showing known tokens.";
   if (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null))
     m.cosmos = "Some Cosmos chains didn't answer just now — those balances show as unavailable. Receiving still works on every chain.";
@@ -963,11 +986,17 @@ function paintAssets() {
       <span class="amt"><b>${fmt(btcBal + btcTrBal, 8)}</b><small>${usd((btcBal + btcTrBal) * (prices.BTC || 0))}</small></span></div>` : skeletonRowsHtml(1)]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
-  // `balances`), presented priced-and-verified first.
+  // `balances`), presented priced-and-verified first. A failed load
+  // renders native + curated tokens as "couldn't load" rows (amount
+  // null) — never an empty list under a $0.00 header.
   {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, net.name, "", "evm");
-    rows.push(familyRowsHtml("evm", balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render));
+    const evmRows = evmLoadFailed
+      ? [{ symbol: net.symbol, amount: null, address: null, verified: true },
+         ...net.tokens.map(t => ({ ...t, amount: null }))]
+      : balances;
+    rows.push(familyRowsHtml("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render));
     if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
     grp("evm", "", rows);
@@ -1092,7 +1121,7 @@ function paintAssets() {
   const titleOf = (key) => key === "evm" ? net.name : key === "bitcoin" ? "Bitcoin" : key === "cosmos" ? "Cosmos"
     : (RECEIVE_NETWORKS.find(x => x.id === key) || {}).name || key;
   const cardFor = (key, innerHtml, titled, totalVal) => {
-    const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${usd(totalVal || 0)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
+    const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${totalVal == null ? "—" : usd(totalVal || 0)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
     return `<div class="card groupcard">${head}${innerHtml}</div>`;
   };
   let html = "";
@@ -1131,7 +1160,7 @@ function paintAssets() {
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !anyBal && scopedTotal() === 0));
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !anyBal && scopedTotal() === 0));
   }
   const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
@@ -1297,6 +1326,11 @@ function mergeEvmRows(customRows, scannedRows) {
 }
 async function hydrateEvmTokens() {
   if (!wallet) return;
+  // The curated load failed: nothing the scan reads is trustworthy
+  // right now (same RPC), and merging custom rows at their fallback
+  // "0" would dress the failure up as loaded balances. Wait for a
+  // successful load — renderMain re-runs this after one.
+  if (evmLoadFailed) return;
   const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;
   const seq = ++evmHydrateSeq;
   const alive = () => seq === evmHydrateSeq && networkKey === myKey && !!wallet;
@@ -1661,6 +1695,7 @@ $("actSend").onclick = () => {
 };
 function openEvmSendSheet() {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
+    ${!balances.length ? `<p class="tag">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
     <input id="sTo" placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
@@ -1694,7 +1729,13 @@ function openEvmSendSheet() {
       if (look) poisonNote = `⚠ This address starts and ends like ${look.slice(0, 6)}…${look.slice(-4)} which you've used before, but it is NOT the same address — this is how address-poisoning scams work. Double-check every character.`;
     }
     const warnPrefix = poisonNote ? poisonNote + " " : "";
-    if (!b || !amount || Number(amount) <= 0) return msg("sMsg", warnPrefix + resolvedNote + "Enter an amount.");
+    // An empty token list means the balances never loaded — say so
+    // plainly instead of the misleading "Enter an amount." (the
+    // dropdown is empty because there is nothing to pick, not
+    // because the user forgot the amount).
+    if (evmLoadFailed) return msg("sMsg", warnPrefix + resolvedNote + "Balances couldn't load right now — tap More → Refresh and try again.");
+    if (!b) return msg("sMsg", warnPrefix + resolvedNote + "Balances are still loading — wait a moment and try again.");
+    if (!amount || Number(amount) <= 0) return msg("sMsg", warnPrefix + resolvedNote + "Enter an amount.");
     if (Number(amount) > Number(b.amount)) return msg("sMsg", warnPrefix + resolvedNote + "Amount is more than your balance.");
     try {
       msg("sMsg", "Estimating fee…", true);
@@ -4407,7 +4448,10 @@ $("refreshBtn").onclick = async () => {
   try {
     await renderMain();
     await new Promise(r => setTimeout(r, 900));
-    toast("Balances refreshed");
+    // The old toast claimed success even when the EVM load had just
+    // failed again — the refresh looked like it worked while nothing
+    // had loaded. Report the load outcome, not the tap.
+    toast(evmLoadFailed ? "Balances couldn't load — check your connection and try again" : "Balances refreshed");
   } finally {
     if (label) label.textContent = old || "Refresh balances";
     delete btn.dataset.busy;

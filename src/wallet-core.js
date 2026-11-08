@@ -61,11 +61,19 @@ export const NETWORKS = {
   bsc: {
     name: "BNB Chain", chainId: 56, symbol: "BNB", priceSym: "BNB",
     rpc: "https://bsc-rpc.publicnode.com", explorer: "https://bscscan.com",
+    // Fallback for the balance read (live-verified 2026-11-08: HTTP 200,
+    // CORS *, eth_chainId 0x38): the publicnode endpoint 429s under
+    // shared-IP load, and a failed curated load used to surface as a
+    // silent $0.00. getBalances retries here once before failing.
+    rpcFallback: "https://bsc-dataseed.binance.org/",
     tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18)],
   },
   base: {
     name: "Base", chainId: 8453, symbol: "ETH", priceSym: "ETH",
     rpc: "https://base-rpc.publicnode.com", explorer: "https://basescan.org",
+    // Fallback for the balance read (live-verified 2026-11-08: HTTP 200,
+    // CORS allows the Fluid origin): same 429 story as BNB Chain.
+    rpcFallback: "https://mainnet.base.org",
     tokens: [USDC("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), USDT("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2")],
   },
   arbitrum: {
@@ -150,6 +158,14 @@ const ERC20 = [
 
 export function providerFor(networkKey) {
   return new ethers.JsonRpcProvider(NETWORKS[networkKey].rpc, NETWORKS[networkKey].chainId);
+}
+
+/** Provider for a network's verified fallback RPC (null when the
+ *  network carries none — only networks whose fallback was
+ *  live-verified carry one; never invent one). */
+export function providerForFallback(networkKey) {
+  const fb = NETWORKS[networkKey]?.rpcFallback;
+  return fb ? new ethers.JsonRpcProvider(fb, NETWORKS[networkKey].chainId) : null;
 }
 
 /** Register runtime-discovered networks (see the discovery section at the
@@ -245,9 +261,8 @@ export function validatePassword(pw) {
   return typeof pw === "string" && pw.length >= MIN_PASSWORD_LENGTH;
 }
 
-export async function getBalances(wallet, networkKey) {
+async function readBalances(wallet, networkKey, provider) {
   const net = NETWORKS[networkKey];
-  const provider = providerFor(networkKey);
   const out = [];
   const native = await provider.getBalance(wallet.address);
   out.push({ symbol: net.symbol, amount: ethers.formatEther(native), address: null });
@@ -257,6 +272,21 @@ export async function getBalances(wallet, networkKey) {
     out.push({ symbol: t.symbol, amount: ethers.formatUnits(bal, t.decimals), address: t.address, decimals: t.decimals });
   }
   return out;
+}
+
+export async function getBalances(wallet, networkKey) {
+  try {
+    return await readBalances(wallet, networkKey, providerFor(networkKey));
+  } catch (e) {
+    // The primary is a free public endpoint and 429s under shared-IP
+    // load (live: bsc-rpc.publicnode.com, 2026-11-08). Retry once
+    // against the network's verified fallback before the caller
+    // reports the load as failed — a failed read must surface as
+    // "couldn't load", never as a zero.
+    const fallback = providerForFallback(networkKey);
+    if (!fallback) throw e;
+    return await readBalances(wallet, networkKey, fallback);
+  }
 }
 
 /** The home-screen greeting (Ethuram's requirement, 2026-11-06): the

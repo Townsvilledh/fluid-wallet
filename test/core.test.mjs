@@ -1,7 +1,8 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
+import { FetchRequest, FetchResponse } from "ethers";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -3356,7 +3357,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
-    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !anyBal')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
   ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
     !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
@@ -3898,7 +3899,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("cosmetic ii: removing the wallet resets the gate username preview",
     appSrc.includes('$("createNamePreview").textContent = "you." + FLUID_DOMAIN;'));
   ok("cosmetic iii: Refresh balances shows working + done feedback",
-    appSrc.includes("Refreshing…") && appSrc.includes('toast("Balances refreshed")'));
+    appSrc.includes("Refreshing…") && appSrc.includes('toast(evmLoadFailed ? "Balances couldn\'t load — check your connection and try again" : "Balances refreshed")'));
 }
 
 // ---------- QA round 2 (2026-11-08): app-path pins, not core-only ----------
@@ -4290,6 +4291,113 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const sum = wcSessionSummary({ topic: "topic123", expiry: 1899999999, peer: { metadata: { name: "D", url: "https://d.example", icons: [] } }, namespaces: { eip155: { accounts: [`eip155:1:${ME}`, `eip155:8453:${ME}`], chains: ["eip155:1"], methods: [], events: [] } } });
   ok("WC: session summary extracts identity + chains", sum.topic === "topic123" && sum.chainIds.join() === "1,8453" && sum.name === "D");
   ok("WC: evmNetworkKeyForChainId resolves + refuses", evmNetworkKeyForChainId(8453) === "base" && evmNetworkKeyForChainId(1) === "ethereum" && evmNetworkKeyForChainId(999999) === null);
+}
+
+// 61. EVM silent-zero fix (domain-flip walk, 2026-11-08): when the
+// curated EVM balance load fails (bsc-rpc.publicnode.com 429s), the
+// BNB Chain family used to show a plain $0.00 — the honest "Could
+// not load balances" message was written and then erased by the very
+// next paintAssets() call, and the send sheet's empty token dropdown
+// answered "Enter an amount." getBalances now retries once against
+// the network's live-verified fallback RPC before failing, and the
+// app carries an evmLoadFailed flag that renders "couldn't load"
+// rows + an alert instead of a zero. Fetch is stubbed with a
+// JSON-RPC fixture (1 BNB native, 2 USDC, 3 USDT on BSC).
+{
+  ok("evm fallback: bsc and base carry a verified fallback RPC",
+    NETWORKS.bsc.rpcFallback === "https://bsc-dataseed.binance.org/"
+    && NETWORKS.base.rpcFallback === "https://mainnet.base.org");
+  ok("evm fallback: providerForFallback builds for bsc/base, null without one",
+    !!providerForFallback("bsc") && !!providerForFallback("base")
+    && providerForFallback("ethereum") === null);
+  // NOTE: ethers v6 on Node does NOT use globalThis.fetch — its
+  // JsonRpcProvider goes through FetchRequest's getUrl (Node http/https).
+  // Stubbing global fetch therefore cannot intercept it (a debug run
+  // proved it: the stub was never called and real chain data came
+  // back). The tests below stub at ethers' own seam instead:
+  // FetchRequest.registerGetUrl, restored to the default afterwards.
+  const wallet = { address: "0x0000000000000000000000000000000000000001" };
+  const defaultGetUrl = FetchRequest.createGetUrlFunc();
+  let calls = [];
+  const rpcGetUrl = (deadPrimary) => async (req) => {
+    const url = req.url;
+    calls.push(url);
+    if (deadPrimary && url.includes("bsc-rpc.publicnode.com")) throw new Error("429 Too Many Requests");
+    // ethers batches concurrent calls into one JSON array body.
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const answer = (reqObj) => {
+      let result;
+      if (reqObj.method === "eth_chainId") result = "0x38";
+      else if (reqObj.method === "net_version") result = "56";
+      else if (reqObj.method === "eth_getBalance") result = "0xde0b6b3a7640000";
+      else if (reqObj.method === "eth_call") {
+        const to = (reqObj.params?.[0]?.to || "").toLowerCase();
+        const usdc = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d";
+        // balanceOf returns a uint256: ABI-encoded, 32 bytes.
+        result = to === usdc ? "0x0000000000000000000000000000000000000000000000001bc16d674ec80000"
+          : "0x00000000000000000000000000000000000000000000000029a2241af62c0000";
+      } else throw new Error("unexpected rpc method " + reqObj.method);
+      return { jsonrpc: "2.0", id: reqObj.id, result };
+    };
+    const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" },
+      new TextEncoder().encode(JSON.stringify(payload)));
+  };
+  try {
+    // Primary healthy: fallback never touched.
+    calls = [];
+    FetchRequest.registerGetUrl(rpcGetUrl(false));
+    let rows = await getBalances(wallet, "bsc");
+    ok("evm balances: healthy primary reads native + tokens",
+      rows.length === 3 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
+      && rows[1].symbol === "USDC" && rows[1].amount === "2.0"
+      && rows[2].symbol === "USDT" && rows[2].amount === "3.0");
+    ok("evm balances: healthy primary never calls the fallback",
+      calls.every(u => u.includes("bsc-rpc.publicnode.com")));
+    // Primary 429s (transport rejects, the way a rate limit surfaces):
+    // the fallback is tried and its values win.
+    calls = [];
+    FetchRequest.registerGetUrl(rpcGetUrl(true));
+    rows = await getBalances(wallet, "bsc");
+    ok("evm balances: dead primary falls back to the dataseed",
+      rows.length === 3 && rows[0].amount === "1.0" && rows[1].amount === "2.0");
+    ok("evm balances: fallback was attempted after the primary failed",
+      calls.some(u => u.includes("bsc-rpc.publicnode.com")) && calls.some(u => u.includes("bsc-dataseed.binance.org")));
+    // Both dead: the read rejects — the app shows "couldn't load".
+    FetchRequest.registerGetUrl(async () => { throw new Error("Failed to fetch"); });
+    await assert.rejects(() => getBalances(wallet, "bsc"));
+    ok("evm balances: total failure throws instead of returning a fake zero", true);
+    // No fallback on the network: a dead primary throws straight away.
+    let ethCalls = 0;
+    FetchRequest.registerGetUrl(async () => { ethCalls++; throw new Error("Failed to fetch"); });
+    await assert.rejects(() => getBalances(wallet, "ethereum"));
+    ok("evm balances: a network without a fallback throws on primary failure", ethCalls > 0);
+  } finally {
+    FetchRequest.registerGetUrl(defaultGetUrl);
+  }
+
+  // app.js: the failure state is honest end-to-end (source pins — the
+  // suite reads app.js as text, as it does for the other screens).
+  const appSrcEvm = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("evm load-failed: flag is declared and set in the renderMain catch",
+    appSrcEvm.includes("let evmLoadFailed = false")
+    && appSrcEvm.includes("evmLoadFailed = true; balances = [];"));
+  ok("evm load-failed: the old clobbering message write is gone",
+    !appSrcEvm.includes("Could not load balances (network busy"));
+  ok("evm load-failed: family alert names the active network",
+    appSrcEvm.includes("if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;"));
+  ok("evm load-failed: failed rows render as couldn't-load, total as —",
+    appSrcEvm.includes("? [{ symbol: net.symbol, amount: null, address: null, verified: true },")
+    && appSrcEvm.includes("m.evm = evmLoadFailed ? null : sumRows(")
+    && appSrcEvm.includes('totalVal == null ? "—" : usd(totalVal || 0)'));
+  ok("evm load-failed: hydrate never merges rows over a failed load",
+    appSrcEvm.includes("if (evmLoadFailed) return;\n  const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;"));
+  ok("evm load-failed: send sheet says the load failed, not \"Enter an amount.\"",
+    appSrcEvm.includes("Balances couldn't load right now — tap More → Refresh and try again.")
+    && appSrcEvm.includes("if (evmLoadFailed) return msg(\"sMsg\", warnPrefix + resolvedNote + \"Balances couldn't load right now"));
+  ok("evm load-failed: refresh reports the load outcome, prices can't stall the render",
+    appSrcEvm.includes("toast(evmLoadFailed ? \"Balances couldn't load — check your connection and try again\" : \"Balances refreshed\")")
+    && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 10000)'));
 }
 
 console.log(`\n${passed} checks passed`);
