@@ -90,5 +90,13 @@
     "sol": "7NdDBaUf9xdoHreEFaweFU5aEGA68hD1XuVJ685nTr6H",
     "tron": "TWsAYT3nioer7Ge4ccjquneyfJRL1Zxyqs",
     "sui": "0x5f52a7db7ed00326c5d29f8075cf7f592cad79328881d65a4e553768ddba1410"
+  },
+  "auditqa1109": {
+    "evm": "0xf75BB5C555470C1ca4E5c1c49cf41Fbc705194e1",
+    "btc": "bc1qxhwhnpv3clhtczncvsss80925wms78qmehhu7l",
+    "algo": "QJPAATPZBNOKAVE7TWOVFBSN6WYSPKMI4WBKBNTAULN4BR5CO4WIIT4GN4",
+    "sol": "3rAAjVpCZr9NwjK35moR6gtMNqAGZJHKRbvBcApaArTU",
+    "tron": "TYX7mZpB5YibnfLVBbcnGPdgTxEFAskLmZ",
+    "sui": "0xf00761b0eb6c730d798bc417de0c81d5a4a5a7f41de425b4e1f58c94a38004a1"
   }
 }
