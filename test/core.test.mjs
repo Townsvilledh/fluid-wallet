@@ -177,12 +177,18 @@ ok("mtpelerin referral code rides every link", MTPELERIN_REFERRAL_CODE === "Fp3d
 ok("mtpelerin null for unsupported fiat", mtpelerinBuyUrl("USDT", "NGN") === null && mtpelerinSellUrl("USDC", "KES") === null);
 ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
-// 16b2. NG live benchmark: Paycrest's keyless rate as a price SOURCE
-// only (research 7 Nov 2026 — Paycrest is not a route: its consumer
-// face is BVN-walled, order creation KYB-gated). The NG sheets show
-// the live market rate as a benchmark line; every failure
-// mode must read as "no benchmark", never a stale or wrong figure,
-// and no rate is ever hardcoded or cached.
+// 16b2. NG live benchmark: Paycrest as a price SOURCE only (research
+// 7 Nov 2026 — Paycrest is not a route: its consumer face is
+// BVN-walled, order creation KYB-gated). The NG + KE sheets show
+// the live market rate as a benchmark line; every failure mode must
+// read as "no benchmark", never a stale or wrong figure, and no
+// rate is ever hardcoded or cached. Since 2026-11-09 the DISPLAYED
+// figure is the aggregator's MARKET rate (/v1/currencies'
+// marketBuyRate/marketSellRate); the provider quote below is only
+// a one-sided sanity witness — that day the NGN quote sat at
+// ~₦683 (half the ₦1,378 market) for hours while the market
+// fields stayed true, and the quote must never wear the "market"
+// label nor suppress the true figure.
 {
   ok("paycrest endpoint is the measured keyless rates URL", PAYCREST_NGN_USDT_RATE_URL === "https://api.paycrest.io/v2/rates/base/USDT/50/NGN");
   ok("paycrest parse reads the buy rate", parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } }) === 1384.52
@@ -196,17 +202,35 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "500" } } }) === 500
     && parsePaycrestNgnBuyRate({ status: "success", data: { buy: { rate: "5000" } } }) === 5000);
   const realFetch = globalThis.fetch;
+  const CURR_OK = { status: "success", data: [
+    { code: "NGN", marketBuyRate: "1384.52", marketSellRate: "1369.35" },
+    { code: "KES", marketBuyRate: "130", marketSellRate: "129.85" } ] };
+  const mockBench = (curr, rates) => async (url) => {
+    if (String(url).includes("/v1/currencies")) {
+      if (curr === "throw") throw new Error("offline");
+      if (curr === "bad") return { ok: false, status: 503, json: async () => ({}) };
+      return { ok: true, json: async () => curr };
+    }
+    if (rates === "throw") throw new Error("offline");
+    if (rates === "bad") return { ok: false, status: 503, json: async () => ({}) };
+    return { ok: true, json: async () => rates };
+  };
   try {
-    globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: "success", data: { buy: { rate: "1401.25" } } }) });
-    ok("paycrest fetch resolves the live rate", await fetchPaycrestNgnBuyRate() === 1401.25);
-    globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
-    ok("paycrest fetch: non-200 → no benchmark", await fetchPaycrestNgnBuyRate() === null);
-    globalThis.fetch = async () => ({ ok: true, json: async () => { throw new Error("not json"); } });
-    ok("paycrest fetch: unparseable body → no benchmark", await fetchPaycrestNgnBuyRate() === null);
-    globalThis.fetch = async () => { throw new Error("offline"); };
-    ok("paycrest fetch: network failure → no benchmark", await fetchPaycrestNgnBuyRate() === null);
-    globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: "success", data: { buy: { rate: "99999" } } }) });
-    ok("paycrest fetch: out-of-band rate → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = mockBench(CURR_OK, { status: "success", data: { buy: { rate: "1401.25" }, sell: { rate: "1390" } } });
+    ok("paycrest fetch resolves the live MARKET rate", await fetchPaycrestNgnBuyRate() === 1384.52);
+    globalThis.fetch = mockBench("bad", { status: "success", data: { buy: { rate: "1401.25" } } });
+    ok("paycrest fetch: market payload non-200 → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = mockBench("throw", { status: "success", data: { buy: { rate: "1401.25" } } });
+    ok("paycrest fetch: market payload unreachable → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = async (url) => String(url).includes("/v1/currencies")
+      ? { ok: true, json: async () => { throw new Error("not json"); } }
+      : { ok: true, json: async () => ({ status: "success", data: { buy: { rate: "1401.25" } } }) };
+    ok("paycrest fetch: unparseable market body → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = mockBench({ status: "success", data: [{ code: "NGN", marketBuyRate: "99999", marketSellRate: "99998" }] },
+      { status: "success", data: { buy: { rate: "99999" } } });
+    ok("paycrest fetch: out-of-band market rate → no benchmark", await fetchPaycrestNgnBuyRate() === null);
+    globalThis.fetch = mockBench(CURR_OK, "throw");
+    ok("paycrest fetch: quote feed down, market healthy → market figure still shows", await fetchPaycrestNgnBuyRate() === 1384.52);
   } finally { globalThis.fetch = realFetch; }
   const appSrcB = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const idxSrcB = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
@@ -3873,7 +3897,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const core = await import("../src/wallet-core.js");
   const { resolveChainRecipient, isValidAlgorandAddress, isValidTronAddress, isValidSolanaAddress, isValidSuiAddress,
     lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
-    parsePaycrestRate, paycrestRateUrl, fetchPaycrestRate, getXrplAccount, xrplAddressFromPhrase, getSolanaAllTokens } = core;
+    parsePaycrestRate, paycrestRateUrl, fetchPaycrestRate, parsePaycrestMarketRate, resolvePaycrestMarketRate, PAYCREST_CURRENCIES_URL, PAYCREST_MARKET_MAX_DIVERGENCE, getXrplAccount, xrplAddressFromPhrase, getSolanaAllTokens } = core;
   const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
   const ALGO_ZERO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AY5HFKQ".replace(" ", "");
@@ -3941,23 +3965,83 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       appSrc.includes("parseSisPathsInput($(\"lnSisPaths\").value)") && !appSrc.includes("JSON.parse($(\"lnSisPaths\")"));
   }
   // F9/F10: Paycrest sell side + the KES pair on the same surface.
+  // The parsePaycrestRate checks pin the PROVIDER-QUOTE parse (the
+  // cross-check input); the DISPLAYED figure is the market rate —
+  // pinned by the F13 block right after this one.
   {
     const payload = { status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } };
-    ok("F9: the NGN sell rate parses from the same payload", parsePaycrestRate(payload, "NGN", "sell") === 1369.35);
-    ok("F10: the KES pair parses (buy + sell)", parsePaycrestRate({ status: "success", data: { buy: { rate: "130.94" }, sell: { rate: "128.79" } } }, "KES", "buy") === 130.94
+    ok("F9: the NGN sell quote parses from the same payload", parsePaycrestRate(payload, "NGN", "sell") === 1369.35);
+    ok("F10: the KES quote pair parses (buy + sell)", parsePaycrestRate({ status: "success", data: { buy: { rate: "130.94" }, sell: { rate: "128.79" } } }, "KES", "buy") === 130.94
       && parsePaycrestRate({ status: "success", data: { buy: { rate: "130.94" }, sell: { rate: "128.79" } } }, "KES", "sell") === 128.79);
-    ok("F10: the KES sanity band rejects absurd rates", parsePaycrestRate({ status: "success", data: { buy: { rate: "49.99" } } }, "KES", "buy") === null
+    ok("F10: the KES sanity band rejects absurd quotes", parsePaycrestRate({ status: "success", data: { buy: { rate: "49.99" } } }, "KES", "buy") === null
       && parsePaycrestRate({ status: "success", data: { buy: { rate: "500.01" } } }, "KES", "buy") === null);
-    ok("F9/F10: unsupported fiats and bad payloads read as no benchmark", parsePaycrestRate(payload, "GHS", "buy") === null
+    ok("F9/F10: unsupported fiats and bad payloads read as no quote", parsePaycrestRate(payload, "GHS", "buy") === null
       && parsePaycrestRate(null, "NGN", "sell") === null && parsePaycrestRate({ status: "error" }, "NGN", "sell") === null);
     ok("F10: the KES rates URL is the same keyless surface", paycrestRateUrl("KES") === "https://api.paycrest.io/v2/rates/base/USDT/50/KES");
     const realFetch = globalThis.fetch;
+    const url2 = (curr, rates) => async (url) => String(url).includes("/v1/currencies")
+      ? { ok: true, json: async () => curr } : { ok: true, json: async () => rates };
     try {
-      globalThis.fetch = async () => ({ ok: true, json: async () => payload });
-      ok("F9: fetchPaycrestRate resolves the NGN sell rate", await fetchPaycrestRate("NGN", "sell") === 1369.35);
+      globalThis.fetch = url2({ status: "success", data: [{ code: "NGN", marketBuyRate: "1384.52", marketSellRate: "1369.35" }] }, payload);
+      ok("F9: fetchPaycrestRate resolves the NGN MARKET sell rate", await fetchPaycrestRate("NGN", "sell") === 1369.35);
       globalThis.fetch = async () => { throw new Error("offline"); };
       ok("F9: fetch failure reads as no benchmark, never throws", await fetchPaycrestRate("NGN", "sell") === null);
     } finally { globalThis.fetch = realFetch; }
+  }
+  // F13: the "market rate" line is the MARKET field, never the
+  // provider quote (2026-11-09: the NGN quote sat at ~₦683, half
+  // the ₦1,378 market, for hours — labelled "market" it primed a
+  // seller to accept half their money).
+  {
+    const currNgn = { status: "success", data: [
+      { code: "NGN", marketBuyRate: "1378.52", marketSellRate: "1378.75" },
+      { code: "KES", marketBuyRate: "130", marketSellRate: "129.85" } ] };
+    ok("F13: currencies endpoint is the keyless market list", PAYCREST_CURRENCIES_URL === "https://api.paycrest.io/v1/currencies");
+    ok("F13: market parse reads both NGN sides", parsePaycrestMarketRate(currNgn, "NGN", "buy") === 1378.52
+      && parsePaycrestMarketRate(currNgn, "NGN", "sell") === 1378.75);
+    ok("F13: market parse reads the KES entry, not NGN's", parsePaycrestMarketRate(currNgn, "KES", "sell") === 129.85);
+    ok("F13: market parse rejects junk payloads", [null, undefined, 42, {}, { status: "error", data: [] },
+      { status: "success", data: {} }, { status: "success", data: [] },
+      { status: "success", data: [{ code: "NGN" }] },
+      { status: "success", data: [{ code: "NGN", marketBuyRate: "abc" }] },
+      { status: "success", data: [{ code: "GHS", marketBuyRate: "15", marketSellRate: "15" }] }]
+      .every(x => parsePaycrestMarketRate(x, "NGN", "buy") === null));
+    ok("F13: market parse keeps the per-fiat band", parsePaycrestMarketRate({ status: "success", data: [{ code: "NGN", marketBuyRate: "499.99" }] }, "NGN", "buy") === null
+      && parsePaycrestMarketRate({ status: "success", data: [{ code: "KES", marketBuyRate: "500.01" }] }, "KES", "buy") === null);
+    ok("F13: resolver passes a healthy market figure through", resolvePaycrestMarketRate(1378.75, 1369.8) === 1378.75
+      && PAYCREST_MARKET_MAX_DIVERGENCE === 0.25);
+    ok("F13: the witness is one-sided — a quote far ABOVE the figure contradicts it", resolvePaycrestMarketRate(600, 4000) === null
+      && resolvePaycrestMarketRate(1378.75, 1800) === null);
+    ok("F13: a quote far BELOW the figure (broken quote) never suppresses it", resolvePaycrestMarketRate(1378.75, 683.43) === 1378.75
+      && resolvePaycrestMarketRate(5000, 900) === 5000);
+    ok("F13: resolver never substitutes the quote for a missing market figure", resolvePaycrestMarketRate(null, 1384.52) === null
+      && resolvePaycrestMarketRate(undefined, 1384.52) === null && resolvePaycrestMarketRate(NaN, 1384.52) === null);
+    ok("F13: an absent quote cannot suppress a true market figure", resolvePaycrestMarketRate(1378.75, null) === 1378.75);
+    const realFetch = globalThis.fetch;
+    const byUrl = (curr, rates) => async (url) => String(url).includes("/v1/currencies")
+      ? { ok: true, json: async () => curr } : { ok: true, json: async () => rates };
+    try {
+      // (i)+(ii): the 2026-11-09 shape — market ₦1,378.75, quote broken at ₦683.43.
+      globalThis.fetch = byUrl(currNgn, { status: "success", data: { buy: { rate: "698.3" }, sell: { rate: "683.43" } } });
+      ok("F13: broken provider quote does NOT change the displayed market figure (sell)", await fetchPaycrestRate("NGN", "sell") === 1378.75);
+      ok("F13: broken provider quote does NOT change the displayed market figure (buy)", await fetchPaycrestRate("NGN", "buy") === 1378.52);
+      // Healthy world: quote near market → the market figure shows.
+      globalThis.fetch = byUrl(currNgn, { status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } });
+      ok("F13: healthy feeds render the market figure", await fetchPaycrestRate("NGN", "sell") === 1378.75);
+      globalThis.fetch = byUrl(currNgn, { status: "success", data: { buy: { rate: "130.99" }, sell: { rate: "128.85" } } });
+      ok("F13: the KES market figure renders on the same path", await fetchPaycrestRate("KES", "sell") === 129.85);
+      // (iii): market source dead → no line, even with a perfect quote in hand.
+      globalThis.fetch = async (url) => String(url).includes("/v1/currencies")
+        ? { ok: false, status: 503, json: async () => ({}) }
+        : { ok: true, json: async () => ({ status: "success", data: { buy: { rate: "1384.52" }, sell: { rate: "1369.35" } } }) };
+      ok("F13: market source failure → no line (never the quote)", await fetchPaycrestRate("NGN", "sell") === null);
+      globalThis.fetch = async () => { throw new Error("offline"); };
+      ok("F13: total fetch failure → no line", await fetchPaycrestRate("NGN", "buy") === null);
+    } finally { globalThis.fetch = realFetch; }
+    const coreSrcF13 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("F13: the sheet's benchmark is market-sourced in core (currencies feed + resolver wired)",
+      coreSrcF13.includes("fetchPaycrestRateOrNull(PAYCREST_CURRENCIES_URL)")
+      && coreSrcF13.includes("resolvePaycrestMarketRate(market, parsePaycrestRate(ratesJson, fiat, side))"));
   }
   // F11: the name section shows the same fields in both states.
   {

@@ -4466,29 +4466,51 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
  *  ~$1 test proves the aggregator settles an unattributed order;
  *  full evidence in research_notes/fluid-ng-repair-20261109.
  *  Its consumer face (Noblocks) is named on the NG sell sheet as
- *  an external app — see the NG plan row. The NG sheets poll
- *  it to show a live "market rate now" benchmark, so users can
- *  judge prices against the market themselves. The payload is
- *  hostile remote data: the parse keeps
- *  only a finite number inside a sane ₦/$ band, and every failure
- *  mode (offline, non-200, unparseable, out-of-band) reads as "no
- *  benchmark" — the sheet then shows no line rather than a stale or
- *  wrong figure. Nothing is cached anywhere: each call fetches
- *  fresh, and the sheet fetches once per opening. */
+ *  an external app — see the NG plan row. The ramp sheets show a
+ *  live "market rate" benchmark line so users can judge prices
+ *  against the market themselves. That line is sourced from the
+ *  aggregator's MARKET fields only — /v1/currencies'
+ *  marketBuyRate/marketSellRate — never from the provider quote
+ *  above: on 2026-11-09 the NGN provider quote sat at ~₦683/$
+ *  (half the ₦1,378 market) for hours while the market fields
+ *  stayed true, and a provider quote labelled "market rate"
+ *  primes a seller to accept half their money. The fix sources
+ *  the line from the market fields; the provider quote is then
+ *  used only as a one-sided sanity witness (parsePaycrestRate
+ *  feeding resolvePaycrestMarketRate): a quote ABOVE the market
+ *  figure by more than PAYCREST_MARKET_MAX_DIVERGENCE
+ *  contradicts the figure and hides the line, while a quote
+ *  below it — a broken or merely poor quote, the normal state
+ *  of the world — never suppresses or alters the true figure.
+ *  Both payloads are hostile remote data: the parse keeps
+ *  only a finite number inside a sane per-$ band, and every
+ *  failure mode (offline, non-200, unparseable, out-of-band,
+ *  contradicted) reads as "no benchmark" — the sheet then
+ *  shows no line rather than a stale or wrong figure.
+ *  Nothing is cached anywhere: each call fetches fresh, and
+ *  the sheet fetches once per opening. */
 export const PAYCREST_NGN_USDT_RATE_URL = "https://api.paycrest.io/v2/rates/base/USDT/50/NGN";
 /** Fiats the benchmark line serves, with the sane per-$ band each
  *  rate must fall inside (same hostile-data discipline as NGN: a
  *  finite number inside the band or "no benchmark"). KES was
  *  verified live on this same keyless surface 2026-11-07 (buy
- *  130.94 / sell 128.79 per USDT) — QA F10. The SELL side of the
- *  same payload powers the Nigeria sell sheet's line — QA F9. */
+ *  130.94 / sell 128.79 per USDT) — QA F10. */
+/** The aggregator's keyless market list: one entry per fiat
+ *  carrying marketBuyRate + marketSellRate (per $1). Verified
+ *  live 2026-11-09: NGN 1378.52/1378.75 and KES 130/129.85
+ *  while the NGN provider quote was broken at ~683/698 — the
+ *  market fields are the honest figure the sheets label. */
+export const PAYCREST_CURRENCIES_URL = "https://api.paycrest.io/v1/currencies";
 export const PAYCREST_RATE_BANDS = { NGN: [500, 5000], KES: [50, 500] };
 export function paycrestRateUrl(fiat) {
   return `https://api.paycrest.io/v2/rates/base/USDT/50/${fiat}`;
 }
-/** Parse one side ("buy" or "sell") of a Paycrest rates payload for
- *  a supported fiat. Null for unsupported fiats, failed payloads,
- *  missing sides, and out-of-band numbers. */
+/** Parse one side ("buy" or "sell") of a Paycrest PROVIDER-QUOTE
+ *  payload for a supported fiat. A quote is what providers will
+ *  transact at — it is NOT the market rate, and nothing displays
+ *  it as one. Its remaining job is the one-sided sanity witness
+ *  inside resolvePaycrestMarketRate. Null for unsupported fiats,
+ *  failed payloads, missing sides, and out-of-band numbers. */
 export function parsePaycrestRate(json, fiat, side) {
   const band = PAYCREST_RATE_BANDS[fiat];
   if (!band || (side !== "buy" && side !== "sell")) return null;
@@ -4497,20 +4519,72 @@ export function parsePaycrestRate(json, fiat, side) {
   if (!Number.isFinite(rate) || rate < band[0] || rate > band[1]) return null;
   return rate;
 }
+/** Parse one side of a /v1/currencies payload for a supported
+ *  fiat: the MARKET rate (the fiat entry's marketBuyRate or
+ *  marketSellRate). Same hostile-data discipline as the quote
+ *  parse — finite and in-band or null. */
+export function parsePaycrestMarketRate(json, fiat, side) {
+  const band = PAYCREST_RATE_BANDS[fiat];
+  if (!band || (side !== "buy" && side !== "sell")) return null;
+  if (!json || json.status !== "success" || !Array.isArray(json.data)) return null;
+  const entry = json.data.find(c => c && c.code === fiat);
+  if (!entry) return null;
+  const rate = Number(side === "buy" ? entry.marketBuyRate : entry.marketSellRate);
+  if (!Number.isFinite(rate) || rate < band[0] || rate > band[1]) return null;
+  return rate;
+}
+/** The quote's one-sided witness bound: a provider quote may
+ *  sit BELOW the market figure by any amount (a poor or broken
+ *  quote — 2026-11-09: −50% for hours — is the quote's problem,
+ *  never the market figure's), but a quote ABOVE the market
+ *  figure by more than this fraction contradicts the figure
+ *  itself: real provider quotes embed margin under market, they
+ *  do not clear it by a quarter. */
+export const PAYCREST_MARKET_MAX_DIVERGENCE = 0.25;
+/** Reconcile the two keyless feeds into the one figure a sheet
+ *  may label "market rate": the market field, witnessed by the
+ *  provider quote when the quote parses. The witness is
+ *  ONE-SIDED: a quote far above the figure (quote > figure ×
+ *  (1 + PAYCREST_MARKET_MAX_DIVERGENCE)) contradicts it and
+ *  hides the line; a quote at or below it — however broken —
+ *  leaves the figure standing, because the quote is never the
+ *  source of the figure (2026-11-09: quote ₦683 vs market
+ *  ₦1,378 — the figure must still show ₦1,378). A missing
+ *  market field is null: NEVER fall back to the provider
+ *  quote. */
+export function resolvePaycrestMarketRate(market, quote) {
+  if (!Number.isFinite(market) || market <= 0) return null;
+  if (Number.isFinite(quote) && quote > market * (1 + PAYCREST_MARKET_MAX_DIVERGENCE)) return null;
+  return market;
+}
 export function parsePaycrestNgnBuyRate(json) {
   return parsePaycrestRate(json, "NGN", "buy");
 }
-/** The live Paycrest rate for a supported fiat + side, or null on
- *  ANY failure — never throws, so the sheet can fire-and-forget it. */
+/** The live MARKET rate for a supported fiat + side — the only
+ *  figure a sheet may label "market rate" — or null on ANY
+ *  failure. Never throws, so the sheet can fire-and-forget it.
+ *  Fetches the market payload (required — a slow one times out
+ *  at the app's 4s benchmark budget, in fetchPaycrestRateOrNull)
+ *  and the provider quote (one-sided sanity witness) in
+ *  parallel. */
 export async function fetchPaycrestRate(fiat, side) {
   if (!PAYCREST_RATE_BANDS[fiat]) return null;
-  try {
-    const r = await fetch(paycrestRateUrl(fiat), { signal: AbortSignal.timeout(4000) });
-    if (!r || !r.ok) return null;
-    return parsePaycrestRate(await r.json().catch(() => null), fiat, side);
-  } catch { return null; }
+  const fetchPaycrestRateOrNull = async (url) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (!r || !r.ok) return null;
+      return await r.json().catch(() => null);
+    } catch { return null; }
+  };
+  const [currJson, ratesJson] = await Promise.all([
+    fetchPaycrestRateOrNull(PAYCREST_CURRENCIES_URL),
+    fetchPaycrestRateOrNull(paycrestRateUrl(fiat)),
+  ]);
+  const market = parsePaycrestMarketRate(currJson, fiat, side);
+  if (market == null) return null;
+  return resolvePaycrestMarketRate(market, parsePaycrestRate(ratesJson, fiat, side));
 }
-/** The live Paycrest NGN/USDT buy rate, or null on ANY failure —
+/** The live Paycrest NGN market buy rate, or null on ANY failure —
  *  never throws, so the sheet can fire-and-forget it. */
 export async function fetchPaycrestNgnBuyRate() {
   return fetchPaycrestRate("NGN", "buy");

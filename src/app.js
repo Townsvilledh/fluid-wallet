@@ -3896,12 +3896,14 @@ function rampSheet(mode) {
     <select id="rAsset"><option>USDC</option><option>USDT</option></select>
     <p class="tag" id="rBench" style="display:none;margin-top:10px"></p>
     <div id="rList"></div>`);
-  // Live market benchmark: Paycrest's keyless rates API (a price
-  // source, not a route — see wallet-core), fetched fresh for this
-  // sheet opening and never persisted. Served corridors: Nigeria
-  // (buy AND sell — QA F9) and Kenya (same surface, QA F10). Any
-  // failure leaves the line hidden rather than showing a stale or
-  // wrong figure.
+  // Live market benchmark: Paycrest's keyless MARKET fields
+  // (/v1/currencies marketBuyRate/marketSellRate — a price source,
+  // not a route; the provider quote from the same aggregator is
+  // only a one-sided sanity witness inside wallet-core), fetched
+  // fresh for this sheet opening and never persisted. Served
+  // corridors: Nigeria (buy AND sell — QA F9) and Kenya (same
+  // surface, QA F10). Any failure leaves the line hidden rather
+  // than showing a stale or wrong figure.
   const BENCH = { NG: { fiat: "NGN", sym: "₦", dec: 0 }, KE: { fiat: "KES", sym: "KSh ", dec: 2 } };
   let benchRate = null, benchKey = "";
   const paintBench = () => {
@@ -3909,8 +3911,9 @@ function rampSheet(mode) {
     const cEl = $("rCountry");
     const b = cEl && BENCH[cEl.value];
     if (b && benchKey === cEl.value + ":" + mode && benchRate != null) {
-      // benchRate is a number parsed + band-checked in wallet-core;
-      // the line is built from that number, never from raw response text.
+      // benchRate is the MARKET figure: parsed, band-checked and
+      // quote-witnessed in wallet-core; the line is built
+      // from that number, never from raw response text.
       const num = benchRate.toLocaleString("en-US", { minimumFractionDigits: b.dec, maximumFractionDigits: b.dec });
       el.textContent = mode === "buy"
         ? `Market rate now: ≈ ${b.sym}${num} per $1 (live)`
