@@ -3985,31 +3985,25 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //      B2B/KYB-only with no attachable consumer referral.
 //  - Noblocks REMOVED 7 Nov 2026: BVN wall up front, and the
 //    owner's live attempt died on its own verify button.
-//  - NoOnes ADDED 7 Nov 2026 as the Nigeria BUY lead (owner's call
-//    under the corrected criterion): a plain link-out to its P2P
-//    marketplace — an external app, not a Fluid partner widget.
-//    Sign-up is email + name + date of birth only (no ID document
-//    at the starter level — up to $5K/day per its help pages);
-//    users buy USDT with an NGN bank transfer, then send it OUT to
-//    their own Fluid address (paste-address send-out, no
-//    WalletConnect). Sellers set their own prices (≈₦1,397 per $
-//    indicative vs the ₦1,347 market on 7 Nov, ≈+3.7%) and coins
-//    land in its custodial wallet first — the route note states
-//    all of that plainly. NO CHEAPEST badge: the badge is
-//    price-evidence-only and NoOnes is not the cheapest measured
-//    route — it leads the NG buy sheet because it is the only
-//    Nigeria buy route that takes a pasted address.
+//  - NoOnes was ADDED 7 Nov 2026 as the Nigeria BUY lead and
+//    REMOVED 2026-11-09: the platform announced its winding-down
+//    on 17 Aug 2026, closed P2P trading permanently on 21 Aug
+//    2026, and has been withdrawal-only since 22 Aug 2026 — a
+//    dead platform cannot stay on a user-facing route list
+//    (owner's standing rule: no pay, no route; dead providers
+//    come off). NG buy now resolves to the same honest empty
+//    state NG sell already showed, until a qualifying route
+//    exists. History only — no route, link, note or caps entry
+//    for it remains below.
 // Direct consumer links whose URL doesn't depend on the selection
 // (Mt Pelerin links are built per selection above).
 export const RAMP_STATIC_LINKS = {
   "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
-  "NoOnes": { buy: "https://noones.app", sell: "https://noones.app" },
   "Spritz": { buy: "https://app.spritz.finance", sell: "https://app.spritz.finance" },
 };
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
   "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
-  "NoOnes": "External marketplace — not a Fluid partner · sign up with email, name and date of birth only (no ID documents at the starter level) · buy with a bank transfer, then send out to your Fluid address — paste it, no WalletConnect · sellers set their own prices",
   "Spritz": "US app — opens outside Fluid · buy 1% by ACH · sell 0.5% by ACH (min $2) — the cheapest verified US sell rate · send out to your Fluid address",
 };
 /** How each provider takes the destination address on a BUY:
@@ -4030,23 +4024,19 @@ const RAMP_DEFAULT_NOTES = {
 export const RAMP_ADDRESS_ENTRY = {
   "Mt Pelerin": "paste",
   "Paybis": "paste",
-  "NoOnes": "paste",
   "Spritz": "paste",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
 // the ranking (cheapest measured first); badge/note override the
 // provider defaults above.
 export const RAMP_COUNTRY_PLAN = {
-  NG: [
-    // NoOnes is the buy LEAD (buy-only row — NG cash-out has NO
-    // route since the 2026-11-08 pull, so the sell sheet resolves
-    // empty and shows the honest empty state). External link-out
-    // to its P2P marketplace, honestly labelled, NO badge: its
-    // price is not the cheapest measured; it leads because it is
-    // the only NG buy route that takes a pasted Fluid address
-    // (see the plan notes above).
-    ["NoOnes", { modes: ["buy"], external: true, note: "External marketplace — not a Fluid partner · email-only sign-up (name + date of birth, no ID documents for everyday amounts) · buy USDT with a bank transfer, then send it out to your Fluid address — you paste the address, no WalletConnect · sellers set their own prices — measured ≈3–4% over the market rate · Fluid is adding more Nigeria routes as they pass our checks" }],
-  ],
+  // NG: no qualifying route — NG sell has been empty since the
+  // 2026-11-08 pull, and NG buy joined it on 2026-11-09 when its
+  // last route was removed as a dead platform (see the REMOVED
+  // note in the plan comments above). Both modes resolve empty
+  // and the sheet shows its honest empty state until a route
+  // passes the bar.
+  NG: [],
   // KE, GH, UG, TZ, CM, SN, CI, ZM: no qualifying route since the
   // 2026-11-08 pull (see the PULLED note in the plan comments) —
   // both modes resolve empty and the sheet shows its honest
@@ -4090,15 +4080,15 @@ export const RAMP_COUNTRY_PLAN = {
  *  owner's standing criterion via RAMP_ADDRESS_ENTRY: a
  *  WalletConnect-only route never reaches a buy sheet. A plan row
  *  may also carry modes: ["buy"] / ["sell"] to appear on one side
- *  only (NoOnes in NG is buy-only), addressEntry to override the
+ *  only, addressEntry to override the
  *  provider's default address entry for its corridor,
  *  pasteAddress: true to flag a paste route whose widget can't be
  *  pre-filled keylessly (carried on the route object; no current
  *  route sets it), and external: true to
- *  render as an external-app link-out (NoOnes is a marketplace,
- *  not a Fluid partner widget). A country/mode with no qualifying
- *  rows returns an empty routes array and the sheet renders its
- *  honest empty state. */
+ *  render as an external-app link-out (Spritz in the US corridor
+ *  is an external app, not a Fluid partner widget). A country/mode
+ *  with no qualifying rows returns an empty routes array and the
+ *  sheet renders its honest empty state. */
 export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
   const c = RAMP_COUNTRIES.find(x => x.code === countryCode) || RAMP_COUNTRIES[0];
   const plan = RAMP_COUNTRY_PLAN[c.code] || [];
@@ -4145,10 +4135,10 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
  *  machine price (buy ₦1,384.52/USDT, measured live 7 Nov 2026) —
  *  is a PRICE SOURCE for Fluid, never a route: its consumer face
  *  (Noblocks) is BVN-walled and order creation is KYB-gated, so it
- *  fails the route criteria on both counts. The NG buy sheet polls
- *  it to show a live "market rate now" benchmark next to the NoOnes
- *  route, so users can judge sellers' prices against the market
- *  themselves. The payload is hostile remote data: the parse keeps
+ *  fails the route criteria on both counts. The NG sheets poll
+ *  it to show a live "market rate now" benchmark, so users can
+ *  judge prices against the market themselves. The payload is
+ *  hostile remote data: the parse keeps
  *  only a finite number inside a sane ₦/$ band, and every failure
  *  mode (offline, non-200, unparseable, out-of-band) reads as "no
  *  benchmark" — the sheet then shows no line rather than a stale or

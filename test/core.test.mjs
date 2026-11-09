@@ -117,17 +117,19 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
-ok("static links are the kept providers", ["Paybis", "NoOnes", "Spritz"].every(n => RAMP_STATIC_LINKS[n])
-  && !RAMP_STATIC_LINKS["Noblocks"] && RAMP_STATIC_LINKS["NoOnes"].buy === "https://noones.app");
+ok("static links are the kept providers", ["Paybis", "Spritz"].every(n => RAMP_STATIC_LINKS[n])
+  && !RAMP_STATIC_LINKS["Noblocks"] && !("NoOnes" in RAMP_STATIC_LINKS));
 ok("Paybis and Spritz static entries are unchanged", RAMP_STATIC_LINKS["Paybis"].buy === "https://paybis.com/"
   && RAMP_STATIC_LINKS["Paybis"].sell === "https://paybis.com/"
   && RAMP_STATIC_LINKS["Spritz"].buy === "https://app.spritz.finance" && RAMP_STATIC_LINKS["Spritz"].sell === "https://app.spritz.finance");
 ok("removed providers stay removed", (() => {
   // Sweep every country × mode: no removed provider may appear by
   // name, URL or note — incl. the +106%-in-Nigeria provider dropped
-  // in this build and the two providers pulled on 2026-11-08 for
-  // paying Fluid nothing collectable (no pay, no route).
-  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|noblocks|fonbnk|mercuryo/i;
+  // in this build, the two providers pulled on 2026-11-08 for
+  // paying Fluid nothing collectable (no pay, no route), and
+  // NoOnes, removed 2026-11-09 as a dead platform (winding-down
+  // announced 17 Aug 2026, P2P closed 21 Aug 2026).
+  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|noblocks|fonbnk|mercuryo|noones/i;
   return RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDC");
     return routes.every(r => !banned.test(r.name) && !banned.test(r.url || "") && !banned.test(r.note));
@@ -139,6 +141,11 @@ ok("removed providers stay removed", (() => {
 ok("pulled providers appear in no corridor plan", RAMP_COUNTRIES.every(c =>
   RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Fonbnk" && n !== "Mercuryo")));
 ok("pulled providers hold no address-entry entry", !("Fonbnk" in RAMP_ADDRESS_ENTRY) && !("Mercuryo" in RAMP_ADDRESS_ENTRY));
+// Removed 2026-11-09 (dead platform — winding-down, P2P closed):
+// NoOnes holds no static link, no plan row and no caps entry.
+ok("NoOnes holds no static link, plan row or caps entry", !("NoOnes" in RAMP_STATIC_LINKS)
+  && !("NoOnes" in RAMP_ADDRESS_ENTRY)
+  && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "NoOnes")));
 ok("ramp assembly carries no pulled-provider flags", (() => { const r = rampRoutesFor("NG", "sell", "bsc", "USDC");
   return !("fonbnkBuyBlocked" in r) && !("fonbnkNetworkMissing" in r); })());
 
@@ -159,8 +166,8 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
 
 // 16b2. NG live benchmark: Paycrest's keyless rate as a price SOURCE
 // only (research 7 Nov 2026 — Paycrest is not a route: its consumer
-// face is BVN-walled, order creation KYB-gated). The NG buy sheet
-// shows the live market rate next to the NoOnes route; every failure
+// face is BVN-walled, order creation KYB-gated). The NG sheets show
+// the live market rate as a benchmark line; every failure
 // mode must read as "no benchmark", never a stale or wrong figure,
 // and no rate is ever hardcoded or cached.
 {
@@ -204,31 +211,21 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (7 Nov 2026, owner's corrected criterion; updated
-  // 2026-11-08): the buy disqualifier is WalletConnect-only
-  // address entry, NOT BVN/KYC. Noblocks is gone (BVN wall + a
-  // verify step that failed live). NoOnes is the NG BUY lead: an
-  // external P2P marketplace link-out, email-only starter
-  // sign-up, paste-address send-out — honestly labelled and
-  // UNBADGED (its ≈3–4% premium is not the cheapest measured; it
-  // leads on the address rule). NG SELL has no route since the
-  // 2026-11-08 pull and resolves to the honest empty state.
-  ok("NG lineup is NoOnes buy / empty sell", JSON.stringify(names("NG")) === JSON.stringify(["NoOnes"])
+  // Nigeria (updated 2026-11-09): NG sell has had no route since
+  // the 2026-11-08 pull, and NG buy joined it on 2026-11-09 when
+  // its last route (NoOnes) was removed as a dead platform —
+  // winding-down announced 17 Aug 2026, P2P trading closed
+  // permanently 21 Aug 2026, withdrawal-only since 22 Aug 2026.
+  // Both modes now resolve to the honest empty state, exactly as
+  // NG sell already did. No replacement route was added.
+  ok("NG lineup is empty buy / empty sell", JSON.stringify(names("NG")) === JSON.stringify([])
     && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
+  ok("NG buy resolves to the empty state", rampRoutesFor("NG", "buy", "bsc", "USDC").routes.length === 0
+    && rampRoutesFor("NG", "buy", "linea", "USDT").routes.length === 0);
   ok("NG sell resolves to the empty state", rampRoutesFor("NG", "sell", "bsc", "USDC").routes.length === 0
     && rampRoutesFor("NG", "sell", "linea", "USDT").routes.length === 0);
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
   ok("NG has no Paybis", !names("NG").includes("Paybis") && !names("NG", "sell").includes("Paybis"));
-  const ngBuy = rampRoutesFor("NG", "buy", "bsc", "USDC").routes;
-  ok("NG NoOnes is the unbadged external lead", ngBuy.length === 1 && ngBuy[0].rank === 0
-    && ngBuy[0].url === "https://noones.app" && ngBuy[0].badge === false && ngBuy[0].external === true);
-  ok("NG NoOnes note is honest about what it is", ngBuy[0].note.includes("External marketplace")
-    && ngBuy[0].note.includes("no ID documents") && ngBuy[0].note.includes("no WalletConnect")
-    && ngBuy[0].note.includes("3–4% over the market rate"));
-  ok("NG NoOnes note drops the retired zero-sign-up claim", !ngBuy[0].note.includes("zero-sign-up")
-    && !ngBuy[0].note.includes("zero sign-up") && !ngBuy[0].note.includes("scam risk")
-    && ngBuy[0].note.includes("no ID documents for everyday amounts")
-    && ngBuy[0].note.includes("Fluid is adding more Nigeria routes as they pass our checks"));
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the total absence of
@@ -236,27 +233,28 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const appSrcR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("app sheet renders the honest empty state for zero-route combos", appSrcR.includes("routes.length === 0")
     && appSrcR.includes("passes Fluid's bar right now"));
-  ok("app source names no pulled provider anywhere", !/fonbnk|mercuryo/i.test(appSrcR));
+  ok("app source names no pulled provider anywhere", !/fonbnk|mercuryo|noones/i.test(appSrcR));
   ok("NG sell is empty on every network and asset", ["bsc", "base", "linea"].every(k =>
     rampRoutesFor("NG", "sell", k, "USDT").routes.length === 0));
+  ok("NG buy is empty on every network and asset", ["bsc", "base", "linea"].every(k =>
+    rampRoutesFor("NG", "buy", k, "USDT").routes.length === 0));
 
   // The address-entry capability table is the standing buy gate:
   // every listed buy route anywhere takes a pasted address. A
   // future provider added to a plan without a caps entry — or
   // flipped to "walletconnect" — fails here instead of silently
   // reaching a buy sheet.
-  ok("address-entry caps are recorded truthfully", ["Mt Pelerin", "Paybis", "NoOnes", "Spritz"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste")
-    && !("Fonbnk" in RAMP_ADDRESS_ENTRY) && !("Mercuryo" in RAMP_ADDRESS_ENTRY));
+  ok("address-entry caps are recorded truthfully", ["Mt Pelerin", "Paybis", "Spritz"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste")
+    && !("Fonbnk" in RAMP_ADDRESS_ENTRY) && !("Mercuryo" in RAMP_ADDRESS_ENTRY) && !("NoOnes" in RAMP_ADDRESS_ENTRY));
   ok("every planned provider has a caps entry", RAMP_COUNTRIES.every(c =>
     RAMP_COUNTRY_PLAN[c.code].every(([n]) => typeof RAMP_ADDRESS_ENTRY[n] === "string")));
   ok("no WalletConnect-only route on any buy sheet", RAMP_COUNTRIES.every(c =>
     rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r => r.addressEntry === "paste")));
   ok("pulled providers surface in no corridor or mode", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Fonbnk" && r.name !== "Mercuryo"))));
-  ok("NoOnes appears only as the NG buy lead", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
-    const has = rampRoutesFor(c.code, m, "bsc", "USDC").routes.some(r => r.name === "NoOnes");
-    return has === (c.code === "NG" && m === "buy");
-  })));
+  ok("NoOnes appears in no assembled route for any corridor", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
+    rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "NoOnes"
+      && !/noones/i.test(r.name) && !/noones/i.test(r.url || "") && !/noones/i.test(r.note)))));
   ok("Spritz appears only in the US lineup", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const has = rampRoutesFor(c.code, m, "bsc", "USDC").routes.some(r => r.name === "Spritz");
     return has === (c.code === "US");
