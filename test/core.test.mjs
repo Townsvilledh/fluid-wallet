@@ -279,6 +279,50 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("ZA badges Mt Pelerin only", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(badged("ZA", "sell")) === JSON.stringify(["Mt Pelerin"]));
 
+  // Corridor extensions (global ramp scout, 2026-11-09): the
+  // existing Mt Pelerin referral preset extended to the rest of
+  // the EEA beyond DE, plus CA (CAD), PL (PLN), AU (AUD) and SG
+  // (SGD — verified on Mt Pelerin's own pricing page: SGD is in
+  // the bank-transfer buy AND sell currency lists, and Singapore
+  // is absent from its published exclusion list). Every new
+  // corridor is Mt Pelerin only, badged (cheapest in-sheet route,
+  // on the sweep's published rate evidence), on both modes, and
+  // every link carries the referral code with its preset fiat.
+  const MTP_EXT_EUR = ["AT", "BE", "BG", "CY", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IS", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "RO", "SI", "SK"];
+  const MTP_EXT_OWN = { CZ: "CZK", DK: "DKK", HU: "HUF", LI: "CHF", NO: "NOK", PL: "PLN", SE: "SEK", CA: "CAD", AU: "AUD", SG: "SGD" };
+  const MTP_EXT_ALL = [...MTP_EXT_EUR, ...Object.keys(MTP_EXT_OWN)];
+  ok("extensions: 32 new corridors take the picker to 50 countries", RAMP_COUNTRIES.length === 50
+    && MTP_EXT_ALL.length === 32 && MTP_EXT_ALL.every(code => RAMP_COUNTRIES.some(c => c.code === code)));
+  ok("extensions: every new corridor is Mt Pelerin only, badged, both modes", MTP_EXT_ALL.every(code =>
+    JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged(code)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged(code, "sell")) === JSON.stringify(["Mt Pelerin"])));
+  ok("extensions: every new-corridor link carries the referral + its preset fiat", MTP_EXT_ALL.every(code => {
+    const fiat = MTP_EXT_OWN[code] || "EUR";
+    const r = rampRoutesFor(code, "buy", "bsc", "USDC");
+    const buy = r.routes[0], sell = rampRoutesFor(code, "sell", "bsc", "USDC").routes[0];
+    return buy.url.includes(`bsc=${fiat}&`) && buy.url.includes("rfr=Fp3dGFX3")
+      && sell.url.includes(`sdc=${fiat}`) && sell.url.includes("rfr=Fp3dGFX3")
+      && r.mtpUnavailable === false;
+  }));
+  ok("extensions: exact preset URLs (CA buy, PL sell, AU buy, SG buy, FR buy)",
+    rampRoutesFor("CA", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=CAD&bdc=USDC&rfr=Fp3dGFX3"
+    && rampRoutesFor("PL", "sell", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/sell-tether-usdt?ssc=USDT&sdc=PLN&rfr=Fp3dGFX3"
+    && rampRoutesFor("AU", "buy", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/buy-tether-usdt?bsc=AUD&bdc=USDT&rfr=Fp3dGFX3"
+    && rampRoutesFor("SG", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=SGD&bdc=USDC&rfr=Fp3dGFX3"
+    && rampRoutesFor("FR", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=EUR&bdc=USDC&rfr=Fp3dGFX3");
+  // Honest labels: no corridor's assembled route (name, URL or
+  // note) — and neither app shell source — may claim the domestic
+  // instant-payment rails that belong to providers failing the
+  // bar (the CA/PL/AU rows must not promise them, ever). Word
+  // boundaries keep ordinary words (e.g. "interaction") out.
+  const appSrcX = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrcX = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("extensions: no domestic instant-rail claims anywhere user-facing", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
+    rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !/\binterac\b|\bblik\b|\bpayid\b/i.test(`${r.name} ${r.url || ""} ${r.note}`))))
+    && !/\binterac\b|\bblik\b|\bpayid\b/i.test(appSrcX) && !/\binterac\b|\bblik\b|\bpayid\b/i.test(idxSrcX));
+
   // US: Spritz leads + badges (cheapest verified US route, global
   // research 7 Nov 2026); Mt Pelerin stays listed but flagged non-US
   // (it excludes US persons); Paybis keeps the ~5% card note.
@@ -299,7 +343,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("ID has no badge at all", badged("ID").length === 0 && badged("ID", "sell").length === 0);
   ok("ID Paybis note says unverified", rampRoutesFor("ID", "buy", "bsc", "USDC").routes[0].note.includes("not yet verified for Indonesia"));
 
-  // Global invariants over all 18 countries × buy/sell: at most one
+  // Global invariants over all countries × buy/sell: at most one
   // badge per sheet, a badge only ever sits on the first route, and
   // every NAVIGATING route's URL is https (a route flagged
   // unavailable — QA F8 — carries url null instead and must say why

@@ -4080,6 +4080,44 @@ export const RAMP_COUNTRIES = [
   { code: "PH", name: "Philippines · PHP", fiat: "PHP" },
   { code: "ID", name: "Indonesia · IDR", fiat: "IDR" },
   { code: "MX", name: "Mexico · MXN", fiat: "MXN" },
+  // Corridor extensions (global ramp scout, 2026-11-09): Canada,
+  // Australia and Singapore, then the rest of the EEA beyond DE,
+  // all on the same Mt Pelerin preset DE already uses (see the
+  // plan entries below). BG/RO/IS ride the EUR preset: their own
+  // currencies are not Mt Pelerin fiats, but all three sit inside
+  // SEPA, so an EUR transfer is the real route for them.
+  { code: "CA", name: "Canada · CAD", fiat: "CAD" },
+  { code: "AU", name: "Australia · AUD", fiat: "AUD" },
+  { code: "SG", name: "Singapore · SGD", fiat: "SGD" },
+  { code: "AT", name: "Austria · EUR", fiat: "EUR" },
+  { code: "BE", name: "Belgium · EUR", fiat: "EUR" },
+  { code: "BG", name: "Bulgaria · EUR", fiat: "EUR" },
+  { code: "CY", name: "Cyprus · EUR", fiat: "EUR" },
+  { code: "CZ", name: "Czechia · CZK", fiat: "CZK" },
+  { code: "DK", name: "Denmark · DKK", fiat: "DKK" },
+  { code: "EE", name: "Estonia · EUR", fiat: "EUR" },
+  { code: "ES", name: "Spain · EUR", fiat: "EUR" },
+  { code: "FI", name: "Finland · EUR", fiat: "EUR" },
+  { code: "FR", name: "France · EUR", fiat: "EUR" },
+  { code: "GR", name: "Greece · EUR", fiat: "EUR" },
+  { code: "HR", name: "Croatia · EUR", fiat: "EUR" },
+  { code: "HU", name: "Hungary · HUF", fiat: "HUF" },
+  { code: "IE", name: "Ireland · EUR", fiat: "EUR" },
+  { code: "IS", name: "Iceland · EUR", fiat: "EUR" },
+  { code: "IT", name: "Italy · EUR", fiat: "EUR" },
+  { code: "LI", name: "Liechtenstein · CHF", fiat: "CHF" },
+  { code: "LT", name: "Lithuania · EUR", fiat: "EUR" },
+  { code: "LU", name: "Luxembourg · EUR", fiat: "EUR" },
+  { code: "LV", name: "Latvia · EUR", fiat: "EUR" },
+  { code: "MT", name: "Malta · EUR", fiat: "EUR" },
+  { code: "NL", name: "Netherlands · EUR", fiat: "EUR" },
+  { code: "NO", name: "Norway · NOK", fiat: "NOK" },
+  { code: "PL", name: "Poland · PLN", fiat: "PLN" },
+  { code: "PT", name: "Portugal · EUR", fiat: "EUR" },
+  { code: "RO", name: "Romania · EUR", fiat: "EUR" },
+  { code: "SE", name: "Sweden · SEK", fiat: "SEK" },
+  { code: "SI", name: "Slovenia · EUR", fiat: "EUR" },
+  { code: "SK", name: "Slovakia · EUR", fiat: "EUR" },
 ];
 // Mt Pelerin: the consumer site IS the checkout (no account, no partner
 // key). URL params prefill the fiat + crypto pair (bsc/bdc buy, ssc/sdc
@@ -4247,6 +4285,54 @@ export const RAMP_COUNTRY_PLAN = {
     ["Paybis", { note: "Price not yet verified for Indonesia — check the final quote before you pay · free email account + quick ID check" }],
   ],
   MX: [["Mt Pelerin", { badge: true }], ["Paybis", {}]],
+  // Corridor extensions (global ramp scout, 2026-11-09; approved
+  // by the owner's standing rule the same day): the existing Mt
+  // Pelerin referral preset extended beyond DE — the remaining
+  // EEA on the EUR/SEPA preset (its own Mt Pelerin fiat where one
+  // exists: CZK, DKK, HUF, CHF, NOK, PLN, SEK), plus CA (CAD),
+  // AU (AUD) and SG (SGD). Mechanics identical to DE: the link is
+  // built per selection and the referral rides every one. Copy
+  // discipline: the provider default note only — passive and
+  // neutral, nothing promotional toward EU/UK users (Mt Pelerin
+  // serves the EU on reverse solicitation), and the notes claim
+  // no domestic instant-payment rail for CA, PL or AU — those
+  // rails belong to providers that fail Fluid's bar. SG verified
+  // on Mt Pelerin's own pricing page (2026-11-09): SGD is listed
+  // for bank-transfer buys AND sells, and Singapore is absent
+  // from its published exclusion list. JP deliberately stays out:
+  // JPY being a supported fiat is not, by itself, a route.
+  CA: [["Mt Pelerin", { badge: true }]],
+  AU: [["Mt Pelerin", { badge: true }]],
+  SG: [["Mt Pelerin", { badge: true }]],
+  AT: [["Mt Pelerin", { badge: true }]],
+  BE: [["Mt Pelerin", { badge: true }]],
+  BG: [["Mt Pelerin", { badge: true }]],
+  CY: [["Mt Pelerin", { badge: true }]],
+  CZ: [["Mt Pelerin", { badge: true }]],
+  DK: [["Mt Pelerin", { badge: true }]],
+  EE: [["Mt Pelerin", { badge: true }]],
+  ES: [["Mt Pelerin", { badge: true }]],
+  FI: [["Mt Pelerin", { badge: true }]],
+  FR: [["Mt Pelerin", { badge: true }]],
+  GR: [["Mt Pelerin", { badge: true }]],
+  HR: [["Mt Pelerin", { badge: true }]],
+  HU: [["Mt Pelerin", { badge: true }]],
+  IE: [["Mt Pelerin", { badge: true }]],
+  IS: [["Mt Pelerin", { badge: true }]],
+  IT: [["Mt Pelerin", { badge: true }]],
+  LI: [["Mt Pelerin", { badge: true }]],
+  LT: [["Mt Pelerin", { badge: true }]],
+  LU: [["Mt Pelerin", { badge: true }]],
+  LV: [["Mt Pelerin", { badge: true }]],
+  MT: [["Mt Pelerin", { badge: true }]],
+  NL: [["Mt Pelerin", { badge: true }]],
+  NO: [["Mt Pelerin", { badge: true }]],
+  PL: [["Mt Pelerin", { badge: true }]],
+  PT: [["Mt Pelerin", { badge: true }]],
+  RO: [["Mt Pelerin", { badge: true }]],
+  SE: [["Mt Pelerin", { badge: true }]],
+  SI: [["Mt Pelerin", { badge: true }]],
+  SK: [["Mt Pelerin", { badge: true }]],
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +
  *  asset, in ranked order. Each route: { name, url, note, badge,
