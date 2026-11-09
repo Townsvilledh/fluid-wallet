@@ -2918,14 +2918,23 @@ export function normalizeFluidName(input) {
  *  `evm` is one address valid on ALL 15 EVM chains/L2s for ANY token
  *  (native, USDC, USDT, any ERC-20), `btc` is the Bitcoin key, `ln`
  *  is an optional Lightning address for invoice-less Lightning sends,
- *  and `algo`, `sol`, `tron`, `sui` carry the wallet's Algorand,
+ *  `lnOffer` is the wallet's own BOLT 12 node offer (the native
+ *  Lightning identity — payments go to the user's own in-app node,
+ *  no outside service), and `algo`, `sol`, `tron`, `sui` carry the wallet's Algorand,
  *  Solana, Tron and Sui addresses. Every field beyond evm/btc is
  *  optional — an entry carries the families its wallet uses, and
  *  entries published before a field existed keep working. */
-export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null) {
+export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null, lnOffer = null) {
   if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   const entry = { evm, btc };
   if (ln) entry.ln = ln;
+  // lnOffer: the wallet's OWN Lightning node offer (BOLT 12) — the
+  // Fluid-native Lightning identity (owner directive, 2026-11-09: no
+  // external wallet creation; a name's Lightning should be the
+  // user's own node). Carried only when it parses as an amountless
+  // BOLT 12 offer — the same rule sanitizeNameEntry applies at read
+  // time, via the shared parseNameLnOffer below.
+  if (lnOffer) { const o = parseNameLnOffer(lnOffer); if (o) entry.lnOffer = o; }
   // The non-EVM families ride along when the caller has the wallet's
   // address for them, each behind its own full validator (the same
   // checks sanitizeNameEntry applies at read time): published
@@ -2982,12 +2991,33 @@ export function assertBolt11Amount(invoice, amountMsat) {
  * here, at the trust boundary; fields that don't parse as the address
  * type they claim to be are dropped, and an entry with no valid field
  * left is treated as unregistered. */
+/* The registry's `lnOffer` rule, shared by the entry builder, the
+ * read-time sanitizer and the claim verifier: the value must parse
+ * (parseBolt12Offer, defined below — the full bech32m + TLV walk,
+ * never a shape regex) as a BOLT 12 OFFER, and it must be
+ * AMOUNTLESS. A name's standing receive identity has to let the
+ * payer choose the amount; a fixed-amount offer registered to a
+ * name would force every payer to that one amount, so it is
+ * refused here rather than published. Returns the parser's
+ * normalized offer string (lowercase, any "lightning:" prefix
+ * stripped), or null. */
+export function parseNameLnOffer(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const p = parseBolt12Offer(value);
+    if (p.kind !== "offer" || p.amountMsat != null) return null;
+    return p.raw;
+  } catch { return null; }
+}
 export function sanitizeNameEntry(entry) {
   if (!entry || typeof entry !== "object") return null;
   const out = {};
   if (typeof entry.evm === "string" && /^0x[0-9a-fA-F]{40}$/.test(entry.evm.trim())) out.evm = entry.evm.trim();
   if (typeof entry.btc === "string" && /^(bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/.test(entry.btc.trim())) out.btc = entry.btc.trim();
   if (typeof entry.ln === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry.ln.trim())) out.ln = entry.ln.trim();
+  // lnOffer: the wallet's own BOLT 12 node offer, gated by
+  // parseNameLnOffer above (full parser + amountless rule).
+  if (typeof entry.lnOffer === "string") { const o = parseNameLnOffer(entry.lnOffer); if (o) out.lnOffer = o; }
   // Algorand: the full address check (58-char base32 + checksum), not a
   // shape regex — a malformed or bad-checksum `algo` field is dropped
   // exactly like the other fields above.
@@ -3157,11 +3187,17 @@ export function nameClaimNostrKeys(phrase) {
  *  Covers name + evm + btc + ln + algo, plus sol/tron/sui when the
  *  wallet carries them (the registry entry's remaining families —
  *  signing them too means the processor can never be handed a
- *  different Solana/Tron/Sui address than the owner signed). */
+ *  different Solana/Tron/Sui address than the owner signed).
+ *  lnOffer (the wallet's own BOLT 12 node offer) is appended as a
+ *  final line ONLY when the claim carries one: claims signed before
+ *  the field existed keep the exact bytes they were signed over and
+ *  still verify, while any claim that does carry an offer has it
+ *  inside the signature — a post-signing swap of the offer breaks
+ *  recovery like any other field. */
 export function buildNameClaimMessage(claim) {
   const c = claim || {};
   const f = (v) => String(v == null ? "" : v).trim();
-  return [
+  const lines = [
     "Fluid name claim v1",
     "name: " + normalizeFluidName(c.name),
     "evm: " + f(c.evm),
@@ -3171,10 +3207,12 @@ export function buildNameClaimMessage(claim) {
     "sol: " + f(c.sol),
     "tron: " + f(c.tron),
     "sui: " + f(c.sui),
-  ].join("\n");
+  ];
+  if (f(c.lnOffer)) lines.push("lnOffer: " + f(c.lnOffer));
+  return lines.join("\n");
 }
-/** Verify a claim object {name, evm, btc, ln?, algo?, sol?, tron?,
- *  sui?, sig}: the name must pass the app's own format rules, every
+/** Verify a claim object {name, evm, btc, ln?, lnOffer?, algo?,
+ *  sol?, tron?, sui?, sig}: the name must pass the app's own format rules, every
  *  present address must pass the registry's own sanitizer, and the
  *  EIP-191 signature over buildNameClaimMessage must recover EXACTLY
  *  the claimed EVM address. Returns { ok, reason?, entry? } — entry
@@ -3186,13 +3224,13 @@ export function verifyNameClaim(claim) {
   const name = normalizeFluidName(c.name);
   if (!validateFluidName(name)) return { ok: false, reason: "invalid name format" };
   if (typeof c.sig !== "string" || !/^0x[0-9a-fA-F]{130}$/.test(c.sig)) return { ok: false, reason: "missing or malformed signature" };
-  const raw = { evm: c.evm, btc: c.btc, ln: c.ln || undefined, algo: c.algo || undefined, sol: c.sol || undefined, tron: c.tron || undefined, sui: c.sui || undefined };
+  const raw = { evm: c.evm, btc: c.btc, ln: c.ln || undefined, lnOffer: c.lnOffer || undefined, algo: c.algo || undefined, sol: c.sol || undefined, tron: c.tron || undefined, sui: c.sui || undefined };
   const entry = sanitizeNameEntry(raw);
   if (!entry || !entry.evm || !entry.btc) return { ok: false, reason: "missing or invalid evm/btc address" };
   // A present-but-invalid optional field is dropped by the sanitizer;
   // a claim that CARRIED such a field was not the claim its owner
   // reviewed — refuse rather than publish a trimmed variant.
-  for (const k of ["ln", "algo", "sol", "tron", "sui"]) {
+  for (const k of ["ln", "lnOffer", "algo", "sol", "tron", "sui"]) {
     if (c[k] && !entry[k]) return { ok: false, reason: `invalid ${k} address` };
   }
   if (String(entry.evm).toLowerCase() !== String(c.evm).trim().toLowerCase()) return { ok: false, reason: "evm address failed sanitization" };
@@ -3212,8 +3250,8 @@ export function nostrEventId(event) {
  *  d-tag "fluid-name-claim:<name>", content = the claim JSON).
  *  `signerWallet` is the unlocked ethers wallet (EIP-191); the claim
  *  is verified locally before anything is signed or sent. */
-export async function buildSignedNameClaim({ name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null, phrase, signerWallet, createdAt = null }) {
-  const claim = { v: 1, name: normalizeFluidName(name), evm, btc, ln: ln || "", algo: algo || "", sol: sol || "", tron: tron || "", sui: sui || "" };
+export async function buildSignedNameClaim({ name, evm, btc, ln = null, lnOffer = null, algo = null, sol = null, tron = null, sui = null, phrase, signerWallet, createdAt = null }) {
+  const claim = { v: 1, name: normalizeFluidName(name), evm, btc, ln: ln || "", lnOffer: lnOffer || "", algo: algo || "", sol: sol || "", tron: tron || "", sui: sui || "" };
   const sig = await signerWallet.signMessage(buildNameClaimMessage(claim));
   const signed = { ...claim, sig };
   const check = verifyNameClaim(signed);
@@ -4022,33 +4060,71 @@ export function parseBolt12Offer(input) {
  *  BOLT 12 offer published in its DNS TXT record. Uses DNS-over-HTTPS
  *  (Cloudflare) because browsers cannot do raw DNS. The returned offer
  *  is validated with parseBolt12Offer before it is trusted — DNS is
- *  hostile input like everything else on the wire. */
+ *  hostile input like everything else on the wire.
+ *  The record name is BIP-353's own: instructions for user@domain
+ *  live at `<user>.user._bitcoin-payment.<domain>` (the BIP's worked
+ *  example is matt.user._bitcoin-payment.mattcorallo.com). This
+ *  resolver originally queried `_bitcoin-payment.<user>.<domain>` —
+ *  wrong label order and missing the literal `user` label — so it
+ *  could never have resolved a real-world record; the spec name is
+ *  queried first now, and the legacy name is still tried second so
+ *  anything published under the old form keeps resolving. (Note the
+ *  resolver does not itself validate DNSSEC — it trusts the DoH
+ *  provider's answers; that limitation is unchanged.) */
 export async function resolveBip353Address(address, dohUrl = "https://cloudflare-dns.com/dns-query") {
   let a = String(address || "").trim().replace(/^₿/, "");
   const m = /^([a-zA-Z0-9._-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})$/.exec(a);
   if (!m) throw new Error("That is not a payment address (name@domain).");
-  const qname = `_bitcoin-payment.${m[1].toLowerCase()}.${m[2].toLowerCase()}`;
-  let res;
-  try {
-    res = await fetch(`${dohUrl}?name=${encodeURIComponent(qname)}&type=TXT`, { headers: { Accept: "application/dns-json" } });
-  } catch (e) { throw new Error("DNS lookup for that address failed."); }
-  if (!res.ok) throw new Error("DNS lookup for that address failed.");
-  const j = await res.json();
-  const answers = (j.Answer || []).filter((r) => r.type === 16);
-  for (const r of answers) {
-    const txt = String(r.data || "").replace(/"\s*/g, "").replace(/"/g, "");
-    if (!/^bitcoin:/i.test(txt)) continue;
-    const query = txt.slice(txt.indexOf("?") + 1);
-    const params = new URLSearchParams(query);
-    const lno = params.get("lno");
-    if (lno) {
-      const offer = parseBolt12Offer(decodeURIComponent(lno));
-      return { address: a, offer: offer.raw, parsedOffer: offer, txt };
+  const user = m[1].toLowerCase(), domain = m[2].toLowerCase();
+  const qnames = [`${user}.user._bitcoin-payment.${domain}`, `_bitcoin-payment.${user}.${domain}`];
+  for (const qname of qnames) {
+    let res;
+    try {
+      res = await fetch(`${dohUrl}?name=${encodeURIComponent(qname)}&type=TXT`, { headers: { Accept: "application/dns-json" } });
+    } catch (e) { throw new Error("DNS lookup for that address failed."); }
+    if (!res.ok) throw new Error("DNS lookup for that address failed.");
+    const j = await res.json();
+    const answers = (j.Answer || []).filter((r) => r.type === 16);
+    for (const r of answers) {
+      const txt = String(r.data || "").replace(/"\s*/g, "").replace(/"/g, "");
+      if (!/^bitcoin:/i.test(txt)) continue;
+      const query = txt.slice(txt.indexOf("?") + 1);
+      const params = new URLSearchParams(query);
+      const lno = params.get("lno");
+      if (lno) {
+        const offer = parseBolt12Offer(decodeURIComponent(lno));
+        return { address: a, offer: offer.raw, parsedOffer: offer, txt };
+      }
+      const lnp = params.get("lnp");
+      if (lnp) return { address: a, invoice: decodeURIComponent(lnp), txt };
     }
-    const lnp = params.get("lnp");
-    if (lnp) return { address: a, invoice: decodeURIComponent(lnp), txt };
   }
   throw new Error("No BIP-353 payment instructions are published for that address.");
+}
+
+/** The Lightning payment target a registry entry offers, decided by
+ *  the VALUE'S SHAPE — never by which field it arrived in
+ *  (Lightning completion audit §5.6 composition contract): an
+ *  offer-shaped value (lno1…, validated by the BOLT 12 parser) is
+ *  paid AS AN OFFER through the payer's own node; an address-shaped
+ *  value (name@domain) goes through the LNURL-pay flow. The native
+ *  offer (lnOffer — the recipient's own in-app node) wins when an
+ *  entry carries both: no third-party service sits in its path.
+ *  Returns { kind: "offer" | "address", value } or null when the
+ *  entry carries no Lightning target. Pure; unit-tested. */
+export function lightningTargetForNameEntry(entry) {
+  const e = entry || {};
+  for (const v of [e.lnOffer, e.ln]) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    const s = v.trim();
+    if (/^lno1/i.test(s)) {
+      try { const p = parseBolt12Offer(s); if (p.kind === "offer") return { kind: "offer", value: p.raw }; }
+      catch { /* not a parseable offer — fall through to the next field */ }
+      continue;
+    }
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) return { kind: "address", value: s };
+  }
+  return null;
 }
 
 /** Classify anything a user pastes into the Lightning sheet so the UI

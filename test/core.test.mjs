@@ -511,6 +511,24 @@ ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { b
   ok("name claim wiring: creation auto-submits + waits on the registry", appSrcNc.includes("submitNameClaim(claimed, null)") && appSrcNc.includes("showNameCreationWait(claimed, accepted)") && appSrcNc.includes("Continue without a username — you can claim one later; until then nobody can send to you by name"));
   ok("name claim wiring: More card carries publish + pick-different actions", appSrcNc.includes("Publish my name") && appSrcNc.includes("Pick a different name") && idxSrcNc.includes('id="ownedNameState"'));
   ok("name claim wiring: GitHub is the labelled fallback only", idxSrcNc.includes("Publish it yourself instead (fallback)") && appSrcNc.includes("Publish it yourself instead (fallback)"));
+  // Native Lightning registration (2026-11-09): the name card's
+  // first choice is the wallet's OWN node; the hosted address stays
+  // as the labelled secondary; the receivable-0 honesty copy is
+  // pinned; the Receive sheet's registered line names the live
+  // front door (completion audit G7).
+  ok("native ln wiring: name card leads with the Fluid node, hosted address secondary",
+    idxSrcNc.includes('id="ownedLnNativeBtn"') && idxSrcNc.includes("Use my Fluid node") &&
+    idxSrcNc.includes('id="ownedLnAddBtn"') && idxSrcNc.includes("Add hosted address") &&
+    idxSrcNc.indexOf('id="ownedLnNativeBtn"') < idxSrcNc.indexOf('id="ownedLnInput"'));
+  ok("native ln wiring: receivable-0 honesty copy is on the card",
+    appSrcNc.includes("Registered but not yet payable") && appSrcNc.includes("it has no channel with room in it. A channel with room is what lets sats arrive") &&
+    appSrcNc.includes("you won't need to register again") && idxSrcNc.includes('id="ownedLnNote"'));
+  ok("native ln wiring: registration rides the signed-claim pipeline with the offer field",
+    appSrcNc.includes("submitNameClaim(stored, keepLn, offer)") && appSrcNc.includes('createOffer(null, "Fluid")'));
+  ok("native ln wiring: pay-by-name branches on the registry value's shape",
+    appSrcNc.includes("lightningTargetForNameEntry(hit)") && appSrcNc.includes("lnSession.payOffer(t.value, msat)"));
+  ok("native ln wiring: Receive sheet names the live front door (audit G7)",
+    appSrcNc.includes("registered to ${esc(name)}.fluidwallet.dpdns.org") && !appSrcNc.includes("registered to ${esc(name)}.${FLUID_DOMAIN}"));
   // Strengthened wait (owner, 2026-11-09): submitted / waiting-for /
   // elapsed on screen; ~15-minute long-wait offers keep-waiting and
   // retry, never an auto-complete; a creation conflict loops back to
@@ -3351,18 +3369,31 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const oooBytes = Buffer.concat([tlv(10, Buffer.from("x", "utf8")), tlv(8, Buffer.from("01", "hex"))]);
   assert.throws(() => parseBolt12Offer(bech32m.encode("lno", b2w(oooBytes), 8000)), /out of order/);
   ok("ln: BOLT12 offer with out-of-order TLVs is refused", true);
-  // BIP-353 over a stubbed DoH endpoint
+  // BIP-353 over a stubbed DoH endpoint. The record name is BIP-353's
+  // own — <user>.user._bitcoin-payment.<domain> (the resolver once
+  // queried the labels in the wrong order and could never have
+  // resolved a real record; the stub answers ONLY at the spec name
+  // for alice and ONLY at the legacy name for carol, pinning both
+  // the fix and the interop fallback).
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    if (String(url).includes("_bitcoin-payment.alice.example.com")) {
-      return { ok: true, json: async () => ({ Answer: [{ name: "_bitcoin-payment.alice.example.com", type: 16, data: `"bitcoin:?lno=${offerStr}"` }] }) };
+    const u = String(url);
+    if (u.includes("name=alice.user._bitcoin-payment.example.com")) {
+      return { ok: true, json: async () => ({ Answer: [{ name: "alice.user._bitcoin-payment.example.com", type: 16, data: `"bitcoin:?lno=${offerStr}"` }] }) };
     }
+    if (u.includes("name=_bitcoin-payment.carol.example.com")) {
+      return { ok: true, json: async () => ({ Answer: [{ name: "_bitcoin-payment.carol.example.com", type: 16, data: `"bitcoin:?lno=${offerStr}"` }] }) };
+    }
+    if (u.includes("example.com")) return { ok: true, json: async () => ({}) };
     throw new Error("unexpected fetch: " + url);
   };
   try {
     const r = await resolveBip353Address("₿alice@example.com");
     ok("ln: BIP-353 resolves a DNS TXT offer and validates it",
       r.offer === offerStr && r.parsedOffer.description === "coffee");
+    const rc = await resolveBip353Address("carol@example.com");
+    ok("ln: BIP-353 falls back to the legacy record name when the spec name has none",
+      rc.offer === offerStr);
     await assert.rejects(() => resolveBip353Address("bob@example.com"), /No BIP-353|DNS lookup/);
     ok("ln: BIP-353 with no TXT record fails plainly", true);
   } finally { globalThis.fetch = realFetch; }
@@ -3372,6 +3403,71 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     classifyLightningTarget("alice@example.com").kind === "address" &&
     classifyLightningTarget("ethuram").kind === "fluid-name" &&
     classifyLightningTarget("not a payment").kind === "unknown");
+  // --- Native Lightning registration: a name's lnOffer (2026-11-09).
+  // The amountless variant of the fixture above (no amount TLV): a
+  // standing name address must let the payer choose the amount.
+  const { sanitizeNameEntry, parseNameLnOffer, lightningTargetForNameEntry } = await import("../src/wallet-core.js");
+  const offerBytesOpen = Buffer.concat([
+    tlv(2, Buffer.from("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000", "hex")),
+    tlv(4, Buffer.from("deadbeef", "hex")),
+    tlv(10, Buffer.from("coffee", "utf8")),
+    tlv(14, Buffer.from("70dbd880", "hex")),
+    tlv(16, Buffer.from("aabbcc", "hex")),
+    tlv(18, Buffer.from("fluid", "utf8")),
+    tlv(20, Buffer.alloc(0)),
+    tlv(22, Buffer.from(PAYEE, "hex")),
+  ]);
+  const offerOpenStr = bech32m.encode("lno", b2w(offerBytesOpen), 8000);
+  const offerOpen2Str = bech32m.encode("lno", b2w(Buffer.concat([
+    tlv(2, Buffer.from("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000", "hex")),
+    tlv(10, Buffer.from("tea", "utf8")),
+    tlv(18, Buffer.from("fluid", "utf8")),
+    tlv(22, Buffer.from(PAYEE, "hex")),
+  ])), 8000);
+  ok("ln: amountless offer fixture parses with no fixed amount",
+    parseBolt12Offer(offerOpenStr).kind === "offer" && parseBolt12Offer(offerOpenStr).amountMsat === null && offerOpen2Str !== offerOpenStr);
+  ok("ln: parseNameLnOffer accepts only amountless BOLT 12 offers",
+    parseNameLnOffer(offerOpenStr) === offerOpenStr &&
+    parseNameLnOffer("LIGHTNING:" + offerOpenStr.toUpperCase()) === offerOpenStr &&
+    parseNameLnOffer(offerStr) === null &&
+    parseNameLnOffer("lno1garbage") === null &&
+    parseNameLnOffer("someone@wallet.example") === null &&
+    parseNameLnOffer(null) === null && parseNameLnOffer(42) === null);
+  const EVM_OK = "0x0EBf5563F905E3B9D58718E28E08143511DC763b", BTC_OK = "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw";
+  ok("names: sanitizeNameEntry carries a valid lnOffer, drops fixed-amount and garbage",
+    sanitizeNameEntry({ evm: EVM_OK, btc: BTC_OK, lnOffer: offerOpenStr }).lnOffer === offerOpenStr &&
+    !("lnOffer" in sanitizeNameEntry({ evm: EVM_OK, btc: BTC_OK, lnOffer: offerStr })) &&
+    !("lnOffer" in sanitizeNameEntry({ evm: EVM_OK, btc: BTC_OK, lnOffer: "lno1garbage" })));
+  ok("names: buildNameEntry carries lnOffer only when it validates",
+    buildNameEntry("offername", EVM_OK, BTC_OK, null, null, null, null, null, offerOpenStr).offername.lnOffer === offerOpenStr &&
+    buildNameEntry("offername", EVM_OK, BTC_OK, null, null, null, null, null, offerStr).offername.lnOffer === undefined);
+  const offerWallet = await unlockVault(known.keystore, "password123");
+  const offerPhrase = offerWallet.mnemonic.phrase;
+  const { claim: offerClaim } = await buildSignedNameClaim({
+    name: "offertest", evm: offerWallet.address, btc: bitcoinAddress(offerPhrase),
+    lnOffer: offerOpenStr, phrase: offerPhrase, signerWallet: offerWallet,
+  });
+  ok("names: a claim carrying lnOffer verifies and the entry round-trips the offer",
+    verifyNameClaim(offerClaim).ok === true && verifyNameClaim(offerClaim).entry.lnOffer === offerOpenStr &&
+    buildNameClaimMessage(offerClaim).endsWith("\nlnOffer: " + offerOpenStr));
+  ok("names: swapping the offer after signing breaks the claim",
+    verifyNameClaim({ ...offerClaim, lnOffer: offerOpen2Str }).ok === false);
+  ok("names: a fixed-amount offer in a claim is refused at build time",
+    await buildSignedNameClaim({ name: "offertest", evm: offerWallet.address, btc: bitcoinAddress(offerPhrase), lnOffer: offerStr, phrase: offerPhrase, signerWallet: offerWallet }).then(() => false, () => true));
+  const { claim: legacyClaim } = await buildSignedNameClaim({
+    name: "offertest", evm: offerWallet.address, btc: bitcoinAddress(offerPhrase),
+    phrase: offerPhrase, signerWallet: offerWallet,
+  });
+  ok("names: a legacy claim (no lnOffer) keeps the exact pre-lnOffer message bytes and verifies",
+    !buildNameClaimMessage(legacyClaim).includes("lnOffer") && verifyNameClaim(legacyClaim).ok === true);
+  ok("ln: lightningTargetForNameEntry decides by the value's shape, native offer first",
+    lightningTargetForNameEntry({ lnOffer: offerOpenStr }).kind === "offer" &&
+    lightningTargetForNameEntry({ lnOffer: offerOpenStr }).value === offerOpenStr &&
+    lightningTargetForNameEntry({ ln: "someone@wallet.example" }).kind === "address" &&
+    lightningTargetForNameEntry({ lnOffer: offerOpenStr, ln: "someone@wallet.example" }).kind === "offer" &&
+    lightningTargetForNameEntry({ ln: offerOpenStr }).kind === "offer" &&
+    lightningTargetForNameEntry({}) === null && lightningTargetForNameEntry(null) === null &&
+    lightningTargetForNameEntry({ lnOffer: "lno1garbage", ln: "someone@wallet.example" }).kind === "address");
   ok("ln: async hold window is bounded and its copy is honest",
     ASYNC_PAY_HOLD.defaultHours === 24 && ASYNC_PAY_HOLD.maxHours === 72 &&
     validateHoldHours(72) === 72 && holdWindowCopy(24).includes("cannot take or redirect") &&
@@ -3677,7 +3773,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     idxSrc.includes('id="ownedNameNote"') && !idxSrc.includes("This name is registered to this wallet in the public registry")
     && idxSrc.includes("saved on this device"));
   const nameAt = appSrc.indexOf("function renderNameSection()");
-  const nameSlice = appSrc.slice(nameAt, nameAt + 16000);
+  // The window is the WHOLE function body (up to the next function):
+  // it was a fixed 16000 chars until the native-Lightning name card
+  // (2026-11-09) grew renderNameSection past it — the pinned
+  // property is unchanged (the wording lives inside this function,
+  // in the registry-resolved branch).
+  const nameSlice = appSrc.slice(nameAt, appSrc.indexOf("async function adoptRegistryNameIfMine", nameAt));
   // 2026-11-09: the wording now comes from NAME_STATE_COPY via
   // nameClaimState — the pinned property is unchanged (the LIVE
   // wording is painted only from the branch where the registry hit

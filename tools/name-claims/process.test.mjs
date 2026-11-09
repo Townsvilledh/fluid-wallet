@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import { ethers } from "ethers";
 import { buildSignedNameClaim, bitcoinAddress, algoAddressFromPhrase } from "../../src/wallet-core.js";
-import { decideClaims, nameEntriesEqual, summarizeRelayScan } from "./process-name-claims.mjs";
+import { decideClaims, nameEntriesEqual, nameUpdateMerge, summarizeRelayScan } from "./process-name-claims.mjs";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -23,6 +23,32 @@ async function claimEvent(phrase, wallet, name, createdAt, btcOverride = null) {
   });
   return event;
 }
+
+async function claimEventLn(phrase, wallet, name, createdAt, { ln = null, lnOffer = null, btc = null } = {}) {
+  const { event } = await buildSignedNameClaim({
+    name, evm: wallet.address,
+    btc: btc || bitcoinAddress(phrase),
+    ln, lnOffer,
+    algo: algoAddressFromPhrase(phrase),
+    phrase, signerWallet: wallet, createdAt,
+  });
+  return event;
+}
+
+// An amountless BOLT 12 offer fixture (hand-built TLV stream, the
+// same layout the core suite pins) — the only lnOffer shape the
+// registry accepts for a name.
+const { bech32m } = await import("@scure/base");
+const tlvB = (type, value) => Buffer.concat([Buffer.from([type, value.length]), value]);
+const b2wB = (bytes) => { let acc = 0, bits = 0; const out = [];
+  for (const b of bytes) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >>> bits) & 31); } acc &= (1 << bits) - 1; }
+  if (bits > 0) out.push((acc << (5 - bits)) & 31); return out; };
+const OFFER_OPEN = bech32m.encode("lno", b2wB(Buffer.concat([
+  tlvB(2, Buffer.from("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000", "hex")),
+  tlvB(10, Buffer.from("fluid node", "utf8")),
+  tlvB(18, Buffer.from("fluid", "utf8")),
+  tlvB(22, Buffer.from("02" + "11".repeat(32), "hex")),
+])), 8000);
 
 const reg = () => ({ ethuram: { evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", btc: "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw" } });
 const emptyState = () => ({ processed: {}, winners: {} });
@@ -138,5 +164,67 @@ ok("entries unequal: btc case differs", !nameEntriesEqual({ evm: "0xabc", btc: "
     ["wss://r1", "wss://r2", "wss://r3"]);
   ok("scan summary: per-relay counts, -1 on failure, total pre-merge", s.perRelay["wss://r1"] === 2 && s.perRelay["wss://r2"] === 0 && s.perRelay["wss://r3"] === -1 && s.total === 2);
 }
+
+// 12. Same-owner update (native Lightning, 2026-11-09): the owner
+//     of a registered name adds its lnOffer with a fresh signed
+//     claim — the processor merges it into the published entry.
+{
+  const base = await claimEvent(PHRASE_A, walletA, "updname", 1000);
+  const c0 = JSON.parse(base.content);
+  const registry = { updname: { evm: c0.evm, btc: c0.btc, algo: c0.algo } };
+  const upd = await claimEventLn(PHRASE_A, walletA, "updname", 2000, { lnOffer: OFFER_OPEN });
+  const { decisions, winners, updates } = decideClaims([upd], registry, emptyState());
+  ok("same-owner lnOffer update merges into the published entry",
+    winners.length === 0 && updates.length === 1 && decisions[0].decision === "updated" &&
+    updates[0].entry.lnOffer === OFFER_OPEN && updates[0].entry.btc === c0.btc && updates[0].entry.algo === c0.algo && updates[0].entry.evm === c0.evm);
+}
+
+// 13. A DIFFERENT wallet's claim carrying lnOffer for a registered
+//     name is still refused — the update path is owner-only.
+{
+  const registry = { takenname: { evm: walletA.address, btc: bitcoinAddress(PHRASE_A) } };
+  const ev = await claimEventLn(PHRASE_B, walletB, "takenname", 1000, { lnOffer: OFFER_OPEN });
+  const { decisions, winners, updates } = decideClaims([ev], registry, emptyState());
+  ok("different wallet cannot update a registered name", winners.length === 0 && updates.length === 0 && decisions[0].decision === "rejected" && /already registered/.test(decisions[0].reason));
+}
+
+// 14. A same-owner claim that tries to MOVE a registered chain
+//     address (a different btc) alongside lnOffer is refused, not
+//     merged — updates add fields and refresh Lightning only.
+{
+  const base = await claimEvent(PHRASE_A, walletA, "confname", 1000);
+  const c0 = JSON.parse(base.content);
+  const registry = { confname: { evm: c0.evm, btc: c0.btc, algo: c0.algo } };
+  const bad = await claimEventLn(PHRASE_A, walletA, "confname", 2000, { lnOffer: OFFER_OPEN, btc: bitcoinAddress(PHRASE_B) });
+  const { decisions, updates } = decideClaims([bad], registry, emptyState());
+  ok("same-owner claim moving a chain address is refused", updates.length === 0 && decisions[0].decision === "rejected");
+}
+
+// 15. An identical claim INCLUDING lnOffer is a duplicate no-op.
+{
+  const ev = await claimEventLn(PHRASE_A, walletA, "dupoffer", 1000, { lnOffer: OFFER_OPEN });
+  const c = JSON.parse(ev.content);
+  const registry = { dupoffer: { evm: c.evm, btc: c.btc, algo: c.algo, lnOffer: OFFER_OPEN } };
+  const { decisions, winners, updates } = decideClaims([ev], registry, emptyState());
+  ok("identical claim with lnOffer is a duplicate", winners.length === 0 && updates.length === 0 && decisions[0].decision === "duplicate");
+}
+
+// 16. Updates never consume the per-run new-names cap.
+{
+  const base = await claimEvent(PHRASE_A, walletA, "capupd", 1000);
+  const c0 = JSON.parse(base.content);
+  const registry = { capupd: { evm: c0.evm, btc: c0.btc, algo: c0.algo } };
+  const upd = await claimEventLn(PHRASE_A, walletA, "capupd", 2000, { ln: "owner@wallet.example" });
+  const { winners, updates } = decideClaims([upd], registry, emptyState(), 0);
+  ok("same-owner update lands even at cap 0", winners.length === 0 && updates.length === 1 && updates[0].entry.ln === "owner@wallet.example");
+}
+
+// 17. nameUpdateMerge units: the hosted address is replaceable by
+//     the owner, silent fields are preserved, a foreign EVM is
+//     refused outright.
+ok("merge: ln replaceable, silent fields preserved, foreign evm refused",
+  nameUpdateMerge({ evm: "0xAbC", btc: "bc1qx", ln: "old@wallet.example" }, { evm: "0xabc", btc: "bc1qx", ln: "new@wallet.example" }).ln === "new@wallet.example" &&
+  nameUpdateMerge({ evm: "0xabc", btc: "bc1qx", algo: "ALGO1" }, { evm: "0xabc", btc: "bc1qx", lnOffer: OFFER_OPEN }).algo === "ALGO1" &&
+  nameUpdateMerge({ evm: "0xabc", btc: "bc1qx" }, { evm: "0xdef", btc: "bc1qx" }) === null);
 
 console.log(`\n${passed} processor checks passed`);

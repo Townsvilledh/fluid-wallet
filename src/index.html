@@ -478,10 +478,16 @@
             <span><b>Lightning</b><br><small class="mono" id="ownedLn" style="word-break:break-all"></small></span>
             <button class="btn ghost" id="copyOwnedLn" style="width:auto;padding:6px 12px;flex:none">Copy</button>
           </div>
+          <p class="tag hidden" id="ownedLnNote" style="margin:2px 0 6px"></p>
           <div id="ownedLnAdd">
-            <input id="ownedLnInput" placeholder="Lightning address (e.g. you@getalby.com)" autocapitalize="none">
-            <button class="btn ghost" id="ownedLnAddBtn" style="width:auto;padding:6px 12px">Add Lightning address</button>
-            <p class="tag" style="margin:6px 0">No Lightning address is registered to this name yet — add one and publish the updated entry so people can pay your name over Lightning.</p>
+            <button class="btn" id="ownedLnNativeBtn" style="width:auto;padding:6px 12px">Use my Fluid node</button>
+            <div id="ownedLnNativeTerms" class="hidden">
+              <p class="tag" id="ownedLnNativeCopy" style="margin:6px 0"></p>
+            </div>
+            <p class="tag" style="margin:6px 0">First choice: your own Lightning node, registered to your name — payments come to the node inside this app, with no outside service and no other wallet to create. Or, only if you already have one, a Lightning address hosted by another provider:</p>
+            <input id="ownedLnInput" placeholder="Hosted Lightning address (e.g. you@getalby.com)" autocapitalize="none">
+            <button class="btn ghost" id="ownedLnAddBtn" style="width:auto;padding:6px 12px">Add hosted address</button>
+            <p class="tag" style="margin:6px 0">Nothing Lightning is registered to this name yet — register your node, or add a hosted address, and publish the updated entry so people can pay your name over Lightning.</p>
           </div>
           <div id="ownedEntryBox" class="hidden">
             <p class="tag"><b>Publish it yourself instead (fallback):</b> publish this updated entry into <b>names.json</b> in the GitHub repo so every Fluid wallet resolves the change:</p>

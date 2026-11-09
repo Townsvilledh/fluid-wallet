@@ -12,6 +12,19 @@ Lightning address so the name also receives Lightning payments. `algo`
 ASA sends. Send any asset to the name alone — the wallet picks the right
 key for the asset.
 
+`lnOffer` (optional) is the wallet's **own BOLT 12 node offer** — the
+Fluid-native Lightning identity. Every Fluid wallet runs its own
+Lightning node inside the app; registering the node's offer to the
+name (More → Your Fluid name → "Use my Fluid node") means a payment
+to the name goes to the user's own node, with no outside service and
+no other wallet to create. When an entry carries both, the offer is
+the Lightning target Fluid pays; `ln` remains for a Lightning address
+hosted by another provider. An offer is only carried when it is
+**amountless** (the payer chooses the amount) and parses as a BOLT 12
+offer. Receiving to a registered offer still needs the node to have a
+channel with room in it and the app open when paid — the name card
+says so plainly until the node can actually receive.
+
 To claim a name: open the wallet and pick a name — at wallet creation,
 or later under More → "Your Fluid name". The wallet signs the claim
 with its own keys and publishes it from inside the app; a processor
@@ -25,6 +38,15 @@ Fallback: if you prefer to publish by hand, the app still shows your
 registry entry — add it to `names.json` in this repo via a GitHub
 edit or PR. First come, first served either way; names are public and
 permanent in git history, so choose one you're happy to be known by.
+
+**Updating your own entry:** a name's owner can add fields to their
+published entry — or refresh its Lightning fields (`ln` / `lnOffer`) —
+by publishing a fresh signed claim from the app; the processor
+verifies the claim's signature recovers the registered EVM address
+(the ownership proof only the owner can produce) and merges the
+claim in. Chain addresses (`evm`, `btc`, `algo`, `sol`, `tron`,
+`sui`) can never be changed or removed this way, and no other wallet
+can touch the entry at all.
 
 
 ## Claiming from the app — states, durability, and the developer protocol

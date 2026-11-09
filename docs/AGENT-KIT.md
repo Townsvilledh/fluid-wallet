@@ -113,17 +113,30 @@ const res = await claimName(agent, "myagentname");
   sol: <Solana address>
   tron: <Tron address>
   sui: <Sui address>
+  lnOffer: <the wallet's own BOLT 12 node offer — appended ONLY when present>
   ```
+
+  The `lnOffer` line is the Fluid-native Lightning registration: the
+  wallet's own in-app node's amountless BOLT 12 offer. It is appended
+  only when the claim carries one, so claims signed before the field
+  existed keep their exact bytes and still verify; a claim that does
+  carry an offer has it inside the signature. An agent claiming a
+  name for a wallet whose node it operates can pass `lnOffer` to
+  register the node in the same claim.
 
 - The claim travels as a **Nostr kind-30078** event, tag
   `["d", "fluid-name-claim:<name>"]`, whose content is the claim JSON
-  `{ v: 1, name, evm, btc, ln, algo, sol, tron, sui, sig }`, published to
+  `{ v: 1, name, evm, btc, ln, lnOffer, algo, sol, tron, sui, sig }`, published to
   `relay.damus.io`, `nos.lol` and `relay.primal.net`. The Nostr key derives
   from the wallet seed at `m/9419'/121924'/0'/0/0`.
 - A public processor folds claims into the registry
   (https://fluidwallet.dpdns.org/names.json), first-come-first-served.
+  A verified claim from a name's OWNER (its signature recovers the
+  registered EVM address) also merges into the published entry as a
+  same-owner update — it can add fields and refresh `ln`/`lnOffer`,
+  never move a chain address.
 - Programmatic entry points (in `src/wallet-core.js`):
-  `buildSignedNameClaim({ name, evm, btc, ln, algo, sol, tron, sui, phrase, signerWallet })`,
+  `buildSignedNameClaim({ name, evm, btc, ln, lnOffer, algo, sol, tron, sui, phrase, signerWallet })`,
   `publishNameClaimEvent(event)` / `publishNameClaimEventDetailed(event)`,
   `resolveFluidName(name)`, and the state machine `nameClaimState(...)` /
   `nameClaimRepairDue(...)`.

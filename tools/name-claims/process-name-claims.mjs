@@ -20,6 +20,15 @@
 // the file is committed ALONE (the repo's names-commit pattern) and
 // pushed via the working SSH route, after a pull --rebase (hand
 // commits may land from elsewhere). New names are capped per run.
+// ONE exception to append-only (2026-11-09, native Lightning): a
+// SAME-OWNER UPDATE — a verified claim whose EVM equals the
+// registered entry's EVM and which does not try to move a
+// registered chain address — merges into the published entry (see
+// nameUpdateMerge). The claim's EIP-191 signature recovering the
+// registered EVM address is the ownership proof, so only the owner
+// can ever do this; it exists so a live name can gain or refresh
+// its Lightning fields (ln / lnOffer) through the same pipeline
+// instead of a hand edit.
 // The same names.json is then published to the gh-pages branch:
 // the live site (and the registry URL every wallet reads) is served
 // from gh-pages, so a main-only names commit never resolves for
@@ -59,18 +68,48 @@ const SSH_ENV = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/conf
  *  exactly — the same comparison findNameForAddresses documents). */
 export function nameEntriesEqual(a, b) {
   if (!a || !b) return false;
-  const keys = ["evm", "btc", "ln", "algo", "sol", "tron", "sui"];
+  const keys = ["evm", "btc", "ln", "lnOffer", "algo", "sol", "tron", "sui"];
   return keys.every((k) => {
     const x = a[k] || "", y = b[k] || "";
     return k === "evm" || k === "algo" ? String(x).toLowerCase() === String(y).toLowerCase() : x === y;
   });
 }
 
+/** Same-owner update test: decideClaims hands this a REGISTERED
+ *  entry and a VERIFIED claim's entry. The claim only qualifies as
+ *  an update when its EVM is the registered EVM (verifyNameClaim
+ *  has already proven the claim's signature recovers exactly that
+ *  EVM — the ownership proof) AND it does not try to move a
+ *  registered chain address. Returns the merged entry, or null
+ *  when this is not a clean same-owner update (a different wallet,
+ *  or a conflicting chain-address value). Merge rules: the claim's
+ *  fields win where the claim carries them and registered fields
+ *  are kept where the claim is silent — so a republish can ADD a
+ *  family field the entry predates and can never silently drop
+ *  one; ln/lnOffer, the Lightning identity this update path exists
+ *  to manage, may also be REPLACED by the owner; every other field
+ *  is additions-only. */
+export function nameUpdateMerge(existing, entry) {
+  if (!existing || !entry) return null;
+  if (String(existing.evm || "").toLowerCase() !== String(entry.evm || "").toLowerCase()) return null;
+  const keys = ["evm", "btc", "ln", "lnOffer", "algo", "sol", "tron", "sui"];
+  const merged = {};
+  for (const k of keys) {
+    const x = existing[k] || "", y = entry[k] || "";
+    if (x && y && x !== y && k !== "evm" && k !== "ln" && k !== "lnOffer") return null; // a chain address changed value — a conflict, not an update
+    const v = y || x;
+    if (v) merged[k] = v;
+  }
+  return merged;
+}
+
 /** Pure decision pass — the FCFS heart, unit-tested in
  *  process.test.mjs. `events` are raw Nostr events; `registry` is
  *  the parsed names.json; `state` carries { processed, winners }
- *  from prior runs. Returns { decisions, winners } where winners are
- *  [{ name, entry }] in claim order, capped. Decisions for events
+ *  from prior runs. Returns { decisions, winners, updates } where
+ *  winners are [{ name, entry }] in claim order, capped, and
+ *  updates are same-owner merges into already-published entries
+ *  (never capped — they are not new names). Decisions for events
  *  deferred by the cap are NOT marked processed — they retry next
  *  run. */
 /** Per-relay scan summary (audit P0-1): what each relay actually
@@ -99,6 +138,7 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
     .sort((a, b) => (a.created_at - b.created_at) || String(a.id).localeCompare(String(b.id)));
   const decisions = [];
   const winners = [];
+  const updates = [];
   const wonThisRun = new Set();
   for (const event of sorted) {
     // Kind 30078 is Nostr's generic app-data kind — other apps'
@@ -121,7 +161,11 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
     const existing = registry ? registry[name] : null;
     if (existing) {
       if (nameEntriesEqual(existing, check.entry)) decide("duplicate", name, "identical claim already published — no-op");
-      else decide("rejected", name, "name already registered to a different wallet");
+      else {
+        const merged = nameUpdateMerge(existing, check.entry);
+        if (merged) { updates.push({ name, entry: merged, eventId: event.id }); decide("updated", name, "same-owner update — merged into the published entry"); }
+        else decide("rejected", name, "name already registered to a different wallet");
+      }
       continue;
     }
     if (wonThisRun.has(name) || priorWinners[name]) { decide("rejected", name, "name won by an earlier valid claim"); continue; }
@@ -130,7 +174,7 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
     winners.push({ name, entry: check.entry, eventId: event.id });
     decide("winner", name, "");
   }
-  return { decisions, winners };
+  return { decisions, winners, updates };
 }
 
 function git(args, opts = {}) {
@@ -200,10 +244,10 @@ async function main() {
   const events = [...byId.values()];
 
   const registry = JSON.parse(readFileSync(NAMES_PATH, "utf8"));
-  const { decisions, winners } = decideClaims(events, registry, state);
+  const { decisions, winners, updates = [] } = decideClaims(events, registry, state);
 
   for (const d of decisions) console.log(`name-claims: ${d.decision} ${d.name || "?"} ${d.eventId.slice(0, 12)}… ${d.reason}`.trim());
-  console.log(`name-claims: ${events.length} claim event(s) seen, ${winners.length} winner(s), ${decisions.filter((d) => d.decision === "rejected").length} rejected.`);
+  console.log(`name-claims: ${events.length} claim event(s) seen, ${winners.length} winner(s), ${updates.length} update(s), ${decisions.filter((d) => d.decision === "rejected").length} rejected.`);
   console.log(`name-claims: relay scan — ${NAME_CLAIM_RELAYS.map((r) => `${r}=${scan.perRelay[r]}`).join(" ")} (pre-merge total ${scan.total}, unique ${events.length}).`);
 
   if (dryRun) {
@@ -211,13 +255,18 @@ async function main() {
     return;
   }
 
-  if (winners.length) {
+  const commitLabel = [
+    winners.length ? `add ${winners.map((w) => w.name).join(", ")}` : "",
+    updates.length ? `update ${updates.map((u) => u.name).join(", ")}` : "",
+  ].filter(Boolean).join("; ");
+  if (winners.length || updates.length) {
     for (const w of winners) registry[w.name] = w.entry;
+    for (const u of updates) registry[u.name] = u.entry;
     writeFileSync(NAMES_PATH, JSON.stringify(registry, null, 2) + "\n");
     git(["add", "names.json"]);
-    git(["commit", "-m", `names: add ${winners.map((w) => w.name).join(", ")} (in-app claim)`], { stdio: "inherit" });
+    git(["commit", "-m", `names: ${commitLabel} (in-app claim)`], { stdio: "inherit" });
     git(["push", "origin", "main"], { stdio: "inherit" });
-    console.log(`name-claims: names.json committed + pushed (${winners.map((w) => w.name).join(", ")}).`);
+    console.log(`name-claims: names.json committed + pushed (${commitLabel}).`);
   }
 
   // Record FIRST (audit P0-1): decisions, per-relay scan counts and
@@ -228,7 +277,7 @@ async function main() {
   // registry from gh-pages) kept polling a stale file. A decision
   // record must never depend on a later step succeeding.
   mkdirSync(STATE_DIR, { recursive: true });
-  appendFileSync(LOG_PATH, JSON.stringify({ type: "scan", at: new Date(now * 1000).toISOString(), perRelay: scan.perRelay, seen: events.length, winners: winners.length, rejected: decisions.filter((d) => d.decision === "rejected").length }) + "\n");
+  appendFileSync(LOG_PATH, JSON.stringify({ type: "scan", at: new Date(now * 1000).toISOString(), perRelay: scan.perRelay, seen: events.length, winners: winners.length, updates: updates.length, rejected: decisions.filter((d) => d.decision === "rejected").length }) + "\n");
   for (const d of decisions) {
     if (d.deferred) continue;
     state.processed[d.eventId] = { decision: d.decision, name: d.name, reason: d.reason, at: now };
@@ -249,7 +298,7 @@ async function main() {
   // sync failure still fails the run (exit 1, reported by the cron)
   // — but the record above is already durable when it does.
   try {
-    syncGhPagesNames(winners.length ? `names: add ${winners.map((w) => w.name).join(", ")} (in-app claim)` : undefined);
+    syncGhPagesNames((winners.length || updates.length) ? `names: ${commitLabel} (in-app claim)` : undefined);
   } catch (e) {
     console.error("name-claims: gh-pages sync FAILED (decisions + state already recorded) —", e.message || e);
     process.exitCode = 1;

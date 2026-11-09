@@ -26,7 +26,7 @@ import {
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
-  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
+  FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
@@ -1903,12 +1903,20 @@ $("actReceive").onclick = () => {
     bitcoin: () => { qr("qrBtc", btcAddr); $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
       qr("qrBtcTr", btcTrAddr); $("cpBtcTr").onclick = () => copyText(btcTrAddr, $("cpBtcTr")); },
     lightning: () => {
-      const paintLn = (ln, name) => {
+      const paintLn = (ln, name, kind = "address") => {
         const slot = $("rcvLnSlot"); if (!slot) return; // sheet has moved on
         if (ln) {
-          slot.innerHTML = `<p class="tag">Your Lightning address${name ? ` (registered to ${esc(name)}.${FLUID_DOMAIN})` : ""}:</p>
+          // The registered-domain line names the LIVE front door
+          // (fluidwallet.dpdns.org) — it used to render FLUID_DOMAIN
+          // (fluid.is-a.dev, the legacy display domain), which told
+          // users their address lived on a domain it doesn't
+          // (Lightning completion audit G7; pinned in tests).
+          const label = kind === "offer"
+            ? `Your Fluid node's offer${name ? ` (registered to ${esc(name)} — pay it from any Lightning wallet, or by name inside Fluid)` : ""}:`
+            : `Your Lightning address${name ? ` (registered to ${esc(name)}.fluidwallet.dpdns.org)` : ""}:`;
+          slot.innerHTML = `<p class="tag">${label}</p>
             <img class="qr" id="qrLn"><p class="mono">${esc(ln)}</p>
-            <button class="btn ghost" id="cpLn">Copy Lightning address</button>`;
+            <button class="btn ghost" id="cpLn">Copy Lightning ${kind === "offer" ? "offer" : "address"}</button>`;
           qr("qrLn", ln);
           $("cpLn").onclick = () => copyText(ln, $("cpLn"));
         } else {
@@ -1917,9 +1925,10 @@ $("actReceive").onclick = () => {
       };
       // Prefer the native node's own reusable BOLT 12 offer when the
       // node has been booted this session; otherwise the Lightning
-      // address registered to the user's Fluid name.
+      // target registered to the user's Fluid name — the native
+      // offer (lnOffer) first, then a hosted address (ln).
       if (lnSession) {
-        try { return paintLn(lnSession.createOffer(null, "Fluid"), null); } catch { /* no peer yet — fall through */ }
+        try { return paintLn(lnSession.createOffer(null, "Fluid"), null, "offer"); } catch { /* no peer yet — fall through */ }
       }
       const myName = localStorage.getItem("fluid_name");
       if (!myName) {
@@ -1927,7 +1936,10 @@ $("actReceive").onclick = () => {
         if (slot) slot.innerHTML = `<p class="tag">Open the Lightning panel (Wallet tab → Lightning) once to start your node — your reusable receive offer will appear here. You can also register a Lightning address to your Fluid name under “Your Fluid name” in the More tab.</p>`;
         return;
       }
-      resolveFluidName(myName).then(hit => paintLn(hit && hit.ln, myName)).catch(() => paintLn(null, myName));
+      resolveFluidName(myName).then(hit => {
+        const t = hit ? lightningTargetForNameEntry(hit) : null;
+        paintLn(t ? t.value : null, myName, t ? t.kind : "address");
+      }).catch(() => paintLn(null, myName));
     },
     tron: () => { qr("qrTron", tronAddr); $("cpTron").onclick = () => copyText(tronAddr, $("cpTron")); },
     solana: () => { qr("qrSol", solAddr); $("cpSol").onclick = () => copyText(solAddr, $("cpSol")); },
@@ -3453,11 +3465,21 @@ async function lnPayWithNode() {
         lnSession.payInvoice(invoice, null);
       }
     } else if (kind === "fluid-name") {
+      // Shape-aware (completion audit §5.6.1): the registry value's
+      // SHAPE decides the path — a registered BOLT 12 offer is paid
+      // as an offer through this node; a registered address goes
+      // through LNURL-pay as before. (An offer-shaped value in the
+      // old LNURL-only branch would have broken the payment.)
       const hit = await resolveFluidName(target).catch(() => null);
-      if (!hit || !hit.ln) return msg("lnPayMsg", "That Fluid name has no Lightning address in the registry.");
+      const t = hit ? lightningTargetForNameEntry(hit) : null;
+      if (!t) return msg("lnPayMsg", "That Fluid name has no Lightning address or node offer in the registry.");
       if (!msat) return msg("lnPayMsg", "Enter the sats amount for a name payment.");
-      const invoice = await lightningInvoiceForAddress(hit.ln, sats);
-      lnSession.payInvoice(invoice, null);
+      if (t.kind === "offer") {
+        lnSession.payOffer(t.value, msat);
+      } else {
+        const invoice = await lightningInvoiceForAddress(t.value, sats);
+        lnSession.payInvoice(invoice, null);
+      }
     } else {
       return msg("lnPayMsg", "That doesn't look like a Lightning invoice, offer, address or Fluid name.");
     }
@@ -3646,9 +3668,16 @@ function lnFallbackSheet(note) {
         if (!sats || sats <= 0) return msg("lnMsg", "Enter the sats amount for a name / Lightning address.");
         let lnAddr = target;
         if (!target.includes("@")) {
+          // Shape-aware like the node's own pay path: an external
+          // WebLN wallet pays invoices, so it can only serve the
+          // LNURL (address) shape — a name whose Lightning is its
+          // own Fluid node offer gets the plain refusal, not a
+          // broken LNURL attempt against an lno… string.
           const hit = await resolveFluidName(target).catch(() => null);
-          if (!hit || !hit.ln) return msg("lnMsg", "That Fluid name has no Lightning address in the registry.");
-          lnAddr = hit.ln;
+          const t = hit ? lightningTargetForNameEntry(hit) : null;
+          if (!t) return msg("lnMsg", "That Fluid name has no Lightning address or node offer in the registry.");
+          if (t.kind === "offer") return msg("lnMsg", "That name receives through its own Fluid node — this fallback pays invoices through an external wallet and can't pay a node offer. Use Wallet tab → Lightning → Pay with my node instead.");
+          lnAddr = t.value;
         }
         msg("lnMsg", "Getting invoice for " + lnAddr + "…", true);
         invoice = await lightningInvoiceForAddress(lnAddr, sats);
@@ -4900,13 +4929,16 @@ function savePendingClaim(p) {
 }
 /** Sign this wallet's claim for `name` and publish it to the relays.
  *  Resolves the number of relays that accepted (≥1 = publishing).
- *  Throws only when the claim cannot be built or verified locally. */
-async function submitNameClaim(name, ln) {
+ *  Throws only when the claim cannot be built or verified locally.
+ *  `lnOffer` carries the wallet's own BOLT 12 node offer (the
+ *  Fluid-native Lightning registration); the processor merges it
+ *  into an already-live entry as a same-owner update. */
+async function submitNameClaim(name, ln, lnOffer = null) {
   if (!wallet) throw new Error("Unlock your wallet first.");
   const phrase = wallet.mnemonic.phrase;
   const { claim, event } = await buildSignedNameClaim({
     name, evm: wallet.address,
-    btc: bitcoinAddress(phrase), ln: ln || null,
+    btc: bitcoinAddress(phrase), ln: ln || null, lnOffer: lnOffer || null,
     algo: algoAddressFromPhrase(phrase), sol: solanaAddressFromPhrase(phrase),
     tron: tronAddressFromPhrase(phrase), sui: suiAddressFromPhrase(phrase),
     phrase, signerWallet: wallet,
@@ -4956,7 +4988,7 @@ async function resumePendingClaim() {
   if (!p || p.published || p.eventId || !p.name) return;
   if (localStorage.getItem("fluid_name") !== p.name) return;
   claimResumeTried = true;
-  try { await submitNameClaim(p.name, p.ln || null); } catch { /* the saved state + Publish button remain */ }
+  try { await submitNameClaim(p.name, p.ln || null, p.lnOffer || null); } catch { /* the saved state + Publish button remain */ }
   renderNameSection();
   refreshHomeClaimBanner();
 }
@@ -5059,7 +5091,11 @@ function showNameCreationWait(name, accepted, { startConflict = false } = {}) {
   const resubmit = async (btn) => {
     if (btn) btn.disabled = true;
     try {
-      const n = await submitNameClaim(currentName, null);
+      // Resubmit the claim THE USER MADE — including any Lightning
+      // fields folded into it — never a stripped variant.
+      const held = loadPendingClaim();
+      const same = held && held.name === currentName;
+      const n = await submitNameClaim(currentName, same ? (held.ln || null) : null, same ? (held.lnOffer || null) : null);
       const st = $("ncWaitStatus"); if (st) st.textContent = n > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved;
       const pb = $("ncPublishBtn"); if (pb) pb.classList.toggle("hidden", n > 0);
       if (n === 0 && btn) btn.disabled = false;
@@ -5197,7 +5233,7 @@ function renderNameSection() {
       box.innerHTML = `<button class="btn ghost" id="nsRepublishBtn" style="width:auto;padding:6px 12px">Publish again</button>`;
       $("nsRepublishBtn").onclick = async () => {
         const p = loadPendingClaim(); if (!p || !wallet) return;
-        try { await submitNameClaim(p.name, p.ln || null); } catch { /* the state repaint reports the outcome */ }
+        try { await submitNameClaim(p.name, p.ln || null, p.lnOffer || null); } catch { /* the state repaint reports the outcome */ }
         renderNameSection();
       };
       ensureNamePoll();
@@ -5208,7 +5244,7 @@ function renderNameSection() {
         const btn = $("nsPublishBtn"); if (btn) btn.disabled = true;
         try {
           const p = loadPendingClaim();
-          const n = await submitNameClaim(stored, p ? (p.ln || null) : null);
+          const n = await submitNameClaim(stored, p ? (p.ln || null) : null, p ? (p.lnOffer || null) : null);
           msg("nameMsg", n > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved, true);
         } catch (e) { msg("nameMsg", "Publish failed: " + (e.message || e)); }
         renderNameSection();
@@ -5259,7 +5295,7 @@ function renderNameSection() {
       try { done = sessionStorage.getItem(key) === "1"; if (!done) sessionStorage.setItem(key, "1"); } catch { /* no sessionStorage — the manual button remains */ }
       if (!done) {
         msg("nameMsg", "Your earlier claim for " + stored + " never reached the public registry — sending it again now.", true);
-        try { await submitNameClaim(p.name, p.ln || null); } catch { /* the repaint reports the outcome */ }
+        try { await submitNameClaim(p.name, p.ln || null, p.lnOffer || null); } catch { /* the repaint reports the outcome */ }
         if (stillCurrent()) renderNameSection();
       }
     } finally { truthBusy = false; }
@@ -5281,60 +5317,159 @@ function renderNameSection() {
   $("copyOwnedEvm").onclick = () => copyText($("ownedEvm").textContent, $("copyOwnedEvm"));
   $("copyOwnedBtc").onclick = () => copyText($("ownedBtc").textContent, $("copyOwnedBtc"));
   $("copyOwnedAlgo").onclick = () => copyText($("ownedAlgo").textContent, $("copyOwnedAlgo"));
-  $("copyOwnedLn").onclick = () => copyText($("ownedLn").textContent, $("copyOwnedLn"));
+  // The value the Lightning row's Copy button copies. A registered
+  // node offer is long and the row shows a shortened form — copying
+  // the DISPLAY text would hand out a broken offer, so paintOwnedLn
+  // keeps the full value here.
+  let ownedLnCopyValue = "";
+  $("copyOwnedLn").onclick = () => copyText(ownedLnCopyValue || $("ownedLn").textContent, $("copyOwnedLn"));
   // The owned box shows the SAME fields the claim form takes (QA
   // F11): EVM, Bitcoin, Algorand, and Lightning in both states. The
-  // Lightning row is always present — the registered address when
-  // the registry carries one, and the add form whenever it doesn't
-  // (the Receive sheet sends users here for exactly this). Round 2:
-  // the form ALSO renders when the registry couldn't be checked —
-  // the entry is built locally from the user's own keys, so a
-  // failed registry read must never suppress it; the honest note
-  // and the form appear together.
-  const paintOwnedLn = (ln, unknown = false) => {
-    if (ln) {
-      $("ownedLn").textContent = ln;
+  // Lightning row is always present. Round 3 (native Lightning,
+  // 2026-11-09): the row is painted from the registry ENTRY, not a
+  // bare address — a registered lnOffer (the wallet's own node) is
+  // the headline state and hides the add form; a hosted address
+  // alone still shows the form, because the native option remains
+  // addable on top of it; neither shows "Not registered yet" with
+  // the form. The form ALSO renders when the registry couldn't be
+  // checked — the entry is built locally from the user's own keys,
+  // so a failed registry read must never suppress it; the honest
+  // note and the form appear together.
+  const paintOwnedLn = (entry, unknown = false) => {
+    const note = $("ownedLnNote");
+    const paintNote = (text) => { if (note) { note.textContent = text || ""; note.classList.toggle("hidden", !text); } };
+    const offer = entry && entry.lnOffer ? String(entry.lnOffer) : "";
+    const hosted = entry && entry.ln ? String(entry.ln) : "";
+    if (offer) {
+      ownedLnCopyValue = offer;
+      $("ownedLn").textContent = "Your Fluid node: " + (offer.length > 42 ? offer.slice(0, 24) + "…" + offer.slice(-8) : offer);
       show("copyOwnedLn", true); show("ownedLnAdd", false);
+      // Capacity truth (Lightning completion audit §5.6.2): a
+      // registered offer is money-in only when the node has a
+      // channel with room in it. Read the LIVE session when one is
+      // running on mainnet; without a session, never assert
+      // capacity — point at the panel instead. The offer is bound
+      // to the node, not the channel: gaining a channel later makes
+      // this same registration payable with no re-registration.
+      let noteText;
+      if (lnSession && lnSession.network === "bitcoin") {
+        let recvMsat = 0;
+        try { recvMsat = Number(JSON.parse(lnSession.balance()).receivableMsat || 0); } catch { recvMsat = 0; }
+        noteText = recvMsat > 0
+          ? "Registered — pays your own node, no outside service. Your node can receive up to ~" + Math.floor(recvMsat / 1000).toLocaleString("en-GB") + " sats right now; Fluid must be open on this device when you're paid."
+          : "Registered but not yet payable — your node can't receive yet: it has no channel with room in it. A channel with room is what lets sats arrive. Open the Lightning panel (Wallet tab → Lightning) to get a channel; this same registration becomes payable the moment a channel has room — no need to register again.";
+      } else {
+        noteText = "Registered — pays your own node, no outside service. Open the Lightning panel once to start your node and see whether it can receive yet: payments to your name need a channel with room in the node, and Fluid open on this device when you're paid.";
+      }
+      if (hosted) noteText += " A hosted address (" + hosted + ") is also registered to this name.";
+      paintNote(noteText);
+    } else if (hosted) {
+      ownedLnCopyValue = hosted;
+      $("ownedLn").textContent = hosted;
+      show("copyOwnedLn", true); show("ownedLnAdd", true);
+      paintNote("This name receives Lightning at the hosted address above. Your own Fluid node is the first choice — register it below and payments come straight to this app instead.");
     } else if (unknown) {
+      ownedLnCopyValue = "";
       $("ownedLn").textContent = "Couldn't check the registry just now";
       show("copyOwnedLn", false); show("ownedLnAdd", true);
+      paintNote("");
     } else {
+      ownedLnCopyValue = "";
       $("ownedLn").textContent = "Not registered yet";
       show("copyOwnedLn", false); show("ownedLnAdd", true);
+      paintNote("");
     }
   };
   paintOwnedLn(null);
   $("ownedLn").textContent = "Checking the registry…";
   show("copyOwnedLn", false); show("ownedLnAdd", false);
+  // --- Native Lightning registration: "Use my Fluid node" ---
+  // First choice on the card (owner directive 2026-11-09: Lightning
+  // is Fluid-native — no external wallet creation, Lightning or
+  // not). Step 1 starts the wallet's own node on mainnet if it
+  // isn't running, takes its amountless BOLT 12 offer, and paints
+  // the honest terms — the live receivable decides whether the
+  // copy says "can receive" or "registered but not yet payable"
+  // (completion audit §5.6.2; the receivable-0 sentence is the
+  // audit's lnReceivePlan wording). Step 2 registers that offer to
+  // the name through the signed-claim pipeline: folded into the
+  // held claim while the name isn't live, merged into the
+  // published entry by the processor as a same-owner update once
+  // it is. A hosted address already registered or held is carried
+  // along untouched.
+  let lnNativeState = null;
+  const paintNativeTerms = () => {
+    const terms = $("ownedLnNativeTerms"), copy = $("ownedLnNativeCopy"), btn = $("ownedLnNativeBtn");
+    if (!terms || !copy || !btn) return;
+    if (!lnNativeState) { terms.classList.add("hidden"); btn.textContent = "Use my Fluid node"; return; }
+    terms.classList.remove("hidden");
+    const recvSats = Math.floor((lnNativeState.receivableMsat || 0) / 1000);
+    if (recvSats > 0) {
+      copy.textContent = "Your node can receive up to ~" + recvSats.toLocaleString("en-GB") + " sats right now. Payments to your name will come to this node — Fluid must be open on this device when you're paid.";
+      btn.textContent = "Register my node";
+    } else {
+      copy.textContent = "Registered but not yet payable: your node can't receive yet — it has no channel with room in it. A channel with room is what lets sats arrive. You can register now and get a channel later (Wallet tab → Lightning → Channels) — this registration becomes payable the moment a channel has room; you won't need to register again. Until then, payments to your name will fail.";
+      btn.textContent = "Register anyway — I'll get a channel";
+    }
+  };
+  $("ownedLnNativeBtn").onclick = async () => {
+    if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
+    const btn = $("ownedLnNativeBtn");
+    if (!lnNativeState) {
+      if (lnSession && lnSession.network !== "bitcoin") return msg("nameMsg", "Your Lightning node is on a test network right now — switch it to Bitcoin (mainnet) in the Lightning panel first, so the offer you register can receive real payments.");
+      if (btn) btn.disabled = true;
+      try {
+        if (!lnSession) {
+          if (btn) btn.textContent = "Starting your node…";
+          if (!lnChunk) lnChunk = await import("./lightning.chunk.js");
+          lnSession = await lnChunk.bootLightning({ phrase: wallet.mnemonic.phrase, network: "bitcoin", wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "" });
+          lnSession.startLoops((evs) => { lnEvents = [...evs.reverse(), ...lnEvents].slice(0, 8); if ($("lnPanel")) paintLnPanel(); });
+          lnSession.syncNow().catch(() => {});
+        }
+        const offer = lnSession.createOffer(null, "Fluid");
+        let recv = 0;
+        try { recv = Number(JSON.parse(lnSession.balance()).receivableMsat || 0); } catch { recv = 0; }
+        lnNativeState = { offer, receivableMsat: recv };
+        paintNativeTerms();
+      } catch (e) {
+        msg("nameMsg", "Your node couldn't start just now: " + lnErrorText(e));
+        if (btn) btn.textContent = "Use my Fluid node";
+      } finally { if (btn) btn.disabled = false; }
+      return;
+    }
+    const offer = lnNativeState.offer;
+    if (btn) btn.disabled = true;
+    try {
+      const hit = await resolveFluidName(stored).catch(() => null);
+      const mine = !!(hit && hit.evm && String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase());
+      const held = loadPendingClaim();
+      const keepLn = (mine && hit.ln) || (held && held.name === stored ? (held.ln || null) : null) || null;
+      const n = await submitNameClaim(stored, keepLn, offer);
+      lnNativeState = null;
+      paintNativeTerms();
+      msg("nameMsg", n > 0 ? "Your node's offer is on its way into the registry — " + NAME_STATE_COPY.publishing : "Your node's offer was added to your claim — " + NAME_STATE_COPY.saved, true);
+    } catch (e) { msg("nameMsg", "Could not register your node: " + (e.message || e)); }
+    if (btn) btn.disabled = false;
+    renderNameSection();
+  };
   $("ownedLnAddBtn").onclick = async () => {
     if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
     const ln = $("ownedLnInput").value.trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ln)) return msg("nameMsg", "That doesn't look like a Lightning address (name@domain).");
-    // Not live yet? The Lightning address folds into the held claim
-    // and the claim is resubmitted — the version that lands carries
-    // it. Already live? The registry is append-only in the in-app
-    // flow, so an update rides the labelled GitHub fallback below.
+    // The hosted address rides the signed-claim pipeline in both
+    // states: folded into the held claim while the name isn't live
+    // yet, and merged into the published entry by the processor as
+    // a same-owner update once it is — the processor verifies the
+    // signature recovers this wallet's EVM before the entry moves.
+    // A native offer already registered or held is carried along.
     const hit = await resolveFluidName(stored).catch(() => null);
-    const isLive = !!(hit && hit.evm && String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase());
-    if (!isLive) {
-      try {
-        const n = await submitNameClaim(stored, ln);
-        msg("nameMsg", n > 0 ? "Lightning address added to your claim — " + NAME_STATE_COPY.publishing : "Lightning address added to your claim — " + NAME_STATE_COPY.saved, true);
-      } catch (e) { msg("nameMsg", "Could not update your claim: " + (e.message || e)); }
-      renderNameSection();
-      return;
-    }
-    const entry = buildNameEntry(stored,
-      $("ownedEvm").textContent || wallet.address,
-      $("ownedBtc").textContent || bitcoinAddress(wallet.mnemonic.phrase),
-      ln,
-      $("ownedAlgo").textContent || algoAddressFromPhrase(wallet.mnemonic.phrase),
-      solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase),
-      tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase),
-      suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase));
-    $("ownedEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
-    show("ownedEntryBox", true);
-    msg("nameMsg", "Your name is already live, so this update uses the fallback below — publish the updated entry so the change resolves everywhere.", true);
+    const held = loadPendingClaim();
+    const keepOffer = (hit && hit.lnOffer) || (held && held.name === stored ? (held.lnOffer || null) : null) || null;
+    try {
+      const n = await submitNameClaim(stored, ln, keepOffer);
+      msg("nameMsg", n > 0 ? "Lightning address on its way into the registry — " + NAME_STATE_COPY.publishing : "Lightning address added to your claim — " + NAME_STATE_COPY.saved, true);
+    } catch (e) { msg("nameMsg", "Could not update your claim: " + (e.message || e)); }
+    renderNameSection();
   };
   $("copyOwnedEntryBtn").onclick = () => copyText($("ownedEntry").textContent, $("copyOwnedEntryBtn"));
   resolveFluidName(stored).then(async (hit) => {
@@ -5357,7 +5492,7 @@ function renderNameSection() {
     if (hit.evm) $("ownedEvm").textContent = hit.evm;
     if (hit.btc) $("ownedBtc").textContent = hit.btc;
     if (hit.algo) $("ownedAlgo").textContent = hit.algo;
-    paintOwnedLn(hit.ln || null);
+    paintOwnedLn(hit);
     paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: hit, myEvm: myAddr }));
   }).catch(() => { if (stillCurrent()) { paintOwnedLn(null, true); paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr })); maybeRepair(null); } });
 }

@@ -189,21 +189,45 @@ harness; the keeper (below) is live on signet and syncing.
 - **Sending**: the panel classifies every target
   (`classifyLightningTarget`): BOLT 11 → pay; BOLT 12 → pay; a
   `₿user@domain` / Lightning address → BIP-353 first (DNS TXT at
-  `_bitcoin-payment.<user>.<domain>` fetched over DNS-over-HTTPS,
-  the returned offer validated by the BOLT 12 parser before use),
+  `<user>.user._bitcoin-payment.<domain>` — the record name BIP-353
+  itself specifies — fetched over DNS-over-HTTPS, with the legacy
+  `_bitcoin-payment.<user>.<domain>` form still tried second; the
+  returned offer is validated by the BOLT 12 parser before use),
   falling back to LNURL-pay for an invoice paid through the node; a
-  bare word → Fluid name → its registered Lightning address → LNURL
-  invoice → node pay.
-- **Receiving identity**: the wallet's BOLT 12 offer IS its shareable
-  address (Receive sheet + panel). Publishing that offer in DNS under
-  the project domain is a documented one-record step that waits for
-  the fluid.js.org grant (PR pending): add a TXT record
-  `_bitcoin-payment.<name>.fluid.js.org` containing
-  `bitcoin:?lno=<offer>`. The code path (resolution + validation) is
-  shipped and tested; no DNS control is faked.
+  bare word → Fluid name → its registered Lightning target, decided
+  by the value's SHAPE (`lightningTargetForNameEntry`): a registered
+  BOLT 12 offer is paid as an offer through the node, a registered
+  address goes through LNURL-pay as before.
+- **Receiving identity — Fluid-native (2026-11-09)**: a name's
+  Lightning identity is the wallet's OWN node offer, published in
+  the names registry as the entry's `lnOffer` field (More → Your
+  Fluid name → "Use my Fluid node"; see `names.README.md`). The
+  registration rides the signed-claim pipeline — the processor
+  merges it into a live entry as a same-owner update — so
+  `name@fluidwallet.dpdns.org` resolves inside Fluid (and in any
+  wallet that reads the public registry) with no outside service.
+  The name card states the receive truth plainly: until the node
+  has a channel with room in it, the registration reads
+  "registered but not yet payable", and the app must be open when
+  paid.
+- **DNS publication is NOT automated, and would not be conformant
+  today**: BIP-353 requires DNSSEC-signed instructions, and the
+  `fluidwallet.dpdns.org` zone is not DNSSEC-signed (no DS record
+  at the parent; the zone is served by the registrar's own
+  nameservers, which expose no record-publishing API the
+  name-claims processor could call, and the processor holds no
+  registrar credentials). Publishing unsigned TXT records would
+  print an address conformant wallets must ignore, so none is
+  faked. The shipped path is registry-based resolution, above.
+  What flips this: a Fluid-controlled DNS host that signs the zone
+  (DS at the parent) and offers a TXT-scoped API token. Full
+  evidence: `~/workspace/research_notes/fluid-native-lightning-address-20261109/report.md`.
 - **Fallback kept**: the pre-existing WebLN / LNURL-pay sheet remains
   as a clearly-labelled secondary fallback (and is the only Lightning
   path in the single-file build, which cannot carry the WASM chunk).
+  It pays invoices only — a name whose Lightning is its own node
+  offer gets a plain refusal there, pointing at the node's own Pay
+  flow.
 
 ### 5. DripBot keeper — `~/workspace/dripbot-lightning/` (outside the repo)
 
