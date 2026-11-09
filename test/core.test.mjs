@@ -4701,8 +4701,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("home order: family failure is read from the load-failed flags",
     appSrcHome.includes("bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,")
     && appSrcHome.includes("cosmos: famLoaded.has(\"cosmos\") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),"));
+  const coreSrcHome = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("home order: splitRows main list runs through sortHomeRows, old value-only sort gone",
-    appSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };")
+    coreSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };")
+    && appSrcHome.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
     && !appSrcHome.includes("main.sort((x, y) => y.v - x.v);"));
   ok("home order: Cosmos rows sort inside their shared card",
     appSrcHome.includes("const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join(\"\");"));
@@ -4710,7 +4712,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcHome.includes("if (b.amount != null && Number(b.amount) === 0 && !isNativeRow(famKey, b)"));
   ok("home order: ordering helpers are used by the home list only (send sheets untouched)",
     (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 1
-    && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 2);
+    && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 1
+    && (appSrcHome.match(/splitHomeRows\(/g) || []).length === 1);
 }
 
 // 63b. Balance cache pack/unpack (2026-11-09 load fix): the cache is
@@ -7605,6 +7608,114 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("satora bridge: wiring — resume runs on unlock + the poll tick, the executor gets the approval recorder, Solana sources link the Solana explorer",
       appSrc71.includes("resumeSatoraBridgedSwaps(wallet, localStorage)") && appSrc71.includes("fromKey === \"solana\" ? SOLANA_EXPLORER")
       && coreSrc71.includes("bridge_source_chain") && coreSrc71.includes("computeSatoraCctpMaxFee"));
+  }
+}
+
+// 72. Unpriced-native home fix (owner screenshots, 2026-11-09): a held
+// NATIVE asset whose price never arrived was buried in the collapsed
+// "Other tokens — Unverified or unpriced" group while the hero and the
+// family header printed a bare $0.00. Ground truth at diagnosis: the
+// owner's Algorand account holds 0.898 ALGO and zero ASAs — the buried
+// row WAS the native. Two coupled defects: (i) splitRows sent any row
+// with rowUsdValue == null (or verified === false) to the group, and
+// the Algorand native row carries neither a verified flag nor a
+// priceUsd; (ii) getPrices was all-or-nothing per round — Binance
+// geo-blocked (HTTP 451 error OBJECT, not a list), the single ~28-id
+// CoinGecko batch then failing left every symbol unpriced at once.
+{
+  const { splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices } = await import("../src/wallet-core.js");
+  const ALGO_ROW = { symbol: "ALGO", name: "Algorand", amount: "0.898", address: null, decimals: 6, verified: true };
+  const ASA_ROW = { symbol: "ASA 123", name: "Algorand asset", amount: "50", address: "123", decimals: 0, verified: false, priceUsd: null };
+  // (a) native held, price missing → main with its amount, v null.
+  {
+    const sp = splitHomeRows([ALGO_ROW, ASA_ROW], () => null, (b) => !b.address);
+    ok("unpriced native: a held native row with no price renders in main, not the Other group",
+      sp.main.length === 1 && sp.main[0].b === ALGO_ROW && sp.main[0].v === null && sp.other.length === 1);
+    ok("unpriced native: the held native sorts as held in main (ahead of zeros)",
+      splitHomeRows([{ ...ALGO_ROW, amount: "0" }, ALGO_ROW], () => null, (b) => !b.address).main[0].b.amount === "0.898");
+  }
+  // (b) a genuine token, unpriced → still grouped; unverified stays
+  // grouped even when priced (the owner's quarantine, unchanged).
+  {
+    const tok = { symbol: "MEME", amount: "10", address: "0xabc", verified: true };
+    ok("unpriced native: an unpriced non-native token still lands in the Other group",
+      splitHomeRows([tok], () => null, () => false).other.length === 1);
+    ok("unpriced native: an unverified token stays grouped even with a price",
+      splitHomeRows([{ ...tok, verified: false }], () => 5, () => false).other.length === 1);
+    ok("unpriced native: a verified priced token renders in main",
+      splitHomeRows([tok], () => 5, () => false).main.length === 1);
+  }
+  // Native wins over a stray unverified flag and over a failed read —
+  // the test is first and unconditional.
+  {
+    const flagged = { ...ALGO_ROW, verified: false };
+    const failed = { ...ALGO_ROW, amount: null };
+    ok("unpriced native: a native row flagged verified:false still renders in main",
+      splitHomeRows([flagged], () => 0.09, (b) => !b.address).main.length === 1);
+    ok("unpriced native: a failed native read (amount null) stays a visible main row",
+      splitHomeRows([failed], () => null, (b) => !b.address).main.length === 1);
+  }
+  // countUnpricedHoldings: the hero-note counter.
+  {
+    const groups = [
+      [[ALGO_ROW], () => null],
+      [[{ symbol: "X", amount: "0", priceUsd: null }, { symbol: "Y", amount: null, priceUsd: null },
+        { symbol: "Z", amount: "3", priceUsd: 2 }, { symbol: "W", amount: "4", priceUsd: null }], () => 9],
+      [[{ symbol: "Q", amount: "7" }], () => 1.5],
+    ];
+    ok("unpriced native: counter counts held+unpriced rows only (explicit priceUsd:null beats the symbol table; zeros and failed reads excluded)",
+      countUnpricedHoldings(groups) === 2);
+    ok("unpriced native: counter is zero when everything held is priced",
+      countUnpricedHoldings([[[ALGO_ROW], () => 0.09]]) === 0);
+  }
+  // (c) price resilience: batch source A fails wholesale, source B
+  // (per-symbol CoinGecko) prices the native; a batch that answered
+  // partially is only topped up, never stripped.
+  {
+    const out = { USDC: 1, USDT: 1, DAI: 1 };
+    const stub = async (url) => {
+      if (url.includes("ids=algorand")) return { json: async () => ({ algorand: { usd: 0.091143 } }) };
+      if (url.includes("ids=bitcoin")) return { json: async () => ({ bitcoin: { usd: 81234 } }) };
+      throw new Error("source error body");
+    };
+    await mergeCgFallbackPrices(out, stub);
+    ok("unpriced native: per-symbol fallback prices ALGO and BTC after the batch failed wholesale",
+      out.ALGO === 0.091143 && out.BTC === 81234);
+    ok("unpriced native: per-symbol fallback never removes a price already present",
+      out.USDC === 1 && out.USDT === 1);
+    const out2 = { BNB: 690 };
+    await mergeCgFallbackPrices(out2, async (url) => {
+      if (url.includes("ids=algorand")) throw new Error("down");
+      return { json: async () => ({}) };
+    });
+    ok("unpriced native: a symbol no source can price stays absent (honest), others untouched",
+      out2.ALGO === undefined && out2.BNB === 690);
+  }
+  // App wiring (source pins, matching house style).
+  {
+    const appSrc72 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const coreSrc72 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("unpriced native: splitRows delegates to splitHomeRows with the family native test",
+      appSrc72.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
+      && appSrc72.includes("splitRows(visible, priceOf, (b) => isNativeRow(famKey, b))"));
+    ok("unpriced native: token rows and scalar rows carry the 'price unavailable' marker",
+      appSrc72.includes(`<small>price unavailable</small>`)
+      && appSrc72.includes("if (price == null && Number(bal) > 0)"));
+    ok("unpriced native: family card headers use cardTotalHtml with the native amount + 'no live price'",
+      appSrc72.includes("cardTotalHtml(key, totalVal)") && appSrc72.includes("· no live price")
+      && appSrc72.includes("unpricedNativeByKey"));
+    ok("unpriced native: the hero sub carries the '+ holdings with no live price' note",
+      appSrc72.includes(`+ holdings with no live price`) && appSrc72.includes("hasUnpricedHoldings()"));
+    ok("unpriced native: scalar rows treat a missing price (null or undefined) as unavailable, never $0.00 for a held coin",
+      appSrc72.includes("if (price == null && Number(bal) > 0)")
+      && appSrc72.includes("scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)"));
+    ok("unpriced native: the cache hydrates before the price load and live prices merge over the cached floor",
+      appSrc72.includes("const cachedPriceSnapshot = { ...prices };")
+      && appSrc72.includes("prices = { ...cachedPriceSnapshot, ...p };")
+      && appSrc72.indexOf("hydrateBalanceCache(w);") < appSrc72.indexOf("const cachedPriceSnapshot")
+      && (appSrc72.match(/hydrateBalanceCache\(w\);/g) || []).length === 1);
+    ok("unpriced native: getPrices rejects a non-list Binance body and tops up per symbol",
+      coreSrc72.includes("Binance price response was not a list") && coreSrc72.includes("await mergeCgFallbackPrices(out)"));
   }
 }
 

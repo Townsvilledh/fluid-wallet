@@ -395,6 +395,30 @@ export async function getVerifiedPrice(symbol) {
   if ((hi - lo) / lo > 0.25) throw new Error(`Price sources disagree on ${symbol} (Binance ${bin}, CoinGecko ${cg}) — refusing to value the send.`);
   return hi;
 }
+/** Per-symbol CoinGecko retry for whatever the batch fallbacks left
+ *  unpriced (2026-11-09 unpriced-native fix): the batch fallback is
+ *  all-or-nothing — one error body, one slow id or one timeout empties
+ *  the WHOLE table (observed live: Binance geo-blocked with an HTTP
+ *  451 error object, then the single ~28-id CoinGecko request failed,
+ *  leaving even ALGO unpriced while pricing it alone answered in
+ *  ~200 ms). Any symbol CoinGecko CAN price must land, so the misses
+ *  get one bounded request each. Mutates and returns `out`; it only
+ *  ever ADDS prices, never removes one already present.
+ *  `fetchImpl` is injectable for tests. */
+export async function mergeCgFallbackPrices(out, fetchImpl) {
+  const F = fetchImpl || fetch;
+  const missing = Object.keys(CG_IDS).filter(s => out[s] == null);
+  for (const s of missing) {
+    try {
+      const res = await F(`https://api.coingecko.com/api/v3/simple/price?ids=${CG_IDS[s]}&vs_currencies=usd`, { signal: AbortSignal.timeout(4000) });
+      const data = await res.json();
+      const v = Number(data && data[CG_IDS[s]] && data[CG_IDS[s]].usd);
+      if (Number.isFinite(v) && v > 0) out[s] = v;
+    } catch { /* this symbol stays unpriced; the home UI says so honestly */ }
+  }
+  return out;
+}
+
 export async function getPrices() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
   try {
@@ -408,6 +432,7 @@ export async function getPrices() {
     // the typical case stays one fast batch.
     const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
     const data = await res.json();
+    if (!Array.isArray(data)) throw new Error("Binance price response was not a list");
     const byPair = Object.fromEntries(data.map(d => [d.symbol, parseFloat(d.price)]));
     for (const [sym, pair] of Object.entries(PRICE_PAIRS)) if (pair && byPair[pair]) out[sym] = byPair[pair];
     if (out.USDC == null && byPair.USDCUSDT) out.USDC = byPair.USDCUSDT;
@@ -423,6 +448,12 @@ export async function getPrices() {
       const data = await res.json();
       for (const s of missing) if (data[CG[s]]?.usd) out[s] = data[CG[s]].usd;
     } catch { /* prices stay partial; callers that need them refuse safely */ }
+  }
+  // Whatever the batch still missed gets a per-symbol retry: a native
+  // major is priced if ANY configured source can price it, never held
+  // hostage by one failing batch (see mergeCgFallbackPrices).
+  if (Object.keys(CG).some(s => out[s] == null)) {
+    try { await mergeCgFallbackPrices(out); } catch { /* partial prices stand */ }
   }
   return out;
 }
@@ -13658,6 +13689,51 @@ export function unpackBalanceCache(json, address) {
  *  rows in their given order. amountOf/valueOf read the caller's
  *  row shape; an unpriced positive counts as value 0 among the
  *  positives. */
+/** Split one family's home rows into the visible main list and the
+ *  collapsed "Other tokens" group (2026-11-09 unpriced-native fix).
+ *  THE NATIVE ROW IS TESTED FIRST AND UNCONDITIONALLY: a family's
+ *  native asset is a main row even when its price is missing (v null)
+ *  and even if a data source left verified === false on it — natives
+ *  are never "other tokens". A NON-native row joins main only when it
+ *  is not flagged unverified AND carries a USD value; an explicit
+ *  unverified flag or a missing price keeps a token in the group
+ *  (the owner's quarantine for unverified/unpriced tokens). Main is
+ *  ordered with sortHomeRows (held, then couldn't-load, then zeros);
+ *  the Other group keeps its given order.
+ *  rows: balance-row objects; valueOf(b) → USD value or null;
+ *  isNative(b) → boolean. Returns { main: [{b, v}], other: [{b, v}] }. */
+export function splitHomeRows(rows, valueOf, isNative) {
+  const main = [], other = [];
+  for (const b of rows) {
+    const v = valueOf(b);
+    if (isNative(b)) main.push({ b, v });
+    else if (b.verified !== false && v != null) main.push({ b, v });
+    else other.push({ b, v });
+  }
+  return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };
+}
+
+/** Count holdings with no live price (2026-11-09 unpriced-native
+ *  fix): rows whose amount is a real number greater than zero and
+ *  whose effective price — the row's own priceUsd when the field is
+ *  present (even explicitly null), else the symbol-table price — is
+ *  null. Failed reads (amount null: the balance is unknown, not
+ *  unpriced) and true zeros never count. groups: an iterable of
+ *  [rows, priceOf] pairs, where priceOf(b) returns the symbol-table
+ *  price for that row (or null). Drives the hero's "+ holdings with
+ *  no live price" note; it counts, it never values. */
+export function countUnpricedHoldings(groups) {
+  let n = 0;
+  for (const [rows, priceOf] of groups) {
+    if (!Array.isArray(rows)) continue;
+    for (const b of rows) {
+      if (!b || b.amount == null || !(Number(b.amount) > 0)) continue;
+      const p = b.priceUsd !== undefined ? b.priceUsd : priceOf(b);
+      if (p == null) n++;
+    }
+  }
+  return n;
+}
 export function sortHomeRows(items, amountOf, valueOf) {
   const tier = (x) => {
     const a = amountOf(x);

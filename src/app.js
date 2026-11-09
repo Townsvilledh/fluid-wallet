@@ -42,7 +42,7 @@ import {
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
-  sortHomeFamilies, sortHomeRows,
+  sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,
 } from "./wallet-core.js";
 
@@ -561,9 +561,16 @@ async function renderMain() {
   // prices = {} for the session, which also silently zeroed every
   // family's USD total and defeated the held-first ordering).
   // Prices now load in parallel and repaint values when they land;
-  // amounts paint first, dollars a beat later. On timeout the last
-  // known (or cached) prices stay — display-only either way; sends
-  // re-verify prices independently.
+  // amounts paint first, dollars a beat later. The cache hydrates
+  // FIRST (2026-11-09 unpriced-native fix): its stored prices are
+  // the floor this load merges over, so a slow or partial live load
+  // can add prices but never strip the ones the last good session
+  // had — cached amounts painting with their cached prices is what
+  // makes the first paint truthful. On timeout the merged (cached)
+  // prices stay — display-only either way; sends re-verify prices
+  // independently.
+  hydrateBalanceCache(w);
+  const cachedPriceSnapshot = { ...prices };
   (async () => {
     try {
       const p = await Promise.race([
@@ -571,9 +578,9 @@ async function renderMain() {
         new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 20000)),
       ]);
       if (wallet !== w) return; // locked (or wallet switched) meanwhile
-      prices = p;
+      prices = { ...cachedPriceSnapshot, ...p };
       paintAssets();
-    } catch { /* keep last-known prices */ }
+    } catch { /* keep last-known (cached) prices */ }
   })();
   if (wallet !== w) return;
   // Bitcoin first (all chains, one wallet)
@@ -760,9 +767,10 @@ async function renderMain() {
     markLoaded("cosmos"); paintAssets();
   });
   $("assetList").innerHTML = "Loading assets…";
-  // Paint last-known balances instantly (marked as updating) — the
-  // live reads fired above replace them family by family.
-  hydrateBalanceCache(w);
+  // Hydration already ran at the top of renderMain (its prices are
+  // the floor the live price merge builds on); the cached amounts it
+  // painted stand until the live reads fired above replace them
+  // family by family.
   evmLoadFailed = false;
   try {
     balances = await Promise.race([
@@ -889,6 +897,46 @@ function scopedTotal() {
   if (viewKey === "evm") return m.evm;
   return m[viewKey] != null ? m[viewKey] : 0;
 }
+
+/** Unpriced-holdings signal for the hero (2026-11-09 unpriced-native
+ *  fix): holdings the totals CANNOT value — a nonzero balance whose
+ *  price never arrived. The priced total stays the priced total; this
+ *  only drives the "+ holdings with no live price" note, so the hero
+ *  never presents a bare $0.00 as the whole story while the wallet
+ *  holds something. The price lookups mirror heroTotal() exactly
+ *  (row priceUsd wins, EVM natives read the network symbol, wNEAR
+ *  reads NEAR, Cosmos reads its symbol table); failed reads (amount
+ *  null / load-failed flags) are unknown, not unpriced, and never
+ *  counted. */
+function unpricedHoldingGroups() {
+  const net = NETWORKS[networkKey];
+  return [
+    [balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]],
+    [tronBalances, (b) => prices[b.symbol]],
+    [solBalances, (b) => prices[b.symbol]],
+    [suiBalances, (b) => prices[b.symbol]],
+    [stellarBalances, (b) => prices[b.symbol]],
+    [tonBalances, (b) => prices[b.symbol]],
+    [nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]],
+    [algoBalances, (b) => prices[b.symbol]],
+    [xrpBalances, (b) => prices[b.symbol]],
+    [dotBalances, (b) => prices[b.symbol]],
+    [aptosBalances, (b) => prices[b.symbol]],
+    [stacksBalances, (b) => prices[b.symbol]],
+    [cosmosRows, (r) => prices[r.symbol]],
+  ];
+}
+function countUnpricedInView() {
+  let n = 0;
+  const btcTotal = Number(btcBal) + Number(btcTrBal);
+  if (!btcLoadFailed && btcTotal > 0 && prices.BTC == null) n++;
+  for (const [bal, sym] of [[ltcBal, "LTC"], [dogeBal, "DOGE"], [bchBal, "BCH"]]) {
+    if (Number(bal) > 0 && prices[sym] == null) n++;
+  }
+  n += countUnpricedHoldings(unpricedHoldingGroups());
+  return n;
+}
+function hasUnpricedHoldings() { return countUnpricedInView() > 0; }
 function viewDisplayName() {
   if (viewKey === "all") return "All networks";
   if (viewKey === "evm") return NETWORKS[networkKey].name;
@@ -928,7 +976,9 @@ function paintHeader() {
     // While a cache paint is still waiting on live reads, say so —
     // the numbers on screen are last-known, not final.
     const updating = cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k));
-    sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`) + (updating ? " · Updating…" : "");
+    sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`)
+      + (hasUnpricedHoldings() ? " + holdings with no live price" : "")
+      + (updating ? " · Updating…" : "");
   }
   const va = viewAddress();
   const addrEl = $("addrText");
@@ -956,10 +1006,13 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
   const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
   const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
   // amount null = the read failed: the balance is unknown, and the
-  // row says so instead of dressing a placeholder zero as fact.
+  // row says so instead of dressing a placeholder zero as fact. A
+  // known amount with NO live price says "price unavailable" —
+  // never a blank where a $0.00 could be read into it.
   const amt = b.amount == null
     ? `<b>—</b><small>couldn't load</small>`
-    : `<b>${fmt(b.amount)}</b><small>${v != null ? usd(v) : ""}</small>`;
+    : (v != null ? `<b>${fmt(b.amount)}</b><small>${usd(v)}</small>`
+        : `<b>${fmt(b.amount)}</b><small>price unavailable</small>`);
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
       <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
       <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small></span>
@@ -1000,7 +1053,7 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
       else visible.push(b);
     }
   }
-  const sp = splitRows(visible, priceOf);
+  const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b));
   let html = sp.main.map(renderItem).join("");
   html += otherGroupHtml(famKey, sp.other, renderItem);
   if (zero.length) html += zeroGroupHtml(famKey, zero.map(b => ({ b, v: rowUsdValue(b, priceOf(b)) })), renderItem);
@@ -1094,17 +1147,12 @@ async function retryFamily(key, title) {
     return fail(`${title} balances`);
   } catch { return fail(`${title} balances`); }
 }
-function splitRows(rows, symPriceOf) {
-  const main = [], other = [];
-  for (const b of rows) {
-    const v = rowUsdValue(b, symPriceOf(b));
-    if (b.verified !== false && v != null) main.push({ b, v }); else other.push({ b, v });
-  }
-  // Home ordering: held rows first (USD value descending), then
-  // couldn't-load rows (amount null), then true zeros in their
-  // given order. The Other group (unverified / unpriced) keeps its
-  // given order — that quarantine is a separate axis.
-  return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };
+function splitRows(rows, symPriceOf, isNative = () => false) {
+  // The split itself lives in wallet-core (splitHomeRows) so the
+  // rule is unit-testable: the native row is tested FIRST and goes
+  // to main unconditionally — priced or not, flagged or not. A
+  // native asset is never an "other token".
+  return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);
 }
 function otherGroupHtml(famKey, items, renderItem) {
   if (!items.length) return "";
@@ -1120,9 +1168,13 @@ function otherGroupHtml(famKey, items, renderItem) {
  *  token row (tokenRowHtml) — the balance is unknown, never a
  *  dressed-up zero. */
 function scalarAmtHtml(failed, bal, price) {
-  return failed
-    ? `<b>—</b><small>couldn't load</small>`
-    : `<b>${fmt(bal, 8)}</b><small>${usd(bal * (price || 0))}</small>`;
+  if (failed) return `<b>—</b><small>couldn't load</small>`;
+  // A held scalar coin with no live price shows its amount with an
+  // honest "price unavailable" — the old `price || 0` printed a
+  // $0.00 under a real balance. A true zero keeps its $0.00: that
+  // one is a fact, not a missing price.
+  if (price == null && Number(bal) > 0) return `<b>${fmt(bal, 8)}</b><small>price unavailable</small>`;
+  return `<b>${fmt(bal, 8)}</b><small>${usd(bal * (price || 0))}</small>`;
 }
 
 function paintAssets() {
@@ -1262,7 +1314,7 @@ function paintAssets() {
         <span class="grow"><b class="rname">${esc(r.name)}</b><small>${esc(r.symbol)} · Cosmos</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>unavailable</small>`
-          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : ""}</small>`}</span></div>`;
+          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "price unavailable" : usd(0))}</small>`}</span></div>`;
     grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [rowHtml]);
   });
   // Lightning scoped view (§4.2): no token rows — one row into the
@@ -1290,6 +1342,46 @@ function paintAssets() {
   // chains share one Cosmos card in the All view.
   const totals = familyUsdTotals();
   const alerts = familyAlertMap();
+  // Unpriced-native card totals (2026-11-09 unpriced-native fix): a
+  // family holding its native asset with no live price shows the
+  // native amount in its card header instead of a bare priced-sum
+  // $0.00. Cosmos is keyed per chain row (its card spans seven).
+  const unpricedNativeByKey = {};
+  {
+    const net0 = NETWORKS[networkKey];
+    if (!evmLoadFailed) {
+      const row = balances.find(b => isNativeRow("evm", b));
+      if (row && Number(row.amount) > 0) {
+        const p = priceOfRow(row, row.address ? prices[row.symbol] : prices[net0.priceSym]);
+        if (p == null) unpricedNativeByKey.evm = { amount: fmt(row.amount), sym: row.symbol };
+      }
+    }
+    const btcT = Number(btcBal) + Number(btcTrBal);
+    if (!btcLoadFailed && btcT > 0 && prices.BTC == null)
+      unpricedNativeByKey.bitcoin = { amount: fmt(btcT), sym: "BTC" };
+    for (const [bal, sym, key] of [[ltcBal, "LTC", "litecoin"], [dogeBal, "DOGE", "dogecoin"], [bchBal, "BCH", "bitcoincash"]])
+      if (Number(bal) > 0 && prices[sym] == null) unpricedNativeByKey[key] = { amount: fmt(bal, 8), sym };
+    for (const [key, rows, sym0, flag] of [
+      ["tron", tronBalances, "TRX", tronLoadFailed], ["solana", solBalances, "SOL", false],
+      ["sui", suiBalances, "SUI", false], ["stellar", stellarBalances, "XLM", stellarLoadFailed],
+      ["ton", tonBalances, "TON", tonLoadFailed], ["near", nearBalances, "NEAR", nearLoadFailed],
+      ["algorand", algoBalances, "ALGO", algoLoadFailed], ["xrpl", xrpBalances, "XRP", xrpLoadFailed],
+      ["polkadot", dotBalances, "DOT", dotLoadFailed], ["aptos", aptosBalances, "APT", aptosLoadFailed],
+      ["stacks", stacksBalances, "STX", stacksLoadFailed],
+    ]) {
+      if (flag || !Array.isArray(rows)) continue;
+      const row = rows.find(b => isNativeRow(key, b)) || rows.find(b => b.symbol === sym0 && !b.address);
+      if (row && Number(row.amount) > 0 && priceOfRow(row, prices[row.symbol]) == null)
+        unpricedNativeByKey[key] = { amount: fmt(row.amount), sym: row.symbol };
+    }
+    for (const r of cosmosRows)
+      if (Number(r.amount) > 0 && prices[r.symbol] == null) { unpricedNativeByKey[r.key] = { amount: fmt(r.amount), sym: r.symbol }; unpricedNativeByKey.cosmos = unpricedNativeByKey[r.key]; }
+  }
+  const cardTotalHtml = (key, totalVal) => {
+    const un = unpricedNativeByKey[key];
+    if (un && !(totalVal > 0)) return `<span class="unpriced-total">${esc(un.amount)} ${esc(un.sym)} · no live price</span>`;
+    return totalVal == null ? "—" : usd(totalVal || 0);
+  };
   // Held is a RAW-balance fact (2026-11-09 ordering fix): any
   // nonzero amount in a family marks it held for sortHomeFamilies,
   // independent of prices — a priced-or-not holding must never
@@ -1324,7 +1416,7 @@ function paintAssets() {
   const titleOf = (key) => key === "evm" ? net.name : key === "bitcoin" ? "Bitcoin" : key === "cosmos" ? "Cosmos"
     : (RECEIVE_NETWORKS.find(x => x.id === key) || {}).name || key;
   const cardFor = (key, innerHtml, titled, totalVal) => {
-    const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${totalVal == null ? "—" : usd(totalVal || 0)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
+    const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${cardTotalHtml(key, totalVal)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
     return `<div class="card groupcard">${head}${innerHtml}</div>`;
   };
   let html = "";
