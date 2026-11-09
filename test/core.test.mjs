@@ -3369,7 +3369,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrc.includes('id="zeroToggle"') && appSrc.includes("function zeroGroupHtml("));
   ok("ui-p1: unloaded families render skeleton rows, driven by famLoaded",
     appSrc.includes("function skeletonRowsHtml(") && appSrc.includes("const famLoaded = new Set()")
-    && appSrc.includes('famLoaded.add("evm")') && appSrc.includes('famLoaded.add("cosmos")')
+    && appSrc.includes('markLoaded("evm")') && appSrc.includes('markLoaded("cosmos")')
+    && appSrc.includes("const markLoaded = (k) => { famLoaded.add(k); liveFams.add(k); };")
     && idxSrc.includes("@keyframes shimmer"));
   ok("ui-p1: wallet header shows name + context address with a lock button (§4.1)",
     idxSrc.includes('class="apphead"') && idxSrc.includes('id="hdrLockBtn"')
@@ -4610,8 +4611,46 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("home rows: an all-zero family's row order is unchanged",
     sortHomeRows(zeroRows, (x) => x.b.amount, (x) => x.v).map(x => x.id).join() === "a,b,c");
 
+  // --- 2026-11-09 load/order fix: HELD is a raw-balance fact ---
+  // The owner's case end to end: he holds ALGO (raw amount > 0) while
+  // its USD total computes to 0 — the price feed missed it — and the
+  // zero BNB/EVM family must NOT sit above it. Under the old
+  // totalUsd-only tier this rendered evm,bitcoin,...,algorand.
+  const famH = (key, totalUsd, failed = false, held = false) => ({ key, totalUsd, failed, held });
+  const ownerCase = FIXED.map(k => famH(k, 0, false, k === "algorand"));
+  ok("home order: a raw-held but unpriced ALGO family beats the zero BNB/EVM family",
+    keys(sortHomeFamilies(ownerCase)).join() === ["algorand", ...FIXED.filter(k => k !== "algorand")].join());
+  // Prices entirely missing (the price-gate timeout shape): every
+  // total is 0, held still wins on the raw fact alone.
+  const noPrices = [famH("evm", 0, false, false), famH("algorand", 0, false, true), famH("bitcoin", 0)];
+  ok("home order: with no prices at all, the held family still leads",
+    keys(sortHomeFamilies(noPrices)).join() === "algorand,evm,bitcoin");
+  // Within the held tier USD still orders: priced holdings first
+  // (descending), unpriced holdings after, in given order.
+  const heldMix = [famH("algorand", 0, false, true), famH("sui", 25, false, true), famH("tron", 0, false, true), famH("evm", 100, false, true), famH("bitcoin", 0)];
+  ok("home order: within held, USD desc; unpriced held keep given order after priced",
+    keys(sortHomeFamilies(heldMix)).join() === "evm,sui,algorand,tron,bitcoin");
+  // A family that is BOTH held and flagged failed (partial read with
+  // real rows landed) is held — its value outranks the unknown tier.
+  const heldFailed = [famH("evm", null, true, false), famH("solana", 0, true, true), famH("bitcoin", 0)];
+  ok("home order: held+failed ranks as held, above unknown and zero",
+    keys(sortHomeFamilies(heldFailed)).join() === "solana,evm,bitcoin");
+  // Backward compatibility: entries without `held` behave exactly
+  // as before (the pre-fix fixtures above all rely on this).
+
   // app.js wiring (source pins, as in sections 61/62).
   const appSrcHome = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("home order: paintAssets passes the raw-balance held map into the cards",
+    appSrcHome.includes("held: !!heldMap[g.key]") && appSrcHome.includes("held: heldMap.cosmos")
+    && appSrcHome.includes("bitcoin: (Number(btcBal) + Number(btcTrBal)) > 0,"));
+  ok("load speed: renderMain no longer awaits prices before balance loads",
+    !appSrcHome.includes("prices = await Promise.race(")
+    && appSrcHome.includes("Prices NO LONGER GATE the render"));
+  ok("load speed: the balance cache is wired (hydrate in renderMain, persist in paintAssets)",
+    appSrcHome.includes("hydrateBalanceCache(w);") && appSrcHome.includes("persistBalanceCache();")
+    && appSrcHome.includes("BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,"));
+  ok("load speed: the hero marks a cache paint as updating until every family is live",
+    appSrcHome.includes("cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k))"));
   ok("home order: paintAssets renders the All view through sortHomeFamilies",
     appSrcHome.includes("html = sortHomeFamilies(cards).map(c => c.html).join(\"\");")
     && appSrcHome.includes("sortHomeFamilies, sortHomeRows,"));
@@ -4628,6 +4667,45 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("home order: ordering helpers are used by the home list only (send sheets untouched)",
     (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 1
     && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 2);
+}
+
+// 63b. Balance cache pack/unpack (2026-11-09 load fix): the cache is
+// a paint-early layer of PUBLIC data only — round-trip fidelity,
+// foreign-wallet rejection, malformed-input rejection, and the
+// fixed field list (nothing beyond balance rows/scalars/prices can
+// be smuggled into storage through the packer).
+{
+  const { packBalanceCache, unpackBalanceCache, BALANCE_CACHE_KEY } = await import("../src/wallet-core.js");
+  const ADDR = "0xb6714bf82EC9a1b27623FF0386e24307a8A185E1";
+  const snap = {
+    evmNetwork: "bsc",
+    evmRows: [{ symbol: "BNB", amount: "0.000012166494395051", address: null }],
+    rows: { algorand: [{ symbol: "ALGO", amount: "12.5", address: null, decimals: 6 }], solana: [{ symbol: "SOL", amount: "0" }] },
+    cosmosRows: [{ key: "atom", symbol: "ATOM", amount: "0" }],
+    scalars: { btcBal: 0, btcTrBal: 0, ltcBal: 0.25 },
+    prices: { ALGO: 0.16, BNB: 690 },
+    seedPhrase: "must never be packed",
+    keystore: "must never be packed",
+  };
+  const packed = packBalanceCache(ADDR, snap, 1700000000000);
+  ok("balance cache: pack produces a string under a fluid_* key (full-wipe covers it)",
+    typeof packed === "string" && BALANCE_CACHE_KEY.startsWith("fluid_"));
+  const back = unpackBalanceCache(packed, ADDR);
+  ok("balance cache: round-trip preserves rows, scalars, evm slice and prices",
+    !!back && back.fams.algorand[0].amount === "12.5" && back.fams.cosmos[0].symbol === "ATOM"
+    && back.evm.network === "bsc" && back.evm.rows[0].symbol === "BNB"
+    && back.scalars.ltcBal === 0.25 && back.prices.ALGO === 0.16 && back.t === 1700000000000);
+  ok("balance cache: secret-shaped fields are dropped by the fixed field list",
+    !!back && !("seedPhrase" in back) && !("keystore" in back) && !JSON.stringify(back).includes("must never"));
+  ok("balance cache: a different wallet's cache is rejected",
+    unpackBalanceCache(packed, "0x0000000000000000000000000000000000000001") === null);
+  ok("balance cache: malformed and foreign payloads are rejected",
+    unpackBalanceCache("not json", ADDR) === null
+    && unpackBalanceCache(JSON.stringify({ v: 2, address: ADDR, fams: {} }), ADDR) === null
+    && unpackBalanceCache(JSON.stringify({ v: 1, address: ADDR, fams: { solana: "nope" } }), ADDR) === null
+    && unpackBalanceCache(null, ADDR) === null && unpackBalanceCache(packed, null) === null);
+  ok("balance cache: an empty snapshot packs to null",
+    packBalanceCache(ADDR, { rows: {}, scalars: {} }) === null && packBalanceCache(null, snap) === null);
 }
 
 // 64. Relay as PRIMARY swap router (router verdict, 2026-11-08):

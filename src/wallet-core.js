@@ -13474,24 +13474,90 @@ export async function sendAptos(phrase, { to, amount, token = null }) {
  * Both are stable: entries that tie keep the order they were given,
  * so an all-zero wallet renders in exactly the order it always has. */
 
-/** Order home family cards: families holding value first (USD
- *  total descending); then families whose balances FAILED to load
- *  (total null, or the family's load-failed flag set) — unknown is
- *  not zero, so they stay visible above the true zeros; then the
- *  all-zero families in their given order.
- *  entries: [{ key, totalUsd (number|null), failed (boolean) }] */
+/** Order home family cards: families HOLDING anything first —
+ *  "held" is a RAW-balance fact (entries carry `held` when any raw
+ *  amount in the family is nonzero), never a USD fact. The first
+ *  version keyed the held tier on totalUsd > 0, so a real holding
+ *  whose price was missing (or whose whole price fetch had failed)
+ *  classified as zero and sank to its fixed-order slot — the owner's
+ *  ALGO buried under a zero BNB card (2026-11-09). USD value only
+ *  orders WITHIN the held tier (descending; an unpriced holding
+ *  counts as 0 there, so priced holdings lead and unpriced ones
+ *  follow in given order — still above every non-held family).
+ *  Then families whose balances FAILED to load (total null, or the
+ *  family's load-failed flag set) — unknown is not zero, so they
+ *  stay visible above the true zeros; then the all-zero families
+ *  in their given order.
+ *  entries: [{ key, totalUsd (number|null), failed (boolean),
+ *              held (boolean, optional) }] */
 export function sortHomeFamilies(entries) {
   const tier = (e) => {
-    if (e.totalUsd != null && e.totalUsd > 0) return 0;
+    if (e.held || (e.totalUsd != null && e.totalUsd > 0)) return 0;
     if (e.totalUsd == null || e.failed) return 1;
     return 2;
   };
   return entries.map((e, i) => [e, i]).sort((a, b) => {
     const ta = tier(a[0]), tb = tier(b[0]);
     if (ta !== tb) return ta - tb;
-    if (ta === 0) { const d = b[0].totalUsd - a[0].totalUsd; if (d !== 0) return d; }
+    if (ta === 0) { const d = (b[0].totalUsd || 0) - (a[0].totalUsd || 0); if (d !== 0) return d; }
     return a[1] - b[1];
   }).map(([e]) => e);
+}
+
+/* ================= Home balance cache (2026-11-09) =================
+ * Last-known balances, kept on-device so opening the wallet paints
+ * real amounts instantly instead of skeletons for ~30 s while the
+ * public endpoints answer. The cache holds ONLY public data —
+ * balance rows, scalar balances and the price map, all of which are
+ * visible on-chain or from public price feeds. No keys, no seed, no
+ * keystore material ever enters it (packBalanceCache copies a fixed
+ * field list). It is keyed by the wallet's EVM address, lives under
+ * a fluid_* localStorage key (so the full-wipe path removes it with
+ * the wallet), and is a PAINT-EARLY layer only: live reads replace
+ * it family by family, the UI marks the paint as updating until
+ * they land, and a failed live read renders couldn't-load — the
+ * cached value is never presented as final. */
+export const BALANCE_CACHE_KEY = "fluid_balcache_v1";
+const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks"];
+const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal"];
+
+/** Serialise a balance snapshot for the cache. `snap` is the app's
+ *  plain-data balance state: { evmNetwork, evmRows, rows: {family:
+ *  [...]}, scalars: {btcBal, ...}, cosmosRows, prices }. Anything
+ *  not on the fixed field list is dropped. Returns a JSON string,
+ *  or null when the snapshot carries nothing worth caching. */
+export function packBalanceCache(address, snap, now = Date.now()) {
+  if (!address || !snap || typeof snap !== "object") return null;
+  const out = { v: 1, address: String(address), t: Number(now) || 0, fams: {} };
+  let any = false;
+  const rows = snap.rows || {};
+  for (const k of BALANCE_CACHE_ROW_KEYS) {
+    if (Array.isArray(rows[k])) { out.fams[k] = rows[k]; any = true; }
+  }
+  if (Array.isArray(snap.cosmosRows)) { out.fams.cosmos = snap.cosmosRows; any = true; }
+  if (typeof snap.evmNetwork === "string" && Array.isArray(snap.evmRows)) {
+    out.evm = { network: snap.evmNetwork, rows: snap.evmRows }; any = true;
+  }
+  const sc = snap.scalars || {};
+  const scalars = {};
+  for (const k of BALANCE_CACHE_SCALAR_KEYS) if (Number.isFinite(Number(sc[k]))) scalars[k] = Number(sc[k]);
+  if (Object.keys(scalars).length) { out.scalars = scalars; any = true; }
+  if (snap.prices && typeof snap.prices === "object") out.prices = snap.prices;
+  return any ? JSON.stringify(out) : null;
+}
+
+/** Parse + validate a cached snapshot for `address`. Returns the
+ *  snapshot object, or null for anything malformed, foreign (a
+ *  different wallet's cache), or from an unknown version — the
+ *  caller then simply paints from live reads as before. */
+export function unpackBalanceCache(json, address) {
+  if (!json || !address) return null;
+  let o; try { o = JSON.parse(json); } catch { return null; }
+  if (!o || o.v !== 1 || String(o.address).toLowerCase() !== String(address).toLowerCase()) return null;
+  if (!o.fams || typeof o.fams !== "object") return null;
+  for (const k of Object.keys(o.fams)) if (!Array.isArray(o.fams[k])) return null;
+  if (o.evm != null && (typeof o.evm !== "object" || typeof o.evm.network !== "string" || !Array.isArray(o.evm.rows))) return null;
+  return o;
 }
 
 /** Order rows within one family: positive balances first (USD

@@ -43,6 +43,7 @@ import {
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows,
+  BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,
 } from "./wallet-core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -64,6 +65,20 @@ let showZeroBalances = false;
 try { showZeroBalances = localStorage.getItem(SHOW_ZERO_LS) === "1"; } catch { /* storage unavailable */ }
 const expandedZero = new Set();   // family keys whose "Zero balances" group is expanded
 const famLoaded = new Set();      // families whose balance read settled this render (§4.13 skeletons)
+// Balance-cache paint state (2026-11-09 load fix): liveFams tracks
+// families whose LIVE read settled this render (famLoaded also
+// gains cache-hydrated families, so the two sets answer different
+// questions); hydratedFams tracks which families are currently
+// showing last-known cached values; cachePaint is true while any
+// hydrated family is still waiting on its live read — the hero
+// carries an "Updating…" marker for exactly that window, and a
+// failed live read always overrides the cached paint.
+const liveFams = new Set();
+const hydratedFams = new Set();
+let cachePaint = false;
+const markLoaded = (k) => { famLoaded.add(k); liveFams.add(k); };
+const HOME_FAMILIES = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
+  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash"];
 function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
 const viewMeta = () => RECEIVE_NETWORKS.find(m => m.id === viewKey) || null;
 const isCosmosView = () => COSMOS_CHAINS.some(c => c.key === viewKey);
@@ -432,6 +447,90 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
   }
 }
 
+/* ---------- balance cache: paint last-known amounts instantly ----------
+ * hydrateBalanceCache runs mid-renderMain (after the placeholder
+ * state is set up, before the EVM await): it copies the cached rows
+ * into the live globals and marks those families loaded, so the
+ * first paint shows real amounts — marked "Updating…" in the hero —
+ * instead of skeletons. Every live read then replaces its family's
+ * paint as it lands; persistBalanceCache (called from paintAssets)
+ * writes back only families whose LIVE read has settled this
+ * render, so a failed read never overwrites the last good values,
+ * and the failure rendering (couldn't-load) overrides the cache. */
+function hydrateBalanceCache(w) {
+  let cached = null;
+  try { cached = unpackBalanceCache(localStorage.getItem(BALANCE_CACHE_KEY), w.address); } catch { /* storage unavailable */ }
+  if (!cached) return;
+  if (cached.prices && typeof cached.prices === "object" && Object.keys(cached.prices).length) {
+    prices = { ...prices, ...cached.prices };
+  }
+  const f = cached.fams || {};
+  const put = (key, apply) => { if (Array.isArray(f[key])) { apply(f[key]); famLoaded.add(key); hydratedFams.add(key); } };
+  put("tron", (rows) => { tronBalances = rows; });
+  put("solana", (rows) => { solBalances = rows; });
+  put("sui", (rows) => { suiBalances = rows; });
+  put("stellar", (rows) => { stellarBalances = rows; });
+  put("ton", (rows) => { tonBalances = rows; });
+  put("near", (rows) => { nearBalances = rows; });
+  put("algorand", (rows) => { algoBalances = rows; });
+  put("xrpl", (rows) => { xrpBalances = rows; });
+  put("polkadot", (rows) => { dotBalances = rows; });
+  put("aptos", (rows) => { aptosBalances = rows; });
+  put("stacks", (rows) => { stacksBalances = rows; });
+  put("cosmos", (rows) => { cosmosRows = rows; });
+  if (cached.evm && cached.evm.network === networkKey && Array.isArray(cached.evm.rows)) {
+    balances = cached.evm.rows;
+    famLoaded.add("evm"); hydratedFams.add("evm");
+  }
+  const sc = cached.scalars || {};
+  if (Number.isFinite(Number(sc.btcBal)) || Number.isFinite(Number(sc.btcTrBal))) {
+    if (Number.isFinite(Number(sc.btcBal))) btcBal = Number(sc.btcBal);
+    if (Number.isFinite(Number(sc.btcTrBal))) btcTrBal = Number(sc.btcTrBal);
+    famLoaded.add("bitcoin"); hydratedFams.add("bitcoin");
+  }
+  if (Number.isFinite(Number(sc.ltcBal))) { ltcBal = Number(sc.ltcBal); famLoaded.add("litecoin"); hydratedFams.add("litecoin"); }
+  if (Number.isFinite(Number(sc.dogeBal))) { dogeBal = Number(sc.dogeBal); famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
+  if (Number.isFinite(Number(sc.bchBal))) { bchBal = Number(sc.bchBal); famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
+  cachePaint = hydratedFams.size > 0;
+  if (cachePaint) paintAssets();
+}
+
+let lastCacheWrite = 0;
+function persistBalanceCache() {
+  if (!wallet || !liveFams.size) return;
+  const now = Date.now();
+  const complete = HOME_FAMILIES.every((k) => liveFams.has(k));
+  if (!complete && now - lastCacheWrite < 2000) return; // throttle mid-load writes
+  lastCacheWrite = now;
+  try {
+    const prev = unpackBalanceCache(localStorage.getItem(BALANCE_CACHE_KEY), wallet.address);
+    const rows = { ...(prev ? prev.fams : {}) };
+    const take = (key, arr) => { if (liveFams.has(key)) rows[key] = arr; };
+    take("tron", tronBalances); take("solana", solBalances); take("sui", suiBalances);
+    take("stellar", stellarBalances); take("ton", tonBalances); take("near", nearBalances);
+    take("algorand", algoBalances); take("xrpl", xrpBalances); take("polkadot", dotBalances);
+    take("aptos", aptosBalances); take("stacks", stacksBalances);
+    delete rows.cosmos; // cosmos travels via cosmosRows in the pack format
+    const scalars = { ...(prev && prev.scalars ? prev.scalars : {}) };
+    if (liveFams.has("bitcoin")) { scalars.btcBal = btcBal; scalars.btcTrBal = btcTrBal; }
+    if (liveFams.has("litecoin")) scalars.ltcBal = ltcBal;
+    if (liveFams.has("dogecoin")) scalars.dogeBal = dogeBal;
+    if (liveFams.has("bitcoincash")) scalars.bchBal = bchBal;
+    const evm = liveFams.has("evm") && !evmLoadFailed
+      ? { network: networkKey, rows: balances }
+      : (prev && prev.evm ? prev.evm : null);
+    const cosmosRowsSnap = liveFams.has("cosmos") ? cosmosRows
+      : (prev && prev.fams && Array.isArray(prev.fams.cosmos) ? prev.fams.cosmos : null);
+    const packed = packBalanceCache(wallet.address, {
+      rows, scalars,
+      ...(evm ? { evmNetwork: evm.network, evmRows: evm.rows } : {}),
+      ...(cosmosRowsSnap ? { cosmosRows: cosmosRowsSnap } : {}),
+      prices,
+    }, now);
+    if (packed) localStorage.setItem(BALANCE_CACHE_KEY, packed);
+  } catch { /* storage unavailable/full — the cache is an optimisation only */ }
+}
+
 async function renderMain() {
   // Snapshot the wallet for the whole render: this function awaits
   // (prices, balances) while the auto-lock / lock button can null
@@ -449,18 +548,34 @@ async function renderMain() {
   // in the description across a remove + import.
   renderAgents();
   famLoaded.clear();
+  liveFams.clear();
+  hydratedFams.clear();
+  cachePaint = false;
   paintHeader();
-  // Bounded: getPrices has no timeout of its own, and renderMain awaits
-  // it before ANY balance load fires — a stalled price fetch used to
-  // stall the whole render (and the More-tab Refresh with it) while
-  // looking like nothing happened. Prices degrade to {} on timeout.
-  try {
-    prices = await Promise.race([
-      getPrices(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 10000)),
-    ]);
-  } catch { prices = {}; }
-  if (wallet !== w) return; // locked (or wallet switched) while prices loaded
+  // Prices NO LONGER GATE the render (2026-11-09 load fix): this
+  // function used to await getPrices() — raced against a 10 s
+  // timeout — before ANY balance load fired, so opening the wallet
+  // meant staring at skeletons for the whole price round trip
+  // (measured: first balance request left ~3.5 s after the prices
+  // that preceded it; a stalled fetch ate the full 10 s and left
+  // prices = {} for the session, which also silently zeroed every
+  // family's USD total and defeated the held-first ordering).
+  // Prices now load in parallel and repaint values when they land;
+  // amounts paint first, dollars a beat later. On timeout the last
+  // known (or cached) prices stay — display-only either way; sends
+  // re-verify prices independently.
+  (async () => {
+    try {
+      const p = await Promise.race([
+        getPrices(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 10000)),
+      ]);
+      if (wallet !== w) return; // locked (or wallet switched) meanwhile
+      prices = p;
+      paintAssets();
+    } catch { /* keep last-known prices */ }
+  })();
+  if (wallet !== w) return;
   // Bitcoin first (all chains, one wallet)
   btcAddr = bitcoinAddress(w.mnemonic.phrase);
   // Fluid name: paint the owned/claim state, then (once per session) try
@@ -473,11 +588,11 @@ async function renderMain() {
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
   btcSegwitFailed = btcTaprootFailed = false; btcLoadFailed = false;
-  getBitcoinBalance(btcAddr).then(b => { btcBal = b; btcSegwitFailed = false; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { btcSegwitFailed = true; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); });
+  getBitcoinBalance(btcAddr).then(b => { btcBal = b; btcSegwitFailed = false; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcSegwitFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
   // Taproot (BIP86) — a second Bitcoin account from the same seed
   // (Build B): its own address and balance, rolled into the BTC totals.
   btcTrAddr = bitcoinTaprootAddress(w.mnemonic.phrase);
-  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; btcTaprootFailed = false; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); }).catch(() => { btcTaprootFailed = true; syncBtcLoadFailed(); famLoaded.add("bitcoin"); paintAssets(); });
+  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; btcTaprootFailed = false; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcTaprootFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
@@ -497,7 +612,7 @@ async function renderMain() {
         tronLoadFailed = true;
         tronBalances = tronBalances.map(b => ({ ...b, amount: null }));
       }
-      famLoaded.add("tron"); paintAssets();
+      markLoaded("tron"); paintAssets();
     });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
   // Ed25519 branch of the same seed, its own rows, painted with zero
@@ -506,7 +621,17 @@ async function renderMain() {
   solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana")
-    .then(rows => { if (rows) solBalances = rows; famLoaded.add("solana"); paintAssets(); });
+    .then(rows => {
+      if (rows) solBalances = rows;
+      else if (hydratedFams.has("solana")) {
+        // The live read failed over a cache paint: the cached rows
+        // must not stand as final — replace them with couldn't-load
+        // rows (the EVM failure shape) until a read succeeds.
+        solBalances = [{ symbol: "SOL", amount: null, address: null, decimals: 9 },
+                       ...SOLANA_TOKENS.map(t => ({ ...t, amount: null }))];
+      }
+      markLoaded("solana"); paintAssets();
+    });
   // Sui (Phase 2b): SLIP-0010 Ed25519 branch (coin type 784) of the
   // same seed — the same derivation family as Solana, Sui's own path.
   // Also the future home of the OGO ERA Companion NFT.
@@ -514,7 +639,16 @@ async function renderMain() {
   suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
                  ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
-    .then(rows => { if (rows) suiBalances = rows; famLoaded.add("sui"); paintAssets(); });
+    .then(rows => {
+      if (rows) suiBalances = rows;
+      else if (hydratedFams.has("sui")) {
+        // Same cache-honesty rule as Solana: a failed live read
+        // replaces the cached paint with couldn't-load rows.
+        suiBalances = [{ symbol: "SUI", amount: null, address: null, decimals: 9 },
+                       ...SUI_TOKENS.map(t => ({ ...t, amount: null }))];
+      }
+      markLoaded("sui"); paintAssets();
+    });
   // Stellar (Phase 3b): SLIP-0010 Ed25519 branch (coin type 148) of
   // the same seed. The single account read IS the all-asset read
   // (XLM + every trustline). An unfunded account is a state — "not
@@ -524,8 +658,8 @@ async function renderMain() {
   stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
-    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; famLoaded.add("stellar"); paintAssets(); })
-    .catch(() => { stellarLoadFailed = true; famLoaded.add("stellar"); paintAssets(); });
+    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; markLoaded("stellar"); paintAssets(); })
+    .catch(() => { stellarLoadFailed = true; markLoaded("stellar"); paintAssets(); });
   // Phase 4 — payments-grade families: TON (SLIP-0010 coin 607,
   // Wallet V4R2), NEAR (coin 397, implicit account), Algorand (coin
   // 283), XRP Ledger (BIP44 secp256k1 coin 144), Polkadot Asset Hub
@@ -537,42 +671,42 @@ async function renderMain() {
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false;
   getTonAccount(tonAddr)
-    .then(acct => { tonBalances = acct.balances; tonState = acct.state; famLoaded.add("ton"); paintAssets(); })
-    .catch(() => { tonLoadFailed = true; famLoaded.add("ton"); paintAssets(); });
+    .then(acct => { tonBalances = acct.balances; tonState = acct.state; markLoaded("ton"); paintAssets(); })
+    .catch(() => { tonLoadFailed = true; markLoaded("ton"); paintAssets(); });
   nearAddr = nearAddressFromPhrase(w.mnemonic.phrase);
   nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
-    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; famLoaded.add("near"); paintAssets(); })
-    .catch(() => { nearLoadFailed = true; famLoaded.add("near"); paintAssets(); });
+    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; markLoaded("near"); paintAssets(); })
+    .catch(() => { nearLoadFailed = true; markLoaded("near"); paintAssets(); });
   algoAddr = algoAddressFromPhrase(w.mnemonic.phrase);
   algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
-    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; famLoaded.add("algorand"); paintAssets(); })
-    .catch(() => { algoLoadFailed = true; famLoaded.add("algorand"); paintAssets(); });
+    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; markLoaded("algorand"); paintAssets(); })
+    .catch(() => { algoLoadFailed = true; markLoaded("algorand"); paintAssets(); });
   xrpAddr = xrplAddressFromPhrase(w.mnemonic.phrase);
   xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
-    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; famLoaded.add("xrpl"); paintAssets(); })
+    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; markLoaded("xrpl"); paintAssets(); })
     .catch(() => {
       // A failed read is UNKNOWN, not zero (QA F12): the row carries
       // amount null and renders "couldn't load" — never a $0.00
       // presented as a loaded balance.
       xrpLoadFailed = true;
       xrpBalances = [{ symbol: "XRP", name: "XRP", amount: null, address: null, decimals: 6, verified: true }];
-      famLoaded.add("xrpl"); paintAssets();
+      markLoaded("xrpl"); paintAssets();
     });
   dotAddr = dotAddressFromPhrase(w.mnemonic.phrase);
   dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
   getDotAccount(dotAddr)
-    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; famLoaded.add("polkadot"); paintAssets(); })
-    .catch(() => { dotLoadFailed = true; famLoaded.add("polkadot"); paintAssets(); });
+    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; markLoaded("polkadot"); paintAssets(); })
+    .catch(() => { dotLoadFailed = true; markLoaded("polkadot"); paintAssets(); });
   // Aptos (Phase 5): SLIP-0010 Ed25519 branch (coin type 637, the
   // Petra path) of the same seed. The account read reports existence
   // honestly — an address the chain has never seen is "not yet
@@ -583,8 +717,8 @@ async function renderMain() {
                    ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
   getAptosAccount(aptosAddr)
-    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; famLoaded.add("aptos"); paintAssets(); })
-    .catch(() => { aptosLoadFailed = true; famLoaded.add("aptos"); paintAssets(); });
+    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; markLoaded("aptos"); paintAssets(); })
+    .catch(() => { aptosLoadFailed = true; markLoaded("aptos"); paintAssets(); });
   // Stacks (Bitcoin L2): BIP44 coin-5757 branch of the same seed. STX +
   // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
   // everything else unverified (⚠) with contract-read metadata.
@@ -594,22 +728,22 @@ async function renderMain() {
   stacksLoadFailed = false; stacksScanFailed = false;
   fetchStacksAccount(stacksAddr)
     .then(acct => {
-      famLoaded.add("stacks");
+      markLoaded("stacks");
       if (acct.scanFailed) { stacksScanFailed = true; paintAssets(); return; }
       stacksBalances = [{ symbol: "STX", name: "Stacks", amount: stxMicroToStx(acct.stxUstx), decimals: 6, verified: true, contract: null },
                         ...acct.tokens.map(t => ({ ...t, amount: stacksRawToAmount(t.balanceRaw, t.decimals) }))];
       paintAssets();
     })
-    .catch(() => { stacksLoadFailed = true; famLoaded.add("stacks"); paintAssets(); });
+    .catch(() => { stacksLoadFailed = true; markLoaded("stacks"); paintAssets(); });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
   ltcAddr = litecoinAddress(w.mnemonic.phrase);
-  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; ltcLoadFailed = false; famLoaded.add("litecoin"); paintAssets(); }).catch(() => { ltcLoadFailed = true; famLoaded.add("litecoin"); paintAssets(); });
+  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; ltcLoadFailed = false; markLoaded("litecoin"); paintAssets(); }).catch(() => { ltcLoadFailed = true; markLoaded("litecoin"); paintAssets(); });
   dogeAddr = dogecoinAddress(w.mnemonic.phrase);
-  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; famLoaded.add("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; famLoaded.add("dogecoin"); paintAssets(); });
+  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; markLoaded("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; markLoaded("dogecoin"); paintAssets(); });
   bchAddr = bitcoinCashAddress(w.mnemonic.phrase);
-  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; famLoaded.add("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; famLoaded.add("bitcoincash"); paintAssets(); });
+  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; markLoaded("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; markLoaded("bitcoincash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -619,8 +753,16 @@ async function renderMain() {
   cosmosAddrs = cosmosAddresses(w.mnemonic.phrase);
   cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
   paintAssets();
-  getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; famLoaded.add("cosmos"); paintAssets(); }).catch(() => { famLoaded.add("cosmos"); paintAssets(); });
+  getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; markLoaded("cosmos"); paintAssets(); }).catch(() => {
+    // A failed live read over a cache paint: cached Cosmos amounts
+    // become "unavailable" (amount null), never final numbers.
+    if (hydratedFams.has("cosmos")) cosmosRows = cosmosRows.map(r => ({ ...r, amount: null }));
+    markLoaded("cosmos"); paintAssets();
+  });
   $("assetList").innerHTML = "Loading assets…";
+  // Paint last-known balances instantly (marked as updating) — the
+  // live reads fired above replace them family by family.
+  hydrateBalanceCache(w);
   evmLoadFailed = false;
   try {
     balances = await Promise.race([
@@ -636,7 +778,7 @@ async function renderMain() {
     // alert, where rendering can't clobber it.)
     evmLoadFailed = true; balances = [];
   }
-  famLoaded.add("evm");
+  markLoaded("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
   renderHistory();
@@ -782,7 +924,12 @@ function paintHeader() {
     }
   }
   const sub = $("totalSub");
-  if (sub) sub.textContent = viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`;
+  if (sub) {
+    // While a cache paint is still waiting on live reads, say so —
+    // the numbers on screen are last-known, not final.
+    const updating = cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k));
+    sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`) + (updating ? " · Updating…" : "");
+  }
   const va = viewAddress();
   const addrEl = $("addrText");
   if (addrEl) {
@@ -1143,6 +1290,20 @@ function paintAssets() {
   // chains share one Cosmos card in the All view.
   const totals = familyUsdTotals();
   const alerts = familyAlertMap();
+  // Held is a RAW-balance fact (2026-11-09 ordering fix): any
+  // nonzero amount in a family marks it held for sortHomeFamilies,
+  // independent of prices — a priced-or-not holding must never
+  // classify as zero again. USD totals only order the held tier.
+  const anyHeld = (rows) => Array.isArray(rows) && rows.some(b => Number(b && b.amount) > 0);
+  const heldMap = {
+    bitcoin: (Number(btcBal) + Number(btcTrBal)) > 0,
+    evm: anyHeld(balances), tron: anyHeld(tronBalances), solana: anyHeld(solBalances),
+    sui: anyHeld(suiBalances), stellar: anyHeld(stellarBalances), ton: anyHeld(tonBalances),
+    near: anyHeld(nearBalances), algorand: anyHeld(algoBalances), xrpl: anyHeld(xrpBalances),
+    polkadot: anyHeld(dotBalances), aptos: anyHeld(aptosBalances), stacks: anyHeld(stacksBalances),
+    litecoin: Number(ltcBal) > 0, dogecoin: Number(dogeBal) > 0, bitcoincash: Number(bchBal) > 0,
+    cosmos: cosmosRows.some(r => Number(r.amount) > 0),
+  };
   // Home ordering (owner request, 2026-11-08): what you hold comes
   // first. A family's load failure is read from its flag — several
   // families keep a $0 total on failure (the scalar coins, Tron),
@@ -1176,7 +1337,7 @@ function paintAssets() {
       // The seven chain rows inside the shared Cosmos card follow
       // the same within-family order as every other family.
       const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join("");
-      cards.push({ key: "cosmos", totalUsd: total, failed: famFailed.cosmos, html: cardFor("cosmos", inner, true, total) });
+      cards.push({ key: "cosmos", totalUsd: total, failed: famFailed.cosmos, held: heldMap.cosmos, html: cardFor("cosmos", inner, true, total) });
       cosmosBuf = [];
     };
     for (const g of groups) {
@@ -1187,7 +1348,7 @@ function paintAssets() {
         continue;
       }
       flushCosmos();
-      cards.push({ key: g.key, totalUsd: totals[g.key], failed: !!famFailed[g.key], html: cardFor(g.key, g.html, true, totals[g.key]) });
+      cards.push({ key: g.key, totalUsd: totals[g.key], failed: !!famFailed[g.key], held: !!heldMap[g.key], html: cardFor(g.key, g.html, true, totals[g.key]) });
     }
     flushCosmos();
     html = sortHomeFamilies(cards).map(c => c.html).join("");
@@ -1197,6 +1358,7 @@ function paintAssets() {
   }
   html += `<button class="btn ghost" id="zeroToggle">${showZeroBalances ? "Hide zero balances" : "Show zero balances"}</button>`;
   $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
+  persistBalanceCache();
   document.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
   const zt = $("zeroToggle");
   if (zt) zt.onclick = () => {
