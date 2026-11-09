@@ -15,5 +15,21 @@
   "muse": {
     "evm": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
     "btc": "bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr"
+  },
+  "fluidqa1": {
+    "evm": "0x781FDaeBcAF4aFA61273afc7aEc42484DB192cbA",
+    "btc": "bc1qgvzv5hx7e4y3dt30s6agsadm9u7l22dt3xzh5c",
+    "algo": "SMR2Y6MKHR4CDOWHL4TAZCBWDL2BLQNG2DICX7D3QUXHNIGWDRYEWTNUTA",
+    "sol": "3yee9NaKhbkM48JWVnGc8ZsaQaFLhcxDJXzszsJtyfBD",
+    "tron": "TLvNFQxwZNn1ZByoDUuh4W9GVbqXA8RL4E",
+    "sui": "0xe07fc2fe0c92f5959d4ace73461f50bc5447aa74cc691be08cfe796249aae176"
+  },
+  "lhogan100": {
+    "evm": "0x01AAAe80748Ea585258f83e6818E00E36580206e",
+    "btc": "bc1qs6czc0ew9xljyktdjag55amcmv7qec30cpyrgz",
+    "algo": "YMH7E3R6ZUAUFQFHWVE2RFDJTYNOSHW7ZH3Y4BHFRJ4TUPORSD2EPCJWCM",
+    "sol": "7Y6Y9racXDpeSHqDF7eWZXe5x3LoUsGGTfR2StvckLb9",
+    "tron": "TA829RHpHNCcj3QyNHT6u6qi2zAjSjkEH1",
+    "sui": "0x63ec6dd8a0d0f7803df30c6ecef3e1e23ebb68f830a7d4561720df19aae164ad"
   }
 }
