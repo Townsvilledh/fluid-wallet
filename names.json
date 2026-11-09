@@ -50,5 +50,13 @@
     "sol": "GHkmnhaWZt5ub2NRUB4x8BuM8BzGu9V144S4vVBuGSww",
     "tron": "TV9k5TJkxkrpsuhCVGXEBuLbwWWECWStQ5",
     "sui": "0xa89680ad744c193d19807fddd70f99b70a7d1b37643822190da1ff852a9e6326"
+  },
+  "marcavelli": {
+    "evm": "0xed66b417cd15B3624717af51D1BcA750D73525b9",
+    "btc": "bc1qsrcg74qzq29a7ux39wlrz8w7ywps54pc4mh3wm",
+    "algo": "37TNMA4AHP2NW3LKFPT62HE7WLNXHI4S2GM26INAKYEGC4BTBX56BGK5OM",
+    "sol": "BLZitZ9NdyW59JevzgWqo9byMw8P8odTsAknFAWdn1Eq",
+    "tron": "TXcUBVA4cSF4aLXwLja4gwxiMtqWUBjHv6",
+    "sui": "0xa27bb611945b1d93689addd6261b51e8ddca8daa99e1dc63a128d97bba2d6211"
   }
 }
