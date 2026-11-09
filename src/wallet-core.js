@@ -4228,8 +4228,14 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //      published fees buy 3.95% / sell 2.95%, ID required, sell
 //      pays EUR/USD/GBP to a card; its partner programme is
 //      B2B/KYB-only with no attachable consumer referral.
-//  - Noblocks REMOVED 7 Nov 2026: BVN wall up front, and the
-//    owner's live attempt died on its own verify button.
+//  - Noblocks REMOVED 7 Nov 2026 as a Fluid ROUTE: BVN wall up
+//    front, and the owner's live attempt died on its own verify
+//    button. REVERSED IN PART 2026-11-09 (owner decision, NG
+//    repair): it returns on the NG SELL sheet only, explicitly as
+//    an EXTERNAL app that pays Fluid nothing — the corridor's one
+//    verified-completing sell path, named so a user holding a
+//    dollar of crypto is not stranded. It is still not a route:
+//    no badge, no buy side, and its note carries the frictions.
 //  - NoOnes was ADDED 7 Nov 2026 as the Nigeria BUY lead and
 //    REMOVED 2026-11-09: the platform announced its winding-down
 //    on 17 Aug 2026, closed P2P trading permanently on 21 Aug
@@ -4245,11 +4251,18 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 export const RAMP_STATIC_LINKS = {
   "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
   "Spritz": { buy: "https://app.spritz.finance", sell: "https://app.spritz.finance" },
+  // Noblocks (Paycrest's own consumer app) — NIGERIA SELL only,
+  // named as the best external route (owner decision 2026-11-09,
+  // NG repair): it pays Fluid nothing and the money passes through
+  // Noblocks' own wallet first, so it is presented as an outside
+  // app, never as a Fluid route — the note says both things plainly.
+  "Noblocks": { sell: "https://noblocks.xyz" },
 };
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
   "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
   "Spritz": "US app — opens outside Fluid · buy 1% by ACH · sell 0.5% by ACH (min $2) — the cheapest verified US sell rate · send out to your Fluid address",
+  "Noblocks": "Opens the Noblocks app (operated by Paycrest) — Fluid earns nothing from it · its fee is 2 bps (min ₦100) at the live market rate · your crypto moves into Noblocks' own wallet first, then sells to your bank — you will need an email sign-up and an ID check inside Noblocks",
 };
 /** How each provider takes the destination address on a BUY:
  *  "paste" = the user can type/paste their Fluid address and the
@@ -4270,18 +4283,33 @@ export const RAMP_ADDRESS_ENTRY = {
   "Mt Pelerin": "paste",
   "Paybis": "paste",
   "Spritz": "paste",
+  // Noblocks keeps its own wallet between the user and the sale;
+  // there is no Fluid address to paste. It is listed SELL-only, so
+  // the buy gate never sees it — the entry exists so every route
+  // on a sheet states honestly how the money moves.
+  "Noblocks": "external-wallet",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
 // the ranking (cheapest measured first); badge/note override the
 // provider defaults above.
 export const RAMP_COUNTRY_PLAN = {
-  // NG: no qualifying route — NG sell has been empty since the
-  // 2026-11-08 pull, and NG buy joined it on 2026-11-09 when its
-  // last route was removed as a dead platform (see the REMOVED
-  // note in the plan comments above). Both modes resolve empty
-  // and the sheet shows its honest empty state until a route
-  // passes the bar.
-  NG: [],
+  // NG: BUY has no qualifying route (its last route was removed
+  // 2026-11-09 as a dead platform — see the REMOVED note above)
+  // and stays honestly empty. SELL names Noblocks (Paycrest's
+  // consumer app) as an EXTERNAL route — owner decision 2026-11-09
+  // (NG repair): a real user holding $1 of BNB had no way to reach
+  // naira at all, and Noblocks is the one NG sell path verified to
+  // complete at small amounts (2 bps, min ₦100 fee, market rate in
+  // normal conditions). It pays Fluid nothing and routes through
+  // Noblocks' own wallet, so it renders as an external-app row
+  // with both facts in its note — named, not endorsed as a Fluid
+  // route. The in-Fluid Paycrest Gateway sell (same protocol,
+  // native fee capture, built 2026-11-09) stays the wired route
+  // the moment its standing gates pass — see
+  // research_notes/fluid-ng-repair-20261109/report.md.
+  NG: [
+    ["Noblocks", { modes: ["sell"], external: true }],
+  ],
   // KE, GH, UG, TZ, CM, SN, CI, ZM: no qualifying route since the
   // 2026-11-08 pull (see the PULLED note in the plan comments) —
   // both modes resolve empty and the sheet shows its honest
@@ -4426,9 +4454,19 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
 
 /** Paycrest's keyless public rates API — the cheapest verifiable NG
  *  machine price (buy ₦1,384.52/USDT, measured live 7 Nov 2026) —
- *  is a PRICE SOURCE for Fluid, never a route: its consumer face
- *  (Noblocks) is BVN-walled and order creation is KYB-gated, so it
- *  fails the route criteria on both counts. The NG sheets poll
+ *  is a PRICE SOURCE for Fluid. As a ROUTE its direct Gateway sell
+ *  was re-verified live 2026-11-09 (NG repair): createOrder on the
+ *  deployed BSC + Base Gateways is permissionless (dry-runs passed
+ *  every contract check; the docs' KYB + API-Key prerequisite is
+ *  attribution metadata only, and the keyless verify-account and
+ *  order-status endpoints answer), and senderFee capture is native
+ *  with a 0% treasury skim — but that day's live NGN provider
+ *  quotes sat at ~₦683/$, half the ₦1,378 market rate, so the
+ *  route fails the rate bar until quotes normalise AND one funded
+ *  ~$1 test proves the aggregator settles an unattributed order;
+ *  full evidence in research_notes/fluid-ng-repair-20261109.
+ *  Its consumer face (Noblocks) is named on the NG sell sheet as
+ *  an external app — see the NG plan row. The NG sheets poll
  *  it to show a live "market rate now" benchmark, so users can
  *  judge prices against the market themselves. The payload is
  *  hostile remote data: the parse keeps

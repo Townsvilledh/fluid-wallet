@@ -116,9 +116,16 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 }
 
 // 15. Global ramps + onramp links (per-country, price-ranked model)
-ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l => l.buy.startsWith("https://") && l.sell.startsWith("https://")));
+ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l =>
+  (l.buy === undefined || l.buy.startsWith("https://")) && (l.sell === undefined || l.sell.startsWith("https://"))));
 ok("static links are the kept providers", ["Paybis", "Spritz"].every(n => RAMP_STATIC_LINKS[n])
-  && !RAMP_STATIC_LINKS["Noblocks"] && !("NoOnes" in RAMP_STATIC_LINKS));
+  && !("NoOnes" in RAMP_STATIC_LINKS));
+// Noblocks returned 2026-11-09 (owner decision, NG repair) as an
+// EXTERNAL sell-side naming for Nigeria only — sell link only, no
+// buy link, and it must never carry a badge or appear as a route
+// anywhere else. Its full pins live in §16c and §73.
+ok("Noblocks static entry is sell-only", RAMP_STATIC_LINKS["Noblocks"].sell === "https://noblocks.xyz"
+  && !("buy" in RAMP_STATIC_LINKS["Noblocks"]));
 ok("Paybis and Spritz static entries are unchanged", RAMP_STATIC_LINKS["Paybis"].buy === "https://paybis.com/"
   && RAMP_STATIC_LINKS["Paybis"].sell === "https://paybis.com/"
   && RAMP_STATIC_LINKS["Spritz"].buy === "https://app.spritz.finance" && RAMP_STATIC_LINKS["Spritz"].sell === "https://app.spritz.finance");
@@ -129,10 +136,16 @@ ok("removed providers stay removed", (() => {
   // paying Fluid nothing collectable (no pay, no route), and
   // NoOnes, removed 2026-11-09 as a dead platform (winding-down
   // announced 17 Aug 2026, P2P closed 21 Aug 2026).
-  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|noblocks|fonbnk|mercuryo|noones/i;
+  // Noblocks left this ban list on 2026-11-09 by owner decision
+  // (NG repair) — it may appear ONLY as the NG sell sheet's single
+  // external row, which the exemption below states exactly; §73
+  // pins that shape so the exception cannot widen silently.
+  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|fonbnk|mercuryo|noones/i;
   return RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDC");
-    return routes.every(r => !banned.test(r.name) && !banned.test(r.url || "") && !banned.test(r.note));
+    return routes.every(r => !banned.test(r.name) && !banned.test(r.url || "") && !banned.test(r.note)
+      && (!/noblocks/i.test(r.name + (r.url || "") + r.note)
+        || (c.code === "NG" && m === "sell" && r.name === "Noblocks" && r.external === true)));
   }));
 })());
 // Pulled 2026-11-08: neither pulled provider may appear in any
@@ -211,19 +224,26 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (updated 2026-11-09): NG sell has had no route since
-  // the 2026-11-08 pull, and NG buy joined it on 2026-11-09 when
-  // its last route (NoOnes) was removed as a dead platform —
-  // winding-down announced 17 Aug 2026, P2P trading closed
-  // permanently 21 Aug 2026, withdrawal-only since 22 Aug 2026.
-  // Both modes now resolve to the honest empty state, exactly as
-  // NG sell already did. No replacement route was added.
-  ok("NG lineup is empty buy / empty sell", JSON.stringify(names("NG")) === JSON.stringify([])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
+  // Nigeria (updated 2026-11-09, NG repair): BUY stays honestly
+  // empty — its last route (NoOnes) was removed as a dead platform
+  // (winding-down announced 17 Aug 2026, P2P trading closed
+  // permanently 21 Aug 2026, withdrawal-only since 22 Aug 2026).
+  // SELL names Noblocks as a single EXTERNAL row (owner decision
+  // 2026-11-09: the corridor's one verified-completing sell path;
+  // it pays Fluid nothing and uses its own wallet — both facts are
+  // in its note, it carries no badge, and it never appears on the
+  // buy side or in any other corridor). §73 pins the full shape.
+  ok("NG lineup is empty buy / Noblocks-external sell", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Noblocks"]));
   ok("NG buy resolves to the empty state", rampRoutesFor("NG", "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor("NG", "buy", "linea", "USDT").routes.length === 0);
-  ok("NG sell resolves to the empty state", rampRoutesFor("NG", "sell", "bsc", "USDC").routes.length === 0
-    && rampRoutesFor("NG", "sell", "linea", "USDT").routes.length === 0);
+  ok("NG sell resolves to the external Noblocks row on every network/asset", (() => {
+    const a = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
+    const b = rampRoutesFor("NG", "sell", "linea", "USDT").routes;
+    return a.length === 1 && b.length === 1
+      && a[0].name === "Noblocks" && a[0].external === true && a[0].url === "https://noblocks.xyz"
+      && a[0].addressEntry === "external-wallet";
+  })());
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
   ok("NG has no Paybis", !names("NG").includes("Paybis") && !names("NG", "sell").includes("Paybis"));
   // The empty state is an app-side render of routes.length === 0
@@ -234,8 +254,10 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("app sheet renders the honest empty state for zero-route combos", appSrcR.includes("routes.length === 0")
     && appSrcR.includes("passes Fluid's bar right now"));
   ok("app source names no pulled provider anywhere", !/fonbnk|mercuryo|noones/i.test(appSrcR));
-  ok("NG sell is empty on every network and asset", ["bsc", "base", "linea"].every(k =>
-    rampRoutesFor("NG", "sell", k, "USDT").routes.length === 0));
+  ok("NG sell carries exactly the one external row on every network and asset", ["bsc", "base", "linea"].every(k => {
+    const r = rampRoutesFor("NG", "sell", k, "USDT").routes;
+    return r.length === 1 && r[0].name === "Noblocks" && r[0].external === true;
+  }));
   ok("NG buy is empty on every network and asset", ["bsc", "base", "linea"].every(k =>
     rampRoutesFor("NG", "buy", k, "USDT").routes.length === 0));
 
@@ -7719,6 +7741,37 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("unpriced native: getPrices rejects a non-list Binance body and tops up per symbol",
       coreSrc72.includes("Binance price response was not a list") && coreSrc72.includes("await mergeCgFallbackPrices(out)"));
   }
+}
+
+// 73. NG sell repair (2026-11-09, owner decision): Noblocks is
+// named on the Nigeria SELL sheet as an external app — the one
+// verified-completing NG sell path — while NG BUY stays honestly
+// empty. These pins keep the exception exactly one row wide: it
+// cannot gain a badge, a buy side, another corridor, or quieter
+// copy without a test going red. Evidence and the wired-route
+// gates for the in-Fluid Paycrest Gateway sell:
+// research_notes/fluid-ng-repair-20261109/report.md.
+{
+  const ngSell = rampRoutesFor("NG", "sell", "bsc", "BNB").routes;
+  ok("NG repair: sell sheet carries exactly one row", ngSell.length === 1);
+  const nb = ngSell[0] || {};
+  ok("NG repair: the row is Noblocks, external, unbadged, at its real URL",
+    nb.name === "Noblocks" && nb.external === true && nb.badge === false
+    && nb.url === "https://noblocks.xyz" && nb.unavailable === false);
+  ok("NG repair: the note discloses no fee capture and the wallet hop",
+    /Fluid earns nothing/.test(nb.note || "") && /own wallet/.test(nb.note || "")
+    && /2 bps \(min ₦100\)/.test(nb.note || ""));
+  ok("NG repair: the row's address entry is honest — there is no Fluid address to paste",
+    nb.addressEntry === "external-wallet" && RAMP_ADDRESS_ENTRY["Noblocks"] === "external-wallet");
+  ok("NG repair: Noblocks appears in no other corridor and never on a buy sheet",
+    RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
+      rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
+        r.name !== "Noblocks" || (c.code === "NG" && m === "sell")))));
+  ok("NG repair: NG buy still resolves empty on every network/asset",
+    rampRoutesFor("NG", "buy", "bsc", "BNB").routes.length === 0
+    && rampRoutesFor("NG", "buy", "base", "USDC").routes.length === 0);
+  ok("NG repair: the plan row itself is sell-only and external",
+    JSON.stringify(RAMP_COUNTRY_PLAN.NG) === JSON.stringify([["Noblocks", { modes: ["sell"], external: true }]]));
 }
 
 console.log(`\n${passed} checks passed`);
