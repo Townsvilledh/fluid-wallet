@@ -15,5 +15,13 @@
   "muse": {
     "evm": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
     "btc": "bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr"
+  },
+  "fluidqa1": {
+    "evm": "0x781FDaeBcAF4aFA61273afc7aEc42484DB192cbA",
+    "btc": "bc1qgvzv5hx7e4y3dt30s6agsadm9u7l22dt3xzh5c",
+    "algo": "SMR2Y6MKHR4CDOWHL4TAZCBWDL2BLQNG2DICX7D3QUXHNIGWDRYEWTNUTA",
+    "sol": "3yee9NaKhbkM48JWVnGc8ZsaQaFLhcxDJXzszsJtyfBD",
+    "tron": "TLvNFQxwZNn1ZByoDUuh4W9GVbqXA8RL4E",
+    "sui": "0xe07fc2fe0c92f5959d4ace73461f50bc5447aa74cc691be08cfe796249aae176"
   }
 }
