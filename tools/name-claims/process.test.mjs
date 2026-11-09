@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import { ethers } from "ethers";
 import { buildSignedNameClaim, bitcoinAddress, algoAddressFromPhrase } from "../../src/wallet-core.js";
-import { decideClaims, nameEntriesEqual } from "./process-name-claims.mjs";
+import { decideClaims, nameEntriesEqual, summarizeRelayScan } from "./process-name-claims.mjs";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -129,5 +129,14 @@ const emptyState = () => ({ processed: {}, winners: {} });
 // 10. Entry equality: EVM case is ignored, BTC case is not.
 ok("entries equal: evm case-insensitive", nameEntriesEqual({ evm: "0xABC", btc: "bc1q" }, { evm: "0xabc", btc: "bc1q" }));
 ok("entries unequal: btc case differs", !nameEntriesEqual({ evm: "0xabc", btc: "BC1Q" }, { evm: "0xabc", btc: "bc1q" }));
+
+// 11. Per-relay scan summary (audit P0-1): counts are pre-merge and
+// per relay; a failed query reads -1 so a silent relay is visible.
+{
+  const s = summarizeRelayScan(
+    [{ status: "fulfilled", value: [{ id: "a" }, { id: "b" }] }, { status: "fulfilled", value: [] }, { status: "rejected", reason: new Error("down") }],
+    ["wss://r1", "wss://r2", "wss://r3"]);
+  ok("scan summary: per-relay counts, -1 on failure, total pre-merge", s.perRelay["wss://r1"] === 2 && s.perRelay["wss://r2"] === 0 && s.perRelay["wss://r3"] === -1 && s.total === 2);
+}
 
 console.log(`\n${passed} processor checks passed`);

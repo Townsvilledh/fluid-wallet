@@ -511,6 +511,33 @@ ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { b
   ok("name claim wiring: import adopting its own published name skips the wait", appSrcNc.includes("Already published to THIS wallet"));
 }
 
+// 18d. Claim repair (first-user audit P0-1, 2026-11-09): a published
+// claim whose event is unfindable on the relays AND absent from the
+// registry past the repair window is LOST — the state machine must
+// say "repair", never leave it at "publishing" forever; the repair
+// path (truth check, once-per-session auto re-publish, wait-sheet
+// inheritance, greeting gate) must stay wired.
+{
+  const { nameClaimRepairDue, NAME_CLAIM_REPAIR_AFTER_MS, queryNameClaimEvent, publishNameClaimEventDetailed } = await import("../src/wallet-core.js");
+  const myEvm = "0x1234567890AbcdEF1234567890aBcdef12345678";
+  const nowMs = 1794230000000;
+  const freshP = { published: true, publishedAt: nowMs - 60000, submittedAt: nowMs - 60000 };
+  const staleP = { published: true, publishedAt: nowMs - NAME_CLAIM_REPAIR_AFTER_MS - 1000, submittedAt: nowMs - NAME_CLAIM_REPAIR_AFTER_MS - 1000 };
+  ok("repair: publishing + event unfindable + window expired = repair", nameClaimState({ stored: "lostname1", pending: staleP, registryHit: null, myEvm, eventFound: false, now: nowMs }) === "repair");
+  ok("repair: event still findable stays publishing (pipeline merely behind)", nameClaimState({ stored: "lostname1", pending: staleP, registryHit: null, myEvm, eventFound: true, now: nowMs }) === "publishing");
+  ok("repair: truth not yet checked stays publishing", nameClaimState({ stored: "lostname1", pending: staleP, registryHit: null, myEvm, now: nowMs }) === "publishing");
+  ok("repair: inside the window stays publishing even if unfindable", nameClaimState({ stored: "lostname1", pending: freshP, registryHit: null, myEvm, eventFound: false, now: nowMs }) === "publishing");
+  ok("repair: registry live beats repair", nameClaimState({ stored: "lostname1", pending: staleP, registryHit: { evm: myEvm }, myEvm, eventFound: false, now: nowMs }) === "live");
+  ok("repair: due boundary is exactly the 15-minute window", nameClaimRepairDue({ pending: staleP, eventFound: false, now: nowMs }) === true && nameClaimRepairDue({ pending: freshP, eventFound: false, now: nowMs }) === false && NAME_CLAIM_REPAIR_AFTER_MS === 15 * 60 * 1000);
+  ok("repair copy: lost + NOT LIVE + Publish again", NAME_STATE_COPY.repair.includes("lost") && NAME_STATE_COPY.repair.includes("NOT LIVE") && NAME_STATE_COPY.repair.includes("Publish again"));
+  ok("repair: truth check + detailed publish exported", typeof queryNameClaimEvent === "function" && typeof publishNameClaimEventDetailed === "function");
+  const appSrcR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("repair wiring: durable record keeps accepted relays + publishedAt", appSrcR.includes("held.acceptedRelays = detail.acceptedRelays") && appSrcR.includes("held.publishedAt = Date.now()"));
+  ok("repair wiring: truth check + repair paint + once-per-session auto republish", appSrcR.includes("queryNameClaimEvent(p.eventId)") && appSrcR.includes('paintNameState("repair")') && appSrcR.includes("fluid_name_autorepair_"));
+  ok("repair wiring: creation wait inherits the repair", appSrcR.includes("repairTried") && appSrcR.includes("NAME_STATE_COPY.repair"));
+  ok("repair wiring: home greeting gated until the claim is proven live", appSrcR.includes("const greetName = stored && !loadPendingClaim() ? stored : null") && appSrcR.includes("formatWelcomeHeader(greetName)"));
+}
+
 // 19. Fee split 60/40 (settled in BTC Lightning) + cheapest-route ranking
 ok("split 60/40", (() => { const s = splitFee(1000); return s.treasury === 600 && s.dripbot === 400; })());
 ok("split remainder to treasury", (() => { const s = splitFee(101); return s.treasury + s.dripbot === 101 && s.treasury === 61; })());
@@ -3638,7 +3665,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     idxSrc.includes('id="ownedNameNote"') && !idxSrc.includes("This name is registered to this wallet in the public registry")
     && idxSrc.includes("saved on this device"));
   const nameAt = appSrc.indexOf("function renderNameSection()");
-  const nameSlice = appSrc.slice(nameAt, nameAt + 12000);
+  const nameSlice = appSrc.slice(nameAt, nameAt + 16000);
   // 2026-11-09: the wording now comes from NAME_STATE_COPY via
   // nameClaimState — the pinned property is unchanged (the LIVE
   // wording is painted only from the branch where the registry hit

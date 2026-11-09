@@ -3235,12 +3235,20 @@ export function verifyNostrEventSignature(event) {
     return schnorr.verify(hexToBytesB(event.sig), hexToBytesB(event.id), hexToBytesB(event.pubkey));
   } catch { return false; }
 }
+/** How long a published claim may stay missing from BOTH the relays
+ *  and the registry before the app stops calling it "publishing"
+ *  and calls it what it is — lost (the REPAIR state). Aligned with
+ *  the creation wait sheet's ~15-minute long-wait bound: claims
+ *  normally land in ~2 minutes, so 15 minutes of total absence is
+ *  not slowness, it is loss. */
+export const NAME_CLAIM_REPAIR_AFTER_MS = 15 * 60 * 1000;
 /** Publish a signed claim event to the public relays over wss
- *  (browser WebSocket). Resolves the number of relays that accepted
- *  (OK true); succeeds by the caller's rule at ≥1. Never throws —
- *  a total failure returns 0 and the caller keeps the claim in the
- *  saved-on-device state with its Publish button. */
-export async function publishNameClaimEvent(event, relays = NAME_CLAIM_RELAYS, timeoutMs = 9000) {
+ *  (browser WebSocket), reporting WHICH relays accepted — the
+ *  device-held claim record keeps the list, because "accepted
+ *  somewhere" is only half the truth: the first-user audit
+ *  (2026-11-09, P0-1) lost a claim whose publish had been accepted
+ *  yet which no processor scan ever saw. Never throws. */
+export async function publishNameClaimEventDetailed(event, relays = NAME_CLAIM_RELAYS, timeoutMs = 9000) {
   const one = (url) => new Promise((resolve) => {
     let done = false;
     const finish = (ok) => { if (!done) { done = true; try { ws.close(); } catch { /* already closed */ } resolve(ok); } };
@@ -3258,7 +3266,60 @@ export async function publishNameClaimEvent(event, relays = NAME_CLAIM_RELAYS, t
     ws.onclose = () => { clearTimeout(timer); finish(false); };
   });
   const results = await Promise.allSettled(relays.map(one));
-  return results.filter(r => r.status === "fulfilled" && r.value === true).length;
+  const acceptedRelays = relays.filter((_, i) => results[i].status === "fulfilled" && results[i].value === true);
+  return { accepted: acceptedRelays.length, acceptedRelays };
+}
+/** Publish a signed claim event; resolves the number of relays that
+ *  accepted (OK true); succeeds by the caller's rule at ≥1. Never
+ *  throws — a total failure returns 0 and the caller keeps the claim
+ *  in the saved-on-device state with its Publish button. */
+export async function publishNameClaimEvent(event, relays = NAME_CLAIM_RELAYS, timeoutMs = 9000) {
+  return (await publishNameClaimEventDetailed(event, relays, timeoutMs)).accepted;
+}
+/** Truth check for a published claim: ask the relays, BY EVENT ID,
+ *  whether the claim event still exists anywhere. (By-id is the
+ *  only reliable read shape — measured 2026-11-09: the audit's
+ *  winning event was fetchable by id from one relay while author
+ *  and bulk queries on the same relays returned nothing.) Resolves
+ *  { found, foundRelays } and never throws: a relay that cannot be
+ *  reached simply does not answer, and "found nowhere we could
+ *  ask" after the repair window is exactly the lost-claim signal
+ *  the REPAIR state exists for. */
+export async function queryNameClaimEvent(eventId, relays = NAME_CLAIM_RELAYS, timeoutMs = 9000) {
+  if (typeof eventId !== "string" || !eventId) return { found: false, foundRelays: [] };
+  const one = (url) => new Promise((resolve) => {
+    let done = false;
+    const finish = (found) => { if (!done) { done = true; try { ws.close(); } catch { /* already closed */ } resolve(found); } };
+    let ws;
+    try { ws = new WebSocket(url); } catch { return resolve(false); }
+    const subId = "fc" + Math.random().toString(36).slice(2, 10);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    ws.onopen = () => { try { ws.send(JSON.stringify(["REQ", subId, { ids: [eventId] }])); } catch { clearTimeout(timer); finish(false); } };
+    ws.onmessage = (m) => {
+      try {
+        const msg = JSON.parse(String(m.data || ""));
+        if (Array.isArray(msg) && msg[0] === "EVENT" && msg[2] && msg[2].id === eventId) { clearTimeout(timer); finish(true); }
+        if (Array.isArray(msg) && msg[0] === "EOSE" && msg[1] === subId) { clearTimeout(timer); finish(false); }
+      } catch { /* unparseable frame — keep waiting */ }
+    };
+    ws.onerror = () => { clearTimeout(timer); finish(false); };
+    ws.onclose = () => { clearTimeout(timer); finish(false); };
+  });
+  const results = await Promise.allSettled(relays.map(one));
+  const foundRelays = relays.filter((_, i) => results[i].status === "fulfilled" && results[i].value === true);
+  return { found: foundRelays.length > 0, foundRelays };
+}
+/** Is a published claim LOST — old enough, absent from the
+ *  registry, and its event unfindable on the relays? Pure, so the
+ *  suite pins the boundary. `eventFound` must be an actual relay
+ *  truth-check result: null (not checked) is never "lost". */
+export function nameClaimRepairDue({ pending = null, registryHit = null, myEvm = null, eventFound = null, now = null } = {}) {
+  if (!pending || !pending.published) return false;
+  if (registryHit && myEvm && registryHit.evm && String(registryHit.evm).toLowerCase() === String(myEvm).toLowerCase()) return false;
+  if (eventFound !== false) return false;
+  const t = typeof now === "number" ? now : Date.now();
+  const since = pending.publishedAt || pending.submittedAt || 0;
+  return t - since >= NAME_CLAIM_REPAIR_AFTER_MS;
 }
 /** The five name states (owner's honesty rule, 2026-11-09: no state
  *  may present a name as owned while it doesn't resolve for other
@@ -3271,11 +3332,17 @@ export async function publishNameClaimEvent(event, relays = NAME_CLAIM_RELAYS, t
  *   live       — the registry resolves the name to THIS wallet.
  *   conflict   — the registry resolves the name to a DIFFERENT
  *                wallet (first come, first served was won elsewhere). */
-export function nameClaimState({ stored = null, pending = null, registryHit = null, myEvm = null } = {}) {
+export function nameClaimState({ stored = null, pending = null, registryHit = null, myEvm = null, eventFound = null, now = null } = {}) {
   const mine = !!(registryHit && myEvm && registryHit.evm && String(registryHit.evm).toLowerCase() === String(myEvm).toLowerCase());
   if (registryHit && mine) return "live";
   if (registryHit && stored) return "conflict";
-  if (pending && pending.published) return "publishing";
+  if (pending && pending.published) {
+    // A published claim that is past the repair window, absent
+    // from the registry AND unfindable on the relays is not
+    // "publishing" — it is lost, and the UI must say so (P0-1).
+    if (nameClaimRepairDue({ pending, registryHit, myEvm, eventFound, now })) return "repair";
+    return "publishing";
+  }
   if (stored || pending) return "saved";
   return "none";
 }
@@ -3284,6 +3351,7 @@ export function nameClaimState({ stored = null, pending = null, registryHit = nu
 export const NAME_STATE_COPY = Object.freeze({
   saved: "Saved on this device only — NOT LIVE. Nobody else can send to this name yet. Tap “Publish my name” to finish claiming it.",
   publishing: "Publishing… your signed claim has been sent and your name will go live once it lands in the public registry — usually a few minutes. This screen keeps checking.",
+  repair: "Your claim seems to have been lost on its way to the public registry — this name is NOT LIVE yet, and nobody can send to it. Tap “Publish again” to send the claim once more.",
   live: "This name is registered to this wallet in the public registry — anyone can send to it on any chain.",
   conflict: "This name was claimed by someone else first — the public registry resolves it to a different wallet, so this device's claim is NOT LIVE. Pick a different name.",
 });

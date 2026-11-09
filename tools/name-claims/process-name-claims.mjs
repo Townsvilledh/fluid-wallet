@@ -73,6 +73,24 @@ export function nameEntriesEqual(a, b) {
  *  [{ name, entry }] in claim order, capped. Decisions for events
  *  deferred by the cap are NOT marked processed — they retry next
  *  run. */
+/** Per-relay scan summary (audit P0-1): what each relay actually
+ *  returned for this run's bulk query, BEFORE the merge. A relay
+ *  that silently returns nothing (outage, policy, pruning) is
+ *  otherwise indistinguishable from "no claims existed" — and a
+ *  claim accepted only by such a relay is exactly the claim that
+ *  used to vanish without a trace. Pure; pinned by the suite. */
+export function summarizeRelayScan(perRelayResults, relays) {
+  const perRelay = {};
+  let total = 0;
+  relays.forEach((r, i) => {
+    const res = perRelayResults[i];
+    const n = res && res.status === "fulfilled" && Array.isArray(res.value) ? res.value.length : 0;
+    perRelay[r] = res && res.status === "fulfilled" ? n : -1; // -1 = query failed outright
+    if (n > 0) total += n;
+  });
+  return { perRelay, total };
+}
+
 export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RUN) {
   const processed = (state && state.processed) || {};
   const priorWinners = (state && state.winners) || {};
@@ -173,6 +191,7 @@ async function main() {
 
   const since = state.lastQuerySince || now - 14 * 24 * 3600;
   const perRelay = await Promise.allSettled(NAME_CLAIM_RELAYS.map((r) => queryEvents(r, { kinds: [NAME_CLAIM_KIND], since }, 25000)));
+  const scan = summarizeRelayScan(perRelay, NAME_CLAIM_RELAYS);
   const byId = new Map();
   for (const res of perRelay) {
     if (res.status !== "fulfilled") continue;
@@ -185,6 +204,7 @@ async function main() {
 
   for (const d of decisions) console.log(`name-claims: ${d.decision} ${d.name || "?"} ${d.eventId.slice(0, 12)}… ${d.reason}`.trim());
   console.log(`name-claims: ${events.length} claim event(s) seen, ${winners.length} winner(s), ${decisions.filter((d) => d.decision === "rejected").length} rejected.`);
+  console.log(`name-claims: relay scan — ${NAME_CLAIM_RELAYS.map((r) => `${r}=${scan.perRelay[r]}`).join(" ")} (pre-merge total ${scan.total}, unique ${events.length}).`);
 
   if (dryRun) {
     console.log("name-claims: dry run — no state written, no git operations performed.");
@@ -200,11 +220,15 @@ async function main() {
     console.log(`name-claims: names.json committed + pushed (${winners.map((w) => w.name).join(", ")}).`);
   }
 
-  // The live registry is served from gh-pages — sync the file there
-  // on EVERY run (not only winner runs) so a failed sync heals.
-  syncGhPagesNames(winners.length ? `names: add ${winners.map((w) => w.name).join(", ")} (in-app claim)` : undefined);
-
+  // Record FIRST (audit P0-1): decisions, per-relay scan counts and
+  // state are written BEFORE the gh-pages sync. The 2026-11-09
+  // /tmp-disk incident proved the old order loses the whole run's
+  // record when the sync throws — winners already committed to
+  // main became invisible in the log, and the app (which reads the
+  // registry from gh-pages) kept polling a stale file. A decision
+  // record must never depend on a later step succeeding.
   mkdirSync(STATE_DIR, { recursive: true });
+  appendFileSync(LOG_PATH, JSON.stringify({ type: "scan", at: new Date(now * 1000).toISOString(), perRelay: scan.perRelay, seen: events.length, winners: winners.length, rejected: decisions.filter((d) => d.decision === "rejected").length }) + "\n");
   for (const d of decisions) {
     if (d.deferred) continue;
     state.processed[d.eventId] = { decision: d.decision, name: d.name, reason: d.reason, at: now };
@@ -219,6 +243,17 @@ async function main() {
   state.lastQuerySince = now - 3600; // 1h overlap; the processed set dedupes
   state.lastRunAt = now;
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+
+  // The live registry is served from gh-pages — sync the file there
+  // on EVERY run (not only winner runs) so a failed sync heals. A
+  // sync failure still fails the run (exit 1, reported by the cron)
+  // — but the record above is already durable when it does.
+  try {
+    syncGhPagesNames(winners.length ? `names: add ${winners.map((w) => w.name).join(", ")} (in-app claim)` : undefined);
+  } catch (e) {
+    console.error("name-claims: gh-pages sync FAILED (decisions + state already recorded) —", e.message || e);
+    process.exitCode = 1;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

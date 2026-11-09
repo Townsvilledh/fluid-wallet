@@ -27,7 +27,7 @@ import {
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
-  buildSignedNameClaim, publishNameClaimEvent, nameClaimState, NAME_STATE_COPY,
+  buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
@@ -4885,10 +4885,19 @@ async function submitNameClaim(name, ln) {
   });
   savePendingClaim({ ...claim, eventId: event.id, published: false, submittedAt: Date.now() });
   localStorage.setItem("fluid_name", claim.name);
-  let accepted = 0;
-  try { accepted = await publishNameClaimEvent(event); } catch { accepted = 0; }
+  let accepted = 0, detail = null;
+  try { detail = await publishNameClaimEventDetailed(event); accepted = detail.accepted; } catch { accepted = 0; }
   const held = loadPendingClaim();
-  if (held && held.eventId === event.id) { held.published = accepted > 0; held.relaysAccepted = accepted; savePendingClaim(held); }
+  if (held && held.eventId === event.id) {
+    held.published = accepted > 0;
+    held.relaysAccepted = accepted;
+    // Durable record (audit P0-1): WHICH relays accepted + when —
+    // the repair truth check keys off publishedAt, and the record
+    // is what lets a later session tell "in flight" from "lost".
+    if (detail) held.acceptedRelays = detail.acceptedRelays;
+    if (accepted > 0) held.publishedAt = Date.now();
+    savePendingClaim(held);
+  }
   return accepted;
 }
 let namePollTimer = null;
@@ -5004,10 +5013,35 @@ function showNameCreationWait(name, accepted, { startConflict = false } = {}) {
     if (!poll) poll = setInterval(check, 10000);
     check();
   };
+  let repairTried = false, repairBusy = false;
   const check = async () => {
     if (settled || !wallet) return;
     const hit = await resolveFluidName(currentName).catch(() => null);
-    if (settled || !hit) return;
+    if (settled) return;
+    if (!hit) {
+      // Repair inheritance (audit P0-1): past the repair window
+      // with still no registry entry, ask the relays for the claim
+      // EVENT itself. Findable = the pipeline is merely behind —
+      // keep waiting. Unfindable = the claim is lost: show the
+      // REPAIR wording and re-send the claim ONCE, right here in
+      // the wait, instead of leaving the sheet at "Publishing…"
+      // forever. (The manual Retry button stays available.)
+      const p = loadPendingClaim();
+      if (p && p.published && p.eventId && !repairTried && !repairBusy
+        && Date.now() - (p.publishedAt || p.submittedAt || startedAt) >= NAME_CLAIM_REPAIR_AFTER_MS) {
+        repairBusy = true;
+        try {
+          const q = await queryNameClaimEvent(p.eventId).catch(() => ({ found: false }));
+          if (!settled && !q.found && wallet) {
+            repairTried = true;
+            const st = $("ncWaitStatus"); if (st) st.textContent = NAME_STATE_COPY.repair;
+            await resubmit(null);
+            startedAt = Date.now();
+          }
+        } finally { repairBusy = false; }
+      }
+      return;
+    }
     const statusEl = $("ncWaitStatus"), enterBtn = $("ncEnterBtn"), skipBtn = $("ncSkipBtn");
     if (!statusEl || !enterBtn) return;
     if (String(hit.evm || "").toLowerCase() === String(wallet.address).toLowerCase()) {
@@ -5043,7 +5077,13 @@ function renderNameSection() {
   // The home header greets by Fluid name (Ethuram's requirement): set it
   // here because every name-state change (claim, adoption, removal)
   // flows through this function, and renderMain calls it on unlock.
-  $("welcomeText").textContent = formatWelcomeHeader(stored);
+  // BUT the greeting is earned only by a LIVE name (audit P0-1:
+  // auditwalk26 was greeted for over an hour by a name that had
+  // never landed in the registry). A held pending claim means "not
+  // proven live yet" — suppress the name until the registry refine
+  // below clears the claim (the live paint restores the greeting).
+  const greetName = stored && !loadPendingClaim() ? stored : null;
+  $("welcomeText").textContent = formatWelcomeHeader(greetName);
   // The section DESCRIPTION names the current wallet's name or the
   // generic placeholder — painted HERE, unconditionally, on every
   // render and in both states (QA round 3): it used to be written
@@ -5076,7 +5116,7 @@ function renderNameSection() {
     if (noteEl && NAME_STATE_COPY[state]) noteEl.textContent = NAME_STATE_COPY[state];
     const box = $("ownedNameState");
     if (!box) return;
-    if (state === "publishing") {
+    if (state === "publishing" || state === "repair") {
       box.innerHTML = `<button class="btn ghost" id="nsRepublishBtn" style="width:auto;padding:6px 12px">Publish again</button>`;
       $("nsRepublishBtn").onclick = async () => {
         const p = loadPendingClaim(); if (!p || !wallet) return;
@@ -5108,11 +5148,45 @@ function renderNameSection() {
       };
     } else {
       if (state === "live" && loadPendingClaim()) savePendingClaim(null);
+      if (state === "live") $("welcomeText").textContent = formatWelcomeHeader(stored);
       stopNamePoll();
       box.innerHTML = "";
     }
   };
   paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr }));
+  // REPAIR truth check (audit P0-1): a claim stuck at PUBLISHING
+  // past the repair window gets asked the hard question — is its
+  // event still findable on ANY relay (by id — the only read shape
+  // that proved reliable)? If yes, the pipeline is merely behind
+  // and the state stays PUBLISHING. If no, the claim is LOST:
+  // paint REPAIR and re-publish ONCE per unlock session, telling
+  // the user on the name message line. Triggered from the registry
+  // refine below (unlock render and every More-tab render flow
+  // through it, and the 20s name poll re-renders while pending).
+  let truthBusy = false;
+  const maybeRepair = async (registryHit) => {
+    if (truthBusy || !stillCurrent() || !wallet) return;
+    const p = loadPendingClaim();
+    if (!p || !p.published || !p.eventId) return;
+    if (nameClaimState({ stored, pending: p, registryHit, myEvm: myAddr }) !== "publishing") return;
+    if (Date.now() - (p.publishedAt || p.submittedAt || 0) < NAME_CLAIM_REPAIR_AFTER_MS) return;
+    truthBusy = true;
+    try {
+      const q = await queryNameClaimEvent(p.eventId).catch(() => ({ found: false }));
+      if (!stillCurrent()) return;
+      const st = nameClaimState({ stored, pending: loadPendingClaim(), registryHit, myEvm: myAddr, eventFound: q.found, now: Date.now() });
+      if (st !== "repair") return;
+      paintNameState("repair");
+      const key = "fluid_name_autorepair_" + p.eventId;
+      let done = false;
+      try { done = sessionStorage.getItem(key) === "1"; if (!done) sessionStorage.setItem(key, "1"); } catch { /* no sessionStorage — the manual button remains */ }
+      if (!done) {
+        msg("nameMsg", "Your earlier claim for " + stored + " never reached the public registry — sending it again now.", true);
+        try { await submitNameClaim(p.name, p.ln || null); } catch { /* the repaint reports the outcome */ }
+        if (stillCurrent()) renderNameSection();
+      }
+    } finally { truthBusy = false; }
+  };
   // Prefill from THIS wallet's own keys right away; the registry
   // entry (what senders actually resolve) refines the fields when
   // it loads. The addresses are derived from the current wallet's
@@ -5200,6 +5274,7 @@ function renderNameSection() {
       if (!stillCurrent()) return;
       paintOwnedLn(null, !reg);
       paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr }));
+      maybeRepair(null);
       return;
     }
     if (hit.evm) $("ownedEvm").textContent = hit.evm;
@@ -5207,7 +5282,7 @@ function renderNameSection() {
     if (hit.algo) $("ownedAlgo").textContent = hit.algo;
     paintOwnedLn(hit.ln || null);
     paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: hit, myEvm: myAddr }));
-  }).catch(() => { if (stillCurrent()) { paintOwnedLn(null, true); paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr })); } });
+  }).catch(() => { if (stillCurrent()) { paintOwnedLn(null, true); paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr })); maybeRepair(null); } });
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
  *  a name whose EVM, BTC, Algorand, Solana, Tron or Sui address is THIS
