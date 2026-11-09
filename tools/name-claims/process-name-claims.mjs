@@ -20,6 +20,13 @@
 // the file is committed ALONE (the repo's names-commit pattern) and
 // pushed via the working SSH route, after a pull --rebase (hand
 // commits may land from elsewhere). New names are capped per run.
+// The same names.json is then published to the gh-pages branch:
+// the live site (and the registry URL every wallet reads) is served
+// from gh-pages, so a main-only names commit never resolves for
+// anyone — the old hand pattern paired every names commit with a
+// full release for exactly this reason. The sync copies ONLY
+// names.json, touches no other artifact, and runs on every run so
+// a failed sync heals itself on the next one.
 //
 // State + a decision log live OUTSIDE the repo, under the Fluid
 // goal's hidden_files (override with FLUID_NAME_CLAIMS_STATE_DIR).
@@ -32,7 +39,7 @@
 //   node tools/name-claims/process-name-claims.mjs [--dry-run]
 //   --dry-run: fetch + decide + print, no state writes, no git ops.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { NAME_CLAIM_KIND, NAME_CLAIM_D_PREFIX, NAME_CLAIM_RELAYS, verifyNameClaim, verifyNostrEventSignature, normalizeFluidName } from "../../src/wallet-core.js";
 import { queryEvents } from "./relay-client.mjs";
@@ -112,6 +119,31 @@ function git(args, opts = {}) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", env: SSH_ENV, ...opts });
 }
 
+const GH_PAGES_WORKTREE = "/tmp/fluid-names-gh-pages";
+/** Publish the repo's names.json to the gh-pages branch if the
+ *  served copy differs — names.json ONLY, in a throwaway worktree,
+ *  mirroring publish.mjs's hash-checked copy scoped to one file. */
+function syncGhPagesNames(label) {
+  try { git(["worktree", "remove", "--force", GH_PAGES_WORKTREE]); } catch { /* not registered */ }
+  rmSync(GH_PAGES_WORKTREE, { recursive: true, force: true });
+  try {
+    git(["fetch", "origin", "gh-pages"]);
+    git(["worktree", "add", "--detach", GH_PAGES_WORKTREE, "origin/gh-pages"]);
+    const served = readFileSync(join(GH_PAGES_WORKTREE, "names.json"), "utf8");
+    const current = readFileSync(NAMES_PATH, "utf8");
+    if (served === current) { console.log("name-claims: gh-pages names.json already current."); return; }
+    copyFileSync(NAMES_PATH, join(GH_PAGES_WORKTREE, "names.json"));
+    const wt = (args, opts = {}) => execFileSync("git", args, { cwd: GH_PAGES_WORKTREE, encoding: "utf8", env: SSH_ENV, ...opts });
+    wt(["add", "names.json"]);
+    wt(["commit", "-m", label || "names: sync registry from main"], { stdio: "inherit" });
+    wt(["push", "origin", "HEAD:gh-pages"], { stdio: "inherit" });
+    console.log("name-claims: gh-pages names.json published.");
+  } finally {
+    try { git(["worktree", "remove", "--force", GH_PAGES_WORKTREE]); } catch { /* leave for next run's cleanup */ }
+    rmSync(GH_PAGES_WORKTREE, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const now = Math.floor(Date.now() / 1000);
@@ -167,6 +199,10 @@ async function main() {
     git(["push", "origin", "main"], { stdio: "inherit" });
     console.log(`name-claims: names.json committed + pushed (${winners.map((w) => w.name).join(", ")}).`);
   }
+
+  // The live registry is served from gh-pages — sync the file there
+  // on EVERY run (not only winner runs) so a failed sync heals.
+  syncGhPagesNames(winners.length ? `names: add ${winners.map((w) => w.name).join(", ")} (in-app claim)` : undefined);
 
   mkdirSync(STATE_DIR, { recursive: true });
   for (const d of decisions) {
