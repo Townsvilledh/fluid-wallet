@@ -251,7 +251,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="c32a70cf12"></head>
+<meta name="fluid-build" content="594b12a645"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -309,7 +309,7 @@
       <button class="btn ghost hidden" id="restoreBackBtn" style="margin-bottom:10px">← Back to unlock</button>
       <h3 style="margin-top:0">Create or import</h3>
       <input id="createName" placeholder="Pick your Fluid username" autocapitalize="none">
-      <p class="tag" style="margin:2px 0 8px">Your name on every chain: <span class="mono" id="createNamePreview">you.fluid.is-a.dev</span> — people send to your name, not a long address. Claimed when your wallet is created; first come, first served.</p>
+      <p class="tag" style="margin:2px 0 8px">Your name on every chain: <span class="mono" id="createNamePreview">you.fluid.is-a.dev</span> — people send to your name, not a long address. Publishing starts when your wallet is created, and your name goes live once it lands in the public registry; first come, first served.</p>
       <input id="createPw" type="password" placeholder="Set a password (12+ characters)" autocomplete="new-password">
       <input id="createPw2" type="password" placeholder="Repeat password" autocomplete="new-password">
       <button class="btn" id="createBtn">Create new wallet</button>
@@ -435,6 +435,7 @@
         <div id="ownedNameBox" class="hidden">
           <div style="font-size:20px;font-weight:700;margin:6px 0" id="ownedNameText"></div>
           <p class="tag" id="ownedNameNote" style="margin:6px 0">This name is saved on this device — publish its entry so other Fluid wallets can resolve it.</p>
+          <div id="ownedNameState" style="margin:8px 0"></div>
           <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
             <span><b>EVM</b> <small style="color:var(--dim)">(every EVM chain)</small><br><small class="mono" id="ownedEvm" style="word-break:break-all"></small></span>
             <button class="btn ghost" id="copyOwnedEvm" style="width:auto;padding:6px 12px;flex:none">Copy</button>
@@ -457,7 +458,7 @@
             <p class="tag" style="margin:6px 0">No Lightning address is registered to this name yet — add one and publish the updated entry so people can pay your name over Lightning.</p>
           </div>
           <div id="ownedEntryBox" class="hidden">
-            <p class="tag">Publish this updated entry into <b>names.json</b> in the GitHub repo so every Fluid wallet resolves the change:</p>
+            <p class="tag"><b>Publish it yourself instead (fallback):</b> publish this updated entry into <b>names.json</b> in the GitHub repo so every Fluid wallet resolves the change:</p>
             <div class="seed" id="ownedEntry" style="font-size:12px"></div>
             <button class="btn ghost" id="copyOwnedEntryBtn">Copy updated entry</button>
           </div>
@@ -467,7 +468,7 @@
           <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
           <button class="btn" id="claimNameBtn">Claim this name</button>
           <div id="claimBox" class="hidden">
-            <p class="tag">Almost there — publish it so every Fluid wallet can resolve you. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
+            <p class="tag"><b>Publish it yourself instead (fallback):</b> your claim already publishes from inside Fluid — use this only if you prefer to do it by hand. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
             <div class="seed" id="nameEntry" style="font-size:12px"></div>
             <button class="btn ghost" id="copyEntryBtn">Copy entry</button>
             <a class="btn ghost" style="display:block;text-align:center;text-decoration:none" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>
@@ -538,6 +539,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=c32a70cf12"></script>
+<script src="app.bundle.js?v=594b12a645"></script>
 </body>
 </html>
