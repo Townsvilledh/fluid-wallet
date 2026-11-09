@@ -22,6 +22,10 @@ copyFileSync("public/_headers", "dist/_headers");
 mkdirSync("dist/.well-known", { recursive: true });
 copyFileSync("public/fluid-agent.json", "dist/fluid-agent.json");
 copyFileSync("public/fluid-agent.json", "dist/.well-known/fluid-agent.json");
+// Jekyll bypass: GitHub Pages' Jekyll build never serves dot-directories
+// (.well-known 404s without this). The site is fully static — nothing
+// relies on Jekyll processing.
+writeFileSync("dist/.nojekyll", "");
 copyFileSync("public/robots.txt", "dist/robots.txt");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");

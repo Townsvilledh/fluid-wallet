@@ -4920,6 +4920,29 @@ export function isNativePredeploy(chainId, address) {
   const p = NATIVE_ASSET_PREDEPLOY[Number(chainId)];
   return !!p && typeof address === "string" && address.toLowerCase() === p.toLowerCase();
 }
+/** The ERC-20 decimals of each pinned predeploy (Arc's USDC: 6) —
+ *  the companion fact to NATIVE_ASSET_PREDEPLOY. It matters because
+ *  Fluid denominates an EVM chain's NATIVE pick uniformly at 18
+ *  decimals in swap requests, while a router that takes the
+ *  predeploy form denominates that same coin at the predeploy's
+ *  decimals: a request translated to the predeploy must
+ *  re-denominate its raw amount (18 → 6 on Arc), or the router
+ *  reads the amount 10^12 times too large (live-probed on Relay:
+ *  the unscaled amount answered INSUFFICIENT_LIQUIDITY for a $5
+ *  swap, 2026-11-09). An entry must exist in both maps or neither. */
+export const NATIVE_ASSET_PREDEPLOY_DECIMALS = {
+  5042: 6, // Arc — USDC through the predeploy is 6-decimal
+};
+/** Re-denominate a raw integer amount between decimal scales.
+ *  BigInt-exact; scaling down truncates sub-unit dust, so a quote
+ *  is then for the truncated amount — never more than entered. */
+export function scaleRawAmount(raw, fromDecimals, toDecimals) {
+  let v;
+  try { v = BigInt(raw); } catch { return String(raw); }
+  const d = Number(toDecimals) - Number(fromDecimals);
+  if (!Number.isFinite(d) || d === 0) return v.toString();
+  return (d > 0 ? v * (10n ** BigInt(d)) : v / (10n ** BigInt(-d))).toString();
+}
 const LIFI_API = "https://li.quest/v1";
 /** Fluid's LI.FI integrator string (sent on every route/quote request).
  *  Registered in the LI.FI Partner Portal on 2026-11-07 with the
@@ -5328,13 +5351,23 @@ export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddr
   const from = relayChainOf(fromChainKey), to = relayChainOf(toChainKey);
   if (!from || !to) return null;
   const withFee = includeFee ?? PLATFORM_FEE_COLLECTION_ENABLED;
+  const originCurrency = relayCurrencyFor(from.chainId, fromTokenAddress);
+  // Denomination follows the currency: a native pick arrives at
+  // the app's uniform native scale (18), but when its currency was
+  // translated to the chain's predeploy the amount must be
+  // re-denominated to the predeploy's decimals (see
+  // NATIVE_ASSET_PREDEPLOY_DECIMALS). A direct predeploy pick
+  // already arrives at that scale and passes through untouched.
+  let amount = String(fromAmount);
+  if (originCurrency !== fromTokenAddress && isNativePredeploy(from.chainId, originCurrency))
+    amount = scaleRawAmount(amount, 18, NATIVE_ASSET_PREDEPLOY_DECIMALS[from.chainId]);
   const body = {
     user: fromAddress,
     originChainId: from.chainId,
     destinationChainId: to.chainId,
-    originCurrency: relayCurrencyFor(from.chainId, fromTokenAddress),
+    originCurrency,
     destinationCurrency: relayCurrencyFor(to.chainId, toTokenAddress),
-    amount: String(fromAmount),
+    amount,
     tradeType: "EXACT_INPUT",
   };
   const destAddress = toAddress || fromAddress;
@@ -5444,7 +5477,11 @@ async function fetchRelayRoute(args, opts) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Relay route search failed: " + (data.message || data.error || ("HTTP " + res.status)));
-  const route = parseRelayQuote(data, args);
+  // The quote must answer the request AS SENT — on a predeploy
+  // chain the body's amount is the re-denominated one, so the
+  // parser's amount check compares against the body's, not the
+  // caller's native-scale figure.
+  const route = parseRelayQuote(data, { ...args, fromAmount: body.amount });
   if (!route) throw new Error("Relay returned no usable route for that pair.");
   if (!relayExecutableSteps(route).length) throw new Error("Relay's route for that pair carries no steps Fluid can sign.");
   return route;
@@ -5609,7 +5646,7 @@ export const ACROSS_MESSAGE_ADAPTERS = {
 export const ACROSS_SPOKE_POOLS = {
   8453: "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64",
   42161: "0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A",
-  5042: "0x9b4A302A548C7e313c2b74C461db7b84d3074A84", // Arc — the probe quote's own allowance spender
+  5042: "0x9b4A302A548c7e313c2b74C461db7b84d3074A84", // Arc — the probe quote's own allowance spender
 };
 const ACROSS_DEPOSIT_ABI = ["function deposit(bytes32 depositor, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 destinationChainId, bytes32 exclusiveRelayer, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes message)"];
 const ACROSS_ERC20_TRANSFER = ["function transfer(address to, uint256 amount) returns (bool)"];
@@ -5955,6 +5992,26 @@ export function parseAcrossQuote(quote, args, plan) {
   if (!checkAcrossDepositBounds(route, args.fromAddress).ok) return null;
   return route;
 }
+/** The args an Across quote must be built AND parsed with. When
+ *  the origin pick is the chain's native coin (zero marker, LI.FI
+ *  sentinel, or no address) but the plan's input token is the
+ *  chain's native-asset predeploy, the raw amount arrives at the
+ *  app's native scale (18) while the Swap API denominates the
+ *  predeploy at its own decimals — re-denominate, or the quote is
+ *  for 10^12 times the intended amount on Arc. Token picks —
+ *  including a direct predeploy pick — already arrive at the right
+ *  scale and pass through untouched. */
+export function acrossQuoteArgs(args, plan) {
+  if (!args || !plan) return args;
+  const from = NETWORKS[args.fromChainKey];
+  if (!from || !isNativePredeploy(from.chainId, plan.inputToken)) return args;
+  const a = String(args.fromTokenAddress || "").toLowerCase();
+  const isNativePick = !args.fromTokenAddress || a === LIFI_NATIVE_TOKEN || a === LIFI_API_NATIVE_SENTINEL.toLowerCase();
+  if (!isNativePick) return args;
+  const dec = NATIVE_ASSET_PREDEPLOY_DECIMALS[from.chainId];
+  if (dec == null) return args;
+  return { ...args, fromAmount: scaleRawAmount(args.fromAmount, 18, dec) };
+}
 /** One Swap API quote, parsed and bounds-checked. Throws on any
  *  failure (HTTP error — including the 429 throttle the readiness
  *  probe warned keyless callers about — an unusable quote, or a
@@ -5962,11 +6019,12 @@ export function parseAcrossQuote(quote, args, plan) {
  *  API's approvalTxns are deliberately never read here: they
  *  encode unlimited approvals, and Fluid composes its own. */
 async function fetchAcrossRoute(args, plan, opts) {
-  const q = buildAcrossQuoteParams(args, plan, opts);
+  const qargs = acrossQuoteArgs(args, plan);
+  const q = buildAcrossQuoteParams(qargs, plan, opts);
   const res = await fetch(`${ACROSS_API}/swap/approval?${q.toString()}`, { signal: AbortSignal.timeout(20000) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Across route search failed: " + (data.message || ("HTTP " + res.status)));
-  const route = parseAcrossQuote(data, args, plan);
+  const route = parseAcrossQuote(data, qargs, plan);
   if (!route) throw new Error("Across returned no usable route for that pair.");
   return route;
 }

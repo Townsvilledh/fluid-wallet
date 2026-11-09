@@ -2,8 +2,8 @@
 import assert from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
-import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
+import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
@@ -8183,7 +8183,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const ARC_PRE = "0x3600000000000000000000000000000000000000";
   const ARC_HANDLER = "0xA07480456C4EbaD7626e4FdF4a180709E238547b";
   const ARC_ADAPTER = "0x446Fe2Be6a8D90fA89F30f3d0A686aAFfe621237";
-  const ARC_POOL = "0x9b4A302A548C7e313c2b74C461db7b84d3074A84";
+  const ARC_POOL = "0x9b4A302A548c7e313c2b74C461db7b84d3074A84";
   const BASE_USDC_77 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
   const BASE_POOL_77 = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
   const USER77 = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
@@ -8247,19 +8247,32 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       scan77.balances.size === 0 && scan77.method === "none");
   } finally { FetchRequest.registerGetUrl(defaultGetUrl77); }
 
-  // GAP-3 — Relay request translation, both directions.
-  const rqArcOut = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
-  ok("GAP-3: Relay Arc→Base names the predeploy for a LI.FI-sentinel pick",
-    !!rqArcOut && rqArcOut.originCurrency === ARC_PRE && rqArcOut.destinationCurrency === BASE_USDC_77);
-  const rqArcZero = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
-  ok("GAP-3: Relay Arc→Base names the predeploy for the native (zero-marker) pick",
-    !!rqArcZero && rqArcZero.originCurrency === ARC_PRE);
+  // GAP-3 — Relay request translation, both directions. The Arc
+  // native pick arrives at the app's native scale (5 = 5e18 raw);
+  // translated to the predeploy it must be re-denominated to the
+  // predeploy's 6 decimals (5e6) or Relay reads a $5-quadrillion
+  // swap (live-probed: INSUFFICIENT_LIQUIDITY).
+  ok("arc: re-denomination is exact and truncates only dust",
+    NATIVE_ASSET_PREDEPLOY_DECIMALS[5042] === 6
+    && scaleRawAmount("5000000000000000000", 18, 6) === "5000000"
+    && scaleRawAmount("5000000", 6, 18) === "5000000000000000000"
+    && scaleRawAmount("1999999999999999999", 18, 6) === "1999999"
+    && scaleRawAmount("42", 6, 6) === "42");
+  const rqArcOut = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: Relay Arc→Base names the predeploy for a LI.FI-sentinel pick, amount re-denominated",
+    !!rqArcOut && rqArcOut.originCurrency === ARC_PRE && rqArcOut.destinationCurrency === BASE_USDC_77 && rqArcOut.amount === "5000000");
+  const rqArcZero = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: Relay Arc→Base names the predeploy for the native (zero-marker) pick, amount re-denominated",
+    !!rqArcZero && rqArcZero.originCurrency === ARC_PRE && rqArcZero.amount === "5000000");
+  const rqArcTok = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: ARC_PRE, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: a direct predeploy pick passes through at its own scale, unscaled",
+    !!rqArcTok && rqArcTok.originCurrency === ARC_PRE && rqArcTok.amount === "5000000");
   const rqArcIn = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_API_NATIVE_SENTINEL, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: Relay Base→Arc names the predeploy on the destination side",
-    !!rqArcIn && rqArcIn.destinationCurrency === ARC_PRE);
+    !!rqArcIn && rqArcIn.destinationCurrency === ARC_PRE && rqArcIn.amount === "5000000");
   const rqBaseNat = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
-  ok("GAP-3: the sentinel maps to the zero marker where no predeploy exists",
-    !!rqBaseNat && rqBaseNat.originCurrency === LIFI_NATIVE_TOKEN);
+  ok("GAP-3: the sentinel maps to the zero marker where no predeploy exists, amount untouched",
+    !!rqBaseNat && rqBaseNat.originCurrency === LIFI_NATIVE_TOKEN && rqBaseNat.amount === "5000000");
   ok("GAP-3: token addresses pass through Relay translation untouched",
     relayCurrencyFor(5042, BASE_USDC_77) === BASE_USDC_77 && relayCurrencyFor(5042, ARC_PRE) === ARC_PRE);
 
@@ -8326,6 +8339,46 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("GAP-4: an unpinned Arc handler refuses the route",
     parseAcrossQuote(arcQuote77({ handler: "0x000000000000000000000000000000000000dEaD" }), argsArc77, planArcIn) === null);
 
+  // GAP-4 denomination — an Arc-ORIGIN native pick must reach the
+  // Swap API at the predeploy's scale: acrossQuoteArgs performs
+  // the same re-denomination as the Relay builder, and a live-
+  // shaped fee-free Arc→Base quote (the 2026-11-09 probe's own
+  // output figure) parses against the scaled args.
+  const argsArcOrigin77 = { fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 };
+  const qargsArc77 = acrossQuoteArgs(argsArcOrigin77, planArcOut);
+  ok("GAP-4: Across args re-denominate an Arc native pick to the predeploy scale",
+    qargsArc77.fromAmount === "5000000" && qargsArc77.fromTokenAddress === LIFI_NATIVE_TOKEN);
+  ok("GAP-4: Across args leave token picks (incl. the predeploy itself) at their own scale",
+    acrossQuoteArgs({ ...argsArcOrigin77, fromTokenAddress: ARC_PRE, fromAmount: "5000000" }, planArcOut).fromAmount === "5000000"
+    && acrossQuoteArgs(argsArc77, planArcIn) === argsArc77);
+  const arcOriginQuote77 = (() => {
+    const inAmt = "5000000", outAmt = "4995843", bridgeRaw = "4202";
+    const data = depIface77.encodeFunctionData("deposit", [b3277(USER77), b3277(USER77), b3277(ARC_PRE), b3277(BASE_USDC_77), BigInt(inAmt), BigInt(outAmt), 8453n, b3277("0x394311a6aaa0d8e3411d8b62de4578d41322d1bd"), 1794177000, 1794184200, 3, "0x"]);
+    const tok77 = (address, chainId) => ({ decimals: 6, symbol: "USDC", address, name: "USD Coin", chainId });
+    const feeTokIn = tok77(ARC_PRE, 5042), feeTokOut = tok77(BASE_USDC_77, 8453);
+    return {
+      crossSwapType: "bridgeableToBridgeable", amountType: "exactInput", id: "77-fixture-origin",
+      checks: { allowance: { token: ARC_PRE, spender: ARC_POOL, actual: "0", expected: inAmt }, balance: { token: ARC_PRE, actual: "0", expected: inAmt } },
+      approvalTxns: [{ chainId: 5042, to: ARC_PRE, data: "0x095ea7b3" }],
+      steps: { bridge: { inputAmount: inAmt, outputAmount: outAmt, tokenIn: feeTokIn, tokenOut: feeTokOut } },
+      inputToken: feeTokIn, outputToken: feeTokOut, refundToken: feeTokIn,
+      fees: { total: { amount: bridgeRaw, amountUsd: "0.004202", token: feeTokIn, details: {
+        type: "total-breakdown",
+        swapImpact: { amount: "-3", amountUsd: "-0.000003", token: feeTokIn },
+        app: { amount: "0", amountUsd: "0", token: feeTokOut },
+        bridge: { amount: bridgeRaw, amountUsd: "0.004202", token: feeTokIn },
+      } } },
+      inputAmount: inAmt, expectedOutputAmount: outAmt, minOutputAmount: outAmt, expectedFillTime: 2,
+      swapTx: { to: ARC_POOL, data, gas: 0, chainId: 5042 }, quoteExpiryTimestamp: 1994180911,
+    };
+  })();
+  const routeArcOrigin77 = parseAcrossQuote(arcOriginQuote77, qargsArc77, planArcOut);
+  ok("GAP-4: a live-shaped fee-free Arc→Base quote parses against the scaled args",
+    !!routeArcOrigin77 && routeArcOrigin77.provider === "across" && routeArcOrigin77.fromAmount === "5000000"
+    && routeArcOrigin77.toAmount === "4995843" && checkAcrossDepositBounds(routeArcOrigin77, USER77).ok === true);
+  ok("GAP-4: the same quote refuses against unscaled (native-scale) args",
+    parseAcrossQuote(arcOriginQuote77, argsArcOrigin77, planArcOut) === null);
+
   // GAP-2 — the receive copy is count-free on both surfaces.
   const coreSrc77 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   const appSrc77 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
@@ -8367,6 +8420,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const pubSrc97 = rf97(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
   ok("kit: publish carries the manifest to gh-pages (both paths in ARTIFACTS)",
     pubSrc97.includes('"fluid-agent.json", ".well-known/fluid-agent.json"'));
+  ok("kit: .nojekyll ships so Pages serves the dot-directory",
+    buildSrc97.includes('writeFileSync("dist/.nojekyll", "")') && pubSrc97.includes('".nojekyll"'));
   // --- the site surfaces ---
   const html97 = rf97(new URL("../src/index.html", import.meta.url), "utf8");
   ok("kit: the WELCOME page carries the agent element with manifest + kit links",
