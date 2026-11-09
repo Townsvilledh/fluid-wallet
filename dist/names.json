@@ -98,5 +98,29 @@
     "sol": "3rAAjVpCZr9NwjK35moR6gtMNqAGZJHKRbvBcApaArTU",
     "tron": "TYX7mZpB5YibnfLVBbcnGPdgTxEFAskLmZ",
     "sui": "0xf00761b0eb6c730d798bc417de0c81d5a4a5a7f41de425b4e1f58c94a38004a1"
+  },
+  "repairqa1109": {
+    "evm": "0x6Be82CadD718B6E8Dc2aF4C3956c3b6897E8872c",
+    "btc": "bc1qj3lye4k7v505sa8hmnrmpg86dudjm5n2lrl2xs",
+    "algo": "VJG4XFH7YLDAXCPS56CAEWS5QZ5CS2WGP4GKFFF25M7THSIMWQUBWS2YNQ",
+    "sol": "BqrHEXyEP3KN7sn3WCKHEmuirwZFfkG6kJTpKn2Ej5Z7",
+    "tron": "TKomSMUa92B6jBnrtLHcq2EQKV6UW5sUnK",
+    "sui": "0x988656731476d9d7e5bc285bf197ea35954238a47dac3e2620c2a8b93f9d8c73"
+  },
+  "totwalk66426": {
+    "evm": "0xFEeAC7CB02a413E4E575F17D5186Cc5Bbea064F6",
+    "btc": "bc1qmwtelzql9stegzdgjpn0vgyzpqfwh5wtnql6a0",
+    "algo": "ZWEEIL2UWSEUXW4K5OSZFJSHWTQSWLTLBFQO2B7TNKFNBSBGTYVINHFGRE",
+    "sol": "DZuxm1bLN2LUTjQZ41ymypqjLARwDYpP9YC3fBWdfmVh",
+    "tron": "TZD5tcd3jVFFanWQR3uRCh1JchQBuh2bdo",
+    "sui": "0x9eac5c778b5fc85c86aaba1bbabe40cb7dbe237eeecc1fc50fb8a5ee8ce93212"
+  },
+  "themeqa1109": {
+    "evm": "0x7e4fc80d9eA2077ce2CBeb67D3FA3De3BD31fef0",
+    "btc": "bc1q40nhundcv2ve3yacxclc7s7jx6cept22jmh3rl",
+    "algo": "4KYETG4CCAJ5O7WLGYQ2ALSL7E2IDDN3QULFJNER22WBBJP5KH6TY3UDWM",
+    "sol": "GPZUUV3wfDbqKpsgSQt4cBQn1jWaHdDJ3tCADfGJSnoB",
+    "tron": "TMV5iYREPEGceRGhe64xT4tTB2CjsuMfmF",
+    "sui": "0x1766816f0968b9d644a04beccbb7fb5b627df9384db3a59331783c8492f260b5"
   }
 }

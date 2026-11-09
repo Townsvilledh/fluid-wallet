@@ -4281,17 +4281,15 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
 // Evidence base: price research of 6 Nov 2026 (benchmarks: USD/NGN
 // mid-market ₦1,374, P2P street ₦1,376–1,380; KES 129.91; GHS 11.66;
 // ZAR 16.51). Rules the plan encodes:
-//  - The CHEAPEST badge appears ONLY where price evidence exists for
-//    that country, and only on the cheapest IN-SHEET route there.
-//    (Noblocks is a link-out to a separate app, never an in-Fluid route,
-//    so it is never badged — its note states its measured price.)
+//  - The CHEAPEST badge is governed by the global badge rule
+//    (audit P0-4, 2026-11-09): it may sit on a route only if that
+//    route, on that side of that corridor, is Class 1 (transact
+//    page), completes at the corridor's small-ticket size, and is
+//    cheapest among routes satisfying both — encoded per-mode via
+//    badgeModes on the plan rows below.
 //  - One launch provider is GONE everywhere: its only measured
 //    corridor was Nigeria at +106% over market and it publishes no
 //    rates anywhere, so no corridor can carry it on price evidence.
-//  - Paybis is kept only where it measured at the market rate
-//    (BR/MX/IN/ZA/PH/EUR/GBP converters ≈ spot, 6 Nov). For Nigeria it
-//    measured +66% BEFORE fees — removed. For the US its evidence is a
-//    dated ~5%-all-in card screenshot, so it stays unbadged there.
 //  - Paychant stays out: its guest widget returned 502, then 404
 //    (502 again on the 7 Nov 2026 recheck; its docs also require a
 //    production API key, so the "guest" link was never truly keyless).
@@ -4299,10 +4297,11 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
 //    Ethuram): both platforms pay Fluid nothing Fluid can actually
 //    collect, so they were out of EVERY corridor under the rule
 //    "no pay, no route". RESTORED IN PART 2026-11-09 (owner's
-//    ruling, same day as the Noblocks naming): the fee-capture
-//    gate no longer strands a corridor — a route that genuinely
-//    completes comes back, honestly labelled in the Noblocks-row
-//    style, and fee capture stays the preference, not the gate.
+//    ruling): the fee-capture gate (superseded the same day by
+//    the owner's capture GATE — see the gate note above the plan)
+//    no longer strands a corridor — a route that genuinely
+//    completes comes back with full disclosure, and fee capture
+//    stays the preference.
 //    Fonbnk SELL returns on its ten pre-pull corridors (NG, KE,
 //    GH, ZA, UG, TZ, CM, SN, CI, ZM) as unbadged external rows
 //    with full disclosure, on fresh live evidence: the widget
@@ -4348,11 +4347,20 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
 //  - Noblocks REMOVED 7 Nov 2026 as a Fluid ROUTE: BVN wall up
 //    front, and the owner's live attempt died on its own verify
 //    button. REVERSED IN PART 2026-11-09 (owner decision, NG
-//    repair): it returns on the NG SELL sheet only, explicitly as
-//    an EXTERNAL app that pays Fluid nothing — the corridor's one
-//    verified-completing sell path, named so a user holding a
-//    dollar of crypto is not stranded. It is still not a route:
-//    no badge, no buy side, and its note carries the frictions.
+//    repair): it returned on the NG SELL sheet only, explicitly
+//    as an EXTERNAL app that paid Fluid nothing. REMOVED AGAIN
+//    2026-11-09 under the owner's CAPTURE GATE (~13:51 WAT): a
+//    route stays wired ONLY IF it carries Fluid's referral /
+//    affiliate / split natively OR a non-custodial own-charge
+//    mechanism exists for its shape — Noblocks has no referral
+//    parameter (measured) and its hosted/link-out shape admits
+//    no own-charge mechanism in the non-custodial ramp-fee design
+//    study, so it came off in full (plan row, static link,
+//    address-entry, default note — the NoOnes-pull pattern). NG
+//    sell is Fonbnk-only until the in-Fluid Paycrest Gateway
+//    sell (native senderFee capture, Class 1) passes its last
+//    gate. History only — no route, link, note or caps entry
+//    for it remains below.
 //  - NoOnes was ADDED 7 Nov 2026 as the Nigeria BUY lead and
 //    REMOVED 2026-11-09: the platform announced its winding-down
 //    on 17 Aug 2026, closed P2P trading permanently on 21 Aug
@@ -4365,23 +4373,43 @@ export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
 //    for it remains below.
 // Direct consumer links whose URL doesn't depend on the selection
 // (Mt Pelerin links are built per selection above).
+// PULLED 2026-11-09 under the owner's CAPTURE GATE (owner ruling
+// ~14:34 WAT, strictly by the gate): Paybis and Spritz were
+// removed in full — every plan row, note, link and address-entry
+// entry — because as wired they pay Fluid nothing and no
+// non-custodial own-charge mechanism exists for their hosted
+// shapes. RE-ADD FACTS: Paybis returns only when its Affise
+// programme actually issues Fluid a live tracking link (20% of
+// commission, lifetime, $50 minimum payout — the account sat on
+// moderation, so no live link existed); Spritz returns only if
+// its referral unlocks without the owner-KYC ≥$200/60d gate.
+// The table stays (empty) so the assembly code path is unchanged.
 export const RAMP_STATIC_LINKS = {
-  "Paybis": { buy: "https://paybis.com/", sell: "https://paybis.com/" },
-  "Spritz": { buy: "https://app.spritz.finance", sell: "https://app.spritz.finance" },
-  // Noblocks (Paycrest's own consumer app) — NIGERIA SELL only,
-  // named as the best external route (owner decision 2026-11-09,
-  // NG repair): it pays Fluid nothing and the money passes through
-  // Noblocks' own wallet first, so it is presented as an outside
-  // app, never as a Fluid route — the note says both things plainly.
-  "Noblocks": { sell: "https://noblocks.xyz" },
 };
+// A default note is either one string (used on both sheets) or a
+// per-mode { buy, sell } object — rampRoutesFor selects by mode so
+// a sell sheet never leads with buy copy (audit P1-11). The
+// per-mode strings below carry the $1-rule disclosure fix F1
+// (2026-11-09): true minimums in-sheet, per side. (The F2/F3
+// strings specced for Paybis/Spritz were superseded the same day
+// by the owner's capture-gate removal of both providers — they
+// never shipped.)
 const RAMP_DEFAULT_NOTES = {
-  "Mt Pelerin": "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank",
-  "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
-  "Spritz": "US app — opens outside Fluid · buy 1% by ACH · sell 0.5% by ACH (min $2) — the cheapest verified US sell rate · send out to your Fluid address",
-  "Noblocks": "Opens the Noblocks app (operated by Paycrest) — Fluid earns nothing from it · its fee is 2 bps (min ₦100) at the live market rate · your crypto moves into Noblocks' own wallet first, then sells to your bank — you will need an email sign-up and an ID check inside Noblocks",
+  "Mt Pelerin": {
+    buy: "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank · buys start at CHF 1 · unverified purchases are held 7 days before delivery",
+    sell: "Sells start at CHF 50 (about $57) unless you hold a personal IBAN with them · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
+  },
   "Fonbnk": "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your payout details, and Fonbnk gives you an address to send to from Fluid · priced off the local market — check the quote before you send",
 };
+// The SWIFT addendum (audit P1-12): on the 12 own-fiat Mt Pelerin
+// corridors flagged `swift: true` in the plan, a bank-transfer buy
+// from a bank outside the currency's home area usually rides
+// SWIFT, and the user's own bank + intermediaries take "a few $
+// to several dozen $" — a fixed cost that can exceed a small
+// purchase. rampRoutesFor appends this to the Mt Pelerin BUY
+// note only, on flagged corridors only; the SEPA corridors are
+// exempt by fact (SEPA/SIC transfers are free/cheap).
+const RAMP_SWIFT_BUY_NOTE = "paying from a bank outside this currency's home area usually rides SWIFT — your bank's international transfer fee applies and can exceed a small purchase";
 /** How each provider takes the destination address on a BUY:
  *  "paste" = the user can type/paste their Fluid address and the
  *  route delivers there; "walletconnect" = the flow forces a
@@ -4399,13 +4427,6 @@ const RAMP_DEFAULT_NOTES = {
  *  object carries its effective entry as `addressEntry`. */
 export const RAMP_ADDRESS_ENTRY = {
   "Mt Pelerin": "paste",
-  "Paybis": "paste",
-  "Spritz": "paste",
-  // Noblocks keeps its own wallet between the user and the sale;
-  // there is no Fluid address to paste. It is listed SELL-only, so
-  // the buy gate never sees it — the entry exists so every route
-  // on a sheet states honestly how the money moves.
-  "Noblocks": "external-wallet",
   // Fonbnk is listed SELL-only (restored 2026-11-09): on a sell
   // there is no destination address at all — Fonbnk returns a
   // deposit address and the user sends to it FROM Fluid. The
@@ -4414,34 +4435,67 @@ export const RAMP_ADDRESS_ENTRY = {
   // guard in rampRoutesFor, so the buy gate never sees it either.
   "Fonbnk": "deposit-address",
 };
-// Ordered provider list per country: [name, { badge, note }]. Order IS
-// the ranking (cheapest measured first); badge/note override the
-// provider defaults above.
+// CAPTURE GATE (owner's ruling, 2026-11-09 ~13:51 WAT): a ramp
+// route stays wired ONLY IF (a) it carries Fluid's referral /
+// affiliate / split natively, OR (b) a non-custodial own-charge
+// mechanism exists for its shape under the ramp-fee design study
+// (research_notes/fluid-noncustodial-ramp-fee-20261109), sized by
+// the fee law and disclosed in-sheet. Otherwise the route is
+// REMOVED and the side shows the honest empty state — the old
+// "Fluid earns nothing from it" fallback class is abolished.
+// Application in this plan: Mt Pelerin keeps both sides via (a)
+// (rfr=Fp3dGFX3 pays 25% of its fees); Fonbnk keeps its sell rows
+// via (b) — its deposit-address shape is exactly what the design
+// study's "Ramp own-charge Tier 1/2" build covers (Permit2
+// signed batch split on EVM; Solana native multi-instruction
+// variant; Tier 2 sequential fallback), and that build is the
+// NAMED, SEQUENCED DEPENDENCY of this wiring: it lands with this
+// disclosure release train, and when it ships, every Fonbnk
+// note's interim wording is replaced by the standing disclosure
+// already carried in the row notes ("Fluid adds its own small
+// fee on top of Fonbnk's quote — shown in the send review before
+// you confirm · Fonbnk's quote itself is never reduced"). The
+// Paycrest Gateway sell is the gate's model citizen (native
+// senderFee) and NG sell's Class-1 end-state behind its gates.
+// Paybis and Spritz were REMOVED in full by the owner's
+// capture-gate ruling (2026-11-09 ~14:34 WAT) — see the PULLED
+// note above RAMP_STATIC_LINKS for the re-add facts.
+//
+// Ordered provider list per country: [name, { badge, badgeModes,
+// note, swift, … }]. Order IS the ranking (cheapest measured
+// first); badge/note override the provider defaults above. The
+// CHEAPEST badge is per-mode (audit P0-4): badgeModes lists the
+// modes on which the row may carry it — a platform may hold it on
+// the buy sheet and not the sell sheet of the same corridor.
+// `swift: true` flags the own-fiat Mt Pelerin corridors whose
+// bank-transfer buys usually ride SWIFT (audit P1-12).
 export const RAMP_COUNTRY_PLAN = {
   // NG: BUY has no qualifying route (its last route was removed
   // 2026-11-09 as a dead platform — see the REMOVED note above;
   // Fonbnk buy was re-checked live the same day and is
   // WalletConnect-only in the keyless widget, so it stays out
   // under the owner's standing buy criterion) and stays honestly
-  // empty. SELL leads with Fonbnk (restored 2026-11-09, owner's
+  // empty. SELL carries Fonbnk ONLY (restored 2026-11-09, owner's
   // ruling — see the RESTORED note in the plan comments): a
   // deposit-address sell where the money leaves Fluid directly,
   // walked live at ₦1,371.50/$ against the ₦1,378.14 composite,
   // no ID check on Nigeria sell orders, bank minimum ₦5,000
-  // (≈$3.65) enforced live in the widget. Noblocks (Paycrest's
-  // consumer app) follows as the second EXTERNAL route — owner
-  // decision 2026-11-09 (NG repair): verified to complete at
-  // small amounts (2 bps, min ₦100 fee, market rate in normal
-  // conditions), but the money passes through Noblocks' own
-  // wallet first, so the deposit-address sell outranks it. Both
-  // pay Fluid nothing and say so in their notes — named, not
-  // endorsed as Fluid routes. The in-Fluid Paycrest Gateway sell
-  // (same protocol as Noblocks, native fee capture) stays the
-  // wired route the moment its standing gates pass — see
+  // (≈$3.65) enforced live in the widget. Fonbnk is kept under
+  // clause (b) of the owner's capture gate (2026-11-09 ~13:51):
+  // the non-custodial own-charge mechanism for its deposit-
+  // address shape is the FOLLOW-ON BUILD "Ramp own-charge
+  // Tier 1/2" (Permit2 signed batch split on EVM, Solana native
+  // multi-instruction variant, Tier 2 sequential fallback),
+  // sequenced WITH this disclosure release — see the gate note
+  // above the plan. The second NG sell row that stood here was
+  // removed in full under that gate the same day (no referral
+  // parameter exists for it, and its hosted shape admits no
+  // own-charge mechanism); NG sell is Fonbnk-only until the
+  // in-Fluid Paycrest Gateway sell (same protocol family, native
+  // fee capture) passes its standing gates — see
   // research_notes/fluid-ng-repair-20261109/report.md.
   NG: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — no ID check on Nigeria sell orders · bank sells start at ₦5,000 (about $3.65) · priced off the local market — check the quote before you send" }],
-    ["Noblocks", { modes: ["sell"], external: true }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — no ID check on Nigeria sell orders · bank sells start at ₦5,000 (about $3.65) · priced off the local market — check the quote before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   // KE, GH, UG, TZ, CM, SN, CI, ZM: BUY resolves empty (Fonbnk
   // buy stays out — see the NG note). SELL carries the restored
@@ -4453,57 +4507,56 @@ export const RAMP_COUNTRY_PLAN = {
   // no bank off-ramp channel, so the link preselects
   // mobile_money and the note says where the money lands).
   KE: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank or M-PESA details, and Fonbnk gives you an address to send to from Fluid — no ID check on Kenya sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank or M-PESA details, and Fonbnk gives you an address to send to from Fluid — no ID check on Kenya sell orders · sells start at about $1 · priced off the local market — check the quote before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   GH: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Ghana sell orders · sells start at about $1 · Ghana pays to mobile money, not to a bank account · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Ghana sell orders · sells start at about $1 · Ghana pays to mobile money, not to a bank account · priced off the local market — check the quote before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   ZA: [
-    ["Mt Pelerin", { badge: true }],
-    ["Paybis", {}],
-    // Fonbnk sell restored 2026-11-09 as the third row: South
+    ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
+    // Fonbnk sell restored 2026-11-09: South
     // Africa is the ONE corridor where Fonbnk switches sell-side
     // KYC on (basic ID check from $1 — its own country page), so
     // the note discloses it; live quote the same day was
     // 1 USDT ≈ 16.11 ZAR.
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — South Africa sell orders need an ID check · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — South Africa sell orders need an ID check · priced off the local market — check the quote before you send · Fonbnk sets its own minimum inside the widget — it is shown before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   UG: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Uganda sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Uganda sell orders · sells start at about $1 · priced off the local market — check the quote before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   TZ: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Tanzania sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Tanzania sell orders · sells start at about $1 · priced off the local market — check the quote before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   CM: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Cameroon sell orders · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Cameroon sell orders · priced off the local market — check the quote before you send · Fonbnk sets its own minimum inside the widget — it is shown before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   SN: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Senegal sell orders · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Senegal sell orders · priced off the local market — check the quote before you send · Fonbnk sets its own minimum inside the widget — it is shown before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   CI: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Côte d'Ivoire sell orders · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Côte d'Ivoire sell orders · priced off the local market — check the quote before you send · Fonbnk sets its own minimum inside the widget — it is shown before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   ZM: [
-    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Zambia sell orders · priced off the local market — check the quote before you send" }],
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Zambia sell orders · priced off the local market — check the quote before you send · Fonbnk sets its own minimum inside the widget — it is shown before you send · Fluid adds its own small fee on top of Fonbnk's quote — shown in the send review before you confirm · Fonbnk's quote itself is never reduced" }],
   ],
   US: [
-    // Spritz leads (global ramp research, 7 Nov 2026): the cheapest
-    // verified US route — buy 1% / sell 0.5% by ACH. Mt Pelerin
-    // EXCLUDES US persons, so it can no longer lead or badge here;
-    // it stays listed, flagged, for non-US users paying in USD.
-    ["Spritz", { badge: true, external: true }],
+    // Mt Pelerin EXCLUDES US persons, so it stays listed, flagged,
+    // for non-US users paying in USD — it can never lead or badge
+    // here. The corridor's two paying-nothing routes were removed
+    // under the capture gate (2026-11-09), so the US sheet
+    // otherwise resolves to the honest empty state on both sides.
     ["Mt Pelerin", { unavailable: true, note: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" }],
-    ["Paybis", { note: "Card purchases cost ~5% all-in (measured 1 Nov) · free email account + quick ID check — paste your Fluid address" }],
   ],
-  GB: [["Mt Pelerin", { badge: true }], ["Paybis", {}]],
-  DE: [["Mt Pelerin", { badge: true }], ["Paybis", {}]],
-  IN: [["Paybis", { badge: true }]],
-  BR: [["Paybis", { badge: true }]],
-  PH: [["Paybis", { badge: true }]],
-  ID: [
-    ["Paybis", { note: "Price not yet verified for Indonesia — check the final quote before you pay · free email account + quick ID check" }],
-  ],
-  MX: [["Mt Pelerin", { badge: true }], ["Paybis", {}]],
+  GB: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  DE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  // IN, BR, PH, ID: their only route was removed under the
+  // capture gate (2026-11-09) — both sides resolve to the honest
+  // empty state until a capture-clean route exists.
+  IN: [],
+  BR: [],
+  PH: [],
+  ID: [],
+  MX: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   // Corridor extensions (global ramp scout, 2026-11-09; approved
   // by the owner's standing rule the same day): the existing Mt
   // Pelerin referral preset extended beyond DE — the remaining
@@ -4520,38 +4573,38 @@ export const RAMP_COUNTRY_PLAN = {
   // for bank-transfer buys AND sells, and Singapore is absent
   // from its published exclusion list. JP deliberately stays out:
   // JPY being a supported fiat is not, by itself, a route.
-  CA: [["Mt Pelerin", { badge: true }]],
-  AU: [["Mt Pelerin", { badge: true }]],
-  SG: [["Mt Pelerin", { badge: true }]],
-  AT: [["Mt Pelerin", { badge: true }]],
-  BE: [["Mt Pelerin", { badge: true }]],
-  BG: [["Mt Pelerin", { badge: true }]],
-  CY: [["Mt Pelerin", { badge: true }]],
-  CZ: [["Mt Pelerin", { badge: true }]],
-  DK: [["Mt Pelerin", { badge: true }]],
-  EE: [["Mt Pelerin", { badge: true }]],
-  ES: [["Mt Pelerin", { badge: true }]],
-  FI: [["Mt Pelerin", { badge: true }]],
-  FR: [["Mt Pelerin", { badge: true }]],
-  GR: [["Mt Pelerin", { badge: true }]],
-  HR: [["Mt Pelerin", { badge: true }]],
-  HU: [["Mt Pelerin", { badge: true }]],
-  IE: [["Mt Pelerin", { badge: true }]],
-  IS: [["Mt Pelerin", { badge: true }]],
-  IT: [["Mt Pelerin", { badge: true }]],
-  LI: [["Mt Pelerin", { badge: true }]],
-  LT: [["Mt Pelerin", { badge: true }]],
-  LU: [["Mt Pelerin", { badge: true }]],
-  LV: [["Mt Pelerin", { badge: true }]],
-  MT: [["Mt Pelerin", { badge: true }]],
-  NL: [["Mt Pelerin", { badge: true }]],
-  NO: [["Mt Pelerin", { badge: true }]],
-  PL: [["Mt Pelerin", { badge: true }]],
-  PT: [["Mt Pelerin", { badge: true }]],
-  RO: [["Mt Pelerin", { badge: true }]],
-  SE: [["Mt Pelerin", { badge: true }]],
-  SI: [["Mt Pelerin", { badge: true }]],
-  SK: [["Mt Pelerin", { badge: true }]],
+  CA: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  AU: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  SG: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  AT: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  BE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  BG: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  CY: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  CZ: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  DK: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  EE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  ES: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  FI: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  FR: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  GR: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  HR: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  HU: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  IE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  IS: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  IT: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  LI: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  LT: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  LU: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  LV: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  MT: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  NL: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  NO: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  PL: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  PT: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  RO: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  SE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  SI: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  SK: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +
  *  asset, in ranked order. Each route: { name, url, note, badge,
@@ -4566,10 +4619,16 @@ export const RAMP_COUNTRY_PLAN = {
  *  pasteAddress: true to flag a paste route whose widget can't be
  *  pre-filled keylessly (carried on the route object; no current
  *  route sets it), and external: true to
- *  render as an external-app link-out (Spritz in the US corridor
- *  is an external app, not a Fluid partner widget). A country/mode
- *  with no qualifying rows returns an empty routes array and the
- *  sheet renders its honest empty state. */
+ *  render as an external-app link-out. A row may
+ *  also carry badgeModes: ["buy"] / ["sell"] — the CHEAPEST
+ *  badge is judged per mode (global badge rule, audit P0-4);
+ *  rows with plain badge: true and no badgeModes keep the
+ *  both-modes meaning — and swift: true, which appends the SWIFT
+ *  bank-cost line to an Mt Pelerin BUY note (audit P1-12). A
+ *  provider default note may be a per-mode { buy, sell } object
+ *  (audit P1-11); a row-level note override stays a string. A
+ *  country/mode with no qualifying rows returns an empty routes
+ *  array and the sheet renders its honest empty state. */
 export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", asset = "USDC") {
   const c = RAMP_COUNTRIES.find(x => x.code === countryCode) || RAMP_COUNTRIES[0];
   const plan = RAMP_COUNTRY_PLAN[c.code] || [];
@@ -4601,6 +4660,15 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       if (!links) continue;
       url = mode === "buy" ? links.buy : links.sell;
     }
+    // Note assembly: a row override wins; otherwise the provider
+    // default, which may be per-mode. On flagged SWIFT corridors
+    // the Mt Pelerin buy note gains the bank-cost line (P1-12).
+    let note = opts.note;
+    if (note == null) {
+      const dflt = RAMP_DEFAULT_NOTES[name];
+      note = (dflt && typeof dflt === "object") ? (dflt[mode] || "") : (dflt || "");
+    }
+    if (opts.swift && name === "Mt Pelerin" && mode === "buy") note = `${note} · ${RAMP_SWIFT_BUY_NOTE}`;
     routes.push({
       name,
       // A plan row flagged unavailable (QA F8: Mt Pelerin in the US
@@ -4609,8 +4677,11 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       // can be honest about a provider without linking anyone to a
       // service that will refuse them.
       url: opts.unavailable ? null : url,
-      note: opts.note || RAMP_DEFAULT_NOTES[name] || "",
-      badge: !!opts.badge,
+      note,
+      // The badge is per-mode: badgeModes lists the modes on which
+      // this row may carry CHEAPEST; absent, badge: true keeps
+      // its both-modes meaning (no current row relies on it).
+      badge: !!opts.badge && (!Array.isArray(opts.badgeModes) || opts.badgeModes.includes(mode)),
       external: !!opts.external,
       unavailable: !!opts.unavailable,
       addressEntry,
@@ -4634,8 +4705,9 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
  *  route fails the rate bar until quotes normalise AND one funded
  *  ~$1 test proves the aggregator settles an unattributed order;
  *  full evidence in research_notes/fluid-ng-repair-20261109.
- *  Its consumer face (Noblocks) is named on the NG sell sheet as
- *  an external app — see the NG plan row. The ramp sheets show a
+ *  (Its consumer face was named on the NG sell sheet until
+ *  2026-11-09, when the owner's capture GATE removed it in
+ *  full — see the plan comments above.) The ramp sheets show a
  *  live "market rate" benchmark line so users can judge prices
  *  against the market themselves. That line is sourced from the
  *  aggregator's MARKET fields only — /v1/currencies'
@@ -5007,6 +5079,24 @@ export function lifiRouteFeeUsd(route) {
   let explicit = 0;
   for (const s of route?.steps || []) explicit += lifiStepCostsUsd(s);
   return routeCostUsd(explicit, Number(route?.fromAmountUSD) - Number(route?.toAmountUSD));
+}
+/** The swap route-list cost label ($1-rule fix F5, 2026-11-09):
+ *  the row prints the route's TOTAL cost — its own cost
+ *  (routeFeeUsd) plus the Fluid fee the final quote discloses
+ *  (platformFeeUsd) — never gasCostUSD alone, which can understate
+ *  the true cost by orders of magnitude on solver routes (a
+ *  BSC→Solana quote showed "fees ≈ $0.0033" while the user
+ *  received $0.82 of $1). Falls back to gasCostUSD when the route
+ *  carries no routeFeeUsd. Pure and exported so tests pin the
+ *  exact arithmetic the sheet renders. */
+export function swapRouteCostLabel(route) {
+  const rf = Number(route?.routeFeeUsd);
+  if (Number.isFinite(rf) && rf >= 0) {
+    const pf = Number(route?.platformFeeUsd);
+    const total = rf + (Number.isFinite(pf) && pf > 0 ? pf : 0);
+    return { text: "route cost", usd: total };
+  }
+  return { text: "fees", usd: Number(route?.gasCostUSD) || 0 };
 }
 /** GET /v1/quote with the given builder options; throws the route
  *  search's standard error on a non-OK answer. */

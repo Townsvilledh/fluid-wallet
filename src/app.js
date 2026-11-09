@@ -30,7 +30,7 @@ import {
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
@@ -4277,7 +4277,7 @@ $("actSwap").onclick = () => {
         const badges = `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="netitem" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · fees ≈ ${usd(r.gasCostUSD)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small></span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small></span>
             <span>${usd(r.toAmountUSD)}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
