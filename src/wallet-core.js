@@ -5525,8 +5525,9 @@ async function satoraPairLimits(chainId, destKey) {
   if (!satoraPairsPromise) {
     satoraPairsPromise = (async () => {
       const data = await satoraFetchJson("/swap-pairs");
-      if (!Array.isArray(data)) throw new Error("Satora returned an unreadable pair list.");
-      return data;
+      const pairs = Array.isArray(data) ? data : (Array.isArray(data?.pairs) ? data.pairs : null);
+      if (!pairs) throw new Error("Satora returned an unreadable pair list.");
+      return pairs;
     })();
     satoraPairsPromise.catch(() => { satoraPairsPromise = null; });
   }
@@ -5571,24 +5572,65 @@ export function satoraSupportsPair(args) {
   }
   return null;
 }
-export function parseSatoraQuote(data, plan, args) {
+export function parseSatoraQuote(data, plan, args, baselineQuote = null) {
   if (!data || typeof data !== "object") return null;
   if (String(data.source_amount) !== String(args.fromAmount)) return null;
   const gross = Number(data.target_amount), net = Number(data.net_target_amount);
   const protocol = Number(data.protocol_fee), network = Number(data.network_fee);
-  if (![gross, net, protocol, network].every(Number.isFinite) || gross <= 0 || net <= 0) return null;
-  // The Fluid fee is whatever the quote deducted beyond protocol +
-  // network — read from the quote's own figures only, never assumed
-  // from the bps that was requested. A quote whose deductions don't
-  // add up (net + fees above the gross) or whose protocol fee
-  // disagrees with its own stated rate is refused outright.
-  const fluidFeeSats = Math.round(gross - net - protocol - network);
-  if (fluidFeeSats < 0) return null;
+  if (![gross, net, protocol, network].every(Number.isFinite) || gross <= 0 || net <= 0 || protocol < 0 || network < 0) return null;
   const rate = Number(data.protocol_fee_rate);
   if (Number.isFinite(rate) && rate > 0 && Math.abs(protocol - rate * gross) > 2) return null;
-  return { grossSats: gross, netSats: net, protocolFeeSats: protocol, networkFeeSats: network, fluidFeeSats, exchangeRate: String(data.exchange_rate || "") };
+  if (baselineQuote != null) {
+    // Live Satora FOLDS extra_fees into protocol_fee on a
+    // fee-bearing quote: pass 2's protocol_fee is the base
+    // protocol fee PLUS Fluid's fee, and its protocol_fee_rate is
+    // the sum of the two rates (live-probed 2026-11-09: $20
+    // Arbitrum USDC -> BTC moved protocol_fee 134 -> 268 and
+    // rate 0.005 -> 0.01 at extra_fees=50, while net fell by the
+    // same 134 sats). The only honest attribution is therefore
+    // DIFFERENTIAL, against the fee-free pass the flow already
+    // fetched: Fluid's fee is the protocol-fee differential,
+    // cross-checked through the two passes' accounting identity
+    //   netDifferential = fluidFee - grossDrift + networkDrift
+    // which must hold within one sat (the fee-free pass's own
+    // rounding). The identity matters: the Lightning lane
+    // RE-PRICES between passes (live-probed 2026-11-09, stable
+    // across repeated probes: pass-2 gross +10 sats on a 26,900
+    // gross, protocol differential 135, net differential 125 —
+    // exactly the identity), so a naive net-differential
+    // equality refuses every Lightning quote, while the
+    // identity separates the fee from the reprice exactly. The
+    // gross reprice itself is bounded at 0.1% (the creation
+    // tolerance): beyond it the second quote is a different
+    // swap than the one measured, and attributing a fee from
+    // it would be a guess — refuse.
+    const baseGross = Number(baselineQuote.grossSats), baseNet = Number(baselineQuote.netSats);
+    const baseProtocol = Number(baselineQuote.protocolFeeSats), baseNetwork = Number(baselineQuote.networkFeeSats);
+    if (![baseGross, baseNet, baseProtocol, baseNetwork].every(Number.isFinite)) return null;
+    if (Number(baselineQuote.fluidFeeSats) !== 0) return null;
+    const grossDrift = gross - baseGross, networkDrift = network - baseNetwork;
+    if (Math.abs(grossDrift) > Math.max(2, Math.floor(baseGross * 0.001))) return null;
+    if (Math.abs(networkDrift) > 1) return null;
+    const fluidFeeSats = protocol - baseProtocol;
+    const netDifferential = baseNet - net;
+    if (fluidFeeSats < 0 || Math.abs(netDifferential - (fluidFeeSats - grossDrift + networkDrift)) > 1) return null;
+    return {
+      grossSats: gross, netSats: net,
+      protocolFeeSats: baseProtocol, networkFeeSats: network,
+      fluidFeeSats, exchangeRate: String(data.exchange_rate || ""),
+    };
+  }
+  // A fee-free quote must account for its own deductions:
+  // gross - net is protocol + network, up to one sat of the
+  // server's rounding. A larger unexplained deduction cannot be
+  // attributed from a single quote — under the live folded shape
+  // it could be a fee folded into protocol_fee, a rate move, or
+  // an error — so the quote is refused rather than guessed at.
+  const residual = gross - net - protocol - network;
+  if (Math.abs(residual) > 1) return null;
+  return { grossSats: gross, netSats: net, protocolFeeSats: protocol, networkFeeSats: network, fluidFeeSats: 0, exchangeRate: String(data.exchange_rate || "") };
 }
-async function fetchSatoraQuote(plan, args, extraFeesBps) {
+async function fetchSatoraQuote(plan, args, extraFeesBps, baselineQuote = null) {
   const fee = satoraFeeConfig(extraFeesBps);
   const q = new URLSearchParams({
     source_chain: String(plan.chainId),
@@ -5600,7 +5642,7 @@ async function fetchSatoraQuote(plan, args, extraFeesBps) {
   });
   if (fee.referralCode) q.set("ref", fee.referralCode);
   const data = await satoraFetchJson("/quote?" + q.toString(), { destKey: plan.destKey });
-  return parseSatoraQuote(data, plan, args);
+  return parseSatoraQuote(data, plan, args, baselineQuote);
 }
 // ---------- Circle IRIS: CCTP fast-transfer fee + attestation ----------
 // The bridge lanes price and settle the crossing with Circle's
@@ -5701,7 +5743,11 @@ export function checkSatoraCctpMessage(messageHex, { userAddress, sourceDomain, 
  *  allowed extra_fees (the destination ecosystem's ceiling and the
  *  0.5% cap do the binding — at evidenced sizes the cap governs);
  *  pass 2 re-quotes with that fee, and the disclosed Fluid fee is
- *  the final quote's own deduction. Minimums are enforced on the
+ *  recovered differentially against pass 1 (the server folds
+ *  extra_fees into protocol_fee — see parseSatoraQuote). A pass 2
+ *  that cannot be reconciled with pass 1 refuses the route:
+ *  quoting a fee Fluid cannot itemise would be a lying sentence.
+ *  Minimums are enforced on the
  *  NET landing (Satora's quote layer does not enforce them):
  *  10,000 sats for Bitcoin, 356 for Lightning; pair limits from
  *  the /swap-pairs preflight bound the gross. Returns null when
@@ -5770,8 +5816,13 @@ export async function getSatoraSwapRoute(args) {
   if (satoraDeveloperKeyLive()) {
     const bps = platformFeeBpsForRoute(routeFeeUsd, fromAmountUSD, plan.destKey);
     if (bps > 0) {
-      const q2 = await fetchSatoraQuote(plan, args, bps).catch(() => null);
-      if (q2 && postCctpNetSats(q2.netSats) >= minNet) { quote = q2; usedBps = bps; }
+      const q2 = await fetchSatoraQuote(plan, args, bps, quote).catch(() => null);
+      if (!q2) {
+        const e = new Error("Satora's fee-bearing quote could not be reconciled with its fee-free quote — refusing to quote a fee Fluid cannot itemise.");
+        e.satoraTerminal = true;
+        throw e;
+      }
+      if (postCctpNetSats(q2.netSats) >= minNet) { quote = q2; usedBps = bps; }
     }
   }
   const feeStackSats = quote.protocolFeeSats + quote.networkFeeSats + quote.fluidFeeSats;
@@ -5950,9 +6001,40 @@ export function checkSatoraCreateResponse(route, data, { identity = null, claimP
     if (String(data.bridge_source_token_address || "") !== String(s.bridge.sourceTokenAddress))
       return refuse("the created swap does not echo the bridge source token the crossing was planned from.");
   }
-  const wantFee = Math.round(s.grossSats - s.netSats);
-  if (Number(data.fee_sats) !== wantFee) return refuse("the created swap's fee differs from the final quote.");
-  if (Number(data.target_amount) !== Math.round(s.netSats)) return refuse("the created swap's payout differs from the quote.");
+  // The creation's total fee must reconcile with the quote's
+  // itemised attribution (protocol + network + Fluid's fee),
+  // within one sat of server rounding/drift (live-probed
+  // 2026-11-09: quote attribution 134 + 160 + 134 = 428 against a
+  // creation fee_sats of 429). Routes built by hand in tests may
+  // carry only gross/net; for those the total deduction is the
+  // attribution. A mismatch beyond tolerance means the server
+  // created a differently-priced swap than the one reviewed —
+  // refuse before funding.
+  const feeParts = [s.protocolFeeSats, s.networkFeeSats, s.fluidFeeSats];
+  const wantFee = feeParts.every(v => Number.isFinite(Number(v)) && v != null)
+    ? Math.round(feeParts.reduce((a, v) => a + Number(v), 0))
+    : Math.round(s.grossSats - s.netSats);
+  if (!Number.isFinite(Number(data.fee_sats)) || Math.abs(Number(data.fee_sats) - wantFee) > 1)
+    return refuse("the created swap's fee differs from the final quote.");
+  // The payout: the server RE-PRICES at creation, so the
+  // creation's target can drift a little from the quote's net
+  // (live-probed 2026-11-09: quote net 26,467 against a creation
+  // target of 26,459 — the creation's own gross had moved ~7
+  // sats in the seconds between quote and creation, while its
+  // fee_sats still reconciled with the quote's attribution
+  // within 1 sat). An exact-equality pin therefore refuses
+  // every live creation. The honest pin is a bounded drift —
+  // 0.1% of the quoted net, floored at 2 sats — with the
+  // creation's figure adopted as the record's truth (see
+  // createSatoraSwap): inside it, the swap is the reviewed one
+  // at a marginally moved rate (the review sentence says
+  // "about"); beyond it, the server created a materially
+  // different payout and funding is refused.
+  const wantTarget = Math.round(s.netSats);
+  const gotTarget = Number(data.target_amount);
+  const targetTol = Math.max(2, Math.floor(wantTarget * 0.001));
+  if (!Number.isFinite(gotTarget) || Math.abs(gotTarget - wantTarget) > targetTol)
+    return refuse("the created swap's payout differs from the quote.");
   if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
     return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
   if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
@@ -6005,8 +6087,16 @@ export async function createSatoraSwap(route, { phrase, index = 0, userAddress }
     id: data.id, provider: "satora", index: Math.max(0, Math.floor(Number(index) || 0)),
     destKey: s.destKey, fromChainKey: Object.keys(SATORA_SOURCE_CHAINS).find(k => SATORA_SOURCE_CHAINS[k] === Number(route.fromChainId)) || null,
     fromSymbol: route.fromToken.symbol, fromAmount: String(route.fromAmount),
-    destInput: s.destInput, netSats: Math.round(s.netSats), grossSats: Math.round(s.grossSats),
+    destInput: s.destInput,
+    // The record's net is the CREATION's target — the payout
+    // the server actually promised — not the quote's estimate
+    // (the two can drift within the tolerance checked above).
+    netSats: Number.isFinite(Number(data.target_amount)) ? Math.round(Number(data.target_amount)) : Math.round(s.netSats),
+    grossSats: Math.round(s.grossSats),
     feeSats: Number(data.fee_sats), status: data.status,
+    protocolFeeSats: s.protocolFeeSats != null ? Math.round(Number(s.protocolFeeSats)) : null,
+    networkFeeSats: s.networkFeeSats != null ? Math.round(Number(s.networkFeeSats)) : null,
+    fluidFeeSats: s.fluidFeeSats != null ? Math.round(Number(s.fluidFeeSats)) : null,
     hashLock: s.destKey === "bitcoin" ? identity.hashLock : String(data.hash_lock || ""),
     claimAddress: s.destKey === "bitcoin" ? (s.destInput || claim.address) : null,
     coordinatorAddress: data.evm_coordinator_address, htlcAddress: data.evm_htlc_address,

@@ -5336,12 +5336,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // BTC), with the probe's hash lock / claim key swapped for the
   // test wallet's derived ones.
   const createBtcS7 = ({ hashLock, claimPkXonly }) => ({
-    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 293,
+    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 427,
     evm_hash_lock: hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
     source_token: { token_id: POL_USDC_S7, symbol: "USDC", chain: "137", name: "USDC", decimals: 6 },
     target_token: { token_id: "btc", symbol: "BTC", chain: "Bitcoin", name: "Bitcoin", decimals: 8 },
     created_at: "2026-11-08T23:05:12.437373Z", chain: "Polygon", evm_chain_id: 137,
-    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26433",
+    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26299",
     evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
     evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
     client_evm_address: "0x0877999faBfDEd6ADBa3A97A3B46159d2F6A2F6B", server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
@@ -5367,14 +5367,31 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   });
   // A Satora wire stub: routes by URL, records quote URLs + create
   // bodies, and throws on anything unexpected.
-  const satoraStubS7 = ({ quote, version = { tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" }, status = { healthy: true, swaps_paused: false }, create = null, swapGet = null, permit2 = null, seen = { quotes: [], creates: [] } }) => async (url, opts = {}) => {
+  const satoraStubS7 = ({ quote, pairs = pairsS7, version = { tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" }, status = { healthy: true, swaps_paused: false }, create = null, swapGet = null, permit2 = null, seen = { quotes: [], creates: [] } }) => async (url, opts = {}) => {
     const u = String(url);
     if (u.includes("api.binance.com")) return jsonResS7([{ symbol: "BTCUSDT", price: String(BTC_USD_S7) }, { symbol: "ETHUSDT", price: "3000" }]);
     if (u.includes("api.coingecko.com")) return jsonResS7({});
     if (u.includes("api.satora.io/version")) return jsonResS7(version);
     if (u.includes("api.satora.io/status")) return jsonResS7(status);
-    if (u.includes("api.satora.io/swap-pairs")) return jsonResS7(pairsS7);
-    if (u.includes("api.satora.io/quote")) { seen.quotes.push(u); return jsonResS7(typeof quote === "function" ? quote(new URL(u)) : quote); }
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResS7(pairs);
+    if (u.includes("api.satora.io/quote")) {
+      seen.quotes.push(u);
+      const base = typeof quote === "function" ? quote(new URL(u)) : quote;
+      const extra = Number(new URL(u).searchParams.get("extra_fees") || 0);
+      // Object fixtures are fee-free quotes; the live server
+      // answers a fee-bearing pass by FOLDING the extra fee into
+      // protocol_fee (and its rate) and deducting it from the
+      // net — reproduce that shape here. Function fixtures shape
+      // their own passes.
+      if (typeof quote !== "function" && extra > 0) {
+        // Scale the fixture's own protocol fee by extra/base
+        // rate (at the usual 50-on-50 it exactly doubles, as the
+        // live $20 pair did: 134 -> 268).
+        const extraSats = Math.round(Number(base.protocol_fee) * extra / (Number(base.protocol_fee_rate) * 10000));
+        return jsonResS7({ ...base, protocol_fee: Number(base.protocol_fee) + extraSats, protocol_fee_rate: Number(base.protocol_fee_rate) + extra / 10000, net_target_amount: String(Number(base.net_target_amount) - extraSats) });
+      }
+      return jsonResS7(base);
+    }
     if (u.includes("api.satora.io/swap/evm/")) { seen.creates.push(JSON.parse(opts.body || "{}")); return jsonResS7(create); }
     if (u.includes("swap-and-lock-calldata-permit2")) return jsonResS7(permit2);
     if (u.includes("api.satora.io/swap/")) return jsonResS7(swapGet);
@@ -5404,27 +5421,71 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "solana" }) === null
     && satoraSupportsPair({ ...ARGS_BTC100_S7, fromTokenAddress: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6" }) === null);
 
-  // Quote parsing: full fee stack from the quote's own figures.
+  // Quote parsing: a fee-free quote accounts for its own
+  // deductions exactly (protocol + network, ±1 sat of rounding);
+  // an unexplained deduction in a single quote is NOT attributed
+  // to Fluid — under the live folded shape it cannot be told
+  // apart from a folded protocol fee.
   const planLnS7 = satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7 });
   const parsedLnS7 = parseSatoraQuote(quoteLnS7(), planLnS7, { fromAmount: "20000000" });
   ok("satora: LN quote parses with the full fee stack", !!parsedLnS7 && parsedLnS7.grossSats === 26934 && parsedLnS7.netSats === 26796 && parsedLnS7.protocolFeeSats === 134 && parsedLnS7.networkFeeSats === 4 && parsedLnS7.fluidFeeSats === 0);
-  const parsedFeeS7 = parseSatoraQuote(quoteLnS7({ net_target_amount: "26662" }), planLnS7, { fromAmount: "20000000" });
-  ok("satora: a deduction beyond protocol+network reads as the Fluid fee", !!parsedFeeS7 && parsedFeeS7.fluidFeeSats === 134);
+  ok("satora: an unexplained deduction in a fee-free quote is refused, not attributed",
+    parseSatoraQuote(quoteLnS7({ net_target_amount: "26662" }), planLnS7, { fromAmount: "20000000" }) === null);
   ok("satora: inconsistent or mismatched quotes are refused",
     parseSatoraQuote(quoteLnS7({ net_target_amount: "27000" }), planLnS7, { fromAmount: "20000000" }) === null
     && parseSatoraQuote(quoteLnS7({ protocol_fee: 500, net_target_amount: "26430" }), planLnS7, { fromAmount: "20000000" }) === null
     && parseSatoraQuote(quoteLnS7(), planLnS7, { fromAmount: "999" }) === null);
 
+  // The LIVE folded shape (probed 2026-11-09, $20 Arbitrum USDC
+  // -> Bitcoin, live key): pass 1 (extra_fees=0) protocol_fee 134
+  // at rate 0.005, network 160, net 26601 of gross 26895; pass 2
+  // (extra_fees=50) protocol_fee 268 at rate 0.01 — the extra fee
+  // FOLDED IN — network 160, net 26467. Fluid's fee exists only
+  // as the differential, and the parser must recover exactly it:
+  // protocol stays the pass-1 134, Fluid's fee is 134.
+  const planBtcArbS7 = satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "bitcoin", fromTokenAddress: ARB_USDC_S7 });
+  const quoteLiveP1S7 = { exchange_rate: "74363.264547313627068228295222", network_fee: 160, gasless_network_fee: 0, protocol_fee: 134, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "20000000", target_amount: "26895", net_source_amount: "20000000", net_target_amount: "26601" };
+  const quoteLiveP2S7 = { ...quoteLiveP1S7, protocol_fee: 268, protocol_fee_rate: 0.01, net_target_amount: "26467" };
+  const parsedLiveP1S7 = parseSatoraQuote(quoteLiveP1S7, planBtcArbS7, { fromAmount: "20000000" });
+  const parsedLiveP2S7 = parseSatoraQuote(quoteLiveP2S7, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7);
+  ok("satora: the live folded pass 2 recovers Fluid's fee differentially (protocol 134, network 160, Fluid 134)",
+    !!parsedLiveP1S7 && parsedLiveP1S7.fluidFeeSats === 0
+    && !!parsedLiveP2S7 && parsedLiveP2S7.protocolFeeSats === 134 && parsedLiveP2S7.networkFeeSats === 160 && parsedLiveP2S7.fluidFeeSats === 134 && parsedLiveP2S7.netSats === 26467 && parsedLiveP2S7.grossSats === 26895);
+  ok("satora: one sat of quote drift between passes is tolerated",
+    !!parseSatoraQuote({ ...quoteLiveP2S7, net_target_amount: "26466" }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7)
+    && !!parseSatoraQuote({ ...quoteLiveP2S7, target_amount: "26896" }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7));
+  ok("satora: an irreconcilable pass 2 is refused (net, gross, network and baseline guards)",
+    parseSatoraQuote({ ...quoteLiveP2S7, net_target_amount: "26460" }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7) === null
+    && parseSatoraQuote({ ...quoteLiveP2S7, target_amount: "26897" }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7) === null
+    && parseSatoraQuote({ ...quoteLiveP2S7, network_fee: 162 }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7) === null
+    && parseSatoraQuote(quoteLiveP2S7, planBtcArbS7, { fromAmount: "20000000" }, { ...parsedLiveP1S7, fluidFeeSats: 5 }) === null);
+  // The live LIGHTNING shape (probed 2026-11-09, stable across
+  // repeated probes): the fee-bearing pass RE-PRICES — gross
+  // 26,900 -> 26,910 (+10) — so the net differential (125) is
+  // the protocol differential (135) minus the gross drift,
+  // exactly the accounting identity. The fee is still 135, the
+  // protocol stays the pass-1 134, and a gross reprice beyond
+  // 0.1% refuses even when the identity would balance.
+  const quoteLiveLnP1S7 = { ...quoteLiveP1S7, network_fee: 4, target_amount: "26900", net_target_amount: "26762" };
+  const quoteLiveLnP2S7 = { ...quoteLiveLnP1S7, protocol_fee: 269, protocol_fee_rate: 0.01, target_amount: "26910", net_target_amount: "26637" };
+  const parsedLiveLnP1S7 = parseSatoraQuote(quoteLiveLnP1S7, planLnS7, { fromAmount: "20000000" });
+  const parsedLiveLnP2S7 = parseSatoraQuote(quoteLiveLnP2S7, planLnS7, { fromAmount: "20000000" }, parsedLiveLnP1S7);
+  ok("satora: the live Lightning reprice reconciles through the identity (Fluid 135, protocol 134)",
+    !!parsedLiveLnP2S7 && parsedLiveLnP2S7.fluidFeeSats === 135 && parsedLiveLnP2S7.protocolFeeSats === 134 && parsedLiveLnP2S7.networkFeeSats === 4 && parsedLiveLnP2S7.netSats === 26637);
+  ok("satora: a gross reprice beyond 0.1% between passes is refused even when the identity balances",
+    parseSatoraQuote({ ...quoteLiveP2S7, target_amount: "27095", net_target_amount: "26667" }, planBtcArbS7, { fromAmount: "20000000" }, parsedLiveP1S7) === null);
+
   // Dispatcher: Satora serves its pairs; live key -> the
   // two-pass discipline (fee-free pass reads the route cost, the
-  // law's bps rides the second pass, the disclosed fee is read
-  // from the final quote only). The stub server honours
-  // extra_fees the way the real one does: at 50 bps it deducts
-  // floor(gross x 50/10000) = 669 sats beyond protocol + network.
+  // law's bps rides the second pass, the disclosed fee is
+  // recovered differentially). The stub server honours
+  // extra_fees the way the real one does: at 50 bps it FOLDS
+  // 669 sats into protocol_fee (669 -> 1338, rate 0.005 -> 0.01)
+  // and deducts them from the net.
   {
     const realFetch = globalThis.fetch;
     const seen = { quotes: [], creates: [] };
-    globalThis.fetch = satoraStubS7({ quote: (u) => u.searchParams.get("extra_fees") === "50" ? quoteBtc100S7({ net_target_amount: "132496" }) : quoteBtc100S7(), seen });
+    globalThis.fetch = satoraStubS7({ quote: (u) => u.searchParams.get("extra_fees") === "50" ? quoteBtc100S7({ protocol_fee: 1338, protocol_fee_rate: 0.01, net_target_amount: "132496" }) : quoteBtc100S7(), seen });
     try {
       resetSatoraCaches();
       const routes = await getSwapRoutes(ARGS_BTC100_S7);
@@ -5438,12 +5499,25 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     } finally { globalThis.fetch = realFetch; }
   }
   {
+    // The LIVE pair-list shape is an object wrapping the array
+    // ({"pairs":[...]}); the bare array the fixtures above use
+    // must keep working too.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ pairs: { pairs: pairsS7 }, quote: quoteBtc100S7() });
+    try {
+      resetSatoraCaches();
+      const routes = await getSwapRoutes(ARGS_BTC100_S7);
+      ok("satora: the live object-wrapped pair list ({pairs:[...]}) serves routes", routes.length === 1 && routes[0].provider === "satora" && routes[0].toAmount === "132496");
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
     const realFetch = globalThis.fetch;
     globalThis.fetch = satoraStubS7({ quote: quoteLnS7() });
     try {
       resetSatoraCaches();
       const routes = await getSwapRoutes({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: AUSER_S7, toAddress: "lnbc1example" });
-      ok("satora: dispatcher returns the Satora route for Arbitrum USDC -> Lightning", routes.length === 1 && routes[0].provider === "satora" && routes[0].toAmount === "26796" && Math.abs(routes[0].toAmountUSD - 26796 * BTC_USD_S7 / 1e8) < 1e-6);
+      ok("satora: dispatcher returns the Satora route for Arbitrum USDC -> Lightning (fee-bearing net, Fluid fee itemised)",
+        routes.length === 1 && routes[0].provider === "satora" && routes[0].toAmount === "26662" && routes[0].satora.fluidFeeSats === 134 && routes[0].satora.protocolFeeSats === 134 && Math.abs(routes[0].toAmountUSD - 26662 * BTC_USD_S7 / 1e8) < 1e-6);
     } finally { globalThis.fetch = realFetch; }
   }
 
@@ -5529,20 +5603,35 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       resetSatoraCaches();
       const route = (await getSwapRoutes(ARGS_BTC20_S7))[0];
       const record = await createSatoraSwap(route, { phrase: PHRASE_S7, index: 0, userAddress: AUSER_S7 });
-      ok("satora: creation returns the persisted record (id is the recovery key)", record.id === "f8367eae-cc13-4062-be55-4b1b2a569e7e" && record.status === "pending" && record.hashLock === identityS7.hashLock && record.netSats === 26433 && record.feeSats === 293);
+      ok("satora: creation returns the persisted record (id is the recovery key)", record.id === "f8367eae-cc13-4062-be55-4b1b2a569e7e" && record.status === "pending" && record.hashLock === identityS7.hashLock && record.netSats === 26299 && record.feeSats === 427 && record.protocolFeeSats === 134 && record.networkFeeSats === 159 && record.fluidFeeSats === 134);
       ok("satora: the record carries the funding-verification facts (sold token, HTLC kind/version, no fund tx yet)", record.sourceTokenAddress === POL_USDC_S7 && record.htlcKind === "erc20" && record.htlcVersion === 7 && record.fundTxHash === null);
       ok("satora: the create body the server received was Fluid's own (live referral at the quote's 50 bps)", seen.creates.length === 1 && seen.creates[0].hash_lock === identityS7.hashLock && seen.creates[0].claim_pk === claimS7.claimPk && seen.creates[0].referral_code === SATORA_DEVELOPER_KEY && seen.creates[0].extra_fees === 50);
       const good = createBtcS7({ hashLock: identityS7.hashLock, claimPkXonly: claimS7.claimPk.slice(2) });
       ok("satora: creation bounds check accepts the faithful record", checkSatoraCreateResponse(route, good, { identity: identityS7, claimPk: claimS7.claimPk }).ok === true);
       ok("satora: creation with a foreign hash lock is refused", checkSatoraCreateResponse(route, { ...good, evm_hash_lock: "0x" + "ff".repeat(32) }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
       ok("satora: creation with a foreign claim key is refused", checkSatoraCreateResponse(route, { ...good, btc_user_claim_pk: "aa".repeat(32) }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
-      ok("satora: creation with a bumped fee is refused", checkSatoraCreateResponse(route, { ...good, fee_sats: 294 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      ok("satora: creation fee within one sat of the quote attribution passes; beyond it is refused", checkSatoraCreateResponse(route, { ...good, fee_sats: 428 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === true
+        && checkSatoraCreateResponse(route, { ...good, fee_sats: 429 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      // The server re-prices at creation (live: quote net
+      // 26,467 -> creation target 26,459): a payout drift
+      // inside 0.1% of the quoted net is the reviewed swap at a
+      // moved rate; beyond it, a different swap — refused.
+      ok("satora: creation payout drift inside 0.1% passes; beyond it is refused", checkSatoraCreateResponse(route, { ...good, target_amount: "26280" }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === true
+        && checkSatoraCreateResponse(route, { ...good, target_amount: "26200" }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
       ok("satora: creation on an unpinned HTLC version is refused", checkSatoraCreateResponse(route, { ...good, evm_htlc_version: 8 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
       // Funding components: the live payload must verify, and its
       // calls_hash must recompute exactly.
       ok("satora: calls_hash recomputes byte-for-byte from the live payload", satoraCallsHash(CALLS_S7) === "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027");
       const comp = await fetchSatoraFundingComponents(record);
       ok("satora: funding components verify against the record", !!comp && checkSatoraFundingComponents(permit2S7({ hashLock: identityS7.hashLock }), record).ok === true);
+      // A creation whose payout drifted inside tolerance: the
+      // persisted record adopts the CREATION's target as its
+      // net (the payout actually promised), not the quote's.
+      globalThis.fetch = satoraStubS7({ quote: quoteBtc20S7(), create: { ...createBtcS7({ hashLock: identityS7.hashLock, claimPkXonly: claimS7.claimPk.slice(2) }), target_amount: "26290" }, permit2: permit2S7({ hashLock: identityS7.hashLock }), seen });
+      resetSatoraCaches();
+      const driftRoute = (await getSwapRoutes(ARGS_BTC20_S7))[0];
+      const driftRecord = await createSatoraSwap(driftRoute, { phrase: PHRASE_S7, index: 0, userAddress: AUSER_S7 });
+      ok("satora: the record adopts the creation's drifted target as its net", driftRecord.netSats === 26290 && driftRoute.satora.netSats === 26299);
       const tamperedCalls = [{ ...CALLS_S7[0] }, { ...CALLS_S7[1], call_data: CALLS_S7[1].call_data.slice(0, -2) + "ff" }];
       ok("satora: tampered funding calls fail the hash pin", checkSatoraFundingComponents({ ...permit2S7({ hashLock: identityS7.hashLock }), calls: tamperedCalls }, record).ok === false);
       const greedyApprove = new ethers.Interface(["function approve(address spender, uint256 amount)"]).encodeFunctionData("approve", [CALLS_S7[1].target, 20000001n]);
@@ -5561,7 +5650,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       resetSatoraCaches();
       const route = (await getSwapRoutes(ARGS_BTC100_S7))[0];
       const intent = formatSatoraSwapIntent({ route, destInput: ARGS_BTC100_S7.toAddress });
-      ok("satora: intent states the full fee stack in plain words", intent.includes("protocol fee 669 sats") && intent.includes("network fee 159 sats") && intent.includes("via Satora"));
+      ok("satora: intent states the full fee stack in plain words", intent.includes("protocol fee 669 sats") && intent.includes("network fee 159 sats") && intent.includes("Fluid's fee 669 sats") && intent.includes("via Satora"));
       ok("satora: intent names the Taproot destination + the refund truth", intent.includes("Taproot address you claim from with your own Fluid key") && intent.includes("If this swap fails, the refund comes back as WBTC/tBTC, not USDC."));
       const feeRoute = { ...route, satora: { ...route.satora, fluidFeeSats: 372 } };
       ok("satora: intent discloses Fluid's fee when one is charged", formatSatoraSwapIntent({ route: feeRoute, destInput: ARGS_BTC100_S7.toAddress }).includes("Fluid's fee 372 sats"));
@@ -5850,12 +5939,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // funding payload -> verify -> sign -> fund-gasless -> record.
   const quote20S9 = { exchange_rate: "74630.764293657131342682080407", network_fee: 159, gasless_network_fee: 159, protocol_fee: 134, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "20000000", target_amount: "26726", net_source_amount: "20000000", net_target_amount: "26433" };
   const createBtcS9 = {
-    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 293,
+    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 427,
     evm_hash_lock: identityS9.hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
     source_token: { token_id: POL_USDC_S9, symbol: "USDC", chain: "137", name: "USDC", decimals: 6 },
     target_token: { token_id: "btc", symbol: "BTC", chain: "Bitcoin", name: "Bitcoin", decimals: 8 },
     created_at: "2026-11-08T23:05:12.437373Z", chain: "Polygon", evm_chain_id: 137,
-    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26433",
+    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26299",
     evm_htlc_address: HTLC_S9, evm_htlc_version: 7, evm_htlc_kind: "erc20",
     evm_coordinator_address: COORD_S9,
     client_evm_address: "0x0877999faBfDEd6ADBa3A97A3B46159d2F6A2F6B", server_evm_address: SERVER_EVM_S9,
@@ -5880,7 +5969,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     if (u.includes("api.satora.io/version")) return jsonResS9({ tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
     if (u.includes("api.satora.io/status")) return jsonResS9({ healthy: true, swaps_paused: false });
     if (u.includes("api.satora.io/swap-pairs")) return jsonResS9(pairsS9);
-    if (u.includes("api.satora.io/quote")) return jsonResS9(quote20S9);
+    if (u.includes("api.satora.io/quote")) {
+      // The live folded shape: a fee-bearing pass folds the
+      // extra fee into protocol_fee and deducts it from the net.
+      if (new URL(u).searchParams.get("extra_fees") === "50")
+        return jsonResS9({ ...quote20S9, protocol_fee: 268, protocol_fee_rate: 0.01, net_target_amount: "26299" });
+      return jsonResS9(quote20S9);
+    }
     if (u.includes("api.satora.io/swap/evm/")) { seen.creates.push(JSON.parse(opts.body || "{}")); return jsonResS9(createBtcS9); }
     if (u.includes("swap-and-lock-calldata-permit2")) return jsonResS9(permit2 || permit2S9({ hashLock: identityS9.hashLock }));
     if (u.includes("fund-gasless")) { seen.funds.push(JSON.parse(opts.body || "{}")); return jsonResS9(fundResponse || { id: createBtcS9.id, status: "clientfundingseen", tx_hash: FUND_TX_S9, message: "ok" }); }
@@ -7027,12 +7122,28 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     { source: "42161", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
   ];
   const quoteForS71 = (amountRaw, extraBps, destKey, fixedNet = null) => {
-    const gross = Math.floor((Number(amountRaw) / 1e6) / BTC_USD_S71 * 1e8);
-    const protocol = Math.round(gross * 0.005);
+    let gross = Math.floor((Number(amountRaw) / 1e6) / BTC_USD_S71 * 1e8);
+    // The live folded shape: the extra fee is folded INTO
+    // protocol_fee (base + extra) and its rate, not carried as
+    // a separate deduction.
+    let baseProtocol = Math.round(gross * 0.005);
     const network = destKey === "bitcoin" ? 160 : 4;
-    const fluid = Math.round(gross * (Number(extraBps) || 0) / 10000);
-    const net = fixedNet != null ? fixedNet : gross - protocol - network - fluid;
-    return { exchange_rate: String(BTC_USD_S71), network_fee: network, gasless_network_fee: network, protocol_fee: protocol, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: String(amountRaw), target_amount: String(gross), net_source_amount: String(amountRaw), net_target_amount: String(net) };
+    if (fixedNet != null) {
+      // The minimum-enforcement fixture: pin the PASS-1 net by
+      // pricing a small consistent quote around it (gross =
+      // net + protocol + network), rather than bolting a tiny
+      // net onto a $5 gross — a quote whose deductions do not
+      // add up is refused by the parser, as it should be. A
+      // fee-bearing pass then nets the extra fee on top.
+      baseProtocol = Math.round(fixedNet * 0.005);
+      gross = fixedNet + baseProtocol + network;
+      baseProtocol = Math.round(gross * 0.005);
+      gross = fixedNet + baseProtocol + network;
+    }
+    const extraProtocol = Math.round(gross * (Number(extraBps) || 0) / 10000);
+    const protocol = baseProtocol + extraProtocol;
+    const net = fixedNet != null ? fixedNet - extraProtocol : gross - protocol - network;
+    return { exchange_rate: String(BTC_USD_S71), network_fee: network, gasless_network_fee: network, protocol_fee: protocol, protocol_fee_rate: 0.005 + (Number(extraBps) || 0) / 10000, min_amount: 10000, max_amount: 20000000, source_amount: String(amountRaw), target_amount: String(gross), net_source_amount: String(amountRaw), net_target_amount: String(net) };
   };
   const apiStubS71 = ({ creates = [], funds = [], createId = "aaaaaaa1-1111-4111-8111-111111111111", compNetRaw = "19996880", attestation = null, solanaSends = [], onSolanaSend = null, quoteFixedNet = null } = {}) => async (url, opts = {}) => {
     const u = String(url);
@@ -7140,13 +7251,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("satora bridge quote: $20 Base -> BTC prices the crossing into the route cost under the fee law",
       !!r && r.satora.bridge.maxFeeRaw === "3120" && r.satora.bridge.netSourceAmountRaw === "19996880"
       && Math.abs(r.routeFeeUsd - 0.22186) < 0.001 && r.platformFeeBps === 50
+      && r.satora.protocolFeeSats === 134 && r.satora.fluidFeeSats === 134
       && Math.abs(r.gasCostUSD - 0.32173) < 0.001 && r.fromChainId === 42161);
   }
   {
     const r = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "solana", toChainKey: "lightning", fromTokenAddress: SOL_USDC_S71, toTokenAddress: "ln", fromAmount: "5000000", fromAddress: SOL_OWNER_S71, toAddress: "user@wallet.example" }));
-    ok("satora bridge quote: $5 Solana -> Lightning (fee cap 600 raw, 0.5% cap binds the bps)",
+    ok("satora bridge quote: $5 Solana -> Lightning (fee cap 600 raw, 0.5% cap binds the bps; the folded Arbitrum settlement quote attributes differentially)",
       !!r && r.satora.bridge.maxFeeRaw === "600" && r.satora.bridge.netSourceAmountRaw === "4999400"
-      && r.platformFeeBps === 50 && Math.abs(r.routeFeeUsd - 0.0289) < 0.001);
+      && r.platformFeeBps === 50 && r.satora.protocolFeeSats === 34 && r.satora.networkFeeSats === 4 && r.satora.fluidFeeSats === 34 && Math.abs(r.routeFeeUsd - 0.0289) < 0.001);
   }
   {
     const rb = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDC_S71, toTokenAddress: "btc", fromAmount: "100000000", fromAddress: USER_S71, toAddress: BTC_DEST_S71 }));
