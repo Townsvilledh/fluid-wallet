@@ -400,7 +400,13 @@ export async function getPrices() {
   try {
     const syms = Object.values(PRICE_PAIRS).filter(Boolean);
     const url = "https://api.binance.com/api/v3/ticker/price?symbols=" + encodeURIComponent(JSON.stringify(syms));
-    const res = await fetch(url);
+    // Bounded per source (2026-11-09): a HUNG Binance request (not a
+    // fast failure) used to hold the whole price load for ~13 s+
+    // before the CoinGecko fallback even started — and the caller's
+    // own timeout then discarded prices for the whole session. Each
+    // source now gets its own budget, so worst case ≈ 6 s + 8 s and
+    // the typical case stays one fast batch.
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
     const data = await res.json();
     const byPair = Object.fromEntries(data.map(d => [d.symbol, parseFloat(d.price)]));
     for (const [sym, pair] of Object.entries(PRICE_PAIRS)) if (pair && byPair[pair]) out[sym] = byPair[pair];
@@ -413,7 +419,7 @@ export async function getPrices() {
   if (missing.length) {
     try {
       const ids = missing.map(s => CG[s]).join(",");
-      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`, { signal: AbortSignal.timeout(8000) });
       const data = await res.json();
       for (const s of missing) if (data[CG[s]]?.usd) out[s] = data[CG[s]].usd;
     } catch { /* prices stay partial; callers that need them refuse safely */ }

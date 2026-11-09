@@ -4463,7 +4463,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcEvm.includes("if (evmLoadFailed) return msg(\"sMsg\", warnPrefix + resolvedNote + \"Balances couldn't load right now"));
   ok("evm load-failed: refresh reports the load outcome, prices can't stall the render",
     appSrcEvm.includes("toast((evmLoadFailed || btcLoadFailed) ? \"Balances couldn't load — check your connection and try again\" : \"Balances refreshed\")")
-    && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 10000)'));
+    && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 20000)'));
 }
 
 // 62. Bitcoin silent-zero fix (EVM re-walk, 2026-11-08): the same

@@ -568,7 +568,7 @@ async function renderMain() {
     try {
       const p = await Promise.race([
         getPrices(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 10000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("prices timed out")), 20000)),
       ]);
       if (wallet !== w) return; // locked (or wallet switched) meanwhile
       prices = p;
