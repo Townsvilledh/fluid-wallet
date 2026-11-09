@@ -5354,7 +5354,7 @@ function renderNameSection() {
       let noteText;
       if (lnSession && lnSession.network === "bitcoin") {
         let recvMsat = 0;
-        try { recvMsat = Number(JSON.parse(lnSession.balance()).receivableMsat || 0); } catch { recvMsat = 0; }
+        try { recvMsat = Number(lnSession.balance().receivableMsat || 0); } catch { recvMsat = 0; }
         noteText = recvMsat > 0
           ? "Registered — pays your own node, no outside service. Your node can receive up to ~" + Math.floor(recvMsat / 1000).toLocaleString("en-GB") + " sats right now; Fluid must be open on this device when you're paid."
           : "Registered but not yet payable — your node can't receive yet: it has no channel with room in it. A channel with room is what lets sats arrive. Open the Lightning panel (Wallet tab → Lightning) to get a channel; this same registration becomes payable the moment a channel has room — no need to register again.";
@@ -5428,7 +5428,7 @@ function renderNameSection() {
         }
         const offer = lnSession.createOffer(null, "Fluid");
         let recv = 0;
-        try { recv = Number(JSON.parse(lnSession.balance()).receivableMsat || 0); } catch { recv = 0; }
+        try { recv = Number(lnSession.balance().receivableMsat || 0); } catch { recv = 0; }
         lnNativeState = { offer, receivableMsat: recv };
         paintNativeTerms();
       } catch (e) {
