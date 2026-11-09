@@ -591,6 +591,11 @@ async function renderMain() {
   // not an empty claim form that rejects the name as "already claimed".
   renderNameSection();
   adoptRegistryNameIfMine();
+  // Claim durability (agent kit): finish a claim an interrupted
+  // creation left unsubmitted, and surface any in-flight claim on
+  // Home until it verifies live in the registry.
+  resumePendingClaim();
+  refreshHomeClaimBanner();
   // A failed Bitcoin load is UNKNOWN, not zero (EVM precedent): each
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
@@ -4708,6 +4713,18 @@ $("createBtn").onclick = async () => {
   msg("onboardMsg", "Creating your wallet… (encrypting takes a few seconds)", true);
   const v = await createVault(pw);
   localStorage.setItem(VAULT_KEY, v.keystore);
+  // Claim durability (agent kit, 2026-11-09): bind the chosen name to
+  // this wallet and persist the pending-claim intent AT THE CREATE
+  // CLICK — before the seed ceremony. If the session dies on the seed
+  // screen (the cold-start F3/F4 hole: vault existed, but no name, no
+  // record, no notice), the wallet reopens knowing the claim is still
+  // owed: the record paints "saved" until submitNameClaim replaces it
+  // with the signed claim — at ceremony finish, or at the next
+  // unlock's resumePendingClaim(). The address is not known until the
+  // vault is unlocked, so the intent record carries evm: null; the
+  // signed claim record supersedes it wholesale.
+  localStorage.setItem("fluid_name", wantName);
+  savePendingClaim({ name: wantName, evm: null, published: false, submittedAt: Date.now(), awaitingSubmit: true });
   $("seedOut").textContent = v.phrase;
   show("seedBox");
   msg("onboardMsg", "Wallet created. Write the seed down, tick the box, then continue.", true);
@@ -4717,7 +4734,10 @@ $("createBtn").onclick = async () => {
     if (pendingName) {
       const claimed = pendingName; pendingName = null;
       localStorage.setItem("fluid_name", claimed);
-      savePendingClaim(null); // a fresh wallet starts with no held claim
+      // No savePendingClaim(null) clear here: the create-click intent
+      // record stands until submitNameClaim's own persist-first write
+      // supersedes it — clearing first would reopen the interruption
+      // hole if the submit throws before its write.
       // The claim is submitted automatically now that the keys exist
       // (NAMES RESOLUTION RULE, 2026-11-09): creation is not complete
       // until the name verifies as resolving from the published
@@ -4754,11 +4774,19 @@ $("importBtn").onclick = async () => {
     nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
     if (wantName) {
+      // Claim durability (agent kit, 2026-11-09): record the owed
+      // claim BEFORE any await that could be interrupted — the same
+      // rule as the create click. submitNameClaim supersedes the
+      // record when it runs; the adopt path clears it; the conflict
+      // path leaves it for the name section's conflict paint.
+      localStorage.setItem("fluid_name", wantName);
+      savePendingClaim({ name: wantName, evm: wallet.address, published: false, submittedAt: Date.now(), awaitingSubmit: true });
       const hit = await resolveFluidName(wantName).catch(() => null);
       if (hit && hit.evm && String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
         // Already published to THIS wallet — resolvable as-is, no
         // wait needed: adopt it and finish.
         localStorage.setItem("fluid_name", wantName);
+        savePendingClaim(null);
         refreshGate();
         return;
       }
@@ -4911,6 +4939,55 @@ function ensureNamePoll() {
     renderNameSection();
   }, 20000);
 }
+// ---------- claim durability: resume + Home surface (agent kit, 2026-11-09) ----------
+// The create/import click persists a pending-claim intent record
+// BEFORE the seed ceremony (see createBtn). These two functions are
+// the reopening half of that promise: an interrupted creation must
+// reopen to a wallet that KNOWS it has a claim in flight.
+let claimResumeTried = false;
+/** Finish a claim that was recorded but never submitted (the session
+ *  died before the ceremony completed). Once the wallet is unlocked
+ *  the keys exist, so submit exactly as the ceremony would have.
+ *  Once per session; a failed submit leaves the record in the saved
+ *  state, whose Publish button (More → Your Fluid name) finishes it. */
+async function resumePendingClaim() {
+  if (claimResumeTried || !wallet) return;
+  const p = loadPendingClaim();
+  if (!p || p.published || p.eventId || !p.name) return;
+  if (localStorage.getItem("fluid_name") !== p.name) return;
+  claimResumeTried = true;
+  try { await submitNameClaim(p.name, p.ln || null); } catch { /* the saved state + Publish button remain */ }
+  renderNameSection();
+  refreshHomeClaimBanner();
+}
+/** Home surface for an in-flight claim: until the name verifies LIVE
+ *  in the registry, Home says so — the same nameClaimState +
+ *  NAME_STATE_COPY the More card paints, registry-refined. The
+ *  button leads to the More-tab name card, whose state paint owns
+ *  the existing one-tap Publish / Publish again actions. A record
+ *  whose claim belongs to a different wallet is never surfaced. */
+async function refreshHomeClaimBanner() {
+  const card = $("homeClaimCard"); if (!card) return;
+  const p = loadPendingClaim();
+  const stored = localStorage.getItem("fluid_name");
+  if (!wallet || !p || !stored || p.name !== stored) { card.classList.add("hidden"); return; }
+  if (p.evm && String(p.evm).toLowerCase() !== String(wallet.address).toLowerCase()) { card.classList.add("hidden"); return; }
+  let hit = null;
+  try { hit = await resolveFluidName(stored); } catch { hit = null; }
+  if (!wallet) return;
+  const st = nameClaimState({ stored, pending: p, registryHit: hit, myEvm: wallet.address });
+  if (st === "live") { savePendingClaim(null); card.classList.add("hidden"); renderNameSection(); return; }
+  if (st === "none") { card.classList.add("hidden"); return; }
+  $("homeClaimText").textContent = NAME_STATE_COPY[st] || "";
+  $("homeClaimBtn").textContent = st === "repair" ? "Publish again" : st === "publishing" ? "View name status" : st === "conflict" ? "Pick a different name" : "Publish my name";
+  card.classList.remove("hidden");
+}
+$("homeClaimBtn").onclick = () => {
+  goTab("more");
+  const owned = $("ownedNameBox"), form = $("claimForm");
+  const el = owned && !owned.classList.contains("hidden") ? owned : form;
+  if (el) setTimeout(() => { try { el.scrollIntoView({ block: "start" }); } catch { /* older engines */ } }, 60);
+};
 /** Creation-time wait (NAMES RESOLUTION RULE, strengthened
  *  2026-11-09): after a wallet claims its name during onboarding
  *  (create, or import with a new name), creation is NOT complete

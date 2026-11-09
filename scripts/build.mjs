@@ -17,6 +17,11 @@ copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");
 copyFileSync("public/_headers", "dist/_headers");
+// Agent manifest (agent kit, 2026-11-09): served at the root AND at the
+// well-known path — one source file, two published copies.
+mkdirSync("dist/.well-known", { recursive: true });
+copyFileSync("public/fluid-agent.json", "dist/fluid-agent.json");
+copyFileSync("public/fluid-agent.json", "dist/.well-known/fluid-agent.json");
 copyFileSync("public/robots.txt", "dist/robots.txt");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");

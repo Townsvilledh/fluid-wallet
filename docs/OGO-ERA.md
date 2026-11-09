@@ -1,5 +1,13 @@
 # OGO ERA + Fluid + Companion SBT — The Bible
 
+> **Status (2026-11-09): PARKED.** OGO ERA is a world-building game
+> universe — many game types (11-a-side, street football,
+> platformer-style, MOBA, shooters) plus real-life games humans play
+> live — of which street football is the first chapter. The framing
+> below is that first chapter's bible and predates the broader
+> definition. No playable build exists yet; the build starts once the
+> wallet settles, after deep gaming research.
+
 *OGO ERA is a street-football **RPG** (not a MOBA): an intelligent,
 interactive role-playing game with Lagos culture and storytelling at its
 heart, and a real sense of belonging for its players. Your character is

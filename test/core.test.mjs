@@ -8334,4 +8334,102 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrc77.includes("the same on every EVM network") && coreSrc77.includes("one address · every EVM network"));
 }
 
+// 97. Agent kit (2026-11-09): the public manifest, the welcome/More
+// agent surfaces, claim durability (create-click intent record →
+// interrupt → reopen → still tracked and surfaced), and the
+// autonomous runtime's claimName. The interrupt pin is behavioural:
+// the exact record shapes the app persists are round-tripped through
+// JSON (storage) and driven through the real state machine.
+{
+  const { readFileSync: rf97, existsSync: ex97, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join: join97 } = await import("node:path");
+  // --- the manifest ---
+  const man97 = JSON.parse(rf97(new URL("../public/fluid-agent.json", import.meta.url), "utf8"));
+  ok("kit: manifest parses and names the product + site", man97.name === "fluid-agent" && man97.site === "https://fluidwallet.dpdns.org");
+  ok("kit: manifest carries the real claim protocol (string, kind, relays)",
+    man97.claimProtocol.canonicalClaimString.startsWith("Fluid name claim v1") && man97.claimProtocol.canonicalClaimString.includes("sui: <Sui address>")
+    && man97.claimProtocol.event.kind === 30078
+    && JSON.stringify([...man97.claimProtocol.relays].sort()) === JSON.stringify([...NAME_CLAIM_RELAYS].sort()));
+  ok("kit: the manifest's canonical string is the core's claim message shape",
+    buildNameClaimMessage({ name: "kitwalk1109", evm: "0x1234567890AbcdEF1234567890aBcdef12345678", btc: "bc1qexample", ln: "", algo: "ALGOEXAMPLE", sol: "SolExample", tron: "TExample", sui: "0xsui" }).startsWith("Fluid name claim v1\nname: kitwalk1109\nevm: 0x1234567890AbcdEF1234567890aBcdef12345678"));
+  ok("kit: manifest documents both modes + the safety layer graded by enforcer",
+    !!man97.modes.forUser && !!man97.modes.agentOwned
+    && man97.safetyAndCooperation.layers.some(l => l.enforcedBy === "wallet")
+    && man97.safetyAndCooperation.layers.some(l => l.enforcedBy === "convention"));
+  ok("kit: manifest policy defaults match the core constants",
+    man97.modes.agentOwned.policyDefaults.perTxCapUsd === AGENT_POLICY_DEFAULTS.perTxCapUsd
+    && man97.modes.agentOwned.policyDefaults.dailyCapUsd === AGENT_POLICY_DEFAULTS.dailyCapUsd);
+  const buildSrc97 = rf97(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  ok("kit: build serves the manifest at the root and the well-known path",
+    buildSrc97.includes('copyFileSync("public/fluid-agent.json", "dist/fluid-agent.json")')
+    && buildSrc97.includes('copyFileSync("public/fluid-agent.json", "dist/.well-known/fluid-agent.json")'));
+  // --- the site surfaces ---
+  const html97 = rf97(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("kit: the WELCOME page carries the agent element with manifest + kit links",
+    html97.includes('id="agentLine"') && html97.includes("Fluid is an agent wallet") && html97.includes('href="fluid-agent.json"'));
+  ok("kit: the More tab carries the agent line", html97.includes('id="moreAgentLine"'));
+  ok("kit: Home carries the pending-claim card", html97.includes('id="homeClaimCard"') && html97.includes('id="homeClaimText"') && html97.includes('id="homeClaimBtn"'));
+  // --- claim durability: app wiring ---
+  const app97 = rf97(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("kit durability: the create click persists the claim intent with the vault",
+    app97.includes("savePendingClaim({ name: wantName, evm: null, published: false, submittedAt: Date.now(), awaitingSubmit: true })"));
+  ok("kit durability: import records the owed claim before its awaits",
+    app97.includes("savePendingClaim({ name: wantName, evm: wallet.address, published: false, submittedAt: Date.now(), awaitingSubmit: true })"));
+  ok("kit durability: the seed-done clear that reopened the hole is gone",
+    !app97.includes("savePendingClaim(null); // a fresh wallet starts with no held claim"));
+  ok("kit durability: unlock render resumes the claim and surfaces it on Home",
+    app97.includes("async function resumePendingClaim()") && app97.includes("async function refreshHomeClaimBanner()")
+    && app97.includes("resumePendingClaim();") && app97.includes("refreshHomeClaimBanner();"));
+  // --- claim durability: the interrupt walk over the persisted shapes ---
+  const { NAME_CLAIM_REPAIR_AFTER_MS: R97 } = await import("../src/wallet-core.js");
+  const myEvm97 = "0x1234567890AbcdEF1234567890aBcdef12345678";
+  const t097 = 1794240000000;
+  const intent97 = JSON.parse(JSON.stringify({ name: "kitwalk1109", evm: null, published: false, submittedAt: t097, awaitingSubmit: true }));
+  ok("kit durability: create → interrupt at the seed screen → reopen = saved (tracked, NOT LIVE)",
+    nameClaimState({ stored: intent97.name, pending: intent97, registryHit: null, myEvm: myEvm97, now: t097 + 1000 }) === "saved");
+  const pub97 = { ...intent97, evm: myEvm97, published: true, eventId: "e".repeat(64), acceptedRelays: ["wss://relay.damus.io"], publishedAt: t097 + 5000 };
+  ok("kit durability: the resumed claim reads publishing inside the window",
+    nameClaimState({ stored: pub97.name, pending: pub97, registryHit: null, myEvm: myEvm97, now: t097 + 60000 }) === "publishing");
+  ok("kit durability: a lost claim past the window reads repair, not publishing forever",
+    nameClaimState({ stored: pub97.name, pending: pub97, registryHit: null, myEvm: myEvm97, eventFound: false, now: t097 + R97 + 10000 }) === "repair");
+  ok("kit durability: live only when the registry resolves the name to THIS wallet",
+    nameClaimState({ stored: pub97.name, pending: pub97, registryHit: { evm: myEvm97 }, myEvm: myEvm97, now: t097 + R97 + 20000 }) === "live");
+  ok("kit durability: a registry hit to a different wallet reads conflict",
+    nameClaimState({ stored: pub97.name, pending: pub97, registryHit: { evm: "0x0000000000000000000000000000000000000001" }, myEvm: myEvm97, now: t097 + 1000 }) === "conflict");
+  // --- the autonomous runtime's claimName ---
+  const { createAgentWallet, openAgent, claimName } = await import("../agent/fluid-agent.mjs");
+  const dir97 = mkdtempSync(join97(tmpdir(), "fluid-kit-agent-"));
+  await createAgentWallet({ name: "Kit Test", dir: dir97, password: "kit-test-password-123" });
+  const agent97 = await openAgent({ dir: dir97, password: "kit-test-password-123" });
+  let ev97 = null, resolveCalls97 = 0;
+  const res97 = await claimName(agent97, "kitagent1109", {
+    publish: async (ev) => { ev97 = ev; return { accepted: 2, acceptedRelays: ["wss://relay.damus.io", "wss://nos.lol"] }; },
+    resolve: async () => (++resolveCalls97 > 1 ? { evm: agent97.descriptor.keys.evm } : null),
+    pollMs: 1, timeoutMs: 5000,
+  });
+  ok("kit claimName: lands and returns the published record", res97.landed === true && !!ev97 && res97.eventId === ev97.id && res97.accepted === 2);
+  ok("kit claimName: the event is a valid kind-30078 claim for the name",
+    ev97.kind === 30078 && ev97.tags.some(t => t[0] === "d" && t[1] === "fluid-name-claim:kitagent1109") && verifyNostrEventSignature(ev97));
+  const content97 = JSON.parse(ev97.content);
+  ok("kit claimName: the claim content verifies and carries the agent's own addresses",
+    verifyNameClaim(content97).ok && content97.evm === agent97.descriptor.keys.evm && content97.btc === agent97.descriptor.keys.btc);
+  ok("kit claimName: the pending record is persisted in the agent dir", ex97(join97(dir97, "name-claim.json")));
+  const res98 = await claimName(agent97, "kitagent21109", {
+    publish: async () => ({ accepted: 1, acceptedRelays: ["wss://nos.lol"] }),
+    resolve: async () => null,
+    pollMs: 1, timeoutMs: 25,
+  });
+  ok("kit claimName: an unlanded claim reports landed:false without throwing", res98.landed === false && res98.accepted === 1);
+  let threw97 = false;
+  try { await claimName(agent97, "ethuram", { resolve: async () => ({ evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b" }) }); } catch { threw97 = true; }
+  ok("kit claimName: a name claimed by a different wallet is refused", threw97);
+  ok("kit claimName: claiming never touches the policy caps", AGENT_POLICY_DEFAULTS.perTxCapUsd === 50 && AGENT_POLICY_DEFAULTS.dailyCapUsd === 200);
+  // --- documentation ---
+  ok("kit: the documentation index and kit doc exist and cross-link",
+    ex97(new URL("../docs/README.md", import.meta.url)) && ex97(new URL("../docs/AGENT-KIT.md", import.meta.url))
+    && rf97(new URL("../docs/README.md", import.meta.url), "utf8").includes("AGENT-KIT.md")
+    && rf97(new URL("../docs/AGENT-KIT.md", import.meta.url), "utf8").includes("claimName"));
+}
+
 console.log(`\n${passed} checks passed`);

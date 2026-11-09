@@ -1,6 +1,12 @@
 # FLUID — Go-Live Checklist: the "form", step by step
 *For Ethuram · Prepared 2026-11-05 · All requirements checked against the providers' own docs*
 
+> **Historical — the entity/KYB path described below is RULED OUT.**
+> Fluid has no legal entity and never will (the owner's standing
+> rule); no partner form is needed or wanted. The wallet is live as
+> an open-source, entity-free product. Kept as the record of what was
+> assessed.
+
 ## The key realisation: there are TWO different "lives"
 
 **A) Fluid live for YOUR personal use — NO partner form needed.**

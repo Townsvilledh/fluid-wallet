@@ -274,3 +274,15 @@ Tooling (build-time only): zig 0.13.0 as the wasm C compiler shim
   by Pages in practice, and fetched only when the panel opens). The
   single-file build cannot inline it and keeps the WebLN fallback +
   a note.
+
+
+## Using Lightning today — honest limits (2026-11-09)
+
+- The node runs **in your browser**, from your seed, only while Fluid
+  is open — Fluid must be open to settle, not to receive.
+- A fresh node has **no channels**: spendable and receivable are both
+  0 until a channel is opened (the panel's open-channel flow funds one
+  from your on-chain BTC). An invoice issued before any channel exists
+  cannot be paid — open a channel first.
+- The balances the panel shows are the node's real channel state, not
+  estimates.

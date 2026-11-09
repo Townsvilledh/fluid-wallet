@@ -2,18 +2,16 @@
 
 ## Principle 1: cheapest route for the user, always
 Fluid routes, it does not sell. For every deposit/withdrawal the wallet
-ranks providers by their documented typical fees and puts the cheapest
-first (the ramp sheet shows a CHEAPEST badge; the provider still shows
-the final live quote before the user pays). Current typical-fee order
-for African local-currency corridors: none in the wallet right now —
-Fonbnk (flat ~$0.12 documented fee) was PULLED 2026-11-08 because it
-pays Fluid nothing collectable without KYB / server-side signing
-(owner's rule: no pay, no route; wiring facts kept in the wallet-core
-ramp notes). Older experiments ranked Ramp Network → Transak →
-MoonPay. When free-tier live quote APIs
-become available to the project, ranking switches from typical fees to
-live quotes automatically — the ranking function (`rankRoutes`) is the
-single place that changes.
+ranks providers by user cost and puts the cheapest first (the ramp
+sheet shows a CHEAPEST badge on buys; the provider still shows
+the final live quote before the user pays). Which routes are wired at
+all is governed by the bars in `docs/RAMPS.md` — a per-corridor price
+bar, the capture gate (a route that can never carry Fluid's fee is
+removed, not subsidised), and no platform-account life. Fonbnk's
+history is the worked example: pulled 2026-11-08 when it paid nothing
+collectable, restored 2026-11-09 as a SELL route under the capture
+gate's own-charge clause with the disclosure line on every row. The
+current wired set lives in `docs/RAMPS.md`.
 
 ## Principle 2: Fluid's own fees split 60/40 — all settled in BTC over Lightning
 Where Fluid itself charges a fee, the fee is split:
@@ -52,11 +50,11 @@ the weekly follower drip and the OGO ERA player pools; see
 `docs/DRIPBOT.md`.
 
 ## Where fees apply
-1. **RAIN claims (wallet):** `contracts/rain-distributor.sol` takes
+1. **RAIN claims (wallet — designed, not yet live; RAIN is parked with OGO ERA):** `contracts/rain-distributor.sol` takes
    `feeBps` at deploy and accounts the fee 60/40 on-chain
    (`feeTreasury` / `feeDripbot` counters) so the split can never be
    skewed; the keeper sweeps and settles in BTC via Lightning.
-2. **OGO ERA (game):** the game has its OWN fee split (set 2026-11-06),
+2. **OGO ERA (game — designed, not yet live; the game is parked):** the game has its OWN fee split (set 2026-11-06),
    deliberately player-first — most of the game's fees go back to
    players, all settled in BTC over Lightning:
    - **40% → Ethuram (treasury)**
@@ -69,12 +67,25 @@ the weekly follower drip and the OGO ERA player pools; see
    computed by the keeper (DripBot) from the game's published activity
    data; the percentages and settlement rail are fixed here.
 3. **In-app swaps (the standard fee):** swaps and in-app conversions
-   carry Fluid's standard platform fee of **0.5%**
+   carry Fluid's platform fee under the **fee law** (owner's model,
+   2026-11-08): `fee = min(multiplier × the route's own cost, 0.5% of
+   the amount, ecosystem ceiling − route cost)`, floored at 0.
+   Multipliers: **4× on EVM, 5× elsewhere**. Ceilings on the user's
+   TOTAL cost (route + fee): **EVM $0.20 · Bitcoin $1.50 · Lightning
+   $0.30 · Solana exits $0.30**. The old flat 0.5%
    (`PLATFORM_FEE_BPS = 50` in the wallet core, set by Ethuram
-   2026-11-06), disclosed as its own clause in the swap confirmation
-   sentence — computed from the quote's actual amounts, never hidden
-   in a spread. Plain sends/receives never carry it. Collection rides
-   LI.FI's integrator fee into the DripBot agent wallet; LI.FI pays
+   2026-11-06) survives only as the hard cap the markup can never
+   cross. The review sheet discloses the route's own cost ("route
+   cost ≈ $X") and Fluid's fee as separate lines — computed from the
+   quote's actual amounts, never hidden in a spread. Plain
+   sends/receives never carry it. **Known issue (2026-11-09):** the
+   route-cost measure behind that label was found to misstate on some
+   routes (Relay zkSync routes overstate ~180×; Mayan dust
+   understates) — the fix is queued in the audit batch; the fee law
+   itself is unchanged. Collection rides each router's native
+   mechanism into the DripBot agent wallet — Relay App Fees, LI.FI's
+   integrator fee, Satora's developer markup, Jupiter/Mayan fee
+   accounts. LI.FI pays
    integrator fees only to a wallet configured in its Partner Portal.
    That registration was completed on 2026-11-07 (integrator
    `fluid-wallet`, DripBot agent wallet as Default EVM fee wallet) and

@@ -347,6 +347,7 @@
     <p class="msg err" id="onboardMsg"></p>
     <p class="tag">Open source (MIT) · non-custodial · keys never leave this device unencrypted.<br>
     Prototype: use small amounts until independently audited.</p>
+    <p class="tag" id="agentLine">🤖 <b>For agents:</b> Fluid is an agent wallet — an AI agent can create a wallet for its user, or hold its own inside owner-set limits. <a href="fluid-agent.json" target="_blank" rel="noopener">Agent manifest</a> · <a href="https://github.com/Townsvilledh/fluid-wallet/blob/main/docs/AGENT-KIT.md" target="_blank" rel="noopener">Agent kit</a></p>
   </section>
 
   <!-- APP -->
@@ -372,6 +373,11 @@
         <button class="act" id="actSwap"><span class="acircle"><svg class="ic"><use href="#i-swap"/></svg></span>Swap</button>
         <button class="act" id="actBuy"><span class="acircle"><svg class="ic"><use href="#i-plus"/></svg></span>Buy</button>
         <button class="act" id="actCash"><span class="acircle"><svg class="ic"><use href="#i-bank"/></svg></span>Cash out</button>
+      </div>
+      <div class="card hidden" id="homeClaimCard">
+        <b class="t-strong">⏳ Your Fluid name is not live yet</b>
+        <p class="tag" id="homeClaimText" style="margin:6px 0 10px"></p>
+        <button class="btn ghost" id="homeClaimBtn" style="width:auto;padding:8px 14px">Publish my name</button>
       </div>
       <div class="card hidden" id="homeZero" style="text-align:center">
         <b class="t-title">Your wallet is empty</b>
@@ -507,6 +513,7 @@
           <button class="btn ghost" id="copyAgentBtn">Copy descriptor</button>
         </div>
         <div id="agentList"></div>
+        <p class="tag" id="moreAgentLine" style="margin:8px 0 2px">For agent builders: <a href="fluid-agent.json" target="_blank" rel="noopener">agent manifest</a> · <a href="https://github.com/Townsvilledh/fluid-wallet/blob/main/docs/AGENT-KIT.md" target="_blank" rel="noopener">agent kit</a> — including the autonomous runtime an agent can hold itself, with caps enforced in code.</p>
         <p class="msg err" id="agentMsg"></p>
       </div>
       <div class="card">

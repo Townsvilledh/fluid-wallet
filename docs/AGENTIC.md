@@ -3,14 +3,21 @@
 *Added at Ethuram's direction (2026-11-06): agents get their own Fluid wallet —
 full blockchain access, no KYC, no on/off-ramps.*
 
+*For the operational kit — how an agent creates a wallet for its user,
+or claims and runs its own today — see `docs/AGENT-KIT.md` and the
+machine-readable manifest at
+https://fluidwallet.dpdns.org/.well-known/fluid-agent.json. This file
+remains the design record.*
+
 ## The idea
 
 Humans need ramps and identity checks because fiat touches banks. An AI agent
 doesn't: it lives on-chain. So a Fluid **agent wallet** is chain-only by
 design:
 
-- **Full blockchain access** — the same 15 EVM networks + Bitcoin as any Fluid
-  wallet (Lightning receive via the owner's Lightning address).
+- **Full blockchain access** — the same chains as any Fluid wallet
+  (15 EVM networks, Bitcoin, and every other family — see
+  `docs/CHAINS.md`; Lightning receive via the owner's Lightning address).
 - **No KYC** — there is no account, no email, no identity provider. The wallet
   is keys derived from a seed, nothing else.
 - **No on-ramp, no off-ramp, ever** — the policy object hard-codes
@@ -66,6 +73,12 @@ node agent/fluid-agent.mjs send --dir ./dripbot-wallet --to 0x… --amount 0.01 
   throw — verified live: a 1 BNB send against a $50 cap is blocked before
   any signature.
 - There is deliberately **no ramp code path** in the runtime. Chain only.
+- **It can claim its own Fluid name** (agent kit, 2026-11-09):
+  `claimName` — as a method on the opened agent, a standalone export,
+  and a `claim` CLI command — builds, signs and publishes the registry
+  claim with wallet-core, persists the pending record in the agent's
+  directory, and verifies the name landed in the public registry. An
+  agent wallet is a first-class named wallet, resolvable by anyone.
 
 **The honest trade-off:** an autonomous agent holds its own keys, so whoever
 controls the agent's machine controls the wallet. The protection model is

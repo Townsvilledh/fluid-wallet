@@ -25,3 +25,23 @@ Fallback: if you prefer to publish by hand, the app still shows your
 registry entry — add it to `names.json` in this repo via a GitHub
 edit or PR. First come, first served either way; names are public and
 permanent in git history, so choose one you're happy to be known by.
+
+
+## Claiming from the app — states, durability, and the developer protocol
+
+In the app, a name's state is one of `none / saved / publishing /
+repair / live / conflict` — and a name is only ever presented as owned
+when this registry resolves it to the claiming wallet. A claim chosen
+at wallet creation is persisted with the wallet **before** the seed
+ceremony, so an interrupted creation reopens with the claim still
+tracked (a banner on Home, and More → Your Fluid name) and finishes
+submitting on unlock; a published claim that never lands and whose
+event disappears from the relays is called what it is — lost — with a
+one-tap republish (the `repair` state).
+
+The full signed-claim protocol — canonical claim string, Nostr kind
+30078 events, the relays, the poll-and-compare verification recipe and
+the repair path — is documented for agents and developers in
+`docs/AGENT-KIT.md`, with a machine-readable manifest at
+https://fluidwallet.dpdns.org/.well-known/fluid-agent.json
+(mirror: https://fluidwallet.dpdns.org/fluid-agent.json).

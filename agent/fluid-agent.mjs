@@ -30,13 +30,14 @@
 //   node agent/fluid-agent.mjs descriptor --dir ./dripbot-wallet
 //   node agent/fluid-agent.mjs balance --dir ./dripbot-wallet [--network base]
 //   node agent/fluid-agent.mjs send --dir ./dripbot-wallet --to 0x… --amount 0.01 [--network bsc]
+//   node agent/fluid-agent.mjs claim --dir ./dripbot-wallet --name dripbot
 import { ethers } from "ethers";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { NETWORKS, bitcoinAddress, getBitcoinBalance, getVerifiedPrice, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor, feePotReport } from "../src/wallet-core.js";
+import { NETWORKS, bitcoinAddress, getBitcoinBalance, getVerifiedPrice, checkAgentPolicy, AGENT_POLICY_DEFAULTS, buildAgentDescriptor, feePotReport, buildSignedNameClaim, publishNameClaimEventDetailed, resolveFluidName, normalizeFluidName, validateFluidName, solanaAddressFromPhrase, tronAddressFromPhrase, suiAddressFromPhrase, algoAddressFromPhrase } from "../src/wallet-core.js";
 
-const KS = "keystore.json", DESC = "descriptor.json", SECRET = ".secret", SPEND = "spend.json";
+const KS = "keystore.json", DESC = "descriptor.json", SECRET = ".secret", SPEND = "spend.json", CLAIMREC = "name-claim.json";
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** A minimal in-process send queue: tasks run one at a time, in the
@@ -160,7 +161,68 @@ export async function openAgent({ dir, password } = {}) {
     // against live prices BEFORE signing; unpriceable or over-cap = throw.
     // Public entry point: serialised through the send queue (audit M6).
     send: (args) => enqueueSend(() => sendLocked(args)),
+    // Claim this agent's own Fluid name (agent kit, 2026-11-09):
+    // build + sign + publish the signed claim with wallet-core,
+    // persist the pending record in the agent's dir FIRST (the same
+    // persist-first rule as the app), then poll the registry until
+    // the name verifies to THIS wallet — comparing the EVM address,
+    // never the name alone. Not a spend: the policy caps gate sends
+    // only and are untouched by claiming. `opts.publish` /
+    // `opts.resolve` are injectable for tests.
+    async claimName(name, opts = {}) {
+      const publish = opts.publish || publishNameClaimEventDetailed;
+      const resolve = opts.resolve || resolveFluidName;
+      const pollMs = opts.pollMs ?? 15000;
+      const timeoutMs = opts.timeoutMs ?? 180000;
+      const n = normalizeFluidName(name);
+      if (!validateFluidName(n)) throw new Error("Invalid Fluid name: " + name + " (3-20 chars: lowercase letters, numbers, underscore; start with a letter).");
+      const phrase = wallet.mnemonic && wallet.mnemonic.phrase;
+      if (!phrase) throw new Error("This agent keystore carries no seed phrase — a name claim cannot be signed for it.");
+      const mine = String(wallet.address).toLowerCase();
+      const existing = await resolve(n).catch(() => null);
+      if (existing && existing.evm) {
+        if (String(existing.evm).toLowerCase() === mine) return { name: n, eventId: null, accepted: 0, acceptedRelays: [], publishedAt: null, landed: true, entry: existing, alreadyMine: true };
+        throw new Error("The name " + n + " is already claimed by a different wallet (" + existing.evm + ") — first come, first served.");
+      }
+      const { claim, event } = await buildSignedNameClaim({
+        name: n, evm: wallet.address,
+        btc: bitcoinAddress(phrase), ln: null,
+        algo: algoAddressFromPhrase(phrase), sol: solanaAddressFromPhrase(phrase),
+        tron: tronAddressFromPhrase(phrase), sui: suiAddressFromPhrase(phrase),
+        phrase, signerWallet: wallet,
+      });
+      const recPath = join(dir, CLAIMREC);
+      const record = { ...claim, eventId: event.id, published: false, submittedAt: Date.now() };
+      writeFileSync(recPath, JSON.stringify(record, null, 1));
+      let detail = null;
+      try { detail = await publish(event); } catch { detail = null; }
+      const accepted = detail ? detail.accepted : 0;
+      record.published = accepted > 0;
+      record.relaysAccepted = accepted;
+      if (detail) record.acceptedRelays = detail.acceptedRelays;
+      if (accepted > 0) record.publishedAt = Date.now();
+      writeFileSync(recPath, JSON.stringify(record, null, 1));
+      // Verify it landed: poll the registry until the entry's EVM
+      // address is this wallet's (a same-name entry under a different
+      // address is a lost race — reported, never claimed as success).
+      const deadline = Date.now() + timeoutMs;
+      let entry = null, landed = false;
+      for (;;) {
+        entry = await resolve(n).catch(() => null);
+        if (entry && entry.evm) { landed = String(entry.evm).toLowerCase() === mine; break; }
+        if (Date.now() >= deadline) break;
+        await new Promise(r => setTimeout(r, pollMs));
+      }
+      return { name: n, eventId: event.id, accepted, acceptedRelays: record.acceptedRelays || [], publishedAt: record.publishedAt || null, landed, entry };
+    },
   };
+}
+
+/** Standalone form of the agent's claimName (agent kit): delegates to
+ *  the opened agent's method so there is exactly one implementation. */
+export async function claimName(agent, name, opts = {}) {
+  if (!agent || typeof agent.claimName !== "function") throw new Error("claimName needs an opened agent (see openAgent).");
+  return agent.claimName(name, opts);
 }
 
 // ---------- CLI ----------
@@ -182,8 +244,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     } else if (cmd === "send") {
       const a = await openAgent({ dir: arg("dir") });
       console.log(JSON.stringify(await a.send({ network: arg("network", "bsc"), to: arg("to"), amount: arg("amount") }), null, 1));
+    } else if (cmd === "claim") {
+      const a = await openAgent({ dir: arg("dir") });
+      console.log(JSON.stringify(await a.claimName(arg("name")), null, 1));
     } else {
-      console.log("Commands: create | descriptor | balance | feepot | send  (see header of this file)");
+      console.log("Commands: create | descriptor | balance | feepot | send | claim  (see header of this file)");
     }
   } catch (e) { console.error("Error:", e.message); process.exit(1); }
 }

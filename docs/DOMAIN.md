@@ -1,5 +1,11 @@
 # Fluid's domain — free route (chosen 2026-11-06: no funds for a paid domain)
 
+> **Superseded (2026-11-09).** The live front door is
+> **fluidwallet.dpdns.org** (registered 2026-11-08). The is-a.dev plan
+> below was not taken; `fluid.is-a.dev` survives only as the display
+> suffix for Fluid names (e.g. `ethuram.fluid.is-a.dev`). Kept as the
+> historical record of the decision.
+
 ## fluid.is-a.dev — AVAILABLE, free forever
 Checked 2026-11-06 against the is-a.dev registry repo: no `fluid.json`
 exists, so the name is unclaimed. is-a.dev is a free subdomain service

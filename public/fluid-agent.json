@@ -1,0 +1,179 @@
+{
+  "$schema": "https://fluidwallet.dpdns.org/fluid-agent.json",
+  "claimProtocol": {
+    "canonicalClaimString": "Fluid name claim v1\nname: <name>\nevm: <EVM address>\nbtc: <bc1q address>\nln: <Lightning address or empty>\nalgo: <Algorand address>\nsol: <Solana address>\ntron: <Tron address>\nsui: <Sui address>",
+    "description": "A Fluid name is claimed by a signed Nostr event; a public processor folds accepted claims into the registry, first-come-first-served. No server account, no fee.",
+    "event": {
+      "content": "JSON of the signed claim: { v: 1, name, evm, btc, ln, algo, sol, tron, sui, sig } — sig is the EIP-191 signature of the canonical claim string; every address is the claiming wallet's own, derived from its one seed.",
+      "key": "Nostr keypair derived from the wallet seed at m/9419'/121924'/0'/0/0 (NIP-06-style path) — the same seed controls the name.",
+      "kind": 30078,
+      "tags": [
+        [
+          "d",
+          "fluid-name-claim:<name>"
+        ]
+      ]
+    },
+    "registry": "https://fluidwallet.dpdns.org/names.json",
+    "relays": [
+      "wss://relay.damus.io",
+      "wss://nos.lol",
+      "wss://relay.primal.net"
+    ],
+    "repairPath": "If 15 minutes pass, the name is still not in the registry AND the claim event can no longer be found on any relay by its event id, the claim is treated as lost: republish the SAME name with a fresh event (the app's one-tap 'Publish my name' does exactly this). Never pick a different name silently — a name that lands under a different address belongs to someone else (state conflict).",
+    "signing": "EIP-191 personal_sign of the canonical claim string with the wallet's EVM key.",
+    "verifyLanded": {
+      "recipe": [
+        "Poll GET https://fluidwallet.dpdns.org/names.json (cache-bust) every ~15 s.",
+        "Landed = the registry has the name AND its evm equals your wallet's EVM address (case-insensitive compare). Name alone is not proof — compare the address.",
+        "Typical landing is ~1–2 minutes; the processor runs every 5 minutes, so allow up to ~25 minutes before treating a claim as lost.",
+        "While waiting, keep the pending record { name, eventId, acceptedRelays, publishedAt } — the app persists it with the wallet's stored state at the create click and surfaces it on Home and More until the name verifies live, so an interrupted creation reopens knowing the claim is still owed."
+      ]
+    }
+  },
+  "creationPaths": {
+    "programmatic": {
+      "description": "The app's own core is importable ESM (src/wallet-core.js in the repo; no npm package yet — import from the repo or the built bundle's window.FluidCore).",
+      "entryPoints": {
+        "AGENT_POLICY_DEFAULTS": "{ perTxCapUsd: 50, dailyCapUsd: 200 } — the shipped agent-owned policy defaults (AGENT_POLICY_DEFAULTS in src/wallet-core.js; the policy object also hard-codes kyc: false, ramps: false, seedExport: false).",
+        "buildSignedNameClaim": "buildSignedNameClaim({ name, evm, btc, ln, algo, sol, tron, sui, phrase, signerWallet }) → { claim, event } — builds, EIP-191-signs and self-verifies the claim and its Nostr event (see claimProtocol).",
+        "createVault": "createVault(mnemonic, password) → encrypted keystore JSON (scrypt + AES, standard Ethereum keystore format). Generate the mnemonic with your own BIP39 source or the core's helpers.",
+        "publishNameClaimEvent": "publishNameClaimEvent(event) → number of relays that accepted; publishNameClaimEventDetailed(event) → { accepted, acceptedRelays }.",
+        "resolveFluidName": "resolveFluidName(name) → the registry entry { evm, btc, ln, algo, sol, tron, sui, ... } or null — reads the live registry.",
+        "nameClaimState": "nameClaimState({ stored, pending, registryHit, myEvm, eventFound, now }) → none | saved | publishing | repair | live | conflict — the claim state machine; nameClaimRepairDue({...}) isolates the lost-claim test."
+      },
+      "ownerAssisted": "window.FluidAgent.requestTransfer({ chainId, to, amountUsd }) — from a page context with the user's wallet unlocked; the owner approves in the wallet UI and the wallet signs. The agent never receives keys or the seed."
+    },
+    "ui": {
+      "description": "Drive the live site's welcome/create screen. Element IDs are stable.",
+      "importInstead": {
+        "element": "#importPhrase / #importBtn",
+        "note": "The import box takes no username unless one is typed in #createName above it (handled as part of import). To claim or manage a name afterwards: More tab → Your Fluid name card (#nameInput + #claimNameBtn, state painted in #ownedNameBox)."
+      },
+      "steps": [
+        {
+          "element": "#onboard",
+          "step": "Open the site; the welcome screen is the create screen."
+        },
+        {
+          "element": "#createName",
+          "livePreview": "#createNamePreview",
+          "step": "Type the user's chosen Fluid username (3–20 chars: lowercase letters, numbers, underscore; must start with a letter)."
+        },
+        {
+          "element": "#createPw / #createPw2",
+          "step": "Let the USER type the password (12+ characters) and repeat it. Never invent or store it."
+        },
+        {
+          "element": "#createBtn",
+          "step": "Click create. The vault is encrypted and persisted on this click, and the chosen name is recorded with the wallet as a pending claim. The signed claim is submitted as soon as the wallet is unlocked (finishing the seed ceremony, or the next unlock after an interruption) — an interrupted creation reopens to a wallet that knows the claim is still owed."
+        },
+        {
+          "element": "#seedOut / #seedCheck",
+          "step": "The 12-word seed appears. Show it to the USER only; the user writes it down and ticks the box."
+        },
+        {
+          "element": "#seedDoneBtn",
+          "step": "Enter the wallet."
+        },
+        {
+          "step": "Verify the name landed in the registry (see claimProtocol.verifyLanded) before telling the user creation is complete."
+        }
+      ],
+      "url": "https://fluidwallet.dpdns.org"
+    }
+  },
+  "docsIndex": "https://github.com/Townsvilledh/fluid-wallet/blob/main/docs/README.md",
+  "honestLimits": [
+    "Fluid is an unaudited prototype — use small amounts.",
+    "There is no npm package for the core yet; import src/wallet-core.js from the repo.",
+    "The .well-known copy of this manifest and the root copy (/fluid-agent.json) are identical; if one URL fails, use the other."
+  ],
+  "kitDoc": "https://github.com/Townsvilledh/fluid-wallet/blob/main/docs/AGENT-KIT.md",
+  "modes": {
+    "agentOwned": {
+      "claimName": "The runtime can claim its own Fluid name: fluid-agent.mjs exports claimName(agent, name) — it builds, signs and publishes the claim with wallet-core, then polls the registry until the name lands (or reports the pending record so the caller can republish).",
+      "description": "The agent generates and holds its own seed and operates its own wallet inside a policy the deployer sets. Shipped runtime: agent/fluid-agent.mjs in the repo (createAgentWallet) — encrypted keystore on disk, caps enforced in code BEFORE signing, allowlists, auditable JSONL log, kill path (delete/rotate the keystore).",
+      "policyDefaults": {
+        "perTxCapUsd": 50,
+        "dailyCapUsd": 200,
+        "note": "AGENT_POLICY_DEFAULTS in src/wallet-core.js. Caps are enforced by the wallet code before any signature; amounts above the caps or outside the allowlist need the human's approval path, never a bypass."
+      }
+    },
+    "forUser": {
+      "creationPaths": [
+        "ui",
+        "programmatic"
+      ],
+      "description": "The agent drives wallet creation for its user, then hands over completely.",
+      "rules": [
+        "The seed phrase is shown to the USER (on the user's screen), never retained, stored, logged or transmitted by the agent.",
+        "The USER sets the wallet password and confirms they wrote the seed down.",
+        "After creation the agent holds no spending power over the user's wallet. Any later agent action on it goes through the owner-assisted API (window.FluidAgent.requestTransfer), which the owner approves in the wallet UI; the wallet signs, the agent never sees keys.",
+        "A Fluid username is part of creation: pick it with the user, and treat creation as complete only when the name verifies live in the registry (see claimProtocol.verifyLanded), or the user explicitly chooses to continue without a username."
+      ]
+    }
+  },
+  "name": "fluid-agent",
+  "product": "Fluid — non-custodial multi-chain wallet (web app, no server, no accounts)",
+  "registry": "https://fluidwallet.dpdns.org/names.json",
+  "safetyAndCooperation": {
+    "layers": [
+      {
+        "enforcedBy": "wallet",
+        "rule": "Spending caps on agent-owned wallets ($50/tx, $200/day defaults), checked before signing",
+        "where": "agent/fluid-agent.mjs policy gate + AGENT_POLICY_DEFAULTS"
+      },
+      {
+        "enforcedBy": "wallet",
+        "rule": "Allowlists for agent-owned destinations/contracts",
+        "where": "agent/fluid-agent.mjs policy"
+      },
+      {
+        "enforcedBy": "wallet",
+        "rule": "Owner approval for consequential actions on a user's wallet (owner-assisted transfers open a wallet-UI approval; the wallet signs)",
+        "where": "window.FluidAgent.requestTransfer"
+      },
+      {
+        "enforcedBy": "wallet",
+        "rule": "Exact-amount token approvals only; inspect-before-sign plain-language intent on every signature",
+        "where": "app review sheets"
+      },
+      {
+        "enforcedBy": "wallet",
+        "rule": "Kill path for an agent-owned wallet (delete/rotate the encrypted keystore; the seed holder can also sweep funds)",
+        "where": "agent/fluid-agent.mjs keystore"
+      },
+      {
+        "enforcedBy": "wallet",
+        "rule": "Auditable log of agent-wallet actions (append-only JSONL)",
+        "where": "agent/fluid-agent.mjs log"
+      },
+      {
+        "enforcedBy": "convention",
+        "rule": "Seed handover for user wallets: show to the user, never retain/store/log/transmit",
+        "where": "this manifest + docs/AGENT-KIT.md — the agent sees the seed on screen at creation by necessity, so this rule is the agent's discipline, stated here as a condition of using the kit"
+      },
+      {
+        "enforcedBy": "convention",
+        "rule": "The user sets the password; the agent never invents, sees or stores it",
+        "where": "creation steps above"
+      },
+      {
+        "enforcedBy": "convention",
+        "rule": "Above-threshold or out-of-policy actions: propose to the human and wait for approval; never route around a cap",
+        "where": "docs/AGENT-KIT.md safety section"
+      },
+      {
+        "enforcedBy": "convention",
+        "rule": "Cooperation: the agent proposes, the user approves the consequential steps; report outcomes (balances, tx hashes), not questions, for in-policy routine work",
+        "where": "docs/AGENT-KIT.md"
+      }
+    ],
+    "principle": "Protecting users is co-owned by the wallet builder and the agent. Restrictions are smart, not blanket bans: the wallet enforces what it can in code, and the kit states plainly what is convention the agent must honour."
+  },
+  "site": "https://fluidwallet.dpdns.org",
+  "source": "https://github.com/Townsvilledh/fluid-wallet",
+  "summary": "Fluid is an agent wallet. Any AI agent can (1) create a wallet FOR its user — the seed is shown to the user and never retained by the agent, the user sets the password and confirms the backup, and the agent keeps no spending power — or (2) hold a wallet OF ITS OWN, operating inside deployer-set spending caps and allowlists, with human approval above thresholds and a kill path. Both modes are live today.",
+  "version": 1
+}
