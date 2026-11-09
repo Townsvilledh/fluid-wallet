@@ -6647,9 +6647,14 @@ export async function getSatoraSwapRoute(args) {
   const minNet = SATORA_MIN_NET_SATS[plan.destKey];
   const belowMin = (netSats) => {
     const e = new Error(plan.destKey === "bitcoin"
-      ? `That swap would land about ${Math.round(netSats).toLocaleString()} sats on Bitcoin — under the 10,000-sat minimum for Bitcoin swaps. Swap a little more.`
-      : `That swap would land about ${Math.round(netSats).toLocaleString()} sats on Lightning — under the 356-sat minimum for Lightning swaps. Swap a little more.`);
+      ? `That swap would land about ${Math.round(netSats).toLocaleString()} sats on Bitcoin — under the 10,000-sat minimum for Bitcoin mainnet settlement on this swap route. The same amount settles over Lightning.`
+      : `That swap would land about ${Math.round(netSats).toLocaleString()} sats on Lightning — under the 356-sat minimum for Lightning swaps on this swap route. Swap a little more.`);
     e.satoraTerminal = true;
+    // Structured way-through marker: the swap sheet turns a sub-floor
+    // Bitcoin refusal into the Lightning alternative at the same amount
+    // instead of a dead end. Rides the error through the dispatcher,
+    // which rethrows terminal errors untouched.
+    e.satoraBelowFloor = { destKey: plan.destKey, netSats: Math.round(netSats), minSats: minNet };
     return e;
   };
   let quote = await fetchSatoraQuote(plan, args, 0);

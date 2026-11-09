@@ -5983,6 +5983,54 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     } finally { globalThis.fetch = realFetch; }
   }
 
+  // BTC-floor way-through: the sub-floor Bitcoin refusal carries the
+  // structured marker (so the swap sheet can offer the alternative
+  // without string parsing) and attributes the floor to the swap
+  // route; the SAME amount quotes live to Lightning.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: (u) => {
+      const chain = u.searchParams.get("target_chain");
+      if (u.searchParams.get("source_amount") === "20000000")
+        return chain === "Bitcoin" ? quoteBtc20S7() : quoteLnS7();
+      return chain === "Bitcoin"
+        ? quoteBtc20S7({ source_amount: "5000000", target_amount: "6713", net_target_amount: "6521", protocol_fee: 33 })
+        : quoteLnS7({ source_amount: "5000000", target_amount: "6713", net_target_amount: "6676", protocol_fee: 33 });
+    } });
+    try {
+      resetSatoraCaches();
+      let btcErr = null;
+      try { await getSwapRoutes({ ...ARGS_BTC20_S7, fromAmount: "5000000" }); } catch (e) { btcErr = e; }
+      ok("satora: sub-floor Bitcoin refusal carries the way-through marker {destKey, netSats, minSats}",
+        !!btcErr && !!btcErr.satoraBelowFloor && btcErr.satoraBelowFloor.destKey === "bitcoin"
+        && btcErr.satoraBelowFloor.netSats === 6521 && btcErr.satoraBelowFloor.minSats === 10000);
+      ok("satora: sub-floor Bitcoin refusal attributes the floor to the route and names Lightning",
+        !!btcErr && btcErr.message.includes("10,000-sat minimum") && btcErr.message.includes("route") && btcErr.message.includes("Lightning"));
+      const lnRoutes = await getSwapRoutes({ ...ARGS_BTC20_S7, fromAmount: "5000000", toChainKey: "lightning", toAddress: "lnbc1example" });
+      ok("satora: the identical $5 amount quotes live to Lightning (the way-through exists)",
+        lnRoutes.length === 1 && lnRoutes[0].provider === "satora");
+      const btc20 = await getSwapRoutes(ARGS_BTC20_S7);
+      ok("satora: above-floor $20 Bitcoin target still returns the Bitcoin route (no way-through needed)",
+        btc20.length === 1 && btc20[0].provider === "satora");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // BTC-floor way-through: app source pins + the no-implied-Fluid-
+  // minimum audit — every line in app/core stating a minimum or
+  // at-least bound that touches Bitcoin/BTC/sats must attribute the
+  // floor to the swap route or to channel size, never to Fluid or
+  // to Bitcoin itself.
+  {
+    const coreSrcPin = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcPin = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("btc-floor: the swap sheet intercepts the marker and offers the Lightning way-through",
+      appSrcPin.includes("satoraBelowFloor") && appSrcPin.includes("Swap to Lightning instead")
+      && appSrcPin.includes("not a Fluid minimum") && appSrcPin.includes("searchRoutes"));
+    const unattributed = (src) => src.split("\n").filter(l => /(minimum|at least)/i.test(l) && /(bitcoin|btc|sats)/i.test(l) && !/(route|Channel)/.test(l));
+    ok("btc-floor: no line states a Bitcoin/sats minimum without route or channel attribution",
+      unattributed(appSrcPin).length === 0 && unattributed(coreSrcPin).length === 0);
+  }
+
   // Version pinning: unknown epoch refuses; failures are not cached.
   {
     const realFetch = globalThis.fetch;

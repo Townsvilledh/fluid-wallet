@@ -31,7 +31,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
-  formatSatoraSwapIntent, checkSatoraLightningReceivability, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
@@ -4193,6 +4193,41 @@ $("actSwap").onclick = () => {
       wrap.classList.add("hidden");
     }
   }
+  // BTC-floor way-through: a sub-10,000-sat swap to Bitcoin mainnet
+  // is refused by the swap route (Satora's settlement floor). That
+  // floor belongs to the route, not to Fluid and not to Bitcoin:
+  // Bitcoin the user holds can be sent at any amount. The sheet
+  // turns the refusal into the Lightning alternative at the same
+  // amount instead of a dead-end error. One tap switches the
+  // destination network to Lightning and re-quotes; the destination
+  // prefill uses the user's registered Lightning ADDRESS only —
+  // never the own-node BOLT 12 offer, which Satora's creation path
+  // cannot pay (it accepts invoice / address / LNURL only), so
+  // offering it here would quote and then fail at creation.
+  function paintBtcFloorWayThrough(floor) {
+    const host = $("wList"); if (!host) return;
+    host.innerHTML = `<div class="netitem" style="cursor:default">
+        <span>That swap would land about <b>${Number(floor.netSats).toLocaleString("en-GB")} sats</b> on Bitcoin.<br>
+        <small style="color:var(--dim)">Mainnet settlement on this swap route opens at 10,000 sats — that is the route's floor, not a Fluid minimum: Bitcoin you hold can be sent at any amount. Lightning settles this amount today, in seconds.</small></span>
+      </div>
+      <button class="btn" id="wBtcFloorLn" style="margin:8px 0">Swap to Lightning instead</button>`;
+    $("wBtcFloorLn").onclick = async () => {
+      $("wToNet").value = "lightning";
+      setPick("to", defaultTok("to", "lightning"));
+      syncDestRow();
+      const inp = $("wDestAddr");
+      if (inp.value && !classifySatoraLightningDestination(inp.value)) inp.value = "";
+      if (!inp.value) {
+        try {
+          const myName = localStorage.getItem("fluid_name");
+          const hit = myName ? await resolveFluidName(myName).catch(() => null) : null;
+          if (hit && hit.ln) inp.value = hit.ln;
+        } catch { /* stays empty — guidance below */ }
+      }
+      if (inp.value) { searchRoutes(); }
+      else { inp.focus(); msg("wMsg", "Lightning is selected with the same amount — paste the invoice or Lightning address to receive at, then tap Get routes.", true); }
+    };
+  }
   // Satora swaps in flight / history, inside this sheet (no new
   // surface): persisted swap ids are the recovery key; statuses are
   // polled from the server and rendered as text only (audit C1).
@@ -4270,7 +4305,7 @@ $("actSwap").onclick = () => {
     ensureSwapList(fn).then(() => { const nt = findTok(fn, fTok); if (nt) setPick("to", nt); });
     msg("wMsg", "");
   };
-  $("wRoutes").onclick = async () => {
+  const searchRoutes = async () => {
     await ensureStableTokens($("wFromNet").value);
     await ensureStableTokens($("wToNet").value);
     const fromKey = $("wFromNet").value, toKey = $("wToNet").value;
@@ -4411,8 +4446,14 @@ $("actSwap").onclick = () => {
         if (r.provider === "mayan") $("wIntentText").textContent += formatMayanRefundNote(r);
         show("wConfirm"); msg("wMsg", "");
       });
-    } catch (e) { msg("wMsg", "Route search failed: " + (e.shortMessage || e.message)); }
+    } catch (e) {
+      if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && $("wToNet").value === "bitcoin") {
+        paintBtcFloorWayThrough(e.satoraBelowFloor);
+        msg("wMsg", "");
+      } else msg("wMsg", "Route search failed: " + (e.shortMessage || e.message));
+    }
   };
+  $("wRoutes").onclick = searchRoutes;
   $("wDo").onclick = async () => {
     if (!pendingSwap) return;
     const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
