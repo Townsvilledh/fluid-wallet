@@ -4475,6 +4475,12 @@ $("createBtn").onclick = async () => {
 $("importBtn").onclick = async () => {
   const pw = $("createPw").value;
   if (!validatePassword(pw)) return msg("onboardMsg", "Set a password (12+ characters) above first.");
+  // Import-with-new-name: a username typed in the box above is part
+  // of this onboarding (NAMES RESOLUTION RULE) — validate its format
+  // BEFORE importing, so a bad name fails here, not after the wallet
+  // has already been replaced.
+  const wantName = normalizeFluidName($("createName").value);
+  if ($("createName").value.trim() && !validateFluidName(wantName)) return msg("onboardMsg", "Username must be 3-20 chars: letters, numbers, underscore; start with a letter — or clear the username field to import without claiming a name.");
   try {
     msg("onboardMsg", "Importing…", true);
     const v = await importVault($("importPhrase").value, pw);
@@ -4488,6 +4494,31 @@ $("importBtn").onclick = async () => {
     localStorage.removeItem(NAME_CLAIM_KEY);
     nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
+    if (wantName) {
+      const hit = await resolveFluidName(wantName).catch(() => null);
+      if (hit && hit.evm && String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
+        // Already published to THIS wallet — resolvable as-is, no
+        // wait needed: adopt it and finish.
+        localStorage.setItem("fluid_name", wantName);
+        refreshGate();
+        return;
+      }
+      if (hit) {
+        // Registered to a DIFFERENT wallet: creation must not
+        // complete under this name — the wait sheet opens in its
+        // conflict state (pick a different name, or continue
+        // without a username).
+        localStorage.setItem("fluid_name", wantName);
+        showNameCreationWait(wantName, 0, { startConflict: true });
+        return;
+      }
+      // New name for this wallet: submit the signed claim and wait
+      // on the registry read, exactly like a fresh creation.
+      let accepted = 0;
+      try { accepted = await submitNameClaim(wantName, null); } catch { accepted = 0; }
+      showNameCreationWait(wantName, accepted);
+      return;
+    }
     refreshGate();
   } catch (e) { msg("onboardMsg", e.message); }
 };
@@ -4612,44 +4643,111 @@ function ensureNamePoll() {
     renderNameSection();
   }, 20000);
 }
-/** Creation-time wait (NAMES RESOLUTION RULE): after a fresh wallet
- *  claims its name, creation completes only when a registry read
- *  shows the name resolving to THIS wallet — or when the user
- *  explicitly chooses to continue without a name (told plainly they
- *  have no live name yet). Dismissing the sheet is the same explicit
- *  bypass, via the sheet-close hook. */
-function showNameCreationWait(name, accepted) {
-  const entry = buildNameEntry(name, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase), solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase));
-  const entryText = JSON.stringify(entry).slice(1, -1) + ",";
+/** Creation-time wait (NAMES RESOLUTION RULE, strengthened
+ *  2026-11-09): after a wallet claims its name during onboarding
+ *  (create, or import with a new name), creation is NOT complete
+ *  until an actual registry read shows the name resolving to THIS
+ *  wallet. The sheet shows what was submitted, what it is waiting
+ *  for, and the elapsed time; it polls the published registry every
+ *  10 seconds. It NEVER auto-completes on a timeout: past ~15
+ *  minutes it offers keep waiting / retry the claim submission /
+ *  continue without a username. The ONLY bypass is that explicit
+ *  continue-without-a-username tap (dismissing the sheet is the
+ *  same deliberate bypass, via the sheet-close hook). A registry
+ *  read showing DIFFERENT addresses is a lost race: creation does
+ *  not complete under that name — the sheet loops back to a name
+ *  step (claim a different name) or the same bypass. */
+function showNameCreationWait(name, accepted, { startConflict = false } = {}) {
+  let currentName = name;
+  let entryText = "";
+  const rebuildEntryText = () => {
+    const entry = buildNameEntry(currentName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase), solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase));
+    entryText = JSON.stringify(entry).slice(1, -1) + ",";
+  };
+  rebuildEntryText();
   let settled = false;
-  let poll = null;
-  const finish = () => { settled = true; if (poll) clearInterval(poll); sheetCloseHook = null; closeSheet(); refreshGate(); };
-  openSheet(`<h3 style="margin:4px 0">Your name: ${esc(name)}.${FLUID_DOMAIN}</h3>
-    <p class="tag" id="ncWaitStatus">${accepted > 0 ? esc(NAME_STATE_COPY.publishing) : esc(NAME_STATE_COPY.saved)}</p>
-    ${accepted > 0 ? "" : `<button class="btn" id="ncPublishBtn">Publish my name</button>`}
+  let poll = null, tick = null;
+  let startedAt = Date.now();
+  let longWaitDismissed = false;
+  const stopTimers = () => { if (poll) { clearInterval(poll); poll = null; } if (tick) { clearInterval(tick); tick = null; } };
+  const finish = () => { settled = true; stopTimers(); sheetCloseHook = null; closeSheet(); refreshGate(); };
+  openSheet(`<h3 style="margin:4px 0" id="ncWaitTitle">Your name: ${esc(currentName)}.${FLUID_DOMAIN}</h3>
+    <p class="tag" id="ncWaitStatus">${startConflict ? esc(NAME_STATE_COPY.conflict) : (accepted > 0 ? esc(NAME_STATE_COPY.publishing) : esc(NAME_STATE_COPY.saved))}</p>
+    <p class="tag" id="ncSubmitted">Claim submitted for ${esc(currentName)}.${FLUID_DOMAIN} — signed with your wallet's key and sent to the public relays.</p>
+    <p class="tag" id="ncWaiting">Waiting for ${esc(currentName)} to appear in the public registry, resolving to your wallet… elapsed <span id="ncElapsed">0:00</span></p>
+    <button class="btn ${startConflict || accepted > 0 ? "hidden" : ""}" id="ncPublishBtn">Publish my name</button>
+    <div id="ncLongWait" class="hidden">
+      <p class="tag" style="margin-top:10px">This is taking longer than usual. Your claim is still publishing — nothing is wrong with your wallet, and this screen will never finish on its own without your name live.</p>
+      <button class="btn ghost" id="ncKeepWaiting">Keep waiting</button>
+      <button class="btn ghost" id="ncRetryBtn">Retry the claim submission</button>
+    </div>
+    <div id="ncConflictBox" class="${startConflict ? "" : "hidden"}">
+      <input id="ncNewName" placeholder="Pick a different name" autocapitalize="none" style="margin-top:10px">
+      <button class="btn" id="ncClaimOtherBtn">Claim this name instead</button>
+      <p class="msg err" id="ncSheetMsg"></p>
+    </div>
     <button class="btn hidden" id="ncEnterBtn">Enter Fluid →</button>
-    <p class="tag" style="margin-top:10px">You can continue now instead — but you will have <b>no live name yet</b>: nobody can send to ${esc(name)}.${FLUID_DOMAIN} until it publishes. It keeps publishing in the background, and its state shows under More → “Your Fluid name”.</p>
-    <button class="btn ghost" id="ncSkipBtn">Continue without a name for now</button>
+    <button class="btn ghost" id="ncSkipBtn" style="margin-top:10px">Continue without a username — you can claim one later; until then nobody can send to you by name</button>
     <p class="tag" style="margin-top:12px"><b>Publish it yourself instead (fallback):</b> copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
-    <div class="seed" style="font-size:12px">${entryText}</div>
+    <div class="seed" style="font-size:12px" id="ncEntryText">${entryText}</div>
     <button class="btn ghost" id="ncCopyEntry">Copy entry</button>
     <a class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>`);
-  sheetCloseHook = () => { if (!settled) { settled = true; if (poll) clearInterval(poll); refreshGate(); } };
+  sheetCloseHook = () => { if (!settled) { settled = true; stopTimers(); refreshGate(); } };
+  if (startConflict) {
+    // Import-conflict: this device submitted nothing — the name was
+    // already registered elsewhere. Say exactly that, and hide the
+    // waiting line until a loop-back claim starts a real wait.
+    $("ncSubmitted").textContent = "This name is already registered to a different wallet — nothing was submitted for it from this device.";
+    $("ncWaiting").style.display = "none";
+  }
   $("ncCopyEntry").onclick = () => copyText(entryText, $("ncCopyEntry"));
   $("ncSkipBtn").onclick = finish;
-  const publishBtn = $("ncPublishBtn");
-  if (publishBtn) publishBtn.onclick = async () => {
-    publishBtn.disabled = true;
+  $("ncEnterBtn").onclick = finish;
+  const paintElapsed = () => {
+    const el = $("ncElapsed"); if (!el) return;
+    const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    if (s >= 900 && !longWaitDismissed) { const lw = $("ncLongWait"); if (lw) lw.classList.remove("hidden"); }
+  };
+  tick = setInterval(paintElapsed, 1000); paintElapsed();
+  $("ncKeepWaiting").onclick = () => { longWaitDismissed = true; $("ncLongWait").classList.add("hidden"); };
+  const resubmit = async (btn) => {
+    if (btn) btn.disabled = true;
     try {
-      const n = await submitNameClaim(name, null);
+      const n = await submitNameClaim(currentName, null);
       const st = $("ncWaitStatus"); if (st) st.textContent = n > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved;
-      if (n > 0) publishBtn.classList.add("hidden");
-      else publishBtn.disabled = false;
-    } catch { publishBtn.disabled = false; }
+      const pb = $("ncPublishBtn"); if (pb) pb.classList.toggle("hidden", n > 0);
+      if (n === 0 && btn) btn.disabled = false;
+    } catch { if (btn) btn.disabled = false; }
+  };
+  $("ncPublishBtn").onclick = (e) => resubmit(e.currentTarget);
+  $("ncRetryBtn").onclick = (e) => resubmit(e.currentTarget);
+  $("ncClaimOtherBtn").onclick = async () => {
+    const want = normalizeFluidName($("ncNewName").value);
+    if (!validateFluidName(want)) return msg("ncSheetMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+    msg("ncSheetMsg", "Checking the registry…", true);
+    const hit = await resolveFluidName(want).catch(() => null);
+    if (hit) return msg("ncSheetMsg", "That name is already claimed. Try another.");
+    try { await submitNameClaim(want, null); } catch (e) { return msg("ncSheetMsg", "Claim failed: " + (e.message || e)); }
+    currentName = want;
+    rebuildEntryText();
+    startedAt = Date.now(); longWaitDismissed = false;
+    $("ncWaitTitle").textContent = "Your name: " + want + "." + FLUID_DOMAIN;
+    $("ncSubmitted").textContent = "Claim submitted for " + want + "." + FLUID_DOMAIN + " — signed with your wallet's key and sent to the public relays.";
+    $("ncWaiting").style.display = "";
+    $("ncWaiting").innerHTML = "";
+    $("ncWaiting").textContent = "Waiting for " + want + " to appear in the public registry, resolving to your wallet… elapsed ";
+    const el = document.createElement("span"); el.id = "ncElapsed"; el.textContent = "0:00"; $("ncWaiting").appendChild(el);
+    $("ncWaitStatus").textContent = NAME_STATE_COPY.publishing;
+    $("ncConflictBox").classList.add("hidden");
+    msg("ncSheetMsg", "");
+    const et = $("ncEntryText"); if (et) et.textContent = entryText;
+    if (!poll) poll = setInterval(check, 10000);
+    check();
   };
   const check = async () => {
     if (settled || !wallet) return;
-    const hit = await resolveFluidName(name).catch(() => null);
+    const hit = await resolveFluidName(currentName).catch(() => null);
     if (settled || !hit) return;
     const statusEl = $("ncWaitStatus"), enterBtn = $("ncEnterBtn"), skipBtn = $("ncSkipBtn");
     if (!statusEl || !enterBtn) return;
@@ -4657,18 +4755,16 @@ function showNameCreationWait(name, accepted) {
       statusEl.textContent = NAME_STATE_COPY.live;
       enterBtn.classList.remove("hidden");
       if (skipBtn) skipBtn.classList.add("hidden");
-      if (poll) { clearInterval(poll); poll = null; }
-      enterBtn.onclick = finish;
+      const lw = $("ncLongWait"); if (lw) lw.classList.add("hidden");
+      const cb = $("ncConflictBox"); if (cb) cb.classList.add("hidden");
+      stopTimers();
     } else {
       statusEl.textContent = NAME_STATE_COPY.conflict;
-      enterBtn.textContent = "Enter Fluid and pick another name";
-      enterBtn.classList.remove("hidden");
+      const cb = $("ncConflictBox"); if (cb) cb.classList.remove("hidden");
       if (poll) { clearInterval(poll); poll = null; }
-      enterBtn.onclick = finish;
     }
   };
-  poll = setInterval(check, 8000);
-  check();
+  if (!startConflict) { poll = setInterval(check, 10000); check(); }
 }
 function renderNameSection() {
   const gen = ++nameSectionGen;

@@ -389,9 +389,19 @@ ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { b
   // GitHub sheet survives only as the labelled fallback.
   const appSrcNc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const idxSrcNc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
-  ok("name claim wiring: creation auto-submits + waits on the registry", appSrcNc.includes("submitNameClaim(claimed, null)") && appSrcNc.includes("showNameCreationWait(claimed, accepted)") && appSrcNc.includes("Continue without a name for now"));
+  ok("name claim wiring: creation auto-submits + waits on the registry", appSrcNc.includes("submitNameClaim(claimed, null)") && appSrcNc.includes("showNameCreationWait(claimed, accepted)") && appSrcNc.includes("Continue without a username — you can claim one later; until then nobody can send to you by name"));
   ok("name claim wiring: More card carries publish + pick-different actions", appSrcNc.includes("Publish my name") && appSrcNc.includes("Pick a different name") && idxSrcNc.includes('id="ownedNameState"'));
   ok("name claim wiring: GitHub is the labelled fallback only", idxSrcNc.includes("Publish it yourself instead (fallback)") && appSrcNc.includes("Publish it yourself instead (fallback)"));
+  // Strengthened wait (owner, 2026-11-09): submitted / waiting-for /
+  // elapsed on screen; ~15-minute long-wait offers keep-waiting and
+  // retry, never an auto-complete; a creation conflict loops back to
+  // a name step inside the flow; import-with-new-name joins the same
+  // rule and the already-published adoption skips the wait.
+  ok("name claim wiring: wait sheet shows submitted, waiting-for and elapsed", appSrcNc.includes('id="ncElapsed"') && appSrcNc.includes("Claim submitted for ") && appSrcNc.includes("to appear in the public registry, resolving to your wallet"));
+  ok("name claim wiring: long wait offers keep waiting + retry, never auto-completes", appSrcNc.includes('id="ncLongWait"') && appSrcNc.includes("Keep waiting") && appSrcNc.includes("Retry the claim submission") && appSrcNc.includes("s >= 900"));
+  ok("name claim wiring: creation conflict loops back to a name step", appSrcNc.includes('id="ncNewName"') && appSrcNc.includes("Claim this name instead"));
+  ok("name claim wiring: import with a new name claims + waits; foreign-owned name opens conflict", appSrcNc.includes("Import-with-new-name") && appSrcNc.includes("startConflict: true") && appSrcNc.includes("submitNameClaim(wantName, null)"));
+  ok("name claim wiring: import adopting its own published name skips the wait", appSrcNc.includes("Already published to THIS wallet"));
 }
 
 // 19. Fee split 60/40 (settled in BTC Lightning) + cheapest-route ranking
