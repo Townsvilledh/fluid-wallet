@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
 import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
@@ -3464,9 +3464,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ui-p1: CSP is exactly the baseline policy with img-src gaining https: and connect-src naming the WalletConnect relay/verify endpoints (script-src stays 'self')",
     idxSrc.includes("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss: wss://relay.walletconnect.com https://relay.walletconnect.com https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://pulse.walletconnect.com; object-src 'none'; base-uri 'self'; form-action 'none'"));
   ok("ui-p1: design tokens are the spec's (Part 3)",
-    ["--bg0:#05070d", "--surface-1:#0b101f", "--surface-2:#111830", "--surface-3:#1a2247",
-     "--brand-1:#5b8cff", "--brand-2:#9d6bff", "--drop:#38bdf8",
-     "--grad-brand:linear-gradient(135deg,var(--brand-1),var(--brand-2))",
+    ["--bg0:#070606", "--surface-1:#0e0d0c", "--surface-2:#161413", "--surface-3:#211e1c",
+     "--brand-1:#f7931a", "--brand-2:#ffbe0b", "--drop:#ff9f2e",
+     "--grad-brand:linear-gradient(180deg,#ffa726 0%,#f7931a 100%)",
      "--sh-card:inset 0 1px 0 rgba(255,255,255,.045), 0 12px 32px rgba(0,0,0,.35)",
      "--r-sheet:28px", "--dur-sheet:260ms"].every(t => idxSrc.includes(t)));
   ok("ui-p1: SVG sprite carries the full icon set",
@@ -7967,6 +7967,65 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !/mercuryo/i.test(r.name + (r.url || "") + r.note))))
     && !("Mercuryo" in RAMP_STATIC_LINKS) && !("Mercuryo" in RAMP_ADDRESS_ENTRY)
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Mercuryo")));
+}
+
+// ---------- Black + Bitcoin-orange retheme (2026-11-09 spec) ----------
+{
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const recSrc = readFileSync(new URL("../tools/recovery.html", import.meta.url), "utf8");
+  const buildSrc = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  const pubSrc = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  const OLD_BLUE = ["#5b8cff", "#9d6bff", "#38bdf8", "#05070d", "#0b101f", "#111830", "#1a2247",
+    "#232b52", "#171e3a", "#0a0f1e", "#ffb84d", "#c9a8ff", "148,163,255", "91,140,255", "56,130,246"];
+  ok("theme: the old blue/violet palette survives nowhere in chrome sources",
+    OLD_BLUE.every(c => !idxSrc.includes(c) && !appSrc.includes(c)));
+  ok("theme: canvas/surface/warm-text tokens carry the spec values",
+    ["--bg0:#070606", "--surface-1:#0e0d0c", "--surface-2:#161413", "--surface-3:#211e1c",
+     "--surface-input:#0b0a09", "--txt:#faf6f0", "--dim:#a79e93", "--faint:#847c70",
+     "--hairline:rgba(255,226,188,.09)", "--hairline-strong:rgba(255,226,188,.19)",
+     "--brand-deep:#e85d04", "--on-brand:#1a1000", "--brand-tint:rgba(247,147,26,.12)",
+     "--brand-line:rgba(247,147,26,.38)", "--sh-brand:0 8px 24px rgba(247,147,26,.28)",
+     "--warn:#ffcf4d", "--good:#2fd08c", "--bad:#ff6b7a"].every(t => idxSrc.includes(t)));
+  ok("theme: gradient inventory is exactly the three spec recipes in index.html",
+    (() => { const g = [...idxSrc.matchAll(/(?:linear|radial)-gradient\([^;]*\)/g)].map(m => m[0]);
+      const allowed = [
+        "--grad-brand:linear-gradient(180deg,#ffa726 0%,#f7931a 100%)",
+        ".btn:active{ transform:scale(.98); background:linear-gradient(180deg,#f7931a 0%,#e85d04 100%); }",
+        "--grad-drop:linear-gradient(160deg,#ffbe0b 0%,#f7931a 48%,#e85d04 100%)",
+        "--grad-hero-glow:radial-gradient(720px 420px at 50% -10%, rgba(247,147,26,.14), rgba(7,6,6,0) 62%)",
+        "background:linear-gradient(180deg,#262019,#171310)",
+        "linear-gradient(var(--surface-2),var(--surface-2)) padding-box, linear-gradient(135deg, var(--brand-line), rgba(247,147,26,.06)) border-box",
+        "background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.06) 50%,transparent 70%)",
+        "background:linear-gradient(180deg, rgba(14,13,12,0), var(--surface-1) 26%)",
+        "background:linear-gradient(180deg, rgba(14,13,12,0), var(--surface-1) 22%)"];
+      return g.length === 9 && g.every(x => allowed.some(a => a.includes(x))); })());
+  ok("theme: droplet sprite + success ring carry the orange ramp, check stays green",
+    idxSrc.includes('<stop offset="0" stop-color="#ffbe0b"/><stop offset=".48" stop-color="#f7931a"/><stop offset="1" stop-color="#e85d04"/>')
+    && appSrc.includes('<stop offset="0" stop-color="#ffbe0b"/><stop offset=".48" stop-color="#f7931a"/><stop offset="1" stop-color="#e85d04"/>')
+    && appSrc.includes('stroke="#2fd08c"'));
+  ok("theme: primary button text is warm black on orange — never white",
+    idxSrc.includes("color:var(--on-brand)") && !/\.btn\{[^}]*color:#fff/.test(idxSrc)
+    && idxSrc.includes("--on-brand:#1a1000"));
+  ok("theme: self-hosted fonts wired — faces, tokens, preload, build + publish plumbing",
+    idxSrc.includes('font-family:"Inter"') && idxSrc.includes('font-family:"Space Grotesk"')
+    && idxSrc.includes('href="/fonts/inter-var.woff2"')
+    && idxSrc.includes('--font-sans:"Inter"') && idxSrc.includes('--font-display:"Space Grotesk"')
+    && buildSrc.includes("public/fonts/inter-var.woff2") && pubSrc.includes("fonts/inter-var.woff2"));
+  ok("theme: font payload inside the spec budget (Inter ≤48 KB, total ≤78 KB)",
+    statSync(new URL("../public/fonts/inter-var.woff2", import.meta.url)).size <= 48 * 1024
+    && statSync(new URL("../public/fonts/inter-var.woff2", import.meta.url)).size
+       + statSync(new URL("../public/fonts/space-grotesk-var.woff2", import.meta.url)).size <= 78 * 1024);
+  ok("theme: QR receive stays on a pure-white card (radius 20, 16px quiet zone)",
+    idxSrc.includes(".qr{ display:block; margin:10px auto; background:#ffffff; border-radius:20px; padding:16px; width:228px; }"));
+  ok("theme: tab bar is warm-tinted with the orange active state",
+    idxSrc.includes("background:rgba(10,8,7,.86)") && idxSrc.includes(".tab.on{ color:var(--brand-1); }"));
+  ok("theme: CHEAPEST badge is brand tint + orange text; game card is flat surface",
+    idxSrc.includes(".pill{ font-size:11px; background:var(--brand-tint); color:var(--drop);")
+    && idxSrc.includes(".game{ background:var(--surface-1);"));
+  ok("theme: recovery tool wears the same black/orange chrome",
+    recSrc.includes("--bg:#070606") && recSrc.includes("--acc:#f7931a") && recSrc.includes("color:var(--onacc)")
+    && !recSrc.includes("#0b1220") && !recSrc.includes("#1e2c4a"));
 }
 
 console.log(`\n${passed} checks passed`);

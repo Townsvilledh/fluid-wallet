@@ -367,7 +367,7 @@ function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName,
   const toLine = toName ? `${esc(toName)}.${FLUID_DOMAIN} · ${esc(short(to))}` : esc(short(to));
   const txShort = txid ? esc(short(txid)) : "";
   openSheet(`<div class="txsuccess">
-    <div class="txbadge"><svg viewBox="0 0 72 72" class="txring"><defs><linearGradient id="txgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b8cff"/><stop offset="1" stop-color="#9d6bff"/></linearGradient></defs><circle cx="36" cy="36" r="32" fill="none" stroke="url(#txgrad)" stroke-width="3"/><path d="M24 37.5 32.5 46 49 28" fill="none" stroke="url(#txgrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div class="txbadge"><svg viewBox="0 0 72 72" class="txring"><defs><linearGradient id="txgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffbe0b"/><stop offset=".48" stop-color="#f7931a"/><stop offset="1" stop-color="#e85d04"/></linearGradient></defs><circle cx="36" cy="36" r="32" fill="none" stroke="url(#txgrad)" stroke-width="3"/><path d="M24 37.5 32.5 46 49 28" fill="none" stroke="#2fd08c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <h3 class="t-screen txverb">${esc(verb || "Sent")}</h3>
     ${pending ? `<p class="tag txcap">Confirming on ${esc(familyName || "the network")} — follow it in Activity</p>` : ""}
     ${amount != null && amount !== "" ? `<p class="txamt">${logoHtml || ""}<span><b>${esc(fmt(amount, 8))} ${esc(symbol || "")}</b>${usdPart}</span></p>` : ""}
