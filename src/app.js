@@ -1007,12 +1007,14 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
   const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
   // amount null = the read failed: the balance is unknown, and the
   // row says so instead of dressing a placeholder zero as fact. A
-  // known amount with NO live price says "price unavailable" —
-  // never a blank where a $0.00 could be read into it.
+  // HELD amount with NO live price says "price unavailable" — never
+  // a blank where a $0.00 could be read into it. A true zero keeps
+  // its $0.00: 0 is worth $0.00 at any price, so that one is a fact.
   const amt = b.amount == null
     ? `<b>—</b><small>couldn't load</small>`
     : (v != null ? `<b>${fmt(b.amount)}</b><small>${usd(v)}</small>`
-        : `<b>${fmt(b.amount)}</b><small>price unavailable</small>`);
+        : (Number(b.amount) > 0 ? `<b>${fmt(b.amount)}</b><small>price unavailable</small>`
+            : `<b>${fmt(b.amount)}</b><small>${usd(0)}</small>`));
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
       <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
       <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small></span>

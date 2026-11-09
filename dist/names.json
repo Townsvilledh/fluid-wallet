@@ -58,5 +58,21 @@
     "sol": "BLZitZ9NdyW59JevzgWqo9byMw8P8odTsAknFAWdn1Eq",
     "tron": "TXcUBVA4cSF4aLXwLja4gwxiMtqWUBjHv6",
     "sui": "0xa27bb611945b1d93689addd6261b51e8ddca8daa99e1dc63a128d97bba2d6211"
+  },
+  "villianarc": {
+    "evm": "0x2e5cd04C74AFB38a376E1fc639F58fBf9C1B60Ba",
+    "btc": "bc1quc9qmn97lk5mq4pkekpcdqma3rhqv3na5lu0hd",
+    "algo": "GOVOYSWQTQBAVHSF7RPTJF6SCJVP5E7K7XD46IKN2TZEJ73ZR7DZCIWYJU",
+    "sol": "859p8Zk37F7AqMdzEPVFa1qsAjuZV5etrebVCJ8hS7hj",
+    "tron": "TECMGgxn2vALW9oTYunz7C9jC2fVBQZ5p2",
+    "sui": "0xa201ad1adcf87e25c9a58d8f2a087fefc4533f3fcf3bbd1d6f43afb4a765aefc"
+  },
+  "auditwalk26": {
+    "evm": "0x7Bc2221Bc05F9D57c187ea20cfb0a0A736DC34a5",
+    "btc": "bc1qqegn0ul3hndq2807x5styxg4maj32dge6ucy4q",
+    "algo": "2A53Z2XE6LTLPJR55AS5ZAJ2IFOVXO2HHVVCYPJL2WAK3BCR7M2D7O2SYY",
+    "sol": "8i95bXGVXNfNWpJs3DBy33zdTVjhUR8XSYQqUhLvgeoH",
+    "tron": "TMFagGVHhVhDgVny5rHWT8Q85Qk14VipvX",
+    "sui": "0x5a3613a0ac1ba3cec1f5fc322d7347ff999a5bd4d74986b276e7391dc7380e69"
   }
 }

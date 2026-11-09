@@ -7701,6 +7701,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("unpriced native: token rows and scalar rows carry the 'price unavailable' marker",
       appSrc72.includes(`<small>price unavailable</small>`)
       && appSrc72.includes("if (price == null && Number(bal) > 0)"));
+    ok("unpriced native: a true-zero token row keeps its truthful $0.00, not the unavailable marker",
+      appSrc72.includes(`Number(b.amount) > 0 ? \`<b>\${fmt(b.amount)}</b><small>price unavailable</small>\``));
     ok("unpriced native: family card headers use cardTotalHtml with the native amount + 'no live price'",
       appSrc72.includes("cardTotalHtml(key, totalVal)") && appSrc72.includes("· no live price")
       && appSrc72.includes("unpricedNativeByKey"));
