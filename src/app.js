@@ -29,7 +29,9 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  formatSatoraSwapIntent, checkSatoraLightningReceivability, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute,
+  executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -3053,6 +3055,8 @@ function openCosmosSheet(row) {
 // a clearly-labelled fallback for builds without the chunk (the
 // single-file build) or users who prefer an external wallet.
 let lnSession = null, lnChunk = null, lnEvents = [];
+let satoraPollTimer = null;
+let mayanPollTimer = null;
 const lnNetKey = () => localStorage.getItem("fluid_ln_network") || "bitcoin";
 const lnSats = (msat) => `${(Number(msat || 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })} sats`;
 
@@ -3705,8 +3709,13 @@ const hzRcv = $("homeReceive"); if (hzRcv) hzRcv.onclick = () => $("actReceive")
 // (custom tokens no list knows) carry ⚠ and add a caution line to the
 // approval sentence, exactly like unverified sends.
 let pendingSwap = null;
-const swapChainName = (k) => (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name);
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
+  if (netKey === "bitcoin" || netKey === "lightning") {
+    // Satora destinations: the receive asset is BTC itself (sats on
+    // Bitcoin mainnet, sats over Lightning). Not a LI.FI token.
+    return [{ symbol: "BTC", address: "btc", decimals: 8, native: false }];
+  }
   if (netKey === "tron") {
     // LI.FI addresses Tron tokens by their base58 T-address; the native
     // TRX entry is LI.FI's T-form zero address (see core).
@@ -3730,11 +3739,15 @@ function swapTokenList(netKey) {
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
 }
 function swapRouteName(route) {
-  // Relay (the primary router) returns a single solver quote, not
-  // LI.FI-style tool steps — its router name is simply "Relay", and
-  // the confirm sentence names it so the user always sees which
-  // router will move their money.
+  // Across and Relay return single quotes, not LI.FI-style tool
+  // steps — their router names are simply "Across" / "Relay", and
+  // the confirm sentence names the router so the user always sees
+  // which one will move their money.
+  if (route && route.provider === "across") return "Across";
   if (route && route.provider === "relay") return "Relay";
+  if (route && route.provider === "satora") return "Satora";
+  if (route && route.provider === "jupiter") return "Jupiter";
+  if (route && route.provider === "mayan") return "Mayan";
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
   return names.join(" → ") || "LI.FI route";
 }
@@ -3799,7 +3812,10 @@ async function swapBalanceOf(chainKey, tok) {
 $("actSwap").onclick = () => {
   pendingSwap = null;
   const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui"];
-  const netOpts = (sel) => swapNets.map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
+  // Bitcoin and Lightning are receive-only swap destinations
+  // (Satora, from EVM stablecoins) — they appear in the To list only.
+  const swapDestNets = [...swapNets, "bitcoin", "lightning"];
+  const netOpts = (sel, dest = false) => (dest ? swapDestNets : swapNets).map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
   const fromKey0 = (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
@@ -3807,7 +3823,8 @@ $("actSwap").onclick = () => {
   const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui"].includes(viewKey))
     ? `<p class="tag">Swaps run on EVM, Solana, Tron and Sui — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
-    <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't). Cheapest = most received after fees; you approve the exact sentence before anything is signed.</p>
+    <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't; Satora covers Bitcoin and Lightning from EVM stablecoins). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
+    <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.</p>
     ${swapViewCaption}
     <label class="tag">From</label>
     <div style="display:flex;gap:8px">
@@ -3822,12 +3839,16 @@ $("actSwap").onclick = () => {
     <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
     <div style="display:flex;gap:8px">
-      <select id="wToNet" style="flex:1.2">${netOpts(toKey0)}</select>
+      <select id="wToNet" style="flex:1.2">${netOpts(toKey0, true)}</select>
       <button class="btn ghost" id="wToTokBtn" style="flex:1;margin:6px 0">Select token ▾</button>
     </div>
     <div id="wToPick" class="hidden">
       <input id="wToSearch" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
       <div id="wToList" style="max-height:240px;overflow:auto"></div>
+    </div>
+    <div id="wDestWrap" class="hidden">
+      <label class="tag" id="wDestLabel"></label>
+      <input id="wDestAddr" autocapitalize="none" spellcheck="false">
     </div>
     <button class="btn" id="wRoutes">Get routes</button>
     <div id="wList"></div>
@@ -3835,6 +3856,8 @@ $("actSwap").onclick = () => {
       <p class="seed" id="wIntentText"></p>
       <button class="btn" id="wDo">Confirm &amp; swap</button>
     </div>
+    <div id="wSatoraSwaps"></div>
+    <div id="wMayanSwaps"></div>
     <p class="msg err" id="wMsg"></p>`);
   const P = {
     from: { net: "wFromNet", btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList" },
@@ -3854,6 +3877,51 @@ $("actSwap").onclick = () => {
     if (!tok) return null;
     return swapTokensFor(netKey).find(t => t.address.toLowerCase() === String(tok.address).toLowerCase()) || null;
   }
+  // Bitcoin / Lightning destinations need a destination the wallet
+  // can't derive from the seed alone: a Bitcoin address (defaulted
+  // to the user's own Fluid Taproot address) or a Lightning
+  // invoice / address / LNURL the user pastes.
+  function syncDestRow() {
+    const tk = $("wToNet").value;
+    const wrap = $("wDestWrap"), inp = $("wDestAddr");
+    if (tk === "bitcoin") {
+      wrap.classList.remove("hidden");
+      $("wDestLabel").textContent = "Bitcoin address to receive at — your Fluid Taproot address by default; you claim the Bitcoin with your own key";
+      if (!inp.value || /^ln/i.test(inp.value)) { inp.value = ""; try { inp.value = bitcoinTaprootAddress(wallet.mnemonic.phrase); } catch { /* stays editable */ } }
+      inp.placeholder = "bc1p…";
+    } else if (tk === "lightning") {
+      wrap.classList.remove("hidden");
+      $("wDestLabel").textContent = "Lightning destination — an amount-bearing invoice, a Lightning address, or an LNURL";
+      if (/^bc1p/i.test(inp.value)) inp.value = "";
+      inp.placeholder = "lnbc… invoice, name@domain, or lnurl…";
+    } else {
+      wrap.classList.add("hidden");
+    }
+  }
+  // Satora swaps in flight / history, inside this sheet (no new
+  // surface): persisted swap ids are the recovery key; statuses are
+  // polled from the server and rendered as text only (audit C1).
+  function paintSatoraSwaps() {
+    const host = $("wSatoraSwaps"); if (!host) return;
+    const records = loadSatoraSwapRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>Satora swaps</h4>` + records.map(r => `<p class="tag" data-satora-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-satora-line]").forEach((el, i) => { el.textContent = satoraSwapHistoryLine(records[i]); });
+  }
+  paintSatoraSwaps();
+  pollSatoraSwapStatuses(localStorage).then(() => paintSatoraSwaps()).catch(() => {});
+  // Mayan swaps in flight / history, same conventions: the
+  // source transaction hash is the recovery key; statuses are
+  // polled from Mayan's explorer and rendered as text only.
+  function paintMayanSwaps() {
+    const host = $("wMayanSwaps"); if (!host) return;
+    const records = loadMayanSwapRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>Mayan swaps</h4>` + records.map(r => `<p class="tag" data-mayan-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-mayan-line]").forEach((el, i) => { el.textContent = mayanSwapHistoryLine(records[i]); });
+  }
+  paintMayanSwaps();
+  pollMayanSwapStatuses(localStorage).then(() => paintMayanSwaps()).catch(() => {});
   function renderPickList(side) {
     const netKey = $(P[side].net).value;
     const q = $(P[side].search).value.trim().toLowerCase();
@@ -3885,14 +3953,18 @@ $("actSwap").onclick = () => {
       await ensureStableTokens(netKey); // discovered chains learn USDC/USDT lazily
       setPick(side, defaultTok(side, netKey));
       ensureSwapList(netKey);
+      if (side === "to") syncDestRow();
     };
   }
   setPick("from", defaultTok("from", fromKey0));
   setPick("to", defaultTok("to", toKey0));
+  syncDestRow();
   ensureStableTokens(fromKey0).then(() => ensureSwapList(fromKey0));
   ensureStableTokens(toKey0).then(() => ensureSwapList(toKey0));
   $("wFlip").onclick = async () => {
     const fn = $("wFromNet").value, tn = $("wToNet").value;
+    if (fn === "bitcoin" || fn === "lightning" || tn === "bitcoin" || tn === "lightning")
+      return msg("wMsg", "Bitcoin and Lightning are receive-only swap destinations — they can't be a swap source.");
     const fTok = pick.from, tTok = pick.to;
     $("wFromNet").value = tn; $("wToNet").value = fn;
     show(P.from.panel, false); show(P.to.panel, false);
@@ -3920,12 +3992,21 @@ $("actSwap").onclick = () => {
         return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${have == null ? "0" : fmt(have)}).`);
       msg("wMsg", "Searching routes across chains…", true);
       const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : wallet.address);
+      // Satora destinations take their destination from the input
+      // row: the Bitcoin address (defaulted to the user's Taproot
+      // address) or the pasted Lightning invoice / address / LNURL.
+      let destInput = "";
+      if (toKey === "bitcoin" || toKey === "lightning") {
+        destInput = ($("wDestAddr").value || "").trim();
+        if (toKey === "bitcoin" && !destInput) { try { destInput = bitcoinTaprootAddress(wallet.mnemonic.phrase); } catch { /* handled below */ } }
+        if (!destInput) return msg("wMsg", toKey === "bitcoin" ? "Enter the Bitcoin address to receive at." : "Paste the Lightning invoice, Lightning address or LNURL to pay first.");
+      }
       const routes = await getSwapRoutes({
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
         fromAmount: swapAmountToRaw(amount, fromTok.decimals),
         fromAddress: addrOf(fromKey),
-        toAddress: addrOf(toKey),
+        toAddress: (toKey === "bitcoin" || toKey === "lightning") ? destInput : addrOf(toKey),
       });
       if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
       const ranked = rankSwapRoutes(routes, Number(toTok.priceUSD) || null).slice(0, 3);
@@ -3943,25 +4024,96 @@ $("actSwap").onclick = () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
         pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        if (r.provider === "satora") {
+          // Receivability gate first (Lightning): an invoice paying
+          // the user's own channel-less Lightning wallet is blocked
+          // before any review is offered.
+          if (toKey === "lightning") {
+            const gate = checkSatoraLightningReceivability({
+              destInput,
+              ownNodeId: lnSession ? lnSession.nodeId : null,
+              ownReceivableMsat: lnSession ? lnSession.balance().receivableMsat : null,
+            });
+            if (!gate.ok) { pendingSwap = null; show("wConfirm", false); return msg("wMsg", gate.reason); }
+          }
+          // The Satora review sentence is self-contained (full fee
+          // stack + destination + refund truth in core's words), so
+          // it replaces the generic disclosure below; Confirm is
+          // live — confirming runs the executor, which re-verifies
+          // the creation record, the funding payload and the
+          // Permit2 witness field by field before signing.
+          $("wIntentText").textContent = formatSatoraSwapIntent({ route: r, destInput });
+          $("wDo").disabled = false;
+          show("wConfirm"); msg("wMsg", "");
+          return;
+        }
+        $("wDo").disabled = false;
         // Fluid's own fee, disclosed as its own clause in the confirm
-        // sentence: computed from THIS quote's actual fromAmount with
-        // the standard rate (platformFeeOn) — never a typed-in number.
-        // Only where the route actually collects: LI.FI attaches the
-        // fee per source chain only where its portal fee wallet is
-        // registered (swapFeeCollectingChain); Relay attaches its App
-        // Fee on every quote but may skip collecting dust-sized fees,
-        // and its quote says so (platformFeeCollecting, parsed from
-        // the quote's own fees.app) — no fee is disclosed on a route
-        // that will not charge it.
+        // sentence, priced by the fee model (a markup on the route's
+        // own cost, capped at 0.5% — core's two-pass search set the
+        // rate) and recomputed from THIS final quote's own numbers —
+        // never a typed-in number. Relay states the fee it will
+        // actually take in its quote (platformFeeUsd, parsed from
+        // fees.app) but may skip collecting dust-sized fees, and its
+        // quote says so (platformFeeCollecting); LI.FI charges the
+        // bps the search attached to this route (platformFeeBps)
+        // out of fromAmount, priced here by the quote itself. Only
+        // where the route actually collects: LI.FI attaches the fee
+        // per source chain only where its portal fee wallet is
+        // registered (swapFeeCollectingChain) — no fee is disclosed
+        // on a route that will not charge it.
         const collects = r.provider === "relay" ? r.platformFeeCollecting === true : swapFeeCollectingChain(r.fromChainId);
-        const feeRaw = r.fromAmount != null && collects ? platformFeeOn(r.fromAmount) : 0n;
-        const platformFee = feeRaw > 0n ? `${fmt(swapRawToAmount(feeRaw.toString(), fromTok.decimals))} ${fromTok.symbol}` : null;
+        let platformFeeUsd = null, platformFeePct = null;
+        if (collects && r.provider === "relay" && Number(r.platformFeeUsd) > 0) {
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "across" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Across states the fee it will actually take in its
+          // quote (platformFeeUsd, parsed from fees.total's app
+          // component) and collects it inside the fill — disclose
+          // exactly that figure, like Relay's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "jupiter" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Jupiter deducts the fee from the swap's OUTPUT inside
+          // the aggregator program; core derived the charged figure
+          // from the final build's own gross-vs-net output
+          // (platformFeeUsd) — disclose exactly that figure, like
+          // Across's. (The generic LI.FI branch below must never
+          // price a Jupiter fee: it would read the bps off the
+          // INPUT amount, the wrong mint entirely.)
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "mayan" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Mayan states the fee it will actually take in the
+          // final quote's own referrerFeeUsd (paid in the source
+          // asset on a Swift, in destination USDC on a Fast
+          // MCTP) — disclose exactly that figure, like Across's.
+          // (The generic LI.FI branch below must never price a
+          // Mayan fee: it would read the bps off the input
+          // amount in the wrong asset and chain.)
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (collects && Number(r.platformFeeBps) > 0 && r.fromAmount != null) {
+          const feeRaw = platformFeeOn(r.fromAmount, Number(r.platformFeeBps));
+          const amtRaw = Number(r.fromAmount), amtUsd = Number(r.fromAmountUSD);
+          if (feeRaw > 0n && amtRaw > 0 && amtUsd > 0) {
+            platformFeeUsd = (Number(feeRaw) / amtRaw) * amtUsd;
+            platformFeePct = (platformFeeUsd / amtUsd) * 100;
+          }
+        }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
           toAmount: fmt(swapRawToAmount(r.toAmount, toTok.decimals)), toSymbol: toTok.symbol, toNetKey: toKey,
           toolName: swapRouteName(r), feeUsd: r.gasCostUSD, durationSec: r.durationSec,
-          ...(platformFee ? { platformFee } : {}),
+          ...(platformFeeUsd != null ? { platformFeeUsd, platformFeePct } : {}),
         }) + ((fromTok.verified === false || toTok.verified === false) ? " ⚠ " + UNVERIFIED_CAUTION : "");
+        if (r.provider === "across") $("wIntentText").textContent += " If the bridge does not fill, your deposit is refunded automatically to this same wallet — refunds take several hours, never seconds.";
+        if (r.provider === "mayan") $("wIntentText").textContent += formatMayanRefundNote(r);
         show("wConfirm"); msg("wMsg", "");
       });
     } catch (e) { msg("wMsg", "Route search failed: " + (e.shortMessage || e.message)); }
@@ -3980,11 +4132,61 @@ $("actSwap").onclick = () => {
         list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
         localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
       };
-      if (route.provider === "relay") {
+      if (route.provider === "satora") {
+        // Satora route (Bitcoin / Lightning destinations): the
+        // executor creates the swap, persists its id, verifies
+        // the funding payload + the Permit2 witness field by
+        // field, signs with the wallet's EVM key and submits to
+        // the gasless relay — the returned hash is the relay's
+        // funding transaction on the SOURCE chain. The persisted
+        // record joins the Satora swaps list in this sheet, whose
+        // polling tracks it from here.
+        hashes = await executeSatoraSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage });
+        srcExplorer = NETWORKS[fromKey].explorer;
+        try { paintSatoraSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "relay") {
         // Relay route (primary router): EVM source by construction —
         // its steps are complete transactions, bounds-checked in core.
         hashes = await executeRelaySwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
         srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "across") {
+        // Across route (same-asset EVM majors): one SpokePool
+        // deposit, bounds-checked in core; Fluid composes its own
+        // exact-amount approval — the API's is unlimited and is
+        // never used.
+        hashes = await executeAcrossSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+        srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "jupiter") {
+        // Jupiter route (Solana same-chain primary): Fluid
+        // assembled the transaction itself from the decomposed
+        // instructions and signs with the wallet's Solana key —
+        // checked BEFORE the generic Solana branch below, whose
+        // executor expects LI.FI step payloads a Jupiter route
+        // does not carry.
+        hashes = await executeJupiterSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
+        srcExplorer = SOLANA_EXPLORER;
+        srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+      } else if (route.provider === "mayan") {
+        // Mayan route (ranked candidate — it is here because it
+        // quoted cheapest): EVM sources sign the bounds-checked
+        // Forwarder payload in core; Solana sources sign the
+        // locally assembled instruction set with the wallet's
+        // Solana key. Checked BEFORE the generic Solana branch
+        // below, whose executor expects LI.FI step payloads.
+        // The swap is then tracked by its source hash in the
+        // Mayan history (statuses polled from Mayan's explorer).
+        hashes = await executeMayanSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+          list.unshift({ chainKey: fromKey, token: fromTok.address, tokenSymbol: sanitizePersistedSymbol(fromTok.symbol), spender: rec.spender, amount: rec.amount, at: Date.now() });
+          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+        });
+        saveMayanSwapRecord(localStorage, {
+          id: hashes[0], status: "INPROGRESS",
+          routeType: route.mayan.routeType, fromChainKey: fromKey, toChainKey: toKey,
+          deadline64: route.mayan.deadline64, at: Date.now(), updatedAt: Date.now(),
+        });
+        if (fromKey === "solana") { srcExplorer = SOLANA_EXPLORER; srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`; }
+        else srcExplorer = NETWORKS[fromKey].explorer;
       } else if (fromKey === "solana") {
         hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
         srcExplorer = SOLANA_EXPLORER;
@@ -4007,7 +4209,7 @@ $("actSwap").onclick = () => {
         hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
         srcExplorer = NETWORKS[fromKey].explorer;
       }
-      const destAddr = toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
+      const destAddr = route.provider === "satora" ? (route.satora.destInput || wallet.address) : toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -4295,6 +4497,16 @@ $("unlockBtn").onclick = async () => {
       }
     } catch { /* the old vault still works; the upgrade retries next unlock */ }
     refreshGate();
+    // Satora swap polling resumes on unlock: persisted swap ids are
+    // the recovery key, so any swap left in flight by a reload or a
+    // locked session picks its status back up here, then keeps
+    // polling while the wallet stays unlocked.
+    pollSatoraSwapStatuses(localStorage).catch(() => {});
+    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) pollSatoraSwapStatuses(localStorage).catch(() => {}); }, 60000);
+    // Mayan swap polling resumes on unlock on the same terms
+    // (source hashes are the recovery key).
+    pollMayanSwapStatuses(localStorage).catch(() => {});
+    if (!mayanPollTimer) mayanPollTimer = setInterval(() => { if (wallet) pollMayanSwapStatuses(localStorage).catch(() => {}); }, 60000);
   }
   catch (e) { msg("onboardMsg", e.message); }
 };

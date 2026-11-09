@@ -2,7 +2,12 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
+import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
+import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
+import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
+import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
+import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -383,9 +388,9 @@ ok("platform fee scope: sends/receives are fee-free", platformFeeApplies("send")
 ok("send intent carries no platform fee", !formatSendIntent({ amount: "0.05", symbol: "BNB", to: fresh.address, networkKey: "bsc", feeNative: "0.000105" }).includes("Fluid fee"));
 // Disclosure: the confirm sentence shows the fee computed from the quote's real numbers
 ok("swap intent discloses fluid fee from quote numbers", (() => {
-  const feeDisp = swapRawToAmount(platformFeeOn("84000000").toString(), 6); // 84 USDC quote -> 0.42 USDC fee
-  const s = formatSwapIntent({ fromAmount: "84", fromSymbol: "USDC", fromNetKey: "bsc", toAmount: "83.9", toSymbol: "USDT", toNetKey: "bsc", toolName: "PancakeSwap", feeUsd: 0.21, durationSec: 30, platformFee: `${feeDisp} USDC` });
-  return feeDisp === "0.42" && s.includes("Fluid fee (0.5%): 0.42 USDC");
+  const feeDisp = swapRawToAmount(platformFeeOn("84000000").toString(), 6); // 84 USDC quote at the cap -> 0.42 USDC fee
+  const s = formatSwapIntent({ fromAmount: "84", fromSymbol: "USDC", fromNetKey: "bsc", toAmount: "83.9", toSymbol: "USDT", toNetKey: "bsc", toolName: "PancakeSwap", feeUsd: 0.21, durationSec: 30, platformFeeUsd: 0.42, platformFeePct: 0.5 });
+  return feeDisp === "0.42" && s.includes("Fluid fee: $0.42 (0.5%)");
 })());
 ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmount: "1", fromSymbol: "BNB", fromNetKey: "bsc", toAmount: "100", toSymbol: "USDC", toNetKey: "bsc", toolName: "X", feeUsd: 0.1, durationSec: 30 }).includes("Fluid fee"));
 // LI.FI request construction: integrator always; fee param gated on collection being enabled
@@ -488,16 +493,16 @@ ok("swap fee coverage: sui collecting into the dripbot agent wallet", (() => {
 // Disclosure is family-agnostic too: a Solana-sourced quote's confirm sentence carries
 // the same Fluid fee clause as an EVM one.
 ok("swap intent discloses fluid fee on a solana route", (() => {
-  const s = formatSwapIntent({ fromAmount: "2", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "150", toSymbol: "USDC", toNetKey: "base", toolName: "Jupiter", feeUsd: 0.05, durationSec: 60, platformFee: "0.01 SOL" });
-  return s.includes("Fluid fee (0.5%): 0.01 SOL") && s.includes("on Solana");
+  const s = formatSwapIntent({ fromAmount: "2", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "150", toSymbol: "USDC", toNetKey: "base", toolName: "Jupiter", feeUsd: 0.05, durationSec: 60, platformFeeUsd: 1.5, platformFeePct: 0.5 });
+  return s.includes("Fluid fee: $1.50 (0.5%)") && s.includes("on Solana");
 })());
 ok("swap intent discloses fluid fee on a tron route", (() => {
-  const s = formatSwapIntent({ fromAmount: "100", fromSymbol: "TRX", fromNetKey: "tron", toAmount: "9.10", toSymbol: "BNB", toNetKey: "bsc", toolName: "Symbiosis", feeUsd: 0.40, durationSec: 120, platformFee: "0.5 TRX" });
-  return s.includes("Fluid fee (0.5%): 0.5 TRX") && s.includes("on Tron");
+  const s = formatSwapIntent({ fromAmount: "100", fromSymbol: "TRX", fromNetKey: "tron", toAmount: "9.10", toSymbol: "BNB", toNetKey: "bsc", toolName: "Symbiosis", feeUsd: 0.40, durationSec: 120, platformFeeUsd: 0.14, platformFeePct: 0.5 });
+  return s.includes("Fluid fee: $0.14 (0.5%)") && s.includes("on Tron");
 })());
 ok("swap intent discloses fluid fee on a sui route", (() => {
-  const s = formatSwapIntent({ fromAmount: "10", fromSymbol: "SUI", fromNetKey: "sui", toAmount: "9.40", toSymbol: "BNB", toNetKey: "bsc", toolName: "Relay", feeUsd: 0.05, durationSec: 120, platformFee: "0.05 SUI" });
-  return s.includes("Fluid fee (0.5%): 0.05 SUI") && s.includes("on Sui");
+  const s = formatSwapIntent({ fromAmount: "10", fromSymbol: "SUI", fromNetKey: "sui", toAmount: "9.40", toSymbol: "BNB", toNetKey: "bsc", toolName: "Relay", feeUsd: 0.05, durationSec: 120, platformFeeUsd: 0.05, platformFeePct: 0.5 });
+  return s.includes("Fluid fee: $0.05 (0.5%)") && s.includes("on Sui");
 })());
 // Settlement legs resolve by USERNAME through the names registry
 ok("fee legs are username-modelled", FEE_SPLIT.treasury.username === "ethuram" && FEE_SPLIT.treasury.share === 60 && FEE_SPLIT.dripbot.username === "dripbot" && FEE_SPLIT.dripbot.share === 40);
@@ -4643,6 +4648,27 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     rroute.platformFeeCollecting === true && rroute.platformFeeRaw === "25000"
     && BigInt(rroute.platformFeeRaw) === platformFeeOn(rroute.fromAmount)
     && Math.abs(rroute.platformFeeUsd - 0.024994) < 1e-9);
+  // Route cost under the model's corrected definition: the all-in
+  // shortfall (4.998895 in − 4.949722 out − the 0.024994 app fee
+  // this capture carries = 0.024179), NOT the $0.001102 of declared
+  // gas — most of Relay's cost rides inside the rate, and the fee
+  // model marks up what the route actually costs.
+  ok("relay: route cost is the all-in shortfall, not the declared fees alone",
+    Math.abs(rroute.routeFeeUsd - 0.024179) < 1e-9);
+  // The $100 lane under the same definition and the adopted fee
+  // law: a fee-free $100 quote whose shortfall is $0.035 (declared
+  // gas still just $0.0011) into an EVM destination prices at the
+  // EVM multiplier — 4 × $0.035 = $0.14 target → 14 bps, $0.14
+  // charged exactly.
+  ok("relay: $100 lane with a $0.035 all-in cost prices at 14 bps to an evm destination",
+    (() => { const q = structuredClone(RELAY_QUOTE);
+      q.details.currencyIn = { ...q.details.currencyIn, amount: "100000000", amountUsd: "100.0" };
+      q.details.currencyOut = { ...q.details.currencyOut, amount: "99965000", amountUsd: "99.965" };
+      q.fees.app = { ...q.fees.app, amount: "0", amountUsd: "0" };
+      const r = parseRelayQuote(q, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "100000000", fromAddress: RUSER });
+      return r !== null && Math.abs(r.routeFeeUsd - 0.035) < 1e-9
+        && platformFeeBpsForRoute(r.routeFeeUsd, r.fromAmountUSD, "arbitrum") === 14
+        && platformFeeOn(100000000n, platformFeeBpsForRoute(r.routeFeeUsd, r.fromAmountUSD, "arbitrum")) === 140000n; })());
   ok("relay: quote for a different amount or sender is refused",
     parseRelayQuote({ ...RELAY_QUOTE, details: { ...RELAY_QUOTE.details, currencyIn: { ...RELAY_QUOTE.details.currencyIn, amount: "5000001" } } }, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER }) === null
     && parseRelayQuote({ ...RELAY_QUOTE, details: { ...RELAY_QUOTE.details, sender: "0x0000000000000000000000000000000000000001" } }, { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: RUSER }) === null
@@ -4697,10 +4723,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && coreSrcRelay.indexOf("checkRelayStepBounds(route, step, item, wallet.address)") < coreSrcRelay.indexOf("const tx = await signer.sendTransaction(txReq);", coreSrcRelay.indexOf("executeRelaySwapRoute")));
 
   // Review-sheet intent: the router is named and the fee is its own
-  // clause — the same sentence shape LI.FI routes produce.
-  ok("relay: intent names the relay router and discloses the 0.5% fee",
-    (() => { const s = formatSwapIntent({ fromAmount: "5", fromSymbol: "USDC", fromNetKey: "base", toAmount: "4.950786", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: rroute.gasCostUSD, durationSec: rroute.executionDuration, platformFee: "0.025 USDC" });
-      return s.includes("via Relay") && s.includes("Fluid fee (0.5%): 0.025 USDC"); })());
+  // clause — the same sentence shape LI.FI routes produce. The fee
+  // shown is the final quote's own USD figure with its effective
+  // percentage of the amount.
+  ok("relay: intent names the relay router and discloses the fee in usd with its effective pct",
+    (() => { const s = formatSwapIntent({ fromAmount: "5", fromSymbol: "USDC", fromNetKey: "base", toAmount: "4.950786", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: rroute.gasCostUSD, durationSec: rroute.executionDuration, platformFeeUsd: rroute.platformFeeUsd, platformFeePct: (rroute.platformFeeUsd / Number(rroute.fromAmountUSD)) * 100 });
+      return s.includes("via Relay") && s.includes("Fluid fee: $0.02 (0.5%)"); })());
   const appSrcRelay = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("relay: app names relay routes, gates fee disclosure on the quote, executes via the relay executor",
     appSrcRelay.includes('if (route && route.provider === "relay") return "Relay";')
@@ -4719,15 +4747,36 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: fromChainId } });
   try {
     let relayCalls = 0, lifiCalls = 0;
+    const relayBodies = [];
     globalThis.fetch = async (url, opts) => {
       const u = String(url);
-      if (u.includes("api.relay.link")) { relayCalls++; return jsonRes(RELAY_QUOTE); }
+      if (u.includes("api.relay.link")) {
+        relayCalls++;
+        relayBodies.push(JSON.parse(opts.body));
+        if (relayCalls === 1) return jsonRes(RELAY_QUOTE);
+        // Pass 2 answers with the app fee at the computed 50 bps —
+        // the capture's own 25,000 raw on 5,000,000.
+        return jsonRes(structuredClone(RELAY_QUOTE));
+      }
       if (u.includes("li.quest")) { lifiCalls++; throw new Error("lifi must not be called"); }
       throw new Error("unexpected url " + u);
     };
     const viaRelay = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5000000", fromAddress: RUSER, toAddress: RUSER });
     ok("relay: supported pair is answered by relay alone",
-      viaRelay.length === 1 && viaRelay[0].provider === "relay" && relayCalls === 1 && lifiCalls === 0);
+      viaRelay.length === 1 && viaRelay[0].provider === "relay" && relayCalls === 2 && lifiCalls === 0);
+    // The fee model's two passes, pinned on the wire: pass 1 carries
+    // NO app fee (it only reads the route's cost — under the model's
+    // definition the fixture's cost is its all-in shortfall,
+    // 4.998895 in − 4.949722 out − 0.024994 app fee = $0.024179 on a
+    // $4.998895 input, not its $0.001102 of declared gas), so even
+    // the EVM multiplier's 4× the cost ($0.097) clears the $0.025
+    // cap and pass 2 carries the full 50 bps; the executed route
+    // is pass 2's, annotated with the charged bps.
+    ok("relay: two-pass search reads the route cost fee-free, then charges the computed bps",
+      !("appFees" in relayBodies[0])
+      && relayBodies[1].appFees?.[0]?.fee === "50" && relayBodies[1].appFees?.[0]?.recipient === RELAY_APP_FEE_RECIPIENT
+      && viaRelay[0].platformFeeBps === 50 && viaRelay[0].platformFeeRaw === "25000"
+      && Math.abs(viaRelay[0].routeFeeUsd - 0.024179) < 1e-9);
 
     relayCalls = 0; lifiCalls = 0;
     globalThis.fetch = async (url, opts) => {
@@ -4754,6 +4803,1978 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       relayCalls === 0 && lifiCalls >= 1 && viaSui.length === 1 && viaSui[0].provider !== "relay");
   } finally {
     globalThis.fetch = realFetch;
+  }
+}
+
+// 65. Fee model (owner's design, adopted law 2026-11-08): Fluid's
+// swap fee is a markup on the ROUTE's cost, not on the user's
+// volume — feeUSD = min(MULTIPLIER(dest) × routeFeeUSD, 0.5% of
+// the amount, CEILING(dest) − routeFeeUSD), floored at 0. The
+// multiplier is 4× into EVM destinations, 5× everywhere else; the
+// ceilings cap the user's TOTAL cost (route + fee) per destination
+// ecosystem — $0.20 EVM, $1.50 Bitcoin, $0.30 Lightning, $0.30
+// Solana, unlisted ecosystems on the EVM ceiling — and a route
+// that alone meets its ceiling leaves the fee at 0. The 0.5% is
+// the hard cap and the degenerate-case fallback. Both routers
+// take the fee as basis points of the amount at quote time,
+// computed by a two-pass search (fee-free quote to read the
+// route's own cost, then the executed quote at exactly the
+// computed bps, floored so the charge can never round above the
+// target). A route's cost is the LARGER of its explicit fee
+// components and its all-in shortfall (input value minus output
+// value, Fluid's fee excluded) — most of a cheap route's cost
+// rides inside the exchange rate, and the owner's worked example
+// multiplies the all-in figure. The lane fixtures are the
+// comparison study's live numbers
+// (research_notes/fluid-router-comparison-20261108/).
+{
+  const USDC_B = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", USDC_A = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const FUSER = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+
+  ok("fee model: multipliers are 5 standard and 4 evm, the cap stays 50 bps",
+    PLATFORM_FEE_ROUTE_MULTIPLIER === 5 && PLATFORM_FEE_ROUTE_MULTIPLIER_EVM === 4 && PLATFORM_FEE_BPS === 50);
+  ok("fee model: ceilings table is the adopted policy",
+    PLATFORM_FEE_TOTAL_CEILINGS_USD.evm === 0.20 && PLATFORM_FEE_TOTAL_CEILINGS_USD.bitcoin === 1.50
+    && PLATFORM_FEE_TOTAL_CEILINGS_USD.lightning === 0.30 && PLATFORM_FEE_TOTAL_CEILINGS_USD.solana === 0.30);
+  // Destination classification: NETWORKS keys are EVM; the named
+  // families get their own rows; unlisted ecosystems (Tron, Sui)
+  // and an absent key fall to the default — EVM ceiling, 5×.
+  ok("fee model: destination ecosystems classify as adopted",
+    platformFeeEcosystemOf("arbitrum") === "evm" && platformFeeEcosystemOf("bsc") === "evm"
+    && platformFeeEcosystemOf("solana") === "solana" && platformFeeEcosystemOf("bitcoin") === "bitcoin"
+    && platformFeeEcosystemOf("lightning") === "lightning" && platformFeeEcosystemOf("tron") === "default"
+    && platformFeeEcosystemOf("sui") === "default" && platformFeeEcosystemOf(null) === "default"
+    && platformFeeMultiplierFor("base") === 4 && platformFeeMultiplierFor("solana") === 5
+    && platformFeeMultiplierFor("tron") === 5 && platformFeeCeilingFor("solana") === 0.30
+    && platformFeeCeilingFor("bitcoin") === 1.50 && platformFeeCeilingFor("tron") === 0.20
+    && platformFeeCeilingFor(null) === 0.20);
+  // The $100 Relay EVM lane: route $0.035 → 4× = $0.14 binds
+  // (under the $0.50 cap and the $0.165 of ceiling room) — the
+  // user's route+fee total is $0.175, the figure the owner
+  // accepted for the flagship lane.
+  ok("fee model: relay $100 evm lane prices at 4x the route cost",
+    Math.abs(platformFeeUsdForRoute(0.035, 100, "arbitrum") - 0.14) < 1e-9
+    && Math.abs(0.035 + platformFeeUsdForRoute(0.035, 100, "arbitrum") - 0.175) < 1e-9);
+  // Charged in whole bps, floored: 14 bps = $0.14 exactly here —
+  // and floor slack only ever lands UNDER the target, never above.
+  ok("fee model: charged bps floors under the target fee",
+    platformFeeBpsForRoute(0.035, 100, "arbitrum") === 14
+    && platformFeeOn(100000000n, platformFeeBpsForRoute(0.035, 100, "arbitrum")) === 140000n);
+  // An Across-class EVM lane: route $0.018 on $100 → 4× = $0.072
+  // binds; 7 bps charged (floored from 7.2) stays under it.
+  ok("fee model: across-class evm lane prices at 4x the route cost",
+    Math.abs(platformFeeUsdForRoute(0.018, 100, "base") - 0.072) < 1e-9
+    && platformFeeBpsForRoute(0.018, 100, "base") === 7);
+  // An expensive same-chain EVM lane (Relay's $0.057 route on
+  // $100): the ceiling binds — the fee is exactly the room left,
+  // $0.20 − $0.057 = $0.143, and the total is exactly $0.20.
+  ok("fee model: the evm ceiling binds an expensive same-chain lane",
+    Math.abs(platformFeeUsdForRoute(0.057, 100, "base") - 0.143) < 1e-9
+    && Math.abs(0.057 + platformFeeUsdForRoute(0.057, 100, "base") - 0.20) < 1e-9);
+  // Bitcoin destination, $20 with a $0.30 route: 5× is $1.50 and
+  // the $1.50 ceiling leaves $1.20 of room, but the 0.5% cap
+  // binds at $0.10 — the cap is the binding term on BTC lanes at
+  // realistic route costs (owner calibration, 2026-11-08).
+  ok("fee model: bitcoin destination is capped at 0.5% under its ceiling",
+    Math.abs(platformFeeUsdForRoute(0.30, 20, "bitcoin") - 0.10) < 1e-9
+    && platformFeeBpsForRoute(0.30, 20, "bitcoin") === 50);
+  // The calibrated BTC lane (Garden's live numbers, $100): the
+  // route costs $0.84 — 5× is $4.20 and the ceiling leaves $0.66,
+  // so the 0.5% cap binds at $0.50 and the total lands at $1.34,
+  // inside the $0.70–1.85 market band for landing on Bitcoin.
+  ok("fee model: bitcoin $100 garden-class lane prices at the 0.5% cap",
+    Math.abs(platformFeeUsdForRoute(0.84, 100, "bitcoin") - 0.50) < 1e-9
+    && Math.abs(0.84 + platformFeeUsdForRoute(0.84, 100, "bitcoin") - 1.34) < 1e-9
+    && platformFeeBpsForRoute(0.84, 100, "bitcoin") === 50);
+  // A pricier BTC route ($1.20 on $100 — Relay-class delivery):
+  // 5× is $6.00 and the cap is $0.50, but the ceiling binds — the
+  // fee is exactly the room left, $1.50 − $1.20 = $0.30, and the
+  // total is exactly the $1.50 ceiling.
+  ok("fee model: the bitcoin ceiling binds a $1.20 route at exactly $1.50 total",
+    Math.abs(platformFeeUsdForRoute(1.20, 100, "bitcoin") - 0.30) < 1e-9
+    && Math.abs(1.20 + platformFeeUsdForRoute(1.20, 100, "bitcoin") - 1.50) < 1e-9
+    && platformFeeBpsForRoute(1.20, 100, "bitcoin") === 30);
+  // A BTC route that alone exceeds the ceiling ($1.60 on $100)
+  // leaves no room: the fee is 0 rather than pushing the total
+  // past the hard cap on user pain.
+  ok("fee model: a bitcoin route above its ceiling prices the fee at zero",
+    platformFeeUsdForRoute(1.60, 100, "bitcoin") === 0
+    && platformFeeBpsForRoute(1.60, 100, "bitcoin") === 0);
+  // Lightning destination, $20 with a $0.10 route: the 0.5% cap
+  // binds at $0.10 and the total lands at $0.20, under the $0.30
+  // ceiling.
+  ok("fee model: lightning destination prices under its ceiling",
+    Math.abs(platformFeeUsdForRoute(0.10, 20, "lightning") - 0.10) < 1e-9
+    && Math.abs(0.10 + platformFeeUsdForRoute(0.10, 20, "lightning") - 0.20) < 1e-9);
+  // Solana destination, $100 with Relay's $0.209 exit route: the
+  // ceiling term ($0.30 − $0.209 = $0.091) binds far below 5×
+  // ($1.045) and the cap ($0.50); 9 bps charged stays under it.
+  ok("fee model: solana ceiling binds a relay exit route",
+    Math.abs(platformFeeUsdForRoute(0.209, 100, "solana") - 0.091) < 1e-9
+    && platformFeeBpsForRoute(0.209, 100, "solana") === 9);
+  // The $5 EVM lane: 4 × $0.026 = $0.104 > the $0.025 cap — the
+  // cap bites.
+  ok("fee model: relay $5 lane is capped at 0.5%",
+    Math.abs(platformFeeUsdForRoute(0.026, 5, "arbitrum") - 0.025) < 1e-9 && platformFeeBpsForRoute(0.026, 5, "arbitrum") === 50);
+  // The $1 lane: capped at $0.005.
+  ok("fee model: relay $1 lane is capped at 0.5%",
+    Math.abs(platformFeeUsdForRoute(0.026, 1, "arbitrum") - 0.005) < 1e-9 && platformFeeBpsForRoute(0.026, 1, "arbitrum") === 50);
+  // A route that alone meets (or eats) the ceiling leaves no
+  // room for a fee at all: the fee is 0, never a push past the
+  // user's total-cost promise — $0.25 of route into a $0.20 EVM
+  // ceiling, and a $2 route on $100 anywhere.
+  ok("fee model: a route at or above the ceiling prices the fee at zero",
+    platformFeeUsdForRoute(0.25, 100, "arbitrum") === 0 && platformFeeBpsForRoute(0.25, 100, "arbitrum") === 0
+    && platformFeeUsdForRoute(2, 100) === 0 && platformFeeBpsForRoute(2, 100) === 0);
+  // Degenerate cases fall back to the flat cap so a fee is still
+  // collected and disclosed: zero/unreadable route cost, unpriced
+  // amount.
+  ok("fee model: degenerate inputs fall back to the flat 0.5%",
+    platformFeeBpsForRoute(0, 100) === 50 && platformFeeBpsForRoute(undefined, 100) === 50
+    && platformFeeBpsForRoute(NaN, 100) === 50 && platformFeeBpsForRoute(0.035, 0) === 50
+    && platformFeeBpsForRoute(0.035, undefined) === 50
+    && Math.abs(platformFeeUsdForRoute(0, 100) - 0.5) < 1e-9);
+  // Sweep (default destination): charged bps never above the cap,
+  // the charged USD never above the law's target (floor slack only
+  // ever rounds down), and route + fee never past the ceiling —
+  // a route already over the ceiling charges exactly 0.
+  ok("fee model: charged fee never exceeds the law across a sweep",
+    [[0.001, 1], [0.01, 3], [0.035, 100], [0.4, 250], [1.5, 40], [0.0005, 1000], [12, 75]].every(([rf, amt]) => {
+      const bps = platformFeeBpsForRoute(rf, amt);
+      const charged = (bps / 10000) * amt;
+      return bps >= 0 && bps <= 50
+        && charged <= Math.min(0.005 * amt, 5 * rf, Math.max(0, 0.20 - rf)) + 1e-9
+        && (rf < 0.20 ? rf + charged <= 0.20 + 1e-9 : charged === 0);
+    }));
+  // platformFeeOn at an explicit rate; the default stays the cap.
+  ok("fee model: platformFeeOn honours an explicit bps and defaults to the cap",
+    platformFeeOn(5000000n, 17) === 8500n && platformFeeOn(5000000n) === 25000n && platformFeeOn(5000000n, 0) === 0n);
+  // Request builders carry an explicit rate and default to the cap.
+  ok("fee model: relay request builder carries an explicit bps and defaults to the cap",
+    buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "5", fromAddress: FUSER, toAddress: FUSER }, { includeFee: true, feeBps: 17 }).appFees[0].fee === "17"
+    && buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "5", fromAddress: FUSER, toAddress: FUSER }).appFees[0].fee === "50");
+  ok("fee model: lifi builders carry an explicit fraction and default to the cap fraction",
+    buildLifiRoutesRequest({ fromChainId: 8453, toChainId: 42161, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true, feeFraction: 0.0017 }).options.fee === 0.0017
+    && buildLifiQuoteParams({ fromChainId: 8453, toChainId: 42161, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true, feeFraction: 0.0017 }).get("fee") === "0.0017");
+
+  // The review sentence: below the cap the user sees the actual USD
+  // fee AND its effective percentage — the edge is the point. At the
+  // cap the percentage is the familiar 0.5%.
+  ok("fee model: intent shows a below-cap fee in usd with its effective pct",
+    (() => { const s = formatSwapIntent({ fromAmount: "100", fromSymbol: "USDC", fromNetKey: "base", toAmount: "99", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: 0.035, durationSec: 1, platformFeeUsd: 0.17, platformFeePct: 0.17 });
+      return s.includes("via Relay") && s.includes("Fluid fee: $0.17 (0.17%)"); })());
+  ok("fee model: intent at the cap shows 0.5%",
+    formatSwapIntent({ fromAmount: "100", fromSymbol: "USDC", fromNetKey: "base", toAmount: "99", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: 0.035, durationSec: 1, platformFeeUsd: 0.5, platformFeePct: 0.5 }).includes("Fluid fee: $0.50 (0.5%)"));
+  // App wiring (source pins): the sheet copy names the model, and
+  // the disclosure is priced from the final quote (Relay's stated
+  // USD fee, or the bps the LI.FI search attached) — the old
+  // flat-rate computation from fromAmount is gone.
+  const appSrcFee = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("fee model: app discloses the final quote's fee and names the model in the sheet copy",
+    appSrcFee.includes("Fluid's fee is a small multiple of the route's cost, never more than 0.5%")
+    && appSrcFee.includes("Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.")
+    && appSrcFee.includes("Number(r.platformFeeBps) > 0")
+    && appSrcFee.includes("...(platformFeeUsd != null ? { platformFeeUsd, platformFeePct } : {})")
+    && !appSrcFee.includes("collects ? platformFeeOn(r.fromAmount) : 0n"));
+
+  // Relay degenerate passes, fetch stubbed: a quote whose route
+  // cost reads as zero prices at the flat cap on pass 2; a route
+  // so cheap the model floors to 0 bps executes the fee-free
+  // pass-1 quote with no second call.
+  // The output's USD value tracks the declared gas, so the quote's
+  // all-in shortfall equals its explicit cost — the two measures of
+  // the route's cost agree, and the degenerate cases below price
+  // off the gas figure alone.
+  const RELAY_Q = (gasUsd, appFee) => ({
+    requestId: "0xfee65",
+    steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: FUSER, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0xe8017952", value: "0", chainId: 8453 } }] }],
+    fees: { gas: { amount: "1", amountUsd: gasUsd }, ...(appFee ? { app: { amount: appFee.amount, amountUsd: appFee.amountUsd } } : {}) },
+    details: { sender: FUSER, recipient: FUSER,
+      currencyIn: { currency: { chainId: 8453, address: USDC_B, symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" },
+      currencyOut: { currency: { chainId: 42161, address: USDC_A, symbol: "USDC", decimals: 6 }, amount: "99000000", amountUsd: String(100 - Number(gasUsd)), minimumAmount: "98000000" },
+      timeEstimate: 1 },
+  });
+  const realFetchFee = globalThis.fetch;
+  const jsonResFee = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  try {
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) {
+        bodies.push(JSON.parse(opts.body));
+        return jsonResFee(bodies.length === 1 ? RELAY_Q("0", null) : RELAY_Q("0", { amount: "50000000", amountUsd: "0.5" }));
+      }
+      throw new Error("unexpected url " + u);
+    };
+    const capped = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
+    ok("fee model: relay zero-cost quote falls back to the flat cap on pass 2",
+      bodies.length === 2 && !("appFees" in bodies[0]) && bodies[1].appFees?.[0]?.fee === "50"
+      && capped[0].platformFeeBps === 50 && capped[0].platformFeeRaw === "50000000");
+
+    const bodies0 = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) { bodies0.push(JSON.parse(opts.body)); return jsonResFee(RELAY_Q("0.0001", null)); }
+      throw new Error("unexpected url " + u);
+    };
+    const free = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
+    ok("fee model: relay route priced at 0 bps executes the fee-free pass-1 quote",
+      bodies0.length === 1 && free[0].platformFeeBps === 0 && free[0].platformFeeCollecting === false);
+  } finally {
+    globalThis.fetch = realFetchFee;
+  }
+
+  // The same model on the LI.FI path: a route's own cost is its
+  // steps' fee costs plus gas costs, read on the fee-free pass.
+  const lifiRoute = () => ({ id: "r1", fromChainId: 8453, toChainId: 42161, fromAmount: "100000000", toAmount: "99000000", toAmountUSD: "99.0", fromAmountUSD: "100.0",
+    fromToken: { address: USDC_B, symbol: "USDC", decimals: 6 }, toToken: { address: USDC_A, symbol: "USDC", decimals: 6 },
+    steps: [{ id: "s1", type: "swap", estimate: { feeCosts: [{ name: "bridgeFee", amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], toAmountUSD: "99.0", fromAmountUSD: "100.0", executionDuration: 30 } }] });
+  // The same explicit costs ($0.02 bridge fee + $0.015 gas) on a
+  // route whose rate is tight: $99.99 arrives on $100, a $0.01
+  // shortfall.
+  const lifiRouteTight = () => ({ ...lifiRoute(), toAmount: "99990000", toAmountUSD: "99.99",
+    steps: [{ id: "s1", type: "swap", estimate: { feeCosts: [{ name: "bridgeFee", amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], toAmountUSD: "99.99", fromAmountUSD: "100.0", executionDuration: 30 } }] });
+  // The corrected route-cost definition, exercised both ways:
+  // lifiRoute's all-in shortfall ($100 in, $99 out = $1.00) dwarfs
+  // its explicit $0.035, so the shortfall prices the fee; the
+  // tight route's $0.01 shortfall loses to its explicit $0.035.
+  ok("fee model: a lifi route's cost is the larger of its explicit costs and its all-in shortfall",
+    Math.abs(lifiRouteFeeUsd(lifiRoute()) - 1.0) < 1e-9 && Math.abs(lifiRouteFeeUsd(lifiRouteTight()) - 0.035) < 1e-9
+    && lifiRouteFeeUsd({}) === 0 && lifiRouteFeeUsd({ steps: [{}] }) === 0);
+  try {
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("li.quest/v1/routes")) { bodies.push(JSON.parse(opts.body)); return jsonResFee({ routes: [lifiRouteTight()] }); }
+      throw new Error("unexpected url " + u);
+    };
+    const rs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
+    // Route cost $0.035 on a $100 input (the tight fixture: explicit
+    // $0.035 over a $0.01 all-in shortfall) into an EVM destination
+    // → 4× binds → 14 bps → fraction 0.0014, attached on pass 2
+    // only; the executed routes carry the bps.
+    ok("fee model: lifi two-pass reads the cost fee-free, then charges the computed fraction",
+      bodies.length === 2 && !("fee" in bodies[0].options) && bodies[0].options.integrator === "fluid-wallet"
+      && Math.abs(bodies[1].options.fee - 0.0014) < 1e-12 && rs.length === 1 && rs[0].platformFeeBps === 14);
+
+    const quoteUrls = [];
+    const lifiQuoteStep = () => ({ id: "q1", type: "swap",
+      action: { fromChainId: 8453, toChainId: 42161, fromAmount: "100000000", fromToken: { address: USDC_B, symbol: "USDC", decimals: 6 }, toToken: { address: USDC_A, symbol: "USDC", decimals: 6 } },
+      estimate: { toAmount: "99990000", toAmountMin: "99980000", toAmountUSD: "99.99", fromAmountUSD: "100.0", feeCosts: [{ amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], executionDuration: 30 },
+      transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: 8453 } });
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("li.quest/v1/routes")) return jsonResFee({ routes: [] });
+      if (u.includes("li.quest/v1/quote")) { quoteUrls.push(u); return jsonResFee(lifiQuoteStep()); }
+      throw new Error("unexpected url " + u);
+    };
+    const qs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
+    ok("fee model: lifi quote path runs its own two passes with the computed fee",
+      quoteUrls.length === 2 && !quoteUrls[0].includes("fee=") && quoteUrls[1].includes("fee=0.0014")
+      && qs.length === 1 && qs[0].platformFeeBps === 14 && qs[0].steps.length === 1);
+  } finally {
+    globalThis.fetch = realFetchFee;
+  }
+}
+
+// 66. Across as PRIMARY for same-asset EVM majors (2026-11-08, under
+// the §65 fee law): the dispatcher quotes Across BEFORE Relay only
+// when both chains are EVM + in Across coverage AND the pair is the
+// same hub asset (USDC/USDT/WETH) — everything else falls through to
+// the unchanged Relay → LI.FI order. The Swap API's deposit is the
+// NEWER unified deposit(bytes32,...) (selector 0xad5425c6); with an
+// app fee the on-chain recipient is the destination MulticallHandler
+// and the user + fee split live inside its `message` (Instructions),
+// so parseAcrossQuote runs a strict bounds check (pinned handler +
+// adapter per destination chain, exact fee/remainder containment) and
+// REFUSES any shape it has not pinned — the live zkSync-Era composed
+// message (approve + opaque router call) is the documented case:
+// refused by design, Relay serves the lane. The API's approvalTxns
+// encode UNLIMITED approvals and are never used; Fluid composes its
+// own exact-amount approval. Fixture shapes mirror the live probes
+// of 2026-11-08 (Base→Arbitrum USDC $100: bridge fee 27,133 raw =
+// $0.027121577, handler 0x0f7a…, adapter 0xBF75…, 1632-byte message).
+{
+  const AUSER = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const AFEE = RELAY_APP_FEE_RECIPIENT;
+  const BASE_USDC_A2 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const ARB_USDC_A2 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const HANDLER_A2 = "0x0f7ae28de1c8532170ad4ee566b5801485c13a0e";
+  const ADAPTER_A2 = "0xBF75133b48b0a42AB9374027902E83C5E2949034";
+  const BASE_POOL_A2 = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
+  const BSC_POOL_A2 = "0x4e8E101924eDE233C13e2D8622DC8aED2872d505";
+  const BSC_USDC_A2 = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+  const coderA2 = ethers.AbiCoder.defaultAbiCoder();
+  const b32A2 = (a) => ethers.zeroPadValue(a, 32);
+  const depositIfaceA2 = new ethers.Interface(["function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityParameter,bytes message)"]);
+  const erc20A2 = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)", "function approve(address spender, uint256 amount) returns (bool)"]);
+  const INSTR_A2 = "tuple(tuple(address target, bytes data, uint256 value)[] calls, address fallbackRecipient)";
+  const adapterBlobA2 = (token, user, feeTo) => "0xd836083e" + coderA2.encode(["uint256", "uint256", "uint256", "uint256", "address", "uint256", "uint256", "uint256", "uint256", "uint256", "address", "address", "string"], [32n, 480n, 1n, 0n, token, 0n, 0n, 0n, 416n, 0n, user, feeTo, "None"]).slice(2);
+  const handlerMsgA2 = ({ token, feeTo, feeAmt, user, handler = HANDLER_A2, adapter = ADAPTER_A2 }) => {
+    const deliver = "0xef8738d3" + coderA2.encode(["address", "address"], [token, user]).slice(2);
+    const calls = [
+      [token, erc20A2.encodeFunctionData("transfer", [feeTo, feeAmt]), 0n],
+      [handler, deliver, 0n],
+      [handler, deliver, 0n],
+      [adapter, adapterBlobA2(token, user, feeTo), 0n],
+    ];
+    return coderA2.encode([INSTR_A2], [[calls, "0x0000000000000000000000000000000000000000"]]);
+  };
+  const acrossQuoteA2 = (o = {}) => {
+    const { appRaw = "0", appUsd = "0", feeTo = AFEE, msgUser = AUSER, feeAmtOverride = null, handler = HANDLER_A2, adapter = ADAPTER_A2,
+      inTok = BASE_USDC_A2, outTok = ARB_USDC_A2, inSym = "USDC", outSym = "USDC", inDec = 6, outDec = 6,
+      inAmt = "100000000", bridgeOut = "99972867", bridgeRaw = "27133", bridgeUsd = "0.027121577007000002",
+      originChainId = 8453, destChainId = 42161, pool = BASE_POOL_A2, messageOverride = null } = o;
+    const hasFee = BigInt(appRaw) > 0n;
+    const message = messageOverride ?? (hasFee ? handlerMsgA2({ token: outTok, feeTo, feeAmt: BigInt(feeAmtOverride ?? appRaw), user: msgUser, handler, adapter }) : "0x");
+    const recipient = hasFee ? handler : AUSER;
+    const data = depositIfaceA2.encodeFunctionData("deposit", [b32A2(AUSER), b32A2(recipient), b32A2(inTok), b32A2(outTok), BigInt(inAmt), BigInt(bridgeOut), BigInt(destChainId), b32A2("0x394311a6aaa0d8e3411d8b62de4578d41322d1bd"), 1794177000, 1794184200, 3, message]);
+    const expected = (BigInt(bridgeOut) - BigInt(appRaw)).toString();
+    const tokA2 = (address, symbol, decimals, chainId) => ({ decimals, symbol, address, name: symbol === "WETH" ? "Wrapped Ether" : "USD Coin", chainId });
+    const feeTokIn = tokA2(inTok, inSym, inDec, originChainId), feeTokOut = tokA2(outTok, outSym, outDec, destChainId);
+    return {
+      crossSwapType: "bridgeableToBridgeable", amountType: "exactInput", id: "66-fixture",
+      checks: { allowance: { token: inTok, spender: pool, actual: "0", expected: inAmt }, balance: { token: inTok, actual: "0", expected: inAmt } },
+      approvalTxns: [{ chainId: originChainId, to: inTok, data: erc20A2.encodeFunctionData("approve", [pool, (2n ** 256n) - 1n]) }],
+      steps: { bridge: { inputAmount: inAmt, outputAmount: bridgeOut, tokenIn: feeTokIn, tokenOut: feeTokOut } },
+      inputToken: feeTokIn, outputToken: feeTokOut, refundToken: feeTokIn,
+      fees: { total: { amount: (BigInt(bridgeRaw) + BigInt(appRaw)).toString(), amountUsd: String(Number(bridgeUsd) + Number(appUsd)), token: feeTokIn, details: {
+        type: "total-breakdown",
+        swapImpact: { amount: "-3", amountUsd: "-0.000003026793999966", token: feeTokIn },
+        app: { amount: appRaw, amountUsd: appUsd, token: feeTokOut },
+        bridge: { amount: bridgeRaw, amountUsd: bridgeUsd, token: feeTokIn },
+      } } },
+      inputAmount: inAmt, expectedOutputAmount: expected, minOutputAmount: expected, expectedFillTime: 2,
+      swapTx: { to: pool, data, gas: 0, chainId: originChainId }, quoteExpiryTimestamp: 1994180911,
+    };
+  };
+  const ARGS100_A2 = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC_A2, toTokenAddress: ARB_USDC_A2, fromAmount: "100000000", fromAddress: AUSER, toAddress: AUSER };
+  const jsonResA2 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+
+  // Fee recipient + pin tables come from the live probes.
+  ok("across: fee recipient is the Relay collection wallet (dripbot)", ACROSS_APP_FEE_RECIPIENT === AFEE && ACROSS_APP_FEE_RECIPIENT.toLowerCase() === "0x7fe638235fad0fdfbbcc759640d881e0fa62135b");
+  ok("across: handler pins (Base/Arb family + Linea + zkSync + Avalanche)",
+    ACROSS_HANDLERS[42161] === HANDLER_A2 && ACROSS_HANDLERS[8453] === HANDLER_A2
+    && ACROSS_HANDLERS[59144] === "0xdf1c940487574eefa79989a79a4936a0f979cda2"
+    && ACROSS_HANDLERS[324] === "0x68d3806e57148d6c6793c78ebddbc272fe605dbf"
+    && ACROSS_HANDLERS[43114] === "0x9610954acdca5ff7905f051a040ce33fe613c60e");
+  ok("across: message-adapter pins",
+    ACROSS_MESSAGE_ADAPTERS[42161] === ADAPTER_A2 && ACROSS_MESSAGE_ADAPTERS[324] === "0x74a2966e23B61A360b1345eA359127aF325beC4C"
+    && ACROSS_MESSAGE_ADAPTERS[43114] === "0x25b15Fc38d6A2C13FEDdD9cb51f184F7Cf0D4C11");
+
+  // Eligibility matrix.
+  const planUsdc = acrossSupportsPair(ARGS100_A2);
+  ok("across: Base USDC → Arbitrum USDC is eligible", !!planUsdc && planUsdc.asset === "USDC" && planUsdc.inputToken === BASE_USDC_A2 && planUsdc.outputToken === ARB_USDC_A2 && planUsdc.nativeInput === false);
+  const planWeth = acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN });
+  ok("across: Base native → Arbitrum native maps to the WETH hub", !!planWeth && planWeth.asset === "WETH" && planWeth.nativeInput === true && planWeth.inputToken.toLowerCase() === "0x4200000000000000000000000000000000000006" && planWeth.outputToken.toLowerCase() === "0x82af49447d8a07e3bd95bd0d56f35241523fbab1");
+  const planBsc = acrossSupportsPair({ fromChainKey: "bsc", toChainKey: "base", fromTokenAddress: BSC_USDC_A2, toTokenAddress: BASE_USDC_A2, fromAmount: "100000000000000000000", fromAddress: AUSER, toAddress: AUSER });
+  ok("across: BSC Binance-Peg USDC → Base USDC is eligible (peg pin)", !!planBsc && planBsc.inputToken === BSC_USDC_A2);
+  ok("across: uncovered chain (Scroll) is ineligible", acrossSupportsPair({ ...ARGS100_A2, toChainKey: "scroll" }) === null);
+  ok("across: different assets (USDC → USDT) are ineligible", acrossSupportsPair({ ...ARGS100_A2, toTokenAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" }) === null);
+  ok("across: same chain is ineligible (Across is cross-chain only)", acrossSupportsPair({ ...ARGS100_A2, toChainKey: "base", toTokenAddress: BASE_USDC_A2 }) === null);
+  ok("across: non-EVM source (Sui) is ineligible", acrossSupportsPair({ ...ARGS100_A2, fromChainKey: "sui" }) === null);
+  ok("across: WETH → Avalanche is ineligible (no WETH hub there)", acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toChainKey: "avalanche" }) === null);
+  ok("across: Polygon native (POL) is not an ETH-hub source", acrossSupportsPair({ fromChainKey: "polygon", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "1", fromAddress: AUSER, toAddress: AUSER }) === null);
+
+  // Quote request shape: appFee is a decimal fraction, only when set.
+  const paramsFree = buildAcrossQuoteParams(ARGS100_A2, planUsdc);
+  ok("across: fee-free params carry no appFee", !paramsFree.has("appFee") && !paramsFree.has("appFeeRecipient") && paramsFree.get("tradeType") === "exactInput" && paramsFree.get("originChainId") === "8453" && paramsFree.get("destinationChainId") === "42161");
+  const paramsFee = buildAcrossQuoteParams(ARGS100_A2, planUsdc, { appFeeFraction: 0.001 });
+  ok("across: fee params carry the fraction + collection recipient", paramsFee.get("appFee") === "0.001" && paramsFee.get("appFeeRecipient") === AFEE);
+
+  // Fee-free parse: honest pricing from the bridge-fee component.
+  const freeRoute = parseAcrossQuote(acrossQuoteA2(), ARGS100_A2, planUsdc);
+  ok("across: fee-free quote parses to a route", !!freeRoute && freeRoute.provider === "across" && freeRoute.toAmount === "99972867");
+  ok("across: route cost = bridge fee USD (+ impact)", !!freeRoute && Math.abs(freeRoute.routeFeeUsd - 0.027121577) < 1e-6);
+  ok("across: implied input value from the bridge price", !!freeRoute && Math.abs(freeRoute.fromAmountUSD - 99.9582) < 0.01);
+  ok("across: fee-free quote is not collecting", !!freeRoute && freeRoute.platformFeeCollecting === false && freeRoute.platformFeeRaw === "0");
+  ok("across: parsed route is executable-shaped", !!freeRoute && acrossExecutableSteps(freeRoute).length === 1 && swapRouteExecutable(freeRoute).ok === true && swapRouteExecutable(freeRoute).across === true);
+  ok("across: the API's unlimited approvalTxns never reach the route", !!freeRoute && !("approvalTxns" in freeRoute.across) && !freeRoute.across.swapTx.data.includes("095ea7b3") && freeRoute.across.swapTx.data.startsWith("0xad5425c6"));
+
+  // Fee-bearing parse: the charged fee comes from the final quote.
+  const feeRoute = parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999" }), ARGS100_A2, planUsdc);
+  ok("across: fee-bearing quote parses with its stated fee", !!feeRoute && feeRoute.platformFeeCollecting === true && feeRoute.platformFeeRaw === "99999" && Math.abs(feeRoute.platformFeeUsd - 0.0999) < 1e-9 && feeRoute.toAmount === "99872868");
+  ok("across: fee-bearing route passes its bounds check", !!feeRoute && checkAcrossDepositBounds(feeRoute, AUSER).ok === true);
+  // Tamper cases: any deviation from the pinned shape refuses.
+  ok("across: fee amount mismatch refuses", parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999", feeAmtOverride: "100000" }), ARGS100_A2, planUsdc) === null);
+  ok("across: fee paid to an attacker refuses", parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999", feeTo: "0x000000000000000000000000000000000000dEaD" }), ARGS100_A2, planUsdc) === null);
+  ok("across: remainder delivered to an attacker refuses", parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999", msgUser: "0x000000000000000000000000000000000000dEaD" }), ARGS100_A2, planUsdc) === null);
+  ok("across: unpinned handler refuses", parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999", handler: "0x000000000000000000000000000000000000dEaD" }), ARGS100_A2, planUsdc) === null);
+  const zkCallsA2 = [[ARB_USDC_A2, erc20A2.encodeFunctionData("approve", [BASE_POOL_A2, 100n]), 0n]];
+  const zkMsgA2 = coderA2.encode([INSTR_A2], [[zkCallsA2, AUSER]]);
+  ok("across: zkSync-style composed message (approve + opaque) refuses → Relay fallback", parseAcrossQuote(acrossQuoteA2({ appRaw: "99999", appUsd: "0.0999", messageOverride: zkMsgA2 }), ARGS100_A2, planUsdc) === null);
+  const mutated = feeRoute ? JSON.parse(JSON.stringify(feeRoute)) : null;
+  if (mutated) mutated.across.swapTx.to = "0x000000000000000000000000000000000000dEaD";
+  ok("across: deposit target ≠ quote's allowance spender refuses", !!mutated && checkAcrossDepositBounds(mutated, AUSER).ok === false);
+
+  // Native WETH lane: route cost priced off the bridge fee.
+  const wethQuote = acrossQuoteA2({ inTok: "0x4200000000000000000000000000000000000006", outTok: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", inSym: "WETH", outSym: "WETH", inDec: 18, outDec: 18, inAmt: "50000000000000000", bridgeOut: "49967973172748906", bridgeRaw: "32026827251094", bridgeUsd: "0.106" });
+  const wethRoute = parseAcrossQuote(wethQuote, { ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "50000000000000000" }, planWeth);
+  ok("across: native WETH lane parses with nativeInput + priced cost", !!wethRoute && wethRoute.across.nativeInput === true && Math.abs(wethRoute.routeFeeUsd - 0.106) < 0.002);
+
+  // BSC 18-decimal peg → Base 6-decimal USDC: same-asset identity pricing.
+  const bscQuote = acrossQuoteA2({ inTok: BSC_USDC_A2, outTok: BASE_USDC_A2, inDec: 18, outDec: 6, inAmt: "100000000000000000000", bridgeOut: "99982054", bridgeRaw: "17900000000000000", bridgeUsd: "0.0179", originChainId: 56, destChainId: 8453, pool: BSC_POOL_A2 });
+  const bscRoute = parseAcrossQuote(bscQuote, { fromChainKey: "bsc", toChainKey: "base", fromTokenAddress: BSC_USDC_A2, toTokenAddress: BASE_USDC_A2, fromAmount: "100000000000000000000", fromAddress: AUSER, toAddress: AUSER }, planBsc);
+  ok("across: BSC peg decimals priced by the same-asset identity", !!bscRoute && Math.abs(bscRoute.fromAmountUSD - 100) < 0.01 && Math.abs(bscRoute.toAmountUSD - 99.982054) < 1e-6 && Math.abs(bscRoute.routeFeeUsd - 0.017946) < 1e-6);
+
+  // Two-pass fee law over a stubbed wire: pass 1 fee-free, the law
+  // prices 4 × $0.027121577 route cost capped by the $0.20 EVM
+  // ceiling → 10 bps of the ~$99.96 input; pass 2 asks Across for
+  // that fee as a fraction of the expected OUTPUT and the disclosed
+  // fee is the final quote's own app component.
+  {
+    const realFetch = globalThis.fetch;
+    let acrossCalls = 0, firstHadFee = null, secondFraction = null;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (!u.includes("app.across.to")) throw new Error("unexpected fetch in across two-pass stub: " + u);
+      acrossCalls++;
+      if (!u.includes("appFee=")) { firstHadFee = false; return jsonResA2(acrossQuoteA2()); }
+      firstHadFee = firstHadFee ?? true;
+      const frac = Number(new URL(u).searchParams.get("appFee"));
+      secondFraction = frac;
+      const appRaw = String(Math.floor(frac * 99972867));
+      const appUsd = String(Number(appRaw) * (0.027121577007 / 27133));
+      return jsonResA2(acrossQuoteA2({ appRaw, appUsd }));
+    };
+    try {
+      const viaAcross = await getSwapRoutes(ARGS100_A2);
+      ok("across: dispatcher returns the Across route as primary", viaAcross.length === 1 && viaAcross[0].provider === "across" && acrossCalls === 2);
+      ok("across: pass 1 is fee-free, pass 2 carries the fraction", firstHadFee === false && secondFraction !== null && secondFraction >= 0.00099 && secondFraction <= 0.00101);
+      ok("across: fee law applied (4× route cost = 10 bps at $100)", viaAcross[0].platformFeeBps === 10 && viaAcross[0].platformFeeUsd >= 0.095 && viaAcross[0].platformFeeUsd <= 0.1005 && viaAcross[0].platformFeeCollecting === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Fallbacks: Across 429 → Relay serves; Across-ineligible pairs
+  // never touch the Across API at all.
+  const relayQuoteMinA2 = () => ({ requestId: "0x66", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: AUSER, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
+    fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
+    details: { sender: AUSER, recipient: AUSER, currencyIn: { currency: { chainId: 8453, address: BASE_USDC_A2, symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" }, currencyOut: { currency: { chainId: 42161, address: ARB_USDC_A2, symbol: "USDC", decimals: 6 }, amount: "99965000", amountUsd: "99.965", minimumAmount: "99000000" }, timeEstimate: 1 } });
+  {
+    const realFetch = globalThis.fetch;
+    let acrossCalls = 0;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("app.across.to")) { acrossCalls++; return jsonResA2({ message: "Too Many Requests" }, false, 429); }
+      if (u.includes("api.relay.link/quote")) return jsonResA2(relayQuoteMinA2());
+      throw new Error("unexpected fetch in across-429 stub: " + u);
+    };
+    try {
+      const viaRelay = await getSwapRoutes(ARGS100_A2);
+      ok("across: 429 falls through to Relay", viaRelay.length === 1 && viaRelay[0].provider === "relay" && acrossCalls === 1);
+    } finally { globalThis.fetch = realFetch; }
+    acrossCalls = 0;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("app.across.to")) { acrossCalls++; return jsonResA2(acrossQuoteA2()); }
+      if (u.includes("api.relay.link/quote")) return jsonResA2(relayQuoteMinA2());
+      throw new Error("unexpected fetch in across-assets stub: " + u);
+    };
+    try {
+      const mixed = await getSwapRoutes({ ...ARGS100_A2, toTokenAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" });
+      ok("across: different-asset pair skips Across, Relay serves", mixed.length === 1 && mixed[0].provider === "relay" && acrossCalls === 0);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Review sentence + app wiring.
+  const intentA2 = formatSwapIntent({ fromAmount: "100", fromSymbol: "USDC", fromNetKey: "base", toAmount: "99.87", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Across", feeUsd: 0.0271, durationSec: 2, platformFeeUsd: 0.0999, platformFeePct: 0.1 });
+  ok("across: intent sentence names Across + the fee",
+    intentA2.includes("via Across") && intentA2.includes("Fluid fee: $0.10") && intentA2.includes("Funds should arrive in about 2 seconds"));
+  const appSrcAcross = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("across: app names the router, discloses its fee, notes the refund, and executes it",
+    appSrcAcross.includes('if (route && route.provider === "across") return "Across";')
+    && appSrcAcross.includes('r.provider === "across" && r.platformFeeCollecting === true')
+    && appSrcAcross.includes("refunded automatically to this same wallet")
+    && appSrcAcross.includes("executeAcrossSwapRoute(wallet, route"));
+  const coreSrcAcross = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("across: bounds check precedes signing in the executor",
+    coreSrcAcross.indexOf("checkAcrossDepositBounds(route, wallet.address)") > -1
+    && coreSrcAcross.indexOf("checkAcrossDepositBounds(route, wallet.address)") < coreSrcAcross.indexOf("await signer.sendTransaction(txReq)", coreSrcAcross.indexOf("async function executeAcrossSwapRoute")));
+  ok("across: executor composes its own exact-amount approval",
+    coreSrcAcross.includes("c.approve(ac.swapTx.to, need)"));
+}
+
+// 67. Satora: EVM stablecoins -> Bitcoin mainnet / Lightning
+// (2026-11-08, Immediate Incorporation Rule). REST composed by
+// Fluid (never the SDK — its separate mnemonic is replaced by
+// derivation from the user's own Fluid seed), version headers
+// pinned (x-satora-evm-erc20-htlc-version 7, bitcoin 1, lightning
+// 1; GET /version tag epoch checked), fee via the developer key's
+// extra_fees read through satoraFeeConfig (placeholder key ->
+// quotes at zero fee), minimums enforced on the NET landing,
+// receivability gate for the user's own Lightning wallet, refund
+// truth in the review sentence, swap ids persisted + polled.
+// Funding was gated OFF while the Permit2 witness format was
+// unpublished (a plain PermitTransferFrom signature provably
+// fails with InvalidSigner — Fluid does not sign what it cannot
+// verify); the official spec arrived 2026-11-09, the developer
+// key went live the same day, and §69 covers the un-gated
+// execution end to end. Fixtures mirror the live probes of
+// 2026-11-08 (quotes, a real creation record, a real Permit2
+// funding payload whose calls_hash Fluid's recomputation must
+// reproduce byte-for-byte).
+{
+  const AUSER_S7 = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const PHRASE_S7 = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const ARB_USDC_S7 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const POL_USDC_S7 = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
+  const BTC_USD_S7 = 74414;
+  const jsonResS7 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const pairsS7 = [
+    { source: "42161", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "42161", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "137", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "137", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "1", target: "Bitcoin", min_sats: 10000, max_sats: 25000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "1", target: "Lightning", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+  ];
+  const quoteLnS7 = (o = {}) => ({ exchange_rate: "74255.587732976906512215044182", network_fee: 4, gasless_network_fee: 4, protocol_fee: 134, protocol_fee_rate: 0.005, min_amount: 356, max_amount: 20000000, source_amount: "20000000", target_amount: "26934", net_source_amount: "20000000", net_target_amount: "26796", ...o });
+  const quoteBtc20S7 = (o = {}) => ({ exchange_rate: "74630.764293657131342682080407", network_fee: 159, gasless_network_fee: 159, protocol_fee: 134, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "20000000", target_amount: "26726", net_source_amount: "20000000", net_target_amount: "26433", ...o });
+  const quoteBtc100S7 = (o = {}) => ({ exchange_rate: "74630.764293657131342682080407", network_fee: 159, gasless_network_fee: 159, protocol_fee: 669, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "100000000", target_amount: "133993", net_source_amount: "100000000", net_target_amount: "133165", ...o });
+  // The real creation record captured live (Polygon USDC $20 ->
+  // BTC), with the probe's hash lock / claim key swapped for the
+  // test wallet's derived ones.
+  const createBtcS7 = ({ hashLock, claimPkXonly }) => ({
+    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 293,
+    evm_hash_lock: hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
+    source_token: { token_id: POL_USDC_S7, symbol: "USDC", chain: "137", name: "USDC", decimals: 6 },
+    target_token: { token_id: "btc", symbol: "BTC", chain: "Bitcoin", name: "Bitcoin", decimals: 8 },
+    created_at: "2026-11-08T23:05:12.437373Z", chain: "Polygon", evm_chain_id: 137,
+    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26433",
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
+    client_evm_address: "0x0877999faBfDEd6ADBa3A97A3B46159d2F6A2F6B", server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    evm_fund_txid: null, evm_claim_txid: null, evm_refund_locktime: 1794265512, evm_funding_confirmations: 128,
+    btc_htlc_address: "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2",
+    btc_user_claim_pk: claimPkXonly, btc_server_refund_pk: "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633",
+    btc_refund_locktime: 1794222312, btc_htlc_script_version: 1, btc_fund_txid: null, btc_fund_vout: null, btc_claim_txid: null,
+    wbtc_address: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6", target_btc_address: null, network: "bitcoin", gasless: true,
+  });
+  // The real Permit2 funding payload captured live for that swap;
+  // its calls_hash is production data Fluid must reproduce.
+  const CALLS_S7 = [
+    { target: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", value: "0", call_data: "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c058615640000000000000000000000000000000000000000000000000000000001312d00" },
+    { target: "0xe592427a0aece92de3edee1f18e0157c05861564", value: "0", call_data: "0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000b79118233552d4b7ed5c8d2d1e2bba7e8eecb71fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000000000000000000000000000000000000000674100000000000000000000000000000000000000000000000000000000000000423c499c542cef5e3811e1192ce70d8cc03d5c3359000064c2132d05d31c914a87c6611c10748aeb04b58e8f000bb81bfd67037b42cf73acf2047067bd4f2c47d9bfd6000000000000000000000000000000000000000000000000000000000000" },
+  ];
+  const permit2S7 = ({ hashLock }) => ({
+    coordinator_address: "0xb79118233552d4b7ed5c8d2d1e2bba7e8eecb71f", htlc_kind: "erc20", htlc_version: 7,
+    permit2_address: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    source_token_address: POL_USDC_S7, source_amount: "20000000",
+    lock_token_address: "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
+    preimage_hash: hashLock, claim_address: "0x5ce278AAec6d9fa67bfcaf98512fe5175dfeebac", timelock: 1794265512,
+    calls: CALLS_S7, calls_hash: "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027",
+  });
+  // A Satora wire stub: routes by URL, records quote URLs + create
+  // bodies, and throws on anything unexpected.
+  const satoraStubS7 = ({ quote, version = { tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" }, status = { healthy: true, swaps_paused: false }, create = null, swapGet = null, permit2 = null, seen = { quotes: [], creates: [] } }) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResS7([{ symbol: "BTCUSDT", price: String(BTC_USD_S7) }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResS7({});
+    if (u.includes("api.satora.io/version")) return jsonResS7(version);
+    if (u.includes("api.satora.io/status")) return jsonResS7(status);
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResS7(pairsS7);
+    if (u.includes("api.satora.io/quote")) { seen.quotes.push(u); return jsonResS7(typeof quote === "function" ? quote(new URL(u)) : quote); }
+    if (u.includes("api.satora.io/swap/evm/")) { seen.creates.push(JSON.parse(opts.body || "{}")); return jsonResS7(create); }
+    if (u.includes("swap-and-lock-calldata-permit2")) return jsonResS7(permit2);
+    if (u.includes("api.satora.io/swap/")) return jsonResS7(swapGet);
+    throw new Error("unexpected fetch in satora stub: " + u);
+  };
+  const ARGS_BTC100_S7 = { fromChainKey: "polygon", toChainKey: "bitcoin", fromTokenAddress: POL_USDC_S7, toTokenAddress: "btc", fromAmount: "100000000", fromAddress: AUSER_S7, toAddress: "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2" };
+  const ARGS_BTC20_S7 = { ...ARGS_BTC100_S7, fromAmount: "20000000" };
+
+  // Developer key: LIVE (issued 2026-11-09, extra fee enabled at
+  // a 50 bps cap). The placeholder branch survives in
+  // satoraFeeConfig and is covered through its seam (an explicit
+  // key argument) — never by editing the live constant.
+  ok("satora: developer key is the live referral id", SATORA_DEVELOPER_KEY === "lnds_1f58b4d6016ca9fc" && satoraDeveloperKeyLive() === true);
+  ok("satora: live fee config names the referral and passes the bps through", (() => { const f = satoraFeeConfig(50); return f.referralCode === SATORA_DEVELOPER_KEY && f.extraFeesBps === 50; })());
+  ok("satora: placeholder fee config charges nothing and names no referral (seam)", (() => { const f = satoraFeeConfig(50, "PENDING_KEY"); return f.referralCode === null && f.extraFeesBps === 0 && satoraDeveloperKeyLive("PENDING_KEY") === false; })());
+  ok("satora: minimums are the evidenced ones", SATORA_MIN_NET_SATS.bitcoin === 10000 && SATORA_MIN_NET_SATS.lightning === 356);
+
+  // Eligibility matrix (pure).
+  ok("satora: pair eligibility (evidenced sources only)",
+    !!satoraSupportsPair(ARGS_BTC100_S7)
+    && !!satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7 })
+    && !!satoraSupportsPair({ fromChainKey: "ethereum", toChainKey: "bitcoin", fromTokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" })
+    && satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null
+    && satoraSupportsPair({ ...ARGS_BTC100_S7, toChainKey: "arbitrum" }) === null
+    && satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "solana" }) === null
+    && satoraSupportsPair({ ...ARGS_BTC100_S7, fromTokenAddress: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6" }) === null);
+
+  // Quote parsing: full fee stack from the quote's own figures.
+  const planLnS7 = satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7 });
+  const parsedLnS7 = parseSatoraQuote(quoteLnS7(), planLnS7, { fromAmount: "20000000" });
+  ok("satora: LN quote parses with the full fee stack", !!parsedLnS7 && parsedLnS7.grossSats === 26934 && parsedLnS7.netSats === 26796 && parsedLnS7.protocolFeeSats === 134 && parsedLnS7.networkFeeSats === 4 && parsedLnS7.fluidFeeSats === 0);
+  const parsedFeeS7 = parseSatoraQuote(quoteLnS7({ net_target_amount: "26662" }), planLnS7, { fromAmount: "20000000" });
+  ok("satora: a deduction beyond protocol+network reads as the Fluid fee", !!parsedFeeS7 && parsedFeeS7.fluidFeeSats === 134);
+  ok("satora: inconsistent or mismatched quotes are refused",
+    parseSatoraQuote(quoteLnS7({ net_target_amount: "27000" }), planLnS7, { fromAmount: "20000000" }) === null
+    && parseSatoraQuote(quoteLnS7({ protocol_fee: 500, net_target_amount: "26430" }), planLnS7, { fromAmount: "20000000" }) === null
+    && parseSatoraQuote(quoteLnS7(), planLnS7, { fromAmount: "999" }) === null);
+
+  // Dispatcher: Satora serves its pairs; live key -> the
+  // two-pass discipline (fee-free pass reads the route cost, the
+  // law's bps rides the second pass, the disclosed fee is read
+  // from the final quote only). The stub server honours
+  // extra_fees the way the real one does: at 50 bps it deducts
+  // floor(gross x 50/10000) = 669 sats beyond protocol + network.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { quotes: [], creates: [] };
+    globalThis.fetch = satoraStubS7({ quote: (u) => u.searchParams.get("extra_fees") === "50" ? quoteBtc100S7({ net_target_amount: "132496" }) : quoteBtc100S7(), seen });
+    try {
+      resetSatoraCaches();
+      const routes = await getSwapRoutes(ARGS_BTC100_S7);
+      const r = routes[0];
+      ok("satora: dispatcher returns the Satora route for Polygon USDC -> Bitcoin", routes.length === 1 && r.provider === "satora" && r.toAmount === "132496");
+      ok("satora: fee stack priced from the final quote (protocol + network + Fluid's 669 sats)", Math.abs(r.gasCostUSD - 1497 * BTC_USD_S7 / 1e8) < 1e-9 && r.platformFeeBps === 50 && r.platformFeeCollecting === true && Math.abs(r.platformFeeUsd - 669 * BTC_USD_S7 / 1e8) < 1e-9);
+      const q1 = new URL(seen.quotes[0]), q2 = new URL(seen.quotes[1]);
+      ok("satora: two-pass quoting — pass 1 at extra_fees=0, the law's 50 bps on pass 2, both under the live referral", seen.quotes.length === 2 && q1.searchParams.get("extra_fees") === "0" && q2.searchParams.get("extra_fees") === "50" && q1.searchParams.get("target_chain") === "Bitcoin" && q1.searchParams.get("ref") === SATORA_DEVELOPER_KEY && q2.searchParams.get("ref") === SATORA_DEVELOPER_KEY);
+      const ranked = rankSwapRoutes(routes, BTC_USD_S7);
+      ok("satora: route ranks cheapest-first by net value", ranked[0].provider === "satora" && ranked[0].cheapest === true && Math.abs(ranked[0].netUsd - (ranked[0].toAmountUSD - ranked[0].gasCostUSD)) < 1e-9);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: quoteLnS7() });
+    try {
+      resetSatoraCaches();
+      const routes = await getSwapRoutes({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: AUSER_S7, toAddress: "lnbc1example" });
+      ok("satora: dispatcher returns the Satora route for Arbitrum USDC -> Lightning", routes.length === 1 && routes[0].provider === "satora" && routes[0].toAmount === "26796" && Math.abs(routes[0].toAmountUSD - 26796 * BTC_USD_S7 / 1e8) < 1e-6);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Minimums enforced on the NET landing, with honest copy.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: (u) => u.searchParams.get("source_amount") === "20000"
+      ? quoteLnS7({ source_amount: "20000", target_amount: "269", net_target_amount: "264", protocol_fee: 1 })
+      : quoteBtc20S7({ source_amount: "5000000", target_amount: "6713", net_target_amount: "6521", protocol_fee: 33 }) });
+    try {
+      resetSatoraCaches();
+      let lnErr = null, btcErr = null;
+      try { await getSwapRoutes({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7, toTokenAddress: "btc", fromAmount: "20000", fromAddress: AUSER_S7, toAddress: "lnbc1example" }); } catch (e) { lnErr = e; }
+      try { await getSwapRoutes({ ...ARGS_BTC20_S7, fromAmount: "5000000" }); } catch (e) { btcErr = e; }
+      ok("satora: Lightning net below 356 sats is refused with the minimum stated", !!lnErr && lnErr.message.includes("356-sat minimum"));
+      ok("satora: Bitcoin net below 10,000 sats is refused with the minimum stated", !!btcErr && btcErr.message.includes("10,000-sat minimum"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Version pinning: unknown epoch refuses; failures are not cached.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7(), version: { tag: "developer-portal-v9.9.9", commit_hash: "deadbeef" } });
+    try {
+      resetSatoraCaches();
+      let vErr = null;
+      try { await getSatoraSwapRoute(ARGS_BTC100_S7); } catch (e) { vErr = e; }
+      ok("satora: an unknown API version epoch refuses the route", !!vErr && vErr.message.includes("refusing the route rather than improvising"));
+      let routes = null, fellThrough = false;
+      try { routes = await getSwapRoutes(ARGS_BTC100_S7); } catch { fellThrough = true; }
+      ok("satora: version refusal falls back (no Satora route is served)", fellThrough || !routes.some(r => r.provider === "satora"));
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7(), status: { healthy: true, swaps_paused: true } });
+    try {
+      resetSatoraCaches();
+      let pErr = null;
+      try { await getSatoraSwapRoute(ARGS_BTC100_S7); } catch (e) { pErr = e; }
+      ok("satora: a paused service refuses the route", !!pErr && pErr.message.includes("paused"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Secret derivation from the user's own Fluid seed (verified
+  // independently against @scure/bip32 + noble sha256).
+  const identityS7 = satoraSwapIdentity(PHRASE_S7, 0);
+  const identity1S7 = satoraSwapIdentity(PHRASE_S7, 1);
+  const nodeS7 = HDKey.fromMasterSeed(mnemonicToSeedSync(PHRASE_S7)).derive("m/9419/121923");
+  ok("satora: user_id is the m/9419/121923 child pubkey", identityS7.userId === Buffer.from(nodeS7.deriveChild(0).publicKey).toString("hex") && /^[0-9a-f]{66}$/.test(identityS7.userId));
+  ok("satora: hash lock is sha256 of the derived secret (never a key itself)", identityS7.hashLock === "0x" + Buffer.from(nobleSha256(Buffer.from(identityS7.secretHex, "hex"))).toString("hex") && identityS7.secretHex !== Buffer.from(nodeS7.deriveChild(0).privateKey).toString("hex"));
+  ok("satora: derivation is deterministic and per-index", satoraSwapIdentity(PHRASE_S7, 0).hashLock === identityS7.hashLock && identity1S7.userId !== identityS7.userId && identity1S7.hashLock !== identityS7.hashLock);
+  const claimS7 = satoraClaimKey(PHRASE_S7);
+  ok("satora: claim key is the wallet's own Taproot key", claimS7.address === bitcoinTaprootAddress(PHRASE_S7) && /^[0-9a-f]{66}$/.test(claimS7.claimPk) && claimS7.address.startsWith("bc1p"));
+
+  // Creation request builders: fee fields identical (absent) on
+  // quote and creation while the key is the placeholder.
+  const btcBodyS7 = buildSatoraBtcCreateRequest({ route: { fromChainId: 137, fromToken: { address: POL_USDC_S7 }, fromAmount: "20000000", satora: { destKey: "bitcoin", destInput: ARGS_BTC20_S7.toAddress, extraFeesBps: 0 } }, userAddress: AUSER_S7, identity: identityS7, claimPk: claimS7.claimPk });
+  ok("satora: BTC creation body carries our hash lock, claim key, script version 1", btcBodyS7.hash_lock === identityS7.hashLock && btcBodyS7.claim_pk === claimS7.claimPk && btcBodyS7.btc_htlc_script_version === 1 && btcBodyS7.user_id === identityS7.userId && btcBodyS7.amount_in === "20000000");
+  ok("satora: creation sends the live referral code with the route's extra_fees", btcBodyS7.referral_code === SATORA_DEVELOPER_KEY && btcBodyS7.extra_fees === 0);
+
+  // A real invoice for the Lightning tests (Fluid's own encoder).
+  const invPrivS7 = "0000000000000000000000000000000000000000000000000000000000000001";
+  const invPayHashS7 = Buffer.from(nobleSha256(new TextEncoder().encode("satora-test-preimage"))).toString("hex");
+  const invoiceS7 = encodeBolt11({ network: "bc", amountMsat: 26796000n, timestamp: Math.floor(Date.now() / 1000), privKey: invPrivS7, fields: [["p", invPayHashS7], ["s", Buffer.from(nobleSha256(new TextEncoder().encode("satora-test-secret"))).toString("hex")], ["d", "satora test"]] });
+  const invPayeeS7 = Buffer.from(secp256k1.getPublicKey(Buffer.from(invPrivS7, "hex"))).toString("hex");
+  const lnBodyS7 = buildSatoraLnCreateRequest({ route: { fromChainId: 42161, fromToken: { address: ARB_USDC_S7 }, fromAmount: "20000000", satora: { destKey: "lightning", destInput: invoiceS7, grossSats: 26934, extraFeesBps: 0 } }, userAddress: AUSER_S7, userId: identityS7.userId });
+  ok("satora: LN creation body carries the invoice (no target amount needed) + the live referral at the route's 0 bps", lnBodyS7.lightning_invoice === invoiceS7 && !("target_amount_sats" in lnBodyS7) && lnBodyS7.referral_code === SATORA_DEVELOPER_KEY && lnBodyS7.extra_fees === 0);
+  const lnAddrBodyS7 = buildSatoraLnCreateRequest({ route: { fromChainId: 42161, fromToken: { address: ARB_USDC_S7 }, fromAmount: "20000000", satora: { destKey: "lightning", destInput: "friend@example.com", grossSats: 26934, extraFeesBps: 0 } }, userAddress: AUSER_S7, userId: identityS7.userId });
+  ok("satora: LN address creation carries the quoted gross target", lnAddrBodyS7.lightning_address === "friend@example.com" && lnAddrBodyS7.target_amount_sats === 26934);
+  ok("satora: destination classification", classifySatoraLightningDestination(invoiceS7)?.kind === "invoice" && classifySatoraLightningDestination("friend@example.com")?.kind === "address" && classifySatoraLightningDestination("lnurl1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")?.kind === "lnurl" && classifySatoraLightningDestination("not a destination") === null);
+
+  // Receivability gate.
+  ok("satora: own channel-less Lightning wallet is blocked", checkSatoraLightningReceivability({ destInput: invoiceS7, ownNodeId: invPayeeS7, ownReceivableMsat: 0 }).ok === false
+    && checkSatoraLightningReceivability({ destInput: invoiceS7, ownNodeId: invPayeeS7, ownReceivableMsat: 0 }).reason.includes("no inbound Lightning capacity"));
+  ok("satora: own wallet with enough inbound capacity passes", checkSatoraLightningReceivability({ destInput: invoiceS7, ownNodeId: invPayeeS7, ownReceivableMsat: 26796000 }).ok === true);
+  ok("satora: external invoices always pass the gate", checkSatoraLightningReceivability({ destInput: invoiceS7, ownNodeId: "02" + "ab".repeat(32), ownReceivableMsat: 0 }).ok === true
+    && checkSatoraLightningReceivability({ destInput: "friend@example.com", ownNodeId: invPayeeS7, ownReceivableMsat: 0 }).ok === true);
+
+  // Creation, end to end over the stub, + bounds-check tampering.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { quotes: [], creates: [] };
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc20S7(), create: createBtcS7({ hashLock: identityS7.hashLock, claimPkXonly: claimS7.claimPk.slice(2) }), permit2: permit2S7({ hashLock: identityS7.hashLock }), seen });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS_BTC20_S7))[0];
+      const record = await createSatoraSwap(route, { phrase: PHRASE_S7, index: 0, userAddress: AUSER_S7 });
+      ok("satora: creation returns the persisted record (id is the recovery key)", record.id === "f8367eae-cc13-4062-be55-4b1b2a569e7e" && record.status === "pending" && record.hashLock === identityS7.hashLock && record.netSats === 26433 && record.feeSats === 293);
+      ok("satora: the record carries the funding-verification facts (sold token, HTLC kind/version, no fund tx yet)", record.sourceTokenAddress === POL_USDC_S7 && record.htlcKind === "erc20" && record.htlcVersion === 7 && record.fundTxHash === null);
+      ok("satora: the create body the server received was Fluid's own (live referral at the quote's 50 bps)", seen.creates.length === 1 && seen.creates[0].hash_lock === identityS7.hashLock && seen.creates[0].claim_pk === claimS7.claimPk && seen.creates[0].referral_code === SATORA_DEVELOPER_KEY && seen.creates[0].extra_fees === 50);
+      const good = createBtcS7({ hashLock: identityS7.hashLock, claimPkXonly: claimS7.claimPk.slice(2) });
+      ok("satora: creation bounds check accepts the faithful record", checkSatoraCreateResponse(route, good, { identity: identityS7, claimPk: claimS7.claimPk }).ok === true);
+      ok("satora: creation with a foreign hash lock is refused", checkSatoraCreateResponse(route, { ...good, evm_hash_lock: "0x" + "ff".repeat(32) }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      ok("satora: creation with a foreign claim key is refused", checkSatoraCreateResponse(route, { ...good, btc_user_claim_pk: "aa".repeat(32) }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      ok("satora: creation with a bumped fee is refused", checkSatoraCreateResponse(route, { ...good, fee_sats: 294 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      ok("satora: creation on an unpinned HTLC version is refused", checkSatoraCreateResponse(route, { ...good, evm_htlc_version: 8 }, { identity: identityS7, claimPk: claimS7.claimPk }).ok === false);
+      // Funding components: the live payload must verify, and its
+      // calls_hash must recompute exactly.
+      ok("satora: calls_hash recomputes byte-for-byte from the live payload", satoraCallsHash(CALLS_S7) === "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027");
+      const comp = await fetchSatoraFundingComponents(record);
+      ok("satora: funding components verify against the record", !!comp && checkSatoraFundingComponents(permit2S7({ hashLock: identityS7.hashLock }), record).ok === true);
+      const tamperedCalls = [{ ...CALLS_S7[0] }, { ...CALLS_S7[1], call_data: CALLS_S7[1].call_data.slice(0, -2) + "ff" }];
+      ok("satora: tampered funding calls fail the hash pin", checkSatoraFundingComponents({ ...permit2S7({ hashLock: identityS7.hashLock }), calls: tamperedCalls }, record).ok === false);
+      const greedyApprove = new ethers.Interface(["function approve(address spender, uint256 amount)"]).encodeFunctionData("approve", [CALLS_S7[1].target, 20000001n]);
+      const greedyCalls = [{ ...CALLS_S7[0], call_data: greedyApprove }, CALLS_S7[1]];
+      const greedy = { ...permit2S7({ hashLock: identityS7.hashLock }), calls: greedyCalls, calls_hash: satoraCallsHash(greedyCalls) };
+      ok("satora: an over-amount approval is refused even with a matching hash", checkSatoraFundingComponents(greedy, record).ok === false);
+      ok("satora: a foreign coordinator is refused", checkSatoraFundingComponents({ ...permit2S7({ hashLock: identityS7.hashLock }), coordinator_address: "0x000000000000000000000000000000000000dEaD" }, record).ok === false);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Review sentence: full fee stack + destination + refund truth.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7() });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS_BTC100_S7))[0];
+      const intent = formatSatoraSwapIntent({ route, destInput: ARGS_BTC100_S7.toAddress });
+      ok("satora: intent states the full fee stack in plain words", intent.includes("protocol fee 669 sats") && intent.includes("network fee 159 sats") && intent.includes("via Satora"));
+      ok("satora: intent names the Taproot destination + the refund truth", intent.includes("Taproot address you claim from with your own Fluid key") && intent.includes("If this swap fails, the refund comes back as WBTC/tBTC, not USDC."));
+      const feeRoute = { ...route, satora: { ...route.satora, fluidFeeSats: 372 } };
+      ok("satora: intent discloses Fluid's fee when one is charged", formatSatoraSwapIntent({ route: feeRoute, destInput: ARGS_BTC100_S7.toAddress }).includes("Fluid's fee 372 sats"));
+      const lnIntent = formatSatoraSwapIntent({ route: { ...route, satora: { ...route.satora, destKey: "lightning", netSats: 26796 } }, destInput: invoiceS7 });
+      ok("satora: LN intent names the invoice amount + refund truth", lnIntent.includes("Lightning invoice for 26,796 sats") && lnIntent.includes("If this swap fails, the refund comes back as WBTC/tBTC, not USDC."));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Execution gate: structural since the witness spec landed
+  // (2026-11-09) — a complete route passes, an incomplete one is
+  // refused, and the executor's full verification chain runs at
+  // execution time (§69 exercises it end to end).
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7() });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS_BTC100_S7))[0];
+      const gate = swapRouteExecutable(route);
+      ok("satora: a complete route passes the structural gate", gate.ok === true && gate.satora === true);
+      ok("satora: an incomplete Satora route is refused at the gate", swapRouteExecutable({ provider: "satora" }).ok === false && swapRouteExecutable({ provider: "satora", satora: { destKey: "bitcoin" } }).ok === false);
+      let execErr = null;
+      try { await executeSatoraSwapRoute({}, route); } catch (e) { execErr = e; }
+      ok("satora: the executor refuses without storage (the swap id must persist before funding)", !!execErr && execErr.message.includes("persist the swap id"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Status model + history copy + refund paths.
+  ok("satora: status model maps refund paths honestly",
+    satoraSwapPhase("serverwontfund").refundPath === "collaborative"
+    && satoraSwapPhase("clientfundedserverrefunded").refundPath === "unilateral"
+    && satoraSwapPhase("clientredeemed").terminal === true
+    && satoraSwapPhase("expired").terminal === true
+    && satoraSwapPhase("pending").refundPath === null);
+  const histRecS7 = { id: "x", destKey: "bitcoin", fromSymbol: "USDC", fromAmount: "20000000", netSats: 26433, status: "serverwontfund", refundLocktime: 1794265512 };
+  ok("satora: history line carries the refund truth + collaborative path",
+    satoraSwapHistoryLine(histRecS7).includes("the refund comes back as WBTC/tBTC, not USDC") && satoraSwapHistoryLine(histRecS7).includes("collaborative refund"));
+  ok("satora: history line for a unilateral refund names the timelock path",
+    satoraSwapHistoryLine({ ...histRecS7, status: "clientfundedserverrefunded" }).includes("with your own key after the timelock"));
+
+  // Persistence + polling resume from stored ids.
+  {
+    const realFetch = globalThis.fetch;
+    const store = new Map();
+    const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+    saveSatoraSwapRecord(storage, { id: "id-1", index: 0, status: "pending", destKey: "bitcoin", fromSymbol: "USDC", fromAmount: "20000000", netSats: 26433 });
+    saveSatoraSwapRecord(storage, { id: "id-2", index: 1, status: "clientredeemed", destKey: "lightning", fromSymbol: "USDC", fromAmount: "20000000", netSats: 26796 });
+    ok("satora: records persist + the next derivation index follows", loadSatoraSwapRecords(storage).length === 2 && nextSatoraSwapIndex(loadSatoraSwapRecords(storage)) === 2);
+    let polledIds = [];
+    globalThis.fetch = async (url) => { const u = String(url); if (u.includes("api.satora.io/swap/")) { polledIds.push(u); return jsonResS7({ id: "id-1", status: "clientfunded" }); } throw new Error("unexpected fetch in satora poll stub: " + u); };
+    try {
+      const after = await pollSatoraSwapStatuses(storage);
+      const rec1 = after.find(r => r.id === "id-1"), rec2 = after.find(r => r.id === "id-2");
+      ok("satora: polling resumes from persisted ids and saves fresh statuses", rec1.status === "clientfunded" && rec2.status === "clientredeemed" && polledIds.length === 1 && loadSatoraSwapRecords(storage).find(r => r.id === "id-1").status === "clientfunded");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Non-Satora pairs are untouched: the dispatcher never calls
+  // Satora for an EVM->EVM pair (Across 429 -> Relay serves, as §66).
+  {
+    const realFetch = globalThis.fetch;
+    let satoraCalls = 0;
+    const relayQuoteMinS7 = () => ({ requestId: "0x66", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: AUSER_S7, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
+      fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
+      details: { sender: AUSER_S7, recipient: AUSER_S7, currencyIn: { currency: { chainId: 8453, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" }, currencyOut: { currency: { chainId: 42161, address: ARB_USDC_S7, symbol: "USDC", decimals: 6 }, amount: "99965000", amountUsd: "99.965", minimumAmount: "99000000" }, timeEstimate: 1 } });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.satora.io")) { satoraCalls++; throw new Error("satora must not be called for EVM pairs"); }
+      if (u.includes("app.across.to")) return jsonResS7({ message: "Too Many Requests" }, false, 429);
+      if (u.includes("api.relay.link/quote")) return jsonResS7(relayQuoteMinS7());
+      throw new Error("unexpected fetch in satora isolation stub: " + u);
+    };
+    try {
+      const viaRelay = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toTokenAddress: ARB_USDC_S7, fromAmount: "100000000", fromAddress: AUSER_S7, toAddress: AUSER_S7 });
+      ok("satora: EVM->EVM pairs never touch Satora and keep the existing order", viaRelay.length === 1 && viaRelay[0].provider === "relay" && satoraCalls === 0);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // App wiring (source pins, as in sections 61/62/66).
+  const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("satora: app offers Bitcoin/Lightning as destinations only, gates, reviews and polls",
+    appSrcSatora.includes('const swapDestNets = [...swapNets, "bitcoin", "lightning"]')
+    && appSrcSatora.includes("checkSatoraLightningReceivability({")
+    && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
+    && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
+    && appSrcSatora.includes('if (route && route.provider === "satora") return "Satora";'));
+  const coreSrcSatora = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("satora: core pins the key constant, the version headers and the spec version",
+    coreSrcSatora.includes('export const SATORA_DEVELOPER_KEY = "lnds_1f58b4d6016ca9fc"')
+    && coreSrcSatora.includes('"x-satora-evm-erc20-htlc-version"')
+    && coreSrcSatora.includes('"x-satora-bitcoin-htlc-version"')
+    && coreSrcSatora.includes('"x-satora-lightning-version"')
+    && coreSrcSatora.includes('SATORA_API_SPEC_VERSION = "0.3.23"'));
+}
+
+// 69. Satora Permit2 witness funding (2026-11-09): the official
+// witness spec landed (Philipp, Satora — the format was
+// unpublished when §67 gated execution off) and the developer
+// key went live, so execution is un-gated. Typed data is
+// constructed field by field from the spec and verified against
+// the bounds-checked creation record + funding components
+// before signing; the checked calls go to the fund-gasless
+// relay unchanged. Golden vectors here are computed
+// INDEPENDENTLY (manual EIP-712 struct hashing over the pinned
+// type strings, noble keccak cross-checks), never through the
+// code under test alone. Fixtures mirror §67's live captures.
+{
+  const PHRASE_S9 = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const POL_USDC_S9 = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
+  const WBTC_S9 = "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6";
+  const COORD_S9 = "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f";
+  const SERVER_EVM_S9 = "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac";
+  const HTLC_S9 = "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748";
+  const PERMIT2_S9 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+  const TIMELOCK_S9 = 1794265512;
+  const BTC_USD_S9 = 74414;
+  const FUND_TX_S9 = "0x" + "ab".repeat(32);
+  const jsonResS9 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const identityS9 = satoraSwapIdentity(PHRASE_S9, 0);
+  const claimS9 = satoraClaimKey(PHRASE_S9);
+  const CALLS_S9 = [
+    { target: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", value: "0", call_data: "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c058615640000000000000000000000000000000000000000000000000000000001312d00" },
+    { target: "0xe592427a0aece92de3edee1f18e0157c05861564", value: "0", call_data: "0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000b79118233552d4b7ed5c8d2d1e2bba7e8eecb71fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000001312d00000000000000000000000000000000000000000000000000000000000000674100000000000000000000000000000000000000000000000000000000000000423c499c542cef5e3811e1192ce70d8cc03d5c3359000064c2132d05d31c914a87c6611c10748aeb04b58e8f000bb81bfd67037b42cf73acf2047067bd4f2c47d9bfd6000000000000000000000000000000000000000000000000000000000000" },
+  ];
+  const permit2S9 = ({ hashLock, ...over } = {}) => ({
+    coordinator_address: COORD_S9, htlc_kind: "erc20", htlc_version: 7,
+    permit2_address: PERMIT2_S9,
+    source_token_address: POL_USDC_S9, source_amount: "20000000",
+    lock_token_address: "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
+    preimage_hash: hashLock, claim_address: "0x5ce278AAec6d9fa67bfcaf98512fe5175dfeebac", timelock: TIMELOCK_S9,
+    calls: CALLS_S9, calls_hash: "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027",
+    ...over,
+  });
+  const recS9 = {
+    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", destKey: "bitcoin", fromChainKey: "polygon",
+    fromAmount: "20000000", hashLock: identityS9.hashLock, coordinatorAddress: COORD_S9,
+    htlcAddress: HTLC_S9, serverEvmAddress: SERVER_EVM_S9, wbtcAddress: WBTC_S9,
+    refundLocktime: TIMELOCK_S9, sourceTokenAddress: POL_USDC_S9, htlcKind: "erc20", htlcVersion: 7,
+  };
+
+  // Golden: the spec's type strings + witness typehash.
+  ok("satora witness: the full type string is the spec's verbatim string",
+    SATORA_PERMIT2_TYPE_STRING === "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExecuteAndCreate witness)ExecuteAndCreate(bytes32 preimageHash,address token,address claimAddress,address refundAddress,uint256 timelock,bytes32 callsHash)TokenPermissions(address token,uint256 amount)"
+    && SATORA_WITNESS_TYPE_STRING === "ExecuteAndCreate(bytes32 preimageHash,address token,address claimAddress,address refundAddress,uint256 timelock,bytes32 callsHash)");
+  ok("satora witness: typehash matches independent keccak computations (ethers + noble)",
+    SATORA_WITNESS_TYPEHASH === ethers.keccak256(ethers.toUtf8Bytes(SATORA_WITNESS_TYPE_STRING))
+    && SATORA_WITNESS_TYPEHASH === "0x" + Buffer.from(keccak_256(new TextEncoder().encode(SATORA_WITNESS_TYPE_STRING))).toString("hex"));
+
+  // The refundAddress rule, branch by branch (spec + reference).
+  const DEP_S9 = "0x1111111111111111111111111111111111111111";
+  ok("satora witness: refund address rule — depositor-keyed deployments name the depositor",
+    satoraPermitRefundAddress({ htlcKind: "erc20", htlcVersion: 7, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === DEP_S9
+    && satoraPermitRefundAddress({ htlcKind: "erc20", htlcVersion: 9, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === DEP_S9
+    && satoraPermitRefundAddress({ htlcKind: "native", htlcVersion: 2, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === DEP_S9);
+  ok("satora witness: refund address rule — older deployments name the coordinator",
+    satoraPermitRefundAddress({ htlcKind: "erc20", htlcVersion: 6, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === COORD_S9
+    && satoraPermitRefundAddress({ htlcKind: "native", htlcVersion: 1, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === COORD_S9);
+  ok("satora witness: refund address rule — unknown kind or missing version refuses (null), never guesses",
+    satoraPermitRefundAddress({ htlcKind: "btc", htlcVersion: 7, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === null
+    && satoraPermitRefundAddress({ htlcKind: "erc20", htlcVersion: undefined, depositor: DEP_S9, coordinatorAddress: COORD_S9 }) === null
+    && satoraPermitRefundAddress({}) === null);
+
+  // Nonces: CSPRNG uint256, unique per draw, in range.
+  ok("satora witness: random nonces are in-range and unique per draw",
+    (() => { const a = satoraRandomPermitNonce(), b = satoraRandomPermitNonce(); return a > 0n && a < (1n << 256n) && b > 0n && b !== a; })());
+
+  // Builder: field-by-field mapping + the golden digest, computed
+  // manually from the pinned strings (domain separator, struct
+  // hashes, 0x1901 digest) — equality with the builder's digest
+  // (ethers' encoder over the returned types) proves the types
+  // encode to the spec's string and every field lands in place.
+  const walletS9 = await unlockVault((await importVault(PHRASE_S9, "password123")).keystore, "password123");
+  const NONCE_S9 = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefn;
+  const NOW_S9 = 1794260000, DEADLINE_S9 = NOW_S9 + SATORA_FUNDING_DEADLINE_SECS;
+  const builtS9 = buildSatoraPermitTypedData({ comp: permit2S9({ hashLock: identityS9.hashLock }), record: recS9, depositor: walletS9.address, nonce: NONCE_S9, deadline: DEADLINE_S9, nowSec: NOW_S9 });
+  ok("satora witness: builder accepts the faithful payload", builtS9.ok === true);
+  ok("satora witness: domain is Permit2's own (no version, canonical contract, the swap's chain)",
+    builtS9.domain.name === "Permit2" && builtS9.domain.chainId === 137 && builtS9.domain.verifyingContract === PERMIT2_S9 && !("version" in builtS9.domain));
+  ok("satora witness: message maps every field per the spec's table",
+    builtS9.message.permitted.token.toLowerCase() === POL_USDC_S9.toLowerCase() && builtS9.message.permitted.amount === 20000000n
+    && builtS9.message.spender.toLowerCase() === COORD_S9.toLowerCase() && builtS9.message.nonce === NONCE_S9 && builtS9.message.deadline === BigInt(DEADLINE_S9)
+    && builtS9.message.witness.preimageHash === identityS9.hashLock && builtS9.message.witness.token.toLowerCase() === WBTC_S9.toLowerCase()
+    && builtS9.message.witness.claimAddress.toLowerCase() === SERVER_EVM_S9.toLowerCase()
+    && builtS9.message.witness.timelock === BigInt(TIMELOCK_S9)
+    && builtS9.message.witness.callsHash === "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027");
+  ok("satora witness: on the pinned ERC-20 v7 the witness names the depositor as refund address", builtS9.message.witness.refundAddress === walletS9.address && builtS9.refundAddress === walletS9.address);
+  {
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const domainSep = ethers.keccak256(coder.encode(["bytes32", "bytes32", "uint256", "address"],
+      [ethers.keccak256(ethers.toUtf8Bytes("EIP712Domain(string name,uint256 chainId,address verifyingContract)")), ethers.keccak256(ethers.toUtf8Bytes("Permit2")), 137n, PERMIT2_S9]));
+    const tpHash = ethers.keccak256(coder.encode(["bytes32", "address", "uint256"],
+      [ethers.keccak256(ethers.toUtf8Bytes("TokenPermissions(address token,uint256 amount)")), POL_USDC_S9, 20000000n]));
+    const witHash = ethers.keccak256(coder.encode(["bytes32", "bytes32", "address", "address", "address", "uint256", "bytes32"],
+      [SATORA_WITNESS_TYPEHASH, identityS9.hashLock, ethers.getAddress(WBTC_S9.toLowerCase()), ethers.getAddress(SERVER_EVM_S9.toLowerCase()), walletS9.address, BigInt(TIMELOCK_S9), "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027"]));
+    const structHash = ethers.keccak256(coder.encode(["bytes32", "bytes32", "address", "uint256", "uint256", "bytes32"],
+      [ethers.keccak256(ethers.toUtf8Bytes(SATORA_PERMIT2_TYPE_STRING)), tpHash, ethers.getAddress(COORD_S9.toLowerCase()), NONCE_S9, BigInt(DEADLINE_S9), witHash]));
+    const manualDigest = ethers.keccak256(ethers.concat(["0x1901", domainSep, structHash]));
+    ok("satora witness: the digest equals the independently constructed EIP-712 digest", builtS9.digest === manualDigest && ethers.TypedDataEncoder.hash(builtS9.domain, builtS9.types, builtS9.message) === manualDigest);
+    const sigS9 = await walletS9.signTypedData(builtS9.domain, builtS9.types, builtS9.message);
+    ok("satora witness: the wallet's signature recovers the wallet (typed-data + raw digest paths)",
+      /^0x[0-9a-fA-F]{130}$/.test(sigS9)
+      && ethers.verifyTypedData(builtS9.domain, builtS9.types, builtS9.message, sigS9) === walletS9.address
+      && ethers.recoverAddress(builtS9.digest, sigS9) === walletS9.address);
+  }
+
+  // Builder: tamper refusals — payload fields (caught with the
+  // funding-component check) and witness-level fields alike.
+  const baseCompS9 = permit2S9({ hashLock: identityS9.hashLock });
+  const tryBuildS9 = (comp, extra = {}) => buildSatoraPermitTypedData({ comp, record: recS9, depositor: walletS9.address, nonce: NONCE_S9, deadline: DEADLINE_S9, nowSec: NOW_S9, ...extra });
+  ok("satora witness: a foreign coordinator is refused", tryBuildS9({ ...baseCompS9, coordinator_address: "0x000000000000000000000000000000000000dEaD" }).ok === false);
+  ok("satora witness: a bumped funding amount is refused", tryBuildS9({ ...baseCompS9, source_amount: "20000001" }).ok === false);
+  ok("satora witness: a foreign lock token is refused", tryBuildS9({ ...baseCompS9, lock_token_address: "0x000000000000000000000000000000000000dEaD" }).ok === false);
+  ok("satora witness: a foreign preimage hash is refused", tryBuildS9({ ...baseCompS9, preimage_hash: "0x" + "ff".repeat(32) }).ok === false);
+  ok("satora witness: a foreign claim address is refused", tryBuildS9({ ...baseCompS9, claim_address: "0x000000000000000000000000000000000000dEaD" }).ok === false);
+  ok("satora witness: a shifted timelock is refused", tryBuildS9({ ...baseCompS9, timelock: TIMELOCK_S9 + 1 }).ok === false);
+  ok("satora witness: a calls hash that does not recompute is refused", tryBuildS9({ ...baseCompS9, calls_hash: "0x" + "00".repeat(32) }).ok === false);
+  ok("satora witness: a value-carrying funding call is refused", tryBuildS9({ ...baseCompS9, calls: [{ ...CALLS_S9[0], value: "1" }, CALLS_S9[1]], calls_hash: satoraCallsHash([{ ...CALLS_S9[0], value: "1" }, CALLS_S9[1]]) }).ok === false);
+  ok("satora witness: an HTLC kind/version drifting from the creation record is refused",
+    tryBuildS9({ ...baseCompS9, htlc_kind: "native", htlc_version: 2 }).ok === false
+    && tryBuildS9({ ...baseCompS9, htlc_version: 6 }).ok === false
+    && tryBuildS9({ ...baseCompS9, htlc_kind: undefined, htlc_version: undefined }).ok === false);
+  ok("satora witness: a sold token drifting from the creation record is refused",
+    tryBuildS9({ ...baseCompS9, source_token_address: "0x000000000000000000000000000000000000dEaD" }).ok === false);
+  ok("satora witness: deadline/nonce bounds are enforced (past, >1h, zero nonce, bad depositor)",
+    tryBuildS9(baseCompS9, { deadline: NOW_S9 }).ok === false
+    && tryBuildS9(baseCompS9, { deadline: NOW_S9 + 3601 }).ok === false
+    && tryBuildS9(baseCompS9, { nonce: 0n }).ok === false
+    && tryBuildS9(baseCompS9, { depositor: "0x123" }).ok === false);
+
+  // EIP-2612 side-permit: needed only when the payload says the
+  // token supports it and Permit2 is unapproved; the value is
+  // the EXACT swap amount, never unlimited.
+  const DOMSEP_S9 = "0x" + "11".repeat(32);
+  const recAmtS9 = { fromAmount: "20000000" };
+  ok("satora witness: no EIP-2612 permit when the payload has no block, or it is unneeded",
+    buildSatoraEip2612Permit({ comp: baseCompS9, record: recAmtS9, depositor: walletS9.address, deadline: DEADLINE_S9 }) === null
+    && buildSatoraEip2612Permit({ comp: { ...baseCompS9, eip2612: { supported: true, already_approved: true, nonce: 7, domain_separator: DOMSEP_S9 } }, record: recAmtS9, depositor: walletS9.address, deadline: DEADLINE_S9 }) === null
+    && buildSatoraEip2612Permit({ comp: { ...baseCompS9, eip2612: { supported: false, already_approved: false, nonce: 7, domain_separator: DOMSEP_S9 } }, record: recAmtS9, depositor: walletS9.address, deadline: DEADLINE_S9 }) === null);
+  {
+    const p = buildSatoraEip2612Permit({ comp: { ...baseCompS9, eip2612: { supported: true, already_approved: false, nonce: 7, domain_separator: DOMSEP_S9 } }, record: recAmtS9, depositor: walletS9.address, deadline: DEADLINE_S9 });
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const pStruct = ethers.keccak256(coder.encode(["bytes32", "address", "address", "uint256", "uint256", "uint256"],
+      [ethers.keccak256(ethers.toUtf8Bytes("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")), walletS9.address, PERMIT2_S9, 20000000n, 7n, BigInt(DEADLINE_S9)]));
+    const pDigest = ethers.keccak256(ethers.concat(["0x1901", DOMSEP_S9, pStruct]));
+    ok("satora witness: the EIP-2612 permit digest is the standard one, for the EXACT amount",
+      !!p && p.ok === true && p.digest === pDigest && p.value === "20000000" && p.nonce === 7);
+    ok("satora witness: a malformed EIP-2612 block is refused, not improvised",
+      buildSatoraEip2612Permit({ comp: { ...baseCompS9, eip2612: { supported: true, already_approved: false, nonce: 7, domain_separator: "0xzz" } }, record: recAmtS9, depositor: walletS9.address, deadline: DEADLINE_S9 }).ok === false);
+  }
+
+  // Fund-gasless body shape: the relay's own fields; the calls
+  // array goes through unchanged (the signed hash covers it).
+  {
+    const body = buildSatoraFundGaslessBody({ comp: baseCompS9, nonce: NONCE_S9, deadline: DEADLINE_S9, signature: "0x" + "cd".repeat(65) });
+    ok("satora witness: fund-gasless body carries nonce/deadline/signature and the UNCHANGED calls",
+      body.permit2_nonce === NONCE_S9.toString() && body.permit2_deadline === DEADLINE_S9
+      && body.permit2_signature === "0x" + "cd".repeat(65)
+      && JSON.stringify(body.calls) === JSON.stringify(baseCompS9.calls)
+      && !("eip2612_permit" in body));
+    const withPermit = buildSatoraFundGaslessBody({ comp: baseCompS9, nonce: NONCE_S9, deadline: DEADLINE_S9, signature: "0x" + "cd".repeat(65), eip2612Permit: { v: 27, r: "aa", s: "bb", value: "20000000", deadline: DEADLINE_S9, nonce: 7 } });
+    ok("satora witness: the EIP-2612 permit rides the body only when one was signed", withPermit.eip2612_permit.value === "20000000" && withPermit.eip2612_permit.nonce === 7);
+  }
+
+  // Unilateral refund encoder: the depositor's own refund call
+  // on the pinned v7 HTLC, every term from the record. The
+  // locked amount must be supplied chain-verified — never
+  // guessed — and the timelock must have passed.
+  ok("satora refund: the pinned selector re-derives from the refund signature",
+    SATORA_HTLC_ERC20_REFUND_SELECTOR === "0x36504721"
+    && ethers.keccak256(ethers.toUtf8Bytes("refund(bytes32,uint256,address,address,uint256)")).slice(0, 10) === SATORA_HTLC_ERC20_REFUND_SELECTOR);
+  {
+    const call = buildSatoraUnilateralRefundCall(recS9, { lockedAmountRaw: "26433", nowSec: TIMELOCK_S9 + 1 });
+    ok("satora refund: the unilateral call targets the swap's HTLC with the record's terms",
+      call.ok === true && call.to === HTLC_S9 && call.data.startsWith(SATORA_HTLC_ERC20_REFUND_SELECTOR));
+    const decoded = new ethers.Interface(["function refund(bytes32 preimageHash, uint256 amount, address token, address claimAddress, uint256 timelock)"]).decodeFunctionData("refund", call.data);
+    ok("satora refund: the call decodes to hash lock, amount, lock token, claim address, timelock",
+      decoded[0] === recS9.hashLock && decoded[1] === 26433n && decoded[2].toLowerCase() === WBTC_S9.toLowerCase() && decoded[3].toLowerCase() === SERVER_EVM_S9.toLowerCase() && decoded[4] === BigInt(TIMELOCK_S9));
+    ok("satora refund: too-early, amount-less and zero-amount calls are refused",
+      buildSatoraUnilateralRefundCall(recS9, { lockedAmountRaw: "26433", nowSec: TIMELOCK_S9 - 1 }).ok === false
+      && buildSatoraUnilateralRefundCall(recS9, { nowSec: TIMELOCK_S9 + 1 }).ok === false
+      && buildSatoraUnilateralRefundCall(recS9, { lockedAmountRaw: "0", nowSec: TIMELOCK_S9 + 1 }).ok === false
+      && buildSatoraUnilateralRefundCall({ ...recS9, htlcKind: "native", htlcVersion: 2 }, { lockedAmountRaw: "26433", nowSec: TIMELOCK_S9 + 1 }).ok === false);
+  }
+
+  // Executor end to end over a stubbed API: create -> persist ->
+  // funding payload -> verify -> sign -> fund-gasless -> record.
+  const quote20S9 = { exchange_rate: "74630.764293657131342682080407", network_fee: 159, gasless_network_fee: 159, protocol_fee: 134, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "20000000", target_amount: "26726", net_source_amount: "20000000", net_target_amount: "26433" };
+  const createBtcS9 = {
+    id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 293,
+    evm_hash_lock: identityS9.hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
+    source_token: { token_id: POL_USDC_S9, symbol: "USDC", chain: "137", name: "USDC", decimals: 6 },
+    target_token: { token_id: "btc", symbol: "BTC", chain: "Bitcoin", name: "Bitcoin", decimals: 8 },
+    created_at: "2026-11-08T23:05:12.437373Z", chain: "Polygon", evm_chain_id: 137,
+    source_amount: "20000000", evm_expected_sats: "26726", target_amount: "26433",
+    evm_htlc_address: HTLC_S9, evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: COORD_S9,
+    client_evm_address: "0x0877999faBfDEd6ADBa3A97A3B46159d2F6A2F6B", server_evm_address: SERVER_EVM_S9,
+    evm_fund_txid: null, evm_claim_txid: null, evm_refund_locktime: TIMELOCK_S9, evm_funding_confirmations: 128,
+    btc_htlc_address: "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2",
+    btc_user_claim_pk: claimS9.claimPk.slice(2), btc_server_refund_pk: "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633",
+    btc_refund_locktime: 1794222312, btc_htlc_script_version: 1, btc_fund_txid: null, btc_fund_vout: null, btc_claim_txid: null,
+    wbtc_address: WBTC_S9, target_btc_address: null, network: "bitcoin", gasless: true,
+  };
+  const pairsS9 = [
+    { source: "42161", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "42161", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "137", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "137", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "1", target: "Bitcoin", min_sats: 10000, max_sats: 25000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "1", target: "Lightning", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+  ];
+  const stubS9 = ({ permit2 = null, fundResponse = null, seen = { funds: [], creates: [] } } = {}) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResS9([{ symbol: "BTCUSDT", price: String(BTC_USD_S9) }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResS9({});
+    if (u.includes("api.satora.io/version")) return jsonResS9({ tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
+    if (u.includes("api.satora.io/status")) return jsonResS9({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResS9(pairsS9);
+    if (u.includes("api.satora.io/quote")) return jsonResS9(quote20S9);
+    if (u.includes("api.satora.io/swap/evm/")) { seen.creates.push(JSON.parse(opts.body || "{}")); return jsonResS9(createBtcS9); }
+    if (u.includes("swap-and-lock-calldata-permit2")) return jsonResS9(permit2 || permit2S9({ hashLock: identityS9.hashLock }));
+    if (u.includes("fund-gasless")) { seen.funds.push(JSON.parse(opts.body || "{}")); return jsonResS9(fundResponse || { id: createBtcS9.id, status: "clientfundingseen", tx_hash: FUND_TX_S9, message: "ok" }); }
+    if (u.includes("api.satora.io/swap/")) return jsonResS9({ id: createBtcS9.id, status: "clientfundingseen" });
+    throw new Error("unexpected fetch: " + u);
+  };
+  const storeS9 = () => {
+    const m = new Map();
+    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
+  };
+  const ARGS20_S9 = { fromChainKey: "polygon", toChainKey: "bitcoin", fromTokenAddress: POL_USDC_S9, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: walletS9.address, toAddress: "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2" };
+
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { funds: [], creates: [] };
+    const store = storeS9();
+    globalThis.fetch = stubS9({ seen });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS20_S9))[0];
+      const before = Math.floor(Date.now() / 1000);
+      const hashes = await executeSatoraSwapRoute(walletS9, route, () => {}, { storage: store });
+      ok("satora exec: funding returns the relay's funding transaction hash", hashes.length === 1 && hashes[0] === FUND_TX_S9);
+      const body = seen.funds[0];
+      ok("satora exec: the submitted body is the spec's shape (exactly one submission)",
+        seen.funds.length === 1 && /^\d+$/.test(body.permit2_nonce) && BigInt(body.permit2_nonce) > 0n
+        && body.permit2_deadline >= before + SATORA_FUNDING_DEADLINE_SECS - 5 && body.permit2_deadline <= before + SATORA_FUNDING_DEADLINE_SECS + 60
+        && /^0x[0-9a-fA-F]{130}$/.test(body.permit2_signature)
+        && JSON.stringify(body.calls) === JSON.stringify(CALLS_S9)
+        && !("eip2612_permit" in body));
+      const saved = loadSatoraSwapRecords(store)[0];
+      const rebuilt = buildSatoraPermitTypedData({ comp: permit2S9({ hashLock: identityS9.hashLock }), record: saved, depositor: walletS9.address, nonce: BigInt(body.permit2_nonce), deadline: body.permit2_deadline, nowSec: body.permit2_deadline - SATORA_FUNDING_DEADLINE_SECS });
+      ok("satora exec: the submitted signature is the wallet's, over exactly the verified typed data",
+        rebuilt.ok === true && ethers.verifyTypedData(rebuilt.domain, rebuilt.types, rebuilt.message, body.permit2_signature) === walletS9.address);
+      ok("satora exec: the persisted record carries the funding outcome and the refreshed status",
+        saved.fundTxHash === FUND_TX_S9 && typeof saved.fundedAt === "number" && saved.status === "clientfundingseen");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // EIP-2612 variant: the side-permit rides the same submission,
+  // exact-amount, recoverable to the wallet.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { funds: [], creates: [] };
+    const store = storeS9();
+    const comp2612 = { ...permit2S9({ hashLock: identityS9.hashLock }), eip2612: { supported: true, already_approved: false, nonce: 7, domain_separator: DOMSEP_S9 } };
+    globalThis.fetch = stubS9({ permit2: comp2612, seen });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS20_S9))[0];
+      await executeSatoraSwapRoute(walletS9, route, () => {}, { storage: store });
+      const p = seen.funds[0] && seen.funds[0].eip2612_permit;
+      ok("satora exec: the EIP-2612 permit rides the submission at the EXACT amount",
+        !!p && p.value === "20000000" && p.nonce === 7 && /^[0-9a-f]{64}$/.test(p.r) && /^[0-9a-f]{64}$/.test(p.s) && (p.v === 27 || p.v === 28));
+      const saved = loadSatoraSwapRecords(store)[0];
+      const permit = buildSatoraEip2612Permit({ comp: comp2612, record: saved, depositor: walletS9.address, deadline: seen.funds[0].permit2_deadline });
+      ok("satora exec: the EIP-2612 signature recovers the wallet over the standard digest",
+        permit.ok === true && ethers.recoverAddress(permit.digest, { v: p.v, r: "0x" + p.r, s: "0x" + p.s }) === walletS9.address);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Tampered payload: the executor refuses BEFORE any submission;
+  // the created swap stays on record for recovery.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { funds: [], creates: [] };
+    const store = storeS9();
+    globalThis.fetch = stubS9({ permit2: permit2S9({ hashLock: identityS9.hashLock, calls_hash: "0x" + "00".repeat(32) }), seen });
+    try {
+      resetSatoraCaches();
+      const route = (await getSwapRoutes(ARGS20_S9))[0];
+      let execErr = null;
+      try { await executeSatoraSwapRoute(walletS9, route, () => {}, { storage: store }); } catch (e) { execErr = e; }
+      ok("satora exec: a tampered funding payload aborts before signing or submitting",
+        !!execErr && execErr.message.includes("refused") && seen.funds.length === 0);
+      const saved = loadSatoraSwapRecords(store)[0];
+      ok("satora exec: the refused swap stays persisted as pending (recoverable, unfunded)",
+        !!saved && saved.status === "pending" && saved.fundTxHash === null);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Submit verification: a relay answer about another swap (or
+  // without a funding hash) is a refusal, never a success.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = stubS9({ fundResponse: { id: "00000000-0000-0000-0000-000000000000", status: "clientfundingseen", tx_hash: FUND_TX_S9, message: "ok" } });
+    try {
+      let submitErr = null;
+      try { await submitSatoraFundGasless(recS9, { permit2_nonce: "1", permit2_deadline: 1, permit2_signature: "0x", calls: [] }); } catch (e) { submitErr = e; }
+      ok("satora exec: a funding answer for a different swap is refused", !!submitErr && submitErr.message.includes("different swap"));
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = stubS9({ fundResponse: { id: recS9.id, status: "clientfundingseen", message: "ok" } });
+    try {
+      let submitErr = null;
+      try { await submitSatoraFundGasless(recS9, { permit2_nonce: "1", permit2_deadline: 1, permit2_signature: "0x", calls: [] }); } catch (e) { submitErr = e; }
+      ok("satora exec: a funding answer without a transaction hash is refused", !!submitErr && submitErr.message.includes("carried no transaction hash"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Wiring pins: the app executes Satora routes through the
+  // executor with persistence; the old gate copy is gone from
+  // both layers.
+  {
+    const appSrcS9 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const coreSrcS9 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("satora exec: the app wires the executor with persistence and dropped the gate copy",
+      appSrcS9.includes("executeSatoraSwapRoute(wallet, route, (t) => msg(\"wMsg\", t, true), { storage: localStorage })")
+      && !appSrcS9.includes("funding for this route is not enabled yet")
+      && !appSrcS9.includes("Satora execution is not enabled in this build")
+      && !coreSrcS9.includes("Satora execution is not enabled in this build"));
+  }
+}
+
+// 68. Jupiter as PRIMARY for Solana same-chain swaps (2026-11-09,
+// Swap V2 /build on the keyless lite API): LI.FI's Solana routing
+// resells Jupiter's own liquidity at +0.25%, so the dispatcher
+// quotes Jupiter directly for Solana -> Solana pairs, ahead of
+// LI.FI. Fee (probed live, controlled back-to-back builds): the
+// platform fee is ALWAYS deducted from the OUTPUT amount —
+// feeRaw = grossOut - netOut = floor(grossOut x bps / 10000) —
+// whatever mint the fee account belongs to, so the fee account is
+// the DripBot collection wallet's ATA for the OUTPUT mint, and it
+// is attached only when that ATA verifiably exists on-chain (a
+// missing ATA quotes fee-free with the reason on the route).
+// Fixtures mirror the live probes of 2026-11-09: quote fields at
+// the top level, decomposed instructions (compute-budget / setup
+// incl. the SOL wrap System transfer + SyncNative / swap /
+// CloseAccount cleanup), routePlan split legs, byte-array
+// blockhash.
+{
+  const PHRASE_J8 = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const USER_J8 = solanaAddressFromPhrase(PHRASE_J8);
+  const WSOL_J8 = JUPITER_WRAPPED_SOL_MINT;
+  const USDC_J8 = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const TOKEN_J8 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const ATA_J8 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+  const SYS_J8 = "11111111111111111111111111111111";
+  const CB_J8 = "ComputeBudget111111111111111111111111111111";
+  const DRIP_J8 = JUPITER_FEE_WALLET;
+  const userWsolAtaJ8 = solanaAtaAddress(USER_J8, WSOL_J8, TOKEN_J8);
+  const userUsdcAtaJ8 = solanaAtaAddress(USER_J8, USDC_J8, TOKEN_J8);
+  const feeUsdcAtaJ8 = solanaAtaAddress(DRIP_J8, USDC_J8, TOKEN_J8);
+  const ATTACKER_J8 = solanaAddressFromPhrase(KNOWN_PHRASE);
+  const LUT_J8 = new SolPublicKey(new Uint8Array(32).fill(9)).toBase58();
+  const jsonResJ8 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const b64J8 = (bytes) => Buffer.from(bytes).toString("base64");
+  const sysTransferDataJ8 = (amount) => { const b = new Uint8Array(12); new DataView(b.buffer).setUint32(0, 2, true); new DataView(b.buffer).setBigUint64(4, BigInt(amount), true); return b64J8(b); };
+  const cbLimitDataJ8 = () => { const b = new Uint8Array(5); b[0] = 2; new DataView(b.buffer).setUint32(1, 200000, true); return b64J8(b); };
+  const cbPriceDataJ8 = () => { const b = new Uint8Array(9); b[0] = 3; new DataView(b.buffer).setBigUint64(1, 10000n, true); return b64J8(b); };
+  const ataIxJ8 = (owner, mint, program = TOKEN_J8) => ({ programId: ATA_J8, accounts: [
+    { pubkey: USER_J8, isSigner: true, isWritable: true },
+    { pubkey: solanaAtaAddress(owner, mint, program), isSigner: false, isWritable: true },
+    { pubkey: owner, isSigner: false, isWritable: false },
+    { pubkey: mint, isSigner: false, isWritable: false },
+    { pubkey: SYS_J8, isSigner: false, isWritable: false },
+    { pubkey: program, isSigner: false, isWritable: false },
+  ], data: b64J8(new Uint8Array([1])) });
+  // Gross output 20,000,000 USDC raw from 227,500,000 lamports,
+  // two parallel split legs; the fee-bearing shape deducts
+  // floor(gross x 49/10000) = 98,000 (the bps the law computes
+  // for this fixture's $0.02 route cost on a $20.02 input).
+  const buildRespJ8 = ({ fee = false, outOverride = null, legsOverride = null, mutate = null } = {}) => {
+    const legs = legsOverride || [
+      { percent: 50, swapInfo: { ammKey: "FixtureAmmA111111111111111111111111111111111", label: "FixtureA", inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "100000000", outAmount: "8800000" } },
+      { percent: 50, swapInfo: { ammKey: "FixtureAmmB111111111111111111111111111111111", label: "FixtureB", inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "127500000", outAmount: "11200000" } },
+    ];
+    const gross = 20000000, feeRaw = fee ? 98000 : 0;
+    const net = outOverride != null ? outOverride : gross - feeRaw;
+    const resp = {
+      inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "227500000", outAmount: String(net),
+      otherAmountThreshold: String(Math.floor(net * 0.995)), swapMode: "ExactIn", slippageBps: 50, priceImpactPct: "0.01",
+      routePlan: legs,
+      computeBudgetInstructions: [
+        { programId: CB_J8, accounts: [], data: cbLimitDataJ8() },
+        { programId: CB_J8, accounts: [], data: cbPriceDataJ8() },
+      ],
+      setupInstructions: [
+        ataIxJ8(USER_J8, WSOL_J8),
+        { programId: SYS_J8, accounts: [
+          { pubkey: USER_J8, isSigner: true, isWritable: true },
+          { pubkey: userWsolAtaJ8, isSigner: false, isWritable: true },
+        ], data: sysTransferDataJ8(227500000) },
+        { programId: TOKEN_J8, accounts: [{ pubkey: userWsolAtaJ8, isSigner: false, isWritable: true }], data: b64J8(new Uint8Array([17])) },
+        ataIxJ8(USER_J8, USDC_J8),
+      ],
+      swapInstruction: { programId: JUPITER_AGGREGATOR_PROGRAM, accounts: [
+        { pubkey: USER_J8, isSigner: true, isWritable: false },
+        { pubkey: userWsolAtaJ8, isSigner: false, isWritable: true },
+        { pubkey: userUsdcAtaJ8, isSigner: false, isWritable: true },
+        { pubkey: WSOL_J8, isSigner: false, isWritable: false },
+        { pubkey: USDC_J8, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_J8, isSigner: false, isWritable: false },
+        ...(fee ? [{ pubkey: feeUsdcAtaJ8, isSigner: false, isWritable: true }] : []),
+      ], data: b64J8(new Uint8Array(40).fill(7)) },
+      cleanupInstruction: { programId: TOKEN_J8, accounts: [
+        { pubkey: userWsolAtaJ8, isSigner: false, isWritable: true },
+        { pubkey: USER_J8, isSigner: false, isWritable: true },
+        { pubkey: USER_J8, isSigner: false, isWritable: false },
+      ], data: b64J8(new Uint8Array([9])) },
+      otherInstructions: [], tipInstruction: null,
+      addressesByLookupTableAddress: { [LUT_J8]: [USER_J8, WSOL_J8, USDC_J8] },
+      blockhashWithMetadata: { blockhash: Array.from({ length: 32 }, (_, i) => i + 1), lastValidBlockHeight: 445116750 },
+      transactionVersion: 0,
+    };
+    if (mutate) mutate(resp);
+    return resp;
+  };
+  const ARGS_J8 = { fromChainKey: "solana", toChainKey: "solana", fromTokenAddress: SOLANA_SWAP_NATIVE_TOKEN, toTokenAddress: USDC_J8, fromAmount: "227500000", fromAddress: USER_J8, toAddress: USER_J8 };
+  const PRICES_J8 = new Map([[WSOL_J8, { usdPrice: 88, decimals: 9 }], [USDC_J8, { usdPrice: 1, decimals: 6 }]]);
+
+  // Pins + eligibility matrix.
+  ok("jupiter: aggregator program + fee wallet pins (dripbot collection)",
+    JUPITER_AGGREGATOR_PROGRAM === "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    && DRIP_J8 === FEE_SPLIT.dripbot.agentWallet.solana && DRIP_J8 === "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn");
+  ok("jupiter: mint mapping (native SOL is the wrapped mint)",
+    jupiterMintOf(SOLANA_SWAP_NATIVE_TOKEN) === WSOL_J8 && jupiterMintOf(null) === WSOL_J8
+    && jupiterMintOf(USDC_J8) === USDC_J8 && jupiterMintOf("not-an-address") === null);
+  ok("jupiter: eligibility is Solana same-chain with the sender as recipient only",
+    jupiterSupportsPair(ARGS_J8) === true
+    && jupiterSupportsPair({ ...ARGS_J8, toChainKey: "base" }) === false
+    && jupiterSupportsPair({ ...ARGS_J8, fromChainKey: "base" }) === false
+    && jupiterSupportsPair({ ...ARGS_J8, toTokenAddress: SOLANA_SWAP_NATIVE_TOKEN }) === false
+    && jupiterSupportsPair({ ...ARGS_J8, toAddress: ATTACKER_J8 }) === false
+    && jupiterSupportsPair({ ...ARGS_J8, fromChainKey: "sui", toChainKey: "sui" }) === false);
+
+  // Request shape: fee fields ride only on the fee pass.
+  const paramsFreeJ8 = buildJupiterBuildParams(ARGS_J8);
+  ok("jupiter: fee-free params carry no fee fields and map native SOL to the wrapped mint",
+    paramsFreeJ8.get("inputMint") === WSOL_J8 && paramsFreeJ8.get("outputMint") === USDC_J8
+    && paramsFreeJ8.get("amount") === "227500000" && paramsFreeJ8.get("taker") === USER_J8
+    && !paramsFreeJ8.has("platformFeeBps") && !paramsFreeJ8.has("feeAccount"));
+  const paramsFeeJ8 = buildJupiterBuildParams(ARGS_J8, { feeBps: 49, feeAccount: feeUsdcAtaJ8 });
+  ok("jupiter: fee params carry the exact bps + the output-mint fee ATA",
+    paramsFeeJ8.get("platformFeeBps") === "49" && paramsFeeJ8.get("feeAccount") === feeUsdcAtaJ8);
+
+  // Fee-free parse: honest pricing, executable shape.
+  const freeRouteJ8 = parseJupiterBuild(buildRespJ8(), ARGS_J8, { prices: PRICES_J8 });
+  ok("jupiter: fee-free build parses to a route", !!freeRouteJ8 && freeRouteJ8.provider === "jupiter" && freeRouteJ8.fromChainId === SOLANA_LIFI_CHAIN_ID && freeRouteJ8.toChainId === SOLANA_LIFI_CHAIN_ID && freeRouteJ8.toAmount === "20000000" && freeRouteJ8.toAmountMin === "19900000");
+  ok("jupiter: route cost is the all-in shortfall against the gross output", !!freeRouteJ8 && Math.abs(freeRouteJ8.routeFeeUsd - 0.02) < 1e-6 && Math.abs(freeRouteJ8.fromAmountUSD - 20.02) < 1e-9 && Math.abs(freeRouteJ8.toAmountUSD - 20) < 1e-9);
+  ok("jupiter: fee-free route is not collecting and passes its bounds check", !!freeRouteJ8 && freeRouteJ8.platformFeeCollecting === false && freeRouteJ8.platformFeeRaw === "0" && checkJupiterSwapBounds(freeRouteJ8, USER_J8).ok === true);
+  ok("jupiter: parsed route is executable-shaped (jupiter gate, not the LI.FI SVM gate)", !!freeRouteJ8 && swapRouteExecutable(freeRouteJ8).ok === true && swapRouteExecutable(freeRouteJ8).jupiter === true);
+
+  // Fee-bearing parse: the fee is the final response's own figure.
+  const feeRouteJ8 = parseJupiterBuild(buildRespJ8({ fee: true }), ARGS_J8, { prices: PRICES_J8, feeBps: 49, feeAccount: feeUsdcAtaJ8, feeTokenProgram: TOKEN_J8 });
+  ok("jupiter: fee-bearing build parses with the derived fee (output mint)", !!feeRouteJ8 && feeRouteJ8.platformFeeRaw === "98000" && Math.abs(feeRouteJ8.platformFeeUsd - 0.098) < 1e-9 && feeRouteJ8.platformFeeCollecting === true && feeRouteJ8.jupiter.feeAccount === feeUsdcAtaJ8 && feeRouteJ8.jupiter.feeBps === 49);
+  ok("jupiter: fee is taken in the OUTPUT mint — its ATA is derived from the output mint",
+    feeUsdcAtaJ8 === solanaAtaAddress(DRIP_J8, USDC_J8, TOKEN_J8) && feeUsdcAtaJ8 !== solanaAtaAddress(DRIP_J8, WSOL_J8, TOKEN_J8));
+
+  // Bounds-check refusals: every tamper falls back to LI.FI.
+  ok("jupiter: a foreign program instruction refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.otherInstructions = [{ programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", accounts: [], data: b64J8(new Uint8Array([1])) }]; } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: a tip instruction refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.tipInstruction = { programId: SYS_J8, accounts: [{ pubkey: USER_J8, isSigner: true, isWritable: true }, { pubkey: ATTACKER_J8, isSigner: false, isWritable: true }], data: sysTransferDataJ8(1000) }; } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: a broken route plan (leg amounts do not conserve) refuses",
+    parseJupiterBuild(buildRespJ8({ legsOverride: [
+      { percent: 50, swapInfo: { ammKey: "FixtureAmmA111111111111111111111111111111111", label: "FixtureA", inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "100000000", outAmount: "8800000" } },
+      { percent: 50, swapInfo: { ammKey: "FixtureAmmB111111111111111111111111111111111", label: "FixtureB", inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "127500000", outAmount: "11200001" } },
+    ] }), ARGS_J8, { prices: PRICES_J8 }) === null
+    && parseJupiterBuild(buildRespJ8({ legsOverride: [
+      { percent: 100, swapInfo: { ammKey: "FixtureAmmA111111111111111111111111111111111", label: "FixtureA", inputMint: WSOL_J8, outputMint: USDC_J8, inAmount: "227499999", outAmount: "20000000" } },
+    ] }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: output below the quoted minimum refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.otherAmountThreshold = String(Number(r.outAmount) + 1); } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: a fee different from the requested bps refuses", parseJupiterBuild(buildRespJ8({ fee: true, outOverride: 19950000 }), ARGS_J8, { prices: PRICES_J8, feeBps: 49, feeAccount: feeUsdcAtaJ8, feeTokenProgram: TOKEN_J8 }) === null);
+  ok("jupiter: a fee paid anywhere but the collection ATA refuses", parseJupiterBuild(buildRespJ8({ fee: true }), ARGS_J8, { prices: PRICES_J8, feeBps: 49, feeAccount: userUsdcAtaJ8, feeTokenProgram: TOKEN_J8 }) === null);
+  ok("jupiter: a System transfer to anyone but the user's own wSOL account refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.setupInstructions[1].accounts[1].pubkey = ATTACKER_J8; } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: a top-level token transfer refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.cleanupInstruction.data = b64J8(new Uint8Array([3, 1, 0, 0, 0, 0, 0, 0, 0])); } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: an ATA creation for someone else refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.setupInstructions[3].accounts[2].pubkey = ATTACKER_J8; } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+  ok("jupiter: a foreign signer refuses", parseJupiterBuild(buildRespJ8({ mutate: (r) => { r.swapInstruction.accounts.push({ pubkey: ATTACKER_J8, isSigner: true, isWritable: false }); } }), ARGS_J8, { prices: PRICES_J8 }) === null);
+
+  // Wire stubs: Jupiter API + Solana RPC share the global fetch.
+  const rpcJ8 = ({ feeAtaExists = true } = {}) => async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    if (body.method === "getAccountInfo") {
+      const addr = body.params[0];
+      const acct = (owner) => ({ context: { slot: 1 }, value: { owner, data: ["", "base64"], lamports: 2039280, executable: false, rentEpoch: 0 } });
+      if (addr === USDC_J8) return jsonResJ8({ jsonrpc: "2.0", id: 1, result: acct(TOKEN_J8) });
+      if (addr === feeUsdcAtaJ8) return jsonResJ8({ jsonrpc: "2.0", id: 1, result: feeAtaExists ? acct(TOKEN_J8) : { context: { slot: 1 }, value: null } });
+      return jsonResJ8({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: null } });
+    }
+    throw new Error("unexpected rpc in jupiter stub: " + body.method);
+  };
+  const lifiRouteJ8 = () => ({ id: "lifi-sol-fixture", fromAmountUSD: "20.02", toAmountUSD: "19.99", fromAmount: "227500000", toAmount: "19990000",
+    steps: [{ estimate: { feeCosts: [{ amountUSD: "0.05" }], gasCosts: [{ amountUSD: "0.001" }], toAmountUSD: "19.99", fromAmountUSD: "20.02" } }] });
+
+  // Two-pass wire flow: pass 1 fee-free reads the cost; the law
+  // prices 49 bps (5x the $0.02 shortfall, under the cap and the
+  // $0.30 Solana ceiling); pass 2 carries exactly that bps + the
+  // fee ATA, and the executed route discloses pass 2's own fee.
+  {
+    const realFetch = globalThis.fetch;
+    const buildUrls = [];
+    resetJupiterCaches();
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("lite-api.jup.ag/price")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 }, [USDC_J8]: { usdPrice: 1, decimals: 6 } });
+      if (u.includes("lite-api.jup.ag/swap/v2/build")) { buildUrls.push(u); return jsonResJ8(buildRespJ8({ fee: u.includes("platformFeeBps=") })); }
+      if (u.includes("publicnode") || u.includes("api.mainnet-beta.solana.com")) return rpcJ8()(url, opts);
+      throw new Error("unexpected fetch in jupiter two-pass stub: " + u);
+    };
+    try {
+      const routes = await getSwapRoutes(ARGS_J8);
+      const r = routes[0];
+      ok("jupiter: dispatcher returns the Jupiter route as Solana same-chain primary", routes.length === 1 && r.provider === "jupiter" && buildUrls.length === 2);
+      ok("jupiter: pass 1 is fee-free, pass 2 carries the law's bps + fee ATA",
+        !buildUrls[0].includes("platformFeeBps") && buildUrls[1].includes("platformFeeBps=49") && buildUrls[1].includes("feeAccount=" + feeUsdcAtaJ8));
+      ok("jupiter: fee law applied (5x route cost = 49 bps) and disclosed from the final build",
+        r.platformFeeBps === 49 && r.platformFeeRaw === "98000" && Math.abs(r.platformFeeUsd - 0.098) < 1e-9 && r.platformFeeCollecting === true && r.jupiter.feeSkipped === null);
+      const ranked = rankSwapRoutes(routes, 1);
+      ok("jupiter: route ranks by net value like any other", ranked[0].provider === "jupiter" && ranked[0].cheapest === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Fee-ATA honesty: the account does not exist -> the SAME cheap
+  // Jupiter route, quoted fee-free in ONE pass, reason recorded.
+  {
+    const realFetch = globalThis.fetch;
+    const buildUrls = [];
+    resetJupiterCaches();
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("lite-api.jup.ag/price")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 }, [USDC_J8]: { usdPrice: 1, decimals: 6 } });
+      if (u.includes("lite-api.jup.ag/swap/v2/build")) { buildUrls.push(u); return jsonResJ8(buildRespJ8()); }
+      if (u.includes("publicnode") || u.includes("api.mainnet-beta.solana.com")) return rpcJ8({ feeAtaExists: false })(url, opts);
+      throw new Error("unexpected fetch in jupiter ata-missing stub: " + u);
+    };
+    try {
+      const routes = await getSwapRoutes(ARGS_J8);
+      const r = routes[0];
+      ok("jupiter: missing fee ATA quotes fee-free through Jupiter (never a fee to nowhere)",
+        routes.length === 1 && r.provider === "jupiter" && buildUrls.length === 1 && !buildUrls[0].includes("platformFeeBps")
+        && r.platformFeeBps === 0 && r.platformFeeCollecting === false && r.jupiter.feeSkipped === "ata-missing" && swapRouteExecutable(r).ok === true);
+      const state = await jupiterFeeAccountFor(USDC_J8);
+      ok("jupiter: fee-account probe reports the missing ATA (negatives are not cached as live)", state.feeAccount === null && state.feeSkipped === "ata-missing");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // 429 on the lite bucket -> LI.FI serves the pair, unchanged.
+  {
+    const realFetch = globalThis.fetch;
+    let jupBuilds = 0;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("lite-api.jup.ag/price")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 }, [USDC_J8]: { usdPrice: 1, decimals: 6 } });
+      if (u.includes("lite-api.jup.ag/swap/v2/build")) { jupBuilds++; return jsonResJ8({ code: 429, message: "Too many requests" }, false, 429); }
+      if (u.includes("li.quest/v1/routes")) return jsonResJ8({ routes: [lifiRouteJ8()] });
+      throw new Error("unexpected fetch in jupiter 429 stub: " + u);
+    };
+    try {
+      const routes = await getSwapRoutes(ARGS_J8);
+      ok("jupiter: a 429 from the lite bucket falls back to LI.FI", jupBuilds >= 1 && routes.length === 1 && routes[0].id === "lifi-sol-fixture" && routes[0].provider !== "jupiter");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Isolation: non-Solana pairs and Solana cross-chain never touch
+  // the Jupiter API at all.
+  {
+    const realFetch = globalThis.fetch;
+    let jupCalls = 0;
+    const relayQuoteMinJ8 = () => ({ requestId: "0x68", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
+      fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
+      details: { sender: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", recipient: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", currencyIn: { currency: { chainId: 8453, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" }, currencyOut: { currency: { chainId: 42161, address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", symbol: "USDC", decimals: 6 }, amount: "99965000", amountUsd: "99.965", minimumAmount: "99000000" }, timeEstimate: 1 } });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      // Jupiter's SWAP router must never serve these pairs. (Its
+      // PRICE api may legitimately be read by the Mayan candidate
+      // to price Solana rent — a price read is not a route.)
+      if (u.includes("lite-api.jup.ag/swap")) { jupCalls++; throw new Error("jupiter swap must not be called for this pair"); }
+      if (u.includes("lite-api.jup.ag")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 } });
+      if (u.includes("app.across.to")) return jsonResJ8({ message: "Too Many Requests" }, false, 429);
+      if (u.includes("api.relay.link/quote")) return jsonResJ8(relayQuoteMinJ8());
+      if (u.includes("li.quest/v1/routes")) return jsonResJ8({ routes: [lifiRouteJ8()] });
+      throw new Error("unexpected fetch in jupiter isolation stub: " + u);
+    };
+    try {
+      const evm = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "100000000", fromAddress: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", toAddress: "0x0EBf5563F905E3B9D58718E28E08143511DC763b" });
+      ok("jupiter: EVM pairs never touch Jupiter and keep the existing order", evm.length === 1 && evm[0].provider === "relay" && jupCalls === 0);
+      const xchain = await getSwapRoutes({ ...ARGS_J8, toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
+      ok("jupiter: Solana cross-chain stays on LI.FI (Jupiter is Solana-internal)", xchain.length === 1 && xchain[0].id === "lifi-sol-fixture" && jupCalls === 0);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Execution, end to end over a stubbed RPC: the assembled v0
+  // transaction is signed by the wallet's own key and broadcast
+  // through Fluid's RPC path; a tampered route refuses pre-sign.
+  {
+    const { VersionedTransaction: VTJ8 } = await import("@solana/web3.js");
+    const realFetch = globalThis.fetch;
+    const freshBhJ8 = new SolPublicKey(new Uint8Array(32).fill(3)).toBase58();
+    let sentPayloadJ8 = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("publicnode") || u.includes("api.mainnet-beta.solana.com")) {
+        const body = JSON.parse(opts.body);
+        if (body.method === "getLatestBlockhash") return jsonResJ8({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: { blockhash: freshBhJ8, lastValidBlockHeight: 999 } } });
+        if (body.method === "sendTransaction") { sentPayloadJ8 = body.params[0]; return jsonResJ8({ jsonrpc: "2.0", id: 1, result: "FixtureJupiterSignature" }); }
+        throw new Error("unexpected rpc in jupiter exec stub: " + body.method);
+      }
+      throw new Error("unexpected fetch in jupiter exec stub: " + u);
+    };
+    try {
+      const hashes = await executeJupiterSwapRoute(PHRASE_J8, feeRouteJ8);
+      ok("jupiter: executor signs and broadcasts through Fluid's own RPC", hashes.length === 1 && hashes[0] === "FixtureJupiterSignature" && typeof sentPayloadJ8 === "string");
+      const sent = VTJ8.deserialize(Buffer.from(sentPayloadJ8, "base64"));
+      ok("jupiter: the broadcast transaction is a v0 tx paying from the user's own account",
+        sent.message.staticAccountKeys[0].toBase58() === USER_J8 && sent.signatures.some(s => s.some(b => b !== 0)));
+      const tampered = JSON.parse(JSON.stringify(feeRouteJ8));
+      tampered.jupiter.quote.outAmount = "1";
+      let execErr = null;
+      try { await executeJupiterSwapRoute(PHRASE_J8, tampered); } catch (e) { execErr = e; }
+      ok("jupiter: a tampered route is refused before signing", !!execErr && /refused|disagrees/.test(execErr.message));
+      let takerErr = null;
+      try { await executeJupiterSwapRoute(KNOWN_PHRASE, feeRouteJ8); } catch (e) { takerErr = e; }
+      ok("jupiter: a route built for another account is refused", !!takerErr && takerErr.message.includes("different account"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Review sentence + app/core wiring (source pins, as in §66/§67).
+  const intentJ8 = formatSwapIntent({ fromAmount: "0.2275", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "19.902", toSymbol: "USDC", toNetKey: "solana", toolName: "Jupiter", feeUsd: 0.0006, durationSec: null, platformFeeUsd: 0.098, platformFeePct: 0.49 });
+  ok("jupiter: intent sentence names Jupiter + the fee", intentJ8.includes("via Jupiter") && intentJ8.includes("Fluid fee: $0.10 (0.49%)"));
+  const appSrcJ8 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("jupiter: app names the router, discloses its fee from the quote, and executes it before the LI.FI Solana branch",
+    appSrcJ8.includes('if (route && route.provider === "jupiter") return "Jupiter";')
+    && appSrcJ8.includes('r.provider === "jupiter" && r.platformFeeCollecting === true')
+    && appSrcJ8.includes("executeJupiterSwapRoute(wallet.mnemonic.phrase, route")
+    && appSrcJ8.indexOf('route.provider === "jupiter"') > appSrcJ8.indexOf('route.provider === "across"')
+    && appSrcJ8.indexOf("executeJupiterSwapRoute(wallet.mnemonic.phrase, route") < appSrcJ8.indexOf('hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route'));
+  const coreSrcJ8 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("jupiter: core pins the lite base, the aggregator program, and bounds-checks before signing",
+    coreSrcJ8.includes("https://lite-api.jup.ag")
+    && coreSrcJ8.includes('JUPITER_AGGREGATOR_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"')
+    && coreSrcJ8.indexOf("checkJupiterSwapBounds(route, myAddr)") > -1
+    && coreSrcJ8.indexOf("checkJupiterSwapBounds(route, myAddr)") < coreSrcJ8.indexOf("jtx.sign([kp])"));
+}
+
+// ---------- Mayan (ranked candidate: Swift + Fast MCTP) ----------
+// Fixtures are the research session's LIVE quote captures
+// (2026-11-09, research_notes/fluid-mayan-research-20261109/),
+// trimmed to the fields the port reads, with only the deadline
+// rolled forward (a quote's deadline is a live value). The
+// owner's rule under test throughout: Mayan serves ONLY when
+// its live quote ranks cheapest — never by priority.
+{
+  const jsonResM = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const EVM_USER_M = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const SOL_USER_M = "FDo3sA7RKCD4KTGutuQXHVLAjavrgNQF547fB8tPhqMz";
+  const USDC_SOL_M = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDC_ARB_M = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const USDC_BASE_M = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const WETH_ARB_M = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
+  const WSOL_M = "So11111111111111111111111111111111111111112";
+  const futureDlM = () => String(Math.floor(Date.now() / 1000) + 3600);
+  // Lane B Swift capture: USDC Solana -> USDC Arbitrum, $100.
+  const swiftSolQuoteM = (over = {}) => ({
+    type: "SWIFT", gasless: false, swiftVersion: "V2", fromChain: "solana", toChain: "arbitrum",
+    fromToken: { contract: USDC_SOL_M, symbol: "USDC", decimals: 6, standard: "spl" },
+    toToken: { contract: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", symbol: "USDC", decimals: 6, standard: "erc20" },
+    effectiveAmountIn: 100, effectiveAmountIn64: "100000000",
+    expectedAmountOut: 99.934069, expectedAmountOutBaseUnits: "99934069",
+    minAmountOut: 99.934069, minReceived: 99.934069, minReceivedBaseUnits: "99934069",
+    minMiddleAmount: 100, price: 0.9996000212869403, toTokenPrice: 0.99976019,
+    protocolBps: 0, protocolFeeUsd: 0, referrerBps: 0, referrerFeeUsd: 0,
+    swiftMayanContract: "mayan34VedncxdK2XobtvWFDXQASUTBXhUVzt2kKgny", swiftInputContract: USDC_SOL_M,
+    swiftInputDecimals: 6, swiftInputContractStandard: "spl", swiftWrapAndLock: false, swiftAuctionMode: 3,
+    cancelRelayerFee64: "4476", refundRelayerFee64: "15339", submitRelayerFee64: "0",
+    deadline64: futureDlM(), gasDrop: 0, slippageBps: 100, etaSeconds: 3,
+    rentCost: "3000000", suggestedPriorityFee: 30000, quoteId: "0xeba18d1fc6e6c2ff778e500e330fba53",
+    ...over,
+  });
+  // Lane B Fast MCTP capture (bridge mode): same pair, $100.
+  const fastSolQuoteM = (over = {}) => ({
+    type: "FAST_MCTP", gasless: false, hasAuction: false, fromChain: "solana", toChain: "arbitrum",
+    fromToken: { contract: USDC_SOL_M, symbol: "USDC", decimals: 6, standard: "spl" },
+    toToken: { contract: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", symbol: "USDC", decimals: 6, standard: "erc20" },
+    effectiveAmountIn: 100, effectiveAmountIn64: "100000000",
+    expectedAmountOut: 99.907438, expectedAmountOutBaseUnits: "99907438",
+    minAmountOut: 98.868326, minReceived: 98.868326, minReceivedBaseUnits: "98868326",
+    minMiddleAmount: 99.0005158281, price: 0.9997239156922222, toPrice: 0.99976019,
+    protocolBps: 3, protocolFeeUsd: 0.0299812251, referrerBps: 0, referrerFeeUsd: 0,
+    fastMctpMayanContract: "Gx9rivpS3YR8pBFwMuP6omYqVxunpLvLkNn7ubNyuZZ5", fastMctpInputContract: USDC_SOL_M,
+    circleMaxFee64: "11001", fastMctpMinFinality: 1,
+    redeemRelayerFee: 0.051583, redeemRelayerFee64: "51583", refundRelayerFee64: "51583", solanaRelayerFee64: "0",
+    deadline64: futureDlM(), gasDrop: 0, slippageBps: 100, etaSeconds: 35,
+    rentCost: "1774800", suggestedPriorityFee: 30000, quoteId: "0x5294c812c3fe3b9543565a9473aa2132",
+    ...over,
+  });
+  // Lane C Swift capture: USDC Base -> WETH Arbitrum, $100 (source swap).
+  const swiftEvmSwapQuoteM = (over = {}) => ({
+    type: "SWIFT", gasless: false, swiftVersion: "V2", fromChain: "base", toChain: "arbitrum",
+    fromToken: { contract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, standard: "erc20" },
+    toToken: { contract: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1", symbol: "WETH", decimals: 18, standard: "erc20" },
+    effectiveAmountIn: 100, effectiveAmountIn64: "100000000",
+    expectedAmountOut: 0.0464810813805816, expectedAmountOutBaseUnits: "46481081380581600",
+    minAmountOut: 0.0460162705667758, minReceived: 0.0460162705667758, minReceivedBaseUnits: "46016270566775800",
+    minMiddleAmount: 0.04617976647945984, price: 0.0004648765176352921, toTokenPrice: 2152.72962889,
+    protocolBps: 0, protocolFeeUsd: 0, referrerBps: 0, referrerFeeUsd: 0,
+    swiftMayanContract: "0x40fFE85A28DC9993541449464d7529a922142960", swiftInputContract: "0x4200000000000000000000000000000000000006",
+    swiftInputDecimals: 18, swiftInputContractStandard: "erc20", swiftWrapAndLock: true, swiftAuctionMode: 2,
+    evmSwapRouterAddress: "0xC87De04e2EC1F4282dFF2933A2D58199f688fC3d",
+    evmSwapRouterCalldata: "0x3f0bde254f0b939e398d2c31b0757d009222de99c6e461d3de1500000000000000000000000005f5e10000000000000000000094b376c869405608939e398d2c31b0757d009222de99c6e461d3de15337685fdab40d39bd02028545a4ffa7d287cc3e2833589fcd6edb6e08f4c7c32d4f71b54bda029134200000000000000000000000000000000000006b94b22332abf5f89877a14cc88f2abc48c34b3dfec3c3755b9ded4a2960ef50c9b48c1694ce274c2cbb7c0000ab88b473b1f5afd9ef808440eed33bf2bfd1fc5e25a8f55c2e849492ad7966ea8a0dd9e460402440506f9204a6f35db0307710301ff",
+    cancelRelayerFee64: "210", refundRelayerFee64: "137", submitRelayerFee64: "0",
+    deadline64: futureDlM(), gasDrop: 0, slippageBps: 100, etaSeconds: 3,
+    rentCost: "3000000", suggestedPriorityFee: 0, quoteId: "0x1f6073ede28d59356f9af5a40eb79b43",
+    ...over,
+  });
+  // Lane D shape: USDC Base -> USDC Arbitrum direct Swift, $100.
+  const swiftEvmDirectQuoteM = (over = {}) => ({
+    type: "SWIFT", gasless: false, swiftVersion: "V2", fromChain: "base", toChain: "arbitrum",
+    fromToken: { contract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, standard: "erc20" },
+    toToken: { contract: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", symbol: "USDC", decimals: 6, standard: "erc20" },
+    effectiveAmountIn: 100, effectiveAmountIn64: "100000000",
+    expectedAmountOut: 99.93, expectedAmountOutBaseUnits: "99930000",
+    minAmountOut: 99.93, minReceived: 99.93, minReceivedBaseUnits: "99930000",
+    minMiddleAmount: 100, price: 0.9996, toTokenPrice: 0.99976,
+    protocolBps: 0, protocolFeeUsd: 0, referrerBps: 0, referrerFeeUsd: 0,
+    swiftMayanContract: "0x40fFE85A28DC9993541449464d7529a922142960", swiftInputContract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    swiftInputDecimals: 6, swiftInputContractStandard: "erc20", swiftWrapAndLock: false, swiftAuctionMode: 3,
+    cancelRelayerFee64: "210", refundRelayerFee64: "137", submitRelayerFee64: "0",
+    deadline64: futureDlM(), gasDrop: 0, slippageBps: 100, etaSeconds: 3,
+    rentCost: "3000000", suggestedPriorityFee: 0, quoteId: "0xdddddddddddddddddddddddddddddddd",
+    ...over,
+  });
+  const argsSolM = { fromChainKey: "solana", toChainKey: "arbitrum", fromTokenAddress: USDC_SOL_M, toTokenAddress: USDC_ARB_M, fromAmount: "100000000", fromAddress: SOL_USER_M, toAddress: EVM_USER_M };
+  const argsEvmSwapM = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_BASE_M, toTokenAddress: WETH_ARB_M, fromAmount: "100000000", fromAddress: EVM_USER_M, toAddress: EVM_USER_M };
+  const argsEvmDirectM = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_BASE_M, toTokenAddress: USDC_ARB_M, fromAmount: "100000000", fromAddress: EVM_USER_M, toAddress: EVM_USER_M };
+  // A fee-bearing variant of a quote, as Mayan's pass 2 answers:
+  // the bps echoed, the fee priced in USD, the output reduced
+  // by the fee (the appendix's proven direction).
+  const withFeeM = (q, bps, outHuman) => ({
+    ...q, referrerBps: bps, referrerFeeUsd: bps / 100,
+    expectedAmountOut: outHuman, expectedAmountOutBaseUnits: String(Math.round(outHuman * 10 ** q.toToken.decimals)),
+    minAmountOut: outHuman, minReceived: outHuman, minReceivedBaseUnits: String(Math.round(outHuman * 10 ** q.toToken.decimals)),
+  });
+  // Stub fetch for Mayan quote rounds: answers quoteFor(body)
+  // and prices SOL for the rent line. Records request bodies.
+  const stubMayanQuotesM = (quoteFor) => {
+    const realFetch = globalThis.fetch; const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("lite-api.jup.ag/price")) return jsonResM({ [WSOL_M]: { usdPrice: 87.38, decimals: 9 } });
+      if (u.includes("price-api.mayan.finance/v3/quote")) { const b = JSON.parse(opts.body); bodies.push(b); return jsonResM({ quotes: [quoteFor(b)] }); }
+      throw new Error("unexpected fetch in mayan stub: " + u);
+    };
+    return { bodies, restore: () => { globalThis.fetch = realFetch; } };
+  };
+
+  // Eligibility matrix (v1 scope).
+  ok("mayan: Solana -> covered EVM is eligible", mayanSupportsPair(argsSolM) === true);
+  ok("mayan: covered EVM <-> EVM is eligible", mayanSupportsPair(argsEvmSwapM) === true && mayanSupportsPair(argsEvmDirectM) === true);
+  ok("mayan: EVM -> Solana is OUT (verified tie, owner's rule)", mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "solana", toTokenAddress: USDC_SOL_M, toAddress: SOL_USER_M }) === false);
+  ok("mayan: same-chain pairs are out", mayanSupportsPair({ ...argsSolM, toChainKey: "solana", toTokenAddress: USDC_SOL_M }) === false
+    && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "base", toTokenAddress: USDC_BASE_M }) === false);
+  ok("mayan: Sui is out on both sides in v1 (construction probe — see report)", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "sui" }) === false
+    && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "sui" }) === false && mayanSupportsPair({ ...argsSolM, toChainKey: "sui" }) === false);
+  ok("mayan: chains outside the catalog are out", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "fuse" }) === false
+    && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "bitcoin" }) === false && mayanSupportsPair({ ...argsSolM, fromChainKey: "tron" }) === false);
+  ok("mayan: chain/token mapping", mayanChainNameOf("base") === "base" && mayanChainNameOf("solana") === "solana" && mayanChainNameOf("sui") === null && mayanChainNameOf("tron") === null
+    && mayanTokenOf("base", LIFI_NATIVE_TOKEN) === "0x0000000000000000000000000000000000000000"
+    && mayanTokenOf("solana", SOLANA_SWAP_NATIVE_TOKEN) === WSOL_M && mayanTokenOf("solana", "not-an-address") === null);
+
+  // Quote-request wire shape: the API's traps are all disarmed.
+  {
+    const p1 = buildMayanQuoteBody(argsSolM);
+    const p2 = buildMayanQuoteBody(argsSolM, { feeBps: 12 });
+    ok("mayan: quote body selects Swift + Fast MCTP only, with the mandatory params",
+      p1.swift === true && p1.fastMctp === true && p1.mctp === false && p1.wormhole === false && p1.gasless === false
+      && p1.sdkVersion === MAYAN_SDK_VERSION && p1.forwarderAddress === MAYAN_FORWARDER && p1.amountIn64 === "100000000"
+      && p1.fromChain === "solana" && p1.toChain === "arbitrum");
+    ok("mayan: fee identity rides every quote; the bps ride only when charged (pass discipline)",
+      p1.referrer === MAYAN_REFERRER_SOLANA && !("referrerBps" in p1) && p2.referrerBps === 12 && p2.referrer === MAYAN_REFERRER_SOLANA);
+    ok("mayan: the fee identity is the DripBot collection wallet (single referrer; the 60/40 split settles under the $2 rule)",
+      MAYAN_REFERRER_SOLANA === FEE_SPLIT.dripbot.agentWallet.solana && MAYAN_REFERRER_EVM === FEE_SPLIT.dripbot.agentWallet.evm);
+    ok("mayan: referrer resolves by the chain that PAYS (Swift: source; Fast MCTP: destination)",
+      mayanReferrerFor(swiftSolQuoteM()) === MAYAN_REFERRER_SOLANA && mayanReferrerFor(swiftEvmSwapQuoteM()) === MAYAN_REFERRER_EVM
+      && mayanReferrerFor(fastSolQuoteM()) === MAYAN_REFERRER_EVM);
+  }
+
+  // Quote parsing: the honest shapes parse; every unverifiable
+  // shape refuses to null.
+  {
+    const r = parseMayanQuote(swiftSolQuoteM(), argsSolM, { feeBps: 0, solPriceUsd: 87.38 });
+    ok("mayan: a live-shaped Swift quote parses to a route", !!r && r.provider === "mayan" && r.mayan.routeType === "SWIFT"
+      && r.toAmount === "99934069" && r.platformFeeCollecting === false && r.platformFeeBps === 0);
+    ok("mayan: route cost reads the model's definition (explicit fee vs gross shortfall)",
+      Math.abs(r.routeFeeUsd - (r.fromAmountUSD - r.toAmountUSD)) < 1e-9 && r.routeFeeUsd > 0.02 && r.routeFeeUsd < 0.03);
+    ok("mayan: Solana rent is priced into gasCostUSD from the quote's own rentCost",
+      Math.abs(r.gasCostUSD - ((3000000 + 5000) / 1e9) * 87.38) < 1e-9);
+    const rf = parseMayanQuote(fastSolQuoteM(), argsSolM, { feeBps: 0, solPriceUsd: 87.38 });
+    ok("mayan: a live-shaped Fast MCTP bridge quote parses (route cost = the larger of its protocol fee and the shortfall)",
+      !!rf && rf.mayan.routeType === "FAST_MCTP" && rf.mayan.hasAuction === false && rf.routeFeeUsd > 0.0299812251
+      && Math.abs(rf.routeFeeUsd - (rf.fromAmountUSD - rf.toAmountUSD)) < 1e-9);
+    const rc = parseMayanQuote(swiftEvmSwapQuoteM(), argsEvmSwapM, { feeBps: 0 });
+    ok("mayan: the cross-asset EVM quote parses with USD read through the price ratio (price x toTokenPrice)",
+      !!rc && Math.abs(rc.fromAmountUSD - 100 * 0.0004648765176352921 * 2152.72962889) < 1e-6 && rc.mayan.needsSwap === true && rc.gasCostUSD === 0);
+    ok("mayan: slow MCTP / gasless / Swift V1 quotes are refused", parseMayanQuote(swiftSolQuoteM({ type: "MCTP" }), argsSolM, {}) === null
+      && parseMayanQuote(swiftSolQuoteM({ gasless: true }), argsSolM, {}) === null
+      && parseMayanQuote(swiftSolQuoteM({ swiftVersion: "V1" }), argsSolM, {}) === null);
+    ok("mayan: quotes that disagree with the request are refused", parseMayanQuote(swiftSolQuoteM({ toChain: "base" }), argsSolM, {}) === null
+      && parseMayanQuote(swiftSolQuoteM({ effectiveAmountIn64: "50000000" }), argsSolM, {}) === null
+      && parseMayanQuote(swiftSolQuoteM({ fromToken: { contract: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", symbol: "BONK", decimals: 5, standard: "spl" } }), argsSolM, {}) === null);
+    ok("mayan: a fee-bearing quote must echo the requested bps and price the fee",
+      parseMayanQuote(swiftSolQuoteM(), argsSolM, { feeBps: 10 }) === null
+      && parseMayanQuote(withFeeM(swiftSolQuoteM(), 10, 99.83), argsSolM, { feeBps: 12 }) === null
+      && !!parseMayanQuote(withFeeM(swiftSolQuoteM(), 10, 99.83), argsSolM, { feeBps: 10 }));
+    ok("mayan: expired, under-guaranteed and undisclosed-swap quotes are refused",
+      parseMayanQuote(swiftSolQuoteM({ deadline64: "1000000000" }), argsSolM, {}) === null
+      && parseMayanQuote(swiftSolQuoteM({ minReceivedBaseUnits: "100000001" }), argsSolM, {}) === null
+      && parseMayanQuote(swiftEvmSwapQuoteM({ evmSwapRouterCalldata: null }), argsEvmSwapM, {}) === null);
+  }
+
+  // Two-pass fee flow, Solana source: pass 1 fee-free reads the
+  // cost; pass 2 carries the law's bps; the disclosed fee is the
+  // final quote's own referrerFeeUsd.
+  {
+    const stub = stubMayanQuotesM((b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM());
+    try {
+      const route = await getMayanSwapRoute(argsSolM);
+      ok("mayan: two-pass wire flow (pass 1 fee-free, pass 2 carries exactly the charged bps)",
+        stub.bodies.length === 2 && !("referrerBps" in stub.bodies[0]) && stub.bodies[1].referrerBps === route.platformFeeBps && route.platformFeeBps > 0);
+      ok("mayan: the disclosed fee comes from the final quote's own referrerFeeUsd",
+        route.platformFeeCollecting === true && Math.abs(route.platformFeeUsd - route.platformFeeBps / 100) < 1e-9);
+      ok("mayan: a Solana-source route needs no EVM payload and is executable", route.mayan.tx === null && swapRouteExecutable(route).ok === true);
+    } finally { stub.restore(); }
+  }
+
+  // Two-pass fee flow, EVM source (source-swap Swift): the
+  // payload is built and bounds-checked at quote time.
+  {
+    const stub = stubMayanQuotesM((b) => b.referrerBps ? withFeeM(swiftEvmSwapQuoteM(), b.referrerBps, 0.0464810813805816 - (b.referrerBps / 100) / 2152.72962889) : swiftEvmSwapQuoteM());
+    try {
+      const route = await getMayanSwapRoute(argsEvmSwapM);
+      ok("mayan: EVM two-pass flow prices the fee and builds the Forwarder payload at quote time",
+        stub.bodies.length === 2 && route.platformFeeBps > 0 && !!route.mayan.tx && route.mayan.tx.to === MAYAN_FORWARDER && route.mayan.tx.value === "0");
+      const fwd = new ethers.Interface([
+        "function forwardERC20(address tokenIn, uint256 amountIn, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permitParams, address mayanProtocol, bytes protocolData)",
+        "function swapAndForwardERC20(address tokenIn, uint256 amountIn, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permitParams, address swapProtocol, bytes swapData, address middleToken, uint256 minMiddleAmount, address mayanProtocol, bytes mayanData)",
+      ]);
+      const dec = fwd.decodeFunctionData("swapAndForwardERC20", route.mayan.tx.data);
+      ok("mayan: the source-swap payload names the quote's own router leg, middle asset and protocol, with a zero permit",
+        dec[3] === swiftEvmSwapQuoteM().evmSwapRouterAddress && dec[4] === swiftEvmSwapQuoteM().evmSwapRouterCalldata
+        && dec[5].toLowerCase() === swiftEvmSwapQuoteM().swiftInputContract && dec[7].toLowerCase() === swiftEvmSwapQuoteM().swiftMayanContract.toLowerCase()
+        && dec[2].value === 0n && dec[2].deadline === 0n && Number(dec[2].v) === 0);
+      ok("mayan: bounds accept the built payload, and the route is executable",
+        checkMayanEvmTxBounds(route, route.mayan.tx, EVM_USER_M).ok === true && swapRouteExecutable(route).ok === true);
+      // Tamper refusals: anything that is not byte-for-byte the
+      // payload the quote describes never reaches the signer.
+      const tx = route.mayan.tx;
+      const flipped = tx.data.slice(0, 200) + (tx.data[200] === "0" ? "1" : "0") + tx.data.slice(201);
+      ok("mayan: EVM bounds refuse a wrong target, a mutated payload, and a stray value",
+        checkMayanEvmTxBounds(route, { ...tx, to: "0x0000000000000000000000000000000000000001" }, EVM_USER_M).ok === false
+        && checkMayanEvmTxBounds(route, { ...tx, data: flipped }, EVM_USER_M).ok === false
+        && checkMayanEvmTxBounds(route, { ...tx, value: "1" }, EVM_USER_M).ok === false);
+      const tamperedQuoteRoute = { ...route, mayan: { ...route.mayan, quote: { ...route.mayan.quote, evmSwapRouterCalldata: "0xdeadbeef" } } };
+      ok("mayan: EVM bounds refuse a payload when the quote's disclosed leg changes under it",
+        checkMayanEvmTxBounds(tamperedQuoteRoute, tx, EVM_USER_M).ok === false);
+      const wrongDestRoute = { ...route, mayan: { ...route.mayan, destinationAddress: "0x0000000000000000000000000000000000000002" } };
+      ok("mayan: EVM bounds refuse a payload paying a different destination than the swap's",
+        checkMayanEvmTxBounds(wrongDestRoute, tx, EVM_USER_M).ok === false);
+    } finally { stub.restore(); }
+  }
+
+  // EVM direct Swift: a forwardERC20 to the pinned Forwarder.
+  {
+    const stub = stubMayanQuotesM((b) => b.referrerBps ? withFeeM(swiftEvmDirectQuoteM(), b.referrerBps, 99.93 - (b.referrerBps / 100) / 0.99976) : swiftEvmDirectQuoteM());
+    try {
+      const route = await getMayanSwapRoute(argsEvmDirectM);
+      const fwd = new ethers.Interface(["function forwardERC20(address tokenIn, uint256 amountIn, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permitParams, address mayanProtocol, bytes protocolData)"]);
+      const dec = fwd.decodeFunctionData("forwardERC20", route.mayan.tx.data);
+      ok("mayan: a direct EVM Swift route forwards the input token to the quote's Swift contract for exactly the amount",
+        dec[0].toLowerCase() === swiftEvmDirectQuoteM().swiftInputContract && dec[1] === 100000000n
+        && dec[3].toLowerCase() === swiftEvmDirectQuoteM().swiftMayanContract.toLowerCase()
+        && checkMayanEvmTxBounds(route, route.mayan.tx, EVM_USER_M).ok === true);
+    } finally { stub.restore(); }
+  }
+
+  // Solana Swift construction: the instruction set is local,
+  // pinned, and field-verified against the quote; the state
+  // account is the order hash's own PDA.
+  {
+    const route = parseMayanQuote(withFeeM(swiftSolQuoteM(), 10, 99.83), argsSolM, { feeBps: 10, solPriceUsd: 87.38 });
+    const built = await buildMayanSolanaInstructions(route, SOL_USER_M);
+    ok("mayan: a direct Solana Swift build is CU-price + wrapped create/transfer/init",
+      built.instructions.length === 4 && built.extraSigners.length === 0
+      && built.instructions[0].programId === "ComputeBudget111111111111111111111111111111"
+      && built.instructions.slice(1).every(ix => ix.programId === "D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa"));
+    ok("mayan: Solana bounds accept the locally built set", checkMayanSolanaSwapBounds(route, built, SOL_USER_M).ok === true);
+    const initIx = mayanProxyUnwrap(built.instructions[3]);
+    const initData = Buffer.from(initIx.data, "base64");
+    ok("mayan: the init instruction carries the quote's deadline, referrer rate and destination",
+      initData.length === 198 && initData[163] === 10 && initData.readBigUInt64LE(123) === BigInt(route.mayan.quote.deadline64)
+      && initIx.accounts[2].pubkey === built.state && initIx.accounts[3].pubkey === built.targetAccount);
+    const hash = computeMayanSwiftOrderHash(route.mayan.quote, { swapperAddress: SOL_USER_M, destinationAddress: EVM_USER_M, randomKey: new Uint8Array(initData.slice(166, 198)) });
+    const { PublicKey: PKM } = await import("@solana/web3.js");
+    const pda = PKM.findProgramAddressSync([new TextEncoder().encode("STATE_SOURCE"), hash, new Uint8Array([23, 0])], new PKM("mayan34VedncxdK2XobtvWFDXQASUTBXhUVzt2kKgny"))[0].toBase58();
+    ok("mayan: the state account re-derives from the order hash of the built fields", pda === built.state);
+    // Tampers.
+    const badTransfer = { ...built, instructions: built.instructions.map((ix, i) => {
+      if (i !== 2) return ix;
+      const d = Buffer.from(ix.data, "base64"); d.writeBigUInt64LE(99999999n, 1);
+      return { ...ix, data: d.toString("base64") };
+    }) };
+    ok("mayan: Solana bounds refuse a funding transfer that moves anything but the quoted amount",
+      checkMayanSolanaSwapBounds(route, badTransfer, SOL_USER_M).ok === false);
+    ok("mayan: Solana bounds refuse a foreign program in the set",
+      checkMayanSolanaSwapBounds(route, { ...built, instructions: [...built.instructions, { programId: "T1TANpTeScyeqVzzgNViGDNrkQ6qHz9KrSBS4aNXvGT", accounts: [], data: "" }] }, SOL_USER_M).ok === false);
+    const badFee = { ...built, instructions: built.instructions.map((ix, i) => {
+      if (i !== 3) return ix;
+      const inner = mayanProxyUnwrap(ix); const d = Buffer.from(inner.data, "base64"); d[163] = 99;
+      return { programId: "D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa", accounts: ix.accounts, data: Buffer.from(d).toString("base64") };
+    }) };
+    ok("mayan: Solana bounds refuse a referrer rate in the order that is not the quoted rate",
+      checkMayanSolanaSwapBounds(route, badFee, SOL_USER_M).ok === false);
+    const badDest = { ...built, instructions: built.instructions.map((ix, i) => {
+      if (i !== 3) return ix;
+      const inner = mayanProxyUnwrap(ix); const d = Buffer.from(inner.data, "base64"); d[30] ^= 0xff;
+      return { programId: "D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa", accounts: ix.accounts, data: Buffer.from(d).toString("base64") };
+    }) };
+    ok("mayan: Solana bounds refuse an order paying a different destination",
+      checkMayanSolanaSwapBounds(route, badDest, SOL_USER_M).ok === false);
+  }
+
+  // Solana Fast MCTP bridge construction: ledger + CCTP trigger,
+  // one ephemeral message signer, fields verified.
+  {
+    const route = parseMayanQuote(fastSolQuoteM(), argsSolM, { feeBps: 0, solPriceUsd: 87.38 });
+    const built = await buildMayanSolanaInstructions(route, SOL_USER_M);
+    ok("mayan: a direct Fast MCTP build is CU + create/transfer/ledger/trigger with one ephemeral signer",
+      built.instructions.length === 5 && built.extraSigners.length === 1);
+    ok("mayan: Fast MCTP bounds accept the locally built set", checkMayanSolanaSwapBounds(route, built, SOL_USER_M).ok === true);
+    const ledgerIx = mayanProxyUnwrap(built.instructions[3]);
+    const ledgerData = Buffer.from(ledgerIx.data, "base64");
+    ok("mayan: the ledger data carries bridge mode, the Arbitrum CCTP domain and the Circle fee cap",
+      ledgerData.length === 124 && ledgerData[123] === 1 && ledgerData.readUInt32LE(72) === 3 && ledgerData.readBigUInt64LE(111) === 11001n);
+    const badDomain = { ...built, instructions: built.instructions.map((ix, i) => {
+      if (i !== 3) return ix;
+      const d = Buffer.from(mayanProxyUnwrap(ix).data, "base64"); d.writeUInt32LE(0, 72);
+      return { programId: "D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa", accounts: ix.accounts, data: d.toString("base64") };
+    }) };
+    ok("mayan: Fast MCTP bounds refuse a ledger naming a different destination domain",
+      checkMayanSolanaSwapBounds(route, badDomain, SOL_USER_M).ok === false);
+  }
+
+  // The Jupiter source-swap leg decode: contained amounts, zero
+  // platform fee (deposit legs collect via the bridge contract),
+  // destination index by discriminator.
+  {
+    const q = swiftSolQuoteM();
+    const mkData = (disc, inAmt, quoted, slip, fee) => {
+      const d = new Uint8Array(30);
+      d.set(Buffer.from(disc, "hex"), 0);
+      const off = disc === "bb64facc31c4af14" ? { i: 8, q: 16, s: 24, f: 26 } : { i: 9, q: 17, s: 25, f: 27 };
+      new DataView(d.buffer).setBigUint64(off.i, BigInt(inAmt), true);
+      new DataView(d.buffer).setBigUint64(off.q, BigInt(quoted), true);
+      new DataView(d.buffer).setUint16(off.s, slip, true);
+      new DataView(d.buffer).setUint16(off.f, fee, true);
+      return d;
+    };
+    ok("mayan: a contained Jupiter leg decodes (both V2 shapes)",
+      !!decodeMayanJupiterSwapArgs(mkData("bb64facc31c4af14", 100000000, 100500000, 100, 0), q)
+      && !!decodeMayanJupiterSwapArgs(mkData("d19853937cfed8e9", 100000000, 100500000, 100, 0), q));
+    ok("mayan: an over-consuming, fee-charging or unknown-shape Jupiter leg is refused",
+      decodeMayanJupiterSwapArgs(mkData("bb64facc31c4af14", 100000001, 100500000, 100, 0), q) === null
+      && decodeMayanJupiterSwapArgs(mkData("bb64facc31c4af14", 100000000, 100500000, 100, 25), q) === null
+      && decodeMayanJupiterSwapArgs(mkData("deadbeefcafebabe", 100000000, 100500000, 100, 0), q) === null);
+    ok("mayan: Jupiter destination account indexes follow the discriminator",
+      mayanJupiterDestAccountIndex("d19853937cfed8e9") === 5 && mayanJupiterDestAccountIndex("bb64facc31c4af14") === 7 && mayanJupiterDestAccountIndex("deadbeef") === -1);
+  }
+
+  // Refund truth, in the review sentence and the history line.
+  {
+    const swapRoute = parseMayanQuote(swiftEvmSwapQuoteM(), argsEvmSwapM, { feeBps: 0 });
+    const directRoute = parseMayanQuote(swiftSolQuoteM(), argsSolM, { feeBps: 0, solPriceUsd: 87.38 });
+    const bridgeRoute = parseMayanQuote(fastSolQuoteM(), argsSolM, { feeBps: 0, solPriceUsd: 87.38 });
+    ok("mayan: the refund note carries the converted-asset truth for a source-swapped order",
+      formatMayanRefundNote(swapRoute).includes("converted asset, not the token you sent") && formatMayanRefundNote(swapRoute).includes("refund to this same wallet"));
+    ok("mayan: the refund note is plain for a direct order, and states the bridge-mode truth (no order to refund)",
+      formatMayanRefundNote(directRoute).includes("the locked funds refund to this same wallet on Solana") && !formatMayanRefundNote(directRoute).includes("converted asset")
+      && formatMayanRefundNote(bridgeRoute).includes("left holding the minted USDC"));
+    ok("mayan: status phases map to the record conventions",
+      mayanSwapPhase("INPROGRESS").terminal === false && mayanSwapPhase("COMPLETED").terminal === true
+      && mayanSwapPhase("REFUNDED").refunded === true && mayanSwapPhase("???").terminal === false);
+    ok("mayan: the history line names the route and, for a live order, its refund deadline",
+      mayanSwapHistoryLine({ status: "INPROGRESS", routeType: "SWIFT", deadline64: 1799999999 }).includes("refunds on the source chain")
+      && mayanSwapHistoryLine({ status: "REFUNDED", routeType: "FAST_MCTP", deadline64: 1799999999 }).includes("Refunded on the source chain"));
+  }
+
+  // Records + explorer polling over a stub storage and API.
+  {
+    const store = new Map();
+    const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+    saveMayanSwapRecord(storage, { id: "sigA", status: "INPROGRESS", routeType: "SWIFT", deadline64: 1799999999, at: 1 });
+    saveMayanSwapRecord(storage, { id: "sigB", status: "COMPLETED", routeType: "FAST_MCTP", at: 2 });
+    ok("mayan: swap records persist and reload under the Mayan key",
+      loadMayanSwapRecords(storage).length === 2 && store.has(MAYAN_SWAPS_STORAGE_KEY));
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("explorer-api.mayan.finance/v3/swap/trx/sigA")) return jsonResM({ clientStatus: "REFUNDED", fulfillTxHash: null });
+      throw new Error("unexpected fetch in mayan status stub: " + u);
+    };
+    try {
+      const fresh = await fetchMayanSwapStatus("sigA");
+      const after = await pollMayanSwapStatuses(storage);
+      ok("mayan: polling refreshes non-terminal records from the explorer and skips terminal ones",
+        fresh.clientStatus === "REFUNDED" && after.find(r => r.id === "sigA").status === "REFUNDED" && after.find(r => r.id === "sigB").status === "COMPLETED");
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = async () => jsonResM({ message: "Transaction not found" }, false, 404);
+    try {
+      const kept = await pollMayanSwapStatuses(storage);
+      ok("mayan: a failed poll keeps the last known status (honest staleness)", kept.find(r => r.id === "sigA").status === "REFUNDED");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // RANKING — the owner's rule, enforced at runtime. The
+  // incumbent cascade and Mayan quote the same pair; Mayan is
+  // offered only when it ranks first, and when it loses the
+  // incumbent's routes come back untouched (no Mayan entry).
+  const lifiRouteM = (toUsd) => ({ id: "lifi-mayan-fixture", fromAmountUSD: "100.10", toAmountUSD: String(toUsd), fromAmount: "100000000", toAmount: String(Math.round(toUsd * 1e6)),
+    steps: [{ estimate: { feeCosts: [{ amountUSD: "0.20" }], gasCosts: [{ amountUSD: "0.01" }], toAmountUSD: String(toUsd), fromAmountUSD: "100.10" } }] });
+  const relayQuoteM = (outUsd) => ({ requestId: "0x68", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: EVM_USER_M, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
+    fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
+    details: { sender: EVM_USER_M, recipient: EVM_USER_M, currencyIn: { currency: { chainId: 8453, address: USDC_BASE_M, symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" }, currencyOut: { currency: { chainId: 42161, address: USDC_ARB_M, symbol: "USDC", decimals: 6 }, amount: String(Math.round(outUsd * 1e6)), amountUsd: String(outUsd), minimumAmount: "99000000" }, timeEstimate: 1 } });
+  const stubRankingM = ({ mayanQuoteFor, lifiToUsd = null, relayOutUsd = null }) => {
+    const realFetch = globalThis.fetch; const mayanCalls = { n: 0 };
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("lite-api.jup.ag/price")) return jsonResM({ [WSOL_M]: { usdPrice: 10, decimals: 9 } });
+      if (u.includes("price-api.mayan.finance")) { mayanCalls.n++; const b = JSON.parse(opts.body); return jsonResM({ quotes: [mayanQuoteFor(b)] }); }
+      if (u.includes("li.quest")) return jsonResM({ routes: [lifiRouteM(lifiToUsd)] });
+      if (u.includes("app.across.to")) return jsonResM({ message: "Too Many Requests" }, false, 429);
+      if (u.includes("api.relay.link")) return jsonResM(relayQuoteM(relayOutUsd));
+      throw new Error("unexpected fetch in mayan ranking stub: " + u);
+    };
+    return { mayanCalls, restore: () => { globalThis.fetch = realFetch; } };
+  };
+  {
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM(), lifiToUsd: 99.55 });
+    try {
+      const routes = await getSwapRoutes(argsSolM);
+      ok("mayan: RANKED — a cheaper Mayan quote leads the list, the incumbent ranked behind it",
+        routes.length === 2 && routes[0].provider === "mayan" && routes[1].id === "lifi-mayan-fixture" && stub.mayanCalls.n >= 2);
+    } finally { stub.restore(); }
+  }
+  {
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM(), lifiToUsd: 99.95 });
+    try {
+      const routes = await getSwapRoutes(argsSolM);
+      ok("mayan: RANKED — a pricier Mayan quote is dropped and the incumbent serves untouched",
+        routes.length === 1 && routes[0].id === "lifi-mayan-fixture" && routes.every(r => r.provider !== "mayan"));
+    } finally { stub.restore(); }
+  }
+  {
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftEvmDirectQuoteM(), b.referrerBps, 99.93 - (b.referrerBps / 100) / 0.99976) : swiftEvmDirectQuoteM(), relayOutUsd: 99.50 });
+    try {
+      const routes = await getSwapRoutes(argsEvmDirectM);
+      ok("mayan: RANKED (EVM) — Mayan beats a pricier Relay quote and leads",
+        routes.length >= 1 && routes[0].provider === "mayan");
+    } finally { stub.restore(); }
+  }
+  {
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftEvmDirectQuoteM(), b.referrerBps, 99.93 - (b.referrerBps / 100) / 0.99976) : swiftEvmDirectQuoteM(), relayOutUsd: 99.99 });
+    try {
+      const routes = await getSwapRoutes(argsEvmDirectM);
+      ok("mayan: RANKED (EVM) — a cheaper Relay quote serves; Mayan does not appear",
+        routes.length === 1 && routes[0].provider === "relay");
+    } finally { stub.restore(); }
+  }
+  {
+    // Ineligible pairs never touch Mayan at all: EVM -> Solana
+    // (the excluded tie) is served by the incumbent cascade with
+    // zero Mayan calls on the wire.
+    const stub = stubRankingM({ mayanQuoteFor: () => { throw new Error("Mayan must not be called for this pair"); }, relayOutUsd: 99.90 });
+    try {
+      const routes = await getSwapRoutes({ fromChainKey: "base", toChainKey: "solana", fromTokenAddress: USDC_BASE_M, toTokenAddress: USDC_SOL_M, fromAmount: "100000000", fromAddress: EVM_USER_M, toAddress: SOL_USER_M });
+      ok("mayan: isolation — EVM -> Solana makes zero Mayan calls and keeps the incumbent's answer",
+        stub.mayanCalls.n === 0 && routes.length >= 1 && routes.every(r => r.provider !== "mayan"));
+    } finally { stub.restore(); }
+  }
+  {
+    // A Mayan outage removes the candidate, never the swap.
+    const stub = stubRankingM({ mayanQuoteFor: () => { throw new Error("mayan down"); }, lifiToUsd: 99.55 });
+    try {
+      const routes = await getSwapRoutes(argsSolM);
+      ok("mayan: a Mayan failure falls back to the incumbent untouched",
+        routes.length === 1 && routes[0].id === "lifi-mayan-fixture");
+    } finally { stub.restore(); }
+  }
+
+  // Wiring: the dispatcher consults Mayan only through the
+  // ranked wrapper, and the app names, discloses, executes and
+  // tracks Mayan routes like the other routers'.
+  {
+    const coreSrcM = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcM = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("mayan: wiring — getSwapRoutes gates Mayan behind mayanSupportsPair and rankSwapRoutes",
+      coreSrcM.includes("if (!mayanSupportsPair(args)) return getSwapRoutesCascade(args);")
+      && coreSrcM.includes("rankSwapRoutes(candidates, null)") && coreSrcM.includes("ranked[0].provider === \"mayan\""));
+    ok("mayan: wiring — the app names, fee-discloses, refund-notes, executes and history-tracks Mayan routes",
+      appSrcM.includes("provider === \"mayan\"") && appSrcM.includes("executeMayanSwapRoute") && appSrcM.includes("formatMayanRefundNote")
+      && appSrcM.includes("saveMayanSwapRecord") && appSrcM.includes("wMayanSwaps") && appSrcM.includes("pollMayanSwapStatuses"));
   }
 }
 
