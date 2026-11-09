@@ -23,5 +23,13 @@
     "sol": "3yee9NaKhbkM48JWVnGc8ZsaQaFLhcxDJXzszsJtyfBD",
     "tron": "TLvNFQxwZNn1ZByoDUuh4W9GVbqXA8RL4E",
     "sui": "0xe07fc2fe0c92f5959d4ace73461f50bc5447aa74cc691be08cfe796249aae176"
+  },
+  "lhogan100": {
+    "evm": "0x01AAAe80748Ea585258f83e6818E00E36580206e",
+    "btc": "bc1qs6czc0ew9xljyktdjag55amcmv7qec30cpyrgz",
+    "algo": "YMH7E3R6ZUAUFQFHWVE2RFDJTYNOSHW7ZH3Y4BHFRJ4TUPORSD2EPCJWCM",
+    "sol": "7Y6Y9racXDpeSHqDF7eWZXe5x3LoUsGGTfR2StvckLb9",
+    "tron": "TA829RHpHNCcj3QyNHT6u6qi2zAjSjkEH1",
+    "sui": "0x63ec6dd8a0d0f7803df30c6ecef3e1e23ebb68f830a7d4561720df19aae164ad"
   }
 }
