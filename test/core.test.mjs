@@ -8364,6 +8364,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("kit: build serves the manifest at the root and the well-known path",
     buildSrc97.includes('copyFileSync("public/fluid-agent.json", "dist/fluid-agent.json")')
     && buildSrc97.includes('copyFileSync("public/fluid-agent.json", "dist/.well-known/fluid-agent.json")'));
+  const pubSrc97 = rf97(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  ok("kit: publish carries the manifest to gh-pages (both paths in ARTIFACTS)",
+    pubSrc97.includes('"fluid-agent.json", ".well-known/fluid-agent.json"'));
   // --- the site surfaces ---
   const html97 = rf97(new URL("../src/index.html", import.meta.url), "utf8");
   ok("kit: the WELCOME page carries the agent element with manifest + kit links",
