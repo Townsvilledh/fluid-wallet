@@ -2,8 +2,8 @@
 import assert from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel } from "../src/wallet-core.js";
-import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
+import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
@@ -8163,6 +8163,175 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       appSrc76.includes("swapRouteCostLabel(r).text") && appSrc76.includes("swapRouteCostLabel(r).usd")
       && !appSrc76.includes("fees ≈ ${usd(r.gasCostUSD)}"));
   }
+}
+
+// 77. Arc (chain 5042) first-class fixes (2026-11-09, verification
+// report research_notes/fluid-arc-support-20261109/report.md):
+// GAP-1 — Arc's native USDC lives at the ERC-20 predeploy
+// 0x3600…0000; LI.FI lists it as a token, so the stable list, the
+// balance reader and the token scan each used to surface it as a
+// SECOND row over the native row (same funds, totals doubled, two
+// indistinguishable send options). GAP-3 — Relay rejects LI.FI's
+// 0xEeee… sentinel verbatim (INVALID_INPUT_CURRENCY) and quotes
+// Arc's native coin at ordinary sizes only under the predeploy, so
+// Relay requests now translate native picks per chain. GAP-4 —
+// Across quotes Arc live (re-probed 2026-11-09, both directions at
+// $5); coverage + handler/adapter/SpokePool pins come from that
+// probe's own fee-bearing quote. GAP-2 — receive copy no longer
+// hard-codes a network count that discovered chains falsify.
+{
+  const ARC_PRE = "0x3600000000000000000000000000000000000000";
+  const ARC_HANDLER = "0xA07480456C4EbaD7626e4FdF4a180709E238547b";
+  const ARC_ADAPTER = "0x446Fe2Be6a8D90fA89F30f3d0A686aAFfe621237";
+  const ARC_POOL = "0x9b4A302A548C7e313c2b74C461db7b84d3074A84";
+  const BASE_USDC_77 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const BASE_POOL_77 = "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64";
+  const USER77 = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  // The discovered-chain registration, carrying the predeploy in
+  // its token list the way a stale on-device cache still can —
+  // the GAP-1 reads below must stay single-row regardless.
+  registerNetworks({ c5042: { name: "Arc", chainId: 5042, symbol: "USDC", priceSym: "USDC",
+    rpc: "https://rpc.arc-stub.invalid", explorer: "https://explorer.arc.io",
+    tokens: [{ symbol: "USDC", address: ARC_PRE, decimals: 6 }] } });
+
+  ok("arc: the predeploy pin is Arc's USDC predeploy, matched per chain only",
+    NATIVE_ASSET_PREDEPLOY[5042] === ARC_PRE && isNativePredeploy(5042, ARC_PRE)
+    && !isNativePredeploy(8453, ARC_PRE) && !isNativePredeploy(5042, BASE_USDC_77));
+
+  // GAP-1a — the stable-token list drops the mirror entry.
+  const realFetch77 = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      const body = String(url).includes("chains=5042")
+        ? { tokens: { "5042": [{ symbol: "USDC", coinKey: "USDC", address: ARC_PRE, decimals: 6 }] } }
+        : { tokens: { "8453": [{ symbol: "USDC", coinKey: "USDC", address: BASE_USDC_77, decimals: 6 },
+                               { symbol: "USDT", coinKey: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 }] } };
+      return { ok: true, status: 200, json: async () => body };
+    };
+    const arcToks = await fetchStableTokens(5042);
+    ok("GAP-1: Arc's stable list drops the native predeploy mirror (no second USDC row)",
+      Array.isArray(arcToks) && arcToks.length === 0);
+    const baseToks = await fetchStableTokens(8453);
+    ok("GAP-1: other chains keep their stable rows untouched",
+      Array.isArray(baseToks) && baseToks.length === 2 && baseToks[0].address === BASE_USDC_77);
+  } finally { globalThis.fetch = realFetch77; }
+
+  // GAP-1b — the balance reader: a funded 1.0 native fixture reads
+  // as exactly ONE row of 1.0 (the $1.00 total, never $2.00), even
+  // with the predeploy still sitting in the network's token list.
+  const defaultGetUrl77 = FetchRequest.createGetUrlFunc();
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (r) => {
+        let result;
+        if (r.method === "eth_chainId") result = "0x13b2";
+        else if (r.method === "net_version") result = "5042";
+        else if (r.method === "eth_getBalance") result = "0xde0b6b3a7640000"; // 1.0 native
+        else if (r.method === "eth_call") result = "0x00000000000000000000000000000000000000000000000000000000000f4240"; // balanceOf = 1,000,000 (the same 1.0)
+        else throw new Error("unexpected rpc method " + r.method);
+        return { jsonrpc: "2.0", id: r.id, result };
+      };
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" },
+        new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    const rows77 = await getBalances({ address: USER77 }, "c5042");
+    ok("GAP-1: a funded 1.0 Arc USDC fixture reads as ONE row of 1.0 (never doubled)",
+      rows77.length === 1 && rows77[0].symbol === "USDC" && rows77[0].amount === "1.0");
+    // GAP-1c — the token scan never re-adds the mirror as a
+    // discovered row: a predeploy-only list scans to nothing and
+    // touches no RPC at all (the stub above would have answered).
+    const scan77 = await scanEvmTokenBalances("c5042", USER77, [{ symbol: "USDC", address: ARC_PRE, decimals: 6 }]);
+    ok("GAP-1: the token scan skips the native predeploy entirely",
+      scan77.balances.size === 0 && scan77.method === "none");
+  } finally { FetchRequest.registerGetUrl(defaultGetUrl77); }
+
+  // GAP-3 — Relay request translation, both directions.
+  const rqArcOut = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: Relay Arc→Base names the predeploy for a LI.FI-sentinel pick",
+    !!rqArcOut && rqArcOut.originCurrency === ARC_PRE && rqArcOut.destinationCurrency === BASE_USDC_77);
+  const rqArcZero = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: Relay Arc→Base names the predeploy for the native (zero-marker) pick",
+    !!rqArcZero && rqArcZero.originCurrency === ARC_PRE);
+  const rqArcIn = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_API_NATIVE_SENTINEL, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: Relay Base→Arc names the predeploy on the destination side",
+    !!rqArcIn && rqArcIn.destinationCurrency === ARC_PRE);
+  const rqBaseNat = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  ok("GAP-3: the sentinel maps to the zero marker where no predeploy exists",
+    !!rqBaseNat && rqBaseNat.originCurrency === LIFI_NATIVE_TOKEN);
+  ok("GAP-3: token addresses pass through Relay translation untouched",
+    relayCurrencyFor(5042, BASE_USDC_77) === BASE_USDC_77 && relayCurrencyFor(5042, ARC_PRE) === ARC_PRE);
+
+  // GAP-4 — Across coverage, pins, eligibility, and a live-shaped
+  // fee-bearing Base→Arc quote (fixture mirrors the 2026-11-09
+  // probe: handler 0xA074…, adapter 0x446F…, 1632-byte message).
+  ok("GAP-4: Across covers 5042 with the live-probed pins",
+    ACROSS_CHAIN_IDS.has(5042) && ACROSS_HANDLERS[5042] === ARC_HANDLER
+    && ACROSS_MESSAGE_ADAPTERS[5042] === ARC_ADAPTER && ACROSS_SPOKE_POOLS[5042] === ARC_POOL);
+  const planArcOut = acrossSupportsPair({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77 });
+  ok("GAP-4: an Arc native pick resolves to the predeploy USDC lane (ERC-20 pull, not deposit value)",
+    !!planArcOut && planArcOut.asset === "USDC" && planArcOut.inputToken === ARC_PRE
+    && planArcOut.outputToken === BASE_USDC_77 && planArcOut.nativeInput === false);
+  const planArcIn = acrossSupportsPair({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_NATIVE_TOKEN });
+  ok("GAP-4: Base USDC → Arc native pick is eligible, delivering the predeploy",
+    !!planArcIn && planArcIn.outputToken === ARC_PRE && planArcIn.nativeOutput === false);
+  const planArcTok = acrossSupportsPair({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: ARC_PRE });
+  ok("GAP-4: Base USDC → Arc predeploy pick is the same eligible lane",
+    !!planArcTok && planArcTok.inputToken === BASE_USDC_77 && planArcTok.outputToken === ARC_PRE);
+  const coder77 = ethers.AbiCoder.defaultAbiCoder();
+  const b3277 = (a) => ethers.zeroPadValue(a, 32);
+  const depIface77 = new ethers.Interface(["function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityParameter,bytes message)"]);
+  const erc2077 = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]);
+  const INSTR77 = "tuple(tuple(address target, bytes data, uint256 value)[] calls, address fallbackRecipient)";
+  const adapterBlob77 = (token, user, feeTo) => "0xd836083e" + coder77.encode(["uint256", "uint256", "uint256", "uint256", "address", "uint256", "uint256", "uint256", "uint256", "uint256", "address", "address", "string"], [32n, 480n, 1n, 0n, token, 0n, 0n, 0n, 416n, 0n, user, feeTo, "None"]).slice(2);
+  const handlerMsg77 = ({ token, feeTo, feeAmt, user, handler = ARC_HANDLER, adapter = ARC_ADAPTER }) => {
+    const deliver = "0xef8738d3" + coder77.encode(["address", "address"], [token, user]).slice(2);
+    const calls = [
+      [token, erc2077.encodeFunctionData("transfer", [feeTo, feeAmt]), 0n],
+      [handler, deliver, 0n],
+      [handler, deliver, 0n],
+      [adapter, adapterBlob77(token, user, feeTo), 0n],
+    ];
+    return coder77.encode([INSTR77], [[calls, "0x0000000000000000000000000000000000000000"]]);
+  };
+  const arcQuote77 = ({ handler = ARC_HANDLER, adapter = ARC_ADAPTER, appRaw = "4995" } = {}) => {
+    const inAmt = "5000000", bridgeOut = "4995327", bridgeRaw = "4702";
+    const hasFee = BigInt(appRaw) > 0n;
+    const message = hasFee ? handlerMsg77({ token: ARC_PRE, feeTo: RELAY_APP_FEE_RECIPIENT, feeAmt: BigInt(appRaw), user: USER77, handler, adapter }) : "0x";
+    const data = depIface77.encodeFunctionData("deposit", [b3277(USER77), b3277(hasFee ? handler : USER77), b3277(BASE_USDC_77), b3277(ARC_PRE), BigInt(inAmt), BigInt(bridgeOut), 5042n, b3277("0x394311a6aaa0d8e3411d8b62de4578d41322d1bd"), 1794177000, 1794184200, 3, message]);
+    const tok77 = (address, chainId) => ({ decimals: 6, symbol: "USDC", address, name: "USD Coin", chainId });
+    const feeTokIn = tok77(BASE_USDC_77, 8453), feeTokOut = tok77(ARC_PRE, 5042);
+    return {
+      crossSwapType: "bridgeableToBridgeable", amountType: "exactInput", id: "77-fixture",
+      checks: { allowance: { token: BASE_USDC_77, spender: BASE_POOL_77, actual: "0", expected: inAmt }, balance: { token: BASE_USDC_77, actual: "0", expected: inAmt } },
+      approvalTxns: [{ chainId: 8453, to: BASE_USDC_77, data: "0x095ea7b3" }],
+      steps: { bridge: { inputAmount: inAmt, outputAmount: bridgeOut, tokenIn: feeTokIn, tokenOut: feeTokOut } },
+      inputToken: feeTokIn, outputToken: feeTokOut, refundToken: feeTokIn,
+      fees: { total: { amount: String(BigInt(bridgeRaw) + BigInt(appRaw)), amountUsd: "0.009697", token: feeTokIn, details: {
+        type: "total-breakdown",
+        swapImpact: { amount: "-3", amountUsd: "-0.000003", token: feeTokIn },
+        app: { amount: appRaw, amountUsd: "0.004995", token: feeTokOut },
+        bridge: { amount: bridgeRaw, amountUsd: "0.004702", token: feeTokIn },
+      } } },
+      inputAmount: inAmt, expectedOutputAmount: (BigInt(bridgeOut) - BigInt(appRaw)).toString(), minOutputAmount: (BigInt(bridgeOut) - BigInt(appRaw)).toString(), expectedFillTime: 2,
+      swapTx: { to: BASE_POOL_77, data, gas: 0, chainId: 8453 }, quoteExpiryTimestamp: 1994180911,
+    };
+  };
+  const argsArc77 = { fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 };
+  const routeArc77 = parseAcrossQuote(arcQuote77(), argsArc77, planArcIn);
+  ok("GAP-4: a live-shaped fee-bearing Base→Arc quote parses and passes its bounds check",
+    !!routeArc77 && routeArc77.provider === "across" && routeArc77.platformFeeCollecting === true
+    && checkAcrossDepositBounds(routeArc77, USER77).ok === true);
+  ok("GAP-4: an unpinned Arc handler refuses the route",
+    parseAcrossQuote(arcQuote77({ handler: "0x000000000000000000000000000000000000dEaD" }), argsArc77, planArcIn) === null);
+
+  // GAP-2 — the receive copy is count-free on both surfaces.
+  const coreSrc77 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc77 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("GAP-2: receive copy no longer hard-codes a network count",
+    !coreSrc77.includes("all 15 networks") && !appSrc77.includes("all 15 networks")
+    && appSrc77.includes("the same on every EVM network") && coreSrc77.includes("one address · every EVM network"));
 }
 
 console.log(`\n${passed} checks passed`);

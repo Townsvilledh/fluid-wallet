@@ -1823,7 +1823,7 @@ $("actReceive").onclick = () => {
   // Entries + alias matching live in wallet-core (RECEIVE_NETWORKS) so the
   // search behaviour is unit-tested.
   const panels = {
-    evm: `<p class="tag">EVM address — the same on all 15 networks:</p>
+    evm: `<p class="tag">EVM address — the same on every EVM network:</p>
       <img class="qr" id="qrEvm"><p class="mono">${wallet.address}</p>
       <button class="btn ghost" id="cpEvm">Copy EVM address</button>`,
     bitcoin: `<p class="tag">Bitcoin — Native SegWit address (bc1q…):</p>

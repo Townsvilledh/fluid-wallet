@@ -274,6 +274,10 @@ async function readBalances(wallet, networkKey, provider) {
   const native = await provider.getBalance(wallet.address);
   out.push({ symbol: net.symbol, amount: ethers.formatEther(native), address: null });
   for (const t of net.tokens) {
+    // GAP-1: a listed token that IS the chain's native-asset
+    // predeploy (Arc's USDC) is the same funds as the native row
+    // above — never emit it as a second row, or totals double.
+    if (isNativePredeploy(net.chainId, t.address)) continue;
     const c = new ethers.Contract(t.address, ERC20, provider);
     const bal = await c.balanceOf(wallet.address);
     out.push({ symbol: t.symbol, amount: ethers.formatUnits(bal, t.decimals), address: t.address, decimals: t.decimals });
@@ -2560,7 +2564,7 @@ const COSMOS_RECEIVE_ALIASES = {
   dydx: ["dydx"],
 };
 export const RECEIVE_NETWORKS = [
-  { id: "evm", name: "EVM networks", sub: "one address · all 15 networks",
+  { id: "evm", name: "EVM networks", sub: "one address · every EVM network",
     aliases: ["evm", "eth", "ethereum", "bsc", "bnb", "bnb chain", "binance smart chain", "base", "polygon", "matic", "arbitrum", "optimism", "avalanche", "avax"] },
   { id: "bitcoin", name: "Bitcoin", aliases: ["btc", "bitcoin", "taproot"] },
   { id: "lightning", name: "Bitcoin Lightning", sub: "via your own Lightning wallet",
@@ -4892,6 +4896,30 @@ export async function sendFromAgent(mnemonic, index, networkKey, to, amountNativ
 // source chain. Bridge delivery on the destination chain is automatic
 // once the source steps are mined. No Fluid server, no Fluid custody.
 export const LIFI_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
+/** LI.FI's own native-token sentinel in ITS token lists and API
+ *  payloads — a different address from Fluid's internal zero-address
+ *  marker above: a swap-picker entry merged from a LI.FI token list
+ *  can carry this address for the chain's native coin, and it flows
+ *  verbatim into router requests unless a builder translates it. */
+export const LIFI_API_NATIVE_SENTINEL = "0xEeeeeEeeeEaEeeEEeEeeEEEeEeeeEeeEEeE";
+/** Chains whose native coin IS an ERC-20 predeploy contract: the
+ *  native balance and the contract's balanceOf are ONE ledger read
+ *  at two decimal scales (Arc: native USDC — 18 decimals as the
+ *  native coin, 6 through the predeploy). Pinned per chain id:
+ *  { chainId: predeploy address }. Every surface that would
+ *  otherwise represent the native coin twice keys off this map:
+ *  the stable-token list and the balance/token scans drop the
+ *  mirror entry (GAP-1), Relay requests name the predeploy for a
+ *  native pick (GAP-3), and Across resolves the chain's hub asset
+ *  to it (GAP-4) — see research_notes/fluid-arc-support-20261109. */
+export const NATIVE_ASSET_PREDEPLOY = {
+  5042: "0x3600000000000000000000000000000000000000", // Arc — native USDC
+};
+/** True when `address` is the native-asset predeploy of `chainId`. */
+export function isNativePredeploy(chainId, address) {
+  const p = NATIVE_ASSET_PREDEPLOY[Number(chainId)];
+  return !!p && typeof address === "string" && address.toLowerCase() === p.toLowerCase();
+}
 const LIFI_API = "https://li.quest/v1";
 /** Fluid's LI.FI integrator string (sent on every route/quote request).
  *  Registered in the LI.FI Partner Portal on 2026-11-07 with the
@@ -5270,6 +5298,23 @@ export function relaySupportsPair(fromChainKey, toChainKey) {
   if (!relayChainOf(fromChainKey) || !relayChainOf(toChainKey)) return false;
   return !!NETWORKS[fromChainKey];
 }
+/** The currency address Relay will accept for one side of a swap.
+ *  A native pick reaches the builder as Fluid's zero-address marker
+ *  or as LI.FI's 0xEeee… sentinel (a picker entry merged from a
+ *  LI.FI token list). Relay names native coins by the zero address
+ *  and rejects the sentinel outright (INVALID_INPUT_CURRENCY,
+ *  probed on Arc 2026-11-09); on a chain whose native coin is an
+ *  ERC-20 predeploy (NATIVE_ASSET_PREDEPLOY — Arc's USDC) the
+ *  predeploy is the native form Relay quotes at ordinary sizes
+ *  (the zero marker clears only a much higher Arc minimum), so
+ *  both markers map to it there. Token addresses pass through
+ *  untouched. */
+export function relayCurrencyFor(chainId, tokenAddress) {
+  if (typeof tokenAddress !== "string") return tokenAddress;
+  const a = tokenAddress.toLowerCase();
+  if (a !== LIFI_NATIVE_TOKEN && a !== LIFI_API_NATIVE_SENTINEL.toLowerCase()) return tokenAddress;
+  return NATIVE_ASSET_PREDEPLOY[Number(chainId)] || LIFI_NATIVE_TOKEN;
+}
 /** Build the POST /quote/v2 body. Pure and exported so tests can pin
  *  exactly what reaches Relay: the App Fees entry carries Fluid's
  *  fee as basis points to the DripBot EVM claim address whenever
@@ -5287,8 +5332,8 @@ export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddr
     user: fromAddress,
     originChainId: from.chainId,
     destinationChainId: to.chainId,
-    originCurrency: fromTokenAddress,
-    destinationCurrency: toTokenAddress,
+    originCurrency: relayCurrencyFor(from.chainId, fromTokenAddress),
+    destinationCurrency: relayCurrencyFor(to.chainId, toTokenAddress),
     amount: String(fromAmount),
     tradeType: "EXACT_INPUT",
   };
@@ -5504,8 +5549,10 @@ export const ACROSS_APP_FEE_RECIPIENT = RELAY_APP_FEE_RECIPIENT;
 /** Across chain ids with live routes for the hub assets (from the
  *  readiness probe's /available-routes snapshot, 2026-11-08): nine
  *  of Fluid's fifteen EVM networks. Scroll, Mantle, Gnosis, Celo,
- *  Fuse and B² have no Across routes — Relay/LI.FI keep them. */
-export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 8453, 42161, 43114, 59144]);
+ *  Fuse and B² have no Across routes — Relay/LI.FI keep them. Arc
+ *  (5042, a discovered chain) was added 2026-11-09 after a fresh
+ *  Swap API re-probe quoted both directions at $5. */
+export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 8453, 42161, 43114, 59144, 5042]);
 /** Canonical WETH per chain key, for the chains whose native coin
  *  IS ETH (Across quotes native routes against the WETH address).
  *  Polygon's wrapped native is WPOL, BSC's is WBNB and Avalanche's
@@ -5537,6 +5584,7 @@ export const ACROSS_HANDLERS = {
   59144: "0xdf1c940487574eefa79989a79a4936a0f979cda2",
   324: "0x68d3806e57148d6c6793c78ebddbc272fe605dbf",
   43114: "0x9610954acdca5ff7905f051a040ce33fe613c60e",
+  5042: "0xA07480456C4EbaD7626e4FdF4a180709E238547b", // Arc — live fee-bearing probe, 2026-11-09
 };
 /** The message-adapter contract per destination chain id — the
  *  target of the composed message's final call (the alternate
@@ -5552,6 +5600,7 @@ export const ACROSS_MESSAGE_ADAPTERS = {
   59144: "0xBF75133b48b0a42AB9374027902E83C5E2949034",
   324: "0x74a2966e23B61A360b1345eA359127aF325beC4C",
   43114: "0x25b15Fc38d6A2C13FEDdD9cb51f184F7Cf0D4C11",
+  5042: "0x446Fe2Be6a8D90fA89F30f3d0A686aAFfe621237", // Arc — same live probe as the handler pin
 };
 /** Origin SpokePools, pinned where a live quote named them (the
  *  deposit transaction's target — and the response's own
@@ -5560,6 +5609,7 @@ export const ACROSS_MESSAGE_ADAPTERS = {
 export const ACROSS_SPOKE_POOLS = {
   8453: "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64",
   42161: "0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A",
+  5042: "0x9b4A302A548C7e313c2b74C461db7b84d3074A84", // Arc — the probe quote's own allowance spender
 };
 const ACROSS_DEPOSIT_ABI = ["function deposit(bytes32 depositor, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 destinationChainId, bytes32 exclusiveRelayer, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes message)"];
 const ACROSS_ERC20_TRANSFER = ["function transfer(address to, uint256 amount) returns (bool)"];
@@ -5576,10 +5626,22 @@ const ACROSS_ADAPTER_SELECTOR = "0xd836083e";
  *  coin is ETH; a token pick must be the chain's pinned USDC/USDT
  *  (NETWORKS' curated rows — on BSC those are the Binance-Peg
  *  contracts at 18 decimals, which the Swap API absorbs) or the
- *  chain's canonical WETH. Anything else is not an Across lane. */
+ *  chain's canonical WETH. Anything else is not an Across lane.
+ *  One predeploy exception (GAP-4): on a chain whose native coin IS
+ *  a stablecoin through its predeploy (Arc's USDC), a native pick
+ *  and a pick of the predeploy are the same lane — resolved to the
+ *  predeploy with native:false, because Across pulls the predeploy
+ *  by transferFrom (its quotes carry an approve step), never as
+ *  deposit value. */
 function acrossAssetOf(chainKey, tokenAddress) {
   const net = NETWORKS[chainKey];
   if (!net) return null;
+  const predeploy = NATIVE_ASSET_PREDEPLOY[net.chainId];
+  if (predeploy && (net.symbol === "USDC" || net.symbol === "USDT")) {
+    const a = String(tokenAddress || "").toLowerCase();
+    if (!tokenAddress || /^0x0{40}$/i.test(a) || a === LIFI_API_NATIVE_SENTINEL.toLowerCase() || a === predeploy.toLowerCase())
+      return { asset: net.symbol, token: predeploy, native: false };
+  }
   if (!tokenAddress || /^0x0{40}$/i.test(String(tokenAddress))) {
     return net.symbol === "ETH" && ACROSS_WETH[chainKey]
       ? { asset: "WETH", token: ACROSS_WETH[chainKey], native: true } : null;
@@ -11462,7 +11524,10 @@ export async function fetchStableTokens(chainId) {
     const out = [];
     for (const sym of ["USDC", "USDT"]) {
       const t = list.find(x => x && x.symbol === sym && x.coinKey === sym) || list.find(x => x && x.symbol === sym);
-      if (t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address)) {
+      // GAP-1: never attach a chain's native-asset predeploy (Arc's
+      // USDC) as an ERC-20 row — it is the native coin itself, and a
+      // second row would paint the same funds twice.
+      if (t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address) && !isNativePredeploy(chainId, t.address)) {
         out.push({ symbol: sym, address: t.address, decimals: t.decimals ?? 6 });
       }
     }
@@ -12159,7 +12224,10 @@ export async function hasMulticall3(networkKey) {
 export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250 } = {}) {
   const net = NETWORKS[networkKey];
   if (!net) throw new Error("Unknown network: " + networkKey);
-  const list = (tokens || []).filter(t => t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address));
+  // GAP-1: the chain's native-asset predeploy (Arc's USDC) is the
+  // native coin itself — scanning it would re-add the same funds as
+  // a discovered token row beside the native row.
+  const list = (tokens || []).filter(t => t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address) && !isNativePredeploy(net.chainId, t.address));
   const balances = new Map();
   if (!list.length) return { balances, method: "none" };
   const iface = new ethers.Interface(ERC20_BALANCE_ABI);
