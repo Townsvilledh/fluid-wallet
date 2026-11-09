@@ -38,7 +38,7 @@
 //   (no commit, no worktree, no push).
 //   --message sets the main commit subject (default: "release: <stamp>").
 import { execFileSync } from "node:child_process";
-import { readFileSync, copyFileSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, copyFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -178,7 +178,7 @@ if (existsSync(WORKTREE)) {
 }
 run("git", ["worktree", "add", "--detach", WORKTREE, "origin/gh-pages"]);
 try {
-  for (const f of ARTIFACTS) copyFileSync(join(ROOT, "dist", f), join(WORKTREE, f));
+  for (const f of ARTIFACTS) { mkdirSync(join(WORKTREE, f, ".."), { recursive: true }); copyFileSync(join(ROOT, "dist", f), join(WORKTREE, f)); }
   const copied = sha256(join(WORKTREE, "app.bundle.js"));
   if (copied !== hash2) {
     console.error(`✗ copied bundle hash ${copied} ≠ fresh build ${hash2}. Aborting before commit.`);
