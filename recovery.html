@@ -6,20 +6,20 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Fluid — Offline Recovery Core (Phase 1 Prototype)</title>
 <style>
-  :root{--bg:#0b1220;--card:#111a2e;--line:#24314f;--txt:#e8eefc;--mut:#9fb0d0;--acc:#22c55e;--warn:#f59e0b;--bad:#ef4444}
-  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  :root{--bg:#070606;--card:#0e0d0c;--line:rgba(255,226,188,.19);--txt:#faf6f0;--mut:#a79e93;--acc:#f7931a;--onacc:#1a1000;--warn:#ffcf4d;--bad:#ff6b7a}
+  *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
   .wrap{max-width:880px;margin:0 auto;padding:20px 16px 60px}
   h1{font-size:26px;margin:8px 0 4px} h2{font-size:19px;margin:0 0 10px} p,li{line-height:1.5;color:var(--mut)} b,strong{color:var(--txt)}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
   .warn{border-color:var(--warn);background:#221a08} .warn p{color:#fcd9a0}
   label{display:block;font-size:13px;color:var(--mut);margin:12px 0 5px}
-  textarea,input{width:100%;background:#0b1220;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px;font-size:15px}
+  textarea,input{width:100%;background:#0b0a09;border:1px solid var(--line);border-radius:9px;color:var(--txt);padding:11px;font-size:15px}
   textarea{min-height:74px;resize:vertical}
-  button{background:var(--acc);color:#04140a;border:0;border-radius:9px;padding:12px 16px;font-weight:700;font-size:15px;cursor:pointer;margin:8px 6px 0 0}
-  button.sec{background:#1e2c4a;color:var(--txt)} button:disabled{opacity:.5}
+  button{background:var(--acc);color:var(--onacc);border:0;border-radius:9px;padding:12px 16px;font-weight:700;font-size:15px;cursor:pointer;margin:8px 6px 0 0}
+  button.sec{background:#161413;color:var(--txt)} button:disabled{opacity:.5}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.row{grid-template-columns:1fr}}
-  .tabs{display:flex;gap:8px;margin:16px 0 0} .tabs button{background:#1e2c4a;color:var(--txt)} .tabs button.on{background:var(--acc);color:#04140a}
-  .ok{color:var(--acc)} .err{color:var(--bad)} .small{font-size:13px} code{background:#0b1220;padding:1px 5px;border-radius:5px;color:#cfe3ff}
+  .tabs{display:flex;gap:8px;margin:16px 0 0} .tabs button{background:#161413;color:var(--txt)} .tabs button.on{background:var(--acc);color:var(--onacc)}
+  .ok{color:#2fd08c} .err{color:var(--bad)} .small{font-size:13px} code{background:#0b0a09;padding:1px 5px;border-radius:5px;color:#cfe3ff}
   .hidden{display:none}
 </style>
 </head>
