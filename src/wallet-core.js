@@ -58,6 +58,7 @@ export const NETWORKS = {
   ethereum: {
     name: "Ethereum", chainId: 1, symbol: "ETH", priceSym: "ETH",
     rpc: "https://ethereum-rpc.publicnode.com", explorer: "https://etherscan.io",
+    fonbnkNetwork: "ETHEREUM",
     tokens: [USDC("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), USDT("0xdAC17F958D2ee523a2206206994597C13D831ec7")],
   },
   bsc: {
@@ -68,6 +69,7 @@ export const NETWORKS = {
     // shared-IP load, and a failed curated load used to surface as a
     // silent $0.00. getBalances retries here once before failing.
     rpcFallback: "https://bsc-dataseed.binance.org/",
+    fonbnkNetwork: "BNB",
     tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18)],
   },
   base: {
@@ -76,11 +78,13 @@ export const NETWORKS = {
     // Fallback for the balance read (live-verified 2026-11-08: HTTP 200,
     // CORS allows the Fluid origin): same 429 story as BNB Chain.
     rpcFallback: "https://mainnet.base.org",
+    fonbnkNetwork: "BASE",
     tokens: [USDC("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), USDT("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2")],
   },
   arbitrum: {
     name: "Arbitrum", chainId: 42161, symbol: "ETH", priceSym: "ETH",
     rpc: "https://arbitrum-one-rpc.publicnode.com", explorer: "https://arbiscan.io",
+    fonbnkNetwork: "ARBITRUM",
     tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")],
   },
   optimism: {
@@ -91,6 +95,7 @@ export const NETWORKS = {
   polygon: {
     name: "Polygon", chainId: 137, symbol: "POL", priceSym: "POL",
     rpc: "https://polygon-bor-rpc.publicnode.com", explorer: "https://polygonscan.com",
+    fonbnkNetwork: "POLYGON",
     tokens: [USDC("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"), USDT("0xc2132D05D31c914a87C6611C10748AEb04B58e8F")],
   },
   avalanche: {
@@ -4178,6 +4183,32 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
   const p = new URLSearchParams({ ssc: asset, sdc: fiat, rfr: MTPELERIN_REFERRAL_CODE });
   return `https://www.mtpelerin.com/${slugs.sell}?${p.toString()}`;
 }
+/** Fonbnk off-ramp (SELL) widget link, built per selection — the
+ *  pre-pull shape, restored 2026-11-09: /offramp carries only
+ *  network / asset / paymentChannel / countryIsoCode (the
+ *  address / source / signature params are KYB-merchant-gated,
+ *  so no keyless pre-fill exists). Returns null on any network
+ *  Fonbnk does not support — the caller omits the row there.
+ *  The channel is per country: bank where Fonbnk runs a bank
+ *  off-ramp channel (NG, KE, ZA), mobile_money where the
+ *  off-ramp is mobile-money only (GH, UG, TZ, CM, SN, CI, ZM) —
+ *  per Fonbnk's own supported-countries table, re-verified
+ *  2026-11-09. Sell only: this builder is never used for a buy
+ *  sheet (see the RESTORED note in the plan comments). */
+export const FONBNK_OFFRAMP_CHANNELS = {
+  NG: "bank", KE: "bank", ZA: "bank",
+  GH: "mobile_money", UG: "mobile_money", TZ: "mobile_money",
+  CM: "mobile_money", SN: "mobile_money", CI: "mobile_money",
+  ZM: "mobile_money",
+};
+export function fonbnkOfframpUrl(networkKey, asset = "USDC", country = "NG") {
+  const net = NETWORKS[networkKey];
+  const channel = FONBNK_OFFRAMP_CHANNELS[country];
+  if (!net?.fonbnkNetwork || !channel) return null;
+  const p = new URLSearchParams({ network: net.fonbnkNetwork, asset, paymentChannel: channel, countryIsoCode: country });
+  return `https://pay.fonbnk.com/offramp?${p.toString()}`;
+}
+
 // ---------- Per-country ramp plan: ranked on MEASURED price ----------
 // Evidence base: price research of 6 Nov 2026 (benchmarks: USD/NGN
 // mid-market ₦1,374, P2P street ₦1,376–1,380; KES 129.91; GHS 11.66;
@@ -4198,32 +4229,50 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 //    production API key, so the "guest" link was never truly keyless).
 //  - PULLED 2026-11-08 — Fonbnk and Mercuryo (owner's decision,
 //    Ethuram): both platforms pay Fluid nothing Fluid can actually
-//    collect, so they are out of EVERY corridor until either offers
-//    a programme Fluid can attach to without KYB and without
-//    server-side signing. The rule is absolute: no pay, no route.
-//    This supersedes all earlier "kept for coverage" placements
-//    (Fonbnk sell across the African corridors + its NG buy row;
-//    Mercuryo as unbadged secondary in 16 corridors). KE, GH, UG,
-//    TZ, CM, SN, CI, ZM and NG sell now resolve to zero routes and
-//    the sheet's honest empty state until a qualifying route exists.
-//    Wiring facts kept here so re-adding is cheap if a collectable
-//    programme appears:
+//    collect, so they were out of EVERY corridor under the rule
+//    "no pay, no route". RESTORED IN PART 2026-11-09 (owner's
+//    ruling, same day as the Noblocks naming): the fee-capture
+//    gate no longer strands a corridor — a route that genuinely
+//    completes comes back, honestly labelled in the Noblocks-row
+//    style, and fee capture stays the preference, not the gate.
+//    Fonbnk SELL returns on its ten pre-pull corridors (NG, KE,
+//    GH, ZA, UG, TZ, CM, SN, CI, ZM) as unbadged external rows
+//    with full disclosure, on fresh live evidence: the widget
+//    walked end-to-end (amount → email verification → payout
+//    details → deposit address) with live quotes at or near the
+//    market (NG ₦1,371.50/$ vs the ₦1,378.14 P2P composite) —
+//    full evidence in
+//    research_notes/fluid-fonbnk-restore-20261109/report.md.
+//    Fonbnk BUY stays out: walked live the same day, its wallet
+//    step offers WalletConnect ONLY in the keyless widget (no
+//    paste-address field), and the owner's standing criterion
+//    excludes WalletConnect-only buys whatever their price; its
+//    NG buy KYC (BVN from $1, hosted photo ID from $15) is the
+//    provider's own and is recorded in the restore report for
+//    the owner's decision. Mercuryo stays OUT entirely: its sell
+//    settles only in EUR/USD/GBP to a card (Nigeria: Visa only),
+//    never NGN to a bank account — no completable NG sell exists
+//    to restore. Wiring facts for Fonbnk, kept from the pre-pull
+//    build and re-verified at the restore:
 //      Fonbnk — widget at pay.fonbnk.com: the ROOT path is the buy
 //      flow (the old /onramp path is dead) and /offramp is the sell
-//      flow; links carried only network / asset / countryIsoCode
-//      (sell adds paymentChannel=bank). Network codes: ethereum
+//      flow; links carry only network / asset / countryIsoCode
+//      (sell adds paymentChannel — bank where a bank off-ramp
+//      channel exists: NG, KE, ZA; mobile_money where it does
+//      not: GH, UG, TZ, CM, SN, CI, ZM). Network codes: ethereum
 //      ETHEREUM, bsc BNB, base BASE, arbitrum ARBITRUM, polygon
-//      POLYGON — any other Fluid network is unsupported and its row
-//      was omitted. The address / source / signature / freezeWallet
-//      params are gated behind a KYB-verified merchant account, so
-//      no keyless pre-fill exists (the NG buy sheet showed the
-//      user's own address + copy button instead); buy delivery is
-//      paste-address or WalletConnect, $500 per-order cap, NG KYC
+//      POLYGON — any other Fluid network is unsupported and its
+//      row is omitted. The address / source / signature /
+//      freezeWallet params are gated behind a KYB-verified
+//      merchant account, so no keyless pre-fill exists; buy
+//      delivery in the keyless widget is WalletConnect only
+//      (walked live 2026-11-09), $500 per-order cap, NG buy KYC
 //      tops out at BVN number + hosted photo ID, agent fulfilment
 //      in minutes (not instant); sell needs no wallet connection
-//      (email code + bank details, they return a deposit address).
-//      Partner fees are KYB + server-signed-JWT gated — that is
-//      exactly why Fluid earned nothing from it.
+//      at all (email code + payout details, they return a deposit
+//      address the user sends to FROM Fluid). Partner fees are
+//      KYB + server-signed-JWT gated — that is exactly why Fluid
+//      earns nothing from it, and the restored rows say so.
 //      Mercuryo — plain static links (mercuryo.io, both modes);
 //      published fees buy 3.95% / sell 2.95%, ID required, sell
 //      pays EUR/USD/GBP to a card; its partner programme is
@@ -4263,6 +4312,7 @@ const RAMP_DEFAULT_NOTES = {
   "Paybis": "Published rate at the market rate on 6 Nov · bank buy ~0.99% · sell from 1.49% · free email account + quick ID check — paste your Fluid address",
   "Spritz": "US app — opens outside Fluid · buy 1% by ACH · sell 0.5% by ACH (min $2) — the cheapest verified US sell rate · send out to your Fluid address",
   "Noblocks": "Opens the Noblocks app (operated by Paycrest) — Fluid earns nothing from it · its fee is 2 bps (min ₦100) at the live market rate · your crypto moves into Noblocks' own wallet first, then sells to your bank — you will need an email sign-up and an ID check inside Noblocks",
+  "Fonbnk": "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your payout details, and Fonbnk gives you an address to send to from Fluid · priced off the local market — check the quote before you send",
 };
 /** How each provider takes the destination address on a BUY:
  *  "paste" = the user can type/paste their Fluid address and the
@@ -4288,44 +4338,86 @@ export const RAMP_ADDRESS_ENTRY = {
   // the buy gate never sees it — the entry exists so every route
   // on a sheet states honestly how the money moves.
   "Noblocks": "external-wallet",
+  // Fonbnk is listed SELL-only (restored 2026-11-09): on a sell
+  // there is no destination address at all — Fonbnk returns a
+  // deposit address and the user sends to it FROM Fluid. The
+  // entry records that deposit-address model; the buy side is
+  // excluded by the plan rows' modes and by an explicit sell-only
+  // guard in rampRoutesFor, so the buy gate never sees it either.
+  "Fonbnk": "deposit-address",
 };
 // Ordered provider list per country: [name, { badge, note }]. Order IS
 // the ranking (cheapest measured first); badge/note override the
 // provider defaults above.
 export const RAMP_COUNTRY_PLAN = {
   // NG: BUY has no qualifying route (its last route was removed
-  // 2026-11-09 as a dead platform — see the REMOVED note above)
-  // and stays honestly empty. SELL names Noblocks (Paycrest's
-  // consumer app) as an EXTERNAL route — owner decision 2026-11-09
-  // (NG repair): a real user holding $1 of BNB had no way to reach
-  // naira at all, and Noblocks is the one NG sell path verified to
-  // complete at small amounts (2 bps, min ₦100 fee, market rate in
-  // normal conditions). It pays Fluid nothing and routes through
-  // Noblocks' own wallet, so it renders as an external-app row
-  // with both facts in its note — named, not endorsed as a Fluid
-  // route. The in-Fluid Paycrest Gateway sell (same protocol,
-  // native fee capture, built 2026-11-09) stays the wired route
-  // the moment its standing gates pass — see
+  // 2026-11-09 as a dead platform — see the REMOVED note above;
+  // Fonbnk buy was re-checked live the same day and is
+  // WalletConnect-only in the keyless widget, so it stays out
+  // under the owner's standing buy criterion) and stays honestly
+  // empty. SELL leads with Fonbnk (restored 2026-11-09, owner's
+  // ruling — see the RESTORED note in the plan comments): a
+  // deposit-address sell where the money leaves Fluid directly,
+  // walked live at ₦1,371.50/$ against the ₦1,378.14 composite,
+  // no ID check on Nigeria sell orders, bank minimum ₦5,000
+  // (≈$3.65) enforced live in the widget. Noblocks (Paycrest's
+  // consumer app) follows as the second EXTERNAL route — owner
+  // decision 2026-11-09 (NG repair): verified to complete at
+  // small amounts (2 bps, min ₦100 fee, market rate in normal
+  // conditions), but the money passes through Noblocks' own
+  // wallet first, so the deposit-address sell outranks it. Both
+  // pay Fluid nothing and say so in their notes — named, not
+  // endorsed as Fluid routes. The in-Fluid Paycrest Gateway sell
+  // (same protocol as Noblocks, native fee capture) stays the
+  // wired route the moment its standing gates pass — see
   // research_notes/fluid-ng-repair-20261109/report.md.
   NG: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — no ID check on Nigeria sell orders · bank sells start at ₦5,000 (about $3.65) · priced off the local market — check the quote before you send" }],
     ["Noblocks", { modes: ["sell"], external: true }],
   ],
-  // KE, GH, UG, TZ, CM, SN, CI, ZM: no qualifying route since the
-  // 2026-11-08 pull (see the PULLED note in the plan comments) —
-  // both modes resolve empty and the sheet shows its honest
-  // empty state until a route passes the bar.
-  KE: [],
-  GH: [],
+  // KE, GH, UG, TZ, CM, SN, CI, ZM: BUY resolves empty (Fonbnk
+  // buy stays out — see the NG note). SELL carries the restored
+  // Fonbnk row (2026-11-09): deposit-address model, off-ramp
+  // KYC off in all of them (Fonbnk's own country pages +
+  // platform KYC page, re-verified 2026-11-09), live quotes
+  // spot-checked for KE (1 USDT ≈ 128.41 KES vs the 130.0
+  // benchmark) and GH (11.99 GHS, mobile money only — Ghana has
+  // no bank off-ramp channel, so the link preselects
+  // mobile_money and the note says where the money lands).
+  KE: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank or M-PESA details, and Fonbnk gives you an address to send to from Fluid — no ID check on Kenya sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+  ],
+  GH: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Ghana sell orders · sells start at about $1 · Ghana pays to mobile money, not to a bank account · priced off the local market — check the quote before you send" }],
+  ],
   ZA: [
     ["Mt Pelerin", { badge: true }],
     ["Paybis", {}],
+    // Fonbnk sell restored 2026-11-09 as the third row: South
+    // Africa is the ONE corridor where Fonbnk switches sell-side
+    // KYC on (basic ID check from $1 — its own country page), so
+    // the note discloses it; live quote the same day was
+    // 1 USDT ≈ 16.11 ZAR.
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your bank details, and Fonbnk gives you an address to send to from Fluid — South Africa sell orders need an ID check · priced off the local market — check the quote before you send" }],
   ],
-  UG: [],
-  TZ: [],
-  CM: [],
-  SN: [],
-  CI: [],
-  ZM: [],
+  UG: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Uganda sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+  ],
+  TZ: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Tanzania sell orders · sells start at about $1 · priced off the local market — check the quote before you send" }],
+  ],
+  CM: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Cameroon sell orders · priced off the local market — check the quote before you send" }],
+  ],
+  SN: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Senegal sell orders · priced off the local market — check the quote before you send" }],
+  ],
+  CI: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Côte d'Ivoire sell orders · priced off the local market — check the quote before you send" }],
+  ],
+  ZM: [
+    ["Fonbnk", { modes: ["sell"], external: true, addressEntry: "deposit-address", note: "Opens the Fonbnk app — Fluid earns nothing from it · you verify an email, give your mobile money details, and Fonbnk gives you an address to send to from Fluid — no ID check on Zambia sell orders · priced off the local market — check the quote before you send" }],
+  ],
   US: [
     // Spritz leads (global ramp research, 7 Nov 2026): the cheapest
     // verified US route — buy 1% / sell 0.5% by ACH. Mt Pelerin
@@ -4426,6 +4518,15 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
     }
     if (name === "Mt Pelerin") {
       url = mode === "buy" ? mtpelerinBuyUrl(asset, c.fiat) : mtpelerinSellUrl(asset, c.fiat);
+      if (!url) continue;
+    } else if (name === "Fonbnk") {
+      // Fonbnk is SELL-only by construction (restored 2026-11-09):
+      // its link builder exists only for the off-ramp, and this
+      // guard keeps it off every buy sheet even if a future plan
+      // row forgets its modes. A network Fonbnk does not support
+      // builds no URL and the row is omitted.
+      if (mode !== "sell") continue;
+      url = fonbnkOfframpUrl(networkKey, asset, c.code);
       if (!url) continue;
     } else {
       const links = RAMP_STATIC_LINKS[name];

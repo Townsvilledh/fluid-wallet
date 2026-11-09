@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, fonbnkOfframpUrl, FONBNK_OFFRAMP_CHANNELS, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
@@ -93,9 +93,11 @@ ok("invalid mnemonic rejected", true);
 const intent = formatSendIntent({ amount: "0.05", symbol: "BNB", to: fresh.address, networkKey: "bsc", feeNative: "0.000105" });
 ok("intent is human-readable", intent.includes("Send 0.05 BNB") && intent.includes("BNB Chain") && intent.includes("Confirm?"));
 
-// 7. Pulled ramp providers (2026-11-08: they pay Fluid nothing
-// collectable — no pay, no route) hold no static links.
-ok("pulled providers hold no static links", !("Fonbnk" in RAMP_STATIC_LINKS) && !("Mercuryo" in RAMP_STATIC_LINKS));
+// 7. Mercuryo (pulled 2026-11-08, still out: its sell settles
+// only in EUR/USD/GBP to a card, never NGN to a bank) holds no
+// static links. Fonbnk holds none either — restored 2026-11-09
+// for SELL only, its links are built per selection, never static.
+ok("Mercuryo holds no static links; Fonbnk links are built, never static", !("Mercuryo" in RAMP_STATIC_LINKS) && !("Fonbnk" in RAMP_STATIC_LINKS));
 
 // 8. Registry sanity: 6 networks, unique chain IDs
 const ids = Object.values(NETWORKS).map(n => n.chainId);
@@ -132,28 +134,38 @@ ok("Paybis and Spritz static entries are unchanged", RAMP_STATIC_LINKS["Paybis"]
 ok("removed providers stay removed", (() => {
   // Sweep every country × mode: no removed provider may appear by
   // name, URL or note — incl. the +106%-in-Nigeria provider dropped
-  // in this build, the two providers pulled on 2026-11-08 for
-  // paying Fluid nothing collectable (no pay, no route), and
-  // NoOnes, removed 2026-11-09 as a dead platform (winding-down
-  // announced 17 Aug 2026, P2P closed 21 Aug 2026).
+  // in this build, Mercuryo (pulled 2026-11-08; its sell is
+  // EUR/USD/GBP-to-card only, so there is no completable NG sell
+  // to restore), and NoOnes, removed 2026-11-09 as a dead platform
+  // (winding-down announced 17 Aug 2026, P2P closed 21 Aug 2026).
   // Noblocks left this ban list on 2026-11-09 by owner decision
-  // (NG repair) — it may appear ONLY as the NG sell sheet's single
+  // (NG repair) — it may appear ONLY as the NG sell sheet's
   // external row, which the exemption below states exactly; §73
   // pins that shape so the exception cannot widen silently.
-  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|fonbnk|mercuryo|noones/i;
+  // Fonbnk left the ban list the same day (owner's restore
+  // ruling): it may appear ONLY as an unbadged external SELL row
+  // in its ten restored corridors; §74 pins that shape exactly.
+  const banned = /guardarian|moonpay|transak|ramp\.network|paychant|mercuryo|noones/i;
+  const FONBNK_CORRIDORS = ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"];
   return RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDC");
     return routes.every(r => !banned.test(r.name) && !banned.test(r.url || "") && !banned.test(r.note)
       && (!/noblocks/i.test(r.name + (r.url || "") + r.note)
-        || (c.code === "NG" && m === "sell" && r.name === "Noblocks" && r.external === true)));
+        || (c.code === "NG" && m === "sell" && r.name === "Noblocks" && r.external === true))
+      && (!/fonbnk/i.test(r.name + (r.url || "") + r.note)
+        || (m === "sell" && FONBNK_CORRIDORS.includes(c.code) && r.name === "Fonbnk" && r.external === true && r.badge === false)));
   }));
 })());
-// Pulled 2026-11-08: neither pulled provider may appear in any
-// corridor plan, in the address-entry table, or in the assembly
-// result's flags (their dedicated fields are gone, not just empty).
-ok("pulled providers appear in no corridor plan", RAMP_COUNTRIES.every(c =>
-  RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Fonbnk" && n !== "Mercuryo")));
-ok("pulled providers hold no address-entry entry", !("Fonbnk" in RAMP_ADDRESS_ENTRY) && !("Mercuryo" in RAMP_ADDRESS_ENTRY));
+// Mercuryo appears in no corridor plan and holds no
+// address-entry entry. Fonbnk (restored 2026-11-09, SELL only)
+// appears in plans ONLY as sell rows in its ten corridors, and
+// its address-entry entry records the deposit-address model.
+ok("Mercuryo appears in no corridor plan; Fonbnk only as restored sell rows", RAMP_COUNTRIES.every(c =>
+  RAMP_COUNTRY_PLAN[c.code].every(([n, o]) => n !== "Mercuryo"
+    && (n !== "Fonbnk" || (["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"].includes(c.code)
+      && JSON.stringify(o.modes) === JSON.stringify(["sell"]))))));
+ok("Mercuryo holds no address-entry entry; Fonbnk's is the deposit-address model", !("Mercuryo" in RAMP_ADDRESS_ENTRY)
+  && RAMP_ADDRESS_ENTRY["Fonbnk"] === "deposit-address");
 // Removed 2026-11-09 (dead platform — winding-down, P2P closed):
 // NoOnes holds no static link, no plan row and no caps entry.
 ok("NoOnes holds no static link, plan row or caps entry", !("NoOnes" in RAMP_STATIC_LINKS)
@@ -248,39 +260,43 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (updated 2026-11-09, NG repair): BUY stays honestly
-  // empty — its last route (NoOnes) was removed as a dead platform
-  // (winding-down announced 17 Aug 2026, P2P trading closed
-  // permanently 21 Aug 2026, withdrawal-only since 22 Aug 2026).
-  // SELL names Noblocks as a single EXTERNAL row (owner decision
-  // 2026-11-09: the corridor's one verified-completing sell path;
-  // it pays Fluid nothing and uses its own wallet — both facts are
-  // in its note, it carries no badge, and it never appears on the
-  // buy side or in any other corridor). §73 pins the full shape.
-  ok("NG lineup is empty buy / Noblocks-external sell", JSON.stringify(names("NG")) === JSON.stringify([])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Noblocks"]));
+  // Nigeria (updated 2026-11-09, NG repair + Fonbnk restore):
+  // BUY stays honestly empty — its last route (NoOnes) was removed
+  // as a dead platform (winding-down announced 17 Aug 2026, P2P
+  // trading closed permanently 21 Aug 2026, withdrawal-only since
+  // 22 Aug 2026), and Fonbnk buy is WalletConnect-only in the
+  // keyless widget (walked live 2026-11-09), so it stays out
+  // under the owner's standing buy criterion. SELL leads with the
+  // restored Fonbnk row and names Noblocks second (both EXTERNAL,
+  // both pay Fluid nothing, both facts in their notes, neither
+  // badged). §73 pins the Noblocks shape; §74 pins Fonbnk's.
+  ok("NG lineup is empty buy / Fonbnk-then-Noblocks sell", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk", "Noblocks"]));
   ok("NG buy resolves to the empty state", rampRoutesFor("NG", "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor("NG", "buy", "linea", "USDT").routes.length === 0);
-  ok("NG sell resolves to the external Noblocks row on every network/asset", (() => {
+  ok("NG sell: Fonbnk leads on supported networks; unsupported networks keep only Noblocks", (() => {
     const a = rampRoutesFor("NG", "sell", "bsc", "USDC").routes;
     const b = rampRoutesFor("NG", "sell", "linea", "USDT").routes;
-    return a.length === 1 && b.length === 1
-      && a[0].name === "Noblocks" && a[0].external === true && a[0].url === "https://noblocks.xyz"
-      && a[0].addressEntry === "external-wallet";
+    return a.length === 2 && a[0].name === "Fonbnk" && a[1].name === "Noblocks"
+      && a[1].external === true && a[1].url === "https://noblocks.xyz"
+      && a[1].addressEntry === "external-wallet"
+      && b.length === 1 && b[0].name === "Noblocks" && b[0].external === true;
   })());
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
   ok("NG has no Paybis", !names("NG").includes("Paybis") && !names("NG", "sell").includes("Paybis"));
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
-  // the explainer's presence in the sheet and the total absence of
-  // the pulled providers from the app source.
+  // the explainer's presence in the sheet and the absence of ANY
+  // provider name from the app source (route names live in
+  // wallet-core; the sheet renders them generically).
   const appSrcR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("app sheet renders the honest empty state for zero-route combos", appSrcR.includes("routes.length === 0")
     && appSrcR.includes("passes Fluid's bar right now"));
-  ok("app source names no pulled provider anywhere", !/fonbnk|mercuryo|noones/i.test(appSrcR));
-  ok("NG sell carries exactly the one external row on every network and asset", ["bsc", "base", "linea"].every(k => {
+  ok("app source names no ramp provider anywhere", !/fonbnk|mercuryo|noones/i.test(appSrcR));
+  ok("NG sell on supported networks carries exactly the two external rows", ["bsc", "base", "ethereum", "arbitrum", "polygon"].every(k => {
     const r = rampRoutesFor("NG", "sell", k, "USDT").routes;
-    return r.length === 1 && r[0].name === "Noblocks" && r[0].external === true;
+    return r.length === 2 && r[0].name === "Fonbnk" && r[0].external === true
+      && r[1].name === "Noblocks" && r[1].external === true;
   }));
   ok("NG buy is empty on every network and asset", ["bsc", "base", "linea"].every(k =>
     rampRoutesFor("NG", "buy", k, "USDT").routes.length === 0));
@@ -291,13 +307,14 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // flipped to "walletconnect" — fails here instead of silently
   // reaching a buy sheet.
   ok("address-entry caps are recorded truthfully", ["Mt Pelerin", "Paybis", "Spritz"].every(n => RAMP_ADDRESS_ENTRY[n] === "paste")
-    && !("Fonbnk" in RAMP_ADDRESS_ENTRY) && !("Mercuryo" in RAMP_ADDRESS_ENTRY) && !("NoOnes" in RAMP_ADDRESS_ENTRY));
+    && RAMP_ADDRESS_ENTRY["Fonbnk"] === "deposit-address" && !("Mercuryo" in RAMP_ADDRESS_ENTRY) && !("NoOnes" in RAMP_ADDRESS_ENTRY));
   ok("every planned provider has a caps entry", RAMP_COUNTRIES.every(c =>
     RAMP_COUNTRY_PLAN[c.code].every(([n]) => typeof RAMP_ADDRESS_ENTRY[n] === "string")));
   ok("no WalletConnect-only route on any buy sheet", RAMP_COUNTRIES.every(c =>
     rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r => r.addressEntry === "paste")));
-  ok("pulled providers surface in no corridor or mode", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
-    rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Fonbnk" && r.name !== "Mercuryo"))));
+  ok("Mercuryo surfaces in no corridor or mode; Fonbnk never on a buy sheet", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
+    rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Mercuryo"
+      && (m === "sell" || r.name !== "Fonbnk")))));
   ok("NoOnes appears in no assembled route for any corridor", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "NoOnes"
       && !/noones/i.test(r.name) && !/noones/i.test(r.url || "") && !/noones/i.test(r.note)))));
@@ -306,22 +323,22 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     return has === (c.code === "US");
   })));
 
-  // Kenya + Ghana: both of their routes were pulled 2026-11-08 —
-  // empty on both sides.
-  ok("KE lineup is empty after the pull", JSON.stringify(names("KE")) === JSON.stringify([])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
-  ok("GH lineup is empty after the pull", JSON.stringify(names("GH")) === JSON.stringify([])
-    && JSON.stringify(names("GH", "sell")) === JSON.stringify([]));
-  // The six corridors that only ever had the pulled pair resolve
-  // empty for BOTH modes (the sheet's honest empty state).
-  ok("pulled-only corridors resolve empty for both modes", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
+  // Kenya + Ghana: buy empty; sell carries the restored Fonbnk
+  // row only (2026-11-09 restore; Mercuryo stays out everywhere).
+  ok("KE lineup is empty buy / Fonbnk sell after the restore", JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Fonbnk"]));
+  ok("GH lineup is empty buy / Fonbnk sell after the restore", JSON.stringify(names("GH")) === JSON.stringify([])
+    && JSON.stringify(names("GH", "sell")) === JSON.stringify(["Fonbnk"]));
+  // The six corridors that only ever had the pulled pair: buy
+  // stays empty, sell carries the restored Fonbnk row.
+  ok("restored-only corridors: buy empty, Fonbnk sell", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
-    && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
+    && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
 
   // South Africa: Mt Pelerin leads on price and takes the badge;
   // Paybis is second on both sides.
   ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Paybis"])
-    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin", "Paybis"]));
+    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin", "Paybis", "Fonbnk"]));
   ok("ZA badges Mt Pelerin only", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(badged("ZA", "sell")) === JSON.stringify(["Mt Pelerin"]));
 
@@ -412,9 +429,9 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   }));
   ok("F8: no other corridor's Mt Pelerin is unavailable", ["ZA", "GB", "DE", "MX"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => !r.unavailable && r.url.startsWith("https://"))));
-  // Corridors left empty by the pull stay empty on other networks
-  // too — nothing half-renders behind the empty state.
-  ok("empty corridors stay empty on other networks", ["KE", "UG", "ZM"].every(code =>
+  // On a network Fonbnk does not support, its restored corridors
+  // resolve empty too — the row is omitted, never half-rendered.
+  ok("restored corridors stay empty on unsupported networks", ["KE", "UG", "ZM"].every(code =>
     rampRoutesFor(code, "buy", "linea", "USDT").routes.length === 0
     && rampRoutesFor(code, "sell", "linea", "USDT").routes.length === 0));
 }
@@ -7828,17 +7845,20 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 }
 
 // 73. NG sell repair (2026-11-09, owner decision): Noblocks is
-// named on the Nigeria SELL sheet as an external app — the one
+// named on the Nigeria SELL sheet as an external app — a
 // verified-completing NG sell path — while NG BUY stays honestly
-// empty. These pins keep the exception exactly one row wide: it
-// cannot gain a badge, a buy side, another corridor, or quieter
-// copy without a test going red. Evidence and the wired-route
-// gates for the in-Fluid Paycrest Gateway sell:
+// empty. These pins keep the exception exactly as wide as the
+// decision: it cannot gain a badge, a buy side, another corridor,
+// or quieter copy without a test going red. (The Fonbnk restore
+// later the same day added a second NG sell row AHEAD of
+// Noblocks — §74 pins it; Noblocks' own shape below is
+// unchanged.) Evidence and the wired-route gates for the
+// in-Fluid Paycrest Gateway sell:
 // research_notes/fluid-ng-repair-20261109/report.md.
 {
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "BNB").routes;
-  ok("NG repair: sell sheet carries exactly one row", ngSell.length === 1);
-  const nb = ngSell[0] || {};
+  ok("NG repair: sell sheet carries the Fonbnk row plus the Noblocks row", ngSell.length === 2);
+  const nb = ngSell[1] || {};
   ok("NG repair: the row is Noblocks, external, unbadged, at its real URL",
     nb.name === "Noblocks" && nb.external === true && nb.badge === false
     && nb.url === "https://noblocks.xyz" && nb.unavailable === false);
@@ -7854,8 +7874,72 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("NG repair: NG buy still resolves empty on every network/asset",
     rampRoutesFor("NG", "buy", "bsc", "BNB").routes.length === 0
     && rampRoutesFor("NG", "buy", "base", "USDC").routes.length === 0);
-  ok("NG repair: the plan row itself is sell-only and external",
-    JSON.stringify(RAMP_COUNTRY_PLAN.NG) === JSON.stringify([["Noblocks", { modes: ["sell"], external: true }]]));
+  ok("NG repair: the plan rows are sell-only and external, Fonbnk first",
+    JSON.stringify(RAMP_COUNTRY_PLAN.NG.map(([n, o]) => [n, o.modes, o.external])) === JSON.stringify([
+      ["Fonbnk", ["sell"], true],
+      ["Noblocks", ["sell"], true],
+    ]));
+}
+
+// 74. Fonbnk restore (2026-11-09, owner ruling): Fonbnk SELL
+// returns on its ten pre-pull corridors as unbadged EXTERNAL rows
+// with Noblocks-style disclosure — the owner's fee-capture gate
+// no longer strands a corridor that has a genuinely-completing
+// route. Live evidence (widget walked 2026-11-09: NG sell
+// ₦1,371.50/$ vs the ₦1,378.14 composite, KE 128.41 KES,
+// GH 11.99 GHS mobile-money only, ZA 16.11 ZAR; NG bank minimum
+// ₦5,000 enforced in the widget; no wallet step anywhere in the
+// sell flow): research_notes/fluid-fonbnk-restore-20261109/
+// report.md. These pins keep the exception exactly this wide:
+// Fonbnk buy stays out (WalletConnect-only in the keyless
+// widget), Mercuryo stays out (EUR/USD/GBP-to-card sell only),
+// and no Fonbnk row may gain a badge, a static link, or quieter
+// copy without a test going red.
+{
+  const CORRIDORS = ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"];
+  ok("Fonbnk restore: off-ramp URL is the recovered pre-pull shape (NG, bank)",
+    fonbnkOfframpUrl("bsc", "USDT", "NG") === "https://pay.fonbnk.com/offramp?network=BNB&asset=USDT&paymentChannel=bank&countryIsoCode=NG");
+  ok("Fonbnk restore: channel is per country — GH is mobile_money, never bank",
+    fonbnkOfframpUrl("bsc", "USDT", "GH") === "https://pay.fonbnk.com/offramp?network=BNB&asset=USDT&paymentChannel=mobile_money&countryIsoCode=GH"
+    && FONBNK_OFFRAMP_CHANNELS.GH === "mobile_money" && FONBNK_OFFRAMP_CHANNELS.NG === "bank"
+    && Object.keys(FONBNK_OFFRAMP_CHANNELS).length === 10);
+  ok("Fonbnk restore: unsupported network or unknown country builds no URL",
+    fonbnkOfframpUrl("linea", "USDT", "NG") === null && fonbnkOfframpUrl("bsc", "USDT", "US") === null
+    && fonbnkOfframpUrl("solana", "USDC", "KE") === null);
+  ok("Fonbnk restore: network codes ride the NETWORKS table",
+    NETWORKS.bsc.fonbnkNetwork === "BNB" && NETWORKS.ethereum.fonbnkNetwork === "ETHEREUM"
+    && NETWORKS.base.fonbnkNetwork === "BASE" && NETWORKS.arbitrum.fonbnkNetwork === "ARBITRUM"
+    && NETWORKS.polygon.fonbnkNetwork === "POLYGON");
+  ok("Fonbnk restore: sell row present in exactly the ten corridors, absent elsewhere",
+    RAMP_COUNTRIES.every(c => {
+      const has = rampRoutesFor(c.code, "sell", "bsc", "USDC").routes.some(r => r.name === "Fonbnk");
+      return has === CORRIDORS.includes(c.code);
+    }));
+  ok("Fonbnk restore: no Fonbnk row on any buy sheet, any network",
+    RAMP_COUNTRIES.every(c => ["bsc", "base", "linea"].every(k =>
+      rampRoutesFor(c.code, "buy", k, "USDT").routes.every(r => r.name !== "Fonbnk"))));
+  ok("Fonbnk restore: every Fonbnk row is external, unbadged, deposit-address, disclosing",
+    CORRIDORS.every(code => {
+      const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes.find(x => x.name === "Fonbnk");
+      return r && r.external === true && r.badge === false && r.unavailable === false
+        && r.addressEntry === "deposit-address" && /Fluid earns nothing/.test(r.note)
+        && (r.url || "").startsWith("https://pay.fonbnk.com/offramp?");
+    }));
+  ok("Fonbnk restore: NG row leads NG sell and its note states the ₦5,000 bank minimum",
+    (() => { const r = rampRoutesFor("NG", "sell", "bsc", "USDT").routes;
+      return r.length === 2 && r[0].name === "Fonbnk" && r[1].name === "Noblocks"
+        && /₦5,000/.test(r[0].note) && /no ID check on Nigeria sell orders/.test(r[0].note); })());
+  ok("Fonbnk restore: GH note says mobile money, ZA note discloses the ID check",
+    /mobile money, not to a bank account/.test(rampRoutesFor("GH", "sell", "bsc", "USDT").routes[0].note)
+    && /need an ID check/.test((rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.find(x => x.name === "Fonbnk") || {}).note || ""));
+  ok("Fonbnk restore: ZA sell order is Mt Pelerin, Paybis, Fonbnk — badge stays on Mt Pelerin only",
+    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Paybis", "Fonbnk"])
+    && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
+  ok("Fonbnk restore: Mercuryo appears in no route, note, URL or table",
+    RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
+      rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !/mercuryo/i.test(r.name + (r.url || "") + r.note))))
+    && !("Mercuryo" in RAMP_STATIC_LINKS) && !("Mercuryo" in RAMP_ADDRESS_ENTRY)
+    && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Mercuryo")));
 }
 
 console.log(`\n${passed} checks passed`);
