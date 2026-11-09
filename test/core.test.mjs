@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
@@ -349,6 +349,50 @@ ok("reverse lookup evm case-insensitive", findNameForAddresses(NAME_REG, { evm: 
 ok("reverse lookup no match", findNameForAddresses(NAME_REG, { evm: "0x0000000000000000000000000000000000000000", btc: "bc1qnone" }) === null);
 ok("reverse lookup empty/null registry", findNameForAddresses(null, { evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b" }) === null && findNameForAddresses({}, { btc: "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw" }) === null);
 ok("reverse lookup btc stays case-sensitive", findNameForAddresses(NAME_REG, { btc: "BC1QH0EYDM0KLSS3Y0J79D3MCTCVKPXU7XRZYFZQDW" }) === null);
+
+// 18c. Signed name claims (2026-11-09): EIP-191 claim → Nostr →
+// processor → registry. The claim must verify end-to-end, any
+// post-signing edit must break it, and the five UI states must be
+// exactly the honesty states the owner directed.
+{
+  const claimWallet = await unlockVault(known.keystore, "password123");
+  const claimPhrase = claimWallet.mnemonic.phrase;
+  const { claim, event } = await buildSignedNameClaim({
+    name: "claimunit", evm: claimWallet.address, btc: bitcoinAddress(claimPhrase),
+    algo: algoAddressFromPhrase(claimPhrase),
+    phrase: claimPhrase, signerWallet: claimWallet,
+  });
+  ok("name claim: signed claim verifies", verifyNameClaim(claim).ok === true);
+  ok("name claim: verified entry carries the signed addresses", (() => { const v = verifyNameClaim(claim); return v.entry.evm === claimWallet.address && v.entry.btc === claim.btc; })());
+  ok("name claim: message covers name + evm + btc + ln + algo", buildNameClaimMessage(claim).startsWith("Fluid name claim v1\nname: claimunit\nevm: " + claimWallet.address) && buildNameClaimMessage(claim).includes("\nln: \n"));
+  ok("name claim: EIP-191 recovery round-trips to the claimed address", ethers.verifyMessage(buildNameClaimMessage(claim), claim.sig) === claimWallet.address);
+  ok("name claim: tampered btc address refused", verifyNameClaim({ ...claim, btc: bitcoinAddress("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about") }).ok === false);
+  ok("name claim: tampered name refused", verifyNameClaim({ ...claim, name: "claimunit2" }).ok === false);
+  ok("name claim: invalid name format refused", verifyNameClaim({ ...claim, name: "2bad" }).ok === false);
+  ok("name claim: missing signature refused", verifyNameClaim({ ...claim, sig: "" }).ok === false);
+  ok("name claim: nostr event is kind 30078 with the claim d-tag", event.kind === 30078 && event.tags.some(t => t[0] === "d" && t[1] === "fluid-name-claim:claimunit"));
+  ok("name claim: nostr event signature verifies", verifyNostrEventSignature(event) === true);
+  ok("name claim: tampered nostr event refused", verifyNostrEventSignature({ ...event, content: event.content.replace("claimunit", "claimuniX") }) === false);
+  ok("name claim: nostr key is stable per wallet", nameClaimNostrKeys(claimPhrase).pubHex === event.pubkey && nameClaimNostrKeys(claimPhrase).pubHex === nameClaimNostrKeys(claimPhrase).pubHex);
+  ok("name claim: relays are the public set", NAME_CLAIM_RELAYS.length >= 3 && NAME_CLAIM_RELAYS.every(r => r.startsWith("wss://")));
+  ok("name state: nothing held = none", nameClaimState({}) === "none");
+  ok("name state: held unpublished = saved (NOT LIVE)", nameClaimState({ stored: "x1name", pending: { published: false }, myEvm: claimWallet.address }) === "saved");
+  ok("name state: held published = publishing", nameClaimState({ stored: "x1name", pending: { published: true }, myEvm: claimWallet.address }) === "publishing");
+  ok("name state: registry resolves to this wallet = live", nameClaimState({ stored: "x1name", pending: { published: true }, registryHit: { evm: claimWallet.address }, myEvm: claimWallet.address }) === "live");
+  ok("name state: registry resolves elsewhere = conflict", nameClaimState({ stored: "x1name", pending: { published: true }, registryHit: { evm: "0x0000000000000000000000000000000000000001" }, myEvm: claimWallet.address }) === "conflict");
+  ok("name state: pending from this device shows publishing, not taken", nameClaimState({ stored: "x1name", pending: { published: true }, registryHit: null, myEvm: claimWallet.address }) === "publishing");
+  ok("name state copy: saved says NOT LIVE", NAME_STATE_COPY.saved.includes("NOT LIVE") && NAME_STATE_COPY.saved.includes("Publish my name"));
+  ok("name state copy: conflict says NOT LIVE + pick different", NAME_STATE_COPY.conflict.includes("NOT LIVE") && NAME_STATE_COPY.conflict.includes("different name"));
+  ok("name state copy: live says registered in the public registry", NAME_STATE_COPY.live.includes("public registry"));
+  // App wiring: creation auto-submits, the wait sheet gates on the
+  // registry read, More-tab publish/conflict buttons exist, and the
+  // GitHub sheet survives only as the labelled fallback.
+  const appSrcNc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrcNc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("name claim wiring: creation auto-submits + waits on the registry", appSrcNc.includes("submitNameClaim(claimed, null)") && appSrcNc.includes("showNameCreationWait(claimed, accepted)") && appSrcNc.includes("Continue without a name for now"));
+  ok("name claim wiring: More card carries publish + pick-different actions", appSrcNc.includes("Publish my name") && appSrcNc.includes("Pick a different name") && idxSrcNc.includes('id="ownedNameState"'));
+  ok("name claim wiring: GitHub is the labelled fallback only", idxSrcNc.includes("Publish it yourself instead (fallback)") && appSrcNc.includes("Publish it yourself instead (fallback)"));
+}
 
 // 19. Fee split 60/40 (settled in BTC Lightning) + cheapest-route ranking
 ok("split 60/40", (() => { const s = splitFee(1000); return s.treasury === 600 && s.dripbot === 400; })());
@@ -3476,10 +3520,16 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     idxSrc.includes('id="ownedNameNote"') && !idxSrc.includes("This name is registered to this wallet in the public registry")
     && idxSrc.includes("saved on this device"));
   const nameAt = appSrc.indexOf("function renderNameSection()");
-  const nameSlice = appSrc.slice(nameAt, nameAt + 6500);
+  const nameSlice = appSrc.slice(nameAt, nameAt + 12000);
+  // 2026-11-09: the wording now comes from NAME_STATE_COPY via
+  // nameClaimState — the pinned property is unchanged (the LIVE
+  // wording is painted only from the branch where the registry hit
+  // is passed in, and nameClaimState returns "live" only when that
+  // hit's evm matches this wallet; the state machine itself is
+  // pinned in section 18c).
   ok("qa5: registered wording is set only when the registry resolves the name to this wallet",
     nameSlice.includes('$("ownedNameNote")')
-    && nameSlice.includes("String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()")
+    && nameSlice.includes("nameClaimState({ stored, pending: loadPendingClaim(), registryHit: hit")
     && nameSlice.includes("publish its entry so other Fluid wallets can resolve it"));
 }
 

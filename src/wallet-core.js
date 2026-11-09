@@ -22,7 +22,7 @@ import { keccak_256, sha3_256 } from "@noble/hashes/sha3.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { secp256k1, schnorr } from "@noble/curves/secp256k1.js";
 import {
   Keypair as SolKeypair, PublicKey as SolPublicKey, SystemProgram as SolSystemProgram,
   Transaction as SolTransaction, TransactionInstruction as SolTxInstruction,
@@ -3075,6 +3075,176 @@ export function findNameForAddresses(registry, { evm = null, btc = null, algo = 
   }
   return null;
 }
+
+// ---------- Fluid Name claims: signed claim → Nostr → processor → registry ----------
+// THE GAP THIS CLOSES (meeday incident, 2026-11-09): claiming used to
+// save the name on-device only; publishing meant hand-editing
+// names.json on GitHub — a step outside the app that phone-only users
+// never completed, so their name never resolved for anyone else while
+// the app showed it as theirs. The claim now completes inside the
+// app: the wallet signs a canonical claim with its EVM key (EIP-191),
+// wraps it in a Nostr event and publishes it to public relays; a
+// processor verifies the signature, enforces first-come-first-served
+// against the published registry, and lands the winner in names.json.
+// No server, no account, no token, no cost — names and addresses are
+// public data, and the event carries nothing private.
+export const NAME_CLAIM_KIND = 30078;
+export const NAME_CLAIM_D_PREFIX = "fluid-name-claim:";
+export const NAME_CLAIM_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+/** The Nostr signing key for claims derives from the user's seed at
+ *  its own BIP32 path — m/9419/121924, one leaf past Satora's
+ *  m/9419/121923 namespace — so a wallet's claims are stable across
+ *  devices and sessions. The key only signs the transport event; the
+ *  binding ownership proof is the EIP-191 signature inside it. */
+export const NAME_CLAIM_DERIVATION_PATH = "m/9419/121924";
+export function nameClaimNostrKeys(phrase) {
+  const seed = mnemonicToSeedSync(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
+  const node = HDKey.fromMasterSeed(seed).derive(NAME_CLAIM_DERIVATION_PATH);
+  if (!node.privateKey) throw new Error("Could not derive this wallet's name-claim key.");
+  const priv = node.privateKey;
+  return { priv, pubHex: hexOf(schnorr.getPublicKey(priv)) };
+}
+/** The canonical claim text — the EXACT bytes the EVM key signs.
+ *  One field per line, empty optional fields stay as empty lines, so
+ *  any post-signing edit to any covered field changes the message
+ *  and the signature stops recovering the claimed EVM address.
+ *  Covers name + evm + btc + ln + algo, plus sol/tron/sui when the
+ *  wallet carries them (the registry entry's remaining families —
+ *  signing them too means the processor can never be handed a
+ *  different Solana/Tron/Sui address than the owner signed). */
+export function buildNameClaimMessage(claim) {
+  const c = claim || {};
+  const f = (v) => String(v == null ? "" : v).trim();
+  return [
+    "Fluid name claim v1",
+    "name: " + normalizeFluidName(c.name),
+    "evm: " + f(c.evm),
+    "btc: " + f(c.btc),
+    "ln: " + f(c.ln),
+    "algo: " + f(c.algo),
+    "sol: " + f(c.sol),
+    "tron: " + f(c.tron),
+    "sui: " + f(c.sui),
+  ].join("\n");
+}
+/** Verify a claim object {name, evm, btc, ln?, algo?, sol?, tron?,
+ *  sui?, sig}: the name must pass the app's own format rules, every
+ *  present address must pass the registry's own sanitizer, and the
+ *  EIP-191 signature over buildNameClaimMessage must recover EXACTLY
+ *  the claimed EVM address. Returns { ok, reason?, entry? } — entry
+ *  is the sanitized registry entry (no name key) on success. This is
+ *  the single verification the processor runs; the app uses the same
+ *  function on its own claim before publishing. */
+export function verifyNameClaim(claim) {
+  const c = claim || {};
+  const name = normalizeFluidName(c.name);
+  if (!validateFluidName(name)) return { ok: false, reason: "invalid name format" };
+  if (typeof c.sig !== "string" || !/^0x[0-9a-fA-F]{130}$/.test(c.sig)) return { ok: false, reason: "missing or malformed signature" };
+  const raw = { evm: c.evm, btc: c.btc, ln: c.ln || undefined, algo: c.algo || undefined, sol: c.sol || undefined, tron: c.tron || undefined, sui: c.sui || undefined };
+  const entry = sanitizeNameEntry(raw);
+  if (!entry || !entry.evm || !entry.btc) return { ok: false, reason: "missing or invalid evm/btc address" };
+  // A present-but-invalid optional field is dropped by the sanitizer;
+  // a claim that CARRIED such a field was not the claim its owner
+  // reviewed — refuse rather than publish a trimmed variant.
+  for (const k of ["ln", "algo", "sol", "tron", "sui"]) {
+    if (c[k] && !entry[k]) return { ok: false, reason: `invalid ${k} address` };
+  }
+  if (String(entry.evm).toLowerCase() !== String(c.evm).trim().toLowerCase()) return { ok: false, reason: "evm address failed sanitization" };
+  let recovered;
+  try { recovered = ethers.verifyMessage(buildNameClaimMessage({ ...c, name }), c.sig); }
+  catch { return { ok: false, reason: "signature does not verify" }; }
+  if (String(recovered).toLowerCase() !== String(c.evm).trim().toLowerCase()) return { ok: false, reason: "signature recovers a different address" };
+  return { ok: true, entry };
+}
+/** The Nostr event id (NIP-01): sha256 of the JSON serialization
+ *  [0, pubkey, created_at, kind, tags, content], hex-encoded. */
+export function nostrEventId(event) {
+  const ser = JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
+  return hexOf(sha256(new TextEncoder().encode(ser)));
+}
+/** Build + sign the claim's Nostr transport event (kind 30078,
+ *  d-tag "fluid-name-claim:<name>", content = the claim JSON).
+ *  `signerWallet` is the unlocked ethers wallet (EIP-191); the claim
+ *  is verified locally before anything is signed or sent. */
+export async function buildSignedNameClaim({ name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null, phrase, signerWallet, createdAt = null }) {
+  const claim = { v: 1, name: normalizeFluidName(name), evm, btc, ln: ln || "", algo: algo || "", sol: sol || "", tron: tron || "", sui: sui || "" };
+  const sig = await signerWallet.signMessage(buildNameClaimMessage(claim));
+  const signed = { ...claim, sig };
+  const check = verifyNameClaim(signed);
+  if (!check.ok) throw new Error("This claim does not verify (" + check.reason + ") — nothing was published.");
+  const keys = nameClaimNostrKeys(phrase);
+  const event = {
+    pubkey: keys.pubHex,
+    created_at: createdAt || Math.floor(Date.now() / 1000),
+    kind: NAME_CLAIM_KIND,
+    tags: [["d", NAME_CLAIM_D_PREFIX + claim.name]],
+    content: JSON.stringify(signed),
+  };
+  event.id = nostrEventId(event);
+  event.sig = hexOf(schnorr.sign(hexToBytesB(event.id), keys.priv));
+  return { claim: signed, event };
+}
+/** Verify a Nostr event's own Schnorr signature (transport integrity
+ *  only — ownership is proven by the EIP-191 signature inside). */
+export function verifyNostrEventSignature(event) {
+  try {
+    if (!event || typeof event.id !== "string" || typeof event.pubkey !== "string" || typeof event.sig !== "string") return false;
+    if (nostrEventId(event) !== event.id) return false;
+    return schnorr.verify(hexToBytesB(event.sig), hexToBytesB(event.id), hexToBytesB(event.pubkey));
+  } catch { return false; }
+}
+/** Publish a signed claim event to the public relays over wss
+ *  (browser WebSocket). Resolves the number of relays that accepted
+ *  (OK true); succeeds by the caller's rule at ≥1. Never throws —
+ *  a total failure returns 0 and the caller keeps the claim in the
+ *  saved-on-device state with its Publish button. */
+export async function publishNameClaimEvent(event, relays = NAME_CLAIM_RELAYS, timeoutMs = 9000) {
+  const one = (url) => new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; try { ws.close(); } catch { /* already closed */ } resolve(ok); } };
+    let ws;
+    try { ws = new WebSocket(url); } catch { return resolve(false); }
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    ws.onopen = () => { try { ws.send(JSON.stringify(["EVENT", event])); } catch { clearTimeout(timer); finish(false); } };
+    ws.onmessage = (m) => {
+      try {
+        const msg = JSON.parse(String(m.data || ""));
+        if (Array.isArray(msg) && msg[0] === "OK" && msg[1] === event.id) { clearTimeout(timer); finish(msg[2] === true); }
+      } catch { /* not an OK frame — keep waiting for the timeout */ }
+    };
+    ws.onerror = () => { clearTimeout(timer); finish(false); };
+    ws.onclose = () => { clearTimeout(timer); finish(false); };
+  });
+  const results = await Promise.allSettled(relays.map(one));
+  return results.filter(r => r.status === "fulfilled" && r.value === true).length;
+}
+/** The five name states (owner's honesty rule, 2026-11-09: no state
+ *  may present a name as owned while it doesn't resolve for other
+ *  wallets). Pure, so the suite pins every transition:
+ *   none       — this device holds no claim for the name.
+ *   saved      — claimed on this device, NOT LIVE: nobody else can
+ *                send to it yet; the Publish button finishes it.
+ *   publishing — the signed claim is with the relays; the app polls
+ *                the published registry until it lands.
+ *   live       — the registry resolves the name to THIS wallet.
+ *   conflict   — the registry resolves the name to a DIFFERENT
+ *                wallet (first come, first served was won elsewhere). */
+export function nameClaimState({ stored = null, pending = null, registryHit = null, myEvm = null } = {}) {
+  const mine = !!(registryHit && myEvm && registryHit.evm && String(registryHit.evm).toLowerCase() === String(myEvm).toLowerCase());
+  if (registryHit && mine) return "live";
+  if (registryHit && stored) return "conflict";
+  if (pending && pending.published) return "publishing";
+  if (stored || pending) return "saved";
+  return "none";
+}
+/** The exact user-facing sentence for each state — one source, used
+ *  by the creation flow and the More-tab card alike, pinned by tests. */
+export const NAME_STATE_COPY = Object.freeze({
+  saved: "Saved on this device only — NOT LIVE. Nobody else can send to this name yet. Tap “Publish my name” to finish claiming it.",
+  publishing: "Publishing… your signed claim has been sent and your name will go live once it lands in the public registry — usually a few minutes. This screen keeps checking.",
+  live: "This name is registered to this wallet in the public registry — anyone can send to it on any chain.",
+  conflict: "This name was claimed by someone else first — the public registry resolves it to a different wallet, so this device's claim is NOT LIVE. Pick a different name.",
+});
 
 // ---------- Platform fees: cheapest-route principle + 60/40 split, settled in BTC over Lightning ----------
 // Fluid's own fees (RAIN claim fee, OGO ERA game rake, the swap fee

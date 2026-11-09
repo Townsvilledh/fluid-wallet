@@ -12,7 +12,16 @@ Lightning address so the name also receives Lightning payments. `algo`
 ASA sends. Send any asset to the name alone — the wallet picks the right
 key for the asset.
 
-To claim a name: open the wallet → More → "Your Fluid name", pick a name,
-copy your entry, then add it to `names.json` in this repo via a GitHub
-edit or PR. First come, first served; names are public and permanent in
-git history, so choose one you're happy to be known by.
+To claim a name: open the wallet and pick a name — at wallet creation,
+or later under More → "Your Fluid name". The wallet signs the claim
+with its own keys and publishes it from inside the app; a processor
+verifies the signature, enforces first-come-first-served against this
+registry, and lands the name here automatically — no account, no
+GitHub, nothing to copy by hand. Your name shows as **live** only once
+it appears in this registry resolving to your wallet; until then the
+app says plainly that it is saved on your device or still publishing.
+
+Fallback: if you prefer to publish by hand, the app still shows your
+registry entry — add it to `names.json` in this repo via a GitHub
+edit or PR. First come, first served either way; names are public and
+permanent in git history, so choose one you're happy to be known by.

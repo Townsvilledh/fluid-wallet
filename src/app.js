@@ -27,6 +27,7 @@ import {
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress,
+  buildSignedNameClaim, publishNameClaimEvent, nameClaimState, NAME_STATE_COPY,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
@@ -46,6 +47,7 @@ import {
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
+const NAME_CLAIM_KEY = "fluid_name_claim"; // the device-held signed name claim + its publish state
 const HISTORY_KEY = "fluid_history_v1";
 const APPROVALS_KEY = "fluid_approvals_v1";
 const CHAINS_KEY = "fluid_chains_v1";
@@ -4454,18 +4456,18 @@ $("createBtn").onclick = async () => {
     if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
     wallet = await unlockVault(v.keystore, pw);
     if (pendingName) {
-      localStorage.setItem("fluid_name", pendingName);
-      const entry = buildNameEntry(pendingName, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase), solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase));
-      const entryText = JSON.stringify(entry).slice(1, -1) + ",";
       const claimed = pendingName; pendingName = null;
-      setTimeout(() => {
-        openSheet(`<h3 style="margin:4px 0">Your name: ${claimed}.${FLUID_DOMAIN}</h3>
-          <p class="tag">Claimed with your wallet and saved on this device. One last step so EVERY Fluid wallet can resolve you: publish this entry into <b>names.json</b> in the GitHub repo.</p>
-          <div class="seed" style="font-size:12px">${entryText}</div>
-          <button class="btn" id="sheetCopyEntry">Copy entry</button>
-          <a class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>`);
-        $("sheetCopyEntry").onclick = () => copyText(entryText, $("sheetCopyEntry"));
-      }, 400);
+      localStorage.setItem("fluid_name", claimed);
+      savePendingClaim(null); // a fresh wallet starts with no held claim
+      // The claim is submitted automatically now that the keys exist
+      // (NAMES RESOLUTION RULE, 2026-11-09): creation is not complete
+      // until the name verifies as resolving from the published
+      // registry — the wait sheet polls for exactly that. The only
+      // bypass is the explicit continue-without-a-name choice on it.
+      let accepted = 0;
+      try { accepted = await submitNameClaim(claimed, null); } catch { accepted = 0; }
+      showNameCreationWait(claimed, accepted);
+      return;
     }
     refreshGate();
   };
@@ -4483,6 +4485,7 @@ $("importBtn").onclick = async () => {
     // imported wallet starts nameless here; renderMain's reverse
     // lookup re-attaches its own published name if it has one.
     localStorage.removeItem("fluid_name");
+    localStorage.removeItem(NAME_CLAIM_KEY);
     nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
     refreshGate();
@@ -4564,10 +4567,121 @@ let nameAdoptTried = false;
 // with — is dropped instead of painting the old wallet's data into
 // the new wallet's section.
 let nameSectionGen = 0;
+// ---------- signed name claims: publish from inside the app ----------
+// The device-held claim record (fluid_name_claim) is the signed claim
+// JSON plus its publish state. It is written BEFORE anything is sent
+// (persist-first), so a claim that fails to reach any relay stays in
+// the saved state with its Publish button — never silently lost, and
+// never presented as live.
+function loadPendingClaim() {
+  try { const p = JSON.parse(localStorage.getItem(NAME_CLAIM_KEY) || "null"); return p && typeof p === "object" ? p : null; }
+  catch { return null; }
+}
+function savePendingClaim(p) {
+  try { if (p) localStorage.setItem(NAME_CLAIM_KEY, JSON.stringify(p)); else localStorage.removeItem(NAME_CLAIM_KEY); } catch { /* storage unavailable */ }
+}
+/** Sign this wallet's claim for `name` and publish it to the relays.
+ *  Resolves the number of relays that accepted (≥1 = publishing).
+ *  Throws only when the claim cannot be built or verified locally. */
+async function submitNameClaim(name, ln) {
+  if (!wallet) throw new Error("Unlock your wallet first.");
+  const phrase = wallet.mnemonic.phrase;
+  const { claim, event } = await buildSignedNameClaim({
+    name, evm: wallet.address,
+    btc: bitcoinAddress(phrase), ln: ln || null,
+    algo: algoAddressFromPhrase(phrase), sol: solanaAddressFromPhrase(phrase),
+    tron: tronAddressFromPhrase(phrase), sui: suiAddressFromPhrase(phrase),
+    phrase, signerWallet: wallet,
+  });
+  savePendingClaim({ ...claim, eventId: event.id, published: false, submittedAt: Date.now() });
+  localStorage.setItem("fluid_name", claim.name);
+  let accepted = 0;
+  try { accepted = await publishNameClaimEvent(event); } catch { accepted = 0; }
+  const held = loadPendingClaim();
+  if (held && held.eventId === event.id) { held.published = accepted > 0; held.relaysAccepted = accepted; savePendingClaim(held); }
+  return accepted;
+}
+let namePollTimer = null;
+function stopNamePoll() { if (namePollTimer) { clearInterval(namePollTimer); namePollTimer = null; } }
+function ensureNamePoll() {
+  if (namePollTimer) return;
+  namePollTimer = setInterval(() => {
+    if (!wallet) { stopNamePoll(); return; }
+    const p = loadPendingClaim();
+    if (!p || !p.published) { stopNamePoll(); return; }
+    renderNameSection();
+  }, 20000);
+}
+/** Creation-time wait (NAMES RESOLUTION RULE): after a fresh wallet
+ *  claims its name, creation completes only when a registry read
+ *  shows the name resolving to THIS wallet — or when the user
+ *  explicitly chooses to continue without a name (told plainly they
+ *  have no live name yet). Dismissing the sheet is the same explicit
+ *  bypass, via the sheet-close hook. */
+function showNameCreationWait(name, accepted) {
+  const entry = buildNameEntry(name, wallet.address, bitcoinAddress(wallet.mnemonic.phrase), null, algoAddressFromPhrase(wallet.mnemonic.phrase), solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddressFromPhrase(wallet.mnemonic.phrase));
+  const entryText = JSON.stringify(entry).slice(1, -1) + ",";
+  let settled = false;
+  let poll = null;
+  const finish = () => { settled = true; if (poll) clearInterval(poll); sheetCloseHook = null; closeSheet(); refreshGate(); };
+  openSheet(`<h3 style="margin:4px 0">Your name: ${esc(name)}.${FLUID_DOMAIN}</h3>
+    <p class="tag" id="ncWaitStatus">${accepted > 0 ? esc(NAME_STATE_COPY.publishing) : esc(NAME_STATE_COPY.saved)}</p>
+    ${accepted > 0 ? "" : `<button class="btn" id="ncPublishBtn">Publish my name</button>`}
+    <button class="btn hidden" id="ncEnterBtn">Enter Fluid →</button>
+    <p class="tag" style="margin-top:10px">You can continue now instead — but you will have <b>no live name yet</b>: nobody can send to ${esc(name)}.${FLUID_DOMAIN} until it publishes. It keeps publishing in the background, and its state shows under More → “Your Fluid name”.</p>
+    <button class="btn ghost" id="ncSkipBtn">Continue without a name for now</button>
+    <p class="tag" style="margin-top:12px"><b>Publish it yourself instead (fallback):</b> copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
+    <div class="seed" style="font-size:12px">${entryText}</div>
+    <button class="btn ghost" id="ncCopyEntry">Copy entry</button>
+    <a class="btn ghost" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="https://github.com/Townsvilledh/fluid-wallet/edit/main/names.json" target="_blank" rel="noopener">Open names.json on GitHub ↗</a>`);
+  sheetCloseHook = () => { if (!settled) { settled = true; if (poll) clearInterval(poll); refreshGate(); } };
+  $("ncCopyEntry").onclick = () => copyText(entryText, $("ncCopyEntry"));
+  $("ncSkipBtn").onclick = finish;
+  const publishBtn = $("ncPublishBtn");
+  if (publishBtn) publishBtn.onclick = async () => {
+    publishBtn.disabled = true;
+    try {
+      const n = await submitNameClaim(name, null);
+      const st = $("ncWaitStatus"); if (st) st.textContent = n > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved;
+      if (n > 0) publishBtn.classList.add("hidden");
+      else publishBtn.disabled = false;
+    } catch { publishBtn.disabled = false; }
+  };
+  const check = async () => {
+    if (settled || !wallet) return;
+    const hit = await resolveFluidName(name).catch(() => null);
+    if (settled || !hit) return;
+    const statusEl = $("ncWaitStatus"), enterBtn = $("ncEnterBtn"), skipBtn = $("ncSkipBtn");
+    if (!statusEl || !enterBtn) return;
+    if (String(hit.evm || "").toLowerCase() === String(wallet.address).toLowerCase()) {
+      statusEl.textContent = NAME_STATE_COPY.live;
+      enterBtn.classList.remove("hidden");
+      if (skipBtn) skipBtn.classList.add("hidden");
+      if (poll) { clearInterval(poll); poll = null; }
+      enterBtn.onclick = finish;
+    } else {
+      statusEl.textContent = NAME_STATE_COPY.conflict;
+      enterBtn.textContent = "Enter Fluid and pick another name";
+      enterBtn.classList.remove("hidden");
+      if (poll) { clearInterval(poll); poll = null; }
+      enterBtn.onclick = finish;
+    }
+  };
+  poll = setInterval(check, 8000);
+  check();
+}
 function renderNameSection() {
   const gen = ++nameSectionGen;
   const stored = localStorage.getItem("fluid_name");
   const myAddr = wallet ? wallet.address : null;
+  // Held-claim hygiene: a pending claim belongs to ONE name and ONE
+  // wallet. A record left by a replaced wallet, or for a name this
+  // device no longer holds, is stale — drop it rather than let it
+  // paint another wallet's state.
+  {
+    const held = loadPendingClaim();
+    if (held && (held.name !== stored || (myAddr && held.evm && String(held.evm).toLowerCase() !== String(myAddr).toLowerCase()))) savePendingClaim(null);
+  }
   const stillCurrent = () => gen === nameSectionGen
     && localStorage.getItem("fluid_name") === stored
     && (wallet ? wallet.address : null) === myAddr;
@@ -4584,7 +4698,7 @@ function renderNameSection() {
   // reload reset the DOM to the static placeholder. This function
   // is now the description's ONLY writer.
   $("namePreview").textContent = stored ? stored + "." + FLUID_DOMAIN : "you." + FLUID_DOMAIN;
-  if (!stored) { show("ownedNameBox", false); show("claimForm", true); return; }
+  if (!stored) { stopNamePoll(); show("ownedNameBox", false); show("claimForm", true); return; }
   show("claimForm", false);
   show("ownedNameBox", true);
   $("ownedNameText").textContent = stored + "." + FLUID_DOMAIN;
@@ -4595,6 +4709,55 @@ function renderNameSection() {
   // be described as registered.
   const noteEl = $("ownedNameNote");
   if (noteEl) noteEl.textContent = "This name is saved on this device — publish its entry so other Fluid wallets can resolve it.";
+  // The five-state paint (nameClaimState + NAME_STATE_COPY): the note
+  // and the one finishing action for the state — Publish my name
+  // (saved), Publish again (publishing), Pick a different name
+  // (conflict), nothing (live). Painted immediately from the local
+  // claim state, then refined by the registry lookup below: a name
+  // pending from THIS device shows as PUBLISHING, never as free,
+  // taken, or done.
+  const paintNameState = (state) => {
+    if (!stillCurrent()) return;
+    if (noteEl && NAME_STATE_COPY[state]) noteEl.textContent = NAME_STATE_COPY[state];
+    const box = $("ownedNameState");
+    if (!box) return;
+    if (state === "publishing") {
+      box.innerHTML = `<button class="btn ghost" id="nsRepublishBtn" style="width:auto;padding:6px 12px">Publish again</button>`;
+      $("nsRepublishBtn").onclick = async () => {
+        const p = loadPendingClaim(); if (!p || !wallet) return;
+        try { await submitNameClaim(p.name, p.ln || null); } catch { /* the state repaint reports the outcome */ }
+        renderNameSection();
+      };
+      ensureNamePoll();
+    } else if (state === "saved") {
+      stopNamePoll();
+      box.innerHTML = `<button class="btn" id="nsPublishBtn">Publish my name</button>`;
+      $("nsPublishBtn").onclick = async () => {
+        const btn = $("nsPublishBtn"); if (btn) btn.disabled = true;
+        try {
+          const p = loadPendingClaim();
+          const n = await submitNameClaim(stored, p ? (p.ln || null) : null);
+          msg("nameMsg", n > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved, true);
+        } catch (e) { msg("nameMsg", "Publish failed: " + (e.message || e)); }
+        renderNameSection();
+      };
+    } else if (state === "conflict") {
+      stopNamePoll();
+      box.innerHTML = `<button class="btn ghost" id="nsPickOtherBtn" style="width:auto;padding:6px 12px">Pick a different name</button>`;
+      $("nsPickOtherBtn").onclick = () => {
+        localStorage.removeItem("fluid_name");
+        savePendingClaim(null);
+        msg("nameMsg", "");
+        renderNameSection();
+        renderMain();
+      };
+    } else {
+      if (state === "live" && loadPendingClaim()) savePendingClaim(null);
+      stopNamePoll();
+      box.innerHTML = "";
+    }
+  };
+  paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr }));
   // Prefill from THIS wallet's own keys right away; the registry
   // entry (what senders actually resolve) refines the fields when
   // it loads. The addresses are derived from the current wallet's
@@ -4637,10 +4800,24 @@ function renderNameSection() {
   paintOwnedLn(null);
   $("ownedLn").textContent = "Checking the registry…";
   show("copyOwnedLn", false); show("ownedLnAdd", false);
-  $("ownedLnAddBtn").onclick = () => {
+  $("ownedLnAddBtn").onclick = async () => {
     if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
     const ln = $("ownedLnInput").value.trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ln)) return msg("nameMsg", "That doesn't look like a Lightning address (name@domain).");
+    // Not live yet? The Lightning address folds into the held claim
+    // and the claim is resubmitted — the version that lands carries
+    // it. Already live? The registry is append-only in the in-app
+    // flow, so an update rides the labelled GitHub fallback below.
+    const hit = await resolveFluidName(stored).catch(() => null);
+    const isLive = !!(hit && hit.evm && String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase());
+    if (!isLive) {
+      try {
+        const n = await submitNameClaim(stored, ln);
+        msg("nameMsg", n > 0 ? "Lightning address added to your claim — " + NAME_STATE_COPY.publishing : "Lightning address added to your claim — " + NAME_STATE_COPY.saved, true);
+      } catch (e) { msg("nameMsg", "Could not update your claim: " + (e.message || e)); }
+      renderNameSection();
+      return;
+    }
     const entry = buildNameEntry(stored,
       $("ownedEvm").textContent || wallet.address,
       $("ownedBtc").textContent || bitcoinAddress(wallet.mnemonic.phrase),
@@ -4651,7 +4828,7 @@ function renderNameSection() {
       suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase));
     $("ownedEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
     show("ownedEntryBox", true);
-    msg("nameMsg", "Lightning address added to your entry — publish it so the change resolves everywhere.", true);
+    msg("nameMsg", "Your name is already live, so this update uses the fallback below — publish the updated entry so the change resolves everywhere.", true);
   };
   $("copyOwnedEntryBtn").onclick = () => copyText($("ownedEntry").textContent, $("copyOwnedEntryBtn"));
   resolveFluidName(stored).then(async (hit) => {
@@ -4667,20 +4844,15 @@ function renderNameSection() {
       const reg = await fetchNameRegistry().catch(() => null);
       if (!stillCurrent()) return;
       paintOwnedLn(null, !reg);
+      paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr }));
       return;
     }
     if (hit.evm) $("ownedEvm").textContent = hit.evm;
     if (hit.btc) $("ownedBtc").textContent = hit.btc;
     if (hit.algo) $("ownedAlgo").textContent = hit.algo;
     paintOwnedLn(hit.ln || null);
-    if (noteEl && wallet && hit.evm) {
-      if (String(hit.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
-        noteEl.textContent = "This name is registered to this wallet in the public registry — anyone can send to it on any chain.";
-      } else {
-        noteEl.textContent = "Saved on this device — but the public registry currently resolves this name to a different wallet.";
-      }
-    }
-  }).catch(() => { if (stillCurrent()) paintOwnedLn(null, true); });
+    paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: hit, myEvm: myAddr }));
+  }).catch(() => { if (stillCurrent()) { paintOwnedLn(null, true); paintNameState(nameClaimState({ stored, pending: loadPendingClaim(), registryHit: null, myEvm: myAddr })); } });
 }
 /** Reverse lookup, once per unlock session: if the public registry holds
  *  a name whose EVM, BTC, Algorand, Solana, Tron or Sui address is THIS
@@ -4706,6 +4878,17 @@ $("claimNameBtn").onclick = async () => {
   if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
   const name = normalizeFluidName($("nameInput").value);
   if (!validateFluidName(name)) return msg("nameMsg", "Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
+  // A claim already held by THIS device for THIS name is neither
+  // free nor taken-by-another — it is this wallet's own publish in
+  // flight (or waiting on its Publish button).
+  const heldClaim = loadPendingClaim();
+  if (heldClaim && heldClaim.name === name && heldClaim.evm && String(heldClaim.evm).toLowerCase() === String(wallet.address).toLowerCase()) {
+    localStorage.setItem("fluid_name", name);
+    msg("nameMsg", heldClaim.published ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved, true);
+    renderNameSection();
+    renderMain();
+    return;
+  }
   msg("nameMsg", "Checking the registry…", true);
   const existing = await resolveFluidName(name).catch(() => null);
   if (existing) {
@@ -4722,11 +4905,17 @@ $("claimNameBtn").onclick = async () => {
     }
     return msg("nameMsg", "That name is already claimed. Try another.");
   }
-  localStorage.setItem("fluid_name", name);
+  // Sign + publish from inside the app — the claim completes here;
+  // the GitHub entry below is now only the labelled fallback.
+  msg("nameMsg", "Signing your claim…", true);
+  let accepted = 0;
+  try { accepted = await submitNameClaim(name, $("lnInput").value.trim() || null); }
+  catch (e) { return msg("nameMsg", "Claim failed: " + (e.message || e)); }
   const entry = buildNameEntry(name, wallet.address, btcAddr || bitcoinAddress(wallet.mnemonic.phrase), $("lnInput").value.trim() || null, algoAddr || algoAddressFromPhrase(wallet.mnemonic.phrase), solAddr || solanaAddressFromPhrase(wallet.mnemonic.phrase), tronAddr || tronAddressFromPhrase(wallet.mnemonic.phrase), suiAddr || suiAddressFromPhrase(wallet.mnemonic.phrase));
   $("nameEntry").textContent = JSON.stringify(entry).slice(1, -1) + ",";
   show("claimBox");
-  msg("nameMsg", "Name saved on this device. Publish the entry to make it resolve everywhere.", true);
+  msg("nameMsg", accepted > 0 ? NAME_STATE_COPY.publishing : NAME_STATE_COPY.saved, true);
+  renderNameSection();
   renderMain();
 };
 $("copyEntryBtn").onclick = () => copyText($("nameEntry").textContent, $("copyEntryBtn"));
