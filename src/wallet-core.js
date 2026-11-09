@@ -5425,6 +5425,44 @@ export const SATORA_SWAPS_STORAGE_KEY = "fluid_satora_swaps_v1";
 const SATORA_PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const SATORA_SOURCE_CHAINS = { ethereum: 1, polygon: 137, arbitrum: 42161 };
 const SATORA_DEST_NAMES = { bitcoin: "Bitcoin", lightning: "Lightning" };
+// ---------- CCTP bridge sources (Base + Solana USDC, 2026-11-09) ----------
+// Two more Satora SOURCES, incorporated the day Philipp confirmed
+// them (study: research_notes/fluid-satora-source-extensions-
+// 20261109). Neither is a new swap type: each is a Circle CCTP v2
+// inbound pre-leg in front of the shipped Arbitrum swap — the
+// creation carries two extra fields (bridge_source_chain /
+// bridge_source_token_address), the user burns native USDC via
+// CCTP Fast Transfer with mintRecipient = the user's OWN EVM
+// address, IRIS attests, receiveMessage mints Arbitrum USDC to
+// the user, and the shipped Permit2 gasless funding runs
+// unchanged on the server-netted amount. The SDK's settlement
+// vehicle (ERC-4337 UserOp from an EIP-7702 Kernel delegation,
+// an UNLIMITED Permit2 approval, a bundler keyed by Satora's own
+// Alchemy/paymaster credentials) is NOT used — Fluid composes the
+// crossing itself, exact-amount approvals only, and every burn is
+// built + bounds-checked locally. Live-proven at build time
+// (2026-11-09): creations in Fluid's exact shipped body shape
+// (gasless: true, the user's own EVM address as depositor) are
+// accepted with BOTH bridge strings, and the Permit2 funding
+// endpoint nets the CCTP deduction identically to the userop
+// endpoint (20 USDC Base burn -> source_amount 19996880; Solana
+// -> 19997600), by the SDK-published formula reproduced in
+// computeSatoraCctpMaxFee.
+export const SATORA_CCTP_TOKEN_MESSENGER_V2 = "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d";
+export const SATORA_CCTP_MESSAGE_TRANSMITTER_V2 = "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64";
+export const SATORA_CCTP_SOLANA_TOKEN_MESSENGER = "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe";
+export const SATORA_CCTP_SOLANA_MESSAGE_TRANSMITTER = "CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC";
+export const SATORA_CCTP_DEST_DOMAIN = 3; // Arbitrum
+export const SATORA_CCTP_FAST_FINALITY = 1000;
+export const SATORA_IRIS_API_BASE = "https://iris-api.circle.com";
+/** The two bridge sources: CCTP moves Circle-issued USDC only,
+ *  so each lane is native-USDC-only by construction. `domain` is
+ *  the CCTP source domain; `sourceTokenAddress` is the pinned
+ *  native USDC on that source. */
+export const SATORA_BRIDGE_SOURCES = {
+  base: { name: "Base", domain: 6, sourceChainKey: "base", sourceTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+  solana: { name: "Solana", domain: 5, sourceChainKey: "solana", sourceTokenAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
+};
 
 export function satoraDeveloperKeyLive(key = SATORA_DEVELOPER_KEY) {
   return typeof key === "string" && key.length > 0 && key !== "PENDING_KEY";
@@ -5466,7 +5504,7 @@ async function satoraFetchJson(path, { method = "GET", destKey = null, body = nu
 // never cached — a transient outage must not poison the session.
 let satoraVersionPromise = null;
 let satoraPairsPromise = null;
-export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; }
+export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; satoraIrisFeeCache = new Map(); }
 async function satoraAssertVersion() {
   if (!satoraVersionPromise) {
     satoraVersionPromise = (async () => {
@@ -5499,20 +5537,39 @@ async function satoraPairLimits(chainId, destKey) {
   if (!Number.isFinite(minSats) || !Number.isFinite(maxSats)) return null;
   return { minSats, maxSats };
 }
-/** Is this pair one Satora serves in v1 — USDC/USDT on Arbitrum,
+/** Is this pair one Satora serves — USDC/USDT on Arbitrum,
  *  Polygon or Ethereum, destined for Bitcoin or Lightning? Pure;
  *  the token must be Fluid's own curated contract for the chain
- *  (the addresses Satora's registry expects are exactly those). */
+ *  (the addresses Satora's registry expects are exactly those).
+ *  Two further sources ride the CCTP bridge (see the constants
+ *  block): native USDC on Base and native USDC on Solana — for
+ *  those the plan's chainId/token are the SETTLEMENT pair
+ *  (Arbitrum + its native USDC, where the swap actually lives)
+ *  and plan.bridge describes the crossing. Everything else on
+ *  those chains (Base USDT, Solana USDT/SOL, BSC anything)
+ *  returns null: CCTP moves Circle-issued USDC only. */
 export function satoraSupportsPair(args) {
   const destKey = (args?.toChainKey === "bitcoin" || args?.toChainKey === "btc") ? "bitcoin"
     : (args?.toChainKey === "lightning" || args?.toChainKey === "ln") ? "lightning" : null;
   if (!destKey) return null;
   const chainId = SATORA_SOURCE_CHAINS[args?.fromChainKey];
-  if (!chainId) return null;
-  const net = NETWORKS[args.fromChainKey];
-  const tok = (net?.tokens || []).find(t => String(t.address).toLowerCase() === String(args?.fromTokenAddress || "").toLowerCase());
-  if (!tok || (tok.symbol !== "USDC" && tok.symbol !== "USDT")) return null;
-  return { destKey, chainId, token: tok };
+  if (chainId) {
+    const net = NETWORKS[args.fromChainKey];
+    const tok = (net?.tokens || []).find(t => String(t.address).toLowerCase() === String(args?.fromTokenAddress || "").toLowerCase());
+    if (!tok || (tok.symbol !== "USDC" && tok.symbol !== "USDT")) return null;
+    return { destKey, chainId, token: tok };
+  }
+  const bridge = SATORA_BRIDGE_SOURCES[args?.fromChainKey];
+  if (bridge) {
+    if (String(args?.fromTokenAddress || "") !== bridge.sourceTokenAddress) return null;
+    const settleTok = (NETWORKS.arbitrum.tokens || []).find(t => t.symbol === "USDC");
+    if (!settleTok) return null;
+    return {
+      destKey, chainId: SATORA_SOURCE_CHAINS.arbitrum, token: settleTok,
+      bridge: { name: bridge.name, domain: bridge.domain, sourceChainKey: bridge.sourceChainKey, sourceTokenAddress: bridge.sourceTokenAddress },
+    };
+  }
+  return null;
 }
 export function parseSatoraQuote(data, plan, args) {
   if (!data || typeof data !== "object") return null;
@@ -5545,6 +5602,97 @@ async function fetchSatoraQuote(plan, args, extraFeesBps) {
   const data = await satoraFetchJson("/quote?" + q.toString(), { destKey: plan.destKey });
   return parseSatoraQuote(data, plan, args);
 }
+// ---------- Circle IRIS: CCTP fast-transfer fee + attestation ----------
+// The bridge lanes price and settle the crossing with Circle's
+// own public API (no key): the fast-tier fee per domain pair, and
+// the attestation that authorises the destination mint. Fees are
+// Circle's LIVE parameters (1.3 bps Base->Arbitrum, 1.0 bps
+// Solana->Arbitrum at build time) — read per quote, never
+// hardcoded; cached ~60 s per pair, the SDK's own TTL.
+let satoraIrisFeeCache = new Map();
+/** The fast-tier (finality threshold 1000) fee entry of an IRIS
+ *  fee response, as hundredths of a basis point (1.3 bps -> 130).
+ *  Null when the response carries no usable fast tier — a lane
+ *  whose crossing cannot be priced exactly is not quoted. */
+export function parseIrisCctpFee(entries) {
+  if (!Array.isArray(entries)) return null;
+  const fast = entries.find(e => e && Number(e.finalityThreshold) === SATORA_CCTP_FAST_FINALITY) || null;
+  if (!fast) return null;
+  const minimumFee = Number(fast.minimumFee);
+  if (!Number.isFinite(minimumFee) || minimumFee < 0) return null;
+  return { minimumFee, bpsHundredths: Math.round(minimumFee * 100) };
+}
+/** The CCTP deduction cap for a burn of `amountRaw`, in the
+ *  burn token's smallest units — the SDK-published formula that
+ *  mirrors Satora's Rust backend (compute_max_fee):
+ *  floor(amount x bpsHundredths / 1e6), then a 20% buffer
+ *  (floor(x * 120 / 100)). This one figure is BOTH the burn's
+ *  authorised maxFee AND the amount the server nets out of the
+ *  funding pull (live-verified to the unit on both lanes,
+ *  2026-11-09: 20,000,000 at 130 -> 3,120; at 100 -> 2,400).
+ *  Circle keeps only the true fee (<= this cap); any headroom
+ *  it does not consume simply never leaves the user's minted
+ *  balance, because the funding pull is for the netted amount. */
+export function computeSatoraCctpMaxFee(amountRaw, bpsHundredths) {
+  const amount = BigInt(amountRaw);
+  const bps = BigInt(Math.max(0, Math.floor(Number(bpsHundredths) || 0)));
+  const protocolFee = (amount * bps) / 1000000n;
+  return (protocolFee * 120n) / 100n;
+}
+async function fetchSatoraCctpFee(sourceDomain) {
+  const key = String(sourceDomain);
+  const hit = satoraIrisFeeCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.fee;
+  const res = await fetch(`${SATORA_IRIS_API_BASE}/v2/burn/USDC/fees/${sourceDomain}/${SATORA_CCTP_DEST_DOMAIN}?forward=true`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error("Circle's fee service answered HTTP " + res.status + " — the crossing cannot be priced right now.");
+  const fee = parseIrisCctpFee(await res.json().catch(() => null));
+  if (!fee) throw new Error("Circle's fee service returned no fast-transfer fee for this crossing — refusing to price the route from a guess.");
+  satoraIrisFeeCache.set(key, { fee, expiresAt: Date.now() + 60000 });
+  return fee;
+}
+/** One IRIS attestation lookup for a burn (EVM by tx hash,
+ *  Solana by signature): { message, attestation } once Circle's
+ *  attestation is complete, null while the burn is unindexed or
+ *  still confirming. Throws on transport/HTTP errors so a caller
+ *  never mistakes an outage for a pending burn. */
+export async function fetchSatoraCctpAttestation(sourceDomain, burnTxId) {
+  const url = `${SATORA_IRIS_API_BASE}/v2/messages/${sourceDomain}?transactionHash=${encodeURIComponent(String(burnTxId))}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("Circle's attestation service answered HTTP " + res.status + ".");
+  const data = await res.json().catch(() => null);
+  const msgs = Array.isArray(data?.messages) ? data.messages : [];
+  const done = msgs.find(m => m && m.status === "complete" && typeof m.message === "string" && typeof m.attestation === "string");
+  if (!done) return null;
+  if (!/^0x[0-9a-fA-F]+$/.test(done.message) || !/^0x[0-9a-fA-F]+$/.test(done.attestation)) return null;
+  return { message: done.message, attestation: done.attestation };
+}
+/** Verify a CCTP message names THIS crossing before it is
+ *  submitted to receiveMessage: header fields only — destination
+ *  domain Arbitrum, the expected source domain, the recipient
+ *  (mintRecipient) exactly the user's own address, and the
+ *  destination caller exactly the caller the burn authorised
+ *  (the user's address, or zero = anyone may relay). Circle's
+ *  attestation already makes a forged message unmintable; this
+ *  pin means a confused or hostile relay response can never make
+ *  Fluid submit a message for somebody else's crossing. */
+export function checkSatoraCctpMessage(messageHex, { userAddress, sourceDomain, destinationCaller } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this CCTP message: " + m });
+  if (typeof messageHex !== "string" || !/^0x[0-9a-fA-F]+$/.test(messageHex)) return refuse("the message was unreadable.");
+  let bytes;
+  try { bytes = ethers.getBytes(messageHex); } catch { return refuse("the message was unreadable."); }
+  // v2 header: version(4) sourceDomain(4) destDomain(4) nonce(8)
+  // sender(32) recipient(32) destinationCaller(32) thresholds(8).
+  if (bytes.length < 124) return refuse("the message is too short to be a CCTP v2 message.");
+  const u32 = (off) => new DataView(bytes.buffer, bytes.byteOffset + off, 4).getUint32(0, false);
+  if (u32(8) !== SATORA_CCTP_DEST_DOMAIN) return refuse("the message is not addressed to Arbitrum.");
+  if (Number(sourceDomain) >= 0 && u32(4) !== Number(sourceDomain)) return refuse("the message comes from a different source domain than the burn.");
+  const word = (off) => "0x" + hexOf(bytes.slice(off, off + 32));
+  const pad = (addr) => ethers.zeroPadValue(String(addr).toLowerCase(), 32).toLowerCase();
+  if (word(52) !== pad(userAddress)) return refuse("the message would mint to a different address than your own wallet.");
+  if (word(84) !== pad(destinationCaller)) return refuse("the message names a different destination caller than the burn authorised.");
+  return { ok: true };
+}
 /** Satora's route for an EVM-stablecoin -> Bitcoin/Lightning pair,
  *  priced under the fee law with the same two-pass discipline as
  *  the other routers: pass 1 quotes fee-free to read the route's
@@ -5572,6 +5720,34 @@ export async function getSatoraSwapRoute(args) {
   if (!(btcUsd > 0)) return null; // unpriced: cannot rank or disclose honestly
   const fromAmountUSD = Number(swapRawToAmount(args.fromAmount, plan.token.decimals)) * (Number(prices?.[plan.token.symbol]) || 1);
   if (!(fromAmountUSD > 0)) return null;
+  // Bridge sources: price the CCTP crossing from Circle's live
+  // fee BEFORE the passes, because the fee law's route cost (and
+  // therefore the bps) must include it, and the executor's burn
+  // cap + the server's funding netting both derive from this one
+  // figure. An unpriceable crossing returns no route — never a
+  // route priced from a guessed fee.
+  let bridge = null;
+  if (plan.bridge) {
+    const iris = await fetchSatoraCctpFee(plan.bridge.domain).catch(() => null);
+    if (!iris) return null;
+    let amount;
+    try { amount = BigInt(args.fromAmount); } catch { return null; }
+    const maxFee = computeSatoraCctpMaxFee(amount, iris.bpsHundredths);
+    if (maxFee <= 0n || maxFee >= amount) return null;
+    bridge = {
+      ...plan.bridge,
+      irisMinimumFee: iris.minimumFee, irisFeeBpsHundredths: iris.bpsHundredths,
+      maxFeeRaw: maxFee.toString(), netSourceAmountRaw: (amount - maxFee).toString(),
+      cctpFeeUsd: Number(maxFee) / 1e6 * (Number(prices?.USDC) || 1),
+    };
+  }
+  // The sats the funded swap can actually be built on: for
+  // bridged plans the funding pulls the post-CCTP netted amount,
+  // so the minimums bind on the net scaled to that amount (the
+  // creation's target is pinned separately, at creation).
+  const postCctpNetSats = (netSats) => bridge
+    ? Number(BigInt(Math.round(netSats)) * BigInt(bridge.netSourceAmountRaw) / BigInt(args.fromAmount))
+    : netSats;
   const minNet = SATORA_MIN_NET_SATS[plan.destKey];
   const belowMin = (netSats) => {
     const e = new Error(plan.destKey === "bitcoin"
@@ -5587,20 +5763,21 @@ export async function getSatoraSwapRoute(args) {
     e.satoraTerminal = true;
     throw e;
   }
-  if (quote.netSats < minNet) throw belowMin(quote.netSats);
-  const routeFeeUsd = routeCostUsd((quote.protocolFeeSats + quote.networkFeeSats) * btcUsd / 1e8, fromAmountUSD - quote.netSats * btcUsd / 1e8);
+  if (postCctpNetSats(quote.netSats) < minNet) throw belowMin(postCctpNetSats(quote.netSats));
+  const routeFeeUsd = routeCostUsd((quote.protocolFeeSats + quote.networkFeeSats) * btcUsd / 1e8, fromAmountUSD - quote.netSats * btcUsd / 1e8)
+    + (bridge ? bridge.cctpFeeUsd : 0);
   let usedBps = 0;
   if (satoraDeveloperKeyLive()) {
     const bps = platformFeeBpsForRoute(routeFeeUsd, fromAmountUSD, plan.destKey);
     if (bps > 0) {
       const q2 = await fetchSatoraQuote(plan, args, bps).catch(() => null);
-      if (q2 && q2.netSats >= minNet) { quote = q2; usedBps = bps; }
+      if (q2 && postCctpNetSats(q2.netSats) >= minNet) { quote = q2; usedBps = bps; }
     }
   }
   const feeStackSats = quote.protocolFeeSats + quote.networkFeeSats + quote.fluidFeeSats;
   return {
     provider: "satora",
-    id: `satora:${plan.destKey}:${plan.chainId}`,
+    id: `satora:${plan.destKey}:${plan.chainId}${bridge ? ":" + bridge.sourceChainKey : ""}`,
     type: "satora",
     fromChainId: plan.chainId,
     toChainId: plan.destKey === "bitcoin" ? SATORA_BITCOIN_CHAIN_ID : SATORA_LIGHTNING_CHAIN_ID,
@@ -5611,9 +5788,9 @@ export async function getSatoraSwapRoute(args) {
     toAmountMin: String(quote.netSats),
     fromAmountUSD,
     toAmountUSD: quote.netSats * btcUsd / 1e8,
-    gasCostUSD: feeStackSats * btcUsd / 1e8,
+    gasCostUSD: feeStackSats * btcUsd / 1e8 + (bridge ? bridge.cctpFeeUsd : 0),
     routeFeeUsd,
-    executionDuration: plan.destKey === "bitcoin" ? 3600 : 300,
+    executionDuration: (plan.destKey === "bitcoin" ? 3600 : 300) + (bridge ? 240 : 0),
     platformFeeBps: usedBps,
     platformFeeUsd: quote.fluidFeeSats * btcUsd / 1e8,
     platformFeeCollecting: usedBps > 0 && quote.fluidFeeSats > 0,
@@ -5626,6 +5803,7 @@ export async function getSatoraSwapRoute(args) {
       fluidFeeSats: quote.fluidFeeSats, extraFeesBps: usedBps,
       btcUsd, pairMinSats: limits.minSats, pairMaxSats: limits.maxSats,
       exchangeRate: quote.exchangeRate,
+      ...(bridge ? { bridge } : {}),
     },
   };
 }
@@ -5698,6 +5876,17 @@ export function checkSatoraLightningReceivability({ destInput, ownNodeId = null,
   if (recv >= cls.parsed.amountMsat) return { ok: true };
   return { ok: false, reason: "That invoice pays your own Fluid Lightning wallet, but your wallet can't receive it yet — it has no inbound Lightning capacity (no open channels with room). Open a Lightning channel first, or pay an invoice from a different wallet." };
 }
+/** The CCTP bridge fields of a creation body, present ONLY on
+ *  bridged plans: the settlement stays Arbitrum (evm_chain_id /
+ *  token_address above are the settlement pair); these two fields
+ *  tell the server the USDC crosses from the named source first.
+ *  The strings are the server's own ("Base" / "Solana" — both
+ *  live-probed 2026-11-09 in Fluid's exact body shape). */
+function satoraBridgeCreateFields(route) {
+  const b = route?.satora?.bridge;
+  if (!b) return {};
+  return { bridge_source_chain: b.name, bridge_source_token_address: b.sourceTokenAddress };
+}
 export function buildSatoraBtcCreateRequest({ route, userAddress, identity, claimPk }) {
   const fee = satoraFeeConfig(route?.satora?.extraFeesBps || 0);
   return {
@@ -5712,6 +5901,7 @@ export function buildSatoraBtcCreateRequest({ route, userAddress, identity, clai
     target_address: route.satora.destInput || undefined,
     gasless: true,
     ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
+    ...satoraBridgeCreateFields(route),
   };
 }
 export function buildSatoraLnCreateRequest({ route, userAddress, userId }) {
@@ -5728,6 +5918,7 @@ export function buildSatoraLnCreateRequest({ route, userAddress, userId }) {
       : { lnurl: cls.lnurl, target_amount_sats: Math.round(route.satora.grossSats) }),
     gasless: true,
     ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
+    ...satoraBridgeCreateFields(route),
   };
 }
 /** Bounds-check a swap-creation response against the quote and the
@@ -5748,6 +5939,17 @@ export function checkSatoraCreateResponse(route, data, { identity = null, claimP
   if (String(data.source_amount) !== String(route.fromAmount)) return refuse("the created swap's amount differs from the quote.");
   if (String(data.source_token?.token_id || "").toLowerCase() !== String(route.fromToken.address).toLowerCase())
     return refuse("the created swap sells a different token than the quote.");
+  // Bridged plans: the creation must echo the crossing back
+  // byte-for-byte — the bridge chain string and the source token
+  // exactly as requested. A missing or drifted echo means the
+  // server did not register the crossing the burn will perform,
+  // and funding it would strand the swap: refuse.
+  if (s.bridge) {
+    if (data.bridge_source_chain !== s.bridge.name)
+      return refuse("the created swap does not echo the bridge source chain the crossing was planned from.");
+    if (String(data.bridge_source_token_address || "") !== String(s.bridge.sourceTokenAddress))
+      return refuse("the created swap does not echo the bridge source token the crossing was planned from.");
+  }
   const wantFee = Math.round(s.grossSats - s.netSats);
   if (Number(data.fee_sats) !== wantFee) return refuse("the created swap's fee differs from the final quote.");
   if (Number(data.target_amount) !== Math.round(s.netSats)) return refuse("the created swap's payout differs from the quote.");
@@ -5817,6 +6019,20 @@ export async function createSatoraSwap(route, { phrase, index = 0, userAddress }
     sourceTokenAddress: data.source_token?.token_id || null,
     htlcKind: data.evm_htlc_kind || null,
     htlcVersion: data.evm_htlc_version != null ? Number(data.evm_htlc_version) : null,
+    // Bridge crossings (Base/Solana USDC sources): the plan the
+    // executor drives — burnTx is persisted BEFORE the burn is
+    // broadcast (it is the transit's recovery key), and
+    // bridgePhase walks burning -> attesting -> minting ->
+    // funding at every persisted transition. Null on direct lanes.
+    bridge: s.bridge ? {
+      name: s.bridge.name, domain: s.bridge.domain, sourceChainKey: s.bridge.sourceChainKey,
+      sourceTokenAddress: s.bridge.sourceTokenAddress,
+      maxFeeRaw: s.bridge.maxFeeRaw, netSourceAmountRaw: s.bridge.netSourceAmountRaw,
+      irisFeeBpsHundredths: s.bridge.irisFeeBpsHundredths,
+      destinationCaller: null, mintTx: null, attestation: null,
+    } : null,
+    burnTx: null,
+    bridgePhase: s.bridge ? "burning" : null,
     fundTxHash: null,
     btcHtlcAddress: data.btc_htlc_address || null,
     createdAt: Date.now(), updatedAt: Date.now(),
@@ -5844,13 +6060,23 @@ export function satoraCallsHash(calls) {
  *  verify (proprietary DEX calldata) — the mitigations are the
  *  pins above plus the Permit2 permit's own cap: the coordinator
  *  can never pull more than the exact source amount. */
+/** The amount the funding pull must be for: the full swap
+ *  amount on direct lanes; on bridged lanes the server-netted
+ *  amount (burn amount minus the CCTP deduction cap the quote
+ *  computed — the Permit2 endpoint nets it identically, live-
+ *  verified 2026-11-09). A bridged payload naming any other
+ *  amount is a drift and refused by the checks that read this. */
+export function satoraFundingAmount(record) {
+  if (record?.bridge && record.bridge.netSourceAmountRaw) return String(record.bridge.netSourceAmountRaw);
+  return String(record?.fromAmount);
+}
 export function checkSatoraFundingComponents(comp, record) {
   const refuse = (m) => ({ ok: false, reason: "Fluid refused this Satora funding payload: " + m });
   if (!comp || typeof comp !== "object" || !record) return refuse("the payload was unreadable.");
   const eq = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
   if (!eq(comp.coordinator_address, record.coordinatorAddress)) return refuse("the coordinator differs from the swap's creation record.");
   if (!eq(comp.permit2_address, SATORA_PERMIT2_ADDRESS)) return refuse("the Permit2 contract is not the canonical one.");
-  if (String(comp.source_amount) !== String(record.fromAmount)) return refuse("the funding amount differs from the swap amount.");
+  if (String(comp.source_amount) !== satoraFundingAmount(record)) return refuse("the funding amount differs from the swap amount.");
   if (!eq(comp.lock_token_address, record.wbtcAddress)) return refuse("the lock token differs from the swap's creation record.");
   if (!eq(comp.preimage_hash, record.hashLock)) return refuse("the preimage hash differs from the swap's hash lock.");
   if (!eq(comp.claim_address, record.serverEvmAddress)) return refuse("the claim address differs from the swap's creation record.");
@@ -5865,7 +6091,7 @@ export function checkSatoraFundingComponents(comp, record) {
   try { decoded = new ethers.Interface(SWAP_ERC20).decodeFunctionData("approve", calls[0].call_data); }
   catch { return refuse("the first funding call did not decode as an ERC-20 approval."); }
   if (!eq(decoded[0], calls[1].target)) return refuse("the approval's spender is not the swap call's router.");
-  if (BigInt(decoded[1]) !== BigInt(record.fromAmount)) return refuse("the approval is not for exactly the swap amount.");
+  if (BigInt(decoded[1]) !== BigInt(satoraFundingAmount(record))) return refuse("the approval is not for exactly the swap amount.");
   const swapData = String(calls[1].call_data || "").toLowerCase();
   if (!swapData.includes(String(srcToken).toLowerCase().slice(2)) || !swapData.includes(String(comp.lock_token_address).toLowerCase().slice(2)))
     return refuse("the swap call does not name the sold token and the lock token.");
@@ -6048,13 +6274,13 @@ export function buildSatoraEip2612Permit({ comp, record, depositor, deadline } =
   if (!Number.isInteger(pNonce) || pNonce < 0) return refuse("the token's EIP-2612 nonce was unreadable.");
   if (!ethers.isAddress(depositor || "")) return refuse("the funding wallet's address was unreadable.");
   let value, deadlineBn;
-  try { value = BigInt(record.fromAmount); deadlineBn = BigInt(deadline); } catch { return refuse("the EIP-2612 permit's terms were unreadable."); }
+  try { value = BigInt(satoraFundingAmount(record)); deadlineBn = BigInt(deadline); } catch { return refuse("the EIP-2612 permit's terms were unreadable."); }
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const structHash = ethers.keccak256(coder.encode(
     ["bytes32", "address", "address", "uint256", "uint256", "uint256"],
     [SATORA_EIP2612_PERMIT_TYPEHASH, ethers.getAddress(String(depositor).toLowerCase()), SATORA_PERMIT2_ADDRESS, value, BigInt(pNonce), deadlineBn]));
   const digest = ethers.keccak256(ethers.concat(["0x1901", String(e.domain_separator), structHash]));
-  return { ok: true, digest, value: String(record.fromAmount), nonce: pNonce };
+  return { ok: true, digest, value: satoraFundingAmount(record), nonce: pNonce };
 }
 /** The fund-gasless request body, in the relay's own field
  *  shape: the client-chosen nonce + deadline, the compact
@@ -6122,6 +6348,14 @@ export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1
   const fromHuman = record?.fromAmount != null && record?.fromSymbol
     ? `${swapRawToAmount(record.fromAmount, 6)} ${record.fromSymbol}` : "your stablecoin";
   const destName = record?.destKey === "lightning" ? "Lightning" : "Bitcoin";
+  // Bridged records still crossing: the honest state is where
+  // the money IS, not the swap's wire status — the crossing
+  // sentence until the mint lands, then the landed state.
+  if (record?.bridge && !record.fundTxHash) {
+    if (!record.burnTx) return `Satora swap: ${fromHuman} → about ${Math.round(Number(record.netSats || 0)).toLocaleString()} sats on ${destName} — created; the crossing from ${record.bridge.name} has not started yet.`;
+    if (record.bridgePhase === "funding") return `Satora swap: ${fromHuman} → about ${Math.round(Number(record.netSats || 0)).toLocaleString()} sats on ${destName} — your USDC has landed on Arbitrum and the swap is being funded.`;
+    return `Satora swap: ${fromHuman} (${record.bridge.name}) → ${destName} — USDC has left ${record.bridge.name} and is crossing to Arbitrum — this step can't be cancelled, and the money can only land in your own wallet.`;
+  }
   let line = `Satora swap: ${fromHuman} → about ${Math.round(Number(record?.netSats || 0)).toLocaleString()} sats on ${destName} — ${ph.label}.`;
   if (ph.refundPath === "collaborative")
     line += ` If this swap fails, the refund comes back as WBTC/tBTC, not ${record?.fromSymbol || "the stablecoin you sent"} — a collaborative refund (Satora co-signs, no gas for you) is available now, or you can refund on your own after the 24h timelock.`;
@@ -6237,6 +6471,280 @@ export async function pollSatoraSwapStatuses(storage) {
   if (changed) { try { storage.setItem(SATORA_SWAPS_STORAGE_KEY, JSON.stringify(records.slice(0, 50))); } catch { /* as above */ } }
   return records;
 }
+// ---------- CCTP burn construction (the bridge pre-leg) ----------
+// Base: two ordinary EVM transactions (exact-amount approve +
+// depositForBurn on Circle's canonical TokenMessengerV2 — the
+// same address on every EVM chain). Solana: one hand-rolled
+// legacy transaction against TokenMessengerMinterV2, ported from
+// the SDK's published builder (itself a port of Circle's IDL) —
+// program ids, PDA seeds, the Anchor discriminator and the Borsh
+// layout are all pinned constants, and the compiled message is
+// verified field by field before anything signs (the golden
+// vectors in the tests were produced BY the SDK's builder).
+const SATORA_CCTP_EVM_INTERFACE = new ethers.Interface([
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
+  "function receiveMessage(bytes message, bytes attestation) returns (bool success)",
+]);
+/** The Base burn call: depositForBurn of the full swap amount
+ *  into Circle's TokenMessengerV2, minting to the user's OWN EVM
+ *  address on Arbitrum, with the quote's buffered fee cap. */
+export function buildSatoraCctpEvmBurn({ amountRaw, mintRecipient, burnToken, destinationCaller, maxFeeRaw } = {}) {
+  const data = SATORA_CCTP_EVM_INTERFACE.encodeFunctionData("depositForBurn", [
+    BigInt(amountRaw), SATORA_CCTP_DEST_DOMAIN, ethers.zeroPadValue(String(mintRecipient), 32),
+    String(burnToken), ethers.zeroPadValue(String(destinationCaller), 32),
+    BigInt(maxFeeRaw), SATORA_CCTP_FAST_FINALITY,
+  ]);
+  return { to: SATORA_CCTP_TOKEN_MESSENGER_V2, data };
+}
+/** Bounds-check a Base burn call field by field: the target is
+ *  Circle's pinned TokenMessengerV2, and every argument — the
+ *  exact amount, the Arbitrum domain, the mint recipient (the
+ *  user's own address), the pinned Base USDC, the authorised
+ *  destination caller, the quote's fee cap, the fast finality
+ *  threshold — must equal the plan. Anything else is refused. */
+export function checkSatoraCctpEvmBurn(call, { userAddress, amountRaw, burnToken, destinationCaller, maxFeeRaw } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this bridge burn: " + m });
+  if (!call || String(call.to || "").toLowerCase() !== SATORA_CCTP_TOKEN_MESSENGER_V2.toLowerCase())
+    return refuse("the burn does not target Circle's pinned TokenMessenger contract.");
+  let d;
+  try { d = SATORA_CCTP_EVM_INTERFACE.decodeFunctionData("depositForBurn", call.data); }
+  catch { return refuse("the burn call does not decode as a CCTP depositForBurn."); }
+  const pad = (a) => ethers.zeroPadValue(String(a).toLowerCase(), 32).toLowerCase();
+  if (d[0] !== BigInt(amountRaw)) return refuse("the burn amount differs from the swap amount.");
+  if (Number(d[1]) !== SATORA_CCTP_DEST_DOMAIN) return refuse("the burn is not addressed to Arbitrum.");
+  if (String(d[2]).toLowerCase() !== pad(userAddress)) return refuse("the burn would mint to a different address than your own wallet.");
+  if (String(d[3]).toLowerCase() !== String(burnToken).toLowerCase()) return refuse("the burn token is not the pinned native USDC.");
+  if (String(d[4]).toLowerCase() !== pad(destinationCaller)) return refuse("the burn names a different destination caller than authorised.");
+  if (d[5] !== BigInt(maxFeeRaw)) return refuse("the burn's fee cap differs from the quote's.");
+  if (Number(d[6]) !== SATORA_CCTP_FAST_FINALITY) return refuse("the burn does not use the fast-transfer finality the quote priced.");
+  return { ok: true };
+}
+/** The Arbitrum mint call: receiveMessage on Circle's pinned
+ *  MessageTransmitterV2, carrying the IRIS message + attestation
+ *  for THIS record's burn (the message itself is bounds-checked
+ *  by checkSatoraCctpMessage before this is built). */
+export function buildSatoraCctpReceiveMessageCall({ message, attestation } = {}) {
+  return {
+    to: SATORA_CCTP_MESSAGE_TRANSMITTER_V2,
+    data: SATORA_CCTP_EVM_INTERFACE.encodeFunctionData("receiveMessage", [String(message), String(attestation)]),
+  };
+}
+export const SATORA_CCTP_BURN_DISCRIMINATOR = new Uint8Array([215, 60, 61, 46, 114, 55, 128, 176]); // sha256("global:deposit_for_burn")[..8]
+export const SATORA_SOLANA_BURN_COMPUTE_UNIT_LIMIT = 100000;
+const SATORA_COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111";
+function satoraConcatBytes(parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+function satoraShortvec(value) {
+  const out = [];
+  let rem = value;
+  for (;;) { let b = rem & 0x7f; rem >>= 7; if (rem === 0) { out.push(b); return new Uint8Array(out); } b |= 0x80; out.push(b); }
+}
+function satoraU32Le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, Number(v), true); return b; }
+function satoraU64Le(v) { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v), true); return b; }
+function satoraEvmBytes32(address) {
+  const hexStr = String(address).toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{40}$/.test(hexStr)) throw new Error("Not an EVM address: " + address);
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 20; i++) out[12 + i] = parseInt(hexStr.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+/** The pinned PDAs of the Solana deposit_for_burn, derived from
+ *  Circle's published seeds (the remote token messenger's domain
+ *  seed is the domain's DECIMAL STRING, per Circle's own
+ *  derivation). */
+export function satoraCctpSolanaPdas(owner, mint = SATORA_BRIDGE_SOURCES.solana.sourceTokenAddress) {
+  const tmm = new SolPublicKey(SATORA_CCTP_SOLANA_TOKEN_MESSENGER);
+  const mt = new SolPublicKey(SATORA_CCTP_SOLANA_MESSAGE_TRANSMITTER);
+  const utf8 = (s) => new TextEncoder().encode(s);
+  const pda = (seeds, prog) => SolPublicKey.findProgramAddressSync(seeds, prog)[0].toBase58();
+  return {
+    senderAuthority: pda([utf8("sender_authority")], tmm),
+    denylistAccount: pda([utf8("denylist_account"), new SolPublicKey(owner).toBuffer()], tmm),
+    messageTransmitter: pda([utf8("message_transmitter")], mt),
+    tokenMessenger: pda([utf8("token_messenger")], tmm),
+    remoteTokenMessenger: pda([utf8("remote_token_messenger"), utf8(String(SATORA_CCTP_DEST_DOMAIN))], tmm),
+    tokenMinter: pda([utf8("token_minter")], tmm),
+    localToken: pda([utf8("local_token"), new SolPublicKey(mint).toBuffer()], tmm),
+    eventAuthority: pda([utf8("__event_authority")], tmm),
+  };
+}
+/** The deposit_for_burn instruction: the IDL's 18-account list
+ *  (owner twice — as owner and as event rent payer — then the
+ *  pinned PDAs, the mint, the co-signing message account, the
+ *  two CCTP programs, Token, System, and the event-cpi pair). */
+export function buildSatoraSolanaBurnInstruction({ owner, eventAccount, amountRaw, mintRecipient, destinationCaller, maxFeeRaw } = {}) {
+  const mint = SATORA_BRIDGE_SOURCES.solana.sourceTokenAddress;
+  const pdas = satoraCctpSolanaPdas(owner, mint);
+  const ro = (pubkey) => ({ pubkey, isSigner: false, isWritable: false });
+  const rw = (pubkey) => ({ pubkey, isSigner: false, isWritable: true });
+  const data = satoraConcatBytes([
+    SATORA_CCTP_BURN_DISCRIMINATOR,
+    satoraU64Le(amountRaw), satoraU32Le(SATORA_CCTP_DEST_DOMAIN),
+    satoraEvmBytes32(mintRecipient), satoraEvmBytes32(destinationCaller),
+    satoraU64Le(maxFeeRaw), satoraU32Le(SATORA_CCTP_FAST_FINALITY),
+  ]);
+  return {
+    programId: SATORA_CCTP_SOLANA_TOKEN_MESSENGER,
+    keys: [
+      { pubkey: owner, isSigner: true, isWritable: false }, // owner
+      { pubkey: owner, isSigner: true, isWritable: true }, // event rent payer
+      ro(pdas.senderAuthority),
+      rw(solanaAtaAddress(owner, mint)),
+      ro(pdas.denylistAccount),
+      rw(pdas.messageTransmitter),
+      ro(pdas.tokenMessenger),
+      ro(pdas.remoteTokenMessenger),
+      ro(pdas.tokenMinter),
+      rw(pdas.localToken),
+      rw(mint),
+      { pubkey: eventAccount, isSigner: true, isWritable: true }, // message_sent_event_data
+      ro(SATORA_CCTP_SOLANA_MESSAGE_TRANSMITTER),
+      ro(SATORA_CCTP_SOLANA_TOKEN_MESSENGER),
+      ro(SOLANA_PROGRAMS.token),
+      ro(SolSystemProgram.programId.toBase58()),
+      ro(pdas.eventAuthority),
+      ro(SATORA_CCTP_SOLANA_TOKEN_MESSENGER), // program (event cpi)
+    ],
+    data,
+  };
+}
+/** Compile instructions into a legacy Solana message (account
+ *  keys ordered: fee payer, writable signers, read-only signers,
+ *  writable non-signers, read-only non-signers; flags merged per
+ *  key) — the SDK builder's exact algorithm, so the wire bytes
+ *  are reproducible byte-for-byte (see the golden tests). */
+function compileSatoraLegacyMessage(feePayer, instructions, blockhash) {
+  const metas = new Map();
+  const touch = (pubkey, isSigner, isWritable) => {
+    const prev = metas.get(pubkey);
+    metas.set(pubkey, { isSigner: (prev?.isSigner ?? false) || isSigner, isWritable: (prev?.isWritable ?? false) || isWritable });
+  };
+  touch(feePayer, true, true);
+  for (const ix of instructions) {
+    for (const k of ix.keys) touch(k.pubkey, k.isSigner, k.isWritable);
+    touch(ix.programId, false, false);
+  }
+  const entries = [...metas.entries()];
+  const group = (signer, writable) => entries.filter(([, m]) => m.isSigner === signer && m.isWritable === writable).map(([k]) => k);
+  const writableSigners = group(true, true).filter(k => k !== feePayer);
+  const readonlySigners = group(true, false);
+  const writableNonSigners = group(false, true);
+  const readonlyNonSigners = group(false, false);
+  const accountKeys = [feePayer, ...writableSigners, ...readonlySigners, ...writableNonSigners, ...readonlyNonSigners];
+  const index = new Map(accountKeys.map((k, i) => [k, i]));
+  const numSigners = 1 + writableSigners.length + readonlySigners.length;
+  const compiled = instructions.map(ix => {
+    const accounts = ix.keys.map(k => index.get(k.pubkey));
+    return satoraConcatBytes([new Uint8Array([index.get(ix.programId)]), satoraShortvec(accounts.length), new Uint8Array(accounts), satoraShortvec(ix.data.length), ix.data]);
+  });
+  const message = satoraConcatBytes([
+    new Uint8Array([numSigners, readonlySigners.length, readonlyNonSigners.length]),
+    satoraShortvec(accountKeys.length),
+    ...accountKeys.map(k => base58.decode(k)),
+    base58.decode(blockhash),
+    satoraShortvec(compiled.length),
+    ...compiled,
+  ]);
+  return { message, accountKeys, numSigners };
+}
+/** Build the full Solana burn transaction: ComputeBudget (unit
+ *  limit + price) and the burn instruction, the ephemeral
+ *  message account's signature in place, the owner's signature
+ *  slot EMPTY (the executor simulates this exact artifact, then
+ *  adds the owner's signature — slot 0 — whose base58 is the
+ *  burn's id, persisted before broadcast). */
+export function buildSatoraSolanaCctpBurn({ owner, amountRaw, mintRecipient, destinationCaller, maxFeeRaw, blockhash, priorityFeeMicroLamports = 10000n, eventSeed = null } = {}) {
+  const seed = eventSeed ? new Uint8Array(eventSeed) : crypto.getRandomValues(new Uint8Array(32));
+  if (seed.length !== 32) throw new Error("The burn's message-account seed was unreadable.");
+  const eventAccount = base58.encode(ed25519.getPublicKey(seed));
+  const burnInstruction = buildSatoraSolanaBurnInstruction({ owner, eventAccount, amountRaw, mintRecipient, destinationCaller, maxFeeRaw });
+  const limitIx = { programId: SATORA_COMPUTE_BUDGET_PROGRAM, keys: [], data: satoraConcatBytes([new Uint8Array([2]), satoraU32Le(SATORA_SOLANA_BURN_COMPUTE_UNIT_LIMIT)]) };
+  const priceIx = { programId: SATORA_COMPUTE_BUDGET_PROGRAM, keys: [], data: satoraConcatBytes([new Uint8Array([3]), satoraU64Le(priorityFeeMicroLamports)]) };
+  const { message, accountKeys, numSigners } = compileSatoraLegacyMessage(owner, [limitIx, priceIx, burnInstruction], blockhash);
+  const signatures = accountKeys.slice(0, numSigners).map(k => (k === eventAccount ? ed25519.sign(message, seed) : new Uint8Array(64)));
+  const transaction = satoraConcatBytes([satoraShortvec(numSigners), ...signatures, message]);
+  return { transaction, message, accountKeys, numSigners, eventAccount, eventSeed: seed, burnInstruction };
+}
+/** Parse a compiled legacy message back into header, keys and
+ *  instructions (for the bounds check). Null on malformed bytes. */
+function parseSatoraLegacyMessage(message) {
+  try {
+    const bytes = message instanceof Uint8Array ? message : new Uint8Array(message);
+    let off = 0;
+    const readShortvec = () => { let v = 0, shift = 0; for (;;) { const b = bytes[off++]; v |= (b & 0x7f) << shift; if (!(b & 0x80)) return v; shift += 7; } };
+    const numSigners = bytes[off++], numReadonlySigned = bytes[off++], numReadonlyUnsigned = bytes[off++];
+    const keyCount = readShortvec();
+    const accountKeys = [];
+    for (let i = 0; i < keyCount; i++) { accountKeys.push(base58.encode(bytes.slice(off, off + 32))); off += 32; }
+    off += 32; // blockhash
+    const ixCount = readShortvec();
+    const instructions = [];
+    for (let i = 0; i < ixCount; i++) {
+      const programIndex = bytes[off++];
+      const acctCount = readShortvec();
+      const accounts = [...bytes.slice(off, off + acctCount)]; off += acctCount;
+      const dataLen = readShortvec();
+      const data = bytes.slice(off, off + dataLen); off += dataLen;
+      instructions.push({ programIndex, accounts, data });
+    }
+    return { numSigners, numReadonlySigned, numReadonlyUnsigned, accountKeys, instructions };
+  } catch { return null; }
+}
+/** Bounds-check a built Solana burn against the plan: the burn
+ *  instruction must equal a fresh local construction byte-for-
+ *  byte (program, all 18 accounts, the Borsh body — amount,
+ *  domain, recipient, caller, fee cap, finality), the compiled
+ *  message must carry exactly the two ComputeBudget instructions
+ *  (the pinned unit limit; a price inside the SDK's clamp) plus
+ *  that burn, the fee payer must be the owner, and the only
+ *  signers may be the owner and the ephemeral message account. */
+export function checkSatoraSolanaCctpBurn(built, { owner, mintRecipient, destinationCaller, amountRaw, maxFeeRaw } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this bridge burn: " + m });
+  if (!built || !(built.message instanceof Uint8Array)) return refuse("the burn transaction was unreadable.");
+  const expected = buildSatoraSolanaBurnInstruction({ owner, eventAccount: built.eventAccount, amountRaw, mintRecipient, destinationCaller, maxFeeRaw });
+  const got = built.burnInstruction;
+  if (!got || got.programId !== expected.programId) return refuse("the burn does not call Circle's pinned TokenMessengerMinter program.");
+  if (JSON.stringify(got.keys) !== JSON.stringify(expected.keys)) return refuse("the burn's account list differs from the pinned CCTP account map.");
+  if (hexOf(got.data) !== hexOf(expected.data)) return refuse("the burn's terms (amount, domain, recipient, caller, fee cap, finality) differ from the plan.");
+  const parsed = parseSatoraLegacyMessage(built.message);
+  if (!parsed) return refuse("the compiled burn message was unreadable.");
+  if (parsed.accountKeys[0] !== owner) return refuse("the burn's fee payer is not the swap's Solana wallet.");
+  if (parsed.numSigners !== 2 || parsed.accountKeys[1] !== built.eventAccount) return refuse("the burn must be signed by exactly the owner and its message account.");
+  if (parsed.instructions.length !== 3) return refuse("the burn transaction carries unexpected instructions.");
+  const [cbLimit, cbPrice, burnIx] = parsed.instructions;
+  const cbProgram = parsed.accountKeys[cbLimit.programIndex];
+  if (cbProgram !== SATORA_COMPUTE_BUDGET_PROGRAM || parsed.accountKeys[cbPrice.programIndex] !== SATORA_COMPUTE_BUDGET_PROGRAM)
+    return refuse("the burn's first instructions are not ComputeBudget instructions.");
+  if (cbLimit.data.length !== 5 || cbLimit.data[0] !== 2 || new DataView(cbLimit.data.buffer, cbLimit.data.byteOffset + 1, 4).getUint32(0, true) !== SATORA_SOLANA_BURN_COMPUTE_UNIT_LIMIT)
+    return refuse("the burn's compute-unit limit differs from the pinned limit.");
+  if (cbPrice.data.length !== 9 || cbPrice.data[0] !== 3) return refuse("the burn's priority-fee instruction is malformed.");
+  const price = new DataView(cbPrice.data.buffer, cbPrice.data.byteOffset + 1, 8).getBigUint64(0, true);
+  if (price > 2000000n) return refuse("the burn's priority fee is above the sane clamp.");
+  if (parsed.accountKeys[burnIx.programIndex] !== SATORA_CCTP_SOLANA_TOKEN_MESSENGER) return refuse("the burn instruction calls a different program than pinned.");
+  const expectIdx = expected.keys.map(k => parsed.accountKeys.indexOf(k.pubkey));
+  if (JSON.stringify(burnIx.accounts) !== JSON.stringify(expectIdx)) return refuse("the compiled burn's accounts differ from the pinned account map.");
+  if (hexOf(burnIx.data) !== hexOf(expected.data)) return refuse("the compiled burn's terms differ from the plan.");
+  return { ok: true };
+}
+/** A sane Solana priority fee for the burn, the SDK's rule:
+ *  the 75th percentile of recent fees for the burn's writable
+ *  state accounts, clamped to [10,000, 2,000,000] micro-lamports
+ *  per CU; the floor on any read failure. */
+async function suggestSatoraSolanaPriorityFee(owner) {
+  try {
+    const pdas = satoraCctpSolanaPdas(owner);
+    const fees = await solanaRpc("getRecentPrioritizationFees", [[pdas.messageTransmitter, pdas.localToken]]);
+    const paid = (Array.isArray(fees) ? fees : []).map(f => Number(f?.prioritizationFee)).filter(f => Number.isFinite(f) && f > 0).sort((a, b) => a - b);
+    if (!paid.length) return 10000n;
+    const p75 = BigInt(Math.floor(paid[Math.floor(paid.length * 0.75)] || 0));
+    return p75 < 10000n ? 10000n : p75 > 2000000n ? 2000000n : p75;
+  } catch { return 10000n; }
+}
+
 /** The pre-sign review sentence for a Satora route, in
  *  formatSwapIntent's conventions: the FULL fee stack in plain
  *  words (protocol + network + Fluid's fee when one is charged),
@@ -6253,8 +6761,10 @@ export function formatSatoraSwapIntent({ route, destInput } = {}) {
     `Satora's protocol fee ${Math.round(s.protocolFeeSats).toLocaleString()} sats (about ${usd(s.protocolFeeSats)})`,
     `network fee ${Math.round(s.networkFeeSats).toLocaleString()} sats (about ${usd(s.networkFeeSats)})`,
   ];
+  const cctpSats = s.bridge ? s.bridge.cctpFeeUsd / s.btcUsd * 1e8 : 0;
+  if (s.bridge) feeParts.push(`Circle's transfer fee ${Math.round(cctpSats).toLocaleString()} sats (about ${usd(cctpSats)})`);
   if (s.fluidFeeSats > 0) feeParts.push(`Fluid's fee ${Math.round(s.fluidFeeSats).toLocaleString()} sats (about ${usd(s.fluidFeeSats)})`);
-  const totalSats = s.protocolFeeSats + s.networkFeeSats + s.fluidFeeSats;
+  const totalSats = s.protocolFeeSats + s.networkFeeSats + s.fluidFeeSats + cctpSats;
   let destSentence;
   if (s.destKey === "bitcoin") {
     const addr = String(destInput || s.destInput || "");
@@ -6268,7 +6778,11 @@ export function formatSatoraSwapIntent({ route, destInput } = {}) {
     else if (cls?.kind === "lnurl") destSentence = "It pays the LNURL you pasted.";
     else destSentence = "It pays the Lightning destination you gave.";
   }
-  return `Swap ${fromHuman} ${route.fromToken.symbol} on ${NETWORKS[Object.keys(SATORA_SOURCE_CHAINS).find(k => SATORA_SOURCE_CHAINS[k] === Number(route.fromChainId))]?.name || "your chain"} for about ${Math.round(s.netSats).toLocaleString()} sats on ${dest} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${destSentence} If this swap fails, the refund comes back as WBTC/tBTC, not ${route.fromToken.symbol}. Confirm?`;
+  const fromChainName = s.bridge ? s.bridge.name : (NETWORKS[Object.keys(SATORA_SOURCE_CHAINS).find(k => SATORA_SOURCE_CHAINS[k] === Number(route.fromChainId))]?.name || "your chain");
+  const crossingSentence = s.bridge
+    ? ` Your USDC first crosses from ${s.bridge.name} to Arbitrum through Circle's transfer service — once it leaves ${s.bridge.name} that step can't be cancelled, and it can only land in your own wallet.${s.bridge.sourceChainKey === "base" ? " Two small transactions on Base pay their own network fees." : " Solana's network fee plus about 0.0012 SOL of account rent for the transfer's message account also apply."}`
+    : "";
+  return `Swap ${fromHuman} ${route.fromToken.symbol} on ${fromChainName} for about ${Math.round(s.netSats).toLocaleString()} sats on ${dest} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${destSentence}${crossingSentence} If this swap fails, the refund comes back as WBTC/tBTC, not ${route.fromToken.symbol}. Confirm?`;
 }
 /** Execute a Satora route end to end (un-gated 2026-11-09, on
  *  the published witness spec): create the swap server-side
@@ -6289,19 +6803,15 @@ export function formatSatoraSwapIntent({ route, destInput } = {}) {
  *  unrecoverable, so the executor refuses without it.
  *  Returns [fundingTxHash] — the relay's on-chain funding
  *  transaction on the source chain. */
-export async function executeSatoraSwapRoute(wallet, route, onProgress = () => {}, opts = {}) {
-  const gate = swapRouteExecutable(route);
-  if (!gate.ok) throw new Error(gate.reason);
-  const storage = opts?.storage;
-  if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function")
-    throw new Error("Satora swaps need storage to persist the swap id before funding — refusing to create an unrecoverable swap.");
-  const phrase = wallet?.mnemonic?.phrase;
-  if (!phrase || !ethers.isAddress(wallet?.address || ""))
-    throw new Error("The unlocked wallet is not available for this swap.");
-  const index = nextSatoraSwapIndex(loadSatoraSwapRecords(storage));
-  onProgress("Creating the swap with Satora…");
-  const record = await createSatoraSwap(route, { phrase, index, userAddress: wallet.address });
-  saveSatoraSwapRecord(storage, record);
+/** Fund a persisted Satora record through the shipped gasless
+ *  Permit2 path (components fetched + bounds-checked, witness
+ *  typed data verified field by field, exact-amount EIP-2612
+ *  permit when the token requires one). Shared by the executor
+ *  and by bridge resume — the funding half never changes between
+ *  lanes; on bridged records the amount it moves is the netted
+ *  one (satoraFundingAmount). Persists + returns the updated
+ *  record. */
+async function fundSatoraSwapRecord(wallet, record, storage, onProgress = () => {}) {
   onProgress("Fetching the funding payload…");
   const comp = await fetchSatoraFundingComponents(record);
   const nowSec = Math.floor(Date.now() / 1000);
@@ -6323,13 +6833,282 @@ export async function executeSatoraSwapRoute(wallet, route, onProgress = () => {
   const body = buildSatoraFundGaslessBody({ comp, nonce, deadline, signature, eip2612Permit });
   onProgress("Submitting the funding to Satora's relayer…");
   const result = await submitSatoraFundGasless(record, body);
-  const updated = { ...record, fundTxHash: result.tx_hash, fundedAt: Date.now(), updatedAt: Date.now() };
+  const updated = { ...record, fundTxHash: result.tx_hash, fundedAt: Date.now(), updatedAt: Date.now(),
+    ...(record.bridge ? { bridgePhase: "funded" } : {}) };
   try {
     const fresh = await fetchSatoraSwapStatus(record.id);
     if (fresh?.status) updated.status = fresh.status;
   } catch { /* the record keeps its last known status; polling resumes it */ }
   saveSatoraSwapRecord(storage, updated);
-  return [result.tx_hash];
+  return updated;
+}
+// ---------- Bridge drive: burn -> attest -> mint -> fund ----------
+// The bridge is a state machine on the persisted record, and the
+// persisted burnTx is its recovery key: it is written BEFORE the
+// burn is broadcast (EVM: the hash of the signed transaction;
+// Solana: the base58 of the owner's signature), so no crash or
+// close can orphan a crossing — resume finds the same burn and
+// NEVER re-burns (a set burnTx is assumed to may-have-landed;
+// only a PROVABLY failed burn — an on-chain failed receipt /
+// errored signature status — lets the foreground executor retry
+// once, because a failed burn moved nothing and its blockhash
+// is spent anyway). IRIS is the source of truth for landing:
+// it indexes the burn and carries the attestation; the mint is
+// confirmed by the depositor's Arbitrum USDC balance reaching
+// the record's netted amount. receiveMessage is submitted by
+// the user's own Arbitrum key when the burn authorised that
+// (destinationCaller = the user, chosen when the user holds
+// Arbitrum ETH dust at burn time; the zero-address path leaves
+// the relay to anyone — the mint can still only land at the
+// pinned user address), and the crossing shows honestly until
+// the mint is observed. While the steps land, the money sits
+// visibly in the user's own wallet in USDC on Arbitrum.
+let satoraBridgeInFlight = new Set();
+function satoraBridgePersist(storage, rec) { rec.updatedAt = Date.now(); saveSatoraSwapRecord(storage, rec); }
+/** The burn's destination caller: the user's own address when
+ *  they hold Arbitrum ETH dust (so Fluid can submit
+ *  receiveMessage itself); the zero address otherwise (anyone
+ *  may relay; the mint can only land at the user's address). */
+async function chooseSatoraBridgeCaller(userAddress) {
+  try {
+    const bal = await providerFor("arbitrum").getBalance(userAddress);
+    return bal >= 200000000000000n ? userAddress : ethers.ZeroAddress; // 0.0002 ETH
+  } catch { return ethers.ZeroAddress; }
+}
+function arbUsdcOf(userAddress) {
+  const arbUsdc = (NETWORKS.arbitrum.tokens || []).find(t => t.symbol === "USDC");
+  return new ethers.Contract(arbUsdc.address, ["function balanceOf(address) view returns (uint256)"], providerFor("arbitrum"));
+}
+async function satoraBridgeBurnEvm(wallet, rec, storage, onProgress, opts) {
+  const fromKey = "base";
+  const net = NETWORKS[fromKey];
+  const tok = (net.tokens || []).find(t => String(t.address).toLowerCase() === String(rec.bridge.sourceTokenAddress).toLowerCase());
+  const signer = wallet.connect(providerFor(fromKey));
+  const amount = BigInt(rec.fromAmount);
+  const token = new ethers.Contract(tok.address, ["function allowance(address,address) view returns (uint256)", "function approve(address,uint256) returns (bool)"], signer);
+  const allowance = await token.allowance(wallet.address, SATORA_CCTP_TOKEN_MESSENGER_V2);
+  if (allowance < amount) {
+    onProgress("Approving exactly the swap amount for Circle's transfer contract…");
+    if (opts?.onApprove) opts.onApprove({ chainKey: fromKey, token: tok.address, tokenSymbol: tok.symbol, spender: SATORA_CCTP_TOKEN_MESSENGER_V2, amount: rec.fromAmount, decimals: tok.decimals ?? 6, at: Date.now() });
+    const atx = await token.approve(SATORA_CCTP_TOKEN_MESSENGER_V2, amount);
+    rec.bridge.approveTx = atx.hash;
+    satoraBridgePersist(storage, rec);
+    const arc = await atx.wait().catch(() => null);
+    if (!arc || Number(arc.status) !== 1) throw new Error("The approval for the crossing did not confirm — nothing was burned.");
+  }
+  const caller = rec.bridge.destinationCaller || await chooseSatoraBridgeCaller(wallet.address);
+  rec.bridge.destinationCaller = caller;
+  const call = buildSatoraCctpEvmBurn({ amountRaw: rec.fromAmount, mintRecipient: wallet.address, burnToken: tok.address, destinationCaller: caller, maxFeeRaw: rec.bridge.maxFeeRaw });
+  const check = checkSatoraCctpEvmBurn(call, { userAddress: wallet.address, amountRaw: rec.fromAmount, burnToken: tok.address, destinationCaller: caller, maxFeeRaw: rec.bridge.maxFeeRaw });
+  if (!check.ok) throw new Error(check.reason);
+  onProgress("Burning your USDC on Base for the crossing…");
+  const unsigned = { to: call.to, data: call.data, value: 0n, chainId: net.chainId };
+  const populated = await signer.populateTransaction(unsigned);
+  const signed = await signer.signTransaction(populated);
+  rec.burnTx = ethers.keccak256(signed);
+  rec.bridgePhase = "attesting";
+  satoraBridgePersist(storage, rec); // BEFORE broadcast — the recovery key
+  try {
+    await signer.provider.broadcastTransaction(signed);
+  } catch (e) {
+    // A broadcast the network never saw must not strand the
+    // record as "crossing" forever: if the transaction is
+    // unknown on-chain, the burn provably never happened —
+    // clear it (nothing moved) and surface the error.
+    let known = false;
+    try { known = !!(await signer.provider.getTransaction(rec.burnTx)); } catch { /* unknown is the answer we need */ }
+    if (!known) { rec.burnTx = null; rec.bridgePhase = "burning"; satoraBridgePersist(storage, rec); }
+    throw e;
+  }
+  return rec;
+}
+async function satoraBridgeBurnEvmRetry(rec, storage) {
+  // A provably-failed burn moved nothing: clear it so the
+  // executor can re-burn once (fresh nonce/blockhash). Only the
+  // foreground executor does this — never resume.
+  try {
+    const rc = await providerFor("base").getTransactionReceipt(rec.burnTx);
+    if (rc && Number(rc.status) === 0) { rec.burnTx = null; rec.bridgePhase = "burning"; satoraBridgePersist(storage, rec); return true; }
+  } catch { /* an unread receipt is not proof of failure */ }
+  return false;
+}
+async function satoraBridgeBurnSolana(wallet, rec, storage, onProgress) {
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("The unlocked wallet is not available for this swap.");
+  const kp = solanaKeypair(phrase);
+  const owner = kp.publicKey.toBase58();
+  const caller = rec.bridge.destinationCaller || await chooseSatoraBridgeCaller(wallet.address);
+  rec.bridge.destinationCaller = caller;
+  const { blockhash } = (await solanaRpc("getLatestBlockhash", [{ commitment: "finalized" }]))?.value || {};
+  if (!blockhash) throw new Error("Solana did not return a recent blockhash for the crossing.");
+  const priorityFee = await suggestSatoraSolanaPriorityFee(owner);
+  const built = buildSatoraSolanaCctpBurn({
+    owner, amountRaw: rec.fromAmount, mintRecipient: wallet.address,
+    destinationCaller: caller, maxFeeRaw: rec.bridge.maxFeeRaw,
+    blockhash, priorityFeeMicroLamports: priorityFee,
+  });
+  const check = checkSatoraSolanaCctpBurn(built, { owner, mintRecipient: wallet.address, destinationCaller: caller, amountRaw: rec.fromAmount, maxFeeRaw: rec.bridge.maxFeeRaw });
+  if (!check.ok) throw new Error(check.reason);
+  // Simulate the exact artifact (message-account signature in
+  // place) before the owner signs anything.
+  const sim = await solanaRpc("simulateTransaction", [base64.encode(built.transaction), { sigVerify: false, commitment: "processed" }]);
+  const simErr = sim?.value?.err ?? sim?.err;
+  if (simErr) throw new Error("Solana refused the crossing in simulation (" + JSON.stringify(simErr) + ") — nothing was signed.");
+  const seed = solanaSeedFromSeed(mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " ")));
+  const ownerSig = ed25519.sign(built.message, seed);
+  const txBytes = new Uint8Array(built.transaction);
+  txBytes.set(ownerSig, satoraShortvec(built.numSigners).length); // signature slot 0 (the owner is the fee payer)
+  const burnId = base58.encode(ownerSig);
+  rec.burnTx = burnId;
+  rec.bridgePhase = "attesting";
+  satoraBridgePersist(storage, rec); // BEFORE broadcast — the recovery key
+  onProgress("Burning your USDC on Solana for the crossing…");
+  try {
+    await solanaBroadcast(txBytes, "the CCTP burn");
+  } catch (e) {
+    // Same rule as the EVM burn: a broadcast the network never
+    // saw (unknown signature afterwards) provably moved nothing
+    // — clear the burn id so the record is not stranded.
+    let known = false;
+    try { const st = await solanaRpc("getSignatureStatuses", [[burnId], { searchTransactionHistory: true }]); known = !!(Array.isArray(st?.value) && st.value[0]); } catch { /* unknown is the answer we need */ }
+    if (!known) { rec.burnTx = null; rec.bridgePhase = "burning"; satoraBridgePersist(storage, rec); }
+    throw e;
+  }
+  return rec;
+}
+async function satoraBridgeBurnSolanaRetry(rec, storage) {
+  try {
+    const st = await solanaRpc("getSignatureStatuses", [[rec.burnTx], { searchTransactionHistory: true }]);
+    const value = Array.isArray(st?.value) ? st.value[0] : null;
+    if (value && value.err) { rec.burnTx = null; rec.bridgePhase = "burning"; satoraBridgePersist(storage, rec); return true; }
+  } catch { /* an unread status is not proof of failure */ }
+  return false;
+}
+/** Drive one bridged record as far as it can go right now.
+ *  Foreground calls (the executor) may burn and poll briefly;
+ *  resume calls check once per stage and never burn. Returns the
+ *  record as persisted. */
+async function driveSatoraBridge(wallet, record, storage, onProgress = () => {}, opts = {}) {
+  const foreground = !!opts.foreground;
+  let rec = { ...record };
+  if (!rec.burnTx) {
+    if (!foreground) return rec; // resume never burns
+    rec = rec.bridge.sourceChainKey === "solana"
+      ? await satoraBridgeBurnSolana(wallet, rec, storage, onProgress)
+      : await satoraBridgeBurnEvm(wallet, rec, storage, onProgress, opts);
+    rec.bridgePhase = "attesting";
+    satoraBridgePersist(storage, rec);
+  } else if (foreground && rec.bridgePhase !== "funding") {
+    // A persisted burn may have provably failed on-chain (a
+    // failed receipt / an errored signature status): only then
+    // may the foreground drive clear it and burn again — a
+    // pending or landed burn is never re-burned.
+    const cleared = rec.bridge.sourceChainKey === "solana"
+      ? await satoraBridgeBurnSolanaRetry(rec, storage)
+      : await satoraBridgeBurnEvmRetry(rec, storage);
+    if (cleared) return driveSatoraBridge(wallet, rec, storage, onProgress, opts);
+  }
+  // Attesting: IRIS indexes the burn + issues the attestation.
+  // A persisted attestation is already Circle-issued for this
+  // burn — it stays valid, so it is used as-is and IRIS is only
+  // polled while none is stored.
+  if (rec.bridge.attestation?.message && rec.bridge.attestation?.attestation) {
+    if (rec.bridgePhase !== "minting") { rec.bridgePhase = "minting"; satoraBridgePersist(storage, rec); }
+  } else {
+    const deadlineMs = Date.now() + (foreground ? 90000 : 0);
+    for (;;) {
+      let att = null;
+      try { att = await fetchSatoraCctpAttestation(rec.bridge.domain, rec.burnTx); } catch { att = null; }
+      if (att) { rec.bridge.attestation = att; if (rec.bridgePhase !== "minting") rec.bridgePhase = "minting"; satoraBridgePersist(storage, rec); break; }
+      if (Date.now() >= deadlineMs) return rec; // still crossing — resume continues it
+      onProgress("Your USDC is crossing to Arbitrum…");
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+  // Minting: the balance is the truth — once the depositor's
+  // Arbitrum USDC reaches the netted amount the crossing is done.
+  const user = wallet.address;
+  const need = BigInt(rec.bridge.netSourceAmountRaw);
+  const hasLanded = async () => { try { return await arbUsdcOf(user).balanceOf(user) >= need; } catch { return false; } };
+  if (!(await hasLanded())) {
+    const att = rec.bridge.attestation;
+    const caller = String(rec.bridge.destinationCaller || "").toLowerCase();
+    if (att && caller === user.toLowerCase()) {
+      const msgCheck = checkSatoraCctpMessage(att.message, { userAddress: user, sourceDomain: rec.bridge.domain, destinationCaller: rec.bridge.destinationCaller });
+      if (!msgCheck.ok) throw new Error(msgCheck.reason);
+      try {
+        const signer = wallet.connect(providerFor("arbitrum"));
+        const mt = new ethers.Contract(SATORA_CCTP_MESSAGE_TRANSMITTER_V2, ["function receiveMessage(bytes,bytes) returns (bool)"], signer);
+        const call = buildSatoraCctpReceiveMessageCall(att);
+        const gas = await mt.receiveMessage.estimateGas(att.message, att.attestation).catch(() => null);
+        const fee = await providerFor("arbitrum").getFeeData().catch(() => null);
+        const price = fee?.gasPrice || fee?.maxFeePerGas || 0n;
+        const ethBal = await providerFor("arbitrum").getBalance(user).catch(() => 0n);
+        if (gas && price > 0n && ethBal * 5n >= gas * price * 6n) { // balance covers estimate x 1.2
+          onProgress("Claiming your USDC on Arbitrum…");
+          const tx = await mt.receiveMessage(att.message, att.attestation, gas ? { gasLimit: gas * 6n / 5n } : {});
+          rec.bridge.mintTx = tx.hash;
+          satoraBridgePersist(storage, rec);
+          await tx.wait().catch(() => null);
+        }
+      } catch { /* a failed mint attempt never loses the crossing: the attestation persists and resume retries */ }
+    }
+    if (!(await hasLanded())) return rec; // still crossing (or awaiting a relay) — resume continues it
+  }
+  rec.bridgePhase = "funding";
+  satoraBridgePersist(storage, rec);
+  return rec;
+}
+export async function executeSatoraSwapRoute(wallet, route, onProgress = () => {}, opts = {}) {
+  const gate = swapRouteExecutable(route);
+  if (!gate.ok) throw new Error(gate.reason);
+  const storage = opts?.storage;
+  if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function")
+    throw new Error("Satora swaps need storage to persist the swap id before funding — refusing to create an unrecoverable swap.");
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase || !ethers.isAddress(wallet?.address || ""))
+    throw new Error("The unlocked wallet is not available for this swap.");
+  const index = nextSatoraSwapIndex(loadSatoraSwapRecords(storage));
+  onProgress("Creating the swap with Satora…");
+  let record = await createSatoraSwap(route, { phrase, index, userAddress: wallet.address });
+  saveSatoraSwapRecord(storage, record);
+  satoraBridgeInFlight.add(record.id);
+  try {
+    if (record.bridge) {
+      // The CCTP pre-leg runs first; the funding below only
+      // starts once the netted USDC verifiably sits in the
+      // user's own Arbitrum wallet. If the crossing is still in
+      // flight, the burn id is the result — resume completes
+      // the funding.
+      record = await driveSatoraBridge(wallet, record, storage, onProgress, { ...opts, foreground: true });
+      if (record.bridgePhase !== "funding")
+        return record.burnTx ? [record.burnTx] : [];
+    }
+    const updated = await fundSatoraSwapRecord(wallet, record, storage, onProgress);
+    return record.bridge && record.burnTx ? [record.burnTx, updated.fundTxHash] : [updated.fundTxHash];
+  } finally { satoraBridgeInFlight.delete(record.id); }
+}
+/** Continue in-flight bridge crossings after unlock (mirrors the
+ *  status poll): records whose burn is attesting/minting are
+ *  driven forward — mint when possible, fund when landed — and
+ *  records are NEVER re-burned here. Best-effort per record. */
+export async function resumeSatoraBridgedSwaps(wallet, storage, onProgress = () => {}) {
+  if (!storage || !wallet?.address || !wallet?.mnemonic?.phrase) return 0;
+  const records = loadSatoraSwapRecords(storage).filter(r => r.bridge && !r.fundTxHash && r.burnTx);
+  let advanced = 0;
+  for (const record of records) {
+    if (satoraBridgeInFlight.has(record.id)) continue;
+    satoraBridgeInFlight.add(record.id);
+    try {
+      const rec = await driveSatoraBridge(wallet, record, storage, onProgress, { foreground: false });
+      if (rec.bridgePhase === "funding") {
+        await fundSatoraSwapRecord(wallet, rec, storage, onProgress);
+        advanced++;
+      } else if (rec.bridgePhase !== record.bridgePhase || rec.bridge.mintTx) advanced++;
+    } catch { /* one stuck crossing never blocks the others */ }
+    finally { satoraBridgeInFlight.delete(record.id); }
+  }
+  return advanced;
 }
 
 // ---------- Jupiter (PRIMARY for Solana same-chain swaps) ----------

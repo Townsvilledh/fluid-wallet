@@ -30,7 +30,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
-  formatSatoraSwapIntent, checkSatoraLightningReceivability, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute,
+  formatSatoraSwapIntent, checkSatoraLightningReceivability, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
@@ -4138,11 +4138,16 @@ $("actSwap").onclick = () => {
         // the funding payload + the Permit2 witness field by
         // field, signs with the wallet's EVM key and submits to
         // the gasless relay — the returned hash is the relay's
-        // funding transaction on the SOURCE chain. The persisted
-        // record joins the Satora swaps list in this sheet, whose
-        // polling tracks it from here.
-        hashes = await executeSatoraSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage });
-        srcExplorer = NETWORKS[fromKey].explorer;
+        // funding transaction on the SOURCE chain. For Base /
+        // Solana USDC sources it first drives the CCTP crossing
+        // (burn id persisted before broadcast) and the returned
+        // hashes lead with the burn; resume completes a crossing
+        // still in flight. The persisted record joins the Satora
+        // swaps list in this sheet, whose polling tracks it.
+        hashes = await executeSatoraSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+        // Bridge sources: the source chain may be Solana (no
+        // NETWORKS entry) — its explorer is the Solana one.
+        srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : NETWORKS[fromKey].explorer;
         try { paintSatoraSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else if (route.provider === "relay") {
         // Relay route (primary router): EVM source by construction —
@@ -4502,7 +4507,8 @@ $("unlockBtn").onclick = async () => {
     // locked session picks its status back up here, then keeps
     // polling while the wallet stays unlocked.
     pollSatoraSwapStatuses(localStorage).catch(() => {});
-    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) pollSatoraSwapStatuses(localStorage).catch(() => {}); }, 60000);
+    resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {});
+    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) { pollSatoraSwapStatuses(localStorage).catch(() => {}); resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {}); } }, 60000);
     // Mayan swap polling resumes on unlock on the same terms
     // (source hashes are the recovery key).
     pollMayanSwapStatuses(localStorage).catch(() => {});

@@ -6,6 +6,7 @@ import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUr
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
+import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -5391,12 +5392,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("satora: placeholder fee config charges nothing and names no referral (seam)", (() => { const f = satoraFeeConfig(50, "PENDING_KEY"); return f.referralCode === null && f.extraFeesBps === 0 && satoraDeveloperKeyLive("PENDING_KEY") === false; })());
   ok("satora: minimums are the evidenced ones", SATORA_MIN_NET_SATS.bitcoin === 10000 && SATORA_MIN_NET_SATS.lightning === 356);
 
-  // Eligibility matrix (pure).
+  // Eligibility matrix (pure). Base + Solana USDC joined the
+  // evidenced sources with the CCTP bridge (2026-11-09); their
+  // full matrix lives in §71.
   ok("satora: pair eligibility (evidenced sources only)",
     !!satoraSupportsPair(ARGS_BTC100_S7)
     && !!satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S7 })
     && !!satoraSupportsPair({ fromChainKey: "ethereum", toChainKey: "bitcoin", fromTokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" })
-    && satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null
+    && !!satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" })
     && satoraSupportsPair({ ...ARGS_BTC100_S7, toChainKey: "arbitrum" }) === null
     && satoraSupportsPair({ ...ARGS_BTC100_S7, fromChainKey: "solana" }) === null
     && satoraSupportsPair({ ...ARGS_BTC100_S7, fromTokenAddress: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6" }) === null);
@@ -5984,7 +5987,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const appSrcS9 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     const coreSrcS9 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("satora exec: the app wires the executor with persistence and dropped the gate copy",
-      appSrcS9.includes("executeSatoraSwapRoute(wallet, route, (t) => msg(\"wMsg\", t, true), { storage: localStorage })")
+      appSrcS9.includes("executeSatoraSwapRoute(wallet, route, (t) => msg(\"wMsg\", t, true), { storage: localStorage, onApprove: recordEvmApproval })")
       && !appSrcS9.includes("funding for this route is not enabled yet")
       && !appSrcS9.includes("Satora execution is not enabled in this build")
       && !coreSrcS9.includes("Satora execution is not enabled in this build"));
@@ -6775,6 +6778,541 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("mayan: wiring — the app names, fee-discloses, refund-notes, executes and history-tracks Mayan routes",
       appSrcM.includes("provider === \"mayan\"") && appSrcM.includes("executeMayanSwapRoute") && appSrcM.includes("formatMayanRefundNote")
       && appSrcM.includes("saveMayanSwapRecord") && appSrcM.includes("wMayanSwaps") && appSrcM.includes("pollMayanSwapStatuses"));
+  }
+}
+
+// 71. Satora CCTP bridge sources (2026-11-09): Base + Solana
+// USDC -> Bitcoin/Lightning, incorporated the day Philipp
+// confirmed both lanes. Neither is a new swap type: each is a
+// Circle CCTP v2 inbound pre-leg in front of the shipped
+// Arbitrum swap — creation adds bridge_source_chain /
+// bridge_source_token_address; the user burns native USDC via
+// CCTP Fast Transfer with mintRecipient = the user's OWN EVM
+// address; IRIS attests; receiveMessage mints Arbitrum USDC to
+// the user; the shipped Permit2 gasless funding then pulls the
+// SERVER-NETTED amount. Live-proven at build time: creations in
+// Fluid's exact shipped body shape (gasless: true) are accepted
+// with BOTH bridge strings, and the Permit2 funding endpoint
+// nets the CCTP deduction identically to the userop endpoint
+// (20 USDC Base burn -> Permit2 source_amount 19996880; Solana
+// -> 19997600), by the formula pinned in computeSatoraCctpMaxFee.
+// The Solana wire goldens below were produced BY the SDK's own
+// builder (@lendasat/lendaswap-sdk-pure 2.8.0, fixed inputs) —
+// Fluid's hand-rolled port must reproduce them byte-for-byte.
+{
+  const PHRASE_S71 = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const walletS71 = await unlockVault((await importVault(PHRASE_S71, "password123")).keystore, "password123");
+  const USER_S71 = walletS71.address;
+  const SOL_OWNER_S71 = solanaAddressFromPhrase(PHRASE_S71);
+  const identityS71 = satoraSwapIdentity(PHRASE_S71, 0);
+  const claimS71 = satoraClaimKey(PHRASE_S71);
+  const BTC_DEST_S71 = "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2";
+  const ARB_USDC_S71 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const ARB_WBTC_S71 = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const BASE_USDC_S71 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const BASE_USDT_S71 = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2";
+  const SOL_USDC_S71 = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const SOL_USDT_S71 = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  const SOL_MINT_S71 = "So11111111111111111111111111111111111111112";
+  const COORD_S71 = "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f";
+  const SERVER_EVM_S71 = "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac";
+  const HTLC_S71 = "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748";
+  const ROUTER_S71 = "0xe592427a0aece92de3edee1f18e0157c05861564";
+  const TIMELOCK_S71 = 1794265512;
+  const BTC_USD_S71 = 74414;
+  const FUND_TX_S71 = "0x" + "ab".repeat(32);
+  const jsonResS71 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const storeS71 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  const hexOf71 = (b) => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+
+  // ---- Eligibility matrix (pure) ----
+  {
+    const basePlan = satoraSupportsPair({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDC_S71 });
+    ok("satora bridge: Base native USDC plans a bridge (settlement = Arbitrum USDC)",
+      !!basePlan && basePlan.chainId === 42161 && basePlan.token.address === ARB_USDC_S71
+      && basePlan.bridge.name === "Base" && basePlan.bridge.domain === 6 && basePlan.bridge.sourceTokenAddress === BASE_USDC_S71);
+    const solPlan = satoraSupportsPair({ fromChainKey: "solana", toChainKey: "lightning", fromTokenAddress: SOL_USDC_S71 });
+    ok("satora bridge: Solana native USDC plans a bridge (domain 5)",
+      !!solPlan && solPlan.chainId === 42161 && solPlan.token.address === ARB_USDC_S71
+      && solPlan.bridge.name === "Solana" && solPlan.bridge.domain === 5 && solPlan.bridge.sourceTokenAddress === SOL_USDC_S71);
+    ok("satora bridge: everything else on those chains returns null (Base USDT, Solana USDT/SOL, BSC, EVM destinations)",
+      satoraSupportsPair({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDT_S71 }) === null
+      && satoraSupportsPair({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: "0x4200000000000000000000000000000000000006" }) === null
+      && satoraSupportsPair({ fromChainKey: "solana", toChainKey: "bitcoin", fromTokenAddress: SOL_USDT_S71 }) === null
+      && satoraSupportsPair({ fromChainKey: "solana", toChainKey: "bitcoin", fromTokenAddress: SOL_MINT_S71 }) === null
+      && satoraSupportsPair({ fromChainKey: "bsc", toChainKey: "bitcoin", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }) === null
+      && satoraSupportsPair({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC_S71 }) === null
+      && satoraSupportsPair({ fromChainKey: "solana", toChainKey: "ethereum", fromTokenAddress: SOL_USDC_S71 }) === null);
+    ok("satora bridge: the pinned source constants are Circle's native USDC on each chain",
+      SATORA_BRIDGE_SOURCES.base.sourceTokenAddress === BASE_USDC_S71 && SATORA_BRIDGE_SOURCES.solana.sourceTokenAddress === SOL_USDC_S71);
+  }
+
+  // ---- IRIS fee parsing + the netting arithmetic ----
+  ok("satora bridge: the IRIS fast tier parses to hundredths of a bip (and only the fast tier)",
+    parseIrisCctpFee([{ finalityThreshold: 2000, minimumFee: 0.5 }, { finalityThreshold: 1000, minimumFee: 1.3 }])?.bpsHundredths === 130
+    && parseIrisCctpFee([{ finalityThreshold: 1000, minimumFee: 1.0 }])?.bpsHundredths === 100
+    && parseIrisCctpFee([{ finalityThreshold: 2000, minimumFee: 0.5 }]) === null
+    && parseIrisCctpFee(null) === null && parseIrisCctpFee([{ finalityThreshold: 1000, minimumFee: "x" }]) === null);
+  ok("satora bridge: the CCTP deduction cap reproduces the server's netting to the unit",
+    computeSatoraCctpMaxFee("20000000", 130) === 3120n && computeSatoraCctpMaxFee("20000000", 100) === 2400n
+    && computeSatoraCctpMaxFee("5000000", 130) === 780n && computeSatoraCctpMaxFee("5000000", 100) === 600n
+    && computeSatoraCctpMaxFee("100000000", 130) === 15600n && computeSatoraCctpMaxFee("100000000", 100) === 12000n
+    && computeSatoraCctpMaxFee("100", 130) === 0n);
+
+  // ---- Creation bodies + the create-response echo pins ----
+  const bridgePlan71 = (name) => name === "Base"
+    ? { name: "Base", domain: 6, sourceChainKey: "base", sourceTokenAddress: BASE_USDC_S71, maxFeeRaw: "3120", netSourceAmountRaw: "19996880", irisFeeBpsHundredths: 130, cctpFeeUsd: 0.00312 }
+    : { name: "Solana", domain: 5, sourceChainKey: "solana", sourceTokenAddress: SOL_USDC_S71, maxFeeRaw: "2400", netSourceAmountRaw: "19997600", irisFeeBpsHundredths: 100, cctpFeeUsd: 0.0024 };
+  const route71 = (name) => ({
+    provider: "satora", fromChainId: 42161, fromAmount: "20000000",
+    fromToken: { address: ARB_USDC_S71, symbol: "USDC", decimals: 6 },
+    satora: { destKey: "bitcoin", destInput: BTC_DEST_S71, extraFeesBps: 50, netSats: 26449, grossSats: 26877, bridge: bridgePlan71(name) },
+  });
+  {
+    const body = buildSatoraBtcCreateRequest({ route: route71("Base"), userAddress: USER_S71, identity: identityS71, claimPk: claimS71.claimPk });
+    ok("satora bridge: the BTC creation carries the bridge fields on the shipped body shape (gasless, settlement pair)",
+      body.bridge_source_chain === "Base" && body.bridge_source_token_address === BASE_USDC_S71
+      && body.evm_chain_id === 42161 && body.token_address === ARB_USDC_S71 && body.gasless === true
+      && body.referral_code === SATORA_DEVELOPER_KEY && body.extra_fees === 50);
+    const lnRoute = { ...route71("Solana"), satora: { ...route71("Solana").satora, destKey: "lightning", destInput: "user@wallet.example", grossSats: 6719 } };
+    const lnBody = buildSatoraLnCreateRequest({ route: lnRoute, userAddress: USER_S71, userId: identityS71.userId });
+    ok("satora bridge: the LN creation carries the Solana bridge fields",
+      lnBody.bridge_source_chain === "Solana" && lnBody.bridge_source_token_address === SOL_USDC_S71 && lnBody.lightning_address === "user@wallet.example");
+    const direct = buildSatoraBtcCreateRequest({ route: { ...route71("Base"), satora: { ...route71("Base").satora, bridge: undefined } }, userAddress: USER_S71, identity: identityS71, claimPk: claimS71.claimPk });
+    ok("satora bridge: direct-lane creations carry no bridge fields (byte-identical bodies)",
+      !("bridge_source_chain" in direct) && !("bridge_source_token_address" in direct));
+  }
+  const createFixture71 = (name, over = {}) => ({
+    id: "aaaaaaa1-1111-4111-8111-111111111111", status: "pending", fee_sats: 428,
+    evm_hash_lock: identityS71.hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
+    source_token: { chain_id: 42161, token_id: ARB_USDC_S71, decimals: 6, symbol: "USDC" },
+    target_token: { chain_id: 0, token_id: "btc", decimals: 8, symbol: "BTC" },
+    created_at: "2026-11-09T02:00:00.000000Z", chain: "Arbitrum", evm_chain_id: 42161,
+    source_amount: "20000000", evm_expected_sats: "26877", target_amount: "26449",
+    evm_htlc_address: HTLC_S71, evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: COORD_S71, client_evm_address: USER_S71, server_evm_address: SERVER_EVM_S71,
+    evm_fund_txid: null, evm_claim_txid: null, evm_refund_locktime: TIMELOCK_S71, evm_funding_confirmations: 128,
+    btc_htlc_address: BTC_DEST_S71, btc_user_claim_pk: claimS71.claimPk.slice(2),
+    btc_server_refund_pk: "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633",
+    btc_refund_locktime: 1794222312, btc_htlc_script_version: 1, btc_fund_txid: null, btc_fund_vout: null, btc_claim_txid: null,
+    wbtc_address: ARB_WBTC_S71, target_btc_address: BTC_DEST_S71, network: "bitcoin", gasless: true,
+    bridge_source_chain: name, bridge_source_token_address: name === "Base" ? BASE_USDC_S71 : SOL_USDC_S71,
+    ...over,
+  });
+  ok("satora bridge: a faithful bridged creation passes the response check",
+    checkSatoraCreateResponse(route71("Base"), createFixture71("Base"), { identity: identityS71, claimPk: claimS71.claimPk }).ok === true
+    && checkSatoraCreateResponse(route71("Solana"), createFixture71("Solana"), { identity: identityS71, claimPk: claimS71.claimPk }).ok === true);
+  ok("satora bridge: missing or drifted bridge echoes are route refusals",
+    checkSatoraCreateResponse(route71("Base"), createFixture71("Base", { bridge_source_chain: undefined }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false
+    && checkSatoraCreateResponse(route71("Base"), createFixture71("Base", { bridge_source_chain: "base" }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false
+    && checkSatoraCreateResponse(route71("Base"), createFixture71("Base", { bridge_source_token_address: BASE_USDT_S71 }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false
+    && checkSatoraCreateResponse(route71("Solana"), createFixture71("Solana", { bridge_source_chain: "Base" }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false);
+  ok("satora bridge: a creation settling anywhere but Arbitrum USDC is refused",
+    checkSatoraCreateResponse(route71("Base"), createFixture71("Base", { evm_chain_id: 8453 }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false
+    && checkSatoraCreateResponse(route71("Base"), createFixture71("Base", { source_token: { chain_id: 8453, token_id: BASE_USDC_S71, decimals: 6, symbol: "USDC" } }), { identity: identityS71, claimPk: claimS71.claimPk }).ok === false);
+
+  // ---- Base burn: calldata golden + per-field refusals ----
+  const GOLD_USER = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  {
+    const call = buildSatoraCctpEvmBurn({ amountRaw: "20000000", mintRecipient: GOLD_USER, burnToken: BASE_USDC_S71, destinationCaller: GOLD_USER, maxFeeRaw: "3120" });
+    ok("satora bridge: the Base burn targets Circle's pinned TokenMessengerV2 with the golden calldata",
+      call.to === SATORA_CCTP_TOKEN_MESSENGER_V2
+      && call.data === "0x8e0250ee0000000000000000000000000000000000000000000000000000000001312d0000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000ebf5563f905e3b9d58718e28e08143511dc763b000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda029130000000000000000000000000ebf5563f905e3b9d58718e28e08143511dc763b0000000000000000000000000000000000000000000000000000000000000c3000000000000000000000000000000000000000000000000000000000000003e8");
+    const plan = { userAddress: GOLD_USER, amountRaw: "20000000", burnToken: BASE_USDC_S71, destinationCaller: GOLD_USER, maxFeeRaw: "3120" };
+    ok("satora bridge: the Base burn bounds check accepts the faithful call",
+      checkSatoraCctpEvmBurn(call, plan).ok === true);
+    ok("satora bridge: the Base burn bounds check refuses every drift (target, amount, recipient, token, caller, fee cap)",
+      checkSatoraCctpEvmBurn({ ...call, to: "0x000000000000000000000000000000000000dEaD" }, plan).ok === false
+      && checkSatoraCctpEvmBurn(call, { ...plan, amountRaw: "20000001" }).ok === false
+      && checkSatoraCctpEvmBurn(call, { ...plan, userAddress: "0x000000000000000000000000000000000000dEaD" }).ok === false
+      && checkSatoraCctpEvmBurn(call, { ...plan, burnToken: BASE_USDT_S71 }).ok === false
+      && checkSatoraCctpEvmBurn(call, { ...plan, destinationCaller: "0x0000000000000000000000000000000000000000" }).ok === false
+      && checkSatoraCctpEvmBurn(call, { ...plan, maxFeeRaw: "3121" }).ok === false);
+    const rm = buildSatoraCctpReceiveMessageCall({ message: "0x1234", attestation: "0x5678" });
+    ok("satora bridge: receiveMessage targets Circle's pinned MessageTransmitterV2",
+      rm.to === SATORA_CCTP_MESSAGE_TRANSMITTER_V2 && rm.data.slice(0, 10) === ethers.id("receiveMessage(bytes,bytes)").slice(0, 10));
+  }
+
+  // ---- Solana burn: wire-byte goldens vs the SDK's own builder ----
+  const GOLD_OWNER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+  const GOLD_TX = "0200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5c2e6b5cc7dcd66d19becec3cc3e449067c56fb3d7ab557f4577de64d832110ca20546b1e5d1d16ac642c32cc09fca482157c09a1ddf8f7f763d3f143a900e02000b117e8c088760bfde1dddcf32c17f209b8242ee52aaf131facd88d0ea2c6d0b06f2ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22cd3ea8cf5acaca8cd05207512175c43cef54a5dd99ede20a16b55253738f397dc076eaeeeb35d837e56b85fbca83355dea3141b9cfd5b90b3e8c6ee7c0a34942fa9a202630d8c5324689243a37de28596703eefb003fc03d2461e6d7bd9581780c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d610306466fe5211732ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a400000002dc7bd6bda3aee5863e2160422ee2c6ff3d6abb980a1b959008704388776ad49454a9d54580421c4dd7ced5d1ca999425fae7ea6cfa7f6429d6ea06c2c9aeb528e6b6a31521dba9ad08af06b6d8ce9aaacfa821ea7712cbb4b92694a6f0336fb3c0a2554074b1c454c9c5b0096b9eeb8253939664ba98c79cfd961211f6a8272c14ed3febff31b8949c9d4112029bc5d3eff50dab32f41648bd613937333e1bfa65fc81ce19edcd2d2c340b02fa61be1d5badde1592833ddf92009d8cf685455a65fc81d0fefa8860cb3b83f089b0224be8a6687b7ae49f594c0b9b4d7e9389306ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90000000000000000000000000000000000000000000000000000000000000000510033fcc78003f0dfd5be6750749b84b9f4823b9cc83b6cb54f1adb0cee206e01000000000000000000000000000000000000000000000000000000000000000306000502a08601000600090310270000000000000d12000007020803090a0b0405010c0d0e0f100d60d73c3d2e723780b0002d310100000000030000000000000000000000000000000ebf5563f905e3b9d58718e28e08143511dc763b0000000000000000000000000ebf5563f905e3b9d58718e28e08143511dc763b6009000000000000e8030000";
+  {
+    const built = buildSatoraSolanaCctpBurn({
+      owner: GOLD_OWNER, amountRaw: "20000000", mintRecipient: GOLD_USER, destinationCaller: GOLD_USER,
+      maxFeeRaw: "2400", blockhash: "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM",
+      priorityFeeMicroLamports: 10000n, eventSeed: new Uint8Array(32).fill(7),
+    });
+    ok("satora bridge: the Solana burn reproduces the SDK builder's wire bytes exactly",
+      built.eventAccount === "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB" && hexOf71(built.transaction) === GOLD_TX);
+    const pdas = satoraCctpSolanaPdas(GOLD_OWNER);
+    ok("satora bridge: the Solana PDAs match Circle's published derivations",
+      pdas.senderAuthority === "45hzrGLQ2EGo1Ln7QpXjDwb589GDQ9H2aEXXw6ds6BFE"
+      && pdas.remoteTokenMessenger === "53NSDvEXmUixWSsCQF5rnTxcKdihq19WXNaZFXrX3ojf"
+      && pdas.localToken === "CRBBbuLCyrkQy4dCTHxqstSmDQv4ajBeUVb9qUdMVaP1"
+      && pdas.messageTransmitter === "W1k5ijkaSTo5iA5zChNpfzcy796fLhkBxfmJuR8W8HU");
+    const plan = { owner: GOLD_OWNER, mintRecipient: GOLD_USER, destinationCaller: GOLD_USER, amountRaw: "20000000", maxFeeRaw: "2400" };
+    ok("satora bridge: the Solana burn bounds check accepts the golden build", checkSatoraSolanaCctpBurn(built, plan).ok === true);
+    const tamperedMsg = new Uint8Array(built.message); tamperedMsg[tamperedMsg.length - 1] ^= 0xff;
+    ok("satora bridge: the Solana burn bounds check refuses drifted terms and tampered wire bytes",
+      checkSatoraSolanaCctpBurn(built, { ...plan, amountRaw: "20000001" }).ok === false
+      && checkSatoraSolanaCctpBurn(built, { ...plan, maxFeeRaw: "2401" }).ok === false
+      && checkSatoraSolanaCctpBurn(built, { ...plan, mintRecipient: "0x000000000000000000000000000000000000dEaD" }).ok === false
+      && checkSatoraSolanaCctpBurn(built, { ...plan, destinationCaller: "0x0000000000000000000000000000000000000000" }).ok === false
+      && checkSatoraSolanaCctpBurn({ ...built, message: tamperedMsg }, plan).ok === false);
+  }
+
+  // ---- CCTP message pin ----
+  const cctpMessage71 = ({ sourceDomain = 6, destDomain = 3, recipient = USER_S71, caller = USER_S71 } = {}) => {
+    const u32 = (n) => BigInt(n).toString(16).padStart(8, "0");
+    const pad = (a) => String(a).toLowerCase().replace("0x", "").padStart(64, "0");
+    return "0x" + u32(1) + u32(sourceDomain) + u32(destDomain) + "0000000000000000" + "00".repeat(32) + pad(recipient) + pad(caller) + "000003e8000003e8" + "00000000";
+  };
+  ok("satora bridge: the CCTP message pin accepts this crossing and refuses foreign ones",
+    checkSatoraCctpMessage(cctpMessage71({}), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: USER_S71 }).ok === true
+    && checkSatoraCctpMessage(cctpMessage71({ caller: "0x0000000000000000000000000000000000000000" }), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: "0x0000000000000000000000000000000000000000" }).ok === true
+    && checkSatoraCctpMessage(cctpMessage71({ recipient: "0x000000000000000000000000000000000000dEaD" }), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: USER_S71 }).ok === false
+    && checkSatoraCctpMessage(cctpMessage71({ destDomain: 6 }), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: USER_S71 }).ok === false
+    && checkSatoraCctpMessage(cctpMessage71({ sourceDomain: 5 }), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: USER_S71 }).ok === false
+    && checkSatoraCctpMessage(cctpMessage71({}), { userAddress: USER_S71, sourceDomain: 6, destinationCaller: "0x0000000000000000000000000000000000000000" }).ok === false);
+
+  // ---- Funding netting: the pulled amount is the netted one ----
+  const compFor71 = (hashLock, netRaw, over = {}) => {
+    const approveData = new ethers.Interface(["function approve(address,uint256) returns (bool)"]).encodeFunctionData("approve", [ROUTER_S71, BigInt(netRaw)]);
+    const pad = (a) => String(a).toLowerCase().replace("0x", "").padStart(64, "0");
+    const calls = [
+      { target: ARB_USDC_S71, value: "0", call_data: approveData },
+      { target: ROUTER_S71, value: "0", call_data: "0xc04b8d59" + pad(ARB_USDC_S71) + pad(ARB_WBTC_S71) },
+    ];
+    return {
+      coordinator_address: COORD_S71, htlc_kind: "erc20", htlc_version: 7,
+      permit2_address: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      source_token_address: ARB_USDC_S71, source_amount: String(netRaw),
+      lock_token_address: ARB_WBTC_S71.toLowerCase(), preimage_hash: hashLock,
+      claim_address: SERVER_EVM_S71.toLowerCase(), timelock: TIMELOCK_S71,
+      calls, calls_hash: satoraCallsHash(calls), ...over,
+    };
+  };
+  const bridgedRecord71 = (over = {}) => ({
+    id: "aaaaaaa1-1111-4111-8111-111111111111", destKey: "bitcoin", fromChainKey: "arbitrum",
+    fromAmount: "20000000", hashLock: identityS71.hashLock, coordinatorAddress: COORD_S71,
+    htlcAddress: HTLC_S71, serverEvmAddress: SERVER_EVM_S71, wbtcAddress: ARB_WBTC_S71,
+    refundLocktime: TIMELOCK_S71, sourceTokenAddress: ARB_USDC_S71, htlcKind: "erc20", htlcVersion: 7,
+    bridge: { name: "Base", domain: 6, sourceChainKey: "base", sourceTokenAddress: BASE_USDC_S71, maxFeeRaw: "3120", netSourceAmountRaw: "19996880", irisFeeBpsHundredths: 130, destinationCaller: USER_S71, mintTx: null, attestation: null },
+    burnTx: "0x" + "cd".repeat(32), bridgePhase: "attesting", fundTxHash: null, status: "pending",
+    destInput: BTC_DEST_S71, netSats: 26449, grossSats: 26877, feeSats: 428, fromSymbol: "USDC", index: 0, btcHtlcAddress: BTC_DEST_S71,
+    ...over,
+  });
+  ok("satora bridge: the funding amount of a bridged record is the netted amount; a direct record's is the full amount",
+    satoraFundingAmount(bridgedRecord71()) === "19996880" && satoraFundingAmount({ fromAmount: "20000000", bridge: null }) === "20000000");
+  ok("satora bridge: netted funding components pass; full-amount components and approvals are refused",
+    checkSatoraFundingComponents(compFor71(identityS71.hashLock, "19996880"), bridgedRecord71()).ok === true
+    && checkSatoraFundingComponents(compFor71(identityS71.hashLock, "20000000"), bridgedRecord71()).ok === false
+    && checkSatoraFundingComponents(compFor71(identityS71.hashLock, "19996880", { source_amount: "19996880" }), bridgedRecord71()).ok === true);
+  {
+    // A component set whose source_amount is netted but whose
+    // APPROVE still names the full amount must refuse.
+    const approveFull = new ethers.Interface(["function approve(address,uint256) returns (bool)"]).encodeFunctionData("approve", [ROUTER_S71, 20000000n]);
+    const comp = compFor71(identityS71.hashLock, "19996880");
+    comp.calls = [{ ...comp.calls[0], call_data: approveFull }, comp.calls[1]];
+    comp.calls_hash = satoraCallsHash(comp.calls);
+    ok("satora bridge: a full-amount approval inside netted components is refused",
+      checkSatoraFundingComponents(comp, bridgedRecord71()).ok === false);
+    const permit = buildSatoraEip2612Permit({ comp: { ...compFor71(identityS71.hashLock, "19996880"), eip2612: { supported: true, already_approved: false, nonce: 3, domain_separator: "0x" + "11".repeat(32) } }, record: bridgedRecord71(), depositor: USER_S71, deadline: Math.floor(Date.now() / 1000) + 600 });
+    ok("satora bridge: the EIP-2612 side-permit is for the NETTED amount, never the full one",
+      !!permit && permit.ok === true && permit.value === "19996880");
+  }
+  // ---- Quoting: fee-law pins with the CCTP fee folded in ----
+  const pairsS71 = [
+    { source: "42161", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "42161", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+  ];
+  const quoteForS71 = (amountRaw, extraBps, destKey, fixedNet = null) => {
+    const gross = Math.floor((Number(amountRaw) / 1e6) / BTC_USD_S71 * 1e8);
+    const protocol = Math.round(gross * 0.005);
+    const network = destKey === "bitcoin" ? 160 : 4;
+    const fluid = Math.round(gross * (Number(extraBps) || 0) / 10000);
+    const net = fixedNet != null ? fixedNet : gross - protocol - network - fluid;
+    return { exchange_rate: String(BTC_USD_S71), network_fee: network, gasless_network_fee: network, protocol_fee: protocol, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: String(amountRaw), target_amount: String(gross), net_source_amount: String(amountRaw), net_target_amount: String(net) };
+  };
+  const apiStubS71 = ({ creates = [], funds = [], createId = "aaaaaaa1-1111-4111-8111-111111111111", compNetRaw = "19996880", attestation = null, solanaSends = [], onSolanaSend = null, quoteFixedNet = null } = {}) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResS71([{ symbol: "BTCUSDT", price: String(BTC_USD_S71) }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResS71({});
+    if (u.includes("iris-api.circle.com/v2/burn/USDC/fees/6/3")) return jsonResS71([{ finalityThreshold: 2000, minimumFee: 0.5, forwardFee: 0 }, { finalityThreshold: 1000, minimumFee: 1.3, forwardFee: 0 }]);
+    if (u.includes("iris-api.circle.com/v2/burn/USDC/fees/5/3")) return jsonResS71([{ finalityThreshold: 1000, minimumFee: 1.0, forwardFee: 0 }]);
+    if (u.includes("iris-api.circle.com/v2/messages/")) {
+      if (!attestation) return jsonResS71({ messages: [] });
+      return jsonResS71({ messages: [{ status: "complete", message: attestation.message, attestation: attestation.attestation }] });
+    }
+    if (u.includes("api.satora.io/version")) return jsonResS71({ tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
+    if (u.includes("api.satora.io/status")) return jsonResS71({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResS71(pairsS71);
+    if (u.includes("api.satora.io/quote")) {
+      const qs = new URL(u).searchParams;
+      return jsonResS71(quoteForS71(qs.get("source_amount"), Number(qs.get("extra_fees") || 0), qs.get("target_chain") === "Bitcoin" ? "bitcoin" : "lightning", quoteFixedNet));
+    }
+    if (u.includes("api.satora.io/swap/evm/")) {
+      const body = JSON.parse(opts.body || "{}");
+      creates.push(body);
+      const net = quoteForS71(body.amount_in, body.extra_fees || 0, "bitcoin").net_target_amount;
+      return jsonResS71(createFixture71(body.bridge_source_chain || "Base", {
+        id: createId, target_amount: String(net),
+        bridge_source_chain: body.bridge_source_chain, bridge_source_token_address: body.bridge_source_token_address,
+      }));
+    }
+    if (u.includes("swap-and-lock-calldata-permit2")) return jsonResS71(compFor71(identityS71.hashLock, compNetRaw));
+    if (u.includes("fund-gasless")) { funds.push(JSON.parse(opts.body || "{}")); return jsonResS71({ id: createId, status: "clientfundingseen", tx_hash: FUND_TX_S71, message: "ok" }); }
+    if (u.includes("api.satora.io/swap/")) return jsonResS71({ id: createId, status: "clientfundingseen" });
+    if (u.includes("solana-rpc.publicnode.com") || u.includes("api.mainnet-beta.solana.com")) {
+      const body = JSON.parse(opts.body);
+      const reply = (result) => jsonResS71({ jsonrpc: "2.0", id: body.id ?? 1, result });
+      if (body.method === "getLatestBlockhash") return reply({ context: { slot: 1 }, value: { blockhash: "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM", lastValidBlockHeight: 100 } });
+      if (body.method === "getRecentPrioritizationFees") return reply([{ slot: 1, prioritizationFee: 10000 }]);
+      if (body.method === "simulateTransaction") return reply({ context: { slot: 1 }, value: { err: null, logs: [], unitsConsumed: 50000 } });
+      if (body.method === "sendTransaction") { solanaSends.push(body.params[0]); if (onSolanaSend) onSolanaSend(body.params[0]); return reply("5SimulatedSignature1111111111111111111111111111"); }
+      if (body.method === "getSignatureStatuses") return reply({ context: { slot: 1 }, value: [{ slot: 1, confirmations: 10, err: null, confirmationStatus: "confirmed" }] });
+      throw new Error("unexpected solana method " + body.method);
+    }
+    // Other routers (dispatcher-isolation tests): an honest
+    // "no route" answer, never a Satora route.
+    if (u.includes("li.quest") || u.includes("relay.link") || u.includes("mayan") || u.includes("across")) return jsonResS71({}, false, 404);
+    throw new Error("unexpected fetch: " + u);
+  };
+  // The EVM JSON-RPC seam (ethers does not use global fetch —
+  // the suite's proven FetchRequest seam), one handler per test.
+  const evmRpcS71 = ({ arbUsdcRaw = 19996880n, balanceOf = null, onSend = null, baseSends = [], arbSends = [] } = {}) => async (req) => {
+    const url = req.url;
+    const isBase = url.includes("base-rpc.publicnode.com");
+    const isArb = url.includes("arbitrum-one-rpc.publicnode.com");
+    if (!isBase && !isArb) throw new Error("unexpected rpc url " + url);
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const word = (v) => "0x" + BigInt(v).toString(16).padStart(64, "0");
+    const block71 = { number: "0x64", hash: "0x" + "22".repeat(32), parentHash: "0x" + "11".repeat(32), timestamp: "0x67300000", transactions: [], gasLimit: "0x1c9c380", gasUsed: "0x0", miner: "0x0000000000000000000000000000000000000000", difficulty: "0x0", baseFeePerGas: "0x5f5e100", extraData: "0x", nonce: "0x0000000000000000", mixHash: "0x" + "00".repeat(32), sha3Uncles: "0x" + "00".repeat(32), logsBloom: "0x" + "00".repeat(256), stateRoot: "0x" + "00".repeat(32), transactionsRoot: "0x" + "00".repeat(32), receiptsRoot: "0x" + "00".repeat(32), uncles: [] };
+    const answer = (r) => {
+      let result;
+      switch (r.method) {
+        case "eth_chainId": result = isBase ? "0x2105" : "0xa4b1"; break;
+        case "net_version": result = isBase ? "8453" : "42161"; break;
+        case "eth_blockNumber": result = "0x64"; break;
+        case "eth_getBlockByNumber": result = block71; break;
+        case "eth_getBalance": result = "0x38d7ea4c68000"; break; // 0.001 ETH — above the caller threshold on Arbitrum
+        case "eth_getTransactionCount": result = "0x0"; break;
+        case "eth_gasPrice": result = "0x5f5e100"; break;
+        case "eth_maxPriorityFeePerGas": result = "0x0"; break;
+        case "eth_feeHistory": result = { baseFeePerGas: ["0x5f5e100", "0x5f5e100"], gasUsedRatio: [0.5], reward: [["0x0"]], oldestBlock: "0x1" }; break;
+        case "eth_estimateGas": result = "0x493e0"; break;
+        case "eth_call": {
+          const data = String(r.params?.[0]?.data || "");
+          if (isBase && data.startsWith("0xdd62ed3e")) result = word(0n); // allowance: none yet -> the approve path runs
+          else if (isArb && data.startsWith("0x70a08231")) result = word(balanceOf ? balanceOf() : arbUsdcRaw);
+          else result = word(0n);
+          break;
+        }
+        case "eth_sendRawTransaction": {
+          const raw = r.params[0];
+          const hash = ethers.keccak256(raw);
+          const entry = { raw, hash, to: ethers.Transaction.from(raw).to };
+          (isBase ? baseSends : arbSends).push(entry);
+          if (onSend) onSend({ isBase, isArb, entry });
+          result = hash;
+          break;
+        }
+        case "eth_getTransactionReceipt": result = { transactionHash: r.params[0], transactionIndex: "0x0", blockHash: "0x" + "22".repeat(32), blockNumber: "0x64", from: USER_S71, to: "0x0000000000000000000000000000000000000000", cumulativeGasUsed: "0x30000", gasUsed: "0x30000", contractAddress: null, logs: [], logsBloom: "0x" + "00".repeat(256), status: "0x1", effectiveGasPrice: "0x5f5e100", type: "0x2" }; break;
+        case "eth_getTransactionByHash": result = null; break;
+        default: throw new Error("unexpected rpc method " + r.method);
+      }
+      return { jsonrpc: "2.0", id: r.id, result };
+    };
+    const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+  };
+  const defaultGetUrl71 = FetchRequest.createGetUrlFunc();
+  const withStubs71 = async (apiOpts, rpcOpts, fn) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = apiStubS71(apiOpts);
+    FetchRequest.registerGetUrl(evmRpcS71(rpcOpts));
+    try { resetSatoraCaches(); return await fn(); }
+    finally { globalThis.fetch = realFetch; FetchRequest.registerGetUrl(defaultGetUrl71); }
+  };
+
+  {
+    const r = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDC_S71, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: USER_S71, toAddress: BTC_DEST_S71 }));
+    ok("satora bridge quote: $20 Base -> BTC prices the crossing into the route cost under the fee law",
+      !!r && r.satora.bridge.maxFeeRaw === "3120" && r.satora.bridge.netSourceAmountRaw === "19996880"
+      && Math.abs(r.routeFeeUsd - 0.22186) < 0.001 && r.platformFeeBps === 50
+      && Math.abs(r.gasCostUSD - 0.32173) < 0.001 && r.fromChainId === 42161);
+  }
+  {
+    const r = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "solana", toChainKey: "lightning", fromTokenAddress: SOL_USDC_S71, toTokenAddress: "ln", fromAmount: "5000000", fromAddress: SOL_OWNER_S71, toAddress: "user@wallet.example" }));
+    ok("satora bridge quote: $5 Solana -> Lightning (fee cap 600 raw, 0.5% cap binds the bps)",
+      !!r && r.satora.bridge.maxFeeRaw === "600" && r.satora.bridge.netSourceAmountRaw === "4999400"
+      && r.platformFeeBps === 50 && Math.abs(r.routeFeeUsd - 0.0289) < 0.001);
+  }
+  {
+    const rb = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDC_S71, toTokenAddress: "btc", fromAmount: "100000000", fromAddress: USER_S71, toAddress: BTC_DEST_S71 }));
+    const rs = await withStubs71({}, {}, () => getSatoraSwapRoute({ fromChainKey: "solana", toChainKey: "bitcoin", fromTokenAddress: SOL_USDC_S71, toTokenAddress: "btc", fromAmount: "100000000", fromAddress: SOL_OWNER_S71, toAddress: BTC_DEST_S71 }));
+    ok("satora bridge quote: $100 crossings price at 15,600 (Base) / 12,000 (Solana) raw",
+      rb?.satora.bridge.maxFeeRaw === "15600" && rb?.satora.bridge.netSourceAmountRaw === "99984400"
+      && rs?.satora.bridge.maxFeeRaw === "12000" && rs?.satora.bridge.netSourceAmountRaw === "99988000");
+  }
+  {
+    // Minimums bind on the POST-CCTP net: a quote netting exactly
+    // 356 sats crosses only 355 after the Solana fee — terminal
+    // refusal; the same quote on the direct lane passes.
+    let termErr = null;
+    await withStubs71({ quoteFixedNet: 356 }, {}, async () => {
+      try { await getSatoraSwapRoute({ fromChainKey: "solana", toChainKey: "lightning", fromTokenAddress: SOL_USDC_S71, toTokenAddress: "ln", fromAmount: "5000000", fromAddress: SOL_OWNER_S71, toAddress: "user@wallet.example" }); }
+      catch (e) { termErr = e; }
+    });
+    const direct = await withStubs71({ quoteFixedNet: 356 }, {}, () => getSatoraSwapRoute({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_S71, toTokenAddress: "ln", fromAmount: "5000000", fromAddress: USER_S71, toAddress: "user@wallet.example" }));
+    ok("satora bridge quote: the Lightning minimum is enforced on the post-CCTP net (355 < 356 refuses; direct 356 passes)",
+      !!termErr && termErr.satoraTerminal === true && /356-sat minimum/.test(termErr.message) && !!direct);
+  }
+
+  // ---- Executor end to end: Base ----
+  {
+    const creates = [], funds = [], baseSends = [], arbSends = [], approvals = [];
+    const store = storeS71();
+    let snapshotAtBurn = null;
+    const attestation = { message: cctpMessage71({ sourceDomain: 6 }), attestation: "0x" + "aa".repeat(65) };
+    const hashes = await withStubs71(
+      { creates, funds, attestation },
+      { baseSends, arbSends, onSend: ({ isBase, entry }) => { if (isBase && String(entry.to).toLowerCase() === SATORA_CCTP_TOKEN_MESSENGER_V2.toLowerCase()) snapshotAtBurn = store.getItem("fluid_satora_swaps_v1"); } },
+      async () => {
+        const route = (await getSwapRoutes({ fromChainKey: "base", toChainKey: "bitcoin", fromTokenAddress: BASE_USDC_S71, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: USER_S71, toAddress: BTC_DEST_S71 }))[0];
+        return executeSatoraSwapRoute(walletS71, route, () => {}, { storage: store, onApprove: (rec) => approvals.push(rec) });
+      });
+    const saved = loadSatoraSwapRecords(store)[0];
+    ok("satora bridge exec (Base): returns [burn, funding] and the record lands funded",
+      hashes.length === 2 && hashes[1] === FUND_TX_S71 && !!saved && saved.fundTxHash === FUND_TX_S71 && saved.bridgePhase === "funded" && saved.burnTx === hashes[0]);
+    ok("satora bridge exec (Base): the creation carried the bridge fields on the shipped gasless body",
+      creates.length === 1 && creates[0].bridge_source_chain === "Base" && creates[0].bridge_source_token_address === BASE_USDC_S71
+      && creates[0].gasless === true && creates[0].extra_fees === 50 && creates[0].evm_chain_id === 42161);
+    ok("satora bridge exec (Base): approve (exact) precedes the burn, and the burn is the pinned depositForBurn",
+      baseSends.length === 2 && String(baseSends[0].to).toLowerCase() === BASE_USDC_S71.toLowerCase()
+      && String(baseSends[1].to).toLowerCase() === SATORA_CCTP_TOKEN_MESSENGER_V2.toLowerCase()
+      && baseSends[1].hash === hashes[0]
+      && checkSatoraCctpEvmBurn({ to: baseSends[1].to, data: ethers.Transaction.from(baseSends[1].raw).data }, { userAddress: USER_S71, amountRaw: "20000000", burnToken: BASE_USDC_S71, destinationCaller: USER_S71, maxFeeRaw: "3120" }).ok === true
+      && approvals.length === 1 && approvals[0].chainKey === "base" && approvals[0].spender === SATORA_CCTP_TOKEN_MESSENGER_V2 && approvals[0].amount === "20000000");
+    ok("satora bridge exec (Base): the burn id was persisted BEFORE broadcast (the store snapshot at send time carries it)",
+      !!snapshotAtBurn && JSON.parse(snapshotAtBurn)[0].burnTx === hashes[0]);
+    ok("satora bridge exec (Base): the funding pulled the NETTED amount (components + approval)",
+      funds.length === 1
+      && new ethers.Interface(["function approve(address,uint256) returns (bool)"]).decodeFunctionData("approve", funds[0].calls[0].call_data)[1] === 19996880n);
+  }
+
+  // ---- Executor end to end: Solana ----
+  {
+    const creates = [], funds = [], solanaSends = [];
+    const store = storeS71();
+    let snapshotAtSend = null;
+    const attestation = { message: cctpMessage71({ sourceDomain: 5 }), attestation: "0x" + "aa".repeat(65) };
+    const { base58: base58S71 } = await import("@scure/base");
+    const hashes = await withStubs71(
+      { creates, funds, attestation, compNetRaw: "19997600", solanaSends, onSolanaSend: () => { snapshotAtSend = store.getItem("fluid_satora_swaps_v1"); } },
+      { arbUsdcRaw: 19997600n },
+      async () => {
+        const route = (await getSwapRoutes({ fromChainKey: "solana", toChainKey: "bitcoin", fromTokenAddress: SOL_USDC_S71, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: SOL_OWNER_S71, toAddress: BTC_DEST_S71 }))[0];
+        return executeSatoraSwapRoute(walletS71, route, () => {}, { storage: store });
+      });
+    const saved = loadSatoraSwapRecords(store)[0];
+    const txBytes = Buffer.from(solanaSends[0], "base64");
+    const ownerSig = txBytes.slice(1, 65);
+    const burnId = base58S71.encode(new Uint8Array(ownerSig));
+    ok("satora bridge exec (Solana): returns [burn signature, funding] and the record lands funded",
+      hashes.length === 2 && hashes[0] === burnId && hashes[1] === FUND_TX_S71 && !!saved && saved.burnTx === burnId && saved.bridgePhase === "funded");
+    ok("satora bridge exec (Solana): exactly one burn broadcast, persisted before it, carrying the pinned terms",
+      solanaSends.length === 1 && !!snapshotAtSend && JSON.parse(snapshotAtSend)[0].burnTx === burnId
+      && Buffer.from(txBytes).toString("hex").includes("d73c3d2e723780b0" + "002d310100000000" + "03000000")
+      && Buffer.from(txBytes).toString("hex").includes(USER_S71.toLowerCase().replace("0x", "").padStart(64, "0"))
+      && Buffer.from(txBytes).toString("hex").includes("6009000000000000" + "e8030000"));
+    ok("satora bridge exec (Solana): the owner's signature on the broadcast verifies against the wallet's Solana key",
+      ed25519.verify(new Uint8Array(ownerSig), new Uint8Array(txBytes.slice(1 + 128)), base58S71.decode(SOL_OWNER_S71)) === true);
+    ok("satora bridge exec (Solana): the creation used the shipped gasless body + Solana bridge fields; funding pulled the netted amount",
+      creates.length === 1 && creates[0].bridge_source_chain === "Solana" && creates[0].gasless === true
+      && new ethers.Interface(["function approve(address,uint256) returns (bool)"]).decodeFunctionData("approve", funds[0].calls[0].call_data)[1] === 19997600n);
+  }
+
+  // ---- Resume: never re-burns; mints when it must; funds when landed ----
+  {
+    const funds = [], baseSends = [], arbSends = [];
+    const store = storeS71();
+    saveSatoraSwapRecord(store, bridgedRecord71());
+    const advanced = await withStubs71(
+      { funds, attestation: { message: cctpMessage71({ sourceDomain: 6 }), attestation: "0x" + "aa".repeat(65) } },
+      { baseSends, arbSends },
+      () => resumeSatoraBridgedSwaps(walletS71, store));
+    const saved = loadSatoraSwapRecords(store)[0];
+    ok("satora bridge resume: an attesting Base record funds with ZERO new burns",
+      advanced === 1 && baseSends.length === 0 && arbSends.length === 0 && funds.length === 1
+      && saved.fundTxHash === FUND_TX_S71 && saved.bridgePhase === "funded" && saved.burnTx === "0x" + "cd".repeat(32));
+  }
+  {
+    // Minting path: the balance is short until receiveMessage is
+    // submitted by the user's own Arbitrum key (destinationCaller
+    // = the user), then the funding proceeds.
+    const funds = [], arbSends = [];
+    const store = storeS71();
+    let minted = false;
+    const rec = bridgedRecord71({ bridgePhase: "minting", bridge: { ...bridgedRecord71().bridge, attestation: { message: cctpMessage71({ sourceDomain: 6 }), attestation: "0x" + "aa".repeat(65) } } });
+    saveSatoraSwapRecord(store, rec);
+    const advanced = await withStubs71(
+      { funds },
+      { arbSends, balanceOf: () => (minted ? 19996880n : 0n), onSend: ({ isArb, entry }) => { if (isArb && String(entry.to).toLowerCase() === SATORA_CCTP_MESSAGE_TRANSMITTER_V2.toLowerCase()) minted = true; } },
+      () => resumeSatoraBridgedSwaps(walletS71, store));
+    const saved = loadSatoraSwapRecords(store)[0];
+    ok("satora bridge resume: receiveMessage is submitted by the user's own key, then the swap funds",
+      advanced === 1 && arbSends.length === 1 && String(arbSends[0].to).toLowerCase() === SATORA_CCTP_MESSAGE_TRANSMITTER_V2.toLowerCase()
+      && saved.bridge.mintTx === arbSends[0].hash && saved.fundTxHash === FUND_TX_S71);
+  }
+  {
+    const funds = [], solanaSends = [];
+    const store = storeS71();
+    saveSatoraSwapRecord(store, bridgedRecord71({
+      bridge: { name: "Solana", domain: 5, sourceChainKey: "solana", sourceTokenAddress: SOL_USDC_S71, maxFeeRaw: "2400", netSourceAmountRaw: "19997600", irisFeeBpsHundredths: 100, destinationCaller: USER_S71, mintTx: null, attestation: null },
+      burnTx: "5BurnSignature111111111111111111111111111111111",
+    }));
+    const advanced = await withStubs71(
+      { funds, compNetRaw: "19997600", attestation: { message: cctpMessage71({ sourceDomain: 5 }), attestation: "0x" + "aa".repeat(65) }, solanaSends },
+      { arbUsdcRaw: 19997600n },
+      () => resumeSatoraBridgedSwaps(walletS71, store));
+    const saved = loadSatoraSwapRecords(store)[0];
+    ok("satora bridge resume: an attesting Solana record funds with ZERO new broadcasts",
+      advanced === 1 && solanaSends.length === 0 && funds.length === 1 && saved.fundTxHash === FUND_TX_S71);
+  }
+
+  // ---- Copy: intent + history ----
+  {
+    const intent = formatSatoraSwapIntent({ route: route71("Base") });
+    ok("satora bridge copy: the intent names the crossing, its fee and its irreversibility",
+      intent.includes("on Base") && intent.includes("Circle's transfer fee") && intent.includes("crosses from Base to Arbitrum")
+      && intent.includes("can't be cancelled") && intent.includes("can only land in your own wallet")
+      && intent.includes("Two small transactions on Base") && intent.includes("WBTC/tBTC"));
+    const intentSol = formatSatoraSwapIntent({ route: { ...route71("Solana"), satora: { ...route71("Solana").satora, bridge: { ...bridgePlan71("Solana"), cctpFeeUsd: 0.0024 } } } });
+    ok("satora bridge copy: the Solana intent discloses the network fee + message-account rent",
+      intentSol.includes("on Solana") && intentSol.includes("0.0012 SOL"));
+    ok("satora bridge copy: the history line states the crossing verbatim until the mint lands",
+      satoraSwapHistoryLine(bridgedRecord71()).includes("USDC has left Base and is crossing to Arbitrum — this step can't be cancelled, and the money can only land in your own wallet.")
+      && satoraSwapHistoryLine(bridgedRecord71({ bridgePhase: "funding" })).includes("landed on Arbitrum")
+      && satoraSwapHistoryLine(bridgedRecord71({ burnTx: null })).includes("has not started yet"));
+  }
+
+  // ---- Dispatcher isolation + wiring ----
+  {
+    // With every other router stubbed "no route", the search may
+    // legitimately end in the last-resort router's error — the
+    // isolation property is that no SATORA route is ever produced.
+    const searchOrNull = async (args) => { try { return await getSwapRoutes(args); } catch { return null; } };
+    const routes = await withStubs71({}, {}, () => searchOrNull({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC_S71, toTokenAddress: ARB_USDC_S71, fromAmount: "20000000", fromAddress: USER_S71, toAddress: USER_S71 }));
+    ok("satora bridge: an EVM destination never produces a Satora route from a bridge source",
+      routes === null || routes.every(r => r.provider !== "satora"));
+    const routesBsc = await withStubs71({}, {}, () => searchOrNull({ fromChainKey: "bsc", toChainKey: "bitcoin", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", toTokenAddress: "btc", fromAmount: "20000000", fromAddress: USER_S71, toAddress: BTC_DEST_S71 }));
+    ok("satora bridge: BSC sources never produce a Satora route", routesBsc === null || routesBsc.every(r => r.provider !== "satora"));
+    const appSrc71 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const coreSrc71 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("satora bridge: wiring — resume runs on unlock + the poll tick, the executor gets the approval recorder, Solana sources link the Solana explorer",
+      appSrc71.includes("resumeSatoraBridgedSwaps(wallet, localStorage)") && appSrc71.includes("fromKey === \"solana\" ? SOLANA_EXPLORER")
+      && coreSrc71.includes("bridge_source_chain") && coreSrc71.includes("computeSatoraCctpMaxFee"));
   }
 }
 
