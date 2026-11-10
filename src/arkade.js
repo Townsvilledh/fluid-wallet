@@ -334,21 +334,45 @@ function normaliseVtxo(v) {
  *  phrase. Automatic settlement is DISABLED in the wallet
  *  config: nothing in Arkade moves unless the user taps it in
  *  the bridge tab — renewals and exits are explicit acts, the
- *  same discipline as every other Fluid family. */
+ *  same discipline as every other Fluid family.
+ *  The boot warms the operator-info snapshot and retries the
+ *  whole boot on failure (bounded, with backoff): the SDK's
+ *  first-boot info fetch is a single network read, and on a
+ *  busy first-open (the wallet's own home screen is still
+ *  fetching balances) it can fail transiently with "server
+ *  info is unavailable and no cached snapshot exists" — a
+ *  first-user QA walk hit exactly that on the live build
+ *  (2026-11-10) while a quiet-page boot succeeded in ~2 s.
+ *  Retrying is safe: wallet creation is local key derivation
+ *  plus reads; nothing is signed or submitted at boot. */
 export async function bootArkade({ phrase }) {
   const identity = MnemonicIdentity.fromMnemonic(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
-  const wallet = await Wallet.create({
-    identity,
-    service: { network: "bitcoin" },
-    settlementConfig: false,
-  });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let wallet = null, lastErr = null;
+  for (let attempt = 0; attempt < 3 && !wallet; attempt++) {
+    try {
+      const candidate = await Wallet.create({
+        identity,
+        service: { network: "bitcoin" },
+        settlementConfig: false,
+      });
+      await candidate.getArkadeInfo();
+      wallet = candidate;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await sleep(1500 * (attempt + 1));
+    }
+  }
+  if (!wallet) throw lastErr || new Error("The Arkade wallet could not start.");
   const address = await wallet.getAddress();
   const session = {
     wallet,
     address,
     network: "bitcoin",
     async operatorInfo() {
-      const info = await wallet.getArkadeInfo();
+      let info;
+      try { info = await wallet.getArkadeInfo(); }
+      catch { await new Promise((r) => setTimeout(r, 1500)); info = await wallet.getArkadeInfo(); }
       return {
         signerPubkey: String(info.signerPubkey || ""),
         fees: info.fees || null,

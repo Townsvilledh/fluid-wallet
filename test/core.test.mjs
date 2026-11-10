@@ -8866,6 +8866,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ark: the three acknowledgements exist and none is pre-ticked", ["bridgeAck1", "bridgeAck2", "bridgeAck3"].every((id) => htmlArk.includes(`id="${id}"`)) && !/id="bridgeAck[123]"[^>]*checked/.test(htmlArk));
   ok("ark: the warnings name expiry, irreversibility and the operator's limits", htmlArk.includes("Arkade coins expire") && htmlArk.includes("cannot be undone") || htmlArk.includes("can't be undone") || htmlArk.includes("Irreversible steps"));
   ok("ark: app.js drives the tab through the lazy chunk + core gate", appArk.includes('import("./arkade.chunk.js")') && appArk.includes("ARKADE_CHUNK_MARKER") && appArk.includes("BRIDGE_ROUTE_COST_CAP_SATS") && appArk.includes("bridgeRefresh"));
+  const chunkArk = readFileSync(new URL("../src/arkade.js", import.meta.url), "utf8");
+  ok("ark: the chunk boot warms the operator snapshot and retries transient failures (QA fix, 2026-11-10)", chunkArk.includes("attempt < 3") && chunkArk.includes("getArkadeInfo()") && appArk.includes("bridgeArkRetry"));
   const buildArk = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
   const publishArk = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
   ok("ark: the chunk is built and published as its own artifact", buildArk.includes("dist/arkade.chunk.js") && buildArk.includes('"./arkade.chunk.js"') && publishArk.includes('"arkade.chunk.js"'));

@@ -4235,9 +4235,15 @@ async function bridgeRefresh() {
     await paintBridgeArkadeLive();
     if (bridgeAcksOk()) paintBridgeForm(); else paintBridgeLocked();
   } catch (e) {
-    paintBridgeArkade(`<p class="msg err" style="margin:0">${esc(e.message || String(e))}</p>`);
+    paintBridgeArkadeError(e.message || String(e));
     if (bridgeAcksOk()) paintBridgeForm();
   }
+}
+
+function paintBridgeArkadeError(message) {
+  paintBridgeArkade(`<p class="msg err" style="margin:0 0 8px">${esc(message)}</p><button class="btn ghost" id="bridgeArkRetry" style="width:auto">Retry</button>`);
+  const b = $("bridgeArkRetry");
+  if (b) b.onclick = () => bridgeRefresh().catch(() => {});
 }
 
 function paintBridgeLocked() {
@@ -4476,7 +4482,7 @@ async function paintBridgeArkadeLive() {
   try {
     const session = await arkEnsureSession();
     const [balance, vtxos] = await Promise.all([session.balanceSats().catch(() => null), session.vtxos().catch(() => [])]);
-    if (balance == null) { paintBridgeArkade(`<p class="msg err" style="margin:0">Your Arkade balance couldn't be read just now — reopen the tab to retry. Nothing is guessed.</p>`); return; }
+    if (balance == null) { paintBridgeArkadeError("Your Arkade balance couldn't be read just now. Nothing is guessed."); return; }
     const earliest = vtxos.reduce((m, v) => (v.expirySecs && (!m || v.expirySecs < m) ? v.expirySecs : m), null);
     const soon = earliest && earliest * 1000 - Date.now() < 7 * 24 * 3600 * 1000;
     const rows = vtxos.slice(0, 12).map((v) => `<p class="tag" style="margin:0 0 2px">${Number(v.valueSats).toLocaleString()} sats${v.expirySecs ? ` · expires ${esc(new Date(v.expirySecs * 1000).toLocaleString())}` : ""}</p>`).join("");
@@ -4516,7 +4522,7 @@ async function paintBridgeArkadeLive() {
       };
     }
   } catch (e) {
-    paintBridgeArkade(`<p class="msg err" style="margin:0">${esc(e.message || String(e))}</p>`);
+    paintBridgeArkadeError(e.message || String(e));
   }
 }
 
