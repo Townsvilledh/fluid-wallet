@@ -219,5 +219,13 @@
     "sol": "DNwqGVXcybk4DhQutMioH7E5vodrprKuK7em6RAyUoKc",
     "tron": "TL1qRiPBDSVNnJrTpZ6RFx8thRHBAJ8zsB",
     "sui": "0xcba2bcd25ac624547dd9af237d3b736cb29affdcf3cbd24d01c2272c51c14378"
+  },
+  "arkqa2110": {
+    "evm": "0x490EFBe87F28C13c7d1234632812B51531D8F2F2",
+    "btc": "bc1qpaxze9pccy7p8jlv8fc4ctrdwmhmu4ertp9v48",
+    "algo": "UCNXHR5ID5Y53EGBSV4OR7LMHWXDIWFEKN4MTWK3WQRI626DTJVTRBG6B4",
+    "sol": "HgynqVFzVX4yerjDnuZ1fCXVkggmkFRUsjj5i7kdY129",
+    "tron": "TGdWHAqEvPyu4sEzakTuurECFtXYfzKDf8",
+    "sui": "0xe57ef2429c80306c34e47540b203ac6b5c95adc11b3a2627a41a37ccb596208f"
   }
 }
