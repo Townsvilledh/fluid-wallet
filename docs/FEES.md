@@ -7,11 +7,12 @@ sheet shows a CHEAPEST badge on buys; the provider still shows
 the final live quote before the user pays). Which routes are wired at
 all is governed by the bars in `docs/RAMPS.md` — a per-corridor price
 bar, the capture gate (a route that can never carry Fluid's fee is
-removed, not subsidised), and no platform-account life. Fonbnk's
-history is the worked example: pulled 2026-11-08 when it paid nothing
-collectable, restored 2026-11-09 as a SELL route under the capture
-gate's own-charge clause with the disclosure line on every row. The
-current wired set lives in `docs/RAMPS.md`.
+removed, not subsidised), and no platform-account life. One African
+off-ramp's history is the worked example: pulled 2026-11-08 when it
+paid nothing collectable, restored 2026-11-09 as a SELL route under
+the capture gate's own-charge clause with the disclosure line on
+every row, then removed in full 2026-11-10 on the owner's order.
+The current wired set lives in `docs/RAMPS.md`.
 
 ## Principle 2: Fluid's own fees split 60/40 — all settled in BTC over Lightning
 Where Fluid itself charges a fee, the fee is split:

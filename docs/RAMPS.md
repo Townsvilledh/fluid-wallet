@@ -29,16 +29,15 @@ honest empty state — rather than a bad route.
   the crypto can be sold back, and some corridors pay out over SWIFT —
   both disclosed in-sheet. Mt Pelerin does **not** serve US residents:
   for the US it appears only as a flagged-unavailable row.
-- **Fonbnk — sell only, 10 corridors** (incl. Nigeria, ₦5,000 minimum,
-  disclosed in-sheet). Fonbnk pays no referral; its rows disclose that
-  Fluid charges its own fee through its non-custodial charge mechanism
-  (Tier 1/2, in build — until it lands the route is kept under the
-  capture gate's own-charge clause with that disclosure on every row).
-
 ## Honest empty states today
 
-- **Nigeria buy** — no route currently passes the price bar *and* the
-  capture gate. The buy sheet says so plainly.
+- **Nigeria buy and sell** — no route currently passes the price bar
+  *and* the capture gate. Both sheets say so plainly. (The sell side's
+  last route was removed in full on 2026-11-10 on the owner's order.)
+- **Kenya, Ghana, Uganda, Tanzania, Cameroon, Senegal, Côte d'Ivoire
+  and Zambia sell** — their only sell route was removed in the same
+  2026-11-10 removal; honestly empty until a qualifying route exists.
+  South Africa keeps Mt Pelerin on both sides.
 - **US buy and sell** — no wired route yet (see below).
 - **India, Brazil, Philippines, Indonesia** — no route passes the bars
   yet; honestly empty.

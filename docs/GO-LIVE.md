@@ -12,6 +12,7 @@
 **A) Fluid live for YOUR personal use — NO partner form needed.**
 As a normal consumer you can cash out through Fonbnk's public widget today: you KYC *as a user* inside Fonbnk (ID + selfie, like any Nigerian using a cash-out app), they pay your bank. Combined with the wallets you already have (Binance Agentic Wallet + scout wallet) and the Fluid recovery/router prototypes, that's a working personal Fluid this week. The partner form only matters when *other people* use Fluid under your brand and you earn the referral cut.
 **Update 2026-11-08:** the in-wallet Fonbnk *route* was PULLED (owner's rule: no pay, no route — Fonbnk pays Fluid nothing collectable without the KYB track below). Personal use of their public widget is unaffected; Track 1 below is now only the re-add path, to run if a collectable programme ever makes the route worth restoring.
+**Update 2026-11-10:** CLOSED. The provider was restored for one day (2026-11-09) and then REMOVED IN FULL on the owner's direct order. Track 1 below is a dead record — there is no re-add path, and nothing in this document is a live instruction.
 
 **B) Fluid live as a product (partner/production keys) — the form below.**
 Every provider's production KYB has the same gate: **a registered legal entity**. No entity, no live keys — from anyone.

@@ -13,10 +13,9 @@
  *    Its network includes Nigeria rails via Yellow Card / Wello.
  *  - Meld: similar aggregator; quote = POST /payments/crypto/quote, free sandbox
  *    at api-sb.meld.io, white-label API if Fluid wants its own UI later.
- *  - Fonbnk: Africa specialist INSIDE/beside the aggregators. Documented NG
- *    off-ramp to bank + airtime, drop-in widget (pay.fonbnk.com/offramp?...)
- *    plus HMAC-signed REST API. Example order in their docs: $5 USDC -> ₦6,301
- *    to a Nigerian bank, fee $0.12. Small-ticket friendly — perfect for UBI/RAIN.
+ *  - An Africa specialist that sat here was removed from Fluid
+ *    entirely on 2026-11-10 (owner's order) — its registry entry
+ *    and widget hand-off went with it.
  *  - Breet: NGN/GHS off-ramp API, "no setup fees, no monthly fees, no hidden
  *    spread", KYB clears in under a day. Good direct fallback.
  *
@@ -51,8 +50,6 @@
 const PROVIDERS = [
   { name: "Onramper (aggregator → Yellow Card/Wello etc.)", kind: "aggregator",
     ngBankPayout: true,  feePct: 0.010, etaSec: 600, note: "Routes to whichever local partner is cheapest/live" },
-  { name: "Fonbnk", kind: "africa-specialist",
-    ngBankPayout: true,  feePct: 0.024, etaSec: 300, note: "NG bank + airtime in docs' own example; min ~$1 orders" },
   { name: "Breet", kind: "africa-specialist",
     ngBankPayout: true,  feePct: 0.012, etaSec: 420, note: "NGN/GHS API, no setup/monthly fees, KYB < 1 day" },
   { name: "Transak", kind: "global",
@@ -75,7 +72,7 @@ export async function getOfframpQuotes({ amountNgn, country = "NG", method = "ba
   const eligible = [], blocked = [];
   for (const p of PROVIDERS) {
     // In production this loop calls each provider's FREE quote API
-    // (Onramper/Meld quote endpoints, Fonbnk price API, …) in parallel.
+    // (Onramper/Meld quote endpoints, …) in parallel.
     // Here the quotes are mocked from the registered fee levels.
     const quote = { provider: p.name, kind: p.kind, feeNgn: Math.round(amountNgn * p.feePct), etaSec: p.etaSec, note: p.note };
     (eligibleForOfframp(p, country, method) ? eligible : blocked).push(quote);
@@ -86,8 +83,6 @@ export async function getOfframpQuotes({ amountNgn, country = "NG", method = "ba
 
 /** Widget hand-off for the winner (what the app actually embeds). */
 export function widgetHandoff(quote, { usdcAmount, network = "BASE" }) {
-  if (quote.provider.startsWith("Fonbnk"))
-    return `Embed: https://pay.fonbnk.com/offramp?amount=${usdcAmount}&network=${network}&asset=USDC&paymentChannel=bank&countryIsoCode=NG`;
   if (quote.provider.startsWith("Onramper"))
     return "Embed: Onramper widget (mode=sell, ~8 lines) pre-set to the winning route; user does KYC + bank details inside the widget.";
   return "Embed: " + quote.provider + " widget session created via its quote API.";
