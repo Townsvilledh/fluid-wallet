@@ -367,8 +367,36 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     });
   })());
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => ["GH", "NG", "KE", "CM", "UG"].includes(c.code) && m === "sell"
+    ["buy", "sell"].every(m => ["GH", "NG", "KE", "CM", "UG", "PK", "BD", "EG", "VN", "AR", "CO", "AE", "BR", "PH"].includes(c.code) && m === "sell"
       || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
+  // Batch 2 (2026-11-10, later the same day): nine more SELL
+  // corridors on the same labelled row, each on a fresh live
+  // book check run by the build (books marketDelta −2% to
+  // −10% on the good offers, established vendors online,
+  // minimums from Rs 100 / ৳1,000 / EGP 1,000 / ₫500,000 /
+  // ARS 100,000 / COP 700,000 / AED 500 / R$500 / ₱4,000 —
+  // the COP/AED/BR/PH minimums are high and the notes
+  // disclose them as-is). PK/BD/EG/VN/AR/CO/AE also enter the
+  // picker here; BR/PH were already in it. Every batch-2 buy
+  // book failed the price bar (+2.8% at best, and only from
+  // offline or cash-in-person rows), so all nine buy sides
+  // stay honestly empty. None of the nine is on the
+  // platform's restricted-jurisdictions list (live Terms
+  // checked by the build).
+  ok("batch-2 sell rows (PK/BD/EG/VN/AR/CO/AE/BR/PH) are the LocalCoinSwap row alone; their buy sides stay honestly empty", ["PK", "BD", "EG", "VN", "AR", "CO", "AE", "BR", "PH"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"])));
+  ok("batch-2 sell rows are labelled external link-outs carrying the referral and their fresh-check figures", (() => {
+    const want = { PK: ["bank transfer", "Rs 100"], BD: ["bank transfer", "৳1,000"], EG: ["Vodafone Cash", "EGP 1,000"], VN: ["bank transfer", "₫500,000"], AR: ["bank transfer", "ARS 100,000"], CO: ["Bancolombia", "COP 700,000"], AE: ["bank transfer", "AED 500"], BR: ["bank transfer", "R$500"], PH: ["bank transfer", "₱4,000"] };
+    return Object.entries(want).every(([code, [method, min]]) => {
+      const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes[0];
+      return r && r.external === true && r.badge === false && r.unavailable === false
+        && r.url === "https://localcoinswap.com/?rc=EC82BA22"
+        && r.note.includes("not inside Fluid") && r.note.includes(method) && r.note.includes(min);
+    });
+  })());
+  ok("batch-2 picker additions carry their fiats", Object.entries({ PK: "PKR", BD: "BDT", EG: "EGP", VN: "VND", AR: "ARS", CO: "COP", AE: "AED" }).every(([code, fiat]) =>
+    RAMP_COUNTRIES.some(c => c.code === code && c.fiat === fiat)));
   // Russia was live-checked 2026-11-10 and refused: the
   // platform's Terms of Service list the Russian Federation
   // as a restricted jurisdiction, its Russia sell book has
@@ -408,7 +436,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const MTP_EXT_EUR = ["AT", "BE", "BG", "CY", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IS", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "RO", "SI", "SK"];
   const MTP_EXT_OWN = { CZ: "CZK", DK: "DKK", HU: "HUF", LI: "CHF", NO: "NOK", PL: "PLN", SE: "SEK", CA: "CAD", AU: "AUD", SG: "SGD" };
   const MTP_EXT_ALL = [...MTP_EXT_EUR, ...Object.keys(MTP_EXT_OWN)];
-  ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries", RAMP_COUNTRIES.length === 54
+  ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries, + 7 LCS batch-2 additions = 61", RAMP_COUNTRIES.length === 61
     && MTP_EXT_ALL.length === 32 && MTP_EXT_ALL.every(code => RAMP_COUNTRIES.some(c => c.code === code)));
   ok("extensions: every new corridor is Mt Pelerin only, badge buy-only", MTP_EXT_ALL.every(code =>
     JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
@@ -488,9 +516,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("US Mt Pelerin flags non-US", (() => { const us = rampRoutesFor("US", "buy", "bsc", "USDC").routes;
     return us[0].unavailable === true && us[0].url === null && us[0].note.includes("Not available to US residents"); })());
 
-  // IN, BR, PH, ID: their only route was removed under the
-  // capture gate — both sides resolve to the honest empty state.
-  ok("IN/BR/PH/ID resolve honestly empty on both sides", ["IN", "BR", "PH", "ID"].every(code =>
+  // IN, ID: their only route was removed under the capture
+  // gate — both sides resolve to the honest empty state.
+  // (BR and PH left this set on 2026-11-10 — LCS batch 2 gave
+  // their sell sides the labelled LocalCoinSwap row after
+  // fresh live book checks; the batch-2 pins above assert
+  // that end-state, and their buy sides stay empty.)
+  ok("IN/ID resolve honestly empty on both sides", ["IN", "ID"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
 
@@ -8301,9 +8333,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const rs = rampRoutesFor("US", m, "bsc", "USDC").routes;
       return rs.every(r => r.unavailable === true && r.url === null && r.badge === false);
     }));
-  ok("gate removal: IN/BR/PH/ID are honestly empty on both sides",
-    ["IN", "BR", "PH", "ID"].every(code => ["buy", "sell"].every(m =>
-      rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
+  ok("gate removal: IN/ID are honestly empty on both sides (BR/PH sell later gained the capture-clean LCS row, batch 2)",
+    ["IN", "ID"].every(code => ["buy", "sell"].every(m =>
+      rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
+    && ["BR", "PH"].every(code => rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0));
   ok("gate removal + 2026-11-10 scrap: ZA sell is Mt Pelerin only, no removed row",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   ok("gate removal: GB/DE/MX keep Mt Pelerin only",

@@ -5061,6 +5061,22 @@ export const RAMP_COUNTRIES = [
   { code: "JP", name: "Japan · JPY", fiat: "JPY" },
   { code: "HK", name: "Hong Kong · HKD", fiat: "HKD" },
   { code: "NZ", name: "New Zealand · NZD", fiat: "NZD" },
+  // Picker additions (LocalCoinSwap sell rows batch 2,
+  // 2026-11-10): Pakistan, Bangladesh, Egypt, Vietnam,
+  // Argentina, Colombia and the UAE enter the picker on the
+  // strength of their LocalCoinSwap SELL books alone — fresh
+  // live book checks the same day (see the plan entries
+  // below); every one of their buy books failed the price bar,
+  // so their buy sides resolve honestly empty. None of the
+  // seven is on the platform's restricted-jurisdictions list
+  // (live Terms checked the same day).
+  { code: "PK", name: "Pakistan · PKR", fiat: "PKR" },
+  { code: "BD", name: "Bangladesh · BDT", fiat: "BDT" },
+  { code: "EG", name: "Egypt · EGP", fiat: "EGP" },
+  { code: "VN", name: "Vietnam · VND", fiat: "VND" },
+  { code: "AR", name: "Argentina · ARS", fiat: "ARS" },
+  { code: "CO", name: "Colombia · COP", fiat: "COP" },
+  { code: "AE", name: "United Arab Emirates · AED", fiat: "AED" },
 ];
 // Mt Pelerin: the consumer site IS the checkout (no account, no partner
 // key). URL params prefill the fiat + crypto pair (bsc/bdc buy, ssc/sdc
@@ -5228,7 +5244,7 @@ export const RAMP_ADDRESS_ENTRY = {
   // external wallet (its own wallet is non-custodial, keys
   // exportable, and bought crypto withdraws to any address the
   // user pastes), so it is not a WalletConnect-only route. Its
-  // Fluid rows are SELL-only regardless (GH/NG/KE/CM/UG below),
+  // Fluid rows are SELL-only regardless (GH, batches 1–2 below),
   // so it never reaches a buy sheet; the caps entry exists
   // because every planned provider carries one.
   "LocalCoinSwap": "paste",
@@ -5395,12 +5411,42 @@ export const RAMP_COUNTRY_PLAN = {
   ],
   GB: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   DE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
-  // IN, BR, PH, ID: their only route was removed under the
-  // capture gate (2026-11-09) — both sides resolve to the honest
+  // IN, ID: their only route was removed under the capture
+  // gate (2026-11-09) — both sides resolve to the honest
   // empty state until a capture-clean route exists.
   IN: [],
-  BR: [],
-  PH: [],
+  // BR: BUY resolves empty (the LocalCoinSwap buy book sat
+  // +9.9% to +35% over market on the 2026-11-10 live check,
+  // mostly gift-card rows). SELL gained the labelled
+  // external-marketplace row 2026-11-10 (batch 2, after GH
+  // and batch 1): the fresh live book check (the platform's
+  // own streamed offer book for Brazil, ~23:05 WAT) showed
+  // 10 live sell-side offers, market deltas −2.5% to −8%,
+  // bank transfer, minimums from R$500 (≈ $90 at $1 =
+  // R$5.58) — a high minimum next to the African books,
+  // disclosed in the note as-is — most vendors online.
+  // Brazil is NOT on the platform's restricted-jurisdictions
+  // list (live Terms checked the same day). Evidence:
+  // research_notes/fluid-lcs-batch2-20261110/.
+  BR: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Brazil offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–8% below the market rate, trades from R$500 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // PH: BUY resolves empty (the LocalCoinSwap buy book sat
+  // +9% to +45% over market on the 2026-11-10 live check).
+  // SELL gained the labelled external-marketplace row
+  // 2026-11-10 (batch 2): the fresh live book check (the
+  // platform's own streamed offer book for the Philippines,
+  // ~23:05 WAT) showed 10 live sell-side offers, market
+  // deltas −2% to −5%, bank transfer (GCash also present in
+  // the book), minimums from ₱4,000 (≈ $63 at $1 = ₱63.12)
+  // — disclosed in the note as-is — vendors online. The
+  // Philippines is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked the
+  // same day). Evidence:
+  // research_notes/fluid-lcs-batch2-20261110/.
+  PH: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Philippines offers (checked 10 Nov 2026): buyers pay by bank transfer at about 2–5% below the market rate, trades from ₱4,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
   ID: [],
   MX: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   // Corridor extensions (global ramp scout, 2026-11-09; approved
@@ -5472,6 +5518,84 @@ export const RAMP_COUNTRY_PLAN = {
   JP: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   HK: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   NZ: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  // LocalCoinSwap sell rows batch 2 + picker additions
+  // (2026-11-10, after GH and batch 1): seven countries enter
+  // the plan — and the picker — on their LocalCoinSwap SELL
+  // books alone. Every corridor below passed a fresh live
+  // book check this build (the platform's own streamed offer
+  // books, ~23:05 WAT) and a fresh restricted-jurisdictions
+  // check against the platform's live Terms: NONE of the
+  // seven is restricted. Every BUY book failed the price bar
+  // (see the per-country notes), so every buy side resolves
+  // honestly empty. Capture on every row = the ambassador
+  // referral (10% of platform fees in BTC) — the sanctioned
+  // labelled-external-marketplace exception shape. Evidence:
+  // research_notes/fluid-lcs-batch2-20261110/.
+  // PK: BUY resolves empty (the buy book sat +28% to +50%
+  // over market; two +1% rows from one 501-trade vendor are
+  // not a book). SELL: 10 live offers, market deltas −3.35%
+  // to −7.9% (main cluster −3.35% to −6%), bank transfer,
+  // minimums from Rs 100 (≈ $0.36 at $1 = Rs 276.59 — the
+  // lowest minimum in the whole LocalCoinSwap set), the
+  // book's biggest vendor online (76k trades).
+  PK: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Pakistan offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–6% below the market rate, trades from Rs 100 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // BD: BUY resolves empty (the buy book sat +19.8% to +45%
+  // over market; the cheap rows are 1–7-trade vendors). SELL:
+  // 10 live offers, market deltas −2% to −5%, bank transfer,
+  // minimums from ৳1,000 (≈ $8 at $1 = ৳124.68), most of the
+  // book online.
+  BD: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Bangladesh offers (checked 10 Nov 2026): buyers pay by bank transfer at about 2–5% below the market rate, trades from ৳1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // EG: BUY resolves empty (the buy book sat +29.9% to +69%
+  // over market, plus EUR/USD filler rows). SELL: 10 live
+  // offers, market deltas −2.9% to −7%, bank transfer with
+  // Vodafone Cash present in the book, minimums from
+  // EGP 1,000 (≈ $19 at $1 = EGP 53.32), vendors online.
+  EG: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Egypt offers (checked 10 Nov 2026): buyers pay by bank transfer or Vodafone Cash at about 3–7% below the market rate, trades from EGP 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // VN: BUY resolves empty (the +2% rows are cash-in-person
+  // from one vendor; bank-transfer rows sat +5.88% to +23.4%
+  // over market). SELL: 10 live offers, bank-transfer rows
+  // clustered at −3.9% to −5% (one vendor at −10%), bank
+  // transfer, minimums from ₫500,000 (≈ $20 at $1 =
+  // ₫25,600), the market's biggest vendor online
+  // (137k trades).
+  VN: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Vietnam offers (checked 10 Nov 2026): buyers pay by bank transfer at about 4–5% below the market rate, trades from ₫500,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // AR: BUY resolves empty (the buy book's best real row sat
+  // +6.88% over market, the rest +19.9% to +100%). SELL: 10
+  // live offers, market deltas −3.19% to −5%, bank transfer,
+  // minimums from ARS 100,000 (≈ $65 at $1 = ARS 1,545.65),
+  // most of the book online.
+  AR: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Argentina offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–5% below the market rate, trades from ARS 100,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // CO: BUY resolves empty (the +2.8% to +3.5% rows are all
+  // from offline vendors; online rows start at +9.99%, with
+  // gift-card junk behind them). SELL: 10 live offers,
+  // market deltas −3% to −10% (good offers −3% to −7%),
+  // bank transfer with Bancolombia present in the book,
+  // minimums from COP 700,000 (≈ $212 at $1 = COP 3,301.39)
+  // — a high minimum, disclosed in the note as-is; the
+  // COP 100,000 rows the morning research saw are gone, so
+  // the note quotes the fresh figure — vendors online.
+  CO: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Colombia offers (checked 10 Nov 2026): buyers pay by bank transfer or Bancolombia at about 3–7% below the market rate, trades from COP 700,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // AE: BUY resolves empty (real buy rows sat +11% to
+  // +14.9% over market, gift-card junk at +20% to +70%).
+  // SELL: 10 live offers, market deltas −3% to −6%, bank
+  // transfer, minimums from AED 500 (≈ $136 at $1 =
+  // AED 3.673) — still a high minimum in dollar terms,
+  // disclosed in the note as-is — most of the book online.
+  AE: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live UAE offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–6% below the market rate, trades from AED 500 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +
  *  asset, in ranked order. Each route: { name, url, note, badge,
