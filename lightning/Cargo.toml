@@ -14,6 +14,13 @@ crate-type = ["cdylib", "rlib"]
 # wasm32-unknown-unknown, so the node takes time from the chain tip and
 # the host at construction, exactly like embedded no-std LDK targets.
 lightning = { version = "=0.2.7", default-features = false, features = ["grind_signatures"] }
+# LSPS client (LSPS1 channel orders + LSPS2 JIT channels) and, for
+# server-role nodes, the LSPS2 service — the Lightning completion
+# build's liquidity layer. Version-paired with lightning 0.2.7 (its
+# manifest requires lightning ^0.2.0). Built no-std like the rest of
+# the node: no `std`/`time` features; the node's own clock feeds it
+# through a custom TimeProvider (see FluidTimeProvider in src/lib.rs).
+lightning-liquidity = { version = "=0.2.7", default-features = false }
 lightning-invoice = { version = "=0.34.1", default-features = false }
 bitcoin = "=0.32.102"
 wasm-bindgen = "=0.2.130"
@@ -21,6 +28,6 @@ lightning-types = "=0.3.5"
 bitcoin-io = "=0.1.101"
 
 [profile.release]
-opt-level = 2
+opt-level = "s"
 strip = "symbols"
 panic = "abort"

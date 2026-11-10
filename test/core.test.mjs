@@ -8,6 +8,8 @@ import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, sato
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
+import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "../src/wallet-core.js";
+import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -5781,6 +5783,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // The real creation record captured live (Polygon USDC $20 ->
   // BTC), with the probe's hash lock / claim key swapped for the
   // test wallet's derived ones.
+  // One shared future locktime for the S7 creation + Permit2
+  // fixtures (the captured record's real locktime expired on
+  // 2026-11-09; the two fixtures must agree to the second).
+  const LOCKTIME_S7 = Math.floor(Date.now() / 1000) + 86400;
   const createBtcS7 = ({ hashLock, claimPkXonly }) => ({
     id: "f8367eae-cc13-4062-be55-4b1b2a569e7e", status: "pending", fee_sats: 427,
     evm_hash_lock: hashLock, btc_hash_lock: "d6770bf184e0f3af2451bdeade083e25275c67c9",
@@ -5791,7 +5797,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
     evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
     client_evm_address: "0x0877999faBfDEd6ADBa3A97A3B46159d2F6A2F6B", server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
-    evm_fund_txid: null, evm_claim_txid: null, evm_refund_locktime: 1794265512, evm_funding_confirmations: 128,
+    evm_fund_txid: null, evm_claim_txid: null, evm_refund_locktime: LOCKTIME_S7, evm_funding_confirmations: 128,
     btc_htlc_address: "bc1pnwvn0aqxhr0pa403rncxqdas9e7ddwetp0qg79avqae7u7u2w68q4v39t2",
     btc_user_claim_pk: claimPkXonly, btc_server_refund_pk: "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633",
     btc_refund_locktime: 1794222312, btc_htlc_script_version: 1, btc_fund_txid: null, btc_fund_vout: null, btc_claim_txid: null,
@@ -5808,7 +5814,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     permit2_address: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
     source_token_address: POL_USDC_S7, source_amount: "20000000",
     lock_token_address: "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
-    preimage_hash: hashLock, claim_address: "0x5ce278AAec6d9fa67bfcaf98512fe5175dfeebac", timelock: 1794265512,
+    preimage_hash: hashLock, claim_address: "0x5ce278AAec6d9fa67bfcaf98512fe5175dfeebac", timelock: LOCKTIME_S7,
     calls: CALLS_S7, calls_hash: "0x1b865e45034d8be753a876eb72909104ca9cd22f663c82134ade2eafb04ea027",
   });
   // A Satora wire stub: routes by URL, records quote URLs + create
@@ -6259,7 +6265,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const SERVER_EVM_S9 = "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac";
   const HTLC_S9 = "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748";
   const PERMIT2_S9 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-  const TIMELOCK_S9 = 1794265512;
+  const TIMELOCK_S9 = Math.floor(Date.now() / 1000) + 86400;
   const BTC_USD_S9 = 74414;
   const FUND_TX_S9 = "0x" + "ab".repeat(32);
   const jsonResS9 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
@@ -7407,7 +7413,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const SERVER_EVM_S71 = "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac";
   const HTLC_S71 = "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748";
   const ROUTER_S71 = "0xe592427a0aece92de3edee1f18e0157c05861564";
-  const TIMELOCK_S71 = 1794265512;
+  const TIMELOCK_S71 = Math.floor(Date.now() / 1000) + 86400;
   const BTC_USD_S71 = 74414;
   const FUND_TX_S71 = "0x" + "ab".repeat(32);
   const jsonResS71 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
@@ -8637,6 +8643,152 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ex97(new URL("../docs/README.md", import.meta.url)) && ex97(new URL("../docs/AGENT-KIT.md", import.meta.url))
     && rf97(new URL("../docs/README.md", import.meta.url), "utf8").includes("AGENT-KIT.md")
     && rf97(new URL("../docs/AGENT-KIT.md", import.meta.url), "utf8").includes("claimName"));
+}
+
+
+// =====================================================================
+// Lightning completion build (Phases 0+1): receive plan, LSPS2 fee
+// arithmetic, peer book, the Satora gate's JIT amendment (§5.4), and
+// the pinned resumable node download (owner directives 2026-11-10).
+// =====================================================================
+{
+  // --- lnReceivePlan: the app must never render an unpayable artifact ---
+  const planA = lnReceivePlan({ receivableMsat: 5000000, requestedMsat: 2000000, hasLsp: true });
+  ok("lnplan: sized + covered → invoice (not partial)", planA.kind === "invoice" && planA.partial === false);
+  ok("lnplan: sized + zero room + LSP → jit", lnReceivePlan({ receivableMsat: 0, requestedMsat: 2000000, hasLsp: true }).kind === "jit");
+  ok("lnplan: sized + zero room + no LSP → need-channel", lnReceivePlan({ receivableMsat: 0, requestedMsat: 2000000, hasLsp: false }).kind === "need-channel");
+  const planP = lnReceivePlan({ receivableMsat: 1000000, requestedMsat: 2000000, hasLsp: true });
+  ok("lnplan: sized + partial room → invoice, partial", planP.kind === "invoice" && planP.partial === true && planP.receivableMsat === 1000000);
+  ok("lnplan: amountless + room → offer", lnReceivePlan({ receivableMsat: 1000, requestedMsat: null, hasLsp: false }).kind === "offer");
+  ok("lnplan: amountless + zero + LSP → need-amount", lnReceivePlan({ receivableMsat: 0, requestedMsat: null, hasLsp: true }).kind === "need-amount");
+  ok("lnplan: amountless + zero + no LSP → need-channel", lnReceivePlan({ receivableMsat: 0, requestedMsat: null, hasLsp: false }).kind === "need-channel");
+  ok("lnplan: exact fit is covered", lnReceivePlan({ receivableMsat: 2000000, requestedMsat: 2000000, hasLsp: false }).kind === "invoice");
+
+  // --- LSPS2 opening fee: max(min_fee, ceil(size × proportional / 1e6)) ---
+  ok("lsps2 fee: proportional exact", lnLsps2OpeningFeeMsat(2000000, { minFeeMsat: 1000, proportional: 1000 }) === 2000);
+  ok("lsps2 fee: proportional rounds up", lnLsps2OpeningFeeMsat(1500500, { minFeeMsat: 0, proportional: 1000 }) === 1501);
+  ok("lsps2 fee: min fee floor wins", lnLsps2OpeningFeeMsat(100000, { minFeeMsat: 1000, proportional: 1000 }) === 1000);
+  ok("lsps2 fee: zero proportional = min fee", lnLsps2OpeningFeeMsat(5000000, { minFeeMsat: 2500, proportional: 0 }) === 2500);
+
+  // --- SCID forms ---
+  ok("ln scid: BxTxO → decimal string", lnScidToDecimal("800000x12x0") === "879609302221586432");
+  ok("ln scid: numeric passes through", lnScidToDecimal("12345") === "12345" && lnScidToDecimal(12345) === "12345");
+  ok("ln scid: garbage → null", lnScidToDecimal("nope") === null && lnScidToDecimal(null) === null && lnScidToDecimal("") === null);
+
+  // --- persisted peer book ---
+  const pkA = "02" + "aa".repeat(32), pkB = "03" + "bb".repeat(32);
+  ok("peerbook: empty input → []", Array.isArray(parseLnPeerBook(null)) && parseLnPeerBook(null).length === 0 && parseLnPeerBook("{oops").length === 0);
+  let bookT = upsertLnPeer([], { pubkey: pkA, host: "a.example", port: 9735 });
+  bookT = upsertLnPeer(bookT, { pubkey: pkB, host: "b.example", port: 19735 });
+  bookT = upsertLnPeer(bookT, { pubkey: pkA, host: "a2.example", port: 9736 });
+  ok("peerbook: upsert dedupes by pubkey and updates the endpoint", bookT.length === 2 && bookT.find((p) => p.pubkey === pkA).host === "a2.example" && bookT.find((p) => p.pubkey === pkA).port === 9736);
+  const bookRt = parseLnPeerBook(serializeLnPeerBook(bookT));
+  ok("peerbook: serialize → parse round-trip", bookRt.length === 2 && bookRt.some((p) => p.pubkey === pkB && p.host === "b.example"));
+  ok("peerbook: garbage entries are dropped, good ones survive", parseLnPeerBook(JSON.stringify([{ pubkey: "zz", host: "x", port: 1 }, { pubkey: pkA, host: "", port: 9735 }, { pubkey: pkB, host: "ok", port: 9735 }])).length === 1);
+  ok("peerbook: remove by pubkey", removeLnPeer(bookT, pkA).length === 1 && removeLnPeer(bookT, pkA)[0].pubkey === pkB);
+
+  // --- Satora gate JIT amendment (§5.4, exact) ---
+  const LSP_PK_T = "034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0";
+  const jitPrivT = "0000000000000000000000000000000000000000000000000000000000000001";
+  const jitPayeeT = Buffer.from(secp256k1.getPublicKey(Buffer.from(jitPrivT, "hex"))).toString("hex");
+  const jitHashT = Buffer.from(nobleSha256(new TextEncoder().encode("jit-test-preimage"))).toString("hex");
+  const jitInvoiceT = encodeBolt11({ network: "bc", amountMsat: 2000000n, timestamp: Math.floor(Date.now() / 1000), privKey: jitPrivT,
+    fields: [["s", "11".repeat(32)], ["p", jitHashT], ["d", "jit test"], ["r", [{ pubkey: LSP_PK_T, shortChannelId: "800000x12x0", feeBaseMsat: 0, feeProportionalMillionths: 0, cltvExpiryDelta: 144 }]]] });
+  const jitCtxT = { lspPubkey: LSP_PK_T, interceptScids: { [jitHashT]: "879609302221586432" }, maxPaymentMsat: "100000000" };
+  const gateT = (over) => checkSatoraLightningReceivability({ destInput: jitInvoiceT, ownNodeId: jitPayeeT, ownReceivableMsat: 0, ...over });
+  ok("gate jit: recorded JIT invoice passes at receivable 0", gateT({ jit: jitCtxT }).ok === true);
+  ok("gate jit: record deleted → refused", gateT({ jit: { ...jitCtxT, interceptScids: {} } }).ok === false);
+  ok("gate jit: no jit context → refused under today's rule", gateT({}).ok === false);
+  ok("gate jit: amount above the negotiated maximum → refused", gateT({ jit: { ...jitCtxT, maxPaymentMsat: "1999999" } }).ok === false);
+  ok("gate jit: wrong LSP pubkey → refused", gateT({ jit: { ...jitCtxT, lspPubkey: pkA } }).ok === false);
+  const forgedHashT = Buffer.from(nobleSha256(new TextEncoder().encode("forged-preimage"))).toString("hex");
+  const forgedInvoiceT = encodeBolt11({ network: "bc", amountMsat: 2000000n, timestamp: Math.floor(Date.now() / 1000), privKey: jitPrivT,
+    fields: [["s", "11".repeat(32)], ["p", forgedHashT], ["d", "forged"], ["r", [{ pubkey: LSP_PK_T, shortChannelId: "800000x12x0", feeBaseMsat: 0, feeProportionalMillionths: 0, cltvExpiryDelta: 144 }]]] });
+  ok("gate jit: LSP first hop but no record for this payment hash → refused",
+    checkSatoraLightningReceivability({ destInput: forgedInvoiceT, ownNodeId: jitPayeeT, ownReceivableMsat: 0, jit: jitCtxT }).ok === false);
+  const wrongHopInvoiceT = encodeBolt11({ network: "bc", amountMsat: 2000000n, timestamp: Math.floor(Date.now() / 1000), privKey: jitPrivT,
+    fields: [["s", "11".repeat(32)], ["p", jitHashT], ["d", "wrong hop"], ["r", [{ pubkey: pkA, shortChannelId: "800000x12x0", feeBaseMsat: 0, feeProportionalMillionths: 0, cltvExpiryDelta: 144 }]]] });
+  ok("gate jit: recorded scid but first hop is not the LSP → refused",
+    checkSatoraLightningReceivability({ destInput: wrongHopInvoiceT, ownNodeId: jitPayeeT, ownReceivableMsat: 0, jit: jitCtxT }).ok === false);
+  const amountlessOwnT = encodeBolt11({ network: "bc", amountMsat: null, timestamp: Math.floor(Date.now() / 1000), privKey: jitPrivT, fields: [["s", "11".repeat(32)], ["p", jitHashT], ["d", "amountless"]] });
+  ok("gate jit: amountless own invoice keeps today's pass", checkSatoraLightningReceivability({ destInput: amountlessOwnT, ownNodeId: jitPayeeT, ownReceivableMsat: 0 }).ok === true);
+  ok("gate jit: external payee unaffected by the amendment", checkSatoraLightningReceivability({ destInput: jitInvoiceT, ownNodeId: pkA, ownReceivableMsat: 0, jit: jitCtxT }).ok === true);
+  ok("gate jit: today's refusal text is byte-for-byte unchanged", gateT({}).reason === "That invoice pays your own Fluid Lightning wallet, but your wallet can't receive it yet — it has no inbound Lightning capacity (no open channels with room). Open a Lightning channel first, or pay an invoice from a different wallet.");
+
+  // --- pinned, resumable download (ln-download.js) ---
+  const dlTotal = 100000, dlChunk = 16384;
+  const dlData = new Uint8Array(dlTotal);
+  for (let i = 0; i < dlTotal; i++) dlData[i] = (i * 31 + 7) % 251;
+  const dlPin = await sha256Hex(dlData);
+  const mkStore = () => { const m = new Map(); return { map: m, get: async (k) => (m.has(k) ? m.get(k) : null), set: async (k, v) => { m.set(k, v); }, del: async (k) => { m.delete(k); } }; };
+  const rangeFetch = (data, log, failAfter = Infinity) => {
+    let served = 0;
+    return async (url, opts) => {
+      const range = opts && opts.headers && opts.headers.Range;
+      const mm = /^bytes=(\d+)-(\d+)$/.exec(range || "");
+      if (!mm) return new Response(data.slice().buffer, { status: 200 });
+      if (served >= failAfter) throw new Error("network dropped");
+      served++;
+      const a = Number(mm[1]), b = Number(mm[2]);
+      log.push([a, b]);
+      return new Response(data.slice(a, b + 1).buffer, { status: 206, headers: { "Content-Range": `bytes ${a}-${b}/${data.length}` } });
+    };
+  };
+  const noSleep = async () => {};
+  // (a) resume: die after 3 chunks; the retry fetches ONLY the rest
+  {
+    const store = mkStore(); const log1 = [], log2 = [];
+    let err = null;
+    try { await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(dlData, log1, 3), chunkBytes: dlChunk, sleepImpl: noSleep }); } catch (e) { err = e; }
+    ok("download: a mid-download drop is a download-stage error that keeps progress", err instanceof LnAssetError && err.stage === "download" && log1.length === 3);
+    const got = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(dlData, log2), chunkBytes: dlChunk, sleepImpl: noSleep });
+    ok("download: resume fetches only the missing chunks", log2.length === Math.ceil(dlTotal / dlChunk) - 3 && log2[0][0] === 3 * dlChunk);
+    ok("download: resumed bytes verify against the pin", (await sha256Hex(new Uint8Array(got.bytes))) === dlPin && got.resumedBytes === 3 * dlChunk);
+    const log3 = [];
+    const again = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(dlData, log3), chunkBytes: dlChunk, sleepImpl: noSleep });
+    ok("download: a complete download is served from the store with zero fetches", log3.length === 0 && again.fromStore === true);
+  }
+  // (b) tamper: corrupt exactly one stored chunk → only it is re-fetched
+  {
+    const store = mkStore(); const log0 = [];
+    await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(dlData, log0), chunkBytes: dlChunk, sleepImpl: noSleep });
+    const key2 = `lnasset:${dlPin}:chunk:2`;
+    const bad = new Uint8Array(await store.get(key2)); bad[0] = (bad[0] + 1) % 256;
+    await store.set(key2, bad);
+    const logT = [];
+    const got = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(dlData, logT), chunkBytes: dlChunk, sleepImpl: noSleep });
+    ok("download TAMPER: the corrupted chunk is identified and only it is re-fetched", JSON.stringify(got.repairedChunks) === "[2]" && logT.length === 1 && logT[0][0] === 2 * dlChunk);
+    ok("download TAMPER: repaired bytes verify and boot may proceed", (await sha256Hex(new Uint8Array(got.bytes))) === dlPin);
+  }
+  // (c) pin refusal: the server serves different bytes entirely
+  {
+    const store = mkStore(); const wrong = new Uint8Array(dlTotal).fill(9);
+    let err = null;
+    try { await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: rangeFetch(wrong, []), chunkBytes: dlChunk, sleepImpl: noSleep }); } catch (e) { err = e; }
+    ok("download: bytes that fail the pinned hash are REFUSED (integrity), nothing returned", err instanceof LnAssetError && err.stage === "integrity");
+  }
+  // (d) Range ignored → 200 whole body is sliced, stored and verified
+  {
+    const store = mkStore();
+    const fullFetch = async () => new Response(dlData.slice().buffer, { status: 200 });
+    const got = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: fullFetch, chunkBytes: dlChunk, sleepImpl: noSleep });
+    ok("download: a Range-ignoring server still yields a verified, stored download", (await sha256Hex(new Uint8Array(got.bytes))) === dlPin && [...store.map.keys()].filter((k) => k.includes(":chunk:")).length === Math.ceil(dlTotal / dlChunk));
+  }
+
+  // --- verbatim copy + wiring pins (source text) ---
+  const appLz = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const nodeLz = readFileSync(new URL("../src/lightning-node.js", import.meta.url), "utf8");
+  ok("copy: receivable-0 sentence (panel + receive sheet)", appLz.includes("Your node can't receive yet — it has no channel with room in it."));
+  ok("copy: partial-capacity sentence", appLz.includes("but your channels can only receive") && appLz.includes("Whoever pays it can send at most"));
+  ok("copy: JIT fee review", appLz.includes("Your first payment opens your channel. The provider (Megalith) takes") && appLz.includes("Keep Fluid open until the payment lands."));
+  ok("copy: capacity line + advanced peer section", appLz.includes("Receiving room:") && appLz.includes("Sending room:") && appLz.includes("Advanced — connect to any peer"));
+  ok("copy: offline-receive lead + wake-up honesty", appLz.includes("Not set up yet — this needs a holding peer that is always online.") && appLz.includes("Wake-up notifications need Fluid's notification relay, which isn't live yet."));
+  ok("copy: send pre-checks", appLz.includes("Your node isn't connected right now — give it a few seconds after opening Fluid, then try again.") && appLz.includes("You don't have that much you can send — your sending room is"));
+  ok("copy: download progress is persisted-progress wording", appLz.includes("kept on your phone as it arrives, so if the connection drops it continues where it stopped"));
+  ok("copy: boot failure never presents the fallback as the node", appLz.includes("This is <b>not</b> your node — an external wallet would pay instead") && appLz.includes("Your Lightning node couldn't load"));
+  ok("copy: registration verified against the registry", appLz.includes("Registered ✓ — the registry now shows your node's offer") && appLz.includes("It is not in the registry yet."));
+  ok("pins: the app imports the in-bundle asset pins", appLz.includes("ln-asset-pins.generated.js") && appLz.includes("LN_WASM_PIN"));
+  ok("defaults: ws-proxy + relay ship empty (not yet deployed), LSP is Megalith", nodeLz.includes('LN_DEFAULT_WS_PROXY = ""') && nodeLz.includes('LN_DEFAULT_RELAY_URL = ""') && nodeLz.includes("034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0"));
 }
 
 console.log(`\n${passed} checks passed`);

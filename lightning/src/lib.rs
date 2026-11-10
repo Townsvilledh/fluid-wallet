@@ -404,6 +404,44 @@ pub type ChannelManagerT = lightning::ln::channelmanager::ChannelManager<
     Arc<MessageRouterT>,
     Arc<HostLogger>,
 >;
+/// The node's clock as an LSPS `TimeProvider`: LSPS fee-parameter
+/// validity windows are wall-clock based, and this no-std build takes
+/// its time from the host at construction plus block-header
+/// timestamps — the same two atomics `NodeInner::now_secs` reads.
+pub struct FluidTimeProvider {
+    pub started: Arc<AtomicU64>,
+    pub tip: Arc<AtomicU64>,
+}
+impl lightning_liquidity::utils::time::TimeProvider for FluidTimeProvider {
+    fn duration_since_epoch(&self) -> std::time::Duration {
+        let now = self
+            .tip
+            .load(Ordering::Relaxed)
+            .max(self.started.load(Ordering::Relaxed));
+        std::time::Duration::from_secs(now)
+    }
+}
+impl std::ops::Deref for FluidTimeProvider {
+    type Target = Self;
+    fn deref(&self) -> &Self {
+        self
+    }
+}
+/// The LSPS liquidity manager (lightning-liquidity, sync flavour over
+/// the host KV store): LSPS1 + LSPS2 CLIENT for every node; the LSPS2
+/// SERVICE is additionally configured for server-role nodes (the
+/// keeper / a test LSP). It sits in the peer manager's
+/// CustomMessageHandler slot — LSPS messages are Lightning custom
+/// messages (type 32769+) riding the same Noise connections.
+pub type LiquidityManagerT = lightning_liquidity::LiquidityManagerSync<
+    Arc<Km>,
+    Arc<Km>,
+    Arc<ChannelManagerT>,
+    Arc<HostFilter>,
+    Arc<HostStore>,
+    Arc<FluidTimeProvider>,
+    Arc<HostBroadcaster>,
+>;
 pub type OnionMessengerT = OnionMessenger<
     Arc<Km>,
     Arc<Km>,
@@ -434,7 +472,7 @@ pub type PeerManagerT = PeerManager<
     Arc<GossipT>,
     Arc<OnionMessengerT>,
     Arc<HostLogger>,
-    IgnoringMessageHandler,
+    Arc<LiquidityManagerT>,
     Arc<Km>,
     IgnoringMessageHandler,
 >;
@@ -522,14 +560,26 @@ pub struct NodeInner {
     pub graph: Arc<Graph>,
     pub chain_monitor: Arc<ChainMonitorT>,
     pub channel_manager: Arc<ChannelManagerT>,
+    pub liquidity: Arc<LiquidityManagerT>,
+    /// LSPS2 opening-params menus by request id (counterparty hex,
+    /// menu) — kept so `lsps2_select_params` can act on the exact
+    /// params the LSP sent (promise included) by index, with no JSON
+    /// round-trip through JS.
+    pub lsps2_menus: Mutex<
+        HashMap<String, (String, Vec<lightning_liquidity::lsps2::msgs::LSPS2OpeningFeeParams>)>,
+    >,
+    /// The node's UserConfig, kept so the LSPS2 service can open JIT
+    /// channels with a per-open override (announce_for_forwarding
+    /// off) without losing the rest of the node's handshake posture.
+    pub user_config: lightning::util::config::UserConfig,
     pub onion_messenger: Arc<OnionMessengerT>,
     pub peer_manager: Arc<PeerManagerT>,
     pub filter: Arc<HostFilter>,
     pub sinks: Sinks,
     pub conns: Mutex<HashMap<u32, Arc<Mutex<Vec<u8>>>>>,
     pub next_conn: AtomicU32,
-    pub started_at: AtomicU64,
-    pub tip_time: AtomicU64,
+    pub started_at: Arc<AtomicU64>,
+    pub tip_time: Arc<AtomicU64>,
     pub dirty: AtomicBool,
 }
 
@@ -645,16 +695,46 @@ impl NodeInner {
         // can delay a payment, never take or redirect it.
         config.enable_htlc_hold = role_server;
         config.hold_outbound_htlcs_at_next_hop = true;
+        // LSPS2 service duty: a server-role node accepts HTLCs whose
+        // next hop is an intercept SCID (the JIT channel flow). LDK
+        // defaults accept_intercept_htlcs to false and fails such
+        // HTLCs with UnknownNextPeer before the LSPS2 service ever
+        // sees them — a wallet-role node never serves JIT channels,
+        // so it keeps the default.
+        config.accept_intercept_htlcs = role_server;
+        // JIT (LSPS2) receives arrive short by exactly the LSP's
+        // opening fee, declared in the HTLC's skimmed-fee TLV. LDK
+        // rejects ANY underpayment on a channel whose config leaves
+        // accept_underpaying_htlcs at its default (false); with it
+        // set, acceptance is bounded by the declared skim — a
+        // short-pay without the declaration still fails.
+        config.channel_config.accept_underpaying_htlcs = true;
+        // The HTLC in-flight cap we declare to peers defaults to
+        // 10% of channel value — on a small JIT channel (the normal
+        // first channel: ~12,000 sats) that caps a single forwarded
+        // payment at ~1,200 sats and the LSP's JIT forward fails
+        // with HTLCMaximum. A wallet must be able to receive a
+        // payment spanning its channel: declare 100%.
+        config.channel_handshake_config.max_inbound_htlc_value_in_flight_percent_of_channel = 100;
+        // Never force-close a channel open whose announcement
+        // preference differs from ours: an LSP opening a JIT channel
+        // to this wallet may set announce_for_forwarding (public-node
+        // posture) and the LDK default (force the preference) kills
+        // the open before the channel exists. Our channels stay
+        // private regardless — an announcement needs both sides'
+        // signatures, and this node never initiates one.
+        config.channel_handshake_limits.force_announced_channel_preference = false;
         if role_server {
             // Server nodes (LSPs, the keeper) announce the channels
             // THEY open, like any public Lightning node: announced
             // channels are how payers' routers learn the LSP<->SIS
             // hops they need to reach a blinded-path introduction
             // beyond their own first hop. Wallet-opened channels stay
-            // private (the wallet config leaves both flags at their
-            // defaults).
+            // private (the wallet config leaves the flag at its
+            // default). JIT opens are the exception — see the LSPS2
+            // OpenChannel handler, which overrides this flag off so a
+            // wallet peer is never asked to announce for forwarding.
             config.channel_handshake_config.announce_for_forwarding = true;
-            config.channel_handshake_limits.force_announced_channel_preference = false;
         }
         // All Fluid channels are private (unannounced). BOLT 12 blinded
         // paths exist precisely to deliver payments over private
@@ -663,6 +743,9 @@ impl NodeInner {
         // (privacy is preserved by the blinding itself; the LDK
         // default of refusing exists for public routing nodes).
         config.accept_forwards_to_priv_channels = true;
+        // Kept for per-open overrides (LSPS2 JIT opens); the original
+        // is moved into the channel manager below.
+        let user_config = config.clone();
 
         // Channel monitors first: the manager read needs them.
         let monitors = lightning::util::persist::read_channel_monitors(
@@ -718,6 +801,63 @@ impl NodeInner {
             let _ = funding_txo;
         }
 
+        // LSPS liquidity manager: client handlers for every node
+        // (LSPS1 orders + LSPS2 JIT channels, e.g. to Megalith); the
+        // LSPS2 *service* only for server-role nodes (the keeper, a
+        // test LSP). The promise secret is derived deterministically
+        // from the node secret so fee-param promises stay valid
+        // across restarts of the same wallet.
+        let started_clock = Arc::new(AtomicU64::new(now_secs));
+        let tip_clock = Arc::new(AtomicU64::new(now_secs));
+        let time_provider = Arc::new(FluidTimeProvider {
+            started: started_clock.clone(),
+            tip: tip_clock.clone(),
+        });
+        let liquidity = {
+            use bitcoin::hashes::{sha256, Hash as BHashT};
+            let mut secret_input = b"fluid-lsps2-promise-secret-v1".to_vec();
+            secret_input.extend_from_slice(
+                &keys_manager.get_node_secret_key().secret_bytes(),
+            );
+            let promise_secret = sha256::Hash::hash(&secret_input).to_byte_array();
+            let service_config = if role_server {
+                Some(lightning_liquidity::LiquidityServiceConfig {
+                    lsps2_service_config: Some(
+                        lightning_liquidity::lsps2::service::LSPS2ServiceConfig {
+                            promise_secret,
+                        },
+                    ),
+                    lsps5_service_config: None,
+                    advertise_service: false,
+                })
+            } else {
+                None
+            };
+            let client_config = Some(lightning_liquidity::LiquidityClientConfig {
+                lsps1_client_config: Some(lightning_liquidity::lsps1::client::LSPS1ClientConfig {
+                    max_channel_fees_msat: None,
+                }),
+                lsps2_client_config: Some(lightning_liquidity::lsps2::client::LSPS2ClientConfig {}),
+                lsps5_client_config: None,
+            });
+            let best_block = lightning::chain::BestBlock::new(tip_hash, tip_height);
+            Arc::new(
+                LiquidityManagerT::new_with_custom_time_provider(
+                    keys_manager.clone(),
+                    keys_manager.clone(),
+                    channel_manager.clone(),
+                    Some(filter.clone()),
+                    Some(ChainParameters { network, best_block }),
+                    store.clone(),
+                    broadcaster.clone(),
+                    service_config,
+                    client_config,
+                    time_provider,
+                )
+                .map_err(|e| format!("liquidity manager init failed: {e}"))?,
+            )
+        };
+
         let onion_messenger = Arc::new(OnionMessenger::new_with_offline_peer_interception(
             keys_manager.clone(),
             keys_manager.clone(),
@@ -734,7 +874,7 @@ impl NodeInner {
             chan_handler: channel_manager.clone(),
             route_handler: gossip.clone(),
             onion_message_handler: onion_messenger.clone(),
-            custom_message_handler: IgnoringMessageHandler {},
+            custom_message_handler: liquidity.clone(),
             send_only_message_handler: IgnoringMessageHandler {},
         };
         let ephemeral: [u8; 32] = keys_manager.get_secure_random_bytes();
@@ -799,14 +939,17 @@ impl NodeInner {
             graph,
             chain_monitor,
             channel_manager,
+            liquidity,
+            lsps2_menus: Mutex::new(HashMap::new()),
+            user_config,
             onion_messenger,
             peer_manager,
             filter,
             sinks,
             conns: Mutex::new(HashMap::new()),
             next_conn: AtomicU32::new(1),
-            started_at: AtomicU64::new(now_secs),
-            tip_time: AtomicU64::new(now_secs),
+            started_at: started_clock,
+            tip_time: tip_clock,
             dirty: AtomicBool::new(false),
         }))
     }
@@ -821,6 +964,7 @@ use lightning::events::{Event, PaymentPurpose, ReplayEvent};
 pub struct NodeEventHandler {
     cm: Arc<ChannelManagerT>,
     om: Arc<OnionMessengerT>,
+    lm: Arc<LiquidityManagerT>,
     sinks: Sinks,
     host: Arc<dyn HostBridge>,
 }
@@ -920,7 +1064,17 @@ impl lightning::events::EventHandler for NodeEventHandler {
                     jstr(&format!("{reason:?}")),
                 ));
             }
-            Event::ChannelReady { channel_id, user_channel_id, channel_type, .. } => {
+            Event::ChannelReady { channel_id, user_channel_id, counterparty_node_id, channel_type, .. } => {
+                // LSPS2 service duty: a JIT channel becoming ready is
+                // what releases the held intercepted payment.
+                if let Some(svc) = self.lm.lsps2_service_handler() {
+                    if let Err(e) = svc.channel_ready(user_channel_id, &channel_id, &counterparty_node_id) {
+                        self.ev(format!(
+                            "{{\"type\":\"lsps2_service_error\",\"stage\":\"channel_ready\",\"error\":{}}}",
+                            jstr(&format!("{e:?}")),
+                        ));
+                    }
+                }
                 self.ev(format!(
                     "{{\"type\":\"channel_ready\",\"channelId\":{},\"userChannelId\":\"{user_channel_id:032x}\",\"channelType\":{}}}",
                     jstr(&hex(&channel_id.0)),
@@ -1052,8 +1206,47 @@ impl lightning::events::EventHandler for NodeEventHandler {
                     outputs.len(),
                 ));
             }
-            Event::HTLCIntercepted { .. } => {
-                self.ev("{\"type\":\"htlc_intercepted\"}".to_string());
+            Event::HTLCIntercepted { intercept_id, requested_next_hop_scid, payment_hash, expected_outbound_amount_msat, .. } => {
+                // LSPS2 service duty: hand the intercepted HTLC to the
+                // JIT state machine — it decides between opening the
+                // channel and forwarding over it.
+                if let Some(svc) = self.lm.lsps2_service_handler() {
+                    if let Err(e) = svc.htlc_intercepted(
+                        requested_next_hop_scid,
+                        intercept_id,
+                        expected_outbound_amount_msat,
+                        payment_hash,
+                    ) {
+                        self.ev(format!(
+                            "{{\"type\":\"lsps2_service_error\",\"stage\":\"htlc_intercepted\",\"error\":{}}}",
+                            jstr(&format!("{e:?}")),
+                        ));
+                    }
+                }
+                self.ev(format!(
+                    "{{\"type\":\"htlc_intercepted\",\"scid\":{},\"paymentHash\":{}}}",
+                    requested_next_hop_scid,
+                    jstr(&hex(&payment_hash.0)),
+                ));
+            }
+            Event::HTLCHandlingFailed { failure_type, .. } => {
+                if let Some(svc) = self.lm.lsps2_service_handler() {
+                    let _ = svc.htlc_handling_failed(failure_type);
+                }
+                self.ev("{\"type\":\"htlc_handling_failed\"}".to_string());
+            }
+            Event::PaymentForwarded { next_channel_id, total_fee_earned_msat, .. } => {
+                // The fee earned on a forward over a JIT channel is
+                // the skimmed opening fee — the service tracks it to
+                // know the channel open has been paid for.
+                if let (Some(svc), Some(next), Some(fee)) = (
+                    self.lm.lsps2_service_handler(),
+                    next_channel_id,
+                    total_fee_earned_msat,
+                ) {
+                    let _ = svc.payment_forwarded(next, fee);
+                }
+                self.ev("{\"type\":\"payment_forwarded\"}".to_string());
             }
             Event::BumpTransaction(event) => {
                 self.ev(format!(
@@ -1078,6 +1271,7 @@ impl NodeInner {
         NodeEventHandler {
             cm: self.channel_manager.clone(),
             om: self.onion_messenger.clone(),
+            lm: self.liquidity.clone(),
             sinks: self.sinks.clone(),
             host: self.host.clone(),
         }
@@ -1161,9 +1355,26 @@ impl NodeInner {
         self.onion_messenger.process_pending_events(&handler);
         self.peer_manager.process_events();
         self.channel_manager.process_pending_events(&handler);
-        if self.dirty.swap(false, Ordering::Relaxed) {
-            self.persist_manager();
+        // LSPS protocol events (fee-param answers, JIT invoice
+        // parameters, service requests) drain after the LDK events
+        // they respond to; service-side auto-responses run inside.
+        let liq_events = self.liquidity.get_and_clear_pending_events();
+        let had_liq = !liq_events.is_empty();
+        for ev in liq_events {
+            self.handle_liquidity_event(ev);
         }
+        if had_liq {
+            let _ = self.liquidity.persist();
+        }
+        // Persist the manager after EVERY processing pass, not only
+        // when our own event sink fired: LDK mutates manager state in
+        // flows that emit no sink event (commitment updates as claims
+        // settle, monitor-update tracking), and a manager snapshot
+        // that lags its channel monitors reads as STALE on the next
+        // boot — LDK then force-closes the channel. The snapshot is
+        // small; correctness wins over the saved write.
+        let _ = self.dirty.swap(false, Ordering::Relaxed);
+        self.persist_manager();
     }
 
     pub fn timer_tick(&self) {
@@ -1193,6 +1404,7 @@ impl NodeInner {
         let refs: Vec<(usize, &Transaction)> = parsed.iter().map(|(i, t)| (*i, t)).collect();
         self.channel_manager.transactions_confirmed(&header, &refs, height);
         self.chain_monitor.transactions_confirmed(&header, &refs, height);
+        self.liquidity.transactions_confirmed(&header, &refs, height);
         Ok(())
     }
 
@@ -1200,6 +1412,7 @@ impl NodeInner {
         let txid = txid_hex.parse::<Txid>().map_err(|_| "bad txid".to_string())?;
         self.channel_manager.transaction_unconfirmed(&txid);
         self.chain_monitor.transaction_unconfirmed(&txid);
+        self.liquidity.transaction_unconfirmed(&txid);
         Ok(())
     }
 
@@ -1211,6 +1424,7 @@ impl NodeInner {
         self.tip_time.fetch_max(header.time as u64, Ordering::Relaxed);
         self.channel_manager.best_block_updated(&header, height);
         self.chain_monitor.best_block_updated(&header, height);
+        self.liquidity.best_block_updated(&header, height);
         self.dirty.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -1244,6 +1458,403 @@ impl NodeInner {
         }
         out
     }
+}
+
+// ---------------------------------------------------------------------------
+// LSPS liquidity: event draining, service auto-responses, client calls
+// ---------------------------------------------------------------------------
+
+impl NodeInner {
+    fn handle_liquidity_event(&self, ev: lightning_liquidity::events::LiquidityEvent) {
+        use lightning_liquidity::events::LiquidityEvent as LE;
+        use lightning_liquidity::lsps1::event::LSPS1ClientEvent;
+        use lightning_liquidity::lsps2::event::{LSPS2ClientEvent, LSPS2ServiceEvent};
+        match ev {
+            LE::LSPS2Client(LSPS2ClientEvent::OpeningParametersReady {
+                request_id,
+                counterparty_node_id,
+                opening_fee_params_menu,
+            }) => {
+                let rid = request_id.0.clone();
+                let menu_json: Vec<String> = opening_fee_params_menu
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{{\"minFeeMsat\":{},\"proportional\":{},\"validUntil\":{},\"minLifetime\":{},\"maxClientToSelfDelay\":{},\"minPaymentSizeMsat\":{},\"maxPaymentSizeMsat\":{}}}",
+                            p.min_fee_msat,
+                            p.proportional,
+                            jstr(&p.valid_until.to_rfc3339()),
+                            p.min_lifetime,
+                            p.max_client_to_self_delay,
+                            p.min_payment_size_msat,
+                            p.max_payment_size_msat,
+                        )
+                    })
+                    .collect();
+                self.lsps2_menus
+                    .lock()
+                    .unwrap()
+                    .insert(rid.clone(), (counterparty_node_id.to_string(), opening_fee_params_menu));
+                self.push_event(format!(
+                    "{{\"type\":\"lsps2_params_ready\",\"requestId\":{},\"counterparty\":{},\"menu\":[{}]}}",
+                    jstr(&rid),
+                    jstr(&counterparty_node_id.to_string()),
+                    menu_json.join(","),
+                ));
+            }
+            LE::LSPS2Client(LSPS2ClientEvent::InvoiceParametersReady {
+                request_id,
+                counterparty_node_id,
+                intercept_scid,
+                cltv_expiry_delta,
+                payment_size_msat,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps2_invoice_params\",\"requestId\":{},\"counterparty\":{},\"interceptScid\":{},\"cltvExpiryDelta\":{},\"paymentSizeMsat\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&intercept_scid.to_string()),
+                    cltv_expiry_delta,
+                    payment_size_msat
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".into()),
+                ));
+            }
+            LE::LSPS2Client(LSPS2ClientEvent::GetInfoFailed {
+                request_id,
+                counterparty_node_id,
+                error,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps2_failed\",\"stage\":\"get_info\",\"requestId\":{},\"counterparty\":{},\"error\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&format!("{}: {}", error.code, error.message)),
+                ));
+            }
+            LE::LSPS2Client(LSPS2ClientEvent::BuyRequestFailed {
+                request_id,
+                counterparty_node_id,
+                error,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps2_failed\",\"stage\":\"buy\",\"requestId\":{},\"counterparty\":{},\"error\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&format!("{}: {}", error.code, error.message)),
+                ));
+            }
+            LE::LSPS1Client(LSPS1ClientEvent::SupportedOptionsReady {
+                request_id,
+                counterparty_node_id,
+                supported_options,
+            }) => {
+                let o = supported_options;
+                self.push_event(format!(
+                    "{{\"type\":\"lsps1_options\",\"requestId\":{},\"counterparty\":{},\"options\":{{\"minRequiredChannelConfirmations\":{},\"minFundingConfirmsWithinBlocks\":{},\"supportsZeroChannelReserve\":{},\"maxChannelExpiryBlocks\":{},\"minInitialClientBalanceSat\":{},\"maxInitialClientBalanceSat\":{},\"minInitialLspBalanceSat\":{},\"maxInitialLspBalanceSat\":{},\"minChannelBalanceSat\":{},\"maxChannelBalanceSat\":{}}}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    o.min_required_channel_confirmations,
+                    o.min_funding_confirms_within_blocks,
+                    o.supports_zero_channel_reserve,
+                    o.max_channel_expiry_blocks,
+                    o.min_initial_client_balance_sat,
+                    o.max_initial_client_balance_sat,
+                    o.min_initial_lsp_balance_sat,
+                    o.max_initial_lsp_balance_sat,
+                    o.min_channel_balance_sat,
+                    o.max_channel_balance_sat,
+                ));
+            }
+            LE::LSPS1Client(LSPS1ClientEvent::OrderCreated {
+                request_id,
+                counterparty_node_id,
+                order_id,
+                order,
+                payment,
+                channel,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps1_order\",\"requestId\":{},\"counterparty\":{},\"orderId\":{},\"lspBalanceSat\":{},\"clientBalanceSat\":{},\"payment\":{},\"channelFunded\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&order_id.0),
+                    order.lsp_balance_sat,
+                    order.client_balance_sat,
+                    lsps1_payment_json(&payment),
+                    channel.is_some(),
+                ));
+            }
+            LE::LSPS1Client(LSPS1ClientEvent::OrderStatus {
+                request_id,
+                counterparty_node_id,
+                order_id,
+                order,
+                payment,
+                channel,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps1_order_status\",\"requestId\":{},\"counterparty\":{},\"orderId\":{},\"lspBalanceSat\":{},\"clientBalanceSat\":{},\"payment\":{},\"channelFunded\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&order_id.0),
+                    order.lsp_balance_sat,
+                    order.client_balance_sat,
+                    lsps1_payment_json(&payment),
+                    channel.is_some(),
+                ));
+            }
+            LE::LSPS1Client(LSPS1ClientEvent::SupportedOptionsRequestFailed {
+                request_id,
+                counterparty_node_id,
+                error,
+            })
+            | LE::LSPS1Client(LSPS1ClientEvent::OrderRequestFailed {
+                request_id,
+                counterparty_node_id,
+                error,
+            }) => {
+                self.push_event(format!(
+                    "{{\"type\":\"lsps1_failed\",\"requestId\":{},\"counterparty\":{},\"error\":{}}}",
+                    jstr(&request_id.0),
+                    jstr(&counterparty_node_id.to_string()),
+                    jstr(&format!("{}: {}", error.code, error.message)),
+                ));
+            }
+            // ---- LSPS2 service (server-role nodes only) ----
+            LE::LSPS2Service(LSPS2ServiceEvent::GetInfo {
+                request_id,
+                counterparty_node_id,
+                token: _,
+            }) => {
+                // The built-in service policy (keeper / test LSP): a
+                // single fee menu entry — 1 sat minimum + 0.1% —
+                // valid for one hour of wall-clock time.
+                if let Some(svc) = self.liquidity.lsps2_service_handler() {
+                    let raw = lightning_liquidity::lsps2::msgs::LSPS2RawOpeningFeeParams {
+                        min_fee_msat: 1_000,
+                        proportional: 1_000,
+                        valid_until:
+                            lightning_liquidity::lsps0::ser::LSPSDateTime::new_from_duration_since_epoch(
+                                std::time::Duration::from_secs(self.now_secs() + 3600),
+                            ),
+                        min_lifetime: 100,
+                        max_client_to_self_delay: 2016,
+                        min_payment_size_msat: 1_000,
+                        max_payment_size_msat: 100_000_000,
+                    };
+                    let _ = svc.opening_fee_params_generated(
+                        &counterparty_node_id,
+                        request_id,
+                        vec![raw],
+                    );
+                }
+            }
+            LE::LSPS2Service(LSPS2ServiceEvent::BuyRequest {
+                request_id,
+                counterparty_node_id,
+                opening_fee_params: _,
+                payment_size_msat: _,
+            }) => {
+                if let Some(svc) = self.liquidity.lsps2_service_handler() {
+                    let intercept_scid = self.channel_manager.get_intercept_scid();
+                    let uid_bytes = self.keys_manager.get_secure_random_bytes();
+                    let mut uid = [0u8; 16];
+                    uid.copy_from_slice(&uid_bytes[..16]);
+                    let _ = svc.invoice_parameters_generated(
+                        &counterparty_node_id,
+                        request_id,
+                        intercept_scid,
+                        144,
+                        false,
+                        u128::from_be_bytes(uid),
+                    );
+                }
+            }
+            LE::LSPS2Service(LSPS2ServiceEvent::OpenChannel {
+                their_network_key,
+                amt_to_forward_msat,
+                opening_fee_msat,
+                user_channel_id,
+                intercept_scid,
+            }) => {
+                // Idempotent under replay (the event is persisted):
+                // a channel with this user_channel_id already created
+                // means the open is already in flight.
+                let exists = self
+                    .channel_manager
+                    .list_channels()
+                    .iter()
+                    .any(|c| c.user_channel_id == user_channel_id);
+                if !exists {
+                    // Channel size: the forwarded amount plus 10,000
+                    // sats of headroom, so the client keeps real
+                    // receiving room after the first payment lands
+                    // (the spec leaves the size to the LSP, requiring
+                    // only payment − fee + reserve).
+                    let value_sat = amt_to_forward_msat / 1000 + 10_000;
+                    // A JIT channel is opened TO a wallet: never ask
+                    // the wallet to announce itself for forwarding
+                    // (public-node posture would make wallet peers
+                    // force-close the open). Override just that flag
+                    // on a clone of this node's own config.
+                    let mut open_config = self.user_config.clone();
+                    open_config.channel_handshake_config.announce_for_forwarding = false;
+                    let _ = self.channel_manager.create_channel(
+                        their_network_key,
+                        value_sat,
+                        0,
+                        user_channel_id,
+                        None,
+                        Some(open_config),
+                    );
+                    self.dirty.store(true, Ordering::Relaxed);
+                }
+                self.push_event(format!(
+                    "{{\"type\":\"lsps2_service_open_channel\",\"counterparty\":{},\"amtToForwardMsat\":{},\"openingFeeMsat\":{},\"interceptScid\":{}}}",
+                    jstr(&their_network_key.to_string()),
+                    amt_to_forward_msat,
+                    opening_fee_msat,
+                    jstr(&intercept_scid.to_string()),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// LSPS2 client: ask an LSP for its JIT opening-fee menu.
+    /// Returns the request id; the answer arrives as an
+    /// `lsps2_params_ready` (or `lsps2_failed`) node event.
+    pub fn lsps2_request_params(
+        &self, lsp_pubkey_hex: &str, token: &str,
+    ) -> Result<String, String> {
+        let lsp = lsp_pubkey_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let handler = self
+            .liquidity
+            .lsps2_client_handler()
+            .ok_or_else(|| "LSPS2 client is not configured".to_string())?;
+        let token_opt = if token.is_empty() { None } else { Some(token.to_string()) };
+        let rid = handler.request_opening_params(lsp, token_opt);
+        Ok(rid.0)
+    }
+
+    /// LSPS2 client: select a menu entry (by request id + index) for
+    /// a payment of `payment_size_msat`. The LSP's answer arrives as
+    /// an `lsps2_invoice_params` (or `lsps2_failed`) node event.
+    pub fn lsps2_select_params(
+        &self, request_id: &str, menu_index: u32, payment_size_msat: Option<u64>,
+    ) -> Result<String, String> {
+        let (counterparty_hex, params) = {
+            let menus = self.lsps2_menus.lock().unwrap();
+            let (cp, menu) = menus
+                .get(request_id)
+                .ok_or_else(|| "unknown or expired LSPS2 request id".to_string())?;
+            let params = menu
+                .get(menu_index as usize)
+                .cloned()
+                .ok_or_else(|| "LSPS2 menu index out of range".to_string())?;
+            (cp.clone(), params)
+        };
+        let lsp = counterparty_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let handler = self
+            .liquidity
+            .lsps2_client_handler()
+            .ok_or_else(|| "LSPS2 client is not configured".to_string())?;
+        let rid = handler
+            .select_opening_params(lsp, payment_size_msat, params)
+            .map_err(|e| format!("lsps2 buy failed: {e:?}"))?;
+        Ok(rid.0)
+    }
+
+    /// LSPS1 client: ask an LSP which channel orders it supports.
+    pub fn lsps1_request_options(&self, lsp_pubkey_hex: &str) -> Result<String, String> {
+        let lsp = lsp_pubkey_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let handler = self
+            .liquidity
+            .lsps1_client_handler()
+            .ok_or_else(|| "LSPS1 client is not configured".to_string())?;
+        Ok(handler.request_supported_options(lsp).0)
+    }
+
+    /// LSPS1 client: order a channel whose receiving side (the LSP's
+    /// balance) is `lsp_balance_sat`; the client contributes nothing
+    /// upfront (client_balance 0 — the standard "buy receiving room"
+    /// shape). The order (with its payment details) arrives as an
+    /// `lsps1_order` node event.
+    pub fn lsps1_create_order(
+        &self, lsp_pubkey_hex: &str, lsp_balance_sat: u64,
+    ) -> Result<String, String> {
+        let lsp = lsp_pubkey_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let handler = self
+            .liquidity
+            .lsps1_client_handler()
+            .ok_or_else(|| "LSPS1 client is not configured".to_string())?;
+        let order = lightning_liquidity::lsps1::msgs::LSPS1OrderParams {
+            lsp_balance_sat,
+            client_balance_sat: 0,
+            required_channel_confirmations: 1,
+            funding_confirms_within_blocks: 6,
+            channel_expiry_blocks: 43_200,
+            token: None,
+            announce_channel: false,
+        };
+        Ok(handler.create_order(&lsp, order, None).0)
+    }
+
+    /// LSPS1 client: poll an order's status (`lsps1_order_status`).
+    pub fn lsps1_check_order(
+        &self, lsp_pubkey_hex: &str, order_id: &str,
+    ) -> Result<String, String> {
+        let lsp = lsp_pubkey_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let handler = self
+            .liquidity
+            .lsps1_client_handler()
+            .ok_or_else(|| "LSPS1 client is not configured".to_string())?;
+        Ok(handler
+            .check_order_status(
+                &lsp,
+                lightning_liquidity::lsps1::msgs::LSPS1OrderId(order_id.to_string()),
+            )
+            .0)
+    }
+}
+
+fn lsps1_payment_json(
+    p: &lightning_liquidity::lsps1::msgs::LSPS1PaymentInfo,
+) -> String {
+    let bolt11 = p.bolt11.as_ref().map(|b| {
+        format!(
+            "{{\"invoice\":{},\"feeTotalSat\":{},\"orderTotalSat\":{},\"state\":{}}}",
+            jstr(&b.invoice.to_string()),
+            b.fee_total_sat,
+            b.order_total_sat,
+            jstr(&format!("{:?}", b.state)),
+        )
+    });
+    let onchain = p.onchain.as_ref().map(|o| {
+        format!(
+            "{{\"address\":{},\"feeTotalSat\":{},\"orderTotalSat\":{},\"state\":{}}}",
+            jstr(&o.address.to_string()),
+            o.fee_total_sat,
+            o.order_total_sat,
+            jstr(&format!("{:?}", o.state)),
+        )
+    });
+    format!(
+        "{{\"bolt11\":{},\"onchain\":{}}}",
+        bolt11.unwrap_or_else(|| "null".into()),
+        onchain.unwrap_or_else(|| "null".into()),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,6 +1949,50 @@ impl NodeInner {
     pub fn create_invoice(
         &self, amount_msat: Option<u64>, description: &str, expiry_secs: u32,
     ) -> Result<String, String> {
+        self.create_invoice_inner(amount_msat, description, expiry_secs, Vec::new(), 18)
+    }
+
+    /// LSPS2 JIT invoice (bLIP-52 §3): an ordinary BOLT 11 invoice for
+    /// `amount_msat` whose FIRST route hint is the LSP's intercept
+    /// hop — LSP node id, the session's intercept SCID, zero routing
+    /// fees, the LSP-supplied CLTV delta — and whose min-final-CLTV
+    /// carries the spec's +2 margin. When a payer routes this invoice
+    /// to the LSP, the LSP opens the channel just-in-time and
+    /// forwards amount − opening fee; LDK books the difference as the
+    /// counterparty-skimmed fee on claim.
+    pub fn create_invoice_jit(
+        &self, amount_msat: u64, description: &str, expiry_secs: u32, lsp_pubkey_hex: &str,
+        intercept_scid_dec: &str, cltv_expiry_delta: u32,
+    ) -> Result<String, String> {
+        use lightning_invoice::{RouteHint, RouteHintHop, RoutingFees};
+        let lsp = lsp_pubkey_hex
+            .parse::<bitcoin::secp256k1::PublicKey>()
+            .map_err(|_| "invalid LSP public key".to_string())?;
+        let scid: u64 = intercept_scid_dec
+            .trim()
+            .parse()
+            .map_err(|_| "invalid intercept scid".to_string())?;
+        let hop = RouteHintHop {
+            src_node_id: lsp,
+            short_channel_id: scid,
+            fees: RoutingFees { base_msat: 0, proportional_millionths: 0 },
+            cltv_expiry_delta: cltv_expiry_delta as u16,
+            htlc_minimum_msat: None,
+            htlc_maximum_msat: None,
+        };
+        self.create_invoice_inner(
+            Some(amount_msat),
+            description,
+            expiry_secs,
+            vec![RouteHint(vec![hop])],
+            20,
+        )
+    }
+
+    fn create_invoice_inner(
+        &self, amount_msat: Option<u64>, description: &str, expiry_secs: u32,
+        extra_hints: Vec<lightning_invoice::RouteHint>, min_final_cltv: u64,
+    ) -> Result<String, String> {
         use lightning_invoice::{Currency, InvoiceBuilder, RouteHint, RouteHintHop, RoutingFees};
         let (payment_hash, payment_secret) = self
             .channel_manager
@@ -1361,9 +2016,15 @@ impl NodeInner {
             .payment_secret(payment_secret)
             .duration_since_epoch(std::time::Duration::from_secs(self.now_secs()))
             .expiry_time(std::time::Duration::from_secs(expiry_secs as u64))
-            .min_final_cltv_expiry_delta(18);
+            .min_final_cltv_expiry_delta(min_final_cltv);
         if let Some(a) = amount_msat {
             builder = builder.amount_milli_satoshis(a);
+        }
+        // Caller-supplied hints (the LSPS2 intercept hint) come FIRST:
+        // a JIT invoice's first hop is how the Satora receivability
+        // gate recognises it, and how payers reach the LSP.
+        for hint in extra_hints {
+            builder = builder.private_route(hint);
         }
         // Route hints over our usable private channels: the final hop
         // runs from our peer to us. Fees come from the peer's announced
@@ -1420,14 +2081,14 @@ impl NodeInner {
             .or(amount_msat)
             .ok_or_else(|| "invoice has no amount — specify one".to_string())?;
         let payment_id = PaymentId(self.keys_manager.get_secure_random_bytes());
-        let payee = invoice
-            .payee_pub_key()
-            .copied()
-            .ok_or_else(|| "invoice has no payee public key".to_string())?;
-        let params = PaymentParameters::from_node_id(
-            payee,
-            invoice.min_final_cltv_expiry_delta() as u32,
-        );
+        // Route parameters FROM THE INVOICE: from_bolt11_invoice
+        // carries the invoice's private route hints (and features /
+        // expiry) into the router. Building params from the node id
+        // alone silently drops the hints, and payment to any wallet
+        // whose channels are private — every Fluid wallet, and every
+        // LSPS2 JIT invoice (whose only path IS the hint) — fails
+        // with RouteNotFound.
+        let params = PaymentParameters::from_bolt11_invoice(&invoice);
         let route_params = RouteParameters::from_payment_params_and_value(params, amount);
         match self.channel_manager.send_payment(
             PaymentHash(invoice.payment_hash().to_byte_array()),
@@ -1792,6 +2453,33 @@ mod wasm_host {
             &self, amount_msat: Option<u64>, description: &str, expiry_secs: u32,
         ) -> Result<String, JsValue> {
             self.inner.create_invoice(amount_msat, description, expiry_secs).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn create_invoice_jit(
+            &self, amount_msat: u64, description: &str, expiry_secs: u32, lsp_pubkey: &str,
+            intercept_scid: &str, cltv_expiry_delta: u32,
+        ) -> Result<String, JsValue> {
+            self.inner
+                .create_invoice_jit(amount_msat, description, expiry_secs, lsp_pubkey, intercept_scid, cltv_expiry_delta)
+                .map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn lsps2_request_params(&self, lsp_pubkey: &str, token: &str) -> Result<String, JsValue> {
+            self.inner.lsps2_request_params(lsp_pubkey, token).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn lsps2_select_params(
+            &self, request_id: &str, menu_index: u32, payment_size_msat: Option<u64>,
+        ) -> Result<String, JsValue> {
+            self.inner
+                .lsps2_select_params(request_id, menu_index, payment_size_msat)
+                .map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn lsps1_request_options(&self, lsp_pubkey: &str) -> Result<String, JsValue> {
+            self.inner.lsps1_request_options(lsp_pubkey).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn lsps1_create_order(&self, lsp_pubkey: &str, lsp_balance_sat: u64) -> Result<String, JsValue> {
+            self.inner.lsps1_create_order(lsp_pubkey, lsp_balance_sat).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn lsps1_check_order(&self, lsp_pubkey: &str, order_id: &str) -> Result<String, JsValue> {
+            self.inner.lsps1_check_order(lsp_pubkey, order_id).map_err(|e| JsValue::from_str(&e))
         }
         pub fn pay_invoice(&self, invoice: &str, amount_msat: Option<u64>) -> Result<String, JsValue> {
             self.inner.pay_invoice(invoice, amount_msat).map_err(|e| JsValue::from_str(&e))

@@ -28,7 +28,7 @@ import {
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
-  lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView,
+  lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
@@ -45,6 +45,7 @@ import {
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,
 } from "./wallet-core.js";
+import { LN_WASM_PIN, LN_CHUNK_SHA256 } from "./ln-asset-pins.generated.js";
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
@@ -1928,7 +1929,17 @@ $("actReceive").onclick = () => {
       // target registered to the user's Fluid name — the native
       // offer (lnOffer) first, then a hosted address (ln).
       if (lnSession) {
-        try { return paintLn(lnSession.createOffer(null, "Fluid"), null, "offer"); } catch { /* no peer yet — fall through */ }
+        // P1-15 (completion audit §5.3): an amountless offer is only
+        // payable when the node has receiving room. At receivable 0
+        // the sheet says so plainly and renders NO artifact.
+        const plan = lnReceivePlan({ receivableMsat: Number(lnSession.balance().receivableMsat || 0), requestedMsat: null, hasLsp: !!lnSession.lsp });
+        if (plan.kind === "offer") {
+          try { return paintLn(lnSession.createOffer(null, "Fluid"), null, "offer"); } catch { /* no peer yet — fall through */ }
+        } else {
+          const slot = $("rcvLnSlot");
+          if (slot) slot.innerHTML = `<p class="tag">Your node can't receive yet — it has no channel with room in it. Open the Lightning panel (Wallet tab → Lightning) and receive a first payment — the payment itself opens your channel.</p>`;
+          return;
+        }
       }
       const myName = localStorage.getItem("fluid_name");
       if (!myName) {
@@ -3337,28 +3348,138 @@ const lnSats = (msat) => `${(Number(msat || 0) / 1000).toLocaleString(undefined,
 
 $("lightningRow").onclick = () => openLightningPanel();
 
+// The Lightning chunk is verified against the fingerprint pinned in
+// THIS bundle (ln-asset-pins.generated.js) before it is imported —
+// code that doesn't match the pin never executes. The import uses a
+// pin-derived version query so a stale cached chunk from a previous
+// build can never be the copy that runs.
+let lnChunkPromise = null;
+function lnLoadChunk() {
+  if (lnChunk) return Promise.resolve(lnChunk);
+  if (lnChunkPromise) return lnChunkPromise;
+  lnChunkPromise = (async () => {
+    try {
+      const url = new URL("./lightning.chunk.js", document.baseURI);
+      const res = await fetch(url, { cache: "no-cache" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      const hex = [...new Uint8Array(digest)].map((x) => x.toString(16).padStart(2, "0")).join("");
+      if (hex !== LN_CHUNK_SHA256) {
+        const e = new Error("The Lightning code that arrived doesn't match this app's fingerprint — it was refused, and nothing ran. This can happen while the site is mid-update; try again in a moment.");
+        e.stage = "integrity";
+        throw e;
+      }
+      lnChunk = await import("./lightning.chunk.js?v=" + LN_CHUNK_SHA256.slice(0, 10));
+      return lnChunk;
+    } catch (e) {
+      lnChunkPromise = null;
+      if (e && e.stage) throw e;
+      const err = new Error("The Lightning code couldn't be downloaded: " + (e && e.message ? e.message : e));
+      err.stage = "software";
+      throw err;
+    }
+  })();
+  return lnChunkPromise;
+}
+
+// One place that turns node events into (a) the panel's recent-events
+// line, (b) repaint, (c) answers for lnWaitEvent waiters (the LSPS
+// flows are request/event pairs).
+let lnEventWaiters = [];
+function lnHandleEvents(evs) {
+  for (const ev of evs) {
+    if (!lnEventWaiters.length) break;
+    const remaining = [];
+    for (const w of lnEventWaiters) {
+      if (ev.type === w.type && (!w.match || w.match(ev))) { clearTimeout(w.timer); w.resolve(ev); }
+      else if (w.failTypes && w.failTypes.includes(ev.type)) { clearTimeout(w.timer); w.reject(new Error(ev.error || "The Lightning provider refused the request.")); }
+      else remaining.push(w);
+    }
+    lnEventWaiters = remaining;
+  }
+  lnEvents = [...evs].reverse().concat(lnEvents).slice(0, 8);
+  if ($("lnPanel")) paintLnPanel();
+}
+function lnWaitEvent(type, { timeoutMs = 45000, match = null, failTypes = ["lsps2_failed", "lsps1_failed"] } = {}) {
+  return new Promise((resolve, reject) => {
+    const w = { type, match, failTypes, resolve, reject, timer: 0 };
+    w.timer = setTimeout(() => {
+      lnEventWaiters = lnEventWaiters.filter((x) => x !== w);
+      reject(new Error("The Lightning provider didn't answer in time — check your connection and try again."));
+    }, timeoutMs);
+    lnEventWaiters.push(w);
+  });
+}
+
+// Boot (or reuse) the node session on a network. Throws an error
+// carrying .stage ("software" | "download" | "integrity" | "chain" |
+// "node") so callers can say exactly which leg failed — never a bare
+// "Failed to fetch" (owner field evidence, 2026-11-10).
+async function lnEnsureSession(network, onProgress) {
+  const net = network || lnNetKey();
+  if (lnSession && lnSession.network === net) return lnSession;
+  if (lnSession) { lnSession.stopLoops(); lnSession = null; }
+  const chunk = await lnLoadChunk();
+  const session = await chunk.bootLightning({
+    phrase: wallet.mnemonic.phrase,
+    network: net,
+    wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "",
+    wasmPin: LN_WASM_PIN,
+    onProgress: onProgress || (() => {}),
+  });
+  lnSession = session;
+  session.startLoops((evs) => lnHandleEvents(evs));
+  session.syncNow().catch(() => {});
+  return session;
+}
+
+function lnBootStageHeadline(stage) {
+  if (stage === "download") return "Your Lightning node couldn't load — the node program didn't finish downloading. This is usually a slow or dropped connection.";
+  if (stage === "integrity") return "Your Lightning node couldn't load — the downloaded code didn't match this app's fingerprint, so Fluid refused to run it. Nothing was executed.";
+  if (stage === "chain") return "Your Lightning node program loaded, but Fluid couldn't read the Bitcoin chain tip to start it.";
+  if (stage === "node") return "Your Lightning node couldn't start.";
+  return "Your Lightning node couldn't load — its code didn't download.";
+}
+
+function lnBootFailedSheet(e) {
+  const stage = (e && e.stage) || "software";
+  const reason = e && e.message ? e.message : String(e);
+  console.warn("[fluid-ln] boot failed at stage:", stage, e);
+  openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning</h3>
+    <p><b>${esc(lnBootStageHeadline(stage))}</b></p>
+    <p class="tag">${esc(reason)}</p>
+    <p class="tag">Nothing was sent or changed, and your funds are untouched. Any part of the download that did arrive is kept on your phone — retrying continues from there, not from zero.</p>
+    <div class="stickyfoot"><button class="btn" id="lnBootRetry">Retry</button></div>
+    <h4>Fallback</h4>
+    <p class="tag">This is <b>not</b> your node — an external wallet would pay instead: <button class="btn ghost" id="lnBootFallback">Pay via WebLN / LNURL instead</button></p>`);
+  $("lnBootRetry").onclick = () => openLightningPanel();
+  $("lnBootFallback").onclick = () => lnFallbackSheet("");
+  // If the connection comes back while this sheet is up, retry once
+  // automatically — the download resumes from its kept progress.
+  const onOnline = () => {
+    window.removeEventListener("online", onOnline);
+    if ($("lnBootRetry")) openLightningPanel();
+  };
+  window.addEventListener("online", onOnline);
+}
+
 async function openLightningPanel() {
   openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning</h3>
-    <p class="tag">Starting your Lightning node… The first open downloads the node code (a few MB, once); after that it runs entirely on your device, from your own seed. Nobody custodies your sats.</p>
-    <p class="msg" id="lnBootMsg"></p>`);
+    <p class="tag" id="lnBootLine"><span class="spinner"></span> Starting your Lightning node… it runs entirely on your device, from your own seed. Nobody custodies your sats.</p>`);
+  const line = (html) => { const el = $("lnBootLine"); if (el) el.innerHTML = html; };
   try {
-    if (!lnChunk) lnChunk = await import("./lightning.chunk.js");
-    if (!lnSession || lnSession.network !== lnNetKey()) {
-      if (lnSession) lnSession.stopLoops();
-      lnSession = await lnChunk.bootLightning({
-        phrase: wallet.mnemonic.phrase,
-        network: lnNetKey(),
-        wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "",
-      });
-      lnSession.startLoops((evs) => {
-        lnEvents = [...evs.reverse(), ...lnEvents].slice(0, 8);
-        if ($("lnPanel")) paintLnPanel();
-      });
-      lnSession.syncNow().catch(() => {});
-    }
+    await lnEnsureSession(lnNetKey(), (stage, info) => {
+      if (stage === "download") {
+        const mb = (n) => (n / 1048576).toFixed(1);
+        line(`<span class="spinner"></span> Downloading the node program: ${mb(info.downloadedBytes)} of ${mb(info.totalBytes)} MB${info.persisted ? " — kept on your phone as it arrives, so if the connection drops it continues where it stopped, even if you leave and come back." : " — this browser can't keep a download between visits, so stay on this screen until it finishes."} First time only; after that your node starts from the copy already on your phone.`);
+      } else if (stage === "verify") line(`<span class="spinner"></span> Download complete — checking it against the app's fingerprint…`);
+      else if (stage === "chain") line(`<span class="spinner"></span> Node program ready — reading the Bitcoin chain tip…`);
+      else if (stage === "node") line(`<span class="spinner"></span> Starting your node…`);
+    });
     paintLnPanel();
   } catch (e) {
-    lnFallbackSheet("The native Lightning node isn't available in this build (" + e.message + ").");
+    lnBootFailedSheet(e);
   }
 }
 
@@ -3373,12 +3494,16 @@ function lnEventLine(ev) {
   return "";
 }
 
+let lnAdvancedOpen = false;
 function paintLnPanel() {
   const s = lnSession; if (!s) return;
   const bal = s.balance();
   const chans = s.channels();
   const hist = s.history().slice(-8).reverse();
   const net = s.network;
+  const peers = s.peerStatus();
+  const relayDefault = s.defaultRelayUrl || "";
+  const relayVal = relayDefault || localStorage.getItem("fluid_ln_relay") || "";
   openSheet(`<div id="lnPanel"><h3>${icon("bolt", "ic ic-brand")} Lightning — your own node</h3>
     <p class="tag">Node <span class="mono">${esc(s.nodeId.slice(0, 16))}…</span> · network:
       <select id="lnNetSel">
@@ -3386,7 +3511,7 @@ function paintLnPanel() {
         <option value="signet" ${net === "signet" ? "selected" : ""}>Signet (test coins)</option>
         <option value="testnet" ${net === "testnet" ? "selected" : ""}>Testnet (test coins)</option>
       </select></p>
-    <p><b>Spendable:</b> ${lnSats(bal.spendableMsat)} · <b>Receivable:</b> ${lnSats(bal.receivableMsat)}${bal.claimableOnchainSat ? ` · <b>Claimable on-chain:</b> ${Number(bal.claimableOnchainSat).toLocaleString()} sats` : ""}</p>
+    <p><b>Receiving room:</b> ${lnSats(bal.receivableMsat)} · <b>Sending room:</b> ${lnSats(bal.spendableMsat)}${bal.claimableOnchainSat ? ` · <b>Claimable on-chain:</b> ${Number(bal.claimableOnchainSat).toLocaleString()} sats` : ""}</p>
     ${lnEvents.length ? `<p class="tag">${lnEvents.map(lnEventLine).filter(Boolean).map(esc).join("<br>")}</p>` : ""}
     <h4>Pay</h4>
     <textarea id="lnTarget" rows="3" placeholder="lnbc… invoice, lno… offer, ₿name@domain, name@domain, or a Fluid name"></textarea>
@@ -3399,27 +3524,44 @@ function paintLnPanel() {
     <button class="btn ghost" id="lnInvoiceBtn">New one-time invoice</button>
     <button class="btn ghost" id="lnOfferBtn">My reusable offer (my Lightning address)</button>
     <div id="lnRcvOut"></div>
+    <h4>Buy receiving room</h4>
+    <p class="tag">Pay Megalith once to open a channel to your node with the sats on their side — that side is your receiving room. The channel's sats sit on the provider's side; what you then receive into the room becomes yours to spend.</p>
+    <p>
+      <button class="btn ghost lnBuyPreset" data-sats="100000">100,000 sats</button>
+      <button class="btn ghost lnBuyPreset" data-sats="500000">500,000 sats</button>
+      <button class="btn ghost lnBuyPreset" data-sats="1000000">1,000,000 sats</button>
+    </p>
+    <div id="lnBuyOut"></div>
+    <h4>Connections</h4>
+    ${peers.length ? peers.map(p => `<p class="tag mono">${esc(p.pubkey.slice(0, 16))}… · ${esc(p.host)}:${p.port} · ${p.state === "connected" ? "connected" : "reconnecting…"}</p>`).join("") : `<p class="tag">No peers yet — your node reconnects to these automatically after every restart.</p>`}
+    <h4>Channels (${chans.length})</h4>
+    ${chans.length ? chans.map(c => `<p class="tag mono">${esc(String(c.counterparty).slice(0, 16))}… · ${Number(c.valueSat).toLocaleString()} sats · spend ${lnSats(c.outboundMsat)} / receive ${lnSats(c.inboundMsat)}${c.isUsable ? "" : " · not ready yet"}</p>`).join("") : `<p class="tag">No channels yet. Your first received payment can open one (see Receive above), or open one yourself under Advanced.</p>`}
+    <div id="lnFundOut"></div>
     <h4>Receive while Fluid is closed</h4>
-    <p class="tag">${esc(holdWindowCopy(24))}</p>
-    <p class="tag">Your channel peer can act as your holding peer: ask it for blinded paths (the DripBot keeper provides them), paste them here, and Fluid builds your offline-receive offer.</p>
-    <textarea id="lnSisPaths" rows="2" placeholder='Blinded paths from your holding peer (JSON list)'></textarea>
-    <button class="btn ghost" id="lnSisBtn">Use these paths &amp; show my offline offer</button>
+    <p class="tag">Not set up yet — this needs a holding peer that is always online. Fluid's own holding peer is on its way; for now, payments to your offer need Fluid open.</p>
     <div id="lnSisOut"></div>
     <h4>Wake-up notifications</h4>
-    <p class="tag">Optional: a notification relay (holds no keys and no funds — see Tools in the project repo) pings your phone when a payment is waiting, so you can open Fluid and claim it.</p>
-    <input id="lnRelay" placeholder="Relay URL, e.g. https://relay.example.com" value="${esc(localStorage.getItem("fluid_ln_relay") || "")}">
+    ${relayDefault ? `<p class="tag">Optional: Fluid's notification relay (holds no keys and no funds — see Tools in the project repo) pings your phone when a payment is waiting, so you can open Fluid and claim it.</p>
     <button class="btn ghost" id="lnWakeBtn">Enable wake-up notifications</button>
-    <p class="msg" id="lnWakeMsg"></p>
-    <h4>Channels (${chans.length})</h4>
-    ${chans.length ? chans.map(c => `<p class="tag mono">${esc(String(c.counterparty).slice(0, 16))}… · ${Number(c.valueSat).toLocaleString()} sats · spend ${lnSats(c.outboundMsat)} / receive ${lnSats(c.inboundMsat)}${c.isUsable ? "" : " · not ready yet"}</p>`).join("") : `<p class="tag">No channels yet — open one to a peer or LSP below. You need a channel before you can send or receive.</p>`}
-    <input id="lnPeerKey" placeholder="Peer pubkey (66 hex chars)">
-    <input id="lnPeerHost" placeholder="Peer host — wss://… endpoint, or host for your proxy">
-    <input id="lnPeerPort" inputmode="numeric" placeholder="Port (e.g. 9735)">
-    <input id="lnChanSats" inputmode="numeric" placeholder="Channel size in sats">
-    <input id="lnProxy" placeholder="Optional WebSocket proxy template: wss://proxy.example/{host}/{port}" value="${esc(localStorage.getItem("fluid_ln_wsproxy") || "")}">
-    <button class="btn ghost" id="lnOpenBtn">Connect &amp; open channel</button>
-    <p class="msg" id="lnChanMsg"></p>
-    <div id="lnFundOut"></div>
+    <p class="msg" id="lnWakeMsg"></p>` : `<p class="tag">Wake-up notifications need Fluid's notification relay, which isn't live yet.</p>`}
+    <details id="lnAdvanced" ${lnAdvancedOpen ? "open" : ""}>
+      <summary><b>Advanced — connect to any peer</b></summary>
+      <p class="tag">Connect to any Lightning peer and open a channel from your own on-chain Bitcoin. Peers you connect to are remembered and reconnected automatically.</p>
+      <input id="lnPeerKey" placeholder="Peer pubkey (66 hex chars)">
+      <input id="lnPeerHost" placeholder="Peer host — wss://… endpoint, or host for your proxy">
+      <input id="lnPeerPort" inputmode="numeric" placeholder="Port (e.g. 9735)">
+      <input id="lnChanSats" inputmode="numeric" placeholder="Channel size in sats">
+      <input id="lnProxy" placeholder="Optional WebSocket proxy template: wss://proxy.example/{host}/{port}" value="${esc(localStorage.getItem("fluid_ln_wsproxy") || s.defaultWsProxy || "")}">
+      <button class="btn ghost" id="lnOpenBtn">Connect &amp; open channel</button>
+      <p class="msg" id="lnChanMsg"></p>
+      <p class="tag" style="margin-top:14px">Offline receive (manual): if a peer acts as your holding peer, ask it for blinded paths (the DripBot keeper provides them) and paste them here — Fluid builds your offline-receive offer from them. ${esc(holdWindowCopy(24))}</p>
+      <textarea id="lnSisPaths" rows="2" placeholder='Blinded paths from your holding peer (JSON list)'></textarea>
+      <button class="btn ghost" id="lnSisBtn">Use these paths &amp; show my offline offer</button>
+      <p class="tag" style="margin-top:14px">Wake-up relay (self-hosted): a relay URL you run yourself. Holds no keys and no funds.</p>
+      <input id="lnRelay" placeholder="Relay URL, e.g. https://relay.example.com" value="${esc(relayVal)}">
+      <button class="btn ghost" id="lnWakeBtnAdv">Enable wake-up notifications via this relay</button>
+      <p class="msg" id="lnWakeMsgAdv"></p>
+    </details>
     ${hist.length ? `<h4>Recent payments</h4>${hist.map(h => `<p class="tag">${h.dir === "in" ? "+" : h.dir === "out" ? "−" : "failed "}${h.amountMsat ? lnSats(h.amountMsat) + " · " : ""}<span class="mono">${esc(String(h.paymentHash || "").slice(0, 12))}…</span></p>`).join("")}` : ""}
     <h4>Fallback</h4>
     <p class="tag">Prefer an external Lightning wallet? <button class="btn ghost" id="lnFallbackBtn">Pay via WebLN / LNURL instead</button></p>
@@ -3429,13 +3571,17 @@ function paintLnPanel() {
   $("lnInvoiceBtn").onclick = () => lnShowReceive("invoice");
   $("lnOfferBtn").onclick = () => lnShowReceive("offer");
   $("lnSisBtn").onclick = lnSetupOfflineOffer;
-  $("lnWakeBtn").onclick = lnEnableWakeUp;
+  if ($("lnWakeBtn")) $("lnWakeBtn").onclick = () => lnEnableWakeUp(relayDefault);
+  $("lnWakeBtnAdv").onclick = () => lnEnableWakeUp(($("lnRelay").value || "").trim());
   $("lnOpenBtn").onclick = lnOpenChannel;
   $("lnFallbackBtn").onclick = () => lnFallbackSheet("");
-  // The event pump repaints this whole panel; the receive and
+  $("lnAdvanced").addEventListener("toggle", (ev) => { lnAdvancedOpen = ev.target.open; });
+  document.querySelectorAll(".lnBuyPreset").forEach((b) => { b.onclick = () => lnBuyRoom(Number(b.dataset.sats)); });
+  // The event pump repaints this whole panel; the receive, buy and
   // offline-offer displays are state-driven, so repaint them from
   // their state — a rendered offer must never be wiped blank (F6).
   paintLnReceive();
+  paintLnBuy();
   paintLnSis();
 }
 
@@ -3447,6 +3593,23 @@ async function lnPayWithNode() {
   let paidMsat = msat;
   try {
     const kind = classifyLightningTarget(target).kind;
+    // Pre-checks with plain answers (completion audit §5.2): a dead
+    // connection or an over-room amount should say so up front, not
+    // surface as a routing failure after the fact.
+    const peers = lnSession.peerStatus();
+    if (peers.length && !peers.some((p) => p.state === "connected")) {
+      return msg("lnPayMsg", "Your node isn't connected right now — give it a few seconds after opening Fluid, then try again.");
+    }
+    let checkMsat = msat;
+    if (kind === "bolt11") {
+      try { const p = parseBolt11(target); if (p.amountMsat != null) checkMsat = BigInt(Math.round(Number(p.amountMsat))); } catch { /* the pay attempt reports a bad invoice */ }
+    }
+    if (checkMsat != null) {
+      const spendable = Number(lnSession.balance().spendableMsat || 0);
+      if (Number(checkMsat) > spendable) {
+        return msg("lnPayMsg", `You don't have that much you can send — your sending room is ${Math.floor(spendable / 1000).toLocaleString()} sats.`);
+      }
+    }
     msg("lnPayMsg", "Paying…", true);
     if (kind === "bolt11") {
       const parsed = parseBolt11(target);
@@ -3501,6 +3664,8 @@ let lnReceiveWhich = "invoice";
 let lnSisState = { status: "idle" };
 function paintLnReceive() {
   const out = $("lnRcvOut"); if (!out) return;
+  if (lnJitFlow) { paintLnJitFlow(out); return; }
+  if (lnPartialState) { paintLnPartial(out); return; }
   const v = lnReceiveView(lnReceiveState);
   if (v.status === "working") {
     out.innerHTML = `<p class="tag"><span class="spinner"></span> Building your ${lnReceiveWhich === "offer" ? "reusable offer" : "invoice"}…</p>`;
@@ -3534,8 +3699,38 @@ function paintLnSis() {
 function lnShowReceive(which) {
   if (!$("lnRcvOut")) return;
   lnReceiveWhich = which;
+  lnJitFlow = null;
+  lnPartialState = null;
   const sats = Number($("lnRcvSats").value) || 0;
   const desc = $("lnRcvDesc").value.trim() || "Fluid payment";
+  const bal = lnSession.balance();
+  // P1-15 (completion audit §5.3): the plan decides what may render.
+  // At receivable 0 NO invoice or offer is produced anywhere — the
+  // node would mint an artifact nobody can pay.
+  const plan = lnReceivePlan({
+    receivableMsat: Number(bal.receivableMsat || 0),
+    requestedMsat: sats > 0 ? Math.round(sats * 1000) : null,
+    hasLsp: !!lnSession.lsp,
+  });
+  if (plan.kind === "need-channel") {
+    lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "failure", error: new Error("Your node can't receive yet — it has no channel with room in it. A channel with room is what lets sats arrive.") });
+    paintLnReceive();
+    return;
+  }
+  if (plan.kind === "need-amount") {
+    lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "failure", error: new Error("Enter an amount for your first receive — the first payment opens your channel, so it has to name the amount.") });
+    paintLnReceive();
+    return;
+  }
+  if (plan.kind === "jit") {
+    lnStartJitReceive(Math.round(sats * 1000), desc);
+    return;
+  }
+  if (plan.kind === "invoice" && plan.partial) {
+    lnPartialState = { requestedMsat: plan.requestedMsat, receivableMsat: plan.receivableMsat };
+    paintLnReceive();
+    return;
+  }
   lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "request" });
   paintLnReceive();
   try {
@@ -3547,6 +3742,261 @@ function lnShowReceive(which) {
     lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "failure", error: e });
   }
   paintLnReceive();
+}
+
+// The receivable-0-with-room-elsewhere state (audit §5.3, verbatim
+// numbers): offer the largest invoice the channels CAN receive, or
+// the path to more room — never the unpayable full amount.
+let lnPartialState = null;
+function paintLnPartial(out) {
+  const x = Math.floor(lnPartialState.requestedMsat / 1000);
+  const y = Math.floor(lnPartialState.receivableMsat / 1000);
+  out.innerHTML = `<p class="msg err">This invoice asks for ${x.toLocaleString()} sats, but your channels can only receive ${y.toLocaleString()} sats right now. Whoever pays it can send at most ${y.toLocaleString()}.</p>
+    <button class="btn ghost" id="lnPartialBtn">Receive ${y.toLocaleString()} instead</button>
+    <button class="btn ghost" id="lnPartialMore">Get more receiving room</button>`;
+  $("lnPartialBtn").onclick = () => {
+    lnPartialState = null;
+    if ($("lnRcvSats")) $("lnRcvSats").value = String(y);
+    lnShowReceive("invoice");
+  };
+  $("lnPartialMore").onclick = () => {
+    lnPartialState = null;
+    paintLnPanel();
+    const el = document.querySelector(".lnBuyPreset");
+    if (el) el.scrollIntoView({ block: "center" });
+  };
+}
+
+// --- LSPS2 just-in-time receive (Phase 1) ---------------------------
+// State lives outside the DOM for the same F6 reason as the receive
+// display: the event pump repaints the panel and must find the flow
+// exactly where it was.
+let lnJitFlow = null; // { stage, amountMsat, desc, menu, chosen, feeMsat, error }
+
+function paintLnJitFlow(out) {
+  const f = lnJitFlow;
+  if (f.stage === "params" || f.stage === "buying") {
+    out.innerHTML = `<p class="tag"><span class="spinner"></span> ${f.stage === "params" ? "Asking Megalith for its channel-opening terms…" : "Opening your channel and building the invoice…"}</p>`;
+    return;
+  }
+  if (f.stage === "failed") {
+    out.innerHTML = `<p class="msg err">${esc(f.error || "The channel opening failed.")}</p>
+      <button class="btn ghost" id="lnJitRetry">Try again</button>`;
+    $("lnJitRetry").onclick = () => lnShowReceive("invoice");
+    return;
+  }
+  // stage === "review": the fee disclosure, verbatim shape, BEFORE
+  // anything is bought or shown as payable.
+  const a = Math.floor(f.amountMsat / 1000);
+  const fee = Math.max(1, Math.round(f.feeMsat / 1000));
+  const landed = a - fee;
+  out.innerHTML = `<p>Your first payment opens your channel. The provider (Megalith) takes ${fee.toLocaleString()} sats of this ${a.toLocaleString()}-sat payment for opening it, so ${landed.toLocaleString()} sats land in your wallet. Keep Fluid open until the payment lands.</p>
+    <button class="btn" id="lnJitGo">Show my invoice</button>
+    <button class="btn ghost" id="lnJitCancel">Cancel</button>`;
+  $("lnJitGo").onclick = () => lnConfirmJitReceive();
+  $("lnJitCancel").onclick = () => { lnJitFlow = null; paintLnReceive(); };
+}
+
+async function lnStartJitReceive(amountMsat, desc) {
+  const lsp = lnSession.lsp;
+  lnJitFlow = { stage: "params", amountMsat, desc };
+  paintLnReceive();
+  try {
+    // The LSP peer must be connected for the negotiation; this also
+    // records it in the peer book so it reconnects after restarts.
+    try { lnSession.connectPeer(lsp.pubkey, lsp.host, lsp.port); } catch { /* already live or dial in flight */ }
+    const rid = lnSession.lsps2RequestParams(lsp.pubkey, lsp.token);
+    const ev = await lnWaitEvent("lsps2_params_ready", { match: (e) => e.requestId === rid });
+    const menu = (ev.menu || []).map((p, i) => ({ ...p, i, feeMsat: lnLsps2OpeningFeeMsat(amountMsat, p) }))
+      .filter((p) => amountMsat >= Number(p.minPaymentSizeMsat || 0) && amountMsat <= Number(p.maxPaymentSizeMsat || Infinity))
+      .sort((x, y) => x.feeMsat - y.feeMsat);
+    if (!menu.length) {
+      const all = ev.menu || [];
+      const lo = all.length ? Math.ceil(Math.min(...all.map((p) => Number(p.minPaymentSizeMsat || 0))) / 1000) : 0;
+      const hi = all.length ? Math.floor(Math.max(...all.map((p) => Number(p.maxPaymentSizeMsat || 0))) / 1000) : 0;
+      lnJitFlow = { stage: "failed", amountMsat, desc, error: `Megalith can't open a channel for that amount — its range is ${lo.toLocaleString()} to ${hi.toLocaleString()} sats.` };
+      paintLnReceive();
+      return;
+    }
+    lnJitFlow = { stage: "review", amountMsat, desc, menu, chosen: menu[0], feeMsat: menu[0].feeMsat, requestId: rid };
+    paintLnReceive();
+  } catch (e) {
+    lnJitFlow = { stage: "failed", amountMsat, desc, error: lnErrorText(e) };
+    paintLnReceive();
+  }
+}
+
+async function lnConfirmJitReceive() {
+  const f = lnJitFlow; if (!f || f.stage !== "review") return;
+  const lsp = lnSession.lsp;
+  const chosen = f.chosen;
+  lnJitFlow = { ...f, stage: "buying" };
+  paintLnReceive();
+  try {
+    // Invoice expiry must end before the negotiated terms do.
+    const untilMs = Date.parse(chosen.validUntil) || (Date.now() + 3600000);
+    const expirySecs = Math.max(120, Math.min(3600, Math.floor((untilMs - Date.now()) / 1000) - 60));
+    const buyRid = lnSession.lsps2SelectParams(f.requestId, chosen.i, f.amountMsat);
+    const ip = await lnWaitEvent("lsps2_invoice_params", { match: (e) => e.requestId === buyRid });
+    const invoice = lnSession.createInvoiceJit(f.amountMsat, f.desc, expirySecs, lsp.pubkey, ip.interceptScid, ip.cltvExpiryDelta);
+    // The Satora gate recognises this invoice as ours-to-receive
+    // ONLY through this local record (completion audit §5.4).
+    try {
+      const parsed = parseBolt11(invoice);
+      if (parsed && parsed.paymentHash) lnStoreJitRecord(parsed.paymentHash, ip.interceptScid, chosen.maxPaymentSizeMsat);
+    } catch { /* the invoice still renders; the gate just won't special-case it */ }
+    lnJitFlow = null;
+    lnReceiveState = lnReceiveTransition(lnReceiveState, { type: "success", text: invoice });
+    paintLnReceive();
+  } catch (e) {
+    lnJitFlow = { stage: "failed", amountMsat: f.amountMsat, desc: f.desc, error: lnErrorText(e) };
+    paintLnReceive();
+  }
+}
+
+// JIT gate records (audit §5.4): { paymentHash -> { scid, maxMsat } }
+// plus the LSP they belong to. Payment hashes and SCIDs are routing
+// data the invoice itself reveals — not secrets — so they live in
+// plain localStorage, capped at the last 50.
+const LN_JIT_RECORDS_KEY = "fluid_ln_jit_records";
+function lnLoadJitRecords() {
+  try {
+    const j = JSON.parse(localStorage.getItem(LN_JIT_RECORDS_KEY) || "{}");
+    return j && typeof j === "object" ? j : {};
+  } catch { return {}; }
+}
+function lnStoreJitRecord(paymentHash, scid, maxPaymentMsat) {
+  const all = lnLoadJitRecords();
+  all[String(paymentHash).toLowerCase()] = { scid: String(scid), maxPaymentMsat: String(maxPaymentMsat || ""), lsp: lnSession ? lnSession.lsp.pubkey : "" };
+  const keys = Object.keys(all);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete all[k];
+  try { localStorage.setItem(LN_JIT_RECORDS_KEY, JSON.stringify(all)); } catch { /* full/blocked storage: gate falls back to today's rule */ }
+}
+// The gate context for one destination invoice: the records map plus
+// THIS invoice's negotiated maximum (the gate wants a scalar).
+function lnJitGateContext(parsed) {
+  if (!parsed || !parsed.paymentHash || !lnSession || !lnSession.lsp) return null;
+  const all = lnLoadJitRecords();
+  const rec = all[String(parsed.paymentHash).toLowerCase()];
+  if (!rec) return null;
+  const interceptScids = {};
+  for (const [h, r] of Object.entries(all)) interceptScids[h] = r.scid;
+  return { lspPubkey: lnSession.lsp.pubkey, interceptScids, maxPaymentMsat: rec.maxPaymentMsat || "0" };
+}
+
+// --- LSPS1 buy receiving room (Phase 1) -----------------------------
+let lnBuyState = { status: "idle" };
+function paintLnBuy() {
+  const out = $("lnBuyOut"); if (!out) return;
+  const b = lnBuyState;
+  if (b.status === "idle") { out.innerHTML = ""; return; }
+  if (b.status === "working") { out.innerHTML = `<p class="tag"><span class="spinner"></span> ${esc(b.note || "Talking to Megalith…")}</p>`; return; }
+  if (b.status === "failed") { out.innerHTML = `<p class="msg err">${esc(b.error || "The order failed.")}</p>`; return; }
+  if (b.status === "order") {
+    const o = b.order;
+    const bolt11 = o.payment && o.payment.bolt11 ? o.payment.bolt11 : null;
+    const onchain = o.payment && o.payment.onchain ? o.payment.onchain : null;
+    const totalSat = bolt11 ? Number(bolt11.orderTotalSat) : onchain ? Number(onchain.orderTotalSat) : 0;
+    const feeSat = bolt11 ? Number(bolt11.feeTotalSat) : onchain ? Number(onchain.feeTotalSat) : 0;
+    let html = `<p>Order placed: ${Number(o.lspBalanceSat || b.sats).toLocaleString()} sats of receiving room. Total to pay: <b>${totalSat.toLocaleString()} sats</b>${feeSat ? ` (includes a ${feeSat.toLocaleString()} sat provider fee)` : ""}. The channel's sats sit on the provider's side — they are your receiving room, not your balance.</p>`;
+    if (bolt11) {
+      html += `<p class="mono">${esc(bolt11.invoice)}</p>
+        <button class="btn ghost" id="lnBuyCopyInv">Copy payment invoice</button>
+        ${lnSession.balance().spendableMsat >= totalSat * 1000 ? `<button class="btn" id="lnBuyPayNode">Pay from my node</button>` : `<p class="tag">Your node's sending room doesn't cover this — pay the invoice from any other Lightning wallet, or pay on-chain below if offered.</p>`}`;
+    }
+    if (onchain) {
+      html += `<p class="tag">Pay on-chain instead: send exactly <b>${Number(onchain.orderTotalSat).toLocaleString()} sats</b> to <span class="mono">${esc(onchain.address)}</span></p>
+        <button class="btn ghost" id="lnBuyPayBtc">Pay from my Bitcoin</button>`;
+    }
+    html += `<p class="msg" id="lnBuyMsg"></p>`;
+    out.innerHTML = html;
+    if ($("lnBuyCopyInv")) $("lnBuyCopyInv").onclick = () => copyText(bolt11.invoice, $("lnBuyCopyInv"));
+    if ($("lnBuyPayNode")) $("lnBuyPayNode").onclick = async () => {
+      try {
+        lnSession.payInvoice(bolt11.invoice, null);
+        msg("lnBuyMsg", "Paid ✓ Watching for your new channel…", true);
+        lnWatchBuyOrder();
+      } catch (e) { msg("lnBuyMsg", "Payment failed: " + lnErrorText(e)); }
+    };
+    if ($("lnBuyPayBtc")) $("lnBuyPayBtc").onclick = () => lnBuyPayOnchain(onchain);
+    return;
+  }
+  if (b.status === "funded") {
+    out.innerHTML = `<p class="msg">Your channel is open ✓ Your receiving room is updated above.</p>`;
+    return;
+  }
+  out.innerHTML = "";
+}
+
+async function lnBuyRoom(sats) {
+  const lsp = lnSession.lsp;
+  lnBuyState = { status: "working", sats, note: "Asking Megalith what receiving room it can sell…" };
+  paintLnBuy();
+  try {
+    try { lnSession.connectPeer(lsp.pubkey, lsp.host, lsp.port); } catch { /* already live or dial in flight */ }
+    const rid = lnSession.lsps1RequestOptions(lsp.pubkey);
+    const opts = await lnWaitEvent("lsps1_options", { match: (e) => e.requestId === rid });
+    const o = opts.options || {};
+    if (sats < Math.ceil(Number(o.minInitialLspBalanceSat || 0)) || sats > Math.floor(Number(o.maxInitialLspBalanceSat || Infinity))) {
+      lnBuyState = { status: "failed", error: `Megalith sells receiving room between ${Number(o.minInitialLspBalanceSat || 0).toLocaleString()} and ${Number(o.maxInitialLspBalanceSat || 0).toLocaleString()} sats — ${sats.toLocaleString()} is outside that range.` };
+      paintLnBuy();
+      return;
+    }
+    lnBuyState = { status: "working", sats, note: "Placing the order…" };
+    paintLnBuy();
+    lnSession.lsps1CreateOrder(lsp.pubkey, sats);
+    const orderEv = await lnWaitEvent("lsps1_order", { failTypes: ["lsps1_failed"] });
+    lnBuyState = { status: "order", sats, order: orderEv };
+    paintLnBuy();
+    lnWatchBuyOrder();
+  } catch (e) {
+    lnBuyState = { status: "failed", error: lnErrorText(e) };
+    paintLnBuy();
+  }
+}
+
+// After an order exists (whichever way it gets paid), poll its status
+// until the channel is funded, then repaint so the room shows.
+let lnBuyWatchTimer = null;
+function lnWatchBuyOrder() {
+  if (lnBuyWatchTimer || !lnBuyState.order) return;
+  const orderId = lnBuyState.order.orderId;
+  const lsp = lnSession.lsp;
+  let rounds = 0;
+  lnBuyWatchTimer = setInterval(async () => {
+    rounds++;
+    if (rounds > 40 || !$("lnBuyOut") || !lnSession) { clearInterval(lnBuyWatchTimer); lnBuyWatchTimer = null; return; }
+    try {
+      lnSession.lsps1CheckOrder(lsp.pubkey, orderId);
+      const ev = await lnWaitEvent("lsps1_order_status", { timeoutMs: 8000, match: (e) => e.orderId === orderId, failTypes: [] }).catch(() => null);
+      if (ev && ev.channelFunded) {
+        clearInterval(lnBuyWatchTimer); lnBuyWatchTimer = null;
+        lnBuyState = { status: "funded", sats: lnBuyState.sats };
+        paintLnPanel();
+      }
+    } catch { /* next round */ }
+  }, 15000);
+}
+
+async function lnBuyPayOnchain(onchain) {
+  const out = $("lnBuyOut"); if (!out) return;
+  try {
+    const sats = Number(onchain.orderTotalSat);
+    const to = onchain.address;
+    const plan = await planBitcoinSend(wallet.mnemonic.phrase, { to, amountBtc: sats / 1e8 });
+    if (!plan || !plan.hex) throw new Error("Couldn't build the Bitcoin payment — check your Bitcoin balance covers it plus the network fee.");
+    out.innerHTML = `<p class="tag">Pay for your receiving room: send exactly <b>${sats.toLocaleString()} sats</b> to <span class="mono">${esc(to)}</span>. Network fee: ${plan.feeSat} sats.</p>
+      <button class="btn" id="lnBuyBtcBtn">Pay ${sats.toLocaleString()} sats + ${plan.feeSat} fee</button>
+      <p class="msg" id="lnBuyMsg"></p>`;
+    $("lnBuyBtcBtn").onclick = async () => {
+      try {
+        msg("lnBuyMsg", "Broadcasting the payment…", true);
+        const txid = await broadcastBitcoinTx(plan.hex);
+        msg("lnBuyMsg", "Bitcoin payment sent ✓ (" + String(txid).slice(0, 16) + "…) Watching for your new channel…", true);
+        lnWatchBuyOrder();
+      } catch (e) { msg("lnBuyMsg", "Payment failed: " + lnErrorText(e)); }
+    };
+  } catch (e) { msg("lnBuyMsg", "Bitcoin payment failed: " + lnErrorText(e)); }
 }
 
 async function lnSetupOfflineOffer() {
@@ -3573,17 +4023,19 @@ async function lnSetupOfflineOffer() {
   paintLnSis();
 }
 
-async function lnEnableWakeUp() {
+async function lnEnableWakeUp(relayUrl) {
+  const msgId = relayUrl && lnSession && relayUrl === lnSession.defaultRelayUrl ? "lnWakeMsg" : "lnWakeMsgAdv";
   try {
-    const relayUrl = $("lnRelay").value.trim();
-    if (!relayUrl) return msg("lnWakeMsg", "Enter the relay URL first.");
-    localStorage.setItem("fluid_ln_relay", relayUrl);
+    const url = String(relayUrl || "").trim();
+    if (!url) return msg(msgId, "Enter the relay URL first.");
+    localStorage.setItem("fluid_ln_relay", url);
+    const chunk = await lnLoadChunk();
     if ("serviceWorker" in navigator) {
       await navigator.serviceWorker.register("sw.js").catch(() => { throw new Error("Service worker registration failed — wake-ups need the hosted build."); });
     }
-    const { webhookUrl } = await lnChunk.subscribeWakeUp({ relayUrl, nodeId: lnSession.nodeId });
-    msg("lnWakeMsg", "Wake-ups on ✓ Give this webhook URL to your holding peer: " + webhookUrl, true);
-  } catch (e) { msg("lnWakeMsg", lnErrorText(e)); }
+    const { webhookUrl } = await chunk.subscribeWakeUp({ relayUrl: url, nodeId: lnSession.nodeId });
+    msg(msgId, "Wake-ups on ✓ Give this webhook URL to your holding peer: " + webhookUrl, true);
+  } catch (e) { msg(msgId, lnErrorText(e)); }
 }
 
 async function lnOpenChannel() {
@@ -4330,6 +4782,18 @@ $("actSwap").onclick = () => {
         destInput = ($("wDestAddr").value || "").trim();
         if (toKey === "bitcoin" && !destInput) { try { destInput = bitcoinTaprootAddress(wallet.mnemonic.phrase); } catch { /* handled below */ } }
         if (!destInput) return msg("wMsg", toKey === "bitcoin" ? "Enter the Bitcoin address to receive at." : "Paste the Lightning invoice, Lightning address or LNURL to pay first.");
+        if (toKey === "lightning" && classifyLightningTarget(destInput).kind === "fluid-name") {
+          // Completion audit §5.6.3 — Satora as a name consumer: a
+          // registered Lightning ADDRESS passes through as the swap
+          // destination; a registered node OFFER gets a plain refusal
+          // (Satora pays invoices, addresses and LNURLs — it cannot
+          // pay a raw BOLT 12 offer).
+          const hit = await resolveFluidName(destInput).catch(() => null);
+          const t = hit ? lightningTargetForNameEntry(hit) : null;
+          if (!t) return msg("wMsg", "That Fluid name has no Lightning address or node offer in the registry.");
+          if (t.kind === "offer") return msg("wMsg", "That name receives through its own Fluid node's offer — this swap pays Lightning invoices, addresses and LNURLs, and can't pay a raw offer. Pay the offer directly from the Lightning panel instead (Wallet tab → Lightning).");
+          destInput = t.value;
+        }
       }
       const routes = await getSwapRoutes({
         fromChainKey: fromKey, toChainKey: toKey,
@@ -4350,7 +4814,7 @@ $("actSwap").onclick = () => {
             <span>${usd(r.toAmountUSD)}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
-      document.querySelectorAll("[data-route]").forEach(b => b.onclick = () => {
+      document.querySelectorAll("[data-route]").forEach(b => b.onclick = async () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
         pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
@@ -4359,10 +4823,20 @@ $("actSwap").onclick = () => {
           // the user's own channel-less Lightning wallet is blocked
           // before any review is offered.
           if (toKey === "lightning") {
+            // Completion audit §5.6/Phase 0.5: if the node has never
+            // been booted this session, boot it now so the gate
+            // judges with the real node id + receivable (and can
+            // recognise a JIT invoice through its local record). A
+            // failed boot doesn't block the swap — the gate then
+            // runs exactly as it did before this build.
+            if (!lnSession) { try { await lnEnsureSession("bitcoin"); } catch { /* gate falls back */ } }
+            let jit = null;
+            try { jit = lnJitGateContext(parseBolt11(destInput)); } catch { jit = null; }
             const gate = checkSatoraLightningReceivability({
               destInput,
               ownNodeId: lnSession ? lnSession.nodeId : null,
               ownReceivableMsat: lnSession ? lnSession.balance().receivableMsat : null,
+              jit,
             });
             if (!gate.ok) { pendingSwap = null; show("wConfirm", false); return msg("wMsg", gate.reason); }
           }
@@ -5439,6 +5913,12 @@ function renderNameSection() {
   // it is. A hosted address already registered or held is carried
   // along untouched.
   let lnNativeState = null;
+  // A registration that was sent but not yet SEEN in the registry:
+  // the button becomes a one-tap re-check that reads the registry
+  // and reports its live state — "on its way" is never the final
+  // word (field evidence 2026-11-10: the owner couldn't tell
+  // whether registration had worked, and it had not).
+  let lnPendingVerify = null;
   const paintNativeTerms = () => {
     const terms = $("ownedLnNativeTerms"), copy = $("ownedLnNativeCopy"), btn = $("ownedLnNativeBtn");
     if (!terms || !copy || !btn) return;
@@ -5456,24 +5936,51 @@ function renderNameSection() {
   $("ownedLnNativeBtn").onclick = async () => {
     if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
     const btn = $("ownedLnNativeBtn");
+    // Re-check path: a sent registration that the registry hadn't
+    // shown yet gets one fresh registry read and a plain answer.
+    if (lnPendingVerify && !lnNativeState) {
+      if (btn) btn.disabled = true;
+      try {
+        const hit = await resolveFluidName(lnPendingVerify.name).catch(() => null);
+        if (hit && hit.lnOffer === lnPendingVerify.offer) {
+          lnPendingVerify = null;
+          msg("nameMsg", "Registered ✓ — the registry now shows your node's offer for " + lnPendingVerifyName() + ".", true);
+          renderNameSection();
+        } else {
+          msg("nameMsg", "Still not in the registry — your signed registration was sent, but the registry doesn't show your node's offer yet. Give it a few more minutes and check again.");
+          if (btn) btn.textContent = "Check the registry again";
+        }
+      } finally { if (btn) btn.disabled = false; }
+      return;
+    }
     if (!lnNativeState) {
       if (lnSession && lnSession.network !== "bitcoin") return msg("nameMsg", "Your Lightning node is on a test network right now — switch it to Bitcoin (mainnet) in the Lightning panel first, so the offer you register can receive real payments.");
       if (btn) btn.disabled = true;
       try {
         if (!lnSession) {
           if (btn) btn.textContent = "Starting your node…";
-          if (!lnChunk) lnChunk = await import("./lightning.chunk.js");
-          lnSession = await lnChunk.bootLightning({ phrase: wallet.mnemonic.phrase, network: "bitcoin", wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "" });
-          lnSession.startLoops((evs) => { lnEvents = [...evs.reverse(), ...lnEvents].slice(0, 8); if ($("lnPanel")) paintLnPanel(); });
-          lnSession.syncNow().catch(() => {});
+          // The shared boot (completion build): resumable verified
+          // download + stage-identified failures. A boot failure
+          // here says exactly that and registers NOTHING — it never
+          // degrades into a fallback.
+          await lnEnsureSession("bitcoin");
         }
-        const offer = lnSession.createOffer(null, "Fluid");
+        let offer;
+        try {
+          offer = lnSession.createOffer(null, "Fluid");
+        } catch {
+          return msg("nameMsg", "Your node started, but it couldn't build its offer yet — it needs a connection to another node first. Open the Lightning panel (Wallet tab → Lightning) → Advanced, connect to a peer, then tap again.");
+        }
         let recv = 0;
         try { recv = Number(lnSession.balance().receivableMsat || 0); } catch { recv = 0; }
         lnNativeState = { offer, receivableMsat: recv };
         paintNativeTerms();
       } catch (e) {
-        msg("nameMsg", "Your node couldn't start just now: " + lnErrorText(e));
+        const stage = e && e.stage;
+        if (stage === "download") msg("nameMsg", "Your node couldn't load — the node program didn't finish downloading (a slow or dropped connection?). Any part that arrived is kept on your phone, so retrying continues from there. Nothing was registered.");
+        else if (stage === "integrity") msg("nameMsg", "Your node couldn't load — the downloaded code didn't match this app's fingerprint, so it wasn't run. Nothing was registered.");
+        else if (stage === "chain") msg("nameMsg", "Your node couldn't load — it couldn't read the Bitcoin chain tip to start. Nothing was registered.");
+        else msg("nameMsg", "Your node couldn't start just now: " + lnErrorText(e) + " Nothing was registered.");
         if (btn) btn.textContent = "Use my Fluid node";
       } finally { if (btn) btn.disabled = false; }
       return;
@@ -5488,11 +5995,34 @@ function renderNameSection() {
       const n = await submitNameClaim(stored, keepLn, offer);
       lnNativeState = null;
       paintNativeTerms();
-      msg("nameMsg", n > 0 ? "Your node's offer is on its way into the registry — " + NAME_STATE_COPY.publishing : "Your node's offer was added to your claim — " + NAME_STATE_COPY.saved, true);
+      if (n === 0) {
+        // Held claim: a defined state, NOT a registration.
+        msg("nameMsg", "Your offer was folded into the claim saved on this device — it publishes together with your name when the name goes live. It is not in the registry yet.", true);
+        if (btn) btn.disabled = false;
+        renderNameSection();
+        return;
+      }
+      // Sent is not registered: verify against the registry itself
+      // and say which one it is.
+      msg("nameMsg", "Registration sent — checking the registry…", true);
+      let verified = false;
+      for (let i = 0; i < 9 && !verified; i++) {
+        await new Promise((r) => setTimeout(r, 8000));
+        const check = await resolveFluidName(stored).catch(() => null);
+        verified = !!(check && check.lnOffer === offer);
+      }
+      if (verified) {
+        msg("nameMsg", "Registered ✓ — the registry now shows your node's offer for " + stored + ".fluid.", true);
+      } else {
+        lnPendingVerify = { offer, name: stored };
+        msg("nameMsg", "Your signed registration was sent, but the registry doesn't show it yet — claims usually appear within a few minutes.");
+        if (btn) btn.textContent = "Check the registry again";
+      }
     } catch (e) { msg("nameMsg", "Could not register your node: " + (e.message || e)); }
     if (btn) btn.disabled = false;
     renderNameSection();
   };
+  const lnPendingVerifyName = () => (lnPendingVerify ? lnPendingVerify.name : stored) + ".fluid";
   $("ownedLnAddBtn").onclick = async () => {
     if (!wallet) return msg("nameMsg", "Unlock your wallet first.");
     const ln = $("ownedLnInput").value.trim();

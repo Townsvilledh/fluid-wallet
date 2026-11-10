@@ -4237,6 +4237,64 @@ export function lnReceiveView(state) {
   if (s.status === "failed") return { status: "failed", spinner: false, text: null, message: s.message || "Something went wrong — please try again." };
   return { status: "idle", spinner: false, text: null, message: null };
 }
+/** RECEIVE PLAN (Lightning completion audit §5.3, the P1-15 fix):
+ *  decide what a receive request may show BEFORE anything renders.
+ *  The law: the app never displays an unpayable Lightning artifact.
+ *  A node whose channels can receive 0 mints no invoice and shows no
+ *  offer — it either starts a just-in-time (JIT) receive through the
+ *  LSP (sized invoices only), asks for an amount first, or says
+ *  plainly that a channel is needed. Inputs are the node's live
+ *  receivable (msat), the requested amount (msat, null = "any"), and
+ *  whether an LSP is configured for JIT opens. */
+export function lnReceivePlan({ receivableMsat = 0, requestedMsat = null, hasLsp = false } = {}) {
+  const recv = Math.max(0, Number(receivableMsat) || 0);
+  const req = requestedMsat == null ? null : Math.max(0, Number(requestedMsat) || 0);
+  if (req != null && req > 0) {
+    if (recv >= req) return { kind: "invoice", amountMsat: req, partial: false, receivableMsat: recv };
+    if (recv === 0) {
+      return hasLsp
+        ? { kind: "jit", amountMsat: req, partial: false, receivableMsat: 0 }
+        : { kind: "need-channel", amountMsat: req, partial: false, receivableMsat: 0 };
+    }
+    return { kind: "invoice", amountMsat: req, partial: true, receivableMsat: recv };
+  }
+  if (recv > 0) return { kind: "offer", amountMsat: null, partial: false, receivableMsat: recv };
+  return hasLsp
+    ? { kind: "need-amount", amountMsat: null, partial: false, receivableMsat: 0 }
+    : { kind: "need-channel", amountMsat: null, partial: false, receivableMsat: 0 };
+}
+/** The LSPS2 opening fee for a payment, mirroring the reference
+ *  client's arithmetic (lightning-liquidity lsps2 utils):
+ *  max(min_fee, ceil(payment_size × proportional / 1_000_000)).
+ *  Params use the panel's camelCase shape (the node's event JSON). */
+export function lnLsps2OpeningFeeMsat(paymentSizeMsat, params) {
+  const size = BigInt(Math.max(0, Math.floor(Number(paymentSizeMsat) || 0)));
+  const minFee = BigInt(Math.max(0, Math.floor(Number(params?.minFeeMsat) || 0)));
+  const prop = BigInt(Math.max(0, Math.floor(Number(params?.proportional) || 0)));
+  const proportionalFee = (size * prop + 999999n) / 1000000n;
+  return Number(minFee > proportionalFee ? minFee : proportionalFee);
+}
+/** A BOLT 11 route hint's "block×txindex×outnum" SCID in decimal
+ *  string form (the shape the node's LSPS2 events use), or null. */
+export function lnScidToDecimal(shortChannelId) {
+  try {
+    if (typeof shortChannelId === "string" && shortChannelId.includes("x")) {
+      const parts = shortChannelId.split("x");
+      if (parts.length !== 3 || parts.some((p) => !/^\d+$/.test(p))) return null;
+      const [b, t, o] = parts.map((p) => BigInt(p));
+      return ((b << 40n) | (t << 16n) | o).toString();
+    }
+    if (typeof shortChannelId === "string" && !/^\d+$/.test(shortChannelId)) return null;
+    if (typeof shortChannelId === "number" && (!Number.isInteger(shortChannelId) || shortChannelId < 0)) return null;
+    if (typeof shortChannelId !== "string" && typeof shortChannelId !== "number" && typeof shortChannelId !== "bigint") return null;
+    return BigInt(shortChannelId).toString();
+  } catch { return null; }
+}
+/** The persisted Lightning peer book ([{pubkey, host, port}] kept in
+ *  the node's encrypted KV so connections — and the channels on
+ *  them — survive restarts) lives in the tiny ln-peers module both
+ *  bundles share; re-exported here for the app and the tests. */
+export { parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "./ln-peers.js";
 
 // ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
 // Local-currency rails: pick a country, Fluid builds the provider link with
@@ -6770,8 +6828,21 @@ export function classifySatoraLightningDestination(input) {
  *  would fail after the EVM side locked. Block before anything is
  *  signed, in plain words. External invoices always pass; an
  *  amountless own invoice cannot be sized, so it passes too (the
- *  failure mode the gate exists for is the sized one). */
-export function checkSatoraLightningReceivability({ destInput, ownNodeId = null, ownReceivableMsat = null } = {}) {
+ *  failure mode the gate exists for is the sized one).
+ *
+ *  JIT EXCEPTION (Lightning completion audit §5.4): an own invoice
+ *  also passes when it is a just-in-time invoice the app itself
+ *  built with the LSP — the LSP opens the channel as the payment
+ *  arrives, so current receivable is not the measure. ALL THREE
+ *  must hold: (1) the invoice's first route hint starts at the
+ *  configured LSP's pubkey; (2) that hop's SCID equals the intercept
+ *  SCID recorded locally for THIS invoice's payment hash when the
+ *  app built it ({paymentHash → scid} — a forged hint naming the
+ *  LSP without the local record fails); (3) the invoice amount is
+ *  within the LSPS2 session's negotiated maximum. `jit` carries
+ *  {lspPubkey, interceptScids, maxPaymentMsat}; anything missing or
+ *  malformed fails closed to the plain receivable rule above. */
+export function checkSatoraLightningReceivability({ destInput, ownNodeId = null, ownReceivableMsat = null, jit = null } = {}) {
   const cls = classifySatoraLightningDestination(destInput);
   if (!cls || cls.kind !== "invoice" || !ownNodeId) return { ok: true };
   const payee = cls.parsed?.payee;
@@ -6780,7 +6851,30 @@ export function checkSatoraLightningReceivability({ destInput, ownNodeId = null,
   let recv = 0n;
   try { recv = BigInt(ownReceivableMsat ?? 0); } catch { recv = 0n; }
   if (recv >= cls.parsed.amountMsat) return { ok: true };
+  if (jit && lnJitInvoicePasses(cls.parsed, jit)) return { ok: true };
   return { ok: false, reason: "That invoice pays your own Fluid Lightning wallet, but your wallet can't receive it yet — it has no inbound Lightning capacity (no open channels with room). Open a Lightning channel first, or pay an invoice from a different wallet." };
+}
+/** The three-legged JIT test for the gate (see above). Pure and
+ *  fail-closed: any doubt returns false. */
+export function lnJitInvoicePasses(parsed, jit) {
+  try {
+    const lsp = String(jit?.lspPubkey || "").toLowerCase();
+    if (!/^[0-9a-f]{66}$/.test(lsp)) return false;
+    const hints = Array.isArray(parsed?.routeHints) ? parsed.routeHints : [];
+    const first = hints[0];
+    if (!first || String(first.pubkey || "").toLowerCase() !== lsp) return false;
+    const records = jit?.interceptScids;
+    if (!records || typeof records !== "object") return false;
+    const hash = String(parsed?.paymentHash || "").toLowerCase();
+    if (!hash) return false;
+    const recorded = records[hash];
+    if (recorded == null) return false;
+    const hintScid = lnScidToDecimal(first.shortChannelId);
+    if (!hintScid || hintScid !== String(recorded)) return false;
+    const max = BigInt(jit?.maxPaymentMsat ?? NaN);
+    if (max <= 0n) return false;
+    return BigInt(parsed.amountMsat) <= max;
+  } catch { return false; }
 }
 /** The CCTP bridge fields of a creation body, present ONLY on
  *  bridged plans: the settlement stays Arbitrum (evm_chain_id /

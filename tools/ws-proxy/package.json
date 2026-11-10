@@ -1,0 +1,1 @@
+{"description":"Fluid's dumb WebSocket->TCP proxy for browser Lightning peer connections. Node standard library only.","name":"fluid-ws-proxy","private":true,"scripts":{"start":"node server.mjs"},"type":"module","version":"1.0.0"}
