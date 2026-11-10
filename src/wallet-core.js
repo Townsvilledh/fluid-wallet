@@ -401,31 +401,38 @@ const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "poly
  * fetches both sources independently and refuses (throws) unless both
  * answer within 25% of each other. The valuation returned is the HIGHER
  * of the two — for cap enforcement, overvaluing a send is the safe side.
- * Display code keeps using getPrices(); only cap checks use this. */
+ * Display code keeps using getPrices(); only cap checks use this.
+ * REPAIR 2026-11-10: the second source was Binance's public ticker, but
+ * Binance geo-blocks this machine's egress (HTTP 451), which killed five
+ * agent sends at the cross-check. The two-source agreement rule is
+ * unchanged; the Binance leg is repointed to Coinbase Exchange's public
+ * USD tickers — an independent, keyless feed that answers from here.
+ * CoinGecko remains the other leg. Both fetches are time-bounded so a
+ * hung source fails closed instead of hanging a send. */
 export async function getVerifiedPrice(symbol) {
   const pair = PRICE_PAIRS[symbol], cgId = CG_IDS[symbol];
   if (symbol === "USDT") return 1;
   if (!pair && !cgId) throw new Error(`No price sources known for ${symbol} — refusing to value it.`);
-  let bin = null, cg = null;
+  let cb = null, cg = null;
   if (pair) {
     try {
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`);
+      const res = await fetch(`https://api.exchange.coinbase.com/products/${symbol}-USD/ticker`, { signal: AbortSignal.timeout(8000) });
       const d = await res.json();
       const v = parseFloat(d && d.price);
-      if (Number.isFinite(v) && v > 0) bin = v;
+      if (Number.isFinite(v) && v > 0) cb = v;
     } catch { /* source down */ }
   }
   if (cgId) {
     try {
-      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`);
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`, { signal: AbortSignal.timeout(8000) });
       const d = await res.json();
       const v = Number(d && d[cgId] && d[cgId].usd);
       if (Number.isFinite(v) && v > 0) cg = v;
     } catch { /* source down */ }
   }
-  if (bin == null || cg == null) throw new Error(`Could not cross-check the ${symbol} price between two independent sources — refusing to value the send.`);
-  const hi = Math.max(bin, cg), lo = Math.min(bin, cg);
-  if ((hi - lo) / lo > 0.25) throw new Error(`Price sources disagree on ${symbol} (Binance ${bin}, CoinGecko ${cg}) — refusing to value the send.`);
+  if (cb == null || cg == null) throw new Error(`Could not cross-check the ${symbol} price between two independent sources — refusing to value the send.`);
+  const hi = Math.max(cb, cg), lo = Math.min(cb, cg);
+  if ((hi - lo) / lo > 0.25) throw new Error(`Price sources disagree on ${symbol} (Coinbase ${cb}, CoinGecko ${cg}) — refusing to value the send.`);
   return hi;
 }
 /** Per-symbol CoinGecko retry for whatever the batch fallbacks left
@@ -5025,7 +5032,7 @@ export const RAMP_STATIC_LINKS = {
 const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": {
     buy: "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank · buys start at CHF 1 · unverified purchases are held 7 days before delivery",
-    sell: "Sells start at CHF 50 (about $57) unless you hold a personal IBAN with them · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
+    sell: "Sells start at CHF 50 (about $61) — or any amount if you hold a free personal Mt Pelerin IBAN · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
   },
 };
 // The SWIFT addendum (audit P1-12): on the 12 own-fiat Mt Pelerin
@@ -5120,7 +5127,7 @@ export const RAMP_COUNTRY_PLAN = {
       // buy copy — each side states its own true terms, mirroring
       // the provider default notes.
       buy: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank · buys start at CHF 1 · unverified purchases are held 7 days before delivery",
-      sell: "Not available to US residents — if you're outside the US: sells start at CHF 50 (about $57) unless you hold a personal IBAN with them · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
+      sell: "Not available to US residents — if you're outside the US: sells start at CHF 50 (about $61) — or any amount if you hold a free personal Mt Pelerin IBAN · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
     } }],
   ],
   GB: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],

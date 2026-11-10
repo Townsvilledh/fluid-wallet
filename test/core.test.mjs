@@ -2661,15 +2661,18 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // (CoinGecko only filled gaps, never compared) — one lying response
 // revalued every cap. Cap valuation now needs both sources agreeing
 // within 25% and takes the higher (conservative) value.
+// 2026-11-10 repair: the non-CoinGecko leg was repointed from Binance
+// (geo-blocked, HTTP 451, from the ops machine) to Coinbase Exchange;
+// the agreement rule and these pins are unchanged.
 {
   const { getVerifiedPrice } = await import("../src/wallet-core.js");
   const realFetch = globalThis.fetch;
-  const stub = (binPrice, cgPrice) => {
+  const stub = (cbPrice, cgPrice) => {
     globalThis.fetch = async (url) => {
       const u = String(url);
-      if (u.includes("api.binance.com")) {
-        if (binPrice === null) throw new Error("source down");
-        return { json: async () => ({ price: String(binPrice) }) };
+      if (u.includes("api.exchange.coinbase.com")) {
+        if (cbPrice === null) throw new Error("source down");
+        return { json: async () => ({ price: String(cbPrice) }) };
       }
       if (u.includes("api.coingecko.com")) {
         if (cgPrice === null) throw new Error("source down");
@@ -8252,6 +8255,29 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("P1-11: the stale dated rate claim is gone everywhere",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !/market rate on 6 Nov/.test(r.note)))));
+
+  // 2026-11-10 copy pass (hiccup dossier §6–§7): the CHF 50 sell
+  // minimum is waived entirely for personal-IBAN holders, so every
+  // Mt Pelerin sell note leads with that zero-minimum path instead of
+  // presenting CHF 50 as a wall; the dollar conversion is the live
+  // CHF 50 figure (≈ $61 at 2026-11-10 FX — re-check FX and update
+  // the note + this pin together when it drifts).
+  ok("MTP-COPY: DE sell note leads with the zero-minimum personal-IBAN path",
+    note("DE", "sell", "Mt Pelerin").includes("or any amount if you hold a free personal Mt Pelerin IBAN"));
+  ok("MTP-COPY: DE sell note carries the corrected CHF 50 conversion and no stale figure",
+    note("DE", "sell", "Mt Pelerin").includes("(about $61)") && !note("DE", "sell", "Mt Pelerin").includes("$57")
+    && !note("DE", "sell", "Mt Pelerin").includes("unless you hold"));
+  ok("MTP-COPY: every Mt Pelerin sell note everywhere carries the IBAN lead and keeps the sell terms",
+    RAMP_COUNTRIES.every(c =>
+      rampRoutesFor(c.code, "sell", "bsc", "USDC").routes.every(r =>
+        r.name !== "Mt Pelerin" || r.unavailable ||
+        (r.note.includes("or any amount if you hold a free personal Mt Pelerin IBAN")
+          && r.note.includes("sell fee 0–1.3% by bank")
+          && r.note.includes("~CHF 999/month") && !r.note.includes("$57")))));
+  ok("MTP-COPY: the US sell note keeps its residents prefix with the IBAN lead and corrected figure",
+    rampRoutesFor("US", "sell").routes[0].note.includes("Not available to US residents")
+    && rampRoutesFor("US", "sell").routes[0].note.includes("or any amount if you hold a free personal Mt Pelerin IBAN")
+    && rampRoutesFor("US", "sell").routes[0].note.includes("(about $61)"));
 
   // P1-12 — SWIFT line on the 12 own-fiat corridors, buy-side only.
   ok("P1-12: GB buy note carries the SWIFT line", note("GB", "buy", "Mt Pelerin").includes("SWIFT"));
