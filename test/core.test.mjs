@@ -276,22 +276,28 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (updated 2026-11-10, full removal): BUY stays
-  // honestly empty — its last route (NoOnes) was removed as a
-  // dead platform (winding-down announced 17 Aug 2026, P2P
-  // trading closed permanently 21 Aug 2026, withdrawal-only
-  // since 22 Aug 2026). SELL's last row — the African off-ramp
+  // Nigeria (updated 2026-11-10): BUY stays honestly empty —
+  // its last route (NoOnes) was removed as a dead platform
+  // (winding-down announced 17 Aug 2026, P2P trading closed
+  // permanently 21 Aug 2026, withdrawal-only since 22 Aug
+  // 2026). SELL's last in-plan row — the African off-ramp
   // provider restored 2026-11-09 — was REMOVED IN FULL
-  // 2026-11-10 on the owner's direct order, so NG sell resolves
-  // to the same honest empty state. §73/§74 pin the absence.
-  ok("NG lineup is honestly empty on both sides after the 2026-11-10 removal", JSON.stringify(names("NG")) === JSON.stringify([])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
+  // 2026-11-10 on the owner's direct order; later the same
+  // day, batch 1 added the labelled LocalCoinSwap
+  // external-marketplace row after a fresh live book check
+  // (10 offers, −7% to 0% vs market, bank transfer, from
+  // ₦30,000), so NG sell carries exactly that row.
+  // §73/§74 pin the removed providers' absence.
+  ok("NG buy stays honestly empty; NG sell is the LocalCoinSwap row alone after batch 1", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["LocalCoinSwap"]));
   ok("NG buy resolves to the empty state", rampRoutesFor("NG", "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor("NG", "buy", "linea", "USDT").routes.length === 0);
-  ok("NG sell is empty on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
-    rampRoutesFor("NG", "sell", k, "USDT").routes.length === 0));
+  ok("NG sell is the LocalCoinSwap row alone on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k => {
+    const rs = rampRoutesFor("NG", "sell", k, "USDT").routes;
+    return rs.length === 1 && rs[0].name === "LocalCoinSwap";
+  }));
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
-  ok("NG has no routes at all", names("NG").length === 0 && names("NG", "sell").length === 0);
+  ok("NG has exactly one route: the sell-side LocalCoinSwap row", names("NG").length === 0 && names("NG", "sell").length === 1);
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the absence of ANY
@@ -326,17 +332,20 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     return !ns.includes("Paybis") && !ns.includes("Spritz");
   })));
 
-  // Kenya: both sides honestly empty after the 2026-11-10
-  // removal (its only sell row was scrapped; Mercuryo stays
-  // out everywhere). Ghana: BUY still honestly empty (live
-  // book +1% to +54% over market fails the price bar), SELL
-  // carries the labelled LocalCoinSwap external-marketplace
-  // row since 2026-11-10 (fresh live book check: 10 offers,
-  // −1% to −6% vs market, MTN MoMo, minimums from GH₵100;
-  // capture = ambassador referral rc=EC82BA22, 10% of
-  // platform fees in BTC — the sanctioned exception shape).
-  ok("KE lineup is honestly empty on both sides after the 2026-11-10 removal", JSON.stringify(names("KE")) === JSON.stringify([])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
+  // Kenya: BUY honestly empty (live book +4.5% to +7.6% over
+  // market fails the price bar; Mercuryo stays out
+  // everywhere); SELL carries the labelled LocalCoinSwap
+  // external-marketplace row since 2026-11-10 batch 1 (fresh
+  // live book check: 10 offers, −2% to −5% vs market, M-Pesa,
+  // minimums from KES 4,972). Ghana: BUY still honestly empty
+  // (live book +1% to +54%), SELL carries the same labelled
+  // row since earlier on 2026-11-10 (10 offers, −1% to −6%,
+  // MTN MoMo, from GH₵100). Nigeria, Cameroon and Uganda
+  // complete batch 1 the same day (pins below); capture
+  // everywhere = ambassador referral rc=EC82BA22, 10% of
+  // platform fees in BTC — the sanctioned exception shape.
+  ok("KE buy stays honestly empty; KE sell is the LocalCoinSwap row alone", JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["LocalCoinSwap"]));
   ok("GH buy stays honestly empty; GH sell is the LocalCoinSwap row alone", JSON.stringify(names("GH")) === JSON.stringify([])
     && JSON.stringify(names("GH", "sell")) === JSON.stringify(["LocalCoinSwap"]));
   ok("GH sell row is a labelled external link-out carrying the referral, never an in-Fluid trade", (() => {
@@ -345,8 +354,20 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
       && r.url === "https://localcoinswap.com/?rc=EC82BA22"
       && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("GH₵100");
   })());
+  ok("batch-1 sell rows (NG/KE/CM/UG) are the LocalCoinSwap row alone; their buy sides stay honestly empty", ["NG", "KE", "CM", "UG"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"])));
+  ok("batch-1 sell rows are labelled external link-outs carrying the referral and their fresh-check figures", (() => {
+    const want = { NG: ["bank transfer", "₦30,000"], KE: ["M-Pesa", "KES 4,972"], CM: ["MTN MoMo", "XAF 10,000"], UG: ["MTN MoMo", "UGX 50,000"] };
+    return Object.entries(want).every(([code, [method, min]]) => {
+      const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes[0];
+      return r && r.external === true && r.badge === false && r.unavailable === false
+        && r.url === "https://localcoinswap.com/?rc=EC82BA22"
+        && r.note.includes("not inside Fluid") && r.note.includes(method) && r.note.includes(min);
+    });
+  })());
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => c.code === "GH" && m === "sell"
+    ["buy", "sell"].every(m => ["GH", "NG", "KE", "CM", "UG"].includes(c.code) && m === "sell"
       || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
   // Russia was live-checked 2026-11-10 and refused: the
   // platform's Terms of Service list the Russian Federation
@@ -355,9 +376,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // country exists in the picker and no row may promise one.
   ok("RU is not a ramp country (LocalCoinSwap bans RU residents; no RUB book passes)", !RAMP_COUNTRIES.some(c => c.code === "RU")
     && !("RU" in RAMP_COUNTRY_PLAN));
-  // The six corridors whose only route was the scrapped sell
-  // row: both sides honestly empty now.
-  ok("scrapped corridors: buy and sell both honestly empty", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
+  // The corridors whose only route was the scrapped sell row
+  // and which still have no qualifying route: both sides
+  // honestly empty now. (UG and CM left this set later on
+  // 2026-11-10 — batch 1 gave their sell sides the labelled
+  // LocalCoinSwap row after fresh live book checks; the pins
+  // above assert that end-state.)
+  ok("scrapped corridors: buy and sell both honestly empty", ["TZ", "SN", "CI", "ZM"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
 
@@ -493,10 +518,19 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("F8: no other corridor's Mt Pelerin is unavailable", ["ZA", "GB", "DE", "MX"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => !r.unavailable && r.url.startsWith("https://"))));
   // After the 2026-11-10 removal the formerly restored
-  // corridors are empty on every network, supported or not.
-  ok("scrapped corridors stay empty on unsupported networks too", ["KE", "UG", "ZM"].every(code =>
+  // corridors were empty on every network, supported or not;
+  // ZM still is. KE and UG gained the network-agnostic
+  // labelled LocalCoinSwap sell row in batch 1 (later on
+  // 2026-11-10), so on unsupported networks their buy side is
+  // empty and their sell side is that row alone.
+  ok("scrapped corridors on unsupported networks: ZM empty; KE/UG buy empty, sell the LocalCoinSwap row alone", ["ZM"].every(code =>
     rampRoutesFor(code, "buy", "linea", "USDT").routes.length === 0
-    && rampRoutesFor(code, "sell", "linea", "USDT").routes.length === 0));
+    && rampRoutesFor(code, "sell", "linea", "USDT").routes.length === 0)
+    && ["KE", "UG"].every(code => {
+      const rs = rampRoutesFor(code, "sell", "linea", "USDT").routes;
+      return rampRoutesFor(code, "buy", "linea", "USDT").routes.length === 0
+        && rs.length === 1 && rs[0].name === "LocalCoinSwap";
+    }));
 }
 
 // 17. Fluid Names
@@ -8110,12 +8144,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // the African off-ramp provider restored the same day — was
 // itself REMOVED IN FULL 2026-11-10 on the owner's direct
 // order; §74 pins that end-state, and the first pin below now
-// asserts the honestly empty NG sell sheet.) Evidence:
+// asserts the NG sell sheet carries only the labelled
+// LocalCoinSwap row added later that day, in batch 1, after a
+// fresh live book check.) Evidence:
 // research_notes/fluid-ramp-disclosure-global-audit-20261109/
 // report.md (§1.9).
 {
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "BNB").routes;
-  ok("capture gate + 2026-11-10 removal: NG sell sheet is honestly empty", ngSell.length === 0);
+  ok("capture gate + 2026-11-10 removal: NG sell sheet carries only the labelled LocalCoinSwap row (batch 1)", ngSell.length === 1 && ngSell[0].name === "LocalCoinSwap" && ngSell[0].external === true);
   ok("capture gate: the removed provider appears in no corridor and never on a buy sheet",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -8126,7 +8162,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("capture gate: NG buy still resolves empty on every network/asset",
     rampRoutesFor("NG", "buy", "bsc", "BNB").routes.length === 0
     && rampRoutesFor("NG", "buy", "base", "USDC").routes.length === 0);
-  ok("removal: the NG plan is empty", RAMP_COUNTRY_PLAN.NG.length === 0);
+  ok("removal: the NG plan holds no removed-provider row — only the LocalCoinSwap sell row", RAMP_COUNTRY_PLAN.NG.length === 1 && RAMP_COUNTRY_PLAN.NG[0][0] === "LocalCoinSwap");
 }
 
 // 74. Fonbnk removal (2026-11-10, owner's direct order —
@@ -8136,8 +8172,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // entry. These pins assert the ABSENCE end-state (the
 // NoOnes/Noblocks-pull pattern): the provider appears in no
 // corridor, no mode, no table; its ten former sell corridors
-// resolve to the honest empty state (ZA keeps Mt Pelerin
-// alone), and no network carries its network code.
+// resolved to the honest empty state at removal (five later
+// gained the labelled LocalCoinSwap row on fresh live book
+// checks — GH, then NG/KE/CM/UG in batch 1, all 2026-11-10;
+// ZA keeps Mt Pelerin alone), and no network carries its
+// network code.
 {
   const CORRIDORS = ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"];
   ok("removal: the scrapped provider appears in no route, note or URL anywhere",
@@ -8150,9 +8189,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     Object.values(NETWORKS).every(n => !("fonbnkNetwork" in n)));
   // (GH left this set later on 2026-11-10: its sell side gained
   // the labelled LocalCoinSwap external-marketplace row after a
-  // fresh live book check — §16c pins that end-state.)
-  ok("removal: the eight still-empty sell-only corridors are honestly empty on both sides",
-    CORRIDORS.filter(code => code !== "ZA" && code !== "GH").every(code => ["buy", "sell"].every(m =>
+  // fresh live book check — §16c pins that end-state. NG, KE,
+  // UG and CM left it the same day in batch 1, same pattern.)
+  ok("removal: the four still-empty sell-only corridors are honestly empty on both sides",
+    CORRIDORS.filter(code => !["ZA", "GH", "NG", "KE", "UG", "CM"].includes(code)).every(code => ["buy", "sell"].every(m =>
       rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
   ok("removal: ZA keeps Mt Pelerin alone on both sides, badge buy-only",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
@@ -8279,9 +8319,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // F4 — the interim minimum line left with the scrapped rows
   // (2026-11-10 removal): the corridors that carried it are
-  // honestly empty on sell now (ZA keeps Mt Pelerin alone), and
+  // honestly empty on sell now (ZA keeps Mt Pelerin alone; CM
+  // left this set in batch 1, later on 2026-11-10 — its sell
+  // side carries the labelled LocalCoinSwap row, §16c), and
   // no assembled note anywhere carries the line.
-  ok("removal: CM/SN/CI/ZM sell sheets are honestly empty", ["CM", "SN", "CI", "ZM"].every(code =>
+  ok("removal: SN/CI/ZM sell sheets are honestly empty", ["SN", "CI", "ZM"].every(code =>
     rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
   ok("removal: no assembled note carries the interim minimum line", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !r.note.includes("sets its own minimum inside the widget")))));

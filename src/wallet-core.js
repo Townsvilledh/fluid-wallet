@@ -5228,9 +5228,9 @@ export const RAMP_ADDRESS_ENTRY = {
   // external wallet (its own wallet is non-custodial, keys
   // exportable, and bought crypto withdraws to any address the
   // user pastes), so it is not a WalletConnect-only route. Its
-  // only Fluid row is SELL-only regardless (GH below), so it
-  // never reaches a buy sheet; the caps entry exists because
-  // every planned provider carries one.
+  // Fluid rows are SELL-only regardless (GH/NG/KE/CM/UG below),
+  // so it never reaches a buy sheet; the caps entry exists
+  // because every planned provider carries one.
   "LocalCoinSwap": "paste",
 };
 // CAPTURE GATE (owner's ruling, 2026-11-09 ~13:51 WAT): a ramp
@@ -5266,21 +5266,47 @@ export const RAMP_ADDRESS_ENTRY = {
 // bank-transfer buys usually ride SWIFT (audit P1-12).
 export const RAMP_COUNTRY_PLAN = {
   // NG: BUY has no qualifying route (its last route was removed
-  // 2026-11-09 as a dead platform — see the REMOVED note above)
-  // and stays honestly empty. SELL's last row — the African
-  // off-ramp provider restored 2026-11-09 — was REMOVED IN FULL
-  // 2026-11-10 on the owner's direct order, so NG sell is
-  // honestly empty too, until the in-Fluid Paycrest Gateway sell
-  // (native senderFee capture, Class 1) passes its standing
-  // gates — see research_notes/fluid-ng-repair-20261109/
-  // report.md.
-  NG: [],
-  // KE, UG, TZ, CM, SN, CI, ZM: BUY resolves empty. SELL's
-  // only row — the African off-ramp provider restored
+  // 2026-11-09 as a dead platform — see the REMOVED note above;
+  // the LocalCoinSwap buy book sat +10% to +36% over market on
+  // the 2026-11-10 live check) and stays honestly empty. SELL's
+  // last in-plan row — the African off-ramp provider restored
   // 2026-11-09 — was REMOVED IN FULL 2026-11-10 on the owner's
-  // direct order, so both sides resolve to the honest empty
-  // state until a qualifying route exists.
-  KE: [],
+  // direct order; the same day, SELL gained the labelled
+  // external-marketplace row (batch 1, after GH): the fresh
+  // live book check (the platform's own streamed offer book
+  // for Nigeria, ~22:55 WAT) showed 10 live sell-side offers,
+  // market deltas −7% to 0%, bank transfer, minimums from
+  // ₦30,000 (≈ $22 at $1 = ₦1,347), several established
+  // vendors online (one with 250k+ trades) — a real book a
+  // seller can actually take. Nigeria is NOT on the
+  // platform's restricted-jurisdictions list (live Terms
+  // checked the same day). The in-Fluid Paycrest Gateway sell
+  // (native senderFee capture, Class 1) remains NG sell's
+  // end-state behind its standing gates — see
+  // research_notes/fluid-ng-repair-20261109/report.md.
+  // Evidence: research_notes/fluid-lcs-batch1-20261110/.
+  NG: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Nigeria offers (checked 10 Nov 2026): buyers pay by bank transfer at about 1–5% below the market rate, trades from ₦30,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // KE: BUY resolves empty (the LocalCoinSwap buy book sat
+  // +4.5% to +7.6% over market on the 2026-11-10 live check).
+  // SELL's only row — the African off-ramp provider restored
+  // 2026-11-09 — was REMOVED IN FULL 2026-11-10 on the owner's
+  // direct order; the same day, SELL gained the labelled
+  // external-marketplace row (batch 1, after GH): the fresh
+  // live book check (the platform's own streamed offer book
+  // for Kenya, ~22:55 WAT) showed 10 live sell-side offers,
+  // market deltas −2% to −5%, M-Pesa among the payment
+  // methods, minimums from KES 4,972 (≈ $38 at $1 = KES
+  // 129.88), vendors online. Kenya is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked the
+  // same day). The row is a labelled fallback beside the
+  // in-Fluid Paycrest Gateway sell (Class 1), which remains
+  // KE sell's end-state behind its standing gates. Evidence:
+  // research_notes/fluid-lcs-batch1-20261110/.
+  KE: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Kenya offers (checked 10 Nov 2026): buyers pay by M-Pesa at about 2–5% below the market rate, trades from KES 4,972 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
   // GH: BUY stays honestly empty (the LocalCoinSwap buy book
   // sat +1% to +54% over market on the 2026-11-10 live check —
   // the cheap rows are bank-transfer-only outliers and the
@@ -5310,9 +5336,46 @@ export const RAMP_COUNTRY_PLAN = {
   ZA: [
     ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
   ],
-  UG: [],
+  // UG: BUY resolves empty (the LocalCoinSwap buy book was
+  // junk / +19% to +29% over market on the 2026-11-10 live
+  // check; Paycrest lists UGX but had zero provider quotes at
+  // any size the same day). SELL gained the labelled
+  // external-marketplace row 2026-11-10 (batch 1, after GH):
+  // the fresh live book check (the platform's own streamed
+  // offer book for Uganda, ~22:55 WAT) showed 10 live
+  // sell-side offers, market deltas −3.3% to −8.9% — a deeper
+  // spread than the other batch-1 books, disclosed in the
+  // note as-is — MTN MoMo among the payment methods,
+  // minimums from UGX 50,000 (≈ $12 at $1 = UGX 4,080),
+  // vendors online. Uganda is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked the
+  // same day). Evidence:
+  // research_notes/fluid-lcs-batch1-20261110/.
+  UG: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Uganda offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 3–9% below the market rate, trades from UGX 50,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
+  // TZ, SN, CI, ZM: BUY resolves empty. SELL's only row —
+  // the African off-ramp provider restored 2026-11-09 — was
+  // REMOVED IN FULL 2026-11-10 on the owner's direct order,
+  // so both sides resolve to the honest empty state until a
+  // qualifying route exists.
   TZ: [],
-  CM: [],
+  // CM: BUY resolves empty (the LocalCoinSwap buy book's real
+  // rows sat +2.9%/+8.9% over market on the 2026-11-10 live
+  // check). SELL gained the labelled external-marketplace
+  // row 2026-11-10 (batch 1, after GH) — Cameroon's
+  // first-ever route in the plan: the fresh live book check
+  // (the platform's own streamed offer book for Cameroon,
+  // ~22:55 WAT) showed 9 live XAF sell-side offers, market
+  // deltas −2% to −7.5%, MTN MoMo among the payment methods,
+  // minimums from XAF 10,000 (≈ $17 at $1 = XAF 588),
+  // vendors online. Cameroon is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked the
+  // same day). Evidence:
+  // research_notes/fluid-lcs-batch1-20261110/.
+  CM: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Cameroon offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 2–7% below the market rate, trades from XAF 10,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
   SN: [],
   CI: [],
   ZM: [],
