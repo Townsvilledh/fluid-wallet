@@ -4078,9 +4078,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("F5: Sui name error is the exact registry wording", await throwsMsg(
       () => resolveChainRecipient("ethuram", { isValidAddress: isValidSuiAddress, field: null, chainLabel: "Sui", lookupName: reg }),
       "That Fluid name has no Sui address in the registry."));
-    ok("F3–F5: an unknown name is hard-blocked as unregistered", await throwsMsg(
+    ok("F3–F5: an unknown name is hard-blocked as unregistered (audit P1-2 copy)", await throwsMsg(
       () => resolveChainRecipient("ghost", { isValidAddress: isValidSolanaAddress, field: null, chainLabel: "Solana", lookupName: reg }),
-      "That Fluid name is not in the registry yet."));
+      "No Fluid user with that name — check the spelling."));
     ok("F3–F5: a valid Tron address passes untouched, no lookup", await (async () => {
       let n = 0; const spy = async () => { n++; return null; };
       const tronAddr = core.tronAddressFromPhrase(KNOWN_PHRASE); // (the QA walk's fixture T-address had a bad checksum — F1)
@@ -4303,8 +4303,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     rd.to === ALGO_DERIVED && rd.name === null && lookups === 0);
   let shortBlocked = false;
   try { await sheetPath(ALGO_ZERO.slice(1)); } catch { shortBlocked = true; }
-  ok("R2-A: a 57-char near-miss does NOT resolve as an address (the transcription sensitivity, documented)",
-    shortBlocked === true && lookups === 1);
+  ok("R2-A: a 57-char near-miss does NOT resolve as an address (the transcription sensitivity, documented) — and no registry lookup runs for it (audit P1-2: it is a malformed address, not a name)",
+    shortBlocked === true && lookups === 0);
 
   // R2-B1 (F11): the name section is scoped to the current wallet.
   const nsStart = appSrc.indexOf("function renderNameSection()");
@@ -4439,8 +4439,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const rd = await sheetPath(derived + "\u200D", spy);
     ok("R3-A: a normal address + trailing U+200D resolves as the address, no lookup",
       rd.to === derived && rd.name === null && lookups === 0);
-    ok("R3-A: a 57-char near-miss still routes to name handling and hard-blocks as unregistered",
-      await throwsMsg(() => sheetPath(ALGO_ZERO.slice(0, 57), spy), "That Fluid name is not in the registry yet.") && lookups === 1);
+    ok("R3-A: a 57-char near-miss hard-blocks — as a malformed address, with NO registry claim (audit P1-2: the pre-fix code misreported it as an unregistered name)",
+      await throwsMsg(() => sheetPath(ALGO_ZERO.slice(0, 57), spy), "That doesn't look like a valid Algorand address, and it isn't a Fluid name either — check it and try again.") && lookups === 0);
     const reg = async (n) => n === "ethuram" ? { name: "ethuram", algo: ALGO_ZERO } : null;
     ok("R3-A: a real name still resolves through the lookup after cleaning",
       (await sheetPath("ethuram\u200B", reg)).to === ALGO_ZERO);
@@ -4541,8 +4541,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     let lookups = 0;
     const spy = async () => { lookups++; return null; };
     const homoglyph = "\u0410" + ALGO_ZERO.slice(1);
-    ok("R4: a Cyrillic-А look-alike still hard-blocks as an unregistered name (no silent normalising)",
-      await throwsMsg(() => resolveChainRecipient(homoglyph, algoOpts(spy)), "That Fluid name is not in the registry yet.") && lookups === 1);
+    ok("R4: a Cyrillic-А look-alike still hard-blocks (no silent normalising) — as a malformed address, since it is neither a valid address nor a plausible Fluid name (audit P1-2)",
+      await throwsMsg(() => resolveChainRecipient(homoglyph, algoOpts(spy)), "That doesn't look like a valid Algorand address, and it isn't a Fluid name either — check it and try again.") && lookups === 0);
   }
 }
 
@@ -9343,6 +9343,203 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     identIdx.every(id => noCorrect(tagOf(idxSrcB2, id))));
   ok("P2-4: prose fields keep their keyboard behaviour (invoice description untouched)",
     !tagOf(appSrcB2, "lnRcvDesc").includes("spellcheck"));
+}
+
+// ---------- Audit fix batch 3 (2026-11-10): P1-1, P1-2, P1-4, P1-9 ----------
+// Source of truth for each finding: the total audit
+// (fluid-total-audit-20261109/report.md §3) + the pass-1 origins.
+{
+  const core = await import("../src/wallet-core.js");
+  const { buildSeedQuiz, seedQuizResults, seedQuizPassed, SEED_QUIZ_COUNT,
+    resolveChainRecipient, lookupFluidNameStatus, isValidSolanaAddress, isValidBitcoinAddress,
+    parseServedBuildStamp, buildFreshness, staleBuildAction, fetchServedBuildStamp } = core;
+  const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const throwsMsg = async (fn, want) => { try { await fn(); return false; } catch (e) { return e.message === want; } };
+  const EVM_ADDR = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+
+  // ---- P1-1: the seed backup quiz ----
+  const lcg = (seed) => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
+  const PHRASE12 = "abandon ability able about above absent absorb abstract absurd abuse access accident";
+  const words12 = PHRASE12.split(" ");
+  {
+    const quiz = buildSeedQuiz(PHRASE12, lcg(42));
+    ok("P1-1: the quiz challenges exactly SEED_QUIZ_COUNT positions", quiz.challenges.length === SEED_QUIZ_COUNT && SEED_QUIZ_COUNT === 3);
+    ok("P1-1: challenged positions are distinct and inside the phrase",
+      new Set(quiz.challenges.map(c => c.position)).size === 3
+      && quiz.challenges.every(c => c.position >= 1 && c.position <= 12));
+    ok("P1-1: each challenge's answer is the word at its position",
+      quiz.challenges.every(c => c.answer === words12[c.position - 1]));
+    ok("P1-1: each challenge offers 4 options with the answer exactly once",
+      quiz.challenges.every(c => c.options.length === 4 && c.options.filter(w => w === c.answer).length === 1));
+    ok("P1-1: decoys come from the phrase's other words, never the answer",
+      quiz.challenges.every(c => c.options.every(w => words12.includes(w)) && new Set(c.options).size === c.options.length));
+    ok("P1-1: all-correct picks pass", seedQuizPassed(quiz, quiz.challenges.map(c => c.answer)) === true);
+    ok("P1-1: one wrong pick fails, and results name exactly that row",
+      (() => { const picks = quiz.challenges.map(c => c.answer); picks[1] = quiz.challenges[1].options.find(w => w !== quiz.challenges[1].answer);
+        return seedQuizPassed(quiz, picks) === false
+          && JSON.stringify(seedQuizResults(quiz, picks)) === JSON.stringify([true, false, true]); })());
+    ok("P1-1: unanswered picks never pass", seedQuizPassed(quiz, [quiz.challenges[0].answer, null, null]) === false);
+    ok("P1-1: a too-short phrase yields an empty quiz that never passes",
+      buildSeedQuiz("only three words", lcg(1)).challenges.length === 0 && seedQuizPassed(buildSeedQuiz("only three words", lcg(1)), []) === false);
+    let propOk = true;
+    for (let seed = 1; seed <= 60 && propOk; seed++) {
+      const q = buildSeedQuiz(PHRASE12, lcg(seed));
+      propOk = q.challenges.length === 3
+        && new Set(q.challenges.map(c => c.position)).size === 3
+        && q.challenges.every(c => c.answer === words12[c.position - 1] && c.options.includes(c.answer));
+    }
+    ok("P1-1: 60 seeded quizzes all challenge distinct positions with true answers", propOk);
+  }
+  ok("P1-1: the create flow paints the phrase as a numbered grid, not one line",
+    appSrc.includes("$(\"seedOut\").innerHTML = seedGridHtml(v.phrase);") && !appSrc.includes("$(\"seedOut\").textContent = v.phrase"));
+  ok("P1-1: creation persists the backup state as pending at the create click",
+    appSrc.includes('localStorage.setItem(BACKUP_STATE_KEY, "pending")'));
+  ok("P1-1: the seed button mounts the quiz; pass and later both enter the wallet (never bricked)",
+    appSrc.includes("mountSeedQuiz($(\"seedQuizBox\"), v.phrase, {")
+    && appSrc.includes("onPass: () => finishCreate(true)")
+    && appSrc.includes("onLater: () => finishCreate(false)")
+    && appSrc.includes('localStorage.setItem(BACKUP_STATE_KEY, "confirmed")'));
+  ok("P1-1: the quiz offers the words-again path back to the phrase view",
+    appSrc.includes('onWords: () => { show("seedQuizBox", false); show("seedWordsView", true); }'));
+  ok("P1-1: the home reminder card exists in the shell with check + dismiss actions",
+    idxSrc.includes('id="homeBackupCard"') && idxSrc.includes('id="homeBackupBtn"') && idxSrc.includes('id="homeBackupDismiss"'));
+  ok("P1-1: the reminder paints only for a pending backup and dismisses per session",
+    appSrc.includes("function refreshHomeBackupCard()")
+    && appSrc.includes('localStorage.getItem(BACKUP_STATE_KEY) === "pending"')
+    && appSrc.includes('sessionStorage.getItem(BACKUP_DISMISS_KEY) !== "1"')
+    && appSrc.includes('sessionStorage.setItem(BACKUP_DISMISS_KEY, "1")'));
+  ok("P1-1: import clears the replaced wallet's backup state (import behaviour itself unchanged)",
+    appSrc.includes("localStorage.removeItem(BACKUP_STATE_KEY);"));
+
+  // ---- P1-2: address/name error states are never conflated ----
+  const evmOpts = (lookupName) => ({ isValidAddress: (a) => /^0x[0-9a-fA-F]{40}$/.test(a), field: "evm", chainLabel: "BNB Chain", lookupName });
+  {
+    let lookups = 0;
+    const spy = async () => { lookups++; return null; };
+    // Pre-fix reproduction: "0x123" in the EVM sheet (and a bad
+    // string in the Solana sheet) returned "That Fluid name is not
+    // in the registry yet." — a malformed address misdiagnosed as
+    // an unregistered name, with a registry claim never proven.
+    ok("P1-2: a malformed EVM address is reported as a malformed address, registry never consulted",
+      await throwsMsg(() => resolveChainRecipient("0x123", evmOpts(spy)),
+        "That doesn't look like a valid BNB Chain address, and it isn't a Fluid name either — check it and try again.") && lookups === 0);
+    ok("P1-2: a malformed Solana string is reported as a malformed address, registry never consulted",
+      await throwsMsg(() => resolveChainRecipient("not an address!!", { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana", lookupName: spy }),
+        "That doesn't look like a valid Solana address, and it isn't a Fluid name either — check it and try again.") && lookups === 0);
+    const raw = await resolveChainRecipient(EVM_ADDR, evmOpts(spy));
+    ok("P1-2: a well-formed address is accepted as a raw external address, no lookup",
+      raw.to === EVM_ADDR && raw.name === null && lookups === 0);
+    const legacy = await resolveChainRecipient("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+      { isValidAddress: isValidBitcoinAddress, field: "btc", chainLabel: "Bitcoin", lookupName: spy });
+    ok("P1-2: a legacy Bitcoin address is an address (the old bc1-prefix test sent it down the name path)",
+      legacy.to === "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" && legacy.name === null && lookups === 0);
+    const reg = async (n) => n === "kemi" ? { name: "kemi", evm: EVM_ADDR } : null;
+    const named = await resolveChainRecipient("kemi", evmOpts(reg));
+    ok("P1-2: a registered name resolves and shows its destination", named.to === EVM_ADDR && named.name === "kemi");
+    ok("P1-2: a registered name with no address for the chain says exactly that",
+      await throwsMsg(() => resolveChainRecipient("kemi", { isValidAddress: isValidSolanaAddress, field: "sol", chainLabel: "Solana", lookupName: reg }),
+        "That Fluid name has no Solana address in the registry."));
+    ok("P1-2: an unregistered name (registry read, name absent) says check the spelling",
+      await throwsMsg(() => resolveChainRecipient("ghost", evmOpts(reg)),
+        "No Fluid user with that name — check the spelling."));
+  }
+  {
+    // The default (non-injected) path: existence claims require a
+    // registry read that actually happened.
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => { throw new Error("network down"); };
+      ok("P1-2: registry unreachable claims NOTHING about existence — a try-again state instead",
+        await throwsMsg(() => resolveChainRecipient("kemi", evmOpts(undefined)),
+          "Couldn't check the Fluid name registry just now — check your connection and try again."));
+      globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+      ok("P1-2: registry read with the name absent → unregistered-name state",
+        await throwsMsg(() => resolveChainRecipient("kemi", evmOpts(undefined)),
+          "No Fluid user with that name — check the spelling."));
+      globalThis.fetch = async () => ({ ok: true, json: async () => ({ kemi: { evm: EVM_ADDR } }) });
+      const hit = await resolveChainRecipient("kemi", evmOpts(undefined));
+      ok("P1-2: registry read with the name present → resolved destination", hit.to === EVM_ADDR && hit.name === "kemi");
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    try {
+      let fetches = 0;
+      globalThis.fetch = async () => { fetches++; return { ok: true, json: async () => ({ kemi: { evm: EVM_ADDR } }) }; };
+      const st = await lookupFluidNameStatus("kemi", "https://example.invalid/reg.json");
+      ok("P1-2: lookupFluidNameStatus reports found with the sanitized entry", st.status === "found" && st.entry.evm === EVM_ADDR && st.entry.name === "kemi");
+      const nf = await lookupFluidNameStatus("0x123", "https://example.invalid/reg.json");
+      ok("P1-2: lookupFluidNameStatus refuses a non-name without fetching", nf.status === "not-a-name" && fetches === 1);
+      globalThis.fetch = async () => { throw new Error("down"); };
+      const un = await lookupFluidNameStatus("kemi", "https://example.invalid/reg.json");
+      ok("P1-2: lookupFluidNameStatus distinguishes unreachable from absent", un.status === "unreachable");
+    } finally { globalThis.fetch = realFetch; }
+  }
+  ok("P1-2: the EVM sheet resolves through the shared path (its private conflated copy is gone)",
+    appSrc.includes('resolveChainRecipient(to, { isValidAddress: (a) => /^0x[0-9a-fA-F]{40}$/.test(a), field: "evm", chainLabel: NETWORKS[networkKey].name })')
+    && !appSrc.includes("That Fluid name is not in the registry yet."));
+  ok("P1-2: the Bitcoin sheet resolves through the shared path (no bc1-prefix name gate)",
+    appSrc.includes('resolveChainRecipient(to, { isValidAddress: isValidBitcoinAddress, field: "btc", chainLabel: "Bitcoin" })')
+    && !appSrc.includes('!to.startsWith("bc1")'));
+
+  // ---- P1-4: the swap form leads, the lecture follows ----
+  ok("P1-4: no native network selects remain in the swap sheet",
+    !appSrc.includes('<select id="wFromNet"') && !appSrc.includes('<select id="wToNet"')
+    && !appSrc.includes('$("wFromNet")') && !appSrc.includes('$("wToNet")'));
+  ok("P1-4: the network pickers are search panels in the token-picker pattern",
+    appSrc.includes('id="wFromNetBtn"') && appSrc.includes('id="wToNetBtn"')
+    && appSrc.includes('id="wFromNetSearch"') && appSrc.includes('id="wToNetSearch"')
+    && appSrc.includes("function renderNetList(side)") && appSrc.includes("async function chooseNet(side, key)")
+    && appSrc.includes('placeholder="Search networks…"'));
+  ok("P1-4: the sheet reads network state from netSel, the single source of truth",
+    appSrc.includes("const netSel = { from: fromKey0, to: toKey0 };")
+    && appSrc.includes("const fromKey = netSel.from, toKey = netSel.to;"));
+  ok("P1-4: the From row is the first interactive element — the explainer sits below the form",
+    appSrc.indexOf('id="wFromNetBtn"') > -1
+    && appSrc.indexOf('id="wFromNetBtn"') < appSrc.indexOf('id="wAmt"')
+    && appSrc.indexOf('id="wAmt"') < appSrc.indexOf('id="wHow"')
+    && appSrc.indexOf("One search across every Fluid chain") > appSrc.indexOf('id="wHow"'));
+  ok("P1-4: the explainer + fee-law + caps copy survives verbatim, inside a collapsed details below the form",
+    appSrc.includes('<details id="wHow"')
+    && appSrc.includes("How swaps work")
+    && appSrc.includes("Fluid's fee is a small multiple of the route's cost, never more than 0.5%")
+    && appSrc.includes("Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.")
+    && appSrc.indexOf('id="wHow"') < appSrc.indexOf('id="wConfirm"'));
+
+  // ---- P1-9: the build-freshness handshake ----
+  ok("P1-9: the served stamp parses from the fluid-build meta in either attribute order",
+    parseServedBuildStamp('<head><meta name="fluid-build" content="abc123"></head>') === "abc123"
+    && parseServedBuildStamp('<head><meta content="def456" name="fluid-build"></head>') === "def456"
+    && parseServedBuildStamp("<head><title>x</title></head>") === null);
+  ok("P1-9: freshness verdicts — same, moved, and unknown (an unreadable page proves nothing)",
+    buildFreshness("a", "a") === "same" && buildFreshness("a", "b") === "moved"
+    && buildFreshness(null, "b") === "unknown" && buildFreshness("a", null) === "unknown");
+  ok("P1-9: stamp moved + failed load → refresh state",
+    staleBuildAction({ loadFailed: true, bootStamp: "a", servedStamp: "b" }) === "refresh");
+  ok("P1-9: stamp same + failed load → the existing honest error stands",
+    staleBuildAction({ loadFailed: true, bootStamp: "a", servedStamp: "a" }) === "keep");
+  ok("P1-9: stamp unknown + failed load → the existing honest error stands",
+    staleBuildAction({ loadFailed: true, bootStamp: "a", servedStamp: null }) === "keep");
+  ok("P1-9: stamp moved + healthy load → no interruption",
+    staleBuildAction({ loadFailed: false, bootStamp: "a", servedStamp: "b" }) === "none");
+  {
+    let seenUrl = "";
+    const stamp = await fetchServedBuildStamp(async (url) => { seenUrl = url; return { ok: true, text: async () => '<meta name="fluid-build" content="zz9"> ' }; }, "https://fluidwallet.dpdns.org/");
+    ok("P1-9: the served-stamp re-read is cache-busted and returns the stamp",
+      stamp === "zz9" && seenUrl.includes("fluid-freshness="));
+    ok("P1-9: a failed or non-ok re-read returns null (unknown), never a false 'moved'",
+      (await fetchServedBuildStamp(async () => { throw new Error("down"); }, "https://x/")) === null
+      && (await fetchServedBuildStamp(async () => ({ ok: false, text: async () => "" }), "https://x/")) === null);
+  }
+  ok("P1-9: the app records its boot stamp and arms the handshake on the send sheet's load states",
+    appSrc.includes("const BOOT_BUILD_STAMP")
+    && appSrc.includes('id="sLoadNote"')
+    && appSrc.includes("staleBuildCheck(note, true)")
+    && appSrc.includes("STALE_BUILD_DEADLINE_MS = 20000"));
+  ok("P1-9: the refresh state is an honest update message with a clean reload action",
+    appSrc.includes("Fluid has updated since you opened it")
+    && appSrc.includes("btn.onclick = () => location.reload();"));
 }
 
 console.log(`\n${passed} checks passed`);

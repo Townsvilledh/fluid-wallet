@@ -3182,31 +3182,55 @@ async function fetchRegistryJson(registryUrl) {
   }
   return null;
 }
-export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
+/** The registry read with its outcome kept distinct (audit P1-2):
+ *  "found" (the entry, sanitized), "absent" (the registry WAS read
+ *  and the name is not in it), "unreachable" (the registry could not
+ *  be read at all — no existence claim may be made from this), and
+ *  "not-a-name" (the input is not even name-shaped). Callers that
+ *  tell a user a name does or doesn't exist must go through this —
+ *  never through a null that conflates absence with a failed read. */
+export async function lookupFluidNameStatus(input, registryUrl = NAMES_REGISTRY_URL) {
   const name = normalizeFluidName(input);
-  if (!validateFluidName(name)) return null;
+  if (!validateFluidName(name)) return { status: "not-a-name" };
   const reg = await fetchRegistryJson(registryUrl);
-  if (!reg) return null;
+  if (!reg) return { status: "unreachable" };
   const entry = sanitizeNameEntry(reg[name]);
-  return entry ? { name, ...entry } : null;
+  return entry ? { status: "found", entry: { name, ...entry } } : { status: "absent" };
+}
+export async function resolveFluidName(input, registryUrl = NAMES_REGISTRY_URL) {
+  const st = await lookupFluidNameStatus(input, registryUrl);
+  return st.status === "found" ? st.entry : null;
 }
 /** Resolve a SEND-sheet recipient for one chain — the one path every
- *  family sheet shares (QA F2/F3–F5, 2026-11-07). Order matters:
+ *  family sheet shares (QA F2/F3–F5, 2026-11-07; audit P1-2,
+ *  2026-11-10). The input is classified BEFORE any claim is made,
+ *  and the three states are never conflated:
  *  1. A string that IS a valid address for the chain is an address,
  *     full stop — the name lookup never runs for it. (The Algorand
  *     zero address AAAA…Y5HFKQ is checksum-valid and must not be
  *     treated as an unregistered Fluid name.)
- *  2. Anything else is treated as a Fluid name and resolved through
- *     the shared registry (resolveFluidName). An unregistered name is
- *     a hard block: "That Fluid name is not in the registry yet."
- *  3. A registered name with no address for this chain is the other
- *     hard block, worded exactly like the Bitcoin sheet's:
- *     "That Fluid name has no <Chain> address in the registry."
- *     A chain the registry schema doesn't carry (field: null)
- *     always lands here for known names.
+ *  2. A string that is NOT an address and NOT a plausible Fluid
+ *     name (validateFluidName fails — a truncated or mistyped
+ *     address, punctuation, an over-long string) is a MALFORMED
+ *     ADDRESS and says so: "That doesn't look like a valid <Chain>
+ *     address, and it isn't a Fluid name either…" The registry is
+ *     never consulted for it — the pre-fix code ran the name lookup
+ *     for exactly these strings and misreported them as
+ *     unregistered names.
+ *  3. A plausible name is resolved through the shared registry
+ *     with the read's outcome kept distinct (lookupFluidNameStatus):
+ *     absent (the registry WAS read) → "No Fluid user with that
+ *     name — check the spelling."; unreachable (no read happened)
+ *     → a try-again message that claims nothing about existence;
+ *     found but no address for this chain → "That Fluid name has
+ *     no <Chain> address in the registry." A chain the registry
+ *     schema doesn't carry (field: null) always lands here for
+ *     known names.
  *  Returns { to, name } — name is null for a raw address. Throws an
  *  Error carrying the user-facing message otherwise. `lookupName`
- *  is injectable for tests. */
+ *  is injectable for tests; an injected lookup keeps the legacy
+ *  contract (entry or null — null reads as "absent", since a test
+ *  seam cannot express an unreachable registry). */
 /** Recipient-input hygiene (QA F2 round 3, convicted by execution):
  *  invisible format characters — zero-width space U+200B, ZWNJ
  *  U+200C, ZWJ U+200D, word joiner U+2060, soft hyphen U+00AD, and
@@ -3241,15 +3265,121 @@ export function cleanRecipientInput(input) {
 export async function resolveChainRecipient(input, { isValidAddress, field = null, chainLabel, lookupName } = {}) {
   const raw = cleanRecipientInput(input);
   if (typeof isValidAddress === "function" && isValidAddress(raw)) return { to: raw, name: null };
-  const lookup = lookupName || resolveFluidName;
-  const hit = await lookup(raw).catch(() => null);
-  if (!hit) throw new Error("That Fluid name is not in the registry yet.");
+  if (!validateFluidName(normalizeFluidName(raw)))
+    throw new Error(`That doesn't look like a valid ${chainLabel} address, and it isn't a Fluid name either — check it and try again.`);
+  let hit = null;
+  if (lookupName) {
+    hit = await lookupName(raw).catch(() => null);
+    if (!hit) throw new Error("No Fluid user with that name — check the spelling.");
+  } else {
+    const st = await lookupFluidNameStatus(raw);
+    if (st.status === "unreachable")
+      throw new Error("Couldn't check the Fluid name registry just now — check your connection and try again.");
+    if (st.status !== "found") throw new Error("No Fluid user with that name — check the spelling.");
+    hit = st.entry;
+  }
   if (!field || !hit[field]) throw new Error(`That Fluid name has no ${chainLabel} address in the registry.`);
   return { to: hit[field], name: hit.name };
 }
 /** Fetch the whole name registry (null on any failure). */
 export async function fetchNameRegistry(registryUrl = NAMES_REGISTRY_URL) {
   return fetchRegistryJson(registryUrl);
+}
+
+// ---------- Seed backup verification quiz (audit P1-1) ----------
+// Creation used to confirm the backup with one checkbox — pure
+// attestation: a user who copied one word wrong found out only at
+// restore time, when it is too late. The quiz follows the MetaMask
+// pattern: the user PICKS the correct word for a few challenged
+// positions from decoy options (selection, never typing). Decoys
+// are drawn from the phrase's own other words — the failure being
+// tested is exactly "right words, wrong order / one word wrong",
+// so the decoys must be plausible. The quiz is a check, never a
+// gate on funds: the app layer retries without limit, offers a
+// look-at-the-words-again path that re-quizzes fresh, and lets the
+// user enter the wallet unconfirmed (with a standing reminder)
+// rather than bricking anything.
+/** How many positions the backup quiz challenges. */
+export const SEED_QUIZ_COUNT = 3;
+/** Build a quiz for a phrase: SEED_QUIZ_COUNT distinct challenged
+ *  positions (1-based), each with the correct word shuffled among
+ *  up to 3 decoys from the phrase's other words. `rand` is
+ *  injectable for tests; the default is Math.random. Returns
+ *  { challenges: [{ position, options, answer }] } — empty when
+ *  the phrase is too short to quiz honestly. */
+export function buildSeedQuiz(phrase, rand = Math.random) {
+  const words = String(phrase || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length < SEED_QUIZ_COUNT + 1) return { challenges: [] };
+  const positions = new Set();
+  while (positions.size < SEED_QUIZ_COUNT) positions.add(Math.floor(rand() * words.length));
+  const challenges = [...positions].map(pos => {
+    const answer = words[pos];
+    const pool = [...new Set(words.filter((w, i) => i !== pos && w !== answer))];
+    const decoys = [];
+    while (decoys.length < 3 && pool.length) decoys.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+    const options = [...decoys, answer];
+    for (let i = options.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [options[i], options[j]] = [options[j], options[i]];
+    }
+    return { position: pos + 1, options, answer };
+  });
+  return { challenges };
+}
+/** Per-challenge verdicts for a set of picks (the word chosen for
+ *  each challenge, in challenge order): true where the pick is the
+ *  challenged position's word. The app keeps the correct picks and
+ *  clears only the wrong ones, so a retry is one tap, not a restart. */
+export function seedQuizResults(quiz, picks) {
+  if (!quiz || !Array.isArray(quiz.challenges)) return [];
+  return quiz.challenges.map((c, i) => Array.isArray(picks) && picks[i] === c.answer);
+}
+/** The quiz is passed only when every challenged position is
+ *  answered with its true word. An empty quiz never passes. */
+export function seedQuizPassed(quiz, picks) {
+  if (!quiz || !Array.isArray(quiz.challenges) || !quiz.challenges.length) return false;
+  return seedQuizResults(quiz, picks).every(Boolean);
+}
+
+// ---------- Build freshness handshake (audit P1-9) ----------
+// A profile that crosses a deploy can hold a sheet whose data load
+// fails or hangs while a fresh profile on the new build loads
+// instantly — the stale bundle is the defect, but the sheet blamed
+// the network and stranded the user. The handshake: the app records
+// its build stamp at boot (the fluid-build meta the build stamps
+// into the page); when a sheet's load has failed or hung, ONE
+// lightweight re-read of the served page's stamp decides — moved
+// means the honest state is "Fluid has updated — tap to refresh",
+// same/unknown means the existing error copy stands.
+export function parseServedBuildStamp(html) {
+  const s = String(html || "");
+  const m = /<meta[^>]*name=["']fluid-build["'][^>]*content=["']([^"']+)["']/i.exec(s)
+    || /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']fluid-build["']/i.exec(s);
+  return m ? m[1] : null;
+}
+export function buildFreshness(bootStamp, servedStamp) {
+  if (!bootStamp || !servedStamp) return "unknown";
+  return bootStamp === servedStamp ? "same" : "moved";
+}
+/** What a sheet should do with a failed/hung load: "refresh" only
+ *  when the load actually failed AND the served build has provably
+ *  moved since boot; "keep" (the existing honest error) otherwise —
+ *  a healthy load is never interrupted, moved build or not. */
+export function staleBuildAction({ loadFailed, bootStamp, servedStamp } = {}) {
+  if (!loadFailed) return "none";
+  return buildFreshness(bootStamp, servedStamp) === "moved" ? "refresh" : "keep";
+}
+/** Re-read the served page and return its build stamp (null when
+ *  the read fails or carries no stamp — an unreadable page proves
+ *  nothing, so callers must treat null as "unknown", never "moved").
+ *  `fetchImpl` is injectable for tests. */
+export async function fetchServedBuildStamp(fetchImpl, url) {
+  try {
+    const bust = String(url || "").includes("?") ? "&" : "?";
+    const res = await fetchImpl(String(url || "") + bust + "fluid-freshness=" + Date.now(), { cache: "no-store" });
+    if (!res || !res.ok) return null;
+    return parseServedBuildStamp(await res.text());
+  } catch { return null; }
 }
 /** Reverse lookup: which registered name belongs to these addresses?
  *  EVM addresses compare case-insensitively (checksummed vs lowercase

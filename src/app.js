@@ -28,6 +28,7 @@ import {
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
+  buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
@@ -60,6 +61,8 @@ const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
 const NAME_CLAIM_KEY = "fluid_name_claim"; // the device-held signed name claim + its publish state
 const HISTORY_KEY = "fluid_history_v1";
+const BACKUP_STATE_KEY = "fluid_backup_state"; // "pending" | "confirmed" — the seed-backup quiz state (audit P1-1); wallet-scoped like fluid_name
+const BACKUP_DISMISS_KEY = "fluid_backup_card_dismissed"; // sessionStorage: the home backup reminder's per-session dismissal
 const APPROVALS_KEY = "fluid_approvals_v1";
 const CHAINS_KEY = "fluid_chains_v1";
 const HISTORY_MAX = 100; // §4.9: history storage cap (was 20)
@@ -179,6 +182,33 @@ function lifiCacheSet(chainId, tokens) {
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
 function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
+// ---------- build freshness (audit P1-9) ----------
+// The build this tab booted with, recorded once at startup from
+// the stamped page. A sheet whose data load fails or hangs checks
+// the SERVED stamp once: if Fluid has updated since this tab
+// opened, the stuck sheet is not a network problem — the sheet
+// offers a clean refresh (the wallet itself lives in the vault;
+// a reload loses nothing) instead of stranding the user on a
+// loading line or a dead-end error. When the stamp has not moved,
+// the existing honest error copy stands untouched.
+const BOOT_BUILD_STAMP = (() => { const m = document.querySelector('meta[name="fluid-build"]'); return m && m.content ? m.content : null; })();
+const STALE_BUILD_DEADLINE_MS = 20000;
+async function staleBuildCheck(noteEl, loadFailed = true) {
+  if (!noteEl || !BOOT_BUILD_STAMP) return false;
+  const served = await fetchServedBuildStamp(fetch, location.href.split("#")[0]).catch(() => null);
+  if (staleBuildAction({ loadFailed, bootStamp: BOOT_BUILD_STAMP, servedStamp: served }) !== "refresh") return false;
+  if (!document.contains(noteEl)) return false;
+  noteEl.innerHTML = "";
+  const span = document.createElement("span");
+  span.textContent = "Fluid has updated since you opened it — this screen is running the old build. ";
+  const btn = document.createElement("button");
+  btn.className = "btn ghost";
+  btn.style.cssText = "width:auto;padding:6px 12px;margin:4px 0";
+  btn.textContent = "Tap to refresh";
+  btn.onclick = () => location.reload();
+  noteEl.append(span, btn);
+  return true;
+}
 // ---------- sheet chrome: busy lock, error banner, toast (§4.7/§4.8) ----------
 // While a transaction broadcasts, the sheet is NOT dismissible: the X,
 // the scrim and closeSheet() all refuse until the send settles.
@@ -648,6 +678,7 @@ async function renderMain() {
   // Home until it verifies live in the registry.
   resumePendingClaim();
   refreshHomeClaimBanner();
+  refreshHomeBackupCard();
   // A failed Bitcoin load is UNKNOWN, not zero (EVM precedent): each
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
@@ -2232,7 +2263,7 @@ function tronRampSendFee() {
 function openEvmSendSheet() {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <div id="sRampOrder"></div>
-    ${!balances.length ? `<p class="tag">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
+    ${!balances.length ? `<p class="tag" id="sLoadNote">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
     <input id="sTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
@@ -2245,20 +2276,38 @@ function openEvmSendSheet() {
     <p class="msg err" id="sMsg"></p>
     <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
   wireRampFeeFields("s");
+  // Audit P1-9: the two states above are exactly where a stale
+  // build strands this sheet after a deploy — a failed load checks
+  // the served build stamp now; a load still unfinished at the
+  // deadline checks it then. A moved stamp replaces the note with
+  // the refresh offer; anything else leaves the copy untouched.
+  if (!balances.length) {
+    const note = $("sLoadNote");
+    if (evmLoadFailed) staleBuildCheck(note, true);
+    else setTimeout(() => { if (!balances.length) staleBuildCheck(note, true); }, STALE_BUILD_DEADLINE_MS);
+  }
   const sOpenOrder = openRampOrder("evm", networkKey);
   if (sOpenOrder) mountRampOrderPanel($("sRampOrder"), sOpenOrder, evmRampSendFee(sOpenOrder));
   $("sReview").onclick = async () => {
     let to = $("sTo").value.trim();
     let sendName = null;
     const amount = $("sAmt").value.trim(), b = balances[Number($("sToken").value)];
-    if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) {
-      msg("sMsg", "Resolving Fluid name…", true);
-      const hit = await resolveFluidName(to).catch(() => null);
-      if (!hit || !hit.evm) return msg("sMsg", "That Fluid name is not in the registry yet.");
-      to = hit.evm; sendName = hit.name;
+    if (!to) return msg("sMsg", "Enter a recipient.");
+    // Recipient resolution is the shared resolveChainRecipient path
+    // (audit P1-2): a well-formed address is accepted as a raw
+    // external address; a name-shaped string is checked against the
+    // registry, and only that registry read decides whether the
+    // name exists; anything else is reported as what it is — a
+    // malformed address. The three states are never conflated.
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to)) msg("sMsg", "Checking the recipient…", true);
+    try {
+      const r = await resolveChainRecipient(to, { isValidAddress: (a) => /^0x[0-9a-fA-F]{40}$/.test(a), field: "evm", chainLabel: NETWORKS[networkKey].name });
+      to = r.to; sendName = r.name;
+    } catch (e) { return msg("sMsg", e.message); }
+    if (sendName) {
       toast("Name resolved");
-      msg("sMsg", hit.name + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
-    }
+      msg("sMsg", sendName + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "…", true);
+    } else msg("sMsg", "");
     const resolvedNote = sendName ? sendName + "." + FLUID_DOMAIN + " → " + to.slice(0, 10) + "… · " : "";
     // Address-poisoning check (raw addresses only — Fluid names are verified
     // against the registry): warn if the recipient imitates an address the
@@ -2538,10 +2587,17 @@ function openBtcSheet() {
     let to = $("bTo").value.trim();
     let sendName = null;
     const amount = Number($("bAmt").value);
-    if (to && !to.startsWith("bc1")) {
-      const hit = await resolveFluidName(to).catch(() => null);
-      if (!hit || !hit.btc) return msg("bMsg", "That Fluid name has no Bitcoin address in the registry.");
-      to = hit.btc; sendName = hit.name;
+    // The shared resolver (audit P1-2): the old startsWith("bc1")
+    // test sent legacy 1…/3… addresses — and every typo — down the
+    // name path, where they were misreported as name problems. A
+    // valid Bitcoin address (any format) is an address; a
+    // name-shaped string is settled by the registry read; anything
+    // else is a malformed address and says so.
+    if (to) {
+      try {
+        const r = await resolveChainRecipient(to, { isValidAddress: isValidBitcoinAddress, field: "btc", chainLabel: "Bitcoin" });
+        to = r.to; sendName = r.name;
+      } catch (e) { return msg("bMsg", e.message); }
     }
     if (!to || !amount || amount <= 0) return msg("bMsg", "Enter a recipient and amount.");
     // A failed balance load is UNKNOWN, not zero: never plan a send
@@ -5414,7 +5470,6 @@ $("actSwap").onclick = () => {
   // Bitcoin and Lightning are receive-only swap destinations
   // (Satora, from EVM stablecoins) — they appear in the To list only.
   const swapDestNets = [...swapNets, "bitcoin", "lightning"];
-  const netOpts = (sel, dest = false) => (dest ? swapDestNets : swapNets).map(k => `<option value="${k}" ${k === sel ? "selected" : ""}>${swapChainName(k)}</option>`).join("");
   const fromKey0 = (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
@@ -5422,13 +5477,15 @@ $("actSwap").onclick = () => {
   const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui"].includes(viewKey))
     ? `<p class="tag">Swaps run on EVM, Solana, Tron and Sui — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
-    <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't; Satora covers Bitcoin and Lightning from EVM stablecoins). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
-    <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.</p>
     ${swapViewCaption}
     <label class="tag">From</label>
     <div style="display:flex;gap:8px">
-      <select id="wFromNet" style="flex:1.2">${netOpts(fromKey0)}</select>
+      <button class="btn ghost" id="wFromNetBtn" style="flex:1.2;margin:6px 0">${esc(swapChainName(fromKey0))} ▾</button>
       <button class="btn ghost" id="wFromTokBtn" style="flex:1;margin:6px 0">Select token ▾</button>
+    </div>
+    <div id="wFromNetPick" class="hidden">
+      <input id="wFromNetSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search networks…" autocapitalize="none">
+      <div id="wFromNetList" style="max-height:240px;overflow:auto"></div>
     </div>
     <div id="wFromPick" class="hidden">
       <input id="wFromSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
@@ -5438,8 +5495,12 @@ $("actSwap").onclick = () => {
     <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
     <div style="display:flex;gap:8px">
-      <select id="wToNet" style="flex:1.2">${netOpts(toKey0, true)}</select>
+      <button class="btn ghost" id="wToNetBtn" style="flex:1.2;margin:6px 0">${esc(swapChainName(toKey0))} ▾</button>
       <button class="btn ghost" id="wToTokBtn" style="flex:1;margin:6px 0">Select token ▾</button>
+    </div>
+    <div id="wToNetPick" class="hidden">
+      <input id="wToNetSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search networks…" autocapitalize="none">
+      <div id="wToNetList" style="max-height:240px;overflow:auto"></div>
     </div>
     <div id="wToPick" class="hidden">
       <input id="wToSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
@@ -5451,6 +5512,11 @@ $("actSwap").onclick = () => {
     </div>
     <button class="btn" id="wRoutes">Get routes</button>
     <div id="wList"></div>
+    <details id="wHow" style="margin:10px 0">
+      <summary class="tag" style="cursor:pointer">How swaps work</summary>
+      <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't; Satora covers Bitcoin and Lightning from EVM stablecoins). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
+      <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.</p>
+    </details>
     <div id="wConfirm" class="hidden">
       <p class="seed" id="wIntentText"></p>
       <button class="btn" id="wDo">Confirm &amp; swap</button>
@@ -5459,10 +5525,39 @@ $("actSwap").onclick = () => {
     <div id="wMayanSwaps"></div>
     <p class="msg err" id="wMsg"></p>`);
   const P = {
-    from: { net: "wFromNet", btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList" },
-    to: { net: "wToNet", btn: "wToTokBtn", panel: "wToPick", search: "wToSearch", list: "wToList" },
+    from: { btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList", netBtn: "wFromNetBtn", netPanel: "wFromNetPick", netSearch: "wFromNetSearch", netList: "wFromNetList" },
+    to: { btn: "wToTokBtn", panel: "wToPick", search: "wToSearch", list: "wToList", netBtn: "wToNetBtn", netPanel: "wToNetPick", netSearch: "wToNetSearch", netList: "wToNetList" },
   };
   const pick = { from: null, to: null };
+  // Network selection (audit P1-4): the network pickers get the
+  // same search treatment as the token pickers — a button that
+  // opens a searchable list — instead of native <select>s with
+  // 90+ options. netSel is the single source of truth the rest of
+  // the sheet reads (the old selects were read via .value in a
+  // dozen places; they all read netSel now).
+  const netSel = { from: fromKey0, to: toKey0 };
+  function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
+  function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
+  function renderNetList(side) {
+    const q = $(P[side].netSearch).value.trim().toLowerCase();
+    const keys = (side === "to" ? swapDestNets : swapNets)
+      .filter(k => !q || swapChainName(k).toLowerCase().includes(q) || k.toLowerCase().includes(q));
+    $(P[side].netList).innerHTML = keys.length
+      ? keys.map(k => `<button class="netitem" data-netpick="${side}" data-key="${esc(k)}"><span>${esc(swapChainName(k))}${k === netSel[side] ? " ✓" : ""}</span></button>`).join("")
+      : `<p class="tag">No networks match.</p>`;
+    document.querySelectorAll(`[data-netpick="${side}"]`).forEach(b => b.onclick = async () => {
+      show(P[side].netPanel, false);
+      await chooseNet(side, b.dataset.key);
+    });
+  }
+  async function chooseNet(side, key) {
+    setNetValue(side, key);
+    show(P[side].panel, false);
+    await ensureStableTokens(key); // discovered chains learn USDC/USDT lazily
+    setPick(side, defaultTok(side, key));
+    ensureSwapList(key);
+    if (side === "to") syncDestRow();
+  }
   function updatePickBtn(side) {
     const t = pick[side];
     $(P[side].btn).textContent = t ? `${t.verified === false ? "⚠ " : ""}${t.symbol} ▾` : "Select token ▾";
@@ -5481,7 +5576,7 @@ $("actSwap").onclick = () => {
   // to the user's own Fluid Taproot address) or a Lightning
   // invoice / address / LNURL the user pastes.
   function syncDestRow() {
-    const tk = $("wToNet").value;
+    const tk = netSel.to;
     const wrap = $("wDestWrap"), inp = $("wDestAddr");
     if (tk === "bitcoin") {
       wrap.classList.remove("hidden");
@@ -5516,7 +5611,7 @@ $("actSwap").onclick = () => {
       </div>
       <button class="btn" id="wBtcFloorLn" style="margin:8px 0">Swap to Lightning instead</button>`;
     $("wBtcFloorLn").onclick = async () => {
-      $("wToNet").value = "lightning";
+      setNetValue("to", "lightning");
       setPick("to", defaultTok("to", "lightning"));
       syncDestRow();
       const inp = $("wDestAddr");
@@ -5557,7 +5652,7 @@ $("actSwap").onclick = () => {
   paintMayanSwaps();
   pollMayanSwapStatuses(localStorage).then(() => paintMayanSwaps()).catch(() => {});
   function renderPickList(side) {
-    const netKey = $(P[side].net).value;
+    const netKey = netSel[side];
     const q = $(P[side].search).value.trim().toLowerCase();
     const toks = swapTokensFor(netKey);
     const list = toks.filter(t => !q || t.symbol.toLowerCase().includes(q)
@@ -5578,17 +5673,17 @@ $("actSwap").onclick = () => {
     $(P[side].btn).onclick = () => {
       const opening = $(P[side].panel).classList.contains("hidden");
       show(P.from.panel, false); show(P.to.panel, false);
+      show(P.from.netPanel, false); show(P.to.netPanel, false);
       if (opening) { show(P[side].panel, true); renderPickList(side); }
     };
     $(P[side].search).addEventListener("input", () => renderPickList(side));
-    $(P[side].net).onchange = async () => {
-      const netKey = $(P[side].net).value;
-      show(P[side].panel, false);
-      await ensureStableTokens(netKey); // discovered chains learn USDC/USDT lazily
-      setPick(side, defaultTok(side, netKey));
-      ensureSwapList(netKey);
-      if (side === "to") syncDestRow();
+    $(P[side].netBtn).onclick = () => {
+      const opening = $(P[side].netPanel).classList.contains("hidden");
+      show(P.from.panel, false); show(P.to.panel, false);
+      show(P.from.netPanel, false); show(P.to.netPanel, false);
+      if (opening) { show(P[side].netPanel, true); renderNetList(side); }
     };
+    $(P[side].netSearch).addEventListener("input", () => renderNetList(side));
   }
   setPick("from", defaultTok("from", fromKey0));
   setPick("to", defaultTok("to", toKey0));
@@ -5596,12 +5691,13 @@ $("actSwap").onclick = () => {
   ensureStableTokens(fromKey0).then(() => ensureSwapList(fromKey0));
   ensureStableTokens(toKey0).then(() => ensureSwapList(toKey0));
   $("wFlip").onclick = async () => {
-    const fn = $("wFromNet").value, tn = $("wToNet").value;
+    const fn = netSel.from, tn = netSel.to;
     if (fn === "bitcoin" || fn === "lightning" || tn === "bitcoin" || tn === "lightning")
       return msg("wMsg", "Bitcoin and Lightning are receive-only swap destinations — they can't be a swap source.");
     const fTok = pick.from, tTok = pick.to;
-    $("wFromNet").value = tn; $("wToNet").value = fn;
+    setNetValue("from", tn); setNetValue("to", fn);
     show(P.from.panel, false); show(P.to.panel, false);
+    show(P.from.netPanel, false); show(P.to.netPanel, false);
     await ensureStableTokens(tn); await ensureStableTokens(fn);
     setPick("from", findTok(tn, tTok) || defaultTok("from", tn));
     setPick("to", findTok(fn, fTok) || defaultTok("to", fn));
@@ -5610,9 +5706,9 @@ $("actSwap").onclick = () => {
     msg("wMsg", "");
   };
   const searchRoutes = async () => {
-    await ensureStableTokens($("wFromNet").value);
-    await ensureStableTokens($("wToNet").value);
-    const fromKey = $("wFromNet").value, toKey = $("wToNet").value;
+    await ensureStableTokens(netSel.from);
+    await ensureStableTokens(netSel.to);
+    const fromKey = netSel.from, toKey = netSel.to;
     const fromTok = pick.from, toTok = pick.to;
     const amount = $("wAmt").value.trim();
     show("wConfirm", false); pendingSwap = null;
@@ -5773,7 +5869,7 @@ $("actSwap").onclick = () => {
         show("wConfirm"); msg("wMsg", "");
       });
     } catch (e) {
-      if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && $("wToNet").value === "bitcoin") {
+      if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && netSel.to === "bitcoin") {
         paintBtcFloorWayThrough(e.satoraBelowFloor);
         msg("wMsg", "");
       } else msg("wMsg", "Route search failed: " + String(e.shortMessage || e.message || e).replace(/^Route search failed:\s*/, ""));
@@ -6098,6 +6194,63 @@ async function runScan() {
 $("scanBtn").onclick = () => runScan();
 $("scanInput").addEventListener("keydown", (e) => { if (e.key === "Enter") runScan(); });
 
+// ---------- seed backup quiz (audit P1-1) ----------
+/** The phrase as a numbered grid — position is what the quiz
+ *  challenges, so the words are never shown as one unnumbered line. */
+function seedGridHtml(phrase) {
+  return String(phrase || "").trim().split(/\s+/).map((w, i) => `<span class="seedword"><b>${i + 1}</b> ${esc(w)}</span>`).join("");
+}
+/** Mount the backup word quiz into a container. The user PICKS
+ *  the correct word for each challenged position from decoy
+ *  options (MetaMask pattern — selection, never typing). Retries
+ *  are unlimited; a failed check keeps the correct picks and
+ *  clears only the wrong ones. The quiz never locks anything:
+ *  onLater always proceeds with the backup honestly unconfirmed,
+ *  and onWords returns to the phrase (the caller re-mounts a
+ *  fresh quiz when the user comes back to the check). */
+function mountSeedQuiz(container, phrase, { onPass, onLater, onWords }) {
+  const quiz = buildSeedQuiz(phrase);
+  const picks = new Array(quiz.challenges.length).fill(null);
+  container.innerHTML = `
+    <p><b>Prove the backup works.</b> Pick the word that belongs at each position — the words from the paper you just wrote. If the words on paper are wrong, this is the only moment that can still be fixed.</p>
+    ${quiz.challenges.map((c, ci) => `
+      <p class="tag" style="margin:12px 0 4px">Word #${c.position}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${c.options.map(w => `<button class="btn ghost" data-quiz-opt="${ci}" data-word="${esc(w)}" style="width:auto;padding:8px 14px">${esc(w)}</button>`).join("")}
+      </div>`).join("")}
+    <p class="msg err" data-quiz-msg></p>
+    <button class="btn" data-quiz-go disabled>Check my words</button>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn ghost" data-quiz-words style="flex:1">See the words again</button>
+      <button class="btn ghost" data-quiz-later style="flex:1">I'll confirm later</button>
+    </div>`;
+  const msgEl = container.querySelector("[data-quiz-msg]");
+  const goBtn = container.querySelector("[data-quiz-go]");
+  const paintPicks = () => {
+    container.querySelectorAll("[data-quiz-opt]").forEach(b => {
+      const sel = picks[Number(b.dataset.quizOpt)] === b.dataset.word;
+      b.style.borderColor = sel ? "var(--brand-1)" : "";
+      b.style.background = sel ? "var(--brand-1)" : "";
+      b.style.color = sel ? "#000" : "";
+    });
+    goBtn.disabled = picks.some(p => p == null);
+  };
+  container.querySelectorAll("[data-quiz-opt]").forEach(b => b.onclick = () => {
+    picks[Number(b.dataset.quizOpt)] = b.dataset.word;
+    msgEl.textContent = "";
+    paintPicks();
+  });
+  goBtn.onclick = () => {
+    if (seedQuizPassed(quiz, picks)) { onPass(); return; }
+    seedQuizResults(quiz, picks).forEach((okPick, ci) => { if (!okPick) picks[ci] = null; });
+    msgEl.textContent = "Not quite — the rows left empty aren't the words from your phrase. Try again, or look at the words again. There's no limit, and nothing is locked.";
+    paintPicks();
+  };
+  container.querySelector("[data-quiz-words]").onclick = () => onWords();
+  container.querySelector("[data-quiz-later]").onclick = () => onLater();
+  paintPicks();
+}
+
 // ---------- onboarding ----------
 let pendingName = null;
 $("createName").addEventListener("input", () => {
@@ -6148,11 +6301,24 @@ $("createBtn").onclick = async () => {
   // signed claim record supersedes it wholesale.
   localStorage.setItem("fluid_name", wantName);
   savePendingClaim({ name: wantName, evm: null, published: false, submittedAt: Date.now(), awaitingSubmit: true });
-  $("seedOut").textContent = v.phrase;
+  // Backup state (audit P1-1), persisted at the same moment for the
+  // same reason: this wallet's seed backup starts UNCONFIRMED and
+  // only the word quiz below turns it "confirmed". If the session
+  // dies on the seed screen, the wallet reopens with the state
+  // honestly "pending" and the home reminder standing.
+  try { localStorage.setItem(BACKUP_STATE_KEY, "pending"); } catch { /* storage unavailable */ }
+  $("seedOut").innerHTML = seedGridHtml(v.phrase);
   show("seedBox");
+  show("seedWordsView", true);
+  show("seedQuizBox", false);
   msg("onboardMsg", "Wallet created. Write the seed down, tick the box, then continue.", true);
-  $("seedDoneBtn").onclick = async () => {
-    if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
+  // Entering the wallet happens exactly once, by either quiz path:
+  // passed (backup confirmed) or deferred (backup honestly
+  // unconfirmed, home reminder standing). The name claim below is
+  // part of creation either way — deferring the backup check never
+  // defers the name, and the quiz never bricks the wallet.
+  const finishCreate = async (backupConfirmed) => {
+    if (backupConfirmed) { try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ } }
     wallet = await unlockVault(v.keystore, pw);
     if (pendingName) {
       const claimed = pendingName; pendingName = null;
@@ -6172,6 +6338,22 @@ $("createBtn").onclick = async () => {
       return;
     }
     refreshGate();
+  };
+  $("seedDoneBtn").onclick = () => {
+    if (!$("seedCheck").checked) return msg("onboardMsg", "Tick the box confirming you wrote the seed down.");
+    // The checkbox alone was attestation, not a check (audit
+    // P1-1): run the word quiz. Passing confirms the backup;
+    // "I'll confirm later" enters anyway, unconfirmed; "See the
+    // words again" returns here and this button re-mounts a FRESH
+    // quiz — retries are unlimited and nothing is ever locked.
+    msg("onboardMsg", "");
+    show("seedWordsView", false);
+    show("seedQuizBox", true);
+    mountSeedQuiz($("seedQuizBox"), v.phrase, {
+      onPass: () => finishCreate(true),
+      onLater: () => finishCreate(false),
+      onWords: () => { show("seedQuizBox", false); show("seedWordsView", true); },
+    });
   };
 };
 $("importBtn").onclick = async () => {
@@ -6194,6 +6376,11 @@ $("importBtn").onclick = async () => {
     // lookup re-attaches its own published name if it has one.
     localStorage.removeItem("fluid_name");
     localStorage.removeItem(NAME_CLAIM_KEY);
+    // Same scoping for the backup state (audit P1-1): it belonged
+    // to the replaced wallet. Import itself has no backup step —
+    // the imported phrase is the user's existing backup — so the
+    // imported wallet starts with no state and no reminder.
+    localStorage.removeItem(BACKUP_STATE_KEY);
     nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
     if (wantName) {
@@ -6413,6 +6600,48 @@ $("homeClaimBtn").onclick = () => {
   const owned = $("ownedNameBox"), form = $("claimForm");
   const el = owned && !owned.classList.contains("hidden") ? owned : form;
   if (el) setTimeout(() => { try { el.scrollIntoView({ block: "start" }); } catch { /* older engines */ } }, 60);
+};
+/** Home reminder for an unconfirmed seed backup (audit P1-1):
+ *  shown while THIS wallet's backup state is "pending" — written
+ *  at creation, turned "confirmed" only by passing the word quiz.
+ *  Dismissal is per-session (sessionStorage); the card returns
+ *  next session until the quiz passes. Wallets created before the
+ *  state existed, and imported wallets, carry no state and are
+ *  never nagged. */
+function refreshHomeBackupCard() {
+  const card = $("homeBackupCard"); if (!card) return;
+  let showCard = false;
+  try {
+    showCard = !!wallet
+      && localStorage.getItem(BACKUP_STATE_KEY) === "pending"
+      && sessionStorage.getItem(BACKUP_DISMISS_KEY) !== "1";
+  } catch { showCard = false; }
+  card.classList.toggle("hidden", !showCard);
+}
+$("homeBackupDismiss").onclick = () => {
+  try { sessionStorage.setItem(BACKUP_DISMISS_KEY, "1"); } catch { /* session storage unavailable — the card simply stays */ }
+  refreshHomeBackupCard();
+};
+$("homeBackupBtn").onclick = () => {
+  if (!wallet) return;
+  openSheet(`<h3>Confirm your backup</h3><div id="backupQuizBox"></div>`);
+  const mount = () => mountSeedQuiz($("backupQuizBox"), wallet.mnemonic.phrase, {
+    onPass: () => {
+      try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ }
+      refreshHomeBackupCard();
+      closeSheet();
+      toast("Backup confirmed — your words are right");
+    },
+    onLater: () => closeSheet(),
+    onWords: () => {
+      const box = $("backupQuizBox"); if (!box) return;
+      box.innerHTML = `<p>Your 12 words, in order — check them against your paper, then take the check again.</p>
+        <div class="seed">${seedGridHtml(wallet.mnemonic.phrase)}</div>
+        <button class="btn" data-quiz-retry style="margin-top:10px">Back to the check</button>`;
+      box.querySelector("[data-quiz-retry]").onclick = mount;
+    },
+  });
+  mount();
 };
 /** Creation-time wait (NAMES RESOLUTION RULE, strengthened
  *  2026-11-09): after a wallet claims its name during onboarding
@@ -7239,6 +7468,11 @@ $("wipeBtn").onclick = () => {
     // Leave no trace of the removed wallet on the onboarding screen:
     // a seed phrase or password must never linger in the form after removal.
     $("seedOut").textContent = ""; show("seedBox", false);
+    // Reset the seed ceremony to its first step (audit P1-1): no
+    // mounted quiz (it renders the phrase as options) may linger,
+    // and the next creation starts on the words view.
+    const quizBox = $("seedQuizBox"); if (quizBox) { quizBox.innerHTML = ""; show("seedQuizBox", false); }
+    show("seedWordsView", true);
     $("seedCheck").checked = false;
     for (const id of ["createPw", "createPw2", "importPhrase", "unlockPw", "createName"]) { const el = $(id); if (el) el.value = ""; }
     // The gate's username preview is only repainted on input events,
