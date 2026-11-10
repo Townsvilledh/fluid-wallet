@@ -243,5 +243,13 @@
     "sol": "A3pMpHxrJyyLZpB12mv64dRMCoaeHWMHqa2A8xvhda3U",
     "tron": "TXTTCzqSRujkaEwvozCimkdZATYybgioQR",
     "sui": "0x89358bddf7a33d379e209eb8caf224f1c88866b789d944b0547d3f33c02832ae"
+  },
+  "rampqa3110": {
+    "evm": "0x2511D48D4223519D3568da6f0D0cfe7e8a916EC8",
+    "btc": "bc1q7fuqvqkpamj5t3jzpyy50uhgt34n5jvxxlkrtg",
+    "algo": "7VZZOXHYO2TWU5YQCPHRYIFGGY7KLCZK2R7BSWDGB5LNRZRHMUQIXNLCZM",
+    "sol": "9yk8vpkyXN95xG48hJ4PZWQxEvPWV2XUi6zoVi3TVz7z",
+    "tron": "TDMDN2Upba66AjadAcC5AZj8bPYC2odpsu",
+    "sui": "0x6712275301f5a362dfa6a20aef550179d47e045f35746e84f69e16822d78bb20"
   }
 }
