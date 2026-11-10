@@ -40,19 +40,21 @@ export const LN_NETWORKS = {
 
 /** Fluid's own WebSocket→TCP proxy for browser→peer transport
  *  (tools/ws-proxy — a dumb pipe: it sees only Noise-encrypted bytes
- *  and its worst failure is refusing to carry them). EMPTY until the
- *  proxy is deployed: deployment is an ops step, and until then raw
- *  TCP peers (like Megalith) are reachable only when the user sets
- *  their own proxy template in the panel's Advanced section. The
- *  value is a URL template with {host}/{port}, same shape as the
- *  panel's per-user setting. */
+ *  and its worst failure is refusing to carry them). DEPLOYED
+ *  2026-11-10 as a Cloudflare Worker on Ethuram's account (the same
+ *  code as tools/ws-proxy; port-9735-only allowlist, so it can carry
+ *  Lightning peer traffic and nothing else). Raw TCP peers (like
+ *  Megalith) are reached through it by default; a user-set template
+ *  in the panel's Advanced section still overrides it. The value is
+ *  a URL template with {host}/{port}, same shape as the panel's
+ *  per-user setting. */
 // Generation marker: the app bundle verifies the chunk it loaded
 // carries this flag before trusting it with a boot. A stale cached
 // chunk from an older build lacks it and is refused plainly (with a
 // reload hint) instead of silently booting an old harness.
 export const LN_PINNED_BOOT = true;
 
-export const LN_DEFAULT_WS_PROXY = "";
+export const LN_DEFAULT_WS_PROXY = "wss://fluid-ws-proxy.kanugideontownsville.workers.dev/{host}/{port}";
 
 /** Fluid's notification relay for wake-up pushes (tools/
  *  notification-relay). EMPTY until deployed — while empty the

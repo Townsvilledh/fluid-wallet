@@ -8805,7 +8805,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("copy: registration verified against the registry", appLz.includes("Registered ✓ — the registry now shows your node's offer") && appLz.includes("It is not in the registry yet."));
   ok("pins: the app imports the in-bundle asset pins", appLz.includes("ln-asset-pins.generated.js") && appLz.includes("LN_WASM_PIN"));
   ok("pins: the loaded chunk must carry the pinned-boot marker (stale chunk refused)", appLz.includes("LN_PINNED_BOOT") && nodeLz.includes("export const LN_PINNED_BOOT = true") && appLz.includes('import("./lightning.chunk.js")'));
-  ok("defaults: ws-proxy + relay ship empty (not yet deployed), LSP is Megalith", nodeLz.includes('LN_DEFAULT_WS_PROXY = ""') && nodeLz.includes('LN_DEFAULT_RELAY_URL = ""') && nodeLz.includes("034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0"));
+  ok("defaults: ws-proxy ships the deployed Cloudflare Worker template, relay still empty (not yet deployed), LSP is Megalith", nodeLz.includes('LN_DEFAULT_WS_PROXY = "wss://fluid-ws-proxy.kanugideontownsville.workers.dev/{host}/{port}"') && nodeLz.includes('LN_DEFAULT_RELAY_URL = ""') && nodeLz.includes("034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0"));
 }
 
 // ---------- Audit batch 4: Lightning panel honesty (F1–F3) ----------

@@ -2,4 +2,4 @@
 // Fingerprints of the Lightning node assets, pinned in the main
 // bundle so lazily-loaded node code is verified before it runs.
 export const LN_WASM_PIN = { sha256: "c6fa4c73ddf6181accb9cc4248b63edd7e61d54e086e38d9bd6f476c15efaf26", bytes: 10502158 };
-export const LN_CHUNK_SHA256 = "fa28a5c50aec919da35723015d59c7041d3525b69c94615bccd6432692d645c9";
+export const LN_CHUNK_SHA256 = "44f24a335663688f3d7e7cf500fc0b2f1857f1ab17346deb7c7b1f972a6e6bed";
