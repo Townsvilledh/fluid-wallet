@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import { ethers } from "ethers";
 import { buildSignedNameClaim, bitcoinAddress, algoAddressFromPhrase } from "../../src/wallet-core.js";
-import { decideClaims, nameEntriesEqual, nameUpdateMerge, summarizeRelayScan } from "./process-name-claims.mjs";
+import { decideClaims, nameEntriesEqual, nameUpdateMerge, summarizeRelayScan, fetchClaimsPaged } from "./process-name-claims.mjs";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -226,5 +226,33 @@ ok("merge: ln replaceable, silent fields preserved, foreign evm refused",
   nameUpdateMerge({ evm: "0xAbC", btc: "bc1qx", ln: "old@wallet.example" }, { evm: "0xabc", btc: "bc1qx", ln: "new@wallet.example" }).ln === "new@wallet.example" &&
   nameUpdateMerge({ evm: "0xabc", btc: "bc1qx", algo: "ALGO1" }, { evm: "0xabc", btc: "bc1qx", lnOffer: OFFER_OPEN }).algo === "ALGO1" &&
   nameUpdateMerge({ evm: "0xabc", btc: "bc1qx" }, { evm: "0xdef", btc: "bc1qx" }) === null);
+
+// 18. fetchClaimsPaged: a claim buried past the relay's first page
+//     is still found — pages walk back with `until` to the window
+//     floor, dedupe by id, and stop on a short page or at maxPages.
+{
+  const mk = (id, t) => ({ id, created_at: t, kind: 30078, tags: [], content: "{}", pubkey: "p", sig: "s" });
+  const all = [mk("a", 900), mk("b", 800), mk("c", 700), mk("d", 600), mk("e", 500)];
+  const fakeRelay = (pages) => {
+    let i = 0;
+    return async () => pages[i++] || [];
+  };
+  const paged = await fetchClaimsPaged(fakeRelay([[all[0], all[1]], [all[2], all[3]], [all[4]]]), { kinds: [30078], since: 100 }, 2);
+  ok("paged scan walks back past the first page", paged.length === 5 && paged[4].id === "e");
+  const dup = await fetchClaimsPaged(fakeRelay([[all[0], all[1]], [all[1], all[2]]]), { kinds: [30078], since: 100 }, 2);
+  ok("paged scan dedupes overlapping pages", dup.length === 3);
+  let floorCalls = 0;
+  const floorRelay = async () => { floorCalls++; return [[all[0], all[1]], [all[2], all[3]], [all[4]]][floorCalls - 1] || []; };
+  const floored = await fetchClaimsPaged(floorRelay, { kinds: [30078], since: 750 }, 2);
+  ok("paged scan stops paging at the since floor", floorCalls === 2 && floored.length === 4);
+  let calls = 0;
+  const endless = async () => { calls++; return [mk("x" + calls, 1000 - calls), mk("y" + calls, 999 - calls)]; };
+  const capped = await fetchClaimsPaged(endless, { kinds: [30078], since: 0 }, 2, 3);
+  ok("paged scan respects maxPages", calls === 3 && capped.length === 6);
+  const untils = [];
+  const recording = async (f) => { untils.push(f.until || null); return untils.length === 1 ? [all[0], all[1]] : [all[2]]; };
+  await fetchClaimsPaged(recording, { kinds: [30078], since: 100 }, 2);
+  ok("paged scan chains until = oldest-1 with the caller's limit", untils[0] === null && untils[1] === 799); // limit asserted via pageSize arg above
+}
 
 console.log(`\n${passed} processor checks passed`);

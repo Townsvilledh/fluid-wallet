@@ -130,6 +130,37 @@ export function summarizeRelayScan(perRelayResults, relays) {
   return { perRelay, total };
 }
 
+export const RELAY_PAGE_SIZE = 500; // the relays' observed per-query cap
+
+/** Paged relay scan. One bulk query returns only the relay's newest
+ *  page (observed cap ~500 on primal) of the global kind-30078
+ *  firehose, so a claim minutes old can sit ON the relay yet never
+ *  appear in any single scan — measured 2026-11-10: a verified
+ *  offer-update claim (lnpubqa5110) sat on primal for 90+ minutes
+ *  across eighteen 5-minute scans without once being seen, while
+ *  newer foreign events kept refilling the first page. Page
+ *  backwards with `until` until the window's `since` is covered or
+ *  a short page proves the relay has no more in the window. Pure
+ *  apart from the injected query fn; pinned by process.test.mjs. */
+export async function fetchClaimsPaged(queryFn, filter, pageSize = RELAY_PAGE_SIZE, maxPages = 24) {
+  const events = [];
+  const seenIds = new Set();
+  let until = filter.until;
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await queryFn({ ...filter, limit: pageSize, ...(until ? { until } : {}) });
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    let oldest = Infinity;
+    for (const ev of batch) {
+      if (ev && typeof ev.created_at === "number" && ev.created_at < oldest) oldest = ev.created_at;
+      if (ev && ev.id && !seenIds.has(ev.id)) { seenIds.add(ev.id); events.push(ev); }
+    }
+    if (batch.length < pageSize) break; // relay exhausted the window
+    if (!(oldest > (filter.since || 0))) break; // reached the window floor
+    until = oldest - 1;
+  }
+  return events;
+}
+
 export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RUN) {
   const processed = (state && state.processed) || {};
   const priorWinners = (state && state.winners) || {};
@@ -234,7 +265,7 @@ async function main() {
   }
 
   const since = state.lastQuerySince || now - 14 * 24 * 3600;
-  const perRelay = await Promise.allSettled(NAME_CLAIM_RELAYS.map((r) => queryEvents(r, { kinds: [NAME_CLAIM_KIND], since }, 25000)));
+  const perRelay = await Promise.allSettled(NAME_CLAIM_RELAYS.map((r) => fetchClaimsPaged((f) => queryEvents(r, f, 25000), { kinds: [NAME_CLAIM_KIND], since })));
   const scan = summarizeRelayScan(perRelay, NAME_CLAIM_RELAYS);
   const byId = new Map();
   for (const res of perRelay) {
