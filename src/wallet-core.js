@@ -5154,8 +5154,22 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 // commission, lifetime, $50 minimum payout — the account sat on
 // moderation, so no live link existed); Spritz returns only if
 // its referral unlocks without the owner-KYC ≥$200/60d gate.
-// The table stays (empty) so the assembly code path is unchanged.
+// The table stayed empty after those pulls until 2026-11-10,
+// when LocalCoinSwap joined as the one sanctioned labelled
+// EXTERNAL-marketplace exception under the capture gate: the
+// row is a plainly-labelled link-out (never an in-Fluid trade),
+// and its ambassador referral pays Fluid 10% of the platform
+// fees of referred users, in BTC (payouts start at 0.0006 BTC)
+// — clause (a) capture, taken from the platform's cut, so the
+// user's price never changes. The owner registered the account
+// himself (the browser route died on the platform's human check
+// four times) and supplied the link 2026-11-10.
+// LocalCoinSwap ambassador referral (Ethuram's own account,
+// supplied 2026-11-10). Keyless: just the rc param on the link.
+export const LOCALCOINSWAP_REFERRAL_CODE = "EC82BA22";
+export const LOCALCOINSWAP_URL = `https://localcoinswap.com/?rc=${LOCALCOINSWAP_REFERRAL_CODE}`;
 export const RAMP_STATIC_LINKS = {
+  "LocalCoinSwap": { buy: LOCALCOINSWAP_URL, sell: LOCALCOINSWAP_URL },
 };
 // A default note is either one string (used on both sheets) or a
 // per-mode { buy, sell } object — rampRoutesFor selects by mode so
@@ -5197,6 +5211,15 @@ const RAMP_SWIFT_BUY_NOTE = "paying from a bank outside this currency's home are
  *  object carries its effective entry as `addressEntry`. */
 export const RAMP_ADDRESS_ENTRY = {
   "Mt Pelerin": "paste",
+  // LocalCoinSwap is an external marketplace, not a checkout:
+  // nothing in its flow forces a WalletConnect connection to an
+  // external wallet (its own wallet is non-custodial, keys
+  // exportable, and bought crypto withdraws to any address the
+  // user pastes), so it is not a WalletConnect-only route. Its
+  // only Fluid row is SELL-only regardless (GH below), so it
+  // never reaches a buy sheet; the caps entry exists because
+  // every planned provider carries one.
+  "LocalCoinSwap": "paste",
 };
 // CAPTURE GATE (owner's ruling, 2026-11-09 ~13:51 WAT): a ramp
 // route stays wired ONLY IF (a) it carries Fluid's referral /
@@ -5207,7 +5230,11 @@ export const RAMP_ADDRESS_ENTRY = {
 // REMOVED and the side shows the honest empty state — the old
 // "Fluid earns nothing from it" fallback class is abolished.
 // Application in this plan: Mt Pelerin keeps both sides via (a)
-// (rfr=Fp3dGFX3 pays 25% of its fees). The African off-ramp
+// (rfr=Fp3dGFX3 pays 25% of its fees). LocalCoinSwap's GH sell
+// row also qualifies via (a) — its ambassador referral pays
+// 10% of platform fees in BTC — and only in the sanctioned
+// labelled-external-marketplace shape (external:true, plainly
+// labelled, per-corridor live book check before surfacing). The African off-ramp
 // provider briefly kept under clause (b) was REMOVED IN FULL
 // 2026-11-10 on the owner's direct order (see the plan history
 // above). The Paycrest Gateway sell is the gate's model citizen
@@ -5236,13 +5263,38 @@ export const RAMP_COUNTRY_PLAN = {
   // gates — see research_notes/fluid-ng-repair-20261109/
   // report.md.
   NG: [],
-  // KE, GH, UG, TZ, CM, SN, CI, ZM: BUY resolves empty. SELL's
+  // KE, UG, TZ, CM, SN, CI, ZM: BUY resolves empty. SELL's
   // only row — the African off-ramp provider restored
   // 2026-11-09 — was REMOVED IN FULL 2026-11-10 on the owner's
   // direct order, so both sides resolve to the honest empty
   // state until a qualifying route exists.
   KE: [],
-  GH: [],
+  // GH: BUY stays honestly empty (the LocalCoinSwap buy book
+  // sat +1% to +54% over market on the 2026-11-10 live check —
+  // the cheap rows are bank-transfer-only outliers and the
+  // depth fails the price bar). SELL carries the labelled
+  // external-marketplace row: the fresh live book check the
+  // same day (the platform's own streamed offer book for
+  // Ghana, ~17:05 WAT) showed 10 live sell-side offers,
+  // market deltas −1% to −6%, MTN MoMo among the payment
+  // methods, minimums from GH₵100 (≈ $8.55 at $1 = GH₵11.70),
+  // several vendors online with 10k+ trades — a real book a
+  // seller can actually take. The row is modes:["sell"] +
+  // external:true, so it renders with the EXTERNAL APP pill
+  // and its note states plainly that the trade happens on
+  // LocalCoinSwap, not inside Fluid. Evidence:
+  // research_notes/fluid-localcoinswap-rows-20261110/.
+  // RUSSIA was checked the same day and REFUSED: the
+  // platform's own Terms of Service list the Russian
+  // Federation as a restricted jurisdiction (residents may
+  // not use it at all), its Russia sell book carries ZERO
+  // RUB offers (only GBP/EUR/THB/USD filler) and its buy
+  // book is two offers from one vendor at +56%/+63% over
+  // market. No RU country or row is added — a corridor is
+  // never surfaced without a passing live check.
+  GH: [
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Ghana offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 1–6% below the market rate, trades from GH₵100 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+  ],
   ZA: [
     ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
   ],

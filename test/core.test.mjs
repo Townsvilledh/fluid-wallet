@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
@@ -129,7 +129,10 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l =>
   (l.buy === undefined || l.buy.startsWith("https://")) && (l.sell === undefined || l.sell.startsWith("https://"))));
-ok("static links table is empty after the capture-gate pulls", Object.keys(RAMP_STATIC_LINKS).length === 0);
+ok("static links table holds only the capture-clean LocalCoinSwap link after the capture-gate pulls", Object.keys(RAMP_STATIC_LINKS).length === 1
+  && RAMP_STATIC_LINKS["LocalCoinSwap"].buy === "https://localcoinswap.com/?rc=EC82BA22"
+  && RAMP_STATIC_LINKS["LocalCoinSwap"].sell === "https://localcoinswap.com/?rc=EC82BA22"
+  && LOCALCOINSWAP_REFERRAL_CODE === "EC82BA22" && LOCALCOINSWAP_URL === "https://localcoinswap.com/?rc=EC82BA22");
 // Paybis and Spritz were REMOVED in full 2026-11-09 under the
 // owner's capture GATE (owner ruling ~14:34 WAT): as wired they
 // paid Fluid nothing and no own-charge mechanism exists for
@@ -323,13 +326,35 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     return !ns.includes("Paybis") && !ns.includes("Spritz");
   })));
 
-  // Kenya + Ghana: both sides honestly empty after the
-  // 2026-11-10 removal (their only sell row was scrapped;
-  // Mercuryo stays out everywhere).
+  // Kenya: both sides honestly empty after the 2026-11-10
+  // removal (its only sell row was scrapped; Mercuryo stays
+  // out everywhere). Ghana: BUY still honestly empty (live
+  // book +1% to +54% over market fails the price bar), SELL
+  // carries the labelled LocalCoinSwap external-marketplace
+  // row since 2026-11-10 (fresh live book check: 10 offers,
+  // −1% to −6% vs market, MTN MoMo, minimums from GH₵100;
+  // capture = ambassador referral rc=EC82BA22, 10% of
+  // platform fees in BTC — the sanctioned exception shape).
   ok("KE lineup is honestly empty on both sides after the 2026-11-10 removal", JSON.stringify(names("KE")) === JSON.stringify([])
     && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
-  ok("GH lineup is honestly empty on both sides after the 2026-11-10 removal", JSON.stringify(names("GH")) === JSON.stringify([])
-    && JSON.stringify(names("GH", "sell")) === JSON.stringify([]));
+  ok("GH buy stays honestly empty; GH sell is the LocalCoinSwap row alone", JSON.stringify(names("GH")) === JSON.stringify([])
+    && JSON.stringify(names("GH", "sell")) === JSON.stringify(["LocalCoinSwap"]));
+  ok("GH sell row is a labelled external link-out carrying the referral, never an in-Fluid trade", (() => {
+    const r = rampRoutesFor("GH", "sell", "bsc", "USDT").routes[0];
+    return r.external === true && r.badge === false && r.unavailable === false
+      && r.url === "https://localcoinswap.com/?rc=EC82BA22"
+      && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("GH₵100");
+  })());
+  ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => c.code === "GH" && m === "sell"
+      || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
+  // Russia was live-checked 2026-11-10 and refused: the
+  // platform's Terms of Service list the Russian Federation
+  // as a restricted jurisdiction, its Russia sell book has
+  // zero RUB offers and its buy book is +56%/+63%. No RU
+  // country exists in the picker and no row may promise one.
+  ok("RU is not a ramp country (LocalCoinSwap bans RU residents; no RUB book passes)", !RAMP_COUNTRIES.some(c => c.code === "RU")
+    && !("RU" in RAMP_COUNTRY_PLAN));
   // The six corridors whose only route was the scrapped sell
   // row: both sides honestly empty now.
   ok("scrapped corridors: buy and sell both honestly empty", ["UG", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
@@ -8087,8 +8112,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Fonbnk")));
   ok("removal: no network carries the provider's network code",
     Object.values(NETWORKS).every(n => !("fonbnkNetwork" in n)));
-  ok("removal: the nine sell-only corridors are honestly empty on both sides",
-    CORRIDORS.filter(code => code !== "ZA").every(code => ["buy", "sell"].every(m =>
+  // (GH left this set later on 2026-11-10: its sell side gained
+  // the labelled LocalCoinSwap external-marketplace row after a
+  // fresh live book check — §16c pins that end-state.)
+  ok("removal: the eight still-empty sell-only corridors are honestly empty on both sides",
+    CORRIDORS.filter(code => code !== "ZA" && code !== "GH").every(code => ["buy", "sell"].every(m =>
       rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
   ok("removal: ZA keeps Mt Pelerin alone on both sides, badge buy-only",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
