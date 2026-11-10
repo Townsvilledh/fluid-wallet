@@ -50,3 +50,45 @@ export function removeLnPeer(peers, pubkey) {
     (p) => p.pubkey !== String(pubkey || "").toLowerCase(),
   );
 }
+
+/** The honest connection state of one peer (audit batch 4, F2).
+ *  "connected" requires BOTH a live socket AND a completed
+ *  Lightning handshake — the node layer learns of the handshake
+ *  from LDK itself (its OnionMessagePeerConnected event, surfaced
+ *  to JS as "peer_back_online": the peer manager only fires it
+ *  after the Noise handshake and init exchange complete). A socket
+ *  that merely dialled is "connecting", never "connected": under a
+ *  failing transport the two diverge, and the row must not claim
+ *  more than LDK has. No socket at all is "disconnected", however
+ *  the peer behaved in the past. */
+export function lnPeerConnState({ socketLive = false, handshaken = false } = {}) {
+  if (socketLive && handshaken) return "connected";
+  if (socketLive) return "connecting";
+  return "disconnected";
+}
+
+/** Poll a peer-status source until the peer's handshake completes
+ *  ("connected") or the timeout passes. Resolves { connected,
+ *  state } with the LAST observed state — it never reports success
+ *  it didn't see, and a peer missing from the list reads as
+ *  "disconnected". Clock and sleep are injectable for tests. Used
+ *  by the panel's connect-only and open-channel flows in place of
+ *  the old fixed 4-second connect→open sleep, which was shorter
+ *  than real connection time in the wild (audit batch 4, F3). */
+export async function waitForLnPeerConnected(getStatus, pubkey, {
+  timeoutMs = 30000, pollMs = 500,
+  now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  const want = String(pubkey || "").toLowerCase();
+  const start = now();
+  let state = "disconnected";
+  for (;;) {
+    let rows = [];
+    try { rows = getStatus() || []; } catch { rows = []; }
+    const row = rows.find((p) => String(p?.pubkey || "").toLowerCase() === want);
+    state = row ? row.state : "disconnected";
+    if (state === "connected") return { connected: true, state };
+    if (now() - start >= timeoutMs) return { connected: false, state };
+    await sleep(pollMs);
+  }
+}

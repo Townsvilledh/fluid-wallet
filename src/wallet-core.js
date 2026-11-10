@@ -4840,7 +4840,7 @@ export function lnScidToDecimal(shortChannelId) {
  *  the node's encrypted KV so connections — and the channels on
  *  them — survive restarts) lives in the tiny ln-peers module both
  *  bundles share; re-exported here for the app and the tests. */
-export { parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "./ln-peers.js";
+export { parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected } from "./ln-peers.js";
 
 // ---------- Global ramps: Fluid routes, providers settle (users KYC with them) ----------
 // Local-currency rails: pick a country, Fluid builds the provider link with

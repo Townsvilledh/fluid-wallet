@@ -8,7 +8,7 @@ import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, sato
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
-import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "../src/wallet-core.js";
+import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
@@ -8780,6 +8780,106 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("pins: the app imports the in-bundle asset pins", appLz.includes("ln-asset-pins.generated.js") && appLz.includes("LN_WASM_PIN"));
   ok("pins: the loaded chunk must carry the pinned-boot marker (stale chunk refused)", appLz.includes("LN_PINNED_BOOT") && nodeLz.includes("export const LN_PINNED_BOOT = true") && appLz.includes('import("./lightning.chunk.js")'));
   ok("defaults: ws-proxy + relay ship empty (not yet deployed), LSP is Megalith", nodeLz.includes('LN_DEFAULT_WS_PROXY = ""') && nodeLz.includes('LN_DEFAULT_RELAY_URL = ""') && nodeLz.includes("034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0"));
+}
+
+// ---------- Audit batch 4: Lightning panel honesty (F1–F3) ----------
+// Source: native-Lightning QA walk retry §14.3. F1: the name-card
+// button stuck at "Starting your node…" when createOffer failed.
+// F2: the peer row claimed "connected" from socket bookkeeping
+// alone. F3: no connect-only path existed though the explainer
+// promised one, and open-channel slept a fixed 4 s.
+{
+  const appB4 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const nodeB4 = readFileSync(new URL("../src/lightning-node.js", import.meta.url), "utf8");
+  const PK_B4 = "02" + "ab".repeat(32);
+
+  // F2 — the state derivation itself (pure truth table).
+  ok("F2 peer state: live socket + completed handshake = connected",
+    lnPeerConnState({ socketLive: true, handshaken: true }) === "connected");
+  ok("F2 peer state: dialled socket alone = connecting, never connected",
+    lnPeerConnState({ socketLive: true, handshaken: false }) === "connecting");
+  ok("F2 peer state: no socket = disconnected, even after a past handshake",
+    lnPeerConnState({ socketLive: false, handshaken: true }) === "disconnected"
+    && lnPeerConnState({ socketLive: false, handshaken: false }) === "disconnected"
+    && lnPeerConnState() === "disconnected");
+
+  // F2 — the session wiring: readiness comes from the node's own
+  // peer_back_online events (LDK OnionMessagePeerConnected), the
+  // drain is the single chokepoint, and a dead last socket voids it.
+  ok("F2 session: peerStatus derives via lnPeerConnState(socket, handshake)",
+    nodeB4.includes("lnPeerConnState({ socketLive: session.peerLive(p.pubkey), handshaken: session.peerReady.has(p.pubkey) })"));
+  ok("F2 session: readiness is fed by peer_back_online drains",
+    nodeB4.includes('ev.type === "peer_back_online"') && nodeB4.includes("session.peerReady.add(String(ev.peer).toLowerCase())"));
+  ok("F2 session: the last socket closing clears the peer's readiness",
+    nodeB4.includes("session.peerReady.delete(pubkey)"));
+  ok("F2 panel: the row paints all three states",
+    appB4.includes('p.state === "connected" ? "connected" : p.state === "connecting" ? "connecting…" : "disconnected"'));
+
+  // F3 — the wait helper's semantics (pure, injected clock).
+  {
+    let t = 0;
+    const clock = { now: () => t, sleep: async (ms) => { t += ms; } };
+    const seq = (states) => { let i = 0; return () => [{ pubkey: PK_B4, state: states[Math.min(i++, states.length - 1)] }]; };
+    const r1 = await waitForLnPeerConnected(seq(["connected"]), PK_B4, { timeoutMs: 5000, pollMs: 100, ...clock });
+    ok("F3 wait: an already-connected peer resolves at once", r1.connected === true && r1.state === "connected" && t === 0);
+    t = 0;
+    const r2 = await waitForLnPeerConnected(seq(["connecting", "connecting", "connected"]), PK_B4, { timeoutMs: 5000, pollMs: 100, ...clock });
+    ok("F3 wait: connecting → connected succeeds when the handshake lands", r2.connected === true && r2.state === "connected");
+    t = 0;
+    const r3 = await waitForLnPeerConnected(seq(["connecting"]), PK_B4, { timeoutMs: 1000, pollMs: 250, ...clock });
+    ok("F3 wait: a handshake that never lands times out with the honest last state",
+      r3.connected === false && r3.state === "connecting" && t >= 1000);
+    t = 0;
+    const r4 = await waitForLnPeerConnected(() => [], PK_B4, { timeoutMs: 300, pollMs: 100, ...clock });
+    ok("F3 wait: a peer missing from the status list reads disconnected, never success",
+      r4.connected === false && r4.state === "disconnected");
+    t = 0;
+    const r5 = await waitForLnPeerConnected(() => { throw new Error("node gone"); }, PK_B4, { timeoutMs: 300, pollMs: 100, ...clock });
+    ok("F3 wait: a throwing status source degrades to disconnected, never success",
+      r5.connected === false && r5.state === "disconnected");
+  }
+
+  // F3 — the panel wiring: both controls exist; connect-only dials
+  // and waits but NEVER opens a channel or reads the sats field;
+  // open-channel waits on state with an honest pre-open refusal.
+  const advB4 = appB4.slice(appB4.indexOf('<details id="lnAdvanced"'), appB4.indexOf("</details>", appB4.indexOf('<details id="lnAdvanced"')));
+  ok("F3 panel: Advanced carries BOTH connect-only and open-channel controls",
+    advB4.includes('id="lnConnectBtn"') && advB4.includes("Connect only — no channel")
+    && advB4.includes('id="lnOpenBtn"') && advB4.includes("Connect &amp; open channel"));
+  const connectOnlyB4 = appB4.slice(appB4.indexOf("async function lnConnectOnly"), appB4.indexOf("async function lnOpenChannel"));
+  ok("F3 connect-only: dials the peer and waits on real state",
+    connectOnlyB4.includes("lnSession.connectPeer(pubkey, host, port)") && connectOnlyB4.includes("waitForLnPeerConnected"));
+  ok("F3 connect-only: constructs NO channel open and reads NO channel size",
+    !connectOnlyB4.includes("openChannel") && !connectOnlyB4.includes("lnChanSats") && !connectOnlyB4.includes("10000"));
+  ok("F3 connect-only: success copy claims a connection only, never a channel",
+    connectOnlyB4.includes("no channel was opened"));
+  const openB4 = appB4.slice(appB4.indexOf("async function lnOpenChannel"), appB4.indexOf("function lnWatchFunding"));
+  ok("F3 open-channel: waits on real connection state (bounded, truthful timeout)",
+    openB4.includes("waitForLnPeerConnected") && openB4.includes("timeoutMs: 30000"));
+  ok("F3 open-channel: a failed wait refuses BEFORE requesting any channel",
+    openB4.includes("if (!res.connected) return msg(") && openB4.includes("no channel was requested")
+    && openB4.indexOf("if (!res.connected)") < openB4.indexOf("lnSession.openChannel"));
+  ok("F3 open-channel: the fixed 4-second connect→open sleep is gone everywhere",
+    !appB4.includes("setTimeout(r, 4000)"));
+  ok("F3 open-channel: the 10,000-sat minimum still guards OPENS (not connects)",
+    openB4.includes("sats < 10000"));
+  ok("F3 explainer: the name-card instruction points at a connect that now exists",
+    appB4.includes("→ Advanced, connect to a peer, then tap again.") && advB4.includes("Connecting alone needs no Bitcoin and opens no channel"));
+
+  // F1 — the name-card handler: the busy label is restored by the
+  // branch finally on every non-success exit (offer failure, boot
+  // failure, any early return); only a painted success keeps a
+  // non-resting label.
+  const nativeB4 = appB4.slice(appB4.indexOf('$("ownedLnNativeBtn").onclick'), appB4.indexOf("const lnPendingVerifyName"));
+  ok("F1 handler: the branch tracks whether the success paint took over the label",
+    nativeB4.includes("let painted = false;") && nativeB4.includes("painted = true;"));
+  ok("F1 handler: the finally restores the resting label unless the success paint ran",
+    nativeB4.includes('if (!painted) btn.textContent = "Use my Fluid node";'));
+  ok("F1 handler: the offer-failure message is unchanged and returns through the finally",
+    nativeB4.includes("couldn't build its offer yet") && nativeB4.includes("finally {"));
+  ok("F1 handler: no exit path sets the busy label without the finally behind it",
+    (nativeB4.match(/btn\.textContent = "Starting your node…"/g) || []).length === 1
+    && nativeB4.indexOf('btn.textContent = "Starting your node…"') < nativeB4.indexOf("if (!painted)"));
 }
 
 // ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------

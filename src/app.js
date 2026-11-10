@@ -30,7 +30,7 @@ import {
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
-  lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat,
+  lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
@@ -4070,7 +4070,7 @@ function paintLnPanel() {
     </p>
     <div id="lnBuyOut"></div>
     <h4>Connections</h4>
-    ${peers.length ? peers.map(p => `<p class="tag mono">${esc(p.pubkey.slice(0, 16))}… · ${esc(p.host)}:${p.port} · ${p.state === "connected" ? "connected" : "reconnecting…"}</p>`).join("") : `<p class="tag">No peers yet — your node reconnects to these automatically after every restart.</p>`}
+    ${peers.length ? peers.map(p => `<p class="tag mono">${esc(p.pubkey.slice(0, 16))}… · ${esc(p.host)}:${p.port} · ${p.state === "connected" ? "connected" : p.state === "connecting" ? "connecting…" : "disconnected"}</p>`).join("") : `<p class="tag">No peers yet — your node reconnects to these automatically after every restart.</p>`}
     <h4>Channels (${chans.length})</h4>
     ${chans.length ? chans.map(c => `<p class="tag mono">${esc(String(c.counterparty).slice(0, 16))}… · ${Number(c.valueSat).toLocaleString()} sats · spend ${lnSats(c.outboundMsat)} / receive ${lnSats(c.inboundMsat)}${c.isUsable ? "" : " · not ready yet"}</p>`).join("") : `<p class="tag">No channels yet. Your first received payment can open one (see Receive above), or open one yourself under Advanced.</p>`}
     <div id="lnFundOut"></div>
@@ -4083,12 +4083,13 @@ function paintLnPanel() {
     <p class="msg" id="lnWakeMsg"></p>` : `<p class="tag">Wake-up notifications need Fluid's notification relay, which isn't live yet.</p>`}
     <details id="lnAdvanced" ${lnAdvancedOpen ? "open" : ""}>
       <summary><b>Advanced — connect to any peer</b></summary>
-      <p class="tag">Connect to any Lightning peer and open a channel from your own on-chain Bitcoin. Peers you connect to are remembered and reconnected automatically.</p>
+      <p class="tag">Connect to any Lightning peer — just connect, or connect and open a channel from your own on-chain Bitcoin. Connecting alone needs no Bitcoin and opens no channel; it is what lets your node build its offer and talk to that peer. Peers you connect to are remembered and reconnected automatically.</p>
       <input id="lnPeerKey" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Peer pubkey (66 hex chars)">
       <input id="lnPeerHost" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Peer host — wss://… endpoint, or host for your proxy">
       <input id="lnPeerPort" inputmode="numeric" placeholder="Port (e.g. 9735)">
-      <input id="lnChanSats" inputmode="numeric" placeholder="Channel size in sats">
+      <input id="lnChanSats" inputmode="numeric" placeholder="Channel size in sats (open channel only)">
       <input id="lnProxy" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Optional WebSocket proxy template: wss://proxy.example/{host}/{port}" value="${esc(localStorage.getItem("fluid_ln_wsproxy") || s.defaultWsProxy || "")}">
+      <button class="btn ghost" id="lnConnectBtn">Connect only — no channel</button>
       <button class="btn ghost" id="lnOpenBtn">Connect &amp; open channel</button>
       <p class="msg" id="lnChanMsg"></p>
       <p class="tag" style="margin-top:14px">Offline receive (manual): if a peer acts as your holding peer, ask it for blinded paths (the DripBot keeper provides them) and paste them here — Fluid builds your offline-receive offer from them. ${esc(holdWindowCopy(24))}</p>
@@ -4110,6 +4111,7 @@ function paintLnPanel() {
   $("lnSisBtn").onclick = lnSetupOfflineOffer;
   if ($("lnWakeBtn")) $("lnWakeBtn").onclick = () => lnEnableWakeUp(relayDefault);
   $("lnWakeBtnAdv").onclick = () => lnEnableWakeUp(($("lnRelay").value || "").trim());
+  $("lnConnectBtn").onclick = lnConnectOnly;
   $("lnOpenBtn").onclick = lnOpenChannel;
   $("lnFallbackBtn").onclick = () => lnFallbackSheet("");
   $("lnAdvanced").addEventListener("toggle", (ev) => { lnAdvancedOpen = ev.target.open; });
@@ -4575,6 +4577,32 @@ async function lnEnableWakeUp(relayUrl) {
   } catch (e) { msg(msgId, lnErrorText(e)); }
 }
 
+// Connect to a peer WITHOUT opening a channel (audit batch 4,
+// F3): the name-card explainer sends users here to "connect to a
+// peer", and connecting is all an offer needs — no on-chain BTC,
+// no 10,000-sat minimum, no channel. Success is reported only
+// when the node's own status shows the handshake completed; a
+// dial that never handshakes gets the honest timeout answer.
+async function lnConnectOnly() {
+  const pubkey = $("lnPeerKey").value.trim();
+  const host = $("lnPeerHost").value.trim();
+  const port = Number($("lnPeerPort").value) || 9735;
+  const proxy = $("lnProxy").value.trim();
+  localStorage.setItem("fluid_ln_wsproxy", proxy);
+  if (!/^[0-9a-fA-F]{66}$/.test(pubkey)) return msg("lnChanMsg", "Peer pubkey must be 66 hex characters.");
+  if (!host) return msg("lnChanMsg", "Enter the peer host (a wss:// endpoint, or a host your proxy can reach).");
+  try {
+    msg("lnChanMsg", "Connecting to peer…", true);
+    lnSession.connectPeer(pubkey, host, port);
+    const res = await waitForLnPeerConnected(() => lnSession.peerStatus(), pubkey, { timeoutMs: 30000 });
+    if (res.connected) {
+      msg("lnChanMsg", "Connected ✓ Your node is linked to this peer — no channel was opened and no sats were needed. You can open a channel any time with “Connect & open channel”.", true);
+    } else {
+      msg("lnChanMsg", "Couldn't finish connecting to this peer — the connection didn't complete in time, so your node isn't linked to it yet. Check the host and port (and the proxy template above if this peer needs one), then try again. The peer is saved in your Connections list, and your node dials it again next time Fluid opens.");
+    }
+  } catch (e) { msg("lnChanMsg", "Connect failed: " + lnErrorText(e)); }
+}
+
 async function lnOpenChannel() {
   const pubkey = $("lnPeerKey").value.trim();
   const host = $("lnPeerHost").value.trim();
@@ -4588,7 +4616,13 @@ async function lnOpenChannel() {
   try {
     msg("lnChanMsg", "Connecting to peer… (if this peer needs a proxy, set the template above and re-open the panel so the node restarts with it)", true);
     lnSession.connectPeer(pubkey, host, port);
-    await new Promise(r => setTimeout(r, 4000));
+    // Wait on the node's real connection state, not a fixed
+    // sleep: 4 s proved shorter than real connection time in the
+    // wild (audit batch 4, F3), and requesting a channel from an
+    // unconnected peer only fails inside LDK. A wait that times
+    // out fails here, truthfully, with no channel requested.
+    const res = await waitForLnPeerConnected(() => lnSession.peerStatus(), pubkey, { timeoutMs: 30000 });
+    if (!res.connected) return msg("lnChanMsg", "Open channel failed: your node couldn't finish connecting to this peer in time, so no channel was requested. Check the host and port (and the proxy template above if this peer needs one), then try again.");
     lnSession.openChannel(pubkey, sats, 0);
     msg("lnChanMsg", "Channel requested. The funding step appears below when the node is ready for it.", true);
     lnWatchFunding();
@@ -7064,6 +7098,15 @@ function renderNameSection() {
     if (!lnNativeState) {
       if (lnSession && lnSession.network !== "bitcoin") return msg("nameMsg", "Your Lightning node is on a test network right now — switch it to Bitcoin (mainnet) in the Lightning panel first, so the offer you register can receive real payments.");
       if (btn) btn.disabled = true;
+      // The busy label ("Starting your node…") is restored on
+      // EVERY exit path of this branch (audit batch 4, F1): the
+      // finally below puts the resting label back unless the
+      // success path ran, where paintNativeTerms() takes over the
+      // label with the registration step's own wording. Before
+      // this, the offer-failure return below skipped the restore
+      // and the button sat at "Starting your node…" indefinitely
+      // while fully functional.
+      let painted = false;
       try {
         if (!lnSession) {
           if (btn) btn.textContent = "Starting your node…";
@@ -7083,14 +7126,19 @@ function renderNameSection() {
         try { recv = Number(lnSession.balance().receivableMsat || 0); } catch { recv = 0; }
         lnNativeState = { offer, receivableMsat: recv };
         paintNativeTerms();
+        painted = true;
       } catch (e) {
         const stage = e && e.stage;
         if (stage === "download") msg("nameMsg", "Your node couldn't load — the node program didn't finish downloading (a slow or dropped connection?). Any part that arrived is kept on your phone, so retrying continues from there. Nothing was registered.");
         else if (stage === "integrity") msg("nameMsg", "Your node couldn't load — the downloaded code didn't match this app's fingerprint, so it wasn't run. Nothing was registered.");
         else if (stage === "chain") msg("nameMsg", "Your node couldn't load — it couldn't read the Bitcoin chain tip to start. Nothing was registered.");
         else msg("nameMsg", "Your node couldn't start just now: " + lnErrorText(e) + " Nothing was registered.");
-        if (btn) btn.textContent = "Use my Fluid node";
-      } finally { if (btn) btn.disabled = false; }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          if (!painted) btn.textContent = "Use my Fluid node";
+        }
+      }
       return;
     }
     const offer = lnNativeState.offer;

@@ -29,7 +29,7 @@
 import init, { FluidNode } from "../lightning/pkg-web/fluid_lightning.js";
 import { gcm } from "@noble/ciphers/aes.js";
 import { deriveLightningSeed, deriveLightningStorageKey } from "./ln-derive.js";
-import { parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "./ln-peers.js";
+import { parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState } from "./ln-peers.js";
 import { fetchPinnedAsset, LnAssetError } from "./ln-download.js";
 
 export const LN_NETWORKS = {
@@ -357,11 +357,24 @@ export async function bootLightning({ phrase, network = "bitcoin", wsProxy = "",
     balance: () => JSON.parse(node.balance()),
     channels: () => JSON.parse(node.channels()),
     history: () => JSON.parse(node.history()),
-    drainEvents: () => JSON.parse(node.drain_events()),
+    // Draining events also feeds the handshake ledger below: the
+    // crate serialises LDK's OnionMessagePeerConnected as
+    // "peer_back_online" — the peer manager emits it only after
+    // the Noise handshake AND the init exchange complete, so it
+    // is the node's own proof a peer is truly connected (F2).
+    // Every drain passes through here, whoever the caller is.
+    drainEvents: () => {
+      const evs = JSON.parse(node.drain_events());
+      for (const ev of evs) {
+        if (ev && ev.type === "peer_back_online" && ev.peer) session.peerReady.add(String(ev.peer).toLowerCase());
+      }
+      return evs;
+    },
     pendingFunding: () => JSON.parse(node.pending_funding()),
     // --- Peer book + connection supervision ---
     peerBook: loadBook(),
     liveConns: new Map(), // connId -> pubkey
+    peerReady: new Set(), // pubkeys whose Lightning handshake LDK has confirmed (peer_back_online)
     peerRetry: new Map(), // pubkey -> { nextMs, delayMs, dialed }
     peerLive(pubkey) {
       if (!active || active.node !== node) return false;
@@ -390,11 +403,23 @@ export async function bootLightning({ phrase, network = "bitcoin", wsProxy = "",
     disconnectPeer: (pubkey) => {
       session.peerBook = removeLnPeer(session.peerBook, pubkey);
       saveBook(session.peerBook);
+      session.peerReady.delete(String(pubkey || "").toLowerCase());
     },
+    // Truth in three states (F2): "connected" only when the
+    // socket is live AND LDK has confirmed the handshake; a
+    // dialled socket still handshaking is "connecting"; no
+    // socket is "disconnected". Never "connected" on dial alone.
     peerStatus: () => session.peerBook.map((p) => ({
-      ...p, state: session.peerLive(p.pubkey) ? "connected" : "reconnecting",
+      ...p, state: lnPeerConnState({ socketLive: session.peerLive(p.pubkey), handshaken: session.peerReady.has(p.pubkey) }),
     })),
-    _socketClosed(connId) { session.liveConns.delete(connId); },
+    _socketClosed(connId) {
+      const pubkey = session.liveConns.get(connId);
+      session.liveConns.delete(connId);
+      // The last socket for a peer dying voids its handshake
+      // proof: a re-dial must earn "connected" again, not inherit
+      // it while the new handshake is still running.
+      if (pubkey && ![...session.liveConns.values()].includes(pubkey)) session.peerReady.delete(pubkey);
+    },
     // Boot dials every book peer; afterwards the supervisor re-dials
     // only peers that hold channels with us and have no live socket,
     // with per-peer backoff (30 s doubling to a 5 min cap).
