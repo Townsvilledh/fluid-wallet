@@ -271,7 +271,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="381f56c5fd"></head>
+<meta name="fluid-build" content="b957cffd68"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -442,6 +442,45 @@
       <div id="scanResults"></div>
     </div>
 
+    <!-- BTC EXIT TAB (Lightning -> Bitcoin mainnet bridge).
+         ALWAYS-WARN LAW v2 (owner, 2026-11-09): the bridge has
+         its own tab and carries every warning; getting onto
+         Lightning is stated safe and locked down; holding on
+         Lightning and pushing out are both presented as
+         legitimate choices; consent is never pre-ticked. -->
+    <div id="tab-bridge" class="hidden">
+      <h2 style="margin:8px 0">Lightning → Bitcoin</h2>
+      <div class="card">
+        <p style="margin:0 0 8px"><b>Getting onto Lightning is safe and locked down.</b> Your Lightning lives in your own node, inside this app, under your own seed phrase. Nobody else can touch it, and using this bridge doesn't change that.</p>
+        <p class="tag" style="margin:0">Once your sats are on Lightning, the choice is yours — and it stays yours. <b>Hold them on Lightning</b>: fast, cheap, and complete in itself. Or <b>push them out to Bitcoin mainnet</b> here, to an external Bitcoin wallet. Neither is pushed. Both stay available whenever you want them.</p>
+      </div>
+      <div class="card">
+        <p class="t-strong" style="margin:0 0 8px">Read this before you cross</p>
+        <p class="tag" style="margin:0 0 8px"><b>Two steps, two systems.</b> Step 1 swaps your Lightning sats into <b>Arkade</b> — a Bitcoin layer-2 run with the Arkade operator (arkade.computer) — through Satora, atomically: the swap either completes, or the Lightning payment fails back and nothing moves. Step 2 exits Arkade to your Bitcoin address in the operator's next batch.</p>
+        <p class="tag" style="margin:0 0 8px"><b>Arkade is new software.</b> The Arkade protocol and its operator are pre-1.0 and live only since 2025 — real, but not battle-tested like Bitcoin itself. Treat this bridge as a <b>crossing, not a vault</b>: move sats across, don't store them here.</p>
+        <p class="tag" style="margin:0 0 8px"><b>The operator can never take your coins.</b> The operator coordinates exits in batches and co-signs them, but your coins sit in outputs whose exit transactions are pre-signed by you. If the operator disappeared, you could still exit on your own after a waiting period (about a week) — slower, and it costs a normal Bitcoin network fee, but the coins stay yours. The one thing the operator must be alive for is the cheap, fast batched exit — and for renewals.</p>
+        <p class="tag" style="margin:0 0 8px"><b>Arkade coins expire.</b> Every Arkade balance has an expiry (about a month — yours is shown below). Past it, unspent coins can be swept by the operator. Fluid shows your deadline and offers a renewal, but don't leave sats parked in Arkade.</p>
+        <p class="tag" style="margin:0 0 8px"><b>Costs are read live and shown before you confirm:</b> Satora's swap fee (0.15% + 1 sat when last checked), the Arkade exit fee (a flat per-exit charge plus up to 0.2%, set by the operator), and Fluid's own fee on the swap step only, capped by Fluid's fee law. The exit fee goes entirely to the Arkade operator — Fluid earns nothing on the exit.</p>
+        <p class="tag" style="margin:0 0 8px"><b>Irreversible steps.</b> Once the swap's Lightning invoice is paid, that step can't be undone. Once an exit is submitted to a batch, it can't be recalled. Check the destination Bitcoin address carefully — a wrong address loses the money.</p>
+        <p class="tag" style="margin:0"><b>Batches take minutes, not seconds.</b> The exit lands in the operator's next batch, then confirms on Bitcoin like any other transaction.</p>
+      </div>
+      <div class="card">
+        <p class="t-strong" style="margin:0 0 8px">Before the bridge form opens, confirm you understand:</p>
+        <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 10px"><input type="checkbox" id="bridgeAck1" style="width:auto;margin:2px 0 0;flex:none"><span class="tag" style="margin:0">Arkade is new, pre-1.0 software, and this bridge is a crossing — not a place to store Bitcoin.</span></label>
+        <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 10px"><input type="checkbox" id="bridgeAck2" style="width:auto;margin:2px 0 0;flex:none"><span class="tag" style="margin:0">Arkade balances expire, and I will exit or renew before the deadline shown.</span></label>
+        <label style="display:flex;gap:10px;align-items:flex-start;margin:0"><input type="checkbox" id="bridgeAck3" style="width:auto;margin:2px 0 0;flex:none"><span class="tag" style="margin:0">The paid swap and a submitted exit cannot be undone, and I will check the destination address carefully.</span></label>
+      </div>
+      <div id="bridgeMain"><p class="tag">Loading the bridge…</p></div>
+      <div class="card">
+        <p class="t-strong" style="margin:0 0 6px">Your Arkade balance</p>
+        <div id="bridgeArkadeBody"><p class="tag" style="margin:0">Loading…</p></div>
+      </div>
+      <div class="card">
+        <p class="t-strong" style="margin:0 0 6px">Bridges in progress</p>
+        <div id="bridgeRecords"><p class="tag" style="margin:0">None yet.</p></div>
+      </div>
+    </div>
+
     <!-- MORE TAB -->
     <div id="tab-more" class="hidden">
       <h2 style="margin:8px 0">Settings &amp; safety</h2>
@@ -547,6 +586,7 @@
       <button class="tab" data-tab="play"><span class="ti"><svg class="ic"><use href="#i-ball"/></svg></span>Play</button>
       <button class="tab" data-tab="activity"><span class="ti"><svg class="ic"><use href="#i-activity"/></svg></span>Activity<span class="navdot hidden" id="activityDot"></span></button>
       <button class="tab" data-tab="scan"><span class="ti"><svg class="ic"><use href="#i-search"/></svg></span>Scan</button>
+      <button class="tab" data-tab="bridge"><span class="ti"><svg class="ic"><use href="#i-bolt"/></svg></span>BTC exit</button>
       <button class="tab" data-tab="more"><span class="ti"><svg class="ic"><use href="#i-more"/></svg></span>More</button>
     </nav>
   </section>
@@ -572,6 +612,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=381f56c5fd"></script>
+<script src="app.bundle.js?v=b957cffd68"></script>
 </body>
 </html>
