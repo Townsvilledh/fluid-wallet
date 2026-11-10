@@ -4327,11 +4327,16 @@ let lnAddrPending = null; // { name, offer } — sent, registry hasn't shown it 
 let lnAddrFetching = false;
 function lnAddrOfferNow() {
   if (!lnSession) return null;
-  if (lnAddrOfferSession === lnSession && lnAddrOffer !== undefined) return lnAddrOffer;
-  try { lnAddrOffer = lnSession.createOffer(null, "Fluid"); }
-  catch { lnAddrOffer = null; }
-  lnAddrOfferSession = lnSession;
-  return lnAddrOffer;
+  if (lnAddrOfferSession === lnSession && lnAddrOffer) return lnAddrOffer;
+  // Only a SUCCESS is cached: a failure (no peer connected yet)
+  // must be retried on the next paint, or a user who opens the
+  // panel before connecting would never be offered Publish.
+  try {
+    const offer = lnSession.createOffer(null, "Fluid");
+    lnAddrOffer = offer;
+    lnAddrOfferSession = lnSession;
+    return offer;
+  } catch { return null; }
 }
 async function lnAddrRefresh() {
   const name = localStorage.getItem("fluid_name");

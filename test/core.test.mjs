@@ -9008,6 +9008,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     pubNs.includes("lnAddrPending = { name, offer }") && pubNs.includes('lnAddrView = { status: "published" }') && pubNs.includes("resolveFluidName(name)"));
   ok("lnaddr wiring: the panel Receive section carries the address block",
     appNs.includes('id="lnAddrOut"') && appNs.includes("paintLnAddress();") && appNs.includes("Not live yet"));
+  const offerNowNs = appNs.slice(appNs.indexOf("function lnAddrOfferNow"), appNs.indexOf("async function lnAddrRefresh"));
+  ok("lnaddr wiring: an offer failure is never cached for the session (publish stays reachable after connecting)",
+    offerNowNs.includes("catch { return null; }") && !offerNowNs.includes("lnAddrOffer = null"));
 }
 
 // ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------
