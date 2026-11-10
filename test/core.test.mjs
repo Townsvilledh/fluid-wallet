@@ -9111,6 +9111,23 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("ark: the three acknowledgements exist and none is pre-ticked", ["bridgeAck1", "bridgeAck2", "bridgeAck3"].every((id) => htmlArk.includes(`id="${id}"`)) && !/id="bridgeAck[123]"[^>]*checked/.test(htmlArk));
   ok("ark: the warnings name expiry, irreversibility and the operator's limits", htmlArk.includes("Arkade coins expire") && htmlArk.includes("cannot be undone") || htmlArk.includes("can't be undone") || htmlArk.includes("Irreversible steps"));
   ok("ark: app.js drives the tab through the lazy chunk + core gate", appArk.includes('import("./arkade.chunk.js")') && appArk.includes("ARKADE_CHUNK_MARKER") && appArk.includes("BRIDGE_ROUTE_COST_CAP_SATS") && appArk.includes("bridgeRefresh"));
+  ok("ark: exit destinations default to the user's own Fluid Bitcoin address (owner direction, 2026-11-10)",
+    appArk.includes("function bridgeOwnBtcAddress()")
+    && appArk.includes("btcAddr || bitcoinAddress(wallet.mnemonic.phrase)")
+    && appArk.includes("Destination Bitcoin address — your Fluid Bitcoin address")
+    && appArk.includes("Or exit everything to a Bitcoin address — your Fluid Bitcoin address")
+    && appArk.includes("These sats land in your own Fluid Bitcoin wallet")
+    && appArk.includes('autocapitalize="none" readonly value="${esc(own)}"'));
+  ok("ark: another wallet is an explicit Change-destination choice on both exit fields, never the starting state",
+    appArk.includes('id="bridgeDestChange"') && appArk.includes('id="bridgeDestOwn"')
+    && appArk.includes('id="bridgeExitAllChange"') && appArk.includes('id="bridgeExitAllOwn"')
+    && appArk.includes("Use my Fluid Bitcoin address")
+    && !appArk.includes("Destination Bitcoin address (your external wallet)"));
+  ok("ark: no derivable own address means an honest unfilled field, never a guessed pre-fill",
+    appArk.includes("Your own Fluid Bitcoin address isn't available right now, so nothing was filled in for you"));
+  ok("ark: the tab copy matches the default (own address first, another wallet by choice)",
+    htmlArk.includes("to your own Fluid Bitcoin address by default, or to another wallet if you choose")
+    && !htmlArk.includes("to an external Bitcoin wallet"));
   const chunkArk = readFileSync(new URL("../src/arkade.js", import.meta.url), "utf8");
   ok("ark: the chunk boot warms the operator snapshot and retries transient failures (QA fix, 2026-11-10)", chunkArk.includes("attempt < 3") && chunkArk.includes("getArkadeInfo()") && appArk.includes("bridgeArkRetry"));
   const buildArk = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");

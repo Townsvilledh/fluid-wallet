@@ -4988,7 +4988,8 @@ function lnFallbackSheet(note) {
 // operator batching outputs it cannot redirect.
 let arkChunk = null, arkChunkPromise = null, arkSession = null, arkBootPromise = null;
 let bridgePair = null, bridgeFeesInfo = null, bridgeQuote = null, bridgeBusy = false;
-let bridgeForm = { sourceSats: "", btcAddress: "" };
+let bridgeForm = { sourceSats: "", btcAddress: "", destCustom: false };
+let bridgeExitAll = { addr: "", custom: false };
 
 function arkLoadChunk() {
   if (arkChunk) return Promise.resolve(arkChunk);
@@ -5027,6 +5028,22 @@ function arkEnsureSession() {
 
 function bridgeAcksOk() {
   return ["bridgeAck1", "bridgeAck2", "bridgeAck3"].every((id) => { const el = $(id); return !!el && el.checked; });
+}
+
+// The wallet's own native Bitcoin mainnet address — the same one
+// the Receive view shows for Bitcoin. BTC-exit destinations
+// default to it (owner direction, 2026-11-10): the sats land back
+// in the user's own Fluid wallet, and the user moves them on from
+// there if they choose; sending to a different wallet is an
+// explicit "Change destination" choice, never the starting state.
+// Null when the address can't be derived, so the form says so
+// plainly instead of pre-filling a blank or a wrong address.
+function bridgeOwnBtcAddress() {
+  if (!wallet) return null;
+  try {
+    const a = btcAddr || bitcoinAddress(wallet.mnemonic.phrase);
+    return a && isValidBitcoinAddress(a) ? a : null;
+  } catch { return null; }
 }
 for (const id of ["bridgeAck1", "bridgeAck2", "bridgeAck3"]) {
   const el = $(id);
@@ -5077,18 +5094,38 @@ function paintBridgeForm() {
   const pairLine = pair
     ? `Satora's live Lightning → Arkade route terms: ${pair.feePercentage * 100}% + ${pair.networkFeeSats} sat per swap · this route's minimum is ${pair.minSats.toLocaleString()} sats · maximum ${pair.maxSats.toLocaleString()} sats.`
     : "Satora's live pair table couldn't be read just now — quoting is paused until it can be. Nothing is guessed.";
+  // Destination: the user's own Fluid Bitcoin address by default
+  // (filled in, locked); "Change destination" is the explicit
+  // choice that unlocks pasting a different wallet. No derivable
+  // own address → nothing is pre-filled and the form says why.
+  const own = bridgeOwnBtcAddress();
+  if (!bridgeForm.destCustom && own) bridgeForm.btcAddress = own;
+  const destHtml = !own
+    ? `<label class="fld"><span>Destination Bitcoin address</span><input id="bridgeBtcAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
+    <p class="tag" style="margin:0 0 10px">Your own Fluid Bitcoin address isn't available right now, so nothing was filled in for you — paste the destination address yourself, and check it carefully.</p>`
+    : !bridgeForm.destCustom
+    ? `<label class="fld"><span>Destination Bitcoin address — your Fluid Bitcoin address</span><input id="bridgeBtcAddr" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" readonly value="${esc(own)}"></label>
+    <p class="tag" style="margin:0 0 6px">These sats land in your own Fluid Bitcoin wallet. From there you can move them wherever you like.</p>
+    <button class="btn ghost" id="bridgeDestChange" style="width:auto;margin:0 0 10px">Change destination</button>`
+    : `<label class="fld"><span>Destination Bitcoin address</span><input id="bridgeBtcAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
+    <button class="btn ghost" id="bridgeDestOwn" style="width:auto;margin:0 0 10px">Use my Fluid Bitcoin address</button>`;
   el.innerHTML = `<div class="card">
     <p class="t-strong" style="margin:0 0 6px">Cross to Bitcoin mainnet</p>
     <p class="tag" style="margin:0 0 10px">${esc(pairLine)}</p>
     <label class="fld"><span>Amount in sats (from your Lightning balance)</span><input id="bridgeAmount" inputmode="numeric" placeholder="e.g. 2700" value="${esc(bridgeForm.sourceSats)}"></label>
-    <label class="fld"><span>Destination Bitcoin address (your external wallet)</span><input id="bridgeBtcAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
+    ${destHtml}
     <p class="msg" id="bridgeMsg"></p>
     <div id="bridgeQuoteBox"></div>
     <button class="btn" id="bridgeQuoteBtn" ${pair ? "" : "disabled"}>Get the exact quote</button>
     <p class="tag" style="margin:10px 0 0">The quote is a real, live Satora creation — unpaid, and it simply expires if you stop here. Fluid refuses the crossing, plainly, if the true costs would push the route above its honesty cap.</p>
   </div>`;
   $("bridgeAmount").oninput = (e) => { bridgeForm.sourceSats = e.target.value; };
-  $("bridgeBtcAddr").oninput = (e) => { bridgeForm.btcAddress = e.target.value; };
+  const destInput = $("bridgeBtcAddr");
+  if (destInput && !destInput.readOnly) destInput.oninput = (e) => { bridgeForm.btcAddress = e.target.value; };
+  const destChange = $("bridgeDestChange");
+  if (destChange) destChange.onclick = () => { bridgeForm.destCustom = true; bridgeForm.btcAddress = ""; bridgeQuote = null; paintBridgeForm(); };
+  const destOwn = $("bridgeDestOwn");
+  if (destOwn) destOwn.onclick = () => { bridgeForm.destCustom = false; bridgeQuote = null; paintBridgeForm(); };
   $("bridgeQuoteBtn").onclick = () => bridgeDoQuote().catch((e) => msg("bridgeMsg", e.message || String(e), false));
   if (bridgeQuote) paintBridgeQuoteReview();
 }
@@ -5304,16 +5341,36 @@ async function paintBridgeArkadeLive() {
     const earliest = vtxos.reduce((m, v) => (v.expirySecs && (!m || v.expirySecs < m) ? v.expirySecs : m), null);
     const soon = earliest && earliest * 1000 - Date.now() < 7 * 24 * 3600 * 1000;
     const rows = vtxos.slice(0, 12).map((v) => `<p class="tag" style="margin:0 0 2px">${Number(v.valueSats).toLocaleString()} sats${v.expirySecs ? ` · expires ${esc(new Date(v.expirySecs * 1000).toLocaleString())}` : ""}</p>`).join("");
+    // Same destination rule as the bridge form: the user's own
+    // Fluid Bitcoin address by default; another wallet only via
+    // the explicit "Change destination" choice.
+    const own = bridgeOwnBtcAddress();
+    if (!bridgeExitAll.custom && own) bridgeExitAll.addr = own;
+    const exitDestHtml = !own
+      ? `<label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeExitAll.addr)}"></label>
+      <p class="tag" style="margin:6px 0 0">Your own Fluid Bitcoin address isn't available right now, so nothing was filled in for you — paste the destination address yourself, and check it carefully.</p>`
+      : !bridgeExitAll.custom
+      ? `<label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address — your Fluid Bitcoin address</span><input id="bridgeExitAllAddr" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" readonly value="${esc(own)}"></label>
+      <p class="tag" style="margin:6px 0 0">These sats land in your own Fluid Bitcoin wallet. From there you can move them wherever you like.</p>
+      <button class="btn ghost" id="bridgeExitAllChange" style="width:auto;margin-top:8px">Change destination</button>`
+      : `<label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeExitAll.addr)}"></label>
+      <button class="btn ghost" id="bridgeExitAllOwn" style="width:auto;margin-top:8px">Use my Fluid Bitcoin address</button>`;
     paintBridgeArkade(`
       <p style="margin:0 0 4px"><b>${Number(balance).toLocaleString()} sats</b> in Arkade</p>
       <p class="tag" style="margin:0 0 6px">Your Arkade address: <span class="mono">${esc(session.address)}</span></p>
       ${rows}
       ${earliest ? `<p class="tag" style="margin:6px 0 0${soon ? ";color:#e5484d" : ""}">Earliest expiry: ${esc(new Date(earliest * 1000).toLocaleString())}${soon ? " — renew or exit soon; past expiry the operator can sweep unspent coins." : ""}</p>` : ""}
       ${balance > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn ghost" id="bridgeRenewBtn" style="width:auto">Renew my Arkade balance</button></div>
-      <label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none"></label>
+      ${exitDestHtml}
       <p class="msg" id="bridgeArkadeMsg"></p>
       <button class="btn ghost" id="bridgeExitAllBtn">Review the exit</button>` : `<p class="tag" style="margin:6px 0 0">Sats you bridge land here first; from here you exit them to Bitcoin mainnet.</p>`}`);
     if (balance > 0) {
+      const exitAllInput = $("bridgeExitAllAddr");
+      if (exitAllInput && !exitAllInput.readOnly) exitAllInput.oninput = (e) => { bridgeExitAll.addr = e.target.value; };
+      const exitAllChange = $("bridgeExitAllChange");
+      if (exitAllChange) exitAllChange.onclick = () => { bridgeExitAll.custom = true; bridgeExitAll.addr = ""; paintBridgeArkadeLive().catch(() => {}); };
+      const exitAllOwn = $("bridgeExitAllOwn");
+      if (exitAllOwn) exitAllOwn.onclick = () => { bridgeExitAll.custom = false; paintBridgeArkadeLive().catch(() => {}); };
       $("bridgeRenewBtn").onclick = async () => {
         try {
           toast("Renewing your Arkade balance…");
