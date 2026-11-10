@@ -3536,26 +3536,34 @@ export function platformFeeBpsForRoute(routeFeeUsd, amountUsd, destChainKey = nu
   const target = platformFeeUsdForRoute(routeFeeUsd, amt, destChainKey);
   return Math.max(0, Math.min(PLATFORM_FEE_BPS, Math.floor((target / amt) * 10000 + 1e-9)));
 }
-/** The route-cost definition the markup reads (owner's worked
- *  example, 2026-11-08): a route's cost is the LARGER of its
- *  explicit fee components (what the router declares — gas,
- *  bridge and relayer fees) and its all-in shortfall (what the
- *  input is worth minus what the user receives, with Fluid's own
- *  fee excluded: callers measure on the fee-free quote pass, or
- *  net the fee out first). Most of a cheap route's cost rides
- *  inside the exchange rate, where no fee component declares it —
- *  on Relay's $5 Base→Arbitrum capture the declared gas is
- *  $0.0011 but the shortfall is $0.0242 — so marking up the
- *  declared components alone would price Fluid's fee off a small
- *  fraction of the true cost. An unreadable measure drops out;
- *  the result never goes below zero, and a total blank stays zero
- *  so the degenerate fallback in platformFeeBpsForRoute applies. */
+/** The route-cost definition the markup reads (owner's definition,
+ *  corrected 2026-11-10, audit F2): a route's cost is the user's
+ *  TRUE ECONOMIC LOSS — the input's fair value minus the output's
+ *  fair value (both priced from the verified price sources the fee
+ *  law already trusts), with Fluid's own fee excluded: callers
+ *  measure on the fee-free quote pass, or net the fee out first.
+ *  The earlier "larger of declared components and shortfall"
+ *  combiner misstated the cost in BOTH directions, because a
+ *  router's DECLARED components are not a loss measure at all:
+ *  on a $1 zkSync→Base Relay quote Relay declares $4.67 of "gas"
+ *  (a padded worst-case estimate the user never pays — the swap
+ *  settles out of the input) while the actual value loss is
+ *  $0.0186, so the fee law read a $4.67 cost, zeroed Fluid's fee
+ *  against the $0.20 EVM ceiling and showed the user a ~$5 route
+ *  cost on a $1 swap. The declared components survive only as the
+ *  FALLBACK for a quote whose fair-value shortfall is unreadable,
+ *  which keeps coverage for routes that expose no output value.
+ *  The result never goes below zero, and a total blank stays zero
+ *  so the degenerate fallback in platformFeeBpsForRoute applies.
+ *  One scope note, stated plainly: source-chain gas the user pays
+ *  ON TOP of the input (not deducted from it) is real money but is
+ *  not part of this measure by the owner's definition — what the
+ *  fee law marks up is the value lost inside the route. */
 function routeCostUsd(explicitUsd, shortfallUsd) {
-  const e = Number(explicitUsd);
-  let cost = Number.isFinite(e) && e > 0 ? e : 0;
   const s = Number(shortfallUsd);
-  if (Number.isFinite(s) && s > cost) cost = s;
-  return Math.max(0, cost);
+  if (Number.isFinite(s)) return Math.max(0, s);
+  const e = Number(explicitUsd);
+  return Number.isFinite(e) && e > 0 ? e : 0;
 }
 /** The platform fee on a raw integer amount (smallest units, BigInt
  *  math): fee = floor(amount × bps / 10000), at the cap rate unless
@@ -4564,7 +4572,13 @@ export const RAMP_COUNTRY_PLAN = {
     // here. The corridor's two paying-nothing routes were removed
     // under the capture gate (2026-11-09), so the US sheet
     // otherwise resolves to the honest empty state on both sides.
-    ["Mt Pelerin", { unavailable: true, note: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank" }],
+    ["Mt Pelerin", { unavailable: true, note: {
+      // Per-mode (audit §1.11): the sell sheet must not lead with
+      // buy copy — each side states its own true terms, mirroring
+      // the provider default notes.
+      buy: "Not available to US residents — if you're outside the US: no ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank · buys start at CHF 1 · unverified purchases are held 7 days before delivery",
+      sell: "Not available to US residents — if you're outside the US: sells start at CHF 50 (about $57) unless you hold a personal IBAN with them · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
+    } }],
   ],
   GB: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   DE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
@@ -4670,10 +4684,13 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       if (!links) continue;
       url = mode === "buy" ? links.buy : links.sell;
     }
-    // Note assembly: a row override wins; otherwise the provider
-    // default, which may be per-mode. On flagged SWIFT corridors
-    // the Mt Pelerin buy note gains the bank-cost line (P1-12).
+    // Note assembly: a row override wins (and may itself be a
+    // per-mode { buy, sell } object — the US row is, audit
+    // §1.11); otherwise the provider default, which may be
+    // per-mode. On flagged SWIFT corridors the Mt Pelerin buy
+    // note gains the bank-cost line (P1-12).
     let note = opts.note;
+    if (note != null && typeof note === "object") note = note[mode] || "";
     if (note == null) {
       const dflt = RAMP_DEFAULT_NOTES[name];
       note = (dflt && typeof dflt === "object") ? (dflt[mode] || "") : (dflt || "");
@@ -5126,10 +5143,11 @@ function lifiStepCostsUsd(step) {
 }
 /** A LI.FI route's own cost in USD — the single place LI.FI's
  *  routeFeeUsd is computed, under the model's definition
- *  (routeCostUsd): the LARGER of the route's explicit costs (the
- *  sum over its steps of lifiStepCostsUsd) and its all-in
- *  shortfall (fromAmountUSD − toAmountUSD — what the rate quietly
- *  takes beyond the declared fees). Measured on the fee-free pass,
+ *  (routeCostUsd): the route's all-in shortfall (fromAmountUSD −
+ *  toAmountUSD, LI.FI's own spot valuations — what the user
+ *  actually loses inside the route), with the explicit costs (the
+ *  sum over its steps of lifiStepCostsUsd) as the fallback when
+ *  that shortfall is unreadable. Measured on the fee-free pass,
  *  so neither measure has Fluid's fee inside it. Exported for
  *  tests. */
 export function lifiRouteFeeUsd(route) {
@@ -5414,16 +5432,17 @@ export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = 
   try { appFeeCollecting = BigInt(appFeeRaw) > 0n; } catch { appFeeCollecting = false; }
   // The route's OWN cost in USD — the single place Relay's
   // routeFeeUsd is computed, under the model's definition
-  // (routeCostUsd): the LARGER of the explicit fee components
-  // Relay declares (every entry in fees EXCEPT Fluid's app fee)
-  // and the quote's all-in shortfall — input value minus output
-  // value, with Fluid's app fee taken back out (on the fee-free
-  // pass 1, where platformFeeBpsForRoute reads this, there is no
-  // app fee in the quote, so the shortfall is pure route cost).
-  // Most of Relay's cost rides inside the exchange rate: the live
-  // $5 capture declares $0.0011 of gas, but its shortfall is
-  // $0.0242 — the declared components alone would understate the
-  // cost the model means to mark up by more than twentyfold.
+  // (routeCostUsd): the quote's all-in shortfall — input value
+  // minus output value, with Fluid's app fee taken back out (on
+  // the fee-free pass 1, where platformFeeBpsForRoute reads this,
+  // there is no app fee in the quote, so the shortfall is pure
+  // route cost). The explicit fee components Relay declares
+  // (every entry in fees EXCEPT Fluid's app fee) are only the
+  // fallback: Relay's declared "gas" is a padded worst-case
+  // estimate, not a loss — on a live $1 zkSync→Base quote it
+  // declared $4.67 against a true shortfall of $0.0186 (audit
+  // F2), and the old larger-of combiner priced Fluid's fee off
+  // the phantom and showed it to the user as route cost.
   let explicitFeeUsd = 0;
   for (const [k, v] of Object.entries(quote.fees || {})) {
     if (k === "app") continue;
@@ -9261,13 +9280,16 @@ export function buildMayanQuoteBody(args, { feeBps = 0 } = {}) {
  *  — a quote Fluid cannot verify never reaches the signer.
  *
  *  ROUTE COST (the model's one definition, routeCostUsd): the
- *  larger of the explicit protocol fee Mayan declares
- *  (protocolFeeUsd — Swift's is 0, Fast MCTP's 3 bps) and the
- *  all-in shortfall, measured against the GROSS output — on a
+ *  all-in shortfall at fair value (see the F2 note in the
+ *  parser body — both sides are priced from independent fair
+ *  prices when ctx carries them, never from the quote's own
+ *  execution ratio), measured against the GROSS output — on a
  *  fee-bearing quote the expected output is already net of
  *  Fluid's referrer fee, so the fee (the quote's own
  *  referrerFeeUsd) is added back before the shortfall is read;
  *  Fluid's fee never inflates the cost it is marked up from.
+ *  The declared protocolFeeUsd survives only as routeCostUsd's
+ *  fallback for an unreadable shortfall.
  *  gasCostUSD prices what the quote itself denominates: for a
  *  Solana source, the account rent the quote declares
  *  (rentCost, lamports) plus the base signature fee, priced in
@@ -9326,17 +9348,40 @@ export function parseMayanQuote(quote, args, ctx = {}) {
     return Math.abs(scaled - Number(raw)) <= Math.max(1, Math.abs(scaled) * 1e-6);
   };
   if (!agree(quote.effectiveAmountIn, inAmt, inDec) || !agree(quote.expectedAmountOut, outAmt, outDec)) return null;
-  // Mayan's `price` is the from-token's price denominated in
-  // the TO token (USDC→WETH quotes ~0.00047, not ~1) — the
-  // from-token's USD price is price × toTokenPrice (verified
-  // against live quotes: 0.0004718 × 2118.67 ≈ 0.9996, the
-  // USDC price in the quote's own feed). Reading `price` as
-  // USD directly would understate the input by the to-token's
-  // whole price factor on cross-asset quotes.
+  // Mayan's `price` is the EXECUTION ratio (expectedOut /
+  // effectiveIn on dust quotes — a live $0.10 Solana→Arbitrum
+  // USDC quote carried price 0.4922, the rate after the ~$0.051
+  // haircut), NOT a spot price: valuing the input with it prices
+  // the input at what comes OUT, so the shortfall — and with it
+  // the route cost and Fluid's fee — collapses to ~zero (audit
+  // F2: the label showed $0.00014 on a true $0.0508 loss). Both
+  // sides are therefore valued at INDEPENDENT fair prices when
+  // ctx carries them (ctx.mintPricesUsd = Jupiter Price V3 by
+  // mint for the Solana side; ctx.symbolPricesUsd = the wallet's
+  // verified symbol prices, stables pinned at 1), and only fall
+  // back to the quote's own price fields when a side has no fair
+  // price — coverage the pre-F2 behaviour already had: on
+  // full-size quotes `price` ≈ spot (verified: 0.0004718 ×
+  // 2118.67 ≈ 0.9996, the USDC price in the quote's own feed),
+  // so the fallback misstates only the dust band it cannot see.
   const priceRatio = Number(quote.price), outPrice = Number(quote.toTokenPrice ?? quote.toPrice);
   if (!Number.isFinite(priceRatio) || priceRatio <= 0 || !Number.isFinite(outPrice) || outPrice <= 0) return null;
-  const fromAmountUSD = Number(quote.effectiveAmountIn) * priceRatio * outPrice;
-  const toAmountUSD = Number(quote.expectedAmountOut) * outPrice;
+  const fairPriceOf = (token, address) => {
+    const byMint = address ? Number(ctx.mintPricesUsd?.[address]) : NaN;
+    if (Number.isFinite(byMint) && byMint > 0) return byMint;
+    let sym = String(token?.symbol || "").toUpperCase();
+    if (sym === "WETH") sym = "ETH";
+    const bySym = Number(ctx.symbolPricesUsd?.[sym]);
+    return Number.isFinite(bySym) && bySym > 0 ? bySym : null;
+  };
+  const fromFair = fairPriceOf(quote.fromToken, args.fromTokenAddress);
+  const toFair = fairPriceOf(quote.toToken, args.toTokenAddress);
+  const fromAmountUSD = fromFair != null && toFair != null
+    ? Number(quote.effectiveAmountIn) * fromFair
+    : Number(quote.effectiveAmountIn) * priceRatio * outPrice;
+  const toAmountUSD = fromFair != null && toFair != null
+    ? Number(quote.expectedAmountOut) * toFair
+    : Number(quote.expectedAmountOut) * outPrice;
   const referrerFeeUsd = Math.max(0, Number(quote.referrerFeeUsd) || 0);
   if (Math.abs((Number(quote.referrerBps) || 0) - feeBps) > 1e-9) return null;
   if (feeBps > 0 && !(referrerFeeUsd > 0)) return null; // a fee was requested; the quote must price it, never silently drop it
@@ -9442,15 +9487,26 @@ function pickMayanQuote(quotes, wantType = null) {
 export async function getMayanSwapRoute(args) {
   if (!mayanSupportsPair(args)) return null;
   let solPriceUsd = 0;
-  if (args.fromChainKey === "solana") {
-    try {
-      const prices = await fetchJupiterPrices([JUPITER_WRAPPED_SOL_MINT]);
-      solPriceUsd = prices.get(JUPITER_WRAPPED_SOL_MINT)?.usdPrice || 0;
-    } catch { /* rent stays unpriced (gasCostUSD 0) — ranking still reads the shortfall honestly */ }
-  }
+  // Fair prices for the F2 route-cost measure: the wallet's
+  // verified symbol prices (stables pinned at 1) plus Jupiter
+  // Price V3 by mint for whichever side is a Solana token. A side
+  // that resolves neither way falls back to the quote's own price
+  // fields inside parseMayanQuote — coverage first, precision
+  // where the trusted sources reach.
+  let symbolPricesUsd = {};
+  try { symbolPricesUsd = await getPrices(); } catch { /* quote-derived fallback inside the parser */ }
+  const mintPricesUsd = {};
+  const solMints = new Set([JUPITER_WRAPPED_SOL_MINT]);
+  if (args.fromChainKey === "solana" && args.fromTokenAddress) solMints.add(args.fromTokenAddress);
+  if (args.toChainKey === "solana" && args.toTokenAddress) solMints.add(args.toTokenAddress);
+  try {
+    const prices = await fetchJupiterPrices([...solMints]);
+    solPriceUsd = prices.get(JUPITER_WRAPPED_SOL_MINT)?.usdPrice || 0;
+    for (const [mint, p] of prices) if (p?.usdPrice > 0) mintPricesUsd[mint] = p.usdPrice;
+  } catch { /* rent stays unpriced (gasCostUSD 0) and the parser falls back per side */ }
   const firstRaw = pickMayanQuote(await fetchMayanQuotes(args, 0));
   if (!firstRaw) throw new Error("Mayan returned no usable route for that pair.");
-  const first = parseMayanQuote(firstRaw, args, { feeBps: 0, solPriceUsd });
+  const first = parseMayanQuote(firstRaw, args, { feeBps: 0, solPriceUsd, symbolPricesUsd, mintPricesUsd });
   if (!first) throw new Error("Mayan returned no usable route for that pair.");
   const finish = (route) => {
     if (route.mayan.fromChainName !== "solana") {
@@ -9470,7 +9526,7 @@ export async function getMayanSwapRoute(args) {
   if (bps <= 0) { first.platformFeeBps = 0; return finish(first); }
   const finalRaw = pickMayanQuote(await fetchMayanQuotes(args, bps), first.mayan.routeType);
   if (!finalRaw) throw new Error("Mayan returned no usable route for that pair.");
-  const final = parseMayanQuote(finalRaw, args, { feeBps: bps, solPriceUsd });
+  const final = parseMayanQuote(finalRaw, args, { feeBps: bps, solPriceUsd, symbolPricesUsd, mintPricesUsd });
   if (!final) throw new Error("Mayan's fee-bearing quote disagreed with its fee-free quote — refusing it.");
   final.platformFeeBps = bps;
   return finish(final);
@@ -13904,12 +13960,32 @@ export function isValidDotAddress(address) {
 export function dotPlanckToDot(planck) { return ethers.formatUnits(BigInt(planck), 10); }
 export function dotDotToPlanck(amount) { return ethers.parseUnits(String(amount), 10); }
 let dotApiPromise = null;
+/** Race a promise against a deadline (audit TS-F1). Exported so
+ *  the deadline behaviour itself is unit-testable with a hanging
+ *  promise and a short clock. */
+export function withDeadline(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s.`)), ms);
+    Promise.resolve(promise).then(
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); });
+  });
+}
 /** The shared Asset Hub API connection (HTTPS). A failed attempt
- *  is NOT cached — the next call retries from scratch. */
-export function dotApi() {
+ *  is NOT cached — the next call retries from scratch. Creation is
+ *  deadline-bound (TS-F1): ApiPromise.create downloads the chain
+ *  metadata (~1.3 MB) before it can answer anything, and a stalled
+ *  fetch used to leave this promise pending FOREVER — the home
+ *  card sat in skeleton under a $0.00 header while every other
+ *  family resolved (the RPC itself answers raw JSON-RPC in ~1s).
+ *  On timeout the cached promise is dropped, so the next call
+ *  retries fresh instead of awaiting the same corpse. The
+ *  deadline is a parameter so tests can drive it short. */
+export function dotApi(timeoutMs = 30000) {
   if (!dotApiPromise) {
     dotCryptoWaitReady().catch(() => {});
-    dotApiPromise = DotApiPromise.create({ provider: new DotHttpProvider(DOT_RPC), noInitWarn: true })
+    const attempt = DotApiPromise.create({ provider: new DotHttpProvider(DOT_RPC), noInitWarn: true });
+    dotApiPromise = withDeadline(attempt, timeoutMs, "Polkadot connection")
       .catch(e => { dotApiPromise = null; throw e; });
   }
   return dotApiPromise;
@@ -13925,9 +14001,15 @@ function dotNativeRow(amount) {
  *  community assets; Fluid checks the two verified stables — the
  *  chain gives no cheap "all assets of one account" query without
  *  an indexer, and inventing one from partial data would lie. */
-export async function getDotAccount(address) {
+export async function getDotAccount(address, timeoutMs = 30000) {
   if (!isValidDotAddress(address)) throw new Error("That is not a valid Polkadot address.");
-  const api = await dotApi();
+  const api = await dotApi(timeoutMs);
+  // The query phase is deadline-bound too (TS-F1): an established
+  // connection whose storage reads stall must still let the card
+  // reach its honest "couldn't load" state, never hang the read.
+  return withDeadline(readDotAccount(api, address), timeoutMs, "Polkadot balance read");
+}
+async function readDotAccount(api, address) {
   const acct = await api.query.system.account(address);
   const free = acct.data.free.toString();
   const exists = Number(acct.providers?.toString?.() ?? 0) > 0 || !acct.data.free.isZero();
@@ -15260,6 +15342,87 @@ export function detectScanFamily(input) {
   if (isValidTronAddress(s)) return { family: "tron", address: s };
   if (isValidSolanaAddress(s)) return { family: "solana", address: s };
   return null;
+}
+
+/** Transaction-id detection for Scan (audit P1-16). A pasted
+ *  ADDRESS and a pasted TRANSACTION ID are different questions,
+ *  and three id shapes collide with address shapes: a 0x + 64-hex
+ *  string is an EVM transaction hash AND a valid Sui address; a
+ *  bare 64-hex string is a Bitcoin (or Tron) txid; a base58 string
+ *  decoding to 64 bytes is a Solana signature (an address decodes
+ *  to 32). Returns { kind, id } or null. The EVM/Sui ambiguity is
+ *  resolved by LOOKUP ORDER in the caller: the transaction lookup
+ *  runs first, and only a miss falls through to the Sui address
+ *  scan — a real EVM hash can no longer land on an empty Sui
+ *  address page. */
+export function detectScanTxid(input) {
+  const s = String(input || "").trim();
+  if (/^0x[0-9a-fA-F]{64}$/.test(s)) return { kind: "evm", id: s };
+  if (/^[0-9a-fA-F]{64}$/.test(s)) return { kind: "btc-tron", id: s.toLowerCase() };
+  if (/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(s)) {
+    try { if (base58.decode(s).length === 64) return { kind: "solana", id: s }; } catch { /* not base58-64 */ }
+  }
+  return null;
+}
+/** Look a detected transaction id up on its own family. Returns
+ *  { found: true, chainKey, label, detail, url } on a hit,
+ *  { found: false } when the family's sources answer "not there",
+ *  and { found: false, unknown: true } when they couldn't be
+ *  reached at all — the caller words the three states honestly
+ *  and never guesses. Never throws. */
+export async function fetchScanTxid(detectedTx) {
+  try {
+    if (!detectedTx) return { found: false };
+    if (detectedTx.kind === "evm") {
+      for (const k of SCAN_EVM_NETWORKS) {
+        try {
+          const tx = await withDeadline(providerFor(k).getTransaction(detectedTx.id), 12000, "Transaction lookup");
+          if (tx) {
+            const net = NETWORKS[k];
+            const short = (a) => a ? a.slice(0, 8) + "…" + a.slice(-6) : "?";
+            const val = Number(ethers.formatUnits(tx.value ?? 0n, 18));
+            return { found: true, chainKey: k, label: `${scanChainLabel(k)} transaction`,
+              detail: `${short(tx.from)} → ${short(tx.to)} · ${val} ${net.symbol}`,
+              url: scanTxUrl(k, detectedTx.id) };
+          }
+        } catch { /* this network doesn't have it (or didn't answer) — try the next */ }
+      }
+      return { found: false };
+    }
+    if (detectedTx.kind === "btc-tron") {
+      for (const base of [MEMPOOL, BLOCKSTREAM]) {
+        const tx = await scanFetchJson(`${base}/tx/${detectedTx.id}`);
+        if (tx && tx.txid) {
+          const outSats = (tx.vout || []).reduce((t, o) => t + (Number(o.value) || 0), 0);
+          return { found: true, chainKey: "btc", label: "Bitcoin transaction",
+            detail: `${ethers.formatUnits(BigInt(Math.round(outSats)), 8)} BTC sent · fee ${tx.fee ?? "?"} sats · ${tx.status?.confirmed ? "confirmed" : "still in the mempool"}`,
+            url: scanTxUrl("btc", detectedTx.id) };
+        }
+      }
+      const tron = await scanFetchJson(`${TRONGRID}/wallet/gettransactionbyid`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: detectedTx.id }),
+      });
+      if (tron && (tron.txID || tron.ret_info)) {
+        const ok = Array.isArray(tron.ret) ? tron.ret[0]?.contractRet === "SUCCESS" : null;
+        return { found: true, chainKey: "tron", label: "Tron transaction",
+          detail: ok == null ? "Found on Tron." : ok ? "Confirmed on Tron." : "This transaction did not succeed on Tron.",
+          url: scanTxUrl("tron", detectedTx.id) };
+      }
+      return { found: false };
+    }
+    if (detectedTx.kind === "solana") {
+      try {
+        const st = await solanaRpc("getSignatureStatuses", [[detectedTx.id], { searchTransactionHistory: true }]);
+        const v = Array.isArray(st?.value) ? st.value[0] : null;
+        if (!v) return { found: false };
+        return { found: true, chainKey: "solana", label: "Solana transaction",
+          detail: v.err ? "This transaction failed on-chain." : `Confirmed · slot ${v.slot}`,
+          url: scanTxUrl("solana", detectedTx.id) };
+      } catch { return { found: false, unknown: true }; }
+    }
+    return { found: false };
+  } catch { return { found: false, unknown: true }; }
 }
 
 /** Canonical explorer transaction URL for a Scan row — or null when

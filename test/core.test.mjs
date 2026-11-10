@@ -35,11 +35,12 @@ import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAd
   dotAddressFromPhrase, isValidDotAddress, dotPlanckToDot, dotDotToPlanck, formatDotSendIntent, DOT_TOKENS } from "../src/wallet-core.js";
 import { aptosAddressFromPhrase, aptosAddressFromSeed, aptosSeedFromSeed, isValidAptosAddress, normalizeAptosAddress, aptosOctasToApt, aptosAptToOctas, aptosAmountToRaw, aptosBuildRawTransaction, aptosSigningMessage, aptosSignRawTransaction, aptosPublicKeyFromPhrase, formatAptosSendIntent, APTOS_TOKENS, APTOS_COIN_TYPE } from "../src/wallet-core.js";
 import { toChecksumAddress } from "../src/wallet-core.js";
-import { detectScanFamily, isValidBitcoinAddress, scanTargetsForName, scanTargetsForAddress, scanTarget,
+import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsForName, scanTargetsForAddress, scanTarget,
   scanTxUrl, scanAddressUrl, scanChainLabel, scanChainBadge, scanChainStatusText, formatScanFeedEntry,
   normalizeBlockscoutTxs, normalizeBlockscoutTokenTransfers, normalizeEsploraTxs, normalizeAlgoIndexerTxs,
   normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
+import { withDeadline, dotApi } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
@@ -3747,9 +3748,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // Defect 4: the green "Wallet created…" message survived onto the
   // lock/unlock screen because locking never cleared onboardMsg.
   const lockAt = appSrc.indexOf("function lockWallet()");
-  const lockSlice = appSrc.slice(lockAt, lockAt + 220);
+  const lockSlice = appSrc.slice(lockAt, lockAt + 1200);
   ok("qa4: locking clears the transient onboarding message",
     lockSlice.includes('msg("onboardMsg", "")'));
+  // Audit P1-14 (2026-11-10): the same function dismisses any open
+  // sheet BEFORE the gate repaints, so a composed send can never
+  // stay legible over the lock screen.
+  ok("audit P1-14: locking dismisses an open sheet before repainting the gate",
+    lockSlice.includes("closeSheet(true)") && lockSlice.indexOf("closeSheet(true)") < lockSlice.indexOf("refreshGate()"));
 
   // Defect 5: the owned-name card claimed public registration for a
   // name that was only claimed locally and never published.
@@ -3807,7 +3813,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && gateSlice.includes('show("restoreBackBtn", restoreMode && !wallet && hasVault)'));
   ok("lockfix: restore mode ends on unlock and on lock — no stale detour",
     gateSlice.includes("if (wallet) restoreMode = false;")
-    && appSrc.slice(appSrc.indexOf("function lockWallet()"), appSrc.indexOf("function lockWallet()") + 220).includes("restoreMode = false;"));
+    && appSrc.slice(appSrc.indexOf("function lockWallet()"), appSrc.indexOf("function lockWallet()") + 1200).includes("restoreMode = false;"));
   const restoreAt = appSrc.indexOf('$("lockRestoreBtn").onclick');
   const restoreSlice = appSrc.slice(restoreAt, restoreAt + 2600);
   ok("lockfix: recovery handler routes through the shared gate only",
@@ -5465,12 +5471,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // shortfall.
   const lifiRouteTight = () => ({ ...lifiRoute(), toAmount: "99990000", toAmountUSD: "99.99",
     steps: [{ id: "s1", type: "swap", estimate: { feeCosts: [{ name: "bridgeFee", amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], toAmountUSD: "99.99", fromAmountUSD: "100.0", executionDuration: 30 } }] });
-  // The corrected route-cost definition, exercised both ways:
-  // lifiRoute's all-in shortfall ($100 in, $99 out = $1.00) dwarfs
-  // its explicit $0.035, so the shortfall prices the fee; the
-  // tight route's $0.01 shortfall loses to its explicit $0.035.
-  ok("fee model: a lifi route's cost is the larger of its explicit costs and its all-in shortfall",
-    Math.abs(lifiRouteFeeUsd(lifiRoute()) - 1.0) < 1e-9 && Math.abs(lifiRouteFeeUsd(lifiRouteTight()) - 0.035) < 1e-9
+  // The F2 route-cost definition (2026-11-10): the cost IS the
+  // all-in shortfall — lifiRoute's $1.00 shortfall prices the fee;
+  // the tight route's $0.01 shortfall prices it too, even though
+  // its declared components total $0.035 (declared components are
+  // estimates, not losses — the old larger-of combiner is what
+  // audit F2 removed). The explicit sum survives only as the
+  // fallback for an unreadable shortfall.
+  ok("fee model: a lifi route's cost is its all-in shortfall, explicit costs only as fallback",
+    Math.abs(lifiRouteFeeUsd(lifiRoute()) - 1.0) < 1e-9 && Math.abs(lifiRouteFeeUsd(lifiRouteTight()) - 0.01) < 1e-9
     && lifiRouteFeeUsd({}) === 0 && lifiRouteFeeUsd({ steps: [{}] }) === 0);
   try {
     const bodies = [];
@@ -5480,13 +5489,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       throw new Error("unexpected url " + u);
     };
     const rs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
-    // Route cost $0.035 on a $100 input (the tight fixture: explicit
-    // $0.035 over a $0.01 all-in shortfall) into an EVM destination
-    // → 4× binds → 14 bps → fraction 0.0014, attached on pass 2
+    // Route cost $0.01 on a $100 input (the tight fixture's all-in
+    // shortfall under the F2 definition) into an EVM destination
+    // → 4× binds → 4 bps → fraction 0.0004, attached on pass 2
     // only; the executed routes carry the bps.
     ok("fee model: lifi two-pass reads the cost fee-free, then charges the computed fraction",
       bodies.length === 2 && !("fee" in bodies[0].options) && bodies[0].options.integrator === "fluid-wallet"
-      && Math.abs(bodies[1].options.fee - 0.0014) < 1e-12 && rs.length === 1 && rs[0].platformFeeBps === 14);
+      && Math.abs(bodies[1].options.fee - 0.0004) < 1e-12 && rs.length === 1 && rs[0].platformFeeBps === 4);
 
     const quoteUrls = [];
     const lifiQuoteStep = () => ({ id: "q1", type: "swap",
@@ -5501,8 +5510,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     };
     const qs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
     ok("fee model: lifi quote path runs its own two passes with the computed fee",
-      quoteUrls.length === 2 && !quoteUrls[0].includes("fee=") && quoteUrls[1].includes("fee=0.0014")
-      && qs.length === 1 && qs[0].platformFeeBps === 14 && qs[0].steps.length === 1);
+      quoteUrls.length === 2 && !quoteUrls[0].includes("fee=") && quoteUrls[1].includes("fee=0.0004")
+      && qs.length === 1 && qs[0].platformFeeBps === 4 && qs[0].steps.length === 1);
   } finally {
     globalThis.fetch = realFetchFee;
   }
@@ -8871,6 +8880,126 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const buildArk = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
   const publishArk = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
   ok("ark: the chunk is built and published as its own artifact", buildArk.includes("dist/arkade.chunk.js") && buildArk.includes('"./arkade.chunk.js"') && publishArk.includes('"arkade.chunk.js"'));
+}
+
+// ---------- audit fix batch (2026-11-10): F2 / TS-F1 / TS-F2 /
+// P1-16 / P1-3 / §1.11 ----------
+{
+  const appSrcBatch = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+
+  // F2, Relay leg — the live zkSync→Base $1 quote captured
+  // 2026-11-10: Relay declares $4.666 of fees, of which "gas" is
+  // $4.619255 — a padded worst-case estimate the user never pays
+  // (the swap settles out of the input). The true loss is the
+  // shortfall: $0.999767 in, $0.981167 out = $0.0186. Under the
+  // old larger-of combiner the route cost read $4.666, the fee
+  // law's EVM ceiling ($0.20) zeroed Fluid's fee, and the swap
+  // sheet showed a ~$5 route cost on a $1 swap.
+  const F2USER = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const zksyncQuoteF2 = {
+    requestId: "0xf2zksync",
+    steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: F2USER, to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0", chainId: 324, gas: "300000" } }] }],
+    fees: {
+      gas: { amount: "2182000000000000000", amountUsd: "4.619255" },
+      relayer: { amount: "11040000000000000", amountUsd: "0.023370" },
+      relayerGas: { amount: "404000000000000", amountUsd: "0.000855" },
+      relayerService: { amount: "10630000000000000", amountUsd: "0.022515" },
+      app: { amount: "0", amountUsd: "0" },
+    },
+    details: {
+      operation: "swap", sender: F2USER, recipient: F2USER,
+      currencyIn: { currency: { chainId: 324, address: "0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4", symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "1000000", amountFormatted: "1.0", amountUsd: "0.999767", minimumAmount: "1000000" },
+      currencyOut: { currency: { chainId: 8453, address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "981167", amountFormatted: "0.981167", amountUsd: "0.981167", minimumAmount: "971000" },
+      timeEstimate: 5,
+    },
+  };
+  const zkRoute = parseRelayQuote(zksyncQuoteF2, { fromChainKey: "zksync", toChainKey: "base", fromAmount: "1000000", fromAddress: F2USER });
+  ok("F2: the zkSync Relay route cost is the $0.0186 shortfall, not the $4.67 declared estimate",
+    zkRoute !== null && Math.abs(zkRoute.routeFeeUsd - 0.0186) < 1e-6);
+  ok("F2: the zkSync route's fee is non-zero under the unchanged fee law, and its label is sane",
+    zkRoute !== null && platformFeeBpsForRoute(zkRoute.routeFeeUsd, zkRoute.fromAmountUSD, "base") >= 40
+    && Math.abs(swapRouteCostLabel(zkRoute).usd - 0.0186) < 1e-6);
+
+  // F2, Mayan leg — the live dust quote captured 2026-11-10
+  // (Solana USDC → Arbitrum USDC, $0.10): Mayan's `price` field is
+  // the EXECUTION ratio 0.4922 (expectedOut/effectiveIn), so the
+  // old parser valued the $0.10 input at $0.0492 and read a
+  // ~$0.00014 route cost on a true $0.0508 loss. deadline64 is
+  // refreshed in the fixture (the capture's own deadline has
+  // passed; every priced field is the capture's, untouched).
+  const mayanDustQuoteF2 = {"meta":{"title":"Fast MCTP","advertisedDescription":"via cctp v2","advertisedTitle":"","icon":"","switchText":""},"maxUserGasDrop":0.000007682223837782328,"withHub":false,"hubRelayerFee64":"0","circleMaxFee64":"12","fastMctpMinFinality":1,"sendTransactionCost":0,"rentCost":"1774800","gasless":false,"slippageBps":100,"effectiveAmountIn":0.1,"effectiveAmountIn64":"100000","expectedAmountOut":0.049192,"price":0.49222881339293006,"priceImpact":null,"minAmountOut":0.048949,"minReceived":0.048949,"route":null,"swapRelayerFee":0,"swapRelayerFee64":"0","solanaRelayerFee":0,"solanaRelayerFee64":"0","redeemRelayerFee":0.050788,"redeemRelayerFee64":"50788","refundRelayerFee":0.050788,"refundRelayerFee64":"50788","clientRelayerFeeSuccess":0.05078777,"clientRelayerFeeRefund":0.05078777,"cancelRelayerFee64":null,"submitRelayerFee64":null,"deadline64":"2000000000","fromToken":{"name":"USD Coin","standard":"spl","symbol":"USDC","mint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","verified":true,"contract":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","chainId":0,"wChainId":1,"decimals":6,"logoURI":"https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png?1547042389","coingeckoId":"usd-coin","pythUsdPriceId":"0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a","realOriginContractAddress":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","realOriginChainId":1,"supportsPermit":false,"hasAuction":true},"fromChain":"solana","toToken":{"name":"USDC","standard":"erc20","hasAuction":true,"symbol":"USDC","mint":"CR4xnGrhsu1fWNPoX4KbTUUtqGMF3mzRLfj4S6YEs1Yo","verified":true,"contract":"0xaf88d065e77c8cc2239327c5edb3a432268e5831","chainId":42161,"wChainId":23,"decimals":6,"logoURI":"https://assets.coingecko.com/coins/images/6319/small/usdc.png?1696506694","coingeckoId":"usd-coin","pythUsdPriceId":"0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a","realOriginContractAddress":"0xaf88d065e77c8cc2239327c5edb3a432268e5831","realOriginChainId":23,"supportsPermit":true,"peggedAsset":"USD"},"toChain":"arbitrum","mintDecimals":null,"gasDrop":0,"eta":1,"etaSeconds":35,"clientEta":"35s","bridgeFee":0,"suggestedPriorityFee":30000,"type":"FAST_MCTP","priceStat":{"ratio":0.9999081532988366,"status":"GOOD"},"referrerBps":0,"protocolBps":3,"protocolFeeUsd":0.000014760299999999998,"referrerFeeUsd":0,"hasAuction":false,"onlyBridging":true,"fastMctpMayanContract":"Gx9rivpS3YR8pBFwMuP6omYqVxunpLvLkNn7ubNyuZZ5","fastMctpInputContract":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","toPrice":0.99978361,"minMiddleAmount":0.0995078777,"sourceSwapExpense":0,"expectedAmountOutBaseUnits":"49192","minAmountOutBaseUnits":"48949","minReceivedBaseUnits":"48949","signature":"0x1b31353a1b1603e327c729c93268427f69a4ad7940bf65ee06dea8f8547cb29813358f2279ea8c20aa379b9edcae7365cb1f4999d3fd0799b51018fa56915d2d1c"};
+  const dustArgsF2 = { fromChainKey: "solana", toChainKey: "arbitrum", fromTokenAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "100000", fromAddress: "FDo3sA7RKCD4KTGutuQXHVLAjavrgNQF547fB8tPhqMz", toAddress: F2USER };
+  const dustFair = parseMayanQuote(mayanDustQuoteF2, dustArgsF2, { feeBps: 0, solPriceUsd: 190, symbolPricesUsd: { USDC: 1 }, mintPricesUsd: { "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": 1 } });
+  ok("F2: the Mayan dust quote priced at fair value reads its true $0.0508 route cost",
+    dustFair !== null && Math.abs(dustFair.fromAmountUSD - 0.1) < 1e-9 && Math.abs(dustFair.toAmountUSD - 0.049192) < 1e-9
+    && Math.abs(dustFair.routeFeeUsd - 0.050808) < 1e-6);
+  const dustBlind = parseMayanQuote(mayanDustQuoteF2, dustArgsF2, { feeBps: 0, solPriceUsd: 190 });
+  ok("F2: without fair prices the parser keeps its quote-derived fallback (coverage over precision)",
+    dustBlind !== null && dustBlind.routeFeeUsd < 0.001);
+
+  // TS-F1: the deadline helper, and dotApi's cache discipline —
+  // a stalled connection attempt must reject at the deadline and
+  // must NOT stay cached for the next call to await forever.
+  ok("TS-F1: withDeadline resolves a fast promise and rejects a hanging one at the deadline",
+    (await withDeadline(Promise.resolve(42), 1000, "T")) === 42
+    && await withDeadline(new Promise(() => {}), 50, "T").then(() => false, e => /timed out/.test(e.message)));
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = () => new Promise(() => {}); // a fetch that never answers
+    try {
+      const t0 = Date.now();
+      const p1 = dotApi(60);
+      const first = await p1.then(() => "resolved", e => e.message);
+      const p2 = dotApi(60);
+      const second = await p2.then(() => "resolved", e => e.message);
+      ok("TS-F1: a stalled Polkadot connection times out instead of hanging the card forever",
+        /timed out/.test(first) && Date.now() - t0 < 5000);
+      ok("TS-F1: the timed-out connection attempt is not cached — the next call retries fresh",
+        /timed out/.test(second) && p2 !== p1);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // TS-F1 (app side): a failed DOT read swaps in null-amount rows,
+  // the XRPL F12 pattern, so the card can paint "couldn't load".
+  ok("TS-F1: the app's DOT failure path swaps in unknown (null) rows",
+    appSrcBatch.includes("dotBalances = [{ symbol: \"DOT\", name: \"Polkadot\", amount: null"));
+
+  // TS-F2 (app source): every family's failed load nulls its card
+  // total (renders "—"), and a fully-failed Cosmos card does too.
+  ok("TS-F2: failed families report a null (—) header total, not $0.00",
+    appSrcBatch.includes("m.tron = tronLoadFailed ? null :") && appSrcBatch.includes("m.xrpl = xrpLoadFailed ? null :")
+    && appSrcBatch.includes("m.bitcoincash = bchLoadFailed ? null :") && appSrcBatch.includes("m.polkadot = dotLoadFailed ? null :")
+    && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("COSMOS_CHAINS.every(c => totals[c.key] == null)"));
+
+  // P1-16: transaction-id shapes route to a transaction lookup.
+  ok("P1-16: a 0x transaction hash is detected as an EVM txid (not a Sui address)",
+    detectScanTxid("0x" + "ab".repeat(32))?.kind === "evm");
+  ok("P1-16: a bare 64-hex id is a Bitcoin/Tron txid; a 64-byte base58 string is a Solana signature",
+    detectScanTxid("ab".repeat(32))?.kind === "btc-tron"
+    && detectScanTxid("99eUso3aSbE9tqGSTXzo3TLfKb9RkMTURrHKQ1K7Zh3BbeqPevr5E1iCbpTjqHuTFLtfxTTD5ekfVuZFzQyEQf8")?.kind === "solana");
+  ok("P1-16: addresses are never mistaken for transaction ids",
+    detectScanTxid("0x" + "ab".repeat(20)) === null && detectScanTxid("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx") === null
+    && detectScanTxid("") === null && detectScanTxid("ethuram") === null);
+
+  // P1-3: the app strips a core-carried prefix before adding its
+  // own — the doubled "Route search failed: Route search failed:"
+  // can no longer print.
+  ok("P1-3: the swap sheet cannot double the route-search prefix",
+    appSrcBatch.includes('replace(/^Route search failed:\\s*/, "")'));
+
+  // §1.11(a): the US unavailable row speaks per-mode — the sell
+  // sheet carries sell terms, never the buy sheet's 0%-fee copy.
+  ok("§1.11: the US sell note is sell copy; the buy note keeps the buy terms",
+    !rampRoutesFor("US", "sell").routes[0].note.includes("first CHF 500") && rampRoutesFor("US", "sell").routes[0].note.includes("sells start at CHF 50")
+    && rampRoutesFor("US", "buy").routes[0].note.includes("first CHF 500") && rampRoutesFor("US", "buy").routes[0].note.includes("held 7 days"));
+  // §1.11(c): Cosmos failure rows use the shared wording.
+  ok("§1.11: Cosmos failure rows say \"couldn't load\" like every other family",
+    appSrcBatch.includes("<small>couldn't load</small>") && !appSrcBatch.includes("<small>unavailable</small>"));
+
+  // P1-17 (app source): opening a sheet arms a history entry and a
+  // popstate closes the sheet instead of leaving the wallet.
+  ok("P1-17: sheets arm a history entry; back closes the sheet, not the app",
+    appSrcBatch.includes("history.pushState({ fluidSheet: 1 }") && appSrcBatch.includes('addEventListener("popstate"')
+    && appSrcBatch.includes("sheetHistSwallow"));
 }
 
 console.log(`\n${passed} checks passed`);

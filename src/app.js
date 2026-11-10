@@ -39,7 +39,7 @@ import {
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
-  detectScanFamily, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
+  detectScanFamily, detectScanTxid, fetchScanTxid, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
@@ -172,10 +172,34 @@ function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = t
 // the scrim and closeSheet() all refuse until the send settles.
 let sheetBusy = false;
 let sheetGen = 0; // guards the animated close against a same-tick reopen
-function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); }
+// Set by lockWallet when it dismisses a sheet (audit P1-14): the
+// next unlock explains the closed sheet once, via toast.
+let lockClosedSheet = false;
+// Browser/Android back closes an open sheet instead of leaving
+// the wallet (audit P1-17): opening a sheet arms ONE history
+// entry; a popstate while a sheet is open closes the sheet and
+// the app stays; closeSheet consumes its own entry so the two
+// never fight. All history calls are best-effort (embedded
+// webviews may refuse them, and the sheet must work regardless).
+let sheetHistArmed = false, sheetHistSwallow = false;
+function armSheetHistory() {
+  if (sheetHistArmed) return;
+  try { history.pushState({ fluidSheet: 1 }, ""); sheetHistArmed = true; } catch { /* no history to arm */ }
+}
+function disarmSheetHistory() {
+  if (!sheetHistArmed) return;
+  sheetHistArmed = false; sheetHistSwallow = true;
+  try { history.back(); } catch { sheetHistSwallow = false; }
+}
+addEventListener("popstate", () => {
+  if (sheetHistSwallow) { sheetHistSwallow = false; return; }
+  if (sheetHistArmed) { sheetHistArmed = false; closeSheet(); }
+});
+function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); armSheetHistory(); }
 function closeSheet(force = false) {
   if (sheetBusy && !force) return;
   fireSheetCloseHook();
+  disarmSheetHistory();
   const r = $("sheetRoot");
   if (!r || r.classList.contains("hidden")) { show("sheetRoot", false); return; }
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { show("sheetRoot", false); return; }
@@ -428,6 +452,7 @@ function refreshGate() {
   if (wallet && gateWasLocked) goTab("wallet");
   gateWasLocked = !wallet;
   if (wallet) renderMain();
+  if (wallet && lockClosedSheet) { lockClosedSheet = false; toast("The sheet that was open when the wallet locked was closed."); }
   // Wake-up deep link: a Lightning push notification lands on
   // /#lightning — open the node panel once per arrival so held
   // payments settle.
@@ -721,7 +746,15 @@ async function renderMain() {
   dotExists = null; dotLoadFailed = false;
   getDotAccount(dotAddr)
     .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; markLoaded("polkadot"); paintAssets(); })
-    .catch(() => { dotLoadFailed = true; markLoaded("polkadot"); paintAssets(); });
+    .catch(() => {
+      // A failed read is UNKNOWN, not zero (QA F12, same pattern
+      // as XRPL): rows carry amount null and render "couldn't
+      // load" — never a $0.00 presented as a loaded balance.
+      dotLoadFailed = true;
+      dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: null, address: null, decimals: 10, verified: true },
+                     ...DOT_TOKENS.map(t => ({ ...t, amount: null }))];
+      markLoaded("polkadot"); paintAssets();
+    });
   // Aptos (Phase 5): SLIP-0010 Ed25519 branch (coin type 637, the
   // Petra path) of the same seed. The account read reports existence
   // honestly — an address the chain has never seen is "not yet
@@ -876,27 +909,29 @@ function familyUsdTotals() {
   // A failed Bitcoin load is unknown, not $0.00: the card total is
   // null (renders "—") and the unknown rows stay out of the total.
   m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);
-  m.litecoin = ltcBal * (prices.LTC || 0);
-  m.dogecoin = dogeBal * (prices.DOGE || 0);
-  m.bitcoincash = bchBal * (prices.BCH || 0);
+  // EVERY family's failed load is unknown, not $0.00 (audit
+  // TS-F2): the Bitcoin/EVM rule above applies to all — a family
+  // whose rows couldn't load gets a null total, which the card
+  // header renders as "—". (Before this fix Tron, XRPL, BCH and
+  // the Cosmos chains printed "$0.00" over "couldn't load" rows.)
+  m.litecoin = ltcLoadFailed ? null : ltcBal * (prices.LTC || 0);
+  m.dogecoin = dogeLoadFailed ? null : dogeBal * (prices.DOGE || 0);
+  m.bitcoincash = bchLoadFailed ? null : bchBal * (prices.BCH || 0);
   const net = NETWORKS[networkKey];
-  // A failed EVM load is unknown, not $0.00: the card total is null
-  // (renders "—") and the unknown rows stay out of the total, the
-  // same discipline as Cosmos' unavailable chains.
   m.evm = evmLoadFailed ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
-  m.tron = sumRows(tronBalances, (b) => prices[b.symbol]);
+  m.tron = tronLoadFailed ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
   m.solana = sumRows(solBalances, (b) => prices[b.symbol]);
   m.sui = sumRows(suiBalances, (b) => prices[b.symbol]);
-  m.stellar = sumRows(stellarBalances, (b) => prices[b.symbol]);
-  m.ton = sumRows(tonBalances, (b) => prices[b.symbol]);
-  m.near = sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
-  m.algorand = sumRows(algoBalances, (b) => prices[b.symbol]);
-  m.xrpl = sumRows(xrpBalances, (b) => prices[b.symbol]);
-  m.polkadot = sumRows(dotBalances, (b) => prices[b.symbol]);
-  m.aptos = sumRows(aptosBalances, (b) => prices[b.symbol]);
-  m.stacks = sumRows(stacksBalances, (b) => prices[b.symbol]);
+  m.stellar = stellarLoadFailed ? null : sumRows(stellarBalances, (b) => prices[b.symbol]);
+  m.ton = tonLoadFailed ? null : sumRows(tonBalances, (b) => prices[b.symbol]);
+  m.near = nearLoadFailed ? null : sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+  m.algorand = algoLoadFailed ? null : sumRows(algoBalances, (b) => prices[b.symbol]);
+  m.xrpl = xrpLoadFailed ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
+  m.polkadot = dotLoadFailed ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
+  m.aptos = aptosLoadFailed ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
+  m.stacks = stacksLoadFailed ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
   m.lightning = lnSession ? (Number(lnSession.balance().spendableMsat || 0) / 1e11) * (prices.BTC || 0) : null;
-  for (const r of cosmosRows) m[r.key] = r.amount == null ? 0 : Number(r.amount) * (prices[r.symbol] || 0);
+  for (const r of cosmosRows) m[r.key] = r.amount == null ? null : Number(r.amount) * (prices[r.symbol] || 0);
   return m;
 }
 function scopedTotal() {
@@ -1096,7 +1131,7 @@ function familyAlertMap() {
   else if (evmScanState.key === networkKey && evmScanState.status === "failed")
     m.evm = "Token scan unavailable right now — showing known tokens.";
   if (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null))
-    m.cosmos = "Some Cosmos chains didn't answer just now — those balances show as unavailable. Receiving still works on every chain.";
+    m.cosmos = "Some Cosmos chains didn't answer just now — those balances couldn't load. Receiving still works on every chain.";
   return m;
 }
 function openFamilyAlert(key) {
@@ -1314,7 +1349,8 @@ function paintAssets() {
   }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
-  // shows "unavailable", never a fake zero. Each chain is its OWN
+  // shows "couldn't load" (the wording every family uses, audit
+  // §1.11), never a fake zero. Each chain is its OWN
   // view group (§4.2); in the All view they render consecutively
   // under one shared header.
   cosmosRows.forEach((r, i) => {
@@ -1323,7 +1359,7 @@ function paintAssets() {
         <span class="logowrap">${tokenLogoHtml({ symbol: r.symbol }, r.key)}</span>
         <span class="grow"><b class="rname">${esc(r.name)}</b><small>${esc(r.symbol)} · Cosmos</small></span>
         <span class="amt">${r.amount == null
-          ? `<b>—</b><small>unavailable</small>`
+          ? `<b>—</b><small>couldn't load</small>`
           : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "price unavailable" : usd(0))}</small>`}</span></div>`;
     grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [rowHtml]);
   });
@@ -1435,7 +1471,12 @@ function paintAssets() {
     let cosmosBuf = [];
     const flushCosmos = () => {
       if (!cosmosBuf.length) return;
-      const total = COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0);
+      // The shared Cosmos card header follows TS-F2 too: when
+      // EVERY chain's read failed the total is unknown ("—");
+      // chains that did load still sum honestly.
+      const total = COSMOS_CHAINS.every(c => totals[c.key] == null)
+        ? null
+        : COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0);
       // The seven chain rows inside the shared Cosmos card follow
       // the same within-family order as every other family.
       const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join("");
@@ -5306,7 +5347,7 @@ $("actSwap").onclick = () => {
       if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && $("wToNet").value === "bitcoin") {
         paintBtcFloorWayThrough(e.satoraBelowFloor);
         msg("wMsg", "");
-      } else msg("wMsg", "Route search failed: " + (e.shortMessage || e.message));
+      } else msg("wMsg", "Route search failed: " + String(e.shortMessage || e.message || e).replace(/^Route search failed:\s*/, ""));
     }
   };
   $("wRoutes").onclick = searchRoutes;
@@ -5557,6 +5598,12 @@ function renderScanResults(heading, sub, results) {
   });
 }
 const shortAddr = (a) => a && a.length > 14 ? a.slice(0, 8) + "…" + a.slice(-6) : String(a || "");
+/** A found transaction's result card (audit P1-16). */
+function renderScanTxid(r) {
+  $("scanResults").innerHTML = `<div class="card"><b>${esc(r.label)}</b>
+    <p class="tag" style="margin:6px 0 0">${esc(r.detail || "")}</p>
+    ${r.url ? `<p style="margin:10px 0 0"><a href="${esc(r.url)}" target="_blank" rel="noopener">View in explorer ↗</a></p>` : ""}</div>`;
+}
 async function runScan() {
   const input = $("scanInput").value.trim();
   if (!input) { scanMsg("Type a Fluid name or paste a wallet address first.", true); return; }
@@ -5567,6 +5614,27 @@ async function runScan() {
   scanMsg("");
   $("scanResults").innerHTML = "";
   let targets = [], heading = "", sub = "";
+  // Transaction ids route to a transaction lookup, never to an
+  // address page (audit P1-16: a pasted Base tx hash used to land
+  // on an empty SUI address result, and a Solana signature got no
+  // lookup at all). The 0x-hash case is ambiguous with a Sui
+  // address, so its lookup runs first and only a miss falls
+  // through to the address scan below.
+  const txid = detectScanTxid(input);
+  if (txid) {
+    const r = await fetchScanTxid(txid).catch(() => ({ found: false, unknown: true }));
+    if (seq !== scanSeq) return;
+    if (r.found) { btn.disabled = false; btn.textContent = "Search"; renderScanTxid(r); return; }
+    if (txid.kind !== "evm") {
+      btn.disabled = false; btn.textContent = "Search";
+      scanMsg(r.unknown
+        ? "Couldn't check that transaction ID just now — check your connection and try again."
+        : txid.kind === "solana"
+          ? "No Solana transaction has that signature."
+          : "No transaction with that ID was found on Bitcoin or Tron — check the ID and try again.", true);
+      return;
+    }
+  }
   const detected = detectScanFamily(input);
   if (detected) {
     targets = scanTargetsForAddress(detected);
@@ -6542,7 +6610,18 @@ $("refreshBtn").onclick = async () => {
     delete btn.dataset.busy;
   }
 };
-function lockWallet() { wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate(); }
+function lockWallet() {
+  // A lock must never leave a composed sheet painted over the
+  // lock screen (audit P1-14): the sheet overlay outlives the
+  // gate paint, so a recipient + amount stayed legible above the
+  // dimmed unlock card. Dismiss it — forced, because privacy
+  // outranks the broadcast-busy refusal (the broadcast itself
+  // holds its own state and is unaffected) — and explain the
+  // closed sheet once, after the next unlock.
+  const sheetRoot = $("sheetRoot");
+  if (sheetRoot && !sheetRoot.classList.contains("hidden")) { lockClosedSheet = true; closeSheet(true); }
+  wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate();
+}
 $("lockBtn").onclick = lockWallet;
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
 if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;
