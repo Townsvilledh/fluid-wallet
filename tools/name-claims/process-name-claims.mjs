@@ -33,9 +33,11 @@
 // the live site (and the registry URL every wallet reads) is served
 // from gh-pages, so a main-only names commit never resolves for
 // anyone — the old hand pattern paired every names commit with a
-// full release for exactly this reason. The sync copies ONLY
-// names.json, touches no other artifact, and runs on every run so
-// a failed sync heals itself on the next one.
+// full release for exactly this reason. The sync also maintains
+// the LNURL step-1 files (.well-known/lnurlp/<name>) derived from
+// the registry's lnBridge opt-ins — the only other artifact class
+// it touches — and runs on every run so a failed sync heals
+// itself on the next one.
 //
 // State + a decision log live OUTSIDE the repo, under the Fluid
 // goal's hidden_files (override with FLUID_NAME_CLAIMS_STATE_DIR).
@@ -48,10 +50,11 @@
 //   node tools/name-claims/process-name-claims.mjs [--dry-run]
 //   --dry-run: fetch + decide + print, no state writes, no git ops.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, copyFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, copyFileSync, rmSync, readdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { NAME_CLAIM_KIND, NAME_CLAIM_D_PREFIX, NAME_CLAIM_RELAYS, verifyNameClaim, verifyNostrEventSignature, normalizeFluidName } from "../../src/wallet-core.js";
 import { queryEvents } from "./relay-client.mjs";
+import { planLnurlEmission, LNURL_DIR } from "./lnurl-emit.mjs";
 
 export const MAX_NEW_NAMES_PER_RUN = 10;
 
@@ -68,7 +71,7 @@ const SSH_ENV = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/conf
  *  exactly — the same comparison findNameForAddresses documents). */
 export function nameEntriesEqual(a, b) {
   if (!a || !b) return false;
-  const keys = ["evm", "btc", "ln", "lnOffer", "algo", "sol", "tron", "sui"];
+  const keys = ["evm", "btc", "ln", "lnOffer", "lnBridge", "algo", "sol", "tron", "sui"];
   return keys.every((k) => {
     const x = a[k] || "", y = b[k] || "";
     return k === "evm" || k === "algo" ? String(x).toLowerCase() === String(y).toLowerCase() : x === y;
@@ -88,15 +91,22 @@ export function nameEntriesEqual(a, b) {
  *  family field the entry predates and can never silently drop
  *  one; ln/lnOffer, the Lightning identity this update path exists
  *  to manage, may also be REPLACED by the owner; every other field
- *  is additions-only. */
+ *  is additions-only. lnBridge — the external-payments opt-in — is
+ *  the single exception to additions-only: it is a toggle, not an
+ *  address, and opting OUT must be able to clear it, so the merged
+ *  entry carries it exactly when the owner's verified claim does
+ *  (the app states the flag from the device's bridge state on
+ *  every claim it signs, so absence in a verified same-owner claim
+ *  is the owner's current word, not silence). */
 export function nameUpdateMerge(existing, entry) {
   if (!existing || !entry) return null;
   if (String(existing.evm || "").toLowerCase() !== String(entry.evm || "").toLowerCase()) return null;
-  const keys = ["evm", "btc", "ln", "lnOffer", "algo", "sol", "tron", "sui"];
+  const keys = ["evm", "btc", "ln", "lnOffer", "lnBridge", "algo", "sol", "tron", "sui"];
   const merged = {};
   for (const k of keys) {
     const x = existing[k] || "", y = entry[k] || "";
-    if (x && y && x !== y && k !== "evm" && k !== "ln" && k !== "lnOffer") return null; // a chain address changed value — a conflict, not an update
+    if (x && y && x !== y && k !== "evm" && k !== "ln" && k !== "lnOffer" && k !== "lnBridge") return null; // a chain address changed value — a conflict, not an update
+    if (k === "lnBridge") { if (y === true) merged[k] = true; continue; }
     const v = y || x;
     if (v) merged[k] = v;
   }
@@ -214,8 +224,17 @@ function git(args, opts = {}) {
 
 const GH_PAGES_WORKTREE = "/tmp/fluid-names-gh-pages";
 /** Publish the repo's names.json to the gh-pages branch if the
- *  served copy differs — names.json ONLY, in a throwaway worktree,
- *  mirroring publish.mjs's hash-checked copy scoped to one file. */
+ *  served copy differs, in a throwaway worktree, mirroring
+ *  publish.mjs's hash-checked copy scoped to the registry. The
+ *  LNURL step-1 files ride the same sync: for every name whose
+ *  registry entry carries the owner's `lnBridge: true` opt-in, a
+ *  static `.well-known/lnurlp/<name>` file (content derived from
+ *  the name alone, see lnurl-emit.mjs) must be served beside
+ *  names.json — that file is what lets other wallets resolve
+ *  name@fluidwallet.dpdns.org. The emission plan is computed from
+ *  the same registry bytes being published, and stale files are
+ *  deleted, so the served set always matches the registry exactly.
+ *  One commit carries names.json + the emission delta together. */
 function syncGhPagesNames(label) {
   try { git(["worktree", "remove", "--force", GH_PAGES_WORKTREE]); } catch { /* not registered */ }
   rmSync(GH_PAGES_WORKTREE, { recursive: true, force: true });
@@ -224,13 +243,30 @@ function syncGhPagesNames(label) {
     git(["worktree", "add", "--detach", GH_PAGES_WORKTREE, "origin/gh-pages"]);
     const served = readFileSync(join(GH_PAGES_WORKTREE, "names.json"), "utf8");
     const current = readFileSync(NAMES_PATH, "utf8");
-    if (served === current) { console.log("name-claims: gh-pages names.json already current."); return; }
-    copyFileSync(NAMES_PATH, join(GH_PAGES_WORKTREE, "names.json"));
+    const registry = JSON.parse(current);
+    const lnurlRoot = join(GH_PAGES_WORKTREE, LNURL_DIR);
+    const currentFiles = new Map();
+    if (existsSync(lnurlRoot)) {
+      for (const fn of readdirSync(lnurlRoot)) {
+        const fp = join(lnurlRoot, fn);
+        if (statSync(fp).isFile()) currentFiles.set(LNURL_DIR + "/" + fn, readFileSync(fp, "utf8"));
+      }
+    }
+    const plan = planLnurlEmission(registry, currentFiles);
+    if (served === current && plan.writes.size === 0 && plan.deletes.length === 0) { console.log("name-claims: gh-pages names.json + lnurlp files already current."); return; }
+    if (served !== current) copyFileSync(NAMES_PATH, join(GH_PAGES_WORKTREE, "names.json"));
+    for (const [path, content] of plan.writes) {
+      const fp = join(GH_PAGES_WORKTREE, path);
+      mkdirSync(dirname(fp), { recursive: true });
+      writeFileSync(fp, content);
+    }
+    for (const path of plan.deletes) rmSync(join(GH_PAGES_WORKTREE, path), { force: true });
     const wt = (args, opts = {}) => execFileSync("git", args, { cwd: GH_PAGES_WORKTREE, encoding: "utf8", env: SSH_ENV, ...opts });
     wt(["add", "names.json"]);
+    if (existsSync(lnurlRoot)) wt(["add", "-A", LNURL_DIR]);
     wt(["commit", "-m", label || "names: sync registry from main"], { stdio: "inherit" });
     wt(["push", "origin", "HEAD:gh-pages"], { stdio: "inherit" });
-    console.log("name-claims: gh-pages names.json published.");
+    console.log(`name-claims: gh-pages published (names.json ${served === current ? "unchanged" : "updated"}, lnurlp +${plan.writes.size} -${plan.deletes.length}).`);
   } finally {
     try { git(["worktree", "remove", "--force", GH_PAGES_WORKTREE]); } catch { /* leave for next run's cleanup */ }
     rmSync(GH_PAGES_WORKTREE, { recursive: true, force: true });

@@ -448,6 +448,11 @@ export async function bootLightning({ phrase, network = "bitcoin", wsProxy = "",
     closeChannel: (channelId, force) => node.close_channel(channelId, force),
     createInvoice: (amountMsat, description) => node.create_invoice(amountMsat == null ? null : BigInt(amountMsat), description, 3600),
     createInvoiceJit: (amountMsat, description, expirySecs, lspPubkey, interceptScid, cltvDelta) => node.create_invoice_jit(BigInt(amountMsat), description, expirySecs, lspPubkey, String(interceptScid), cltvDelta),
+    // Description-hash twins for the LNURL-pay bridge: the invoice
+    // carries sha256(step-1 metadata) in its `h` tag, never the
+    // text — the shape payer wallets verify for Lightning addresses.
+    createInvoiceDescHash: (amountMsat, descriptionHashHex) => node.create_invoice_desc_hash(amountMsat == null ? null : BigInt(amountMsat), descriptionHashHex, 3600),
+    createInvoiceJitDescHash: (amountMsat, descriptionHashHex, expirySecs, lspPubkey, interceptScid, cltvDelta) => node.create_invoice_jit_desc_hash(BigInt(amountMsat), descriptionHashHex, expirySecs, lspPubkey, String(interceptScid), cltvDelta),
     // --- LSPS (LSPS1 orders + LSPS2 JIT) over the node's events ---
     lsp: LN_LSP,
     defaultWsProxy: LN_DEFAULT_WS_PROXY,

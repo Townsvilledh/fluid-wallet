@@ -512,6 +512,52 @@ pub fn unhex(s: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+/// What an invoice carries in its description slot: the plain
+/// text (`d` tag) every existing receive flow uses, or a SHA-256
+/// hash of text held elsewhere (`h` tag) — the LNURL-pay shape,
+/// where the description is the address's published metadata and
+/// only its hash belongs in the invoice.
+pub enum InvoiceText {
+    Direct(String),
+    Hash([u8; 32]),
+}
+
+/// Parse a 32-byte description hash from hex (the bridge passes
+/// sha256(metadata) as lowercase hex; `unhex` also accepts 0x).
+pub fn parse_description_hash(description_hash_hex: &str) -> Result<[u8; 32], String> {
+    let bytes = unhex(description_hash_hex.trim())?;
+    if bytes.len() != 32 {
+        return Err("description hash must be 32 bytes".to_string());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+/// The LSPS2 intercept route hint both JIT invoice variants share:
+/// the LSP as first hop, the session's intercept SCID, zero fees,
+/// the LSP-supplied CLTV delta.
+pub fn jit_intercept_hint(
+    lsp_pubkey_hex: &str, intercept_scid_dec: &str, cltv_expiry_delta: u32,
+) -> Result<lightning_invoice::RouteHint, String> {
+    use lightning_invoice::{RouteHint, RouteHintHop, RoutingFees};
+    let lsp = lsp_pubkey_hex
+        .parse::<bitcoin::secp256k1::PublicKey>()
+        .map_err(|_| "invalid LSP public key".to_string())?;
+    let scid: u64 = intercept_scid_dec
+        .trim()
+        .parse()
+        .map_err(|_| "invalid intercept scid".to_string())?;
+    Ok(RouteHint(vec![RouteHintHop {
+        src_node_id: lsp,
+        short_channel_id: scid,
+        fees: RoutingFees { base_msat: 0, proportional_millionths: 0 },
+        cltv_expiry_delta: cltv_expiry_delta as u16,
+        htlc_minimum_msat: None,
+        htlc_maximum_msat: None,
+    }]))
+}
+
 // ---------------------------------------------------------------------------
 // The node
 // ---------------------------------------------------------------------------
@@ -1949,7 +1995,20 @@ impl NodeInner {
     pub fn create_invoice(
         &self, amount_msat: Option<u64>, description: &str, expiry_secs: u32,
     ) -> Result<String, String> {
-        self.create_invoice_inner(amount_msat, description, expiry_secs, Vec::new(), 18)
+        self.create_invoice_inner(amount_msat, InvoiceText::Direct(description.to_string()), expiry_secs, Vec::new(), 18)
+    }
+
+    /// Description-hash invoice (BOLT 11 `h` tag instead of `d`):
+    /// the LNURL-pay bridge's shape — the payer's wallet computed
+    /// sha256(metadata) from the address's step-1 file, and wallets
+    /// that still enforce the old LUD-06 rule refuse an invoice
+    /// whose hash doesn't match the metadata they fetched. The
+    /// description text itself never enters the invoice.
+    pub fn create_invoice_desc_hash(
+        &self, amount_msat: Option<u64>, description_hash_hex: &str, expiry_secs: u32,
+    ) -> Result<String, String> {
+        let hash = parse_description_hash(description_hash_hex)?;
+        self.create_invoice_inner(amount_msat, InvoiceText::Hash(hash), expiry_secs, Vec::new(), 18)
     }
 
     /// LSPS2 JIT invoice (bLIP-52 §3): an ordinary BOLT 11 invoice for
@@ -1964,33 +2023,36 @@ impl NodeInner {
         &self, amount_msat: u64, description: &str, expiry_secs: u32, lsp_pubkey_hex: &str,
         intercept_scid_dec: &str, cltv_expiry_delta: u32,
     ) -> Result<String, String> {
-        use lightning_invoice::{RouteHint, RouteHintHop, RoutingFees};
-        let lsp = lsp_pubkey_hex
-            .parse::<bitcoin::secp256k1::PublicKey>()
-            .map_err(|_| "invalid LSP public key".to_string())?;
-        let scid: u64 = intercept_scid_dec
-            .trim()
-            .parse()
-            .map_err(|_| "invalid intercept scid".to_string())?;
-        let hop = RouteHintHop {
-            src_node_id: lsp,
-            short_channel_id: scid,
-            fees: RoutingFees { base_msat: 0, proportional_millionths: 0 },
-            cltv_expiry_delta: cltv_expiry_delta as u16,
-            htlc_minimum_msat: None,
-            htlc_maximum_msat: None,
-        };
+        let hint = jit_intercept_hint(lsp_pubkey_hex, intercept_scid_dec, cltv_expiry_delta)?;
         self.create_invoice_inner(
             Some(amount_msat),
-            description,
+            InvoiceText::Direct(description.to_string()),
             expiry_secs,
-            vec![RouteHint(vec![hop])],
+            vec![hint],
+            20,
+        )
+    }
+
+    /// The JIT invoice's description-hash twin (LNURL bridge first
+    /// payments): same intercept hint, same CLTV margin, `h` tag
+    /// instead of `d`.
+    pub fn create_invoice_jit_desc_hash(
+        &self, amount_msat: u64, description_hash_hex: &str, expiry_secs: u32, lsp_pubkey_hex: &str,
+        intercept_scid_dec: &str, cltv_expiry_delta: u32,
+    ) -> Result<String, String> {
+        let hash = parse_description_hash(description_hash_hex)?;
+        let hint = jit_intercept_hint(lsp_pubkey_hex, intercept_scid_dec, cltv_expiry_delta)?;
+        self.create_invoice_inner(
+            Some(amount_msat),
+            InvoiceText::Hash(hash),
+            expiry_secs,
+            vec![hint],
             20,
         )
     }
 
     fn create_invoice_inner(
-        &self, amount_msat: Option<u64>, description: &str, expiry_secs: u32,
+        &self, amount_msat: Option<u64>, description: InvoiceText, expiry_secs: u32,
         extra_hints: Vec<lightning_invoice::RouteHint>, min_final_cltv: u64,
     ) -> Result<String, String> {
         use lightning_invoice::{Currency, InvoiceBuilder, RouteHint, RouteHintHop, RoutingFees};
@@ -2009,9 +2071,13 @@ impl NodeInner {
             .keys_manager
             .get_node_id(Recipient::Node)
             .map_err(|_| "node id unavailable".to_string())?;
-        let mut builder = InvoiceBuilder::new(currency)
-            .payee_pub_key(node_pubkey)
-            .description(description.to_string())
+        let builder = InvoiceBuilder::new(currency).payee_pub_key(node_pubkey);
+        let builder = match description {
+            InvoiceText::Direct(text) => builder.description(text),
+            InvoiceText::Hash(hash) => builder
+                .description_hash(bitcoin::hashes::sha256::Hash::from_byte_array(hash)),
+        };
+        let mut builder = builder
             .payment_hash(bitcoin::hashes::sha256::Hash::from_byte_array(payment_hash.0))
             .payment_secret(payment_secret)
             .duration_since_epoch(std::time::Duration::from_secs(self.now_secs()))
@@ -2460,6 +2526,19 @@ mod wasm_host {
         ) -> Result<String, JsValue> {
             self.inner
                 .create_invoice_jit(amount_msat, description, expiry_secs, lsp_pubkey, intercept_scid, cltv_expiry_delta)
+                .map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn create_invoice_desc_hash(
+            &self, amount_msat: Option<u64>, description_hash_hex: &str, expiry_secs: u32,
+        ) -> Result<String, JsValue> {
+            self.inner.create_invoice_desc_hash(amount_msat, description_hash_hex, expiry_secs).map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn create_invoice_jit_desc_hash(
+            &self, amount_msat: u64, description_hash_hex: &str, expiry_secs: u32, lsp_pubkey: &str,
+            intercept_scid: &str, cltv_expiry_delta: u32,
+        ) -> Result<String, JsValue> {
+            self.inner
+                .create_invoice_jit_desc_hash(amount_msat, description_hash_hex, expiry_secs, lsp_pubkey, intercept_scid, cltv_expiry_delta)
                 .map_err(|e| JsValue::from_str(&e))
         }
         pub fn lsps2_request_params(&self, lsp_pubkey: &str, token: &str) -> Result<String, JsValue> {

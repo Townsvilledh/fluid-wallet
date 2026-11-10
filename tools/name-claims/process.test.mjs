@@ -5,6 +5,8 @@ import assert from "node:assert";
 import { ethers } from "ethers";
 import { buildSignedNameClaim, bitcoinAddress, algoAddressFromPhrase } from "../../src/wallet-core.js";
 import { decideClaims, nameEntriesEqual, nameUpdateMerge, summarizeRelayScan, fetchClaimsPaged } from "./process-name-claims.mjs";
+import { planLnurlEmission, lnurlOptedInNames, lnurlPathFor, LNURL_DIR } from "./lnurl-emit.mjs";
+import { lnurlPayRequestJson } from "../../src/wallet-core.js";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
@@ -253,6 +255,76 @@ ok("merge: ln replaceable, silent fields preserved, foreign evm refused",
   const recording = async (f) => { untils.push(f.until || null); return untils.length === 1 ? [all[0], all[1]] : [all[2]]; };
   await fetchClaimsPaged(recording, { kinds: [30078], since: 100 }, 2);
   ok("paged scan chains until = oldest-1 with the caller's limit", untils[0] === null && untils[1] === 799); // limit asserted via pageSize arg above
+}
+
+// 19. lnBridge (LNURL bridge opt-in, 2026-11-11): a same-owner
+//     claim carrying the flag merges it in; a later same-owner
+//     claim without it clears it (the opt-out); equality sees it.
+{
+  const claimEventBridge = async (phrase, wallet, name, createdAt, lnBridge) => {
+    const { event } = await buildSignedNameClaim({
+      name, evm: wallet.address,
+      btc: bitcoinAddress(phrase),
+      algo: algoAddressFromPhrase(phrase),
+      lnBridge,
+      phrase, signerWallet: wallet, createdAt,
+    });
+    return event;
+  };
+  const base = await claimEvent(PHRASE_A, walletA, "bridgename", 1000);
+  const c0 = JSON.parse(base.content);
+  const registry = { bridgename: { evm: c0.evm, btc: c0.btc, algo: c0.algo } };
+  const on = await claimEventBridge(PHRASE_A, walletA, "bridgename", 2000, true);
+  const r1 = decideClaims([on], registry, emptyState());
+  ok("lnBridge: same-owner opt-in merges the flag in",
+    r1.updates.length === 1 && r1.decisions[0].decision === "updated" && r1.updates[0].entry.lnBridge === true && r1.updates[0].entry.btc === c0.btc);
+  const registryOn = { bridgename: r1.updates[0].entry };
+  const off = await claimEventBridge(PHRASE_A, walletA, "bridgename", 3000, null);
+  const r2 = decideClaims([off], registryOn, emptyState());
+  ok("lnBridge: same-owner republish without the flag clears it (opt-out)",
+    r2.updates.length === 1 && r2.updates[0].entry.lnBridge === undefined && r2.updates[0].entry.evm === c0.evm);
+  ok("lnBridge: equality distinguishes flag on/off",
+    !nameEntriesEqual({ evm: c0.evm, btc: c0.btc, lnBridge: true }, { evm: c0.evm, btc: c0.btc }) &&
+    nameEntriesEqual({ evm: c0.evm, btc: c0.btc, lnBridge: true }, { evm: c0.evm, btc: c0.btc, lnBridge: true }));
+  ok("lnBridge: merge units — claim states the flag outright",
+    nameUpdateMerge({ evm: "0xabc", btc: "bc1qx" }, { evm: "0xabc", btc: "bc1qx", lnBridge: true }).lnBridge === true &&
+    nameUpdateMerge({ evm: "0xabc", btc: "bc1qx", lnBridge: true }, { evm: "0xabc", btc: "bc1qx" }).lnBridge === undefined);
+  const foreign = await claimEventBridge(PHRASE_B, walletB, "bridgename", 4000, true);
+  const r3 = decideClaims([foreign], registryOn, emptyState());
+  ok("lnBridge: a different wallet cannot set the flag", r3.updates.length === 0 && r3.decisions[0].decision === "rejected");
+}
+
+// 20. LNURL step-1 emission plan (mirrors the bridge package's
+//     suite, against the repo's own step-1 builder): the served
+//     files always match the registry's opt-ins exactly.
+{
+  const registry = {
+    ethuram: { evm: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", lnBridge: true },
+    meeday: { evm: "0xc675C7A6fdC261eF546D526726A2d262f54E1051" }, // not opted in
+    qa1: { evm: "0x1111111111111111111111111111111111111111", lnBridge: true },
+    qa2: { evm: "0x2222222222222222222222222222222222222222", lnBridge: false },
+    "Bad Name": { evm: "0x3333333333333333333333333333333333333333", lnBridge: true }, // charset refusal
+  };
+  ok("emission: opted-in names are the flagged, charset-valid ones", JSON.stringify(lnurlOptedInNames(registry)) === JSON.stringify(["ethuram", "qa1"]));
+  let plan = planLnurlEmission(registry, new Map());
+  ok("emission: cold start writes both opted-in files, deletes nothing",
+    plan.writes.size === 2 && plan.deletes.length === 0 &&
+    plan.writes.get(lnurlPathFor("ethuram")) === lnurlPayRequestJson("ethuram") &&
+    JSON.parse(plan.writes.get(lnurlPathFor("qa1"))).tag === "payRequest");
+  const current = new Map(plan.writes);
+  plan = planLnurlEmission(registry, current);
+  ok("emission: steady state is a no-op", plan.writes.size === 0 && plan.deletes.length === 0);
+  const reg2 = { ...registry, qa1: { evm: registry.qa1.evm } };
+  plan = planLnurlEmission(reg2, current);
+  ok("emission: opt-out deletes the file, the other stays", plan.writes.size === 0 && JSON.stringify(plan.deletes) === JSON.stringify([lnurlPathFor("qa1")]));
+  const withStale = new Map(current);
+  withStale.set(LNURL_DIR + "/ghost", "{}");
+  plan = planLnurlEmission(registry, withStale);
+  ok("emission: stale foreign file is cleaned up", JSON.stringify(plan.deletes) === JSON.stringify([LNURL_DIR + "/ghost"]));
+  const corrupted = new Map(current);
+  corrupted.set(lnurlPathFor("ethuram"), "{\"tag\":\"payRequest\"");
+  plan = planLnurlEmission(registry, corrupted);
+  ok("emission: corrupted content is rewritten to the canonical bytes", plan.writes.get(lnurlPathFor("ethuram")) === lnurlPayRequestJson("ethuram"));
 }
 
 console.log(`\n${passed} processor checks passed`);

@@ -3061,10 +3061,15 @@ export function normalizeFluidName(input) {
  *  Solana, Tron and Sui addresses. Every field beyond evm/btc is
  *  optional — an entry carries the families its wallet uses, and
  *  entries published before a field existed keep working. */
-export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null, lnOffer = null) {
+export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = null, tron = null, sui = null, lnOffer = null, lnBridge = null) {
   if (!validateFluidName(name)) throw new Error("Name must be 3-20 chars: letters, numbers, underscore; start with a letter.");
   const entry = { evm, btc };
   if (ln) entry.ln = ln;
+  // lnBridge: the owner's opt-in to the LNURL-pay bridge (external
+  // wallets can pay name@fluidwallet.dpdns.org). A boolean flag,
+  // not an address — carried only when exactly true, the same rule
+  // sanitizeNameEntry applies at read time.
+  if (lnBridge === true) entry.lnBridge = true;
   // lnOffer: the wallet's OWN Lightning node offer (BOLT 12) — the
   // Fluid-native Lightning identity (owner directive, 2026-11-09: no
   // external wallet creation; a name's Lightning should be the
@@ -3083,6 +3088,40 @@ export function buildNameEntry(name, evm, btc, ln = null, algo = null, sol = nul
   if (tron && isValidTronAddress(tron)) entry.tron = tron;
   if (sui && isValidSuiAddress(sui)) entry.sui = sui;
   return { [name]: entry };
+}
+/* LNURL-pay (LUD-06) step 1 for Fluid's OWN Lightning addresses —
+ * the serving half of the external-payments bridge that makes
+ * `name@fluidwallet.dpdns.org` payable from other wallets (Wallet
+ * of Satoshi, Blink, Phoenix, ...). The name-claims processor
+ * writes lnurlPayRequestJson(name) verbatim to
+ * `.well-known/lnurlp/<name>` for every name whose owner opted in
+ * (the registry entry's `lnBridge: true`), and the bridge Worker
+ * hashes lnurlPayMetadata(name) for the invoice description_hash —
+ * ONE construction, here, so the served bytes and the hashed bytes
+ * can never drift. Byte-identity with the bridge Worker's own
+ * lnurlStep1Json is pinned in the core suite. */
+export const LNURL_DOMAIN = "fluidwallet.dpdns.org";
+export const LNURL_BRIDGE_BASE = "https://fluid-ws-proxy.kanugideontownsville.workers.dev";
+/** LUD-16 name part: lowercase a-z 0-9 and - _ . + only. Fluid
+ *  names are stricter than this, so every valid Fluid name
+ *  qualifies. */
+export function isLnurlName(name) {
+  return typeof name === "string" && /^[a-z0-9][a-z0-9\-_.+]*$/.test(name) && name.length <= 64;
+}
+export function lnurlPayMetadata(name) {
+  return JSON.stringify([
+    ["text/plain", `Pay to ${name}@${LNURL_DOMAIN}`],
+    ["text/identifier", `${name}@${LNURL_DOMAIN}`],
+  ]);
+}
+export function lnurlPayRequestJson(name) {
+  return JSON.stringify({
+    tag: "payRequest",
+    callback: `${LNURL_BRIDGE_BASE}/lnurlp/callback/${name}`,
+    minSendable: 1000,
+    maxSendable: 1000000000,
+    metadata: lnurlPayMetadata(name),
+  }, null, 2) + "\n";
 }
 /** Fetch a Lightning invoice for a Lightning address (LNURL-pay, LUD-16).
  *  Returns a BOLT11 invoice the user's own WebLN wallet then pays. */
@@ -3155,6 +3194,11 @@ export function sanitizeNameEntry(entry) {
   // lnOffer: the wallet's own BOLT 12 node offer, gated by
   // parseNameLnOffer above (full parser + amountless rule).
   if (typeof entry.lnOffer === "string") { const o = parseNameLnOffer(entry.lnOffer); if (o) out.lnOffer = o; }
+  // lnBridge: the external-payments (LNURL bridge) opt-in flag.
+  // A boolean, not an address: carried only when exactly true —
+  // any other value (false, "true", 1) is not an opt-in and the
+  // field is dropped, exactly like a malformed address field.
+  if (entry.lnBridge === true) out.lnBridge = true;
   // Algorand: the full address check (58-char base32 + checksum), not a
   // shape regex — a malformed or bad-checksum `algo` field is dropped
   // exactly like the other fields above.
@@ -3460,7 +3504,11 @@ export function nameClaimNostrKeys(phrase) {
  *  the field existed keep the exact bytes they were signed over and
  *  still verify, while any claim that does carry an offer has it
  *  inside the signature — a post-signing swap of the offer breaks
- *  recovery like any other field. */
+ *  recovery like any other field. The lnBridge opt-in flag rides
+ *  the same way, as a constant "lnBridge: 1" line after the offer
+ *  line, present only when the claim's value is truthy: the flag
+ *  is inside the signature exactly when it is on, and a claim
+ *  signed before the flag existed keeps its original bytes. */
 export function buildNameClaimMessage(claim) {
   const c = claim || {};
   const f = (v) => String(v == null ? "" : v).trim();
@@ -3476,9 +3524,10 @@ export function buildNameClaimMessage(claim) {
     "sui: " + f(c.sui),
   ];
   if (f(c.lnOffer)) lines.push("lnOffer: " + f(c.lnOffer));
+  if (c.lnBridge) lines.push("lnBridge: 1");
   return lines.join("\n");
 }
-/** Verify a claim object {name, evm, btc, ln?, lnOffer?, algo?,
+/** Verify a claim object {name, evm, btc, ln?, lnOffer?, lnBridge?, algo?,
  *  sol?, tron?, sui?, sig}: the name must pass the app's own format rules, every
  *  present address must pass the registry's own sanitizer, and the
  *  EIP-191 signature over buildNameClaimMessage must recover EXACTLY
@@ -3491,7 +3540,7 @@ export function verifyNameClaim(claim) {
   const name = normalizeFluidName(c.name);
   if (!validateFluidName(name)) return { ok: false, reason: "invalid name format" };
   if (typeof c.sig !== "string" || !/^0x[0-9a-fA-F]{130}$/.test(c.sig)) return { ok: false, reason: "missing or malformed signature" };
-  const raw = { evm: c.evm, btc: c.btc, ln: c.ln || undefined, lnOffer: c.lnOffer || undefined, algo: c.algo || undefined, sol: c.sol || undefined, tron: c.tron || undefined, sui: c.sui || undefined };
+  const raw = { evm: c.evm, btc: c.btc, ln: c.ln || undefined, lnOffer: c.lnOffer || undefined, lnBridge: (c.lnBridge === true) ? true : undefined, algo: c.algo || undefined, sol: c.sol || undefined, tron: c.tron || undefined, sui: c.sui || undefined };
   const entry = sanitizeNameEntry(raw);
   if (!entry || !entry.evm || !entry.btc) return { ok: false, reason: "missing or invalid evm/btc address" };
   // A present-but-invalid optional field is dropped by the sanitizer;
@@ -3500,6 +3549,12 @@ export function verifyNameClaim(claim) {
   for (const k of ["ln", "lnOffer", "algo", "sol", "tron", "sui"]) {
     if (c[k] && !entry[k]) return { ok: false, reason: `invalid ${k} address` };
   }
+  // The bridge flag obeys the same law in boolean form: a claim
+  // that CARRIES lnBridge in any shape but exactly `true` (false,
+  // "true", 1) would be silently dropped by the sanitizer — refuse
+  // it, so the flag in the registry is always the flag the owner
+  // actually signed for.
+  if (c.lnBridge !== undefined && c.lnBridge !== null && c.lnBridge !== true) return { ok: false, reason: "invalid lnBridge flag" };
   if (String(entry.evm).toLowerCase() !== String(c.evm).trim().toLowerCase()) return { ok: false, reason: "evm address failed sanitization" };
   let recovered;
   try { recovered = ethers.verifyMessage(buildNameClaimMessage({ ...c, name }), c.sig); }
@@ -3517,8 +3572,12 @@ export function nostrEventId(event) {
  *  d-tag "fluid-name-claim:<name>", content = the claim JSON).
  *  `signerWallet` is the unlocked ethers wallet (EIP-191); the claim
  *  is verified locally before anything is signed or sent. */
-export async function buildSignedNameClaim({ name, evm, btc, ln = null, lnOffer = null, algo = null, sol = null, tron = null, sui = null, phrase, signerWallet, createdAt = null }) {
+export async function buildSignedNameClaim({ name, evm, btc, ln = null, lnOffer = null, lnBridge = null, algo = null, sol = null, tron = null, sui = null, phrase, signerWallet, createdAt = null }) {
   const claim = { v: 1, name: normalizeFluidName(name), evm, btc, ln: ln || "", lnOffer: lnOffer || "", algo: algo || "", sol: sol || "", tron: tron || "", sui: sui || "" };
+  // The bridge opt-in rides as a real boolean, present only when
+  // on — absent otherwise, so a claim that never mentions it keeps
+  // the exact shape (and signed bytes) claims have always had.
+  if (lnBridge) claim.lnBridge = true;
   const sig = await signerWallet.signMessage(buildNameClaimMessage(claim));
   const signed = { ...claim, sig };
   const check = verifyNameClaim(signed);

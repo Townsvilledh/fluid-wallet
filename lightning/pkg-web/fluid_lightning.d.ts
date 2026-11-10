@@ -13,7 +13,9 @@ export class FluidNode {
     confirm_transactions(header_hex: string, height: number, indexes: Uint32Array | number[], tx_hexes: string[]): void;
     connect_peer(pubkey: string, host: string, port: number): number;
     create_invoice(amount_msat: bigint | null | undefined, description: string, expiry_secs: number): string;
+    create_invoice_desc_hash(amount_msat: bigint | null | undefined, description_hash_hex: string, expiry_secs: number): string;
     create_invoice_jit(amount_msat: bigint, description: string, expiry_secs: number, lsp_pubkey: string, intercept_scid: string, cltv_expiry_delta: number): string;
+    create_invoice_jit_desc_hash(amount_msat: bigint, description_hash_hex: string, expiry_secs: number, lsp_pubkey: string, intercept_scid: string, cltv_expiry_delta: number): string;
     create_offer(amount_msat: bigint | null | undefined, description: string): string;
     drain_events(): string;
     funding_tx_ready(user_channel_id: string, raw_tx_hex: string): void;
@@ -56,7 +58,9 @@ export interface InitOutput {
     readonly fluidnode_confirm_transactions: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly fluidnode_connect_peer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly fluidnode_create_invoice: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => void;
+    readonly fluidnode_create_invoice_desc_hash: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => void;
     readonly fluidnode_create_invoice_jit: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly fluidnode_create_invoice_jit_desc_hash: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly fluidnode_create_offer: (a: number, b: number, c: number, d: bigint, e: number, f: number) => void;
     readonly fluidnode_drain_events: (a: number, b: number) => void;
     readonly fluidnode_funding_tx_ready: (a: number, b: number, c: number, d: number, e: number, f: number) => void;

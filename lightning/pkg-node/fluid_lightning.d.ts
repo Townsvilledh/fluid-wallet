@@ -13,7 +13,9 @@ export class FluidNode {
     confirm_transactions(header_hex: string, height: number, indexes: Uint32Array | number[], tx_hexes: string[]): void;
     connect_peer(pubkey: string, host: string, port: number): number;
     create_invoice(amount_msat: bigint | null | undefined, description: string, expiry_secs: number): string;
+    create_invoice_desc_hash(amount_msat: bigint | null | undefined, description_hash_hex: string, expiry_secs: number): string;
     create_invoice_jit(amount_msat: bigint, description: string, expiry_secs: number, lsp_pubkey: string, intercept_scid: string, cltv_expiry_delta: number): string;
+    create_invoice_jit_desc_hash(amount_msat: bigint, description_hash_hex: string, expiry_secs: number, lsp_pubkey: string, intercept_scid: string, cltv_expiry_delta: number): string;
     create_offer(amount_msat: bigint | null | undefined, description: string): string;
     drain_events(): string;
     funding_tx_ready(user_channel_id: string, raw_tx_hex: string): void;

@@ -57,6 +57,10 @@ import {
 } from "./wallet-core.js";
 import { ethers } from "ethers";
 import { LN_WASM_PIN, LN_CHUNK_SHA256 } from "./ln-asset-pins.generated.js";
+import {
+  registerLnBridge, unregisterLnBridge, startLnBridgeResponder,
+  loadLnBridgeState,
+} from "./ln-nwc-bridge.js";
 
 const $ = (id) => document.getElementById(id);
 const VAULT_KEY = "fluid_vault_v1";
@@ -4061,7 +4065,7 @@ function lnAutoConnect(session) {
 async function lnEnsureSession(network, onProgress) {
   const net = network || lnNetKey();
   if (lnSession && lnSession.network === net) { lnAutoConnect(lnSession); return lnSession; }
-  if (lnSession) { lnSession.stopLoops(); lnSession = null; }
+  if (lnSession) { lnBridgeStopResponder(); lnSession.stopLoops(); lnSession = null; }
   lnBootUiState.starting = true;
   lnBootUiState.failed = null;
   paintLnNodeStatus();
@@ -4076,6 +4080,7 @@ async function lnEnsureSession(network, onProgress) {
     });
     lnSession = session;
     session.startLoops((evs) => lnHandleEvents(evs));
+    lnBridgeSyncResponder();
     lnAutoConnect(session);
     session.syncNow().catch(() => {});
     lnBootUiState.starting = false;
@@ -4235,7 +4240,7 @@ function paintLnPanel() {
     <h4>Fallback</h4>
     <p class="tag">Prefer an external Lightning wallet? <button class="btn ghost" id="lnFallbackBtn">Pay via WebLN / LNURL instead</button></p>
     </div>`);
-  $("lnNetSel").onchange = () => { localStorage.setItem("fluid_ln_network", $("lnNetSel").value); if (lnSession) { lnSession.stopLoops(); lnSession = null; } openLightningPanel(); };
+  $("lnNetSel").onchange = () => { localStorage.setItem("fluid_ln_network", $("lnNetSel").value); if (lnSession) { lnBridgeStopResponder(); lnSession.stopLoops(); lnSession = null; } openLightningPanel(); };
   $("lnPayBtn").onclick = lnPayWithNode;
   $("lnInvoiceBtn").onclick = () => lnShowReceive("invoice");
   $("lnOfferBtn").onclick = () => lnShowReceive("offer");
@@ -4483,17 +4488,21 @@ function paintLnAddressInto(out) {
   if (st.state === "live") {
     out.innerHTML = `${addrHtml}
       <p class="tag"><b>✓ Live</b> — the registry carries your node's offer under this address, so anyone can pay it to send you sats. Payments come to your own node inside this app; Fluid must be open on this device when you're paid.${lnAddrView.status === "published" ? " <b>Published ✓ — just confirmed in the registry.</b>" : ""}</p>
-      <p>${copyShare}</p>`;
+      <p>${copyShare}</p>
+      ${lnBridgeBlockHtml()}`;
     bindCopyShare();
+    bindLnBridge(out);
     return;
   }
   if (st.state === "update-available") {
     out.innerHTML = `${addrHtml}
       <p class="tag"><b>✓ Live</b> — but your node has a newer offer than the one published under this address. Update it so payments keep coming to this node.</p>
       <p><button class="btn lnAddrPublish">${esc(st.publishLabel)}</button></p>
-      <p>${copyShare}</p>`;
+      <p>${copyShare}</p>
+      ${lnBridgeBlockHtml()}`;
     out.querySelector(".lnAddrPublish").onclick = () => lnPublishAddress();
     bindCopyShare();
+    bindLnBridge(out);
     return;
   }
   // not-published: the address is shown, but plainly NOT live —
@@ -4589,6 +4598,188 @@ async function lnPublishAddress() {
     lnAddrView = { status: "failed", message: "Couldn't publish your Lightning address: " + lnErrorText(e) };
     paintLnAddress();
   }
+}
+
+// --- External payments (LNURL-pay bridge, owner directive 2026-11-11) ---
+// Turning this on makes the published address payable from OTHER
+// Lightning wallets (Wallet of Satoshi, Blink, Phoenix, ...), not
+// just inside Fluid: the wallet registers with the bridge service
+// as the invoice-minter for its name (NWC make_invoice only — the
+// bridge can ask for invoices, never move funds), then republishes
+// its name claim with lnBridge: true; the name-claims processor
+// sees the flag and serves the step-1 file other wallets resolve.
+// The block is presented as ON only when the registry itself shows
+// the flag — the same confirm discipline as the offer publish —
+// and payments still land on the user's own node, which must be
+// open when they're paid (the responder below is what answers).
+let lnBridgeView = { status: "idle" }; // idle | working{label} | sent | failed{message}
+let lnBridgeResponder = null;
+function lnBridgeBlockHtml() {
+  const name = localStorage.getItem("fluid_name");
+  if (!name || !wallet) return "";
+  if (lnBridgeView.status === "working") {
+    return `<p class="tag"><span class="spinner"></span> ${esc(lnBridgeView.label || "Working…")}</p>`;
+  }
+  const deviceState = loadLnBridgeState(wallet.address);
+  const registryOn = !!(lnAddrEntry && lnAddrEntry.lnBridge === true);
+  let inner;
+  if (registryOn) {
+    inner = `<p class="tag"><b>✓ Also payable from other wallets</b> — Wallet of Satoshi, Blink, Phoenix and other Lightning wallets can pay this address too. Payments come to your own node inside this app; Fluid must be open on this device when you're paid.</p>
+      <p><button class="btn ghost lnBridgeOff">Turn off external payments</button></p>`;
+  } else if (deviceState) {
+    inner = `<p class="tag">External payments are registered on this device, but the registry doesn't show them yet — claims usually appear within a few minutes.</p>
+      <p><button class="btn ghost lnBridgeOn">Finish turning on external payments</button> <button class="btn ghost lnBridgeOff">Turn off external payments</button></p>`;
+  } else {
+    inner = `<p class="tag"><b>Also payable from other wallets</b> — turn this on and Wallet of Satoshi, Blink, Phoenix and other Lightning wallets can pay this address too, not just Fluid users. Payments still come to your own node, and Fluid must be open on this device when you're paid — the same as now.</p>
+      <p><button class="btn ghost lnBridgeOn">Make this address payable from other wallets</button></p>`;
+  }
+  if (lnBridgeView.status === "sent") inner += `<p class="tag">Your signed update was sent, but the registry doesn't show it yet — claims usually appear within a few minutes. Reopen this panel to check.</p>`;
+  if (lnBridgeView.status === "failed") inner += `<p class="msg err">${esc(lnBridgeView.message)}</p>`;
+  return inner;
+}
+function bindLnBridge(out) {
+  const on = out.querySelector(".lnBridgeOn"); if (on) on.onclick = () => lnBridgeEnable();
+  const off = out.querySelector(".lnBridgeOff"); if (off) off.onclick = () => lnBridgeDisable();
+}
+async function lnBridgeEnable() {
+  const name = localStorage.getItem("fluid_name");
+  if (!name || !wallet) return;
+  lnBridgeView = { status: "working", label: "Registering this wallet with the bridge…" };
+  paintLnAddress();
+  try {
+    await registerLnBridge({
+      name, evm: wallet.address, phrase: wallet.mnemonic.phrase,
+      signMessage: (m) => wallet.signMessage(m),
+    });
+    lnBridgeView = { status: "working", label: "Registered — publishing the update to the registry…" };
+    paintLnAddress();
+    const keepLn = lnAddrEntry && lnAddrEntry.ln ? lnAddrEntry.ln : null;
+    const n = await submitNameClaim(name, keepLn, lnAddrOfferNow(), true);
+    if (n === 0) {
+      lnBridgeView = { status: "failed", message: "This device is registered with the bridge, but the signed update couldn't reach the relays, so the registry doesn't show external payments yet — the update is saved on this device. Try again in a moment." };
+      paintLnAddress();
+      return;
+    }
+    // Sent is not on: verify against the registry itself, polling
+    // like the address publish, and say which it is.
+    let verified = null;
+    for (let i = 0; i < 9 && !verified; i++) {
+      await new Promise((r) => setTimeout(r, 8000));
+      const check = await resolveFluidName(name).catch(() => null);
+      if (check && check.lnBridge === true) verified = check;
+    }
+    if (verified) {
+      lnAddrEntry = verified;
+      lnBridgeView = { status: "idle" };
+      lnBridgeSyncResponder();
+    } else {
+      lnBridgeView = { status: "sent" };
+    }
+    paintLnAddress();
+  } catch (e) {
+    lnBridgeView = { status: "failed", message: "Couldn't turn on external payments: " + lnErrorText(e) };
+    paintLnAddress();
+  }
+}
+async function lnBridgeDisable() {
+  const name = localStorage.getItem("fluid_name");
+  if (!name || !wallet) return;
+  lnBridgeView = { status: "working", label: "Turning off external payments…" };
+  paintLnAddress();
+  try {
+    // unregisterLnBridge clears this device's state even when the
+    // bridge service can't be reached; withdrawing the registry
+    // flag below is what removes the step-1 file other wallets
+    // resolve, and that is the withdrawal that stops payments.
+    try {
+      await unregisterLnBridge({ name, evm: wallet.address, signMessage: (m) => wallet.signMessage(m) });
+    } catch { /* local state is already cleared; the republish proceeds */ }
+    lnBridgeStopResponder();
+    const keepLn = lnAddrEntry && lnAddrEntry.ln ? lnAddrEntry.ln : null;
+    const n = await submitNameClaim(name, keepLn, lnAddrOfferNow(), false);
+    if (n === 0) {
+      lnBridgeView = { status: "failed", message: "External payments are off on this device, but the signed update couldn't reach the relays — the registry may still show them on until the update publishes. Try again in a moment." };
+      paintLnAddress();
+      return;
+    }
+    let verified = null;
+    for (let i = 0; i < 9 && !verified; i++) {
+      await new Promise((r) => setTimeout(r, 8000));
+      const check = await resolveFluidName(name).catch(() => null);
+      if (check && check.lnBridge !== true) verified = check;
+    }
+    if (verified) {
+      lnAddrEntry = verified;
+      lnBridgeView = { status: "idle" };
+    } else {
+      lnBridgeView = { status: "sent" };
+    }
+    paintLnAddress();
+  } catch (e) {
+    lnBridgeView = { status: "failed", message: "Couldn't turn off external payments: " + lnErrorText(e) };
+    paintLnAddress();
+  }
+}
+// The responder: while the wallet is unlocked, the node is running
+// and this device holds a bridge registration, answer the bridge's
+// make_invoice requests by minting with the wallet's own node.
+function lnBridgeStopResponder() {
+  if (lnBridgeResponder) { try { lnBridgeResponder.stop(); } catch { /* already gone */ } lnBridgeResponder = null; }
+}
+function lnBridgeSyncResponder() {
+  lnBridgeStopResponder();
+  if (!wallet || !lnSession || lnSession.network !== "bitcoin") return;
+  const st = loadLnBridgeState(wallet.address);
+  if (!st || !st.clientPub) return;
+  try {
+    lnBridgeResponder = startLnBridgeResponder({
+      phrase: wallet.mnemonic.phrase,
+      clientPubHex: st.clientPub,
+      mintInvoice: lnBridgeMintInvoice,
+    });
+  } catch { lnBridgeResponder = null; }
+}
+async function lnBridgeMintInvoice({ amountMsat, descriptionHashHex }) {
+  if (!wallet || !lnSession || lnSession.network !== "bitcoin") throw new Error("This wallet's node is not running.");
+  const bal = lnSession.balance();
+  const plan = lnReceivePlan({
+    receivableMsat: Number(bal.receivableMsat || 0),
+    requestedMsat: amountMsat,
+    hasLsp: !!lnSession.lsp,
+  });
+  if (plan.kind === "need-channel") throw new Error("This wallet can't receive yet — it has no channel with room in it.");
+  if (plan.kind === "need-amount") throw new Error("An amount is required for this wallet's first receive.");
+  if (plan.kind === "invoice") {
+    // A partial plan would mint an invoice for more than the
+    // channels can receive — refuse honestly; the payer's wallet
+    // shows the refusal instead of attempting a broken payment.
+    if (plan.partial) throw new Error("That amount is more than this wallet can receive right now.");
+    return lnSession.createInvoiceDescHash(amountMsat, descriptionHashHex);
+  }
+  return lnBridgeMintJitInvoice(amountMsat, descriptionHashHex);
+}
+async function lnBridgeMintJitInvoice(amountMsat, descriptionHashHex) {
+  const lsp = lnSession.lsp;
+  try { lnSession.connectPeer(lsp.pubkey, lsp.host, lsp.port); } catch { /* already live or dial in flight */ }
+  const rid = lnSession.lsps2RequestParams(lsp.pubkey, lsp.token);
+  const ev = await lnWaitEvent("lsps2_params_ready", { match: (e) => e.requestId === rid });
+  const menu = (ev.menu || []).map((p, i) => ({ ...p, i, feeMsat: lnLsps2OpeningFeeMsat(amountMsat, p) }))
+    .filter((p) => amountMsat >= Number(p.minPaymentSizeMsat || 0) && amountMsat <= Number(p.maxPaymentSizeMsat || Infinity))
+    .sort((x, y) => x.feeMsat - y.feeMsat);
+  if (!menu.length) throw new Error("The channel provider can't open a channel for that amount.");
+  const chosen = menu[0];
+  const untilMs = Date.parse(chosen.validUntil) || (Date.now() + 3600000);
+  const expirySecs = Math.max(120, Math.min(3600, Math.floor((untilMs - Date.now()) / 1000) - 60));
+  const buyRid = lnSession.lsps2SelectParams(rid, chosen.i, amountMsat);
+  const ip = await lnWaitEvent("lsps2_invoice_params", { match: (e) => e.requestId === buyRid });
+  const invoice = lnSession.createInvoiceJitDescHash(amountMsat, descriptionHashHex, expirySecs, lsp.pubkey, ip.interceptScid, ip.cltvExpiryDelta);
+  // The same gate record the Receive sheet keeps (audit §5.4), so
+  // a bridge-minted JIT invoice is recognised as ours-to-receive.
+  try {
+    const parsed = parseBolt11(invoice);
+    if (parsed && parsed.paymentHash) lnStoreJitRecord(parsed.paymentHash, ip.interceptScid, chosen.maxPaymentSizeMsat);
+  } catch { /* the invoice still stands; the gate just won't special-case it */ }
+  return invoice;
 }
 
 function paintLnSis() {
@@ -6975,13 +7166,20 @@ function savePendingClaim(p) {
  *  Throws only when the claim cannot be built or verified locally.
  *  `lnOffer` carries the wallet's own BOLT 12 node offer (the
  *  Fluid-native Lightning registration); the processor merges it
- *  into an already-live entry as a same-owner update. */
-async function submitNameClaim(name, ln, lnOffer = null) {
+ *  into an already-live entry as a same-owner update.
+ *  `lnBridge` is the external-payments opt-in flag: pass true/false
+ *  to state it outright; when omitted, the claim states THIS
+ *  device's bridge state (registered here = on) — every claim the
+ *  app signs says where the flag stands, because the processor
+ *  takes a verified same-owner claim's word for the flag (that is
+ *  what lets an opt-out republish clear it). */
+async function submitNameClaim(name, ln, lnOffer = null, lnBridge = undefined) {
   if (!wallet) throw new Error("Unlock your wallet first.");
   const phrase = wallet.mnemonic.phrase;
+  const bridgeFlag = lnBridge !== undefined ? lnBridge : (loadLnBridgeState(wallet.address) ? true : null);
   const { claim, event } = await buildSignedNameClaim({
     name, evm: wallet.address,
-    btc: bitcoinAddress(phrase), ln: ln || null, lnOffer: lnOffer || null,
+    btc: bitcoinAddress(phrase), ln: ln || null, lnOffer: lnOffer || null, lnBridge: bridgeFlag || null,
     algo: algoAddressFromPhrase(phrase), sol: solanaAddressFromPhrase(phrase),
     tron: tronAddressFromPhrase(phrase), sui: suiAddressFromPhrase(phrase),
     phrase, signerWallet: wallet,
@@ -7798,6 +7996,7 @@ function lockWallet() {
   // closed sheet once, after the next unlock.
   const sheetRoot = $("sheetRoot");
   if (sheetRoot && !sheetRoot.classList.contains("hidden")) { lockClosedSheet = true; closeSheet(true); }
+  lnBridgeStopResponder(); // a locked wallet answers no bridge invoice requests
   wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate();
 }
 $("lockBtn").onclick = lockWallet;

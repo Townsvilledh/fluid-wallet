@@ -11,7 +11,9 @@ export const fluidnode_close_channel: (a: number, b: number, c: number, d: numbe
 export const fluidnode_confirm_transactions: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const fluidnode_connect_peer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const fluidnode_create_invoice: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => void;
+export const fluidnode_create_invoice_desc_hash: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => void;
 export const fluidnode_create_invoice_jit: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+export const fluidnode_create_invoice_jit_desc_hash: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const fluidnode_create_offer: (a: number, b: number, c: number, d: bigint, e: number, f: number) => void;
 export const fluidnode_drain_events: (a: number, b: number) => void;
 export const fluidnode_funding_tx_ready: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
