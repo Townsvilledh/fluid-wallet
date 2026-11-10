@@ -8,7 +8,7 @@ import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, sato
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
-import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected } from "../src/wallet-core.js";
+import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
@@ -8900,12 +8900,114 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("F1 handler: the branch tracks whether the success paint took over the label",
     nativeB4.includes("let painted = false;") && nativeB4.includes("painted = true;"));
   ok("F1 handler: the finally restores the resting label unless the success paint ran",
-    nativeB4.includes('if (!painted) btn.textContent = "Use my Fluid node";'));
+    nativeB4.includes("if (!painted) btn.textContent = lnStatusSnapshot().nativeBtnLabel;"));
+  ok("F1 handler: the resting label is state-derived, never a blind revert to start",
+    nativeB4.includes("lnStatusSnapshot().nativeBtnLabel") && !nativeB4.includes('btn.textContent = "Use my Fluid node";'));
   ok("F1 handler: the offer-failure message is unchanged and returns through the finally",
     nativeB4.includes("couldn't build its offer yet") && nativeB4.includes("finally {"));
   ok("F1 handler: no exit path sets the busy label without the finally behind it",
     (nativeB4.match(/btn\.textContent = "Starting your node…"/g) || []).length === 1
     && nativeB4.indexOf('btn.textContent = "Starting your node…"') < nativeB4.indexOf("if (!painted)"));
+}
+
+// ---------- LN node-status clarity + Lightning address (2026-11-10) ----------
+const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = await import("../src/wallet-core.js");
+// Owner field report: he started his node, the button silently
+// reverted to "Use my Fluid node", and only a later panel visit
+// showed the node live. And his registry entry carried no offer,
+// so his Lightning address resolved to nothing with no in-app way
+// to publish it from the panel. Three layers pinned here: the pure
+// status derivation, the panel/name-card/home wiring, and the
+// BOLT 12 parser's checksum-less form — a current node's offer
+// (LDK encodes BOLT 12 WITHOUT a bech32 checksum) must verify,
+// publish and resolve, or both features are decoration.
+{
+  // --- The real LDK 0.2.7 offer fixture: produced by the shipped
+  // node itself (create_offer(null, "Fluid"), peer connected, no
+  // channels), captured in research_notes/fluid-ln-proxy-wiring-
+  // 20261110/offer-repro.txt. Checksum-less, paths-bearing.
+  const LDK_OFFER = "lno1qgsqvgnwgcg35z6ee2h3yczraddm72xrfua9uve2rlrm9deu7xyfzrc2q4rxcatfvsg06qt3qvs0tztx4jusenq3afhkagww6ead478p4tg9zpax897s7yu5u0l9uq5se68dk5ncudgnxaldhnzfh83lpzht6pshetl7zamz2xzu2q4xlcpq9tm5tm37cnv34jeujq8ne496h4dgyjv5ygjs4q06pjlrey87sndhqp6w6etr9c3a3sva6wyfak0n585z060lnfj5qtzdkdddhl8ttt8vuq9fcrjplw6uy83td8gp0hyvc8weu5jr4pc8kwxm95fyjcucn7j4sm6g09fuqp6gk30zcr7j8zgzw808y0a60hq4tf9aeyxpssjwzfhx9vewt5tpjakrjzlg2v8vkxjz43cefhlg6qnjnjwxrlkw9lvftuvjrvcgwmqq0v8gja0qgjwfzwnernjqt7f7zsq8g2fw06ttstpq0w2vrfms4ns0933es88mpgdgeukfctr458ras5kpsdm677xzg6m60zype0ep9cwv2gj64ju8zu5gxpghj4mheelxdlpu2ec7ze9vnzl69el53rlmyvdz0pmsrcyl09sv6he4cwzlrqsmdp9la7q5fmhylw8sr5hh50mnma5ckhxtlaqkyyprwan7p6umgdhy6kwsndhd8xpgrzfnfyy88c4yafxr8tc5uszrwtg";
+  // The legacy checksummed offer (registry's lnqapipe1 entry shape).
+  const LEGACY_OFFER = "lno1qgsxlc5vp2m0rvmjcxn2y34wv0m5lyc7sdj7zksgn35dvxgqqqqqqqq2rfkxuutpwp5hqef3ypcxjur9d35kuefqve5hsar4wfj3yptxd36kjeqkyypjyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsulx9nd";
+  const pRepro = parseBolt12Offer(LDK_OFFER);
+  ok("bolt12 nocs: a real current-LDK checksum-less offer parses",
+    pRepro.kind === "offer" && pRepro.hasPaths === true && pRepro.amountMsat === null && pRepro.description === "Fluid");
+  ok("bolt12 nocs: parseNameLnOffer accepts it for a name claim",
+    parseNameLnOffer(LDK_OFFER) === LDK_OFFER);
+  ok("bolt12 nocs: buildNameEntry carries it onto the entry",
+    buildNameEntry("kemi", "0xabc", "bc1q", null, null, null, null, null, LDK_OFFER).kemi.lnOffer === LDK_OFFER);
+  ok("bolt12 nocs: pay-by-name resolves an entry carrying it as an offer",
+    (() => { const t = lightningTargetForNameEntry({ lnOffer: LDK_OFFER }); return !!t && t.kind === "offer" && t.value === LDK_OFFER; })());
+  ok("bolt12 nocs: the legacy checksummed offer still parses via the strict path",
+    parseBolt12Offer(LEGACY_OFFER).kind === "offer" && parseNameLnOffer(LEGACY_OFFER) === LEGACY_OFFER);
+  ok("bolt12 nocs: garbage is still rejected",
+    parseNameLnOffer("lno1garbage") === null && parseNameLnOffer(LDK_OFFER.slice(0, 100)) === null
+    && parseNameLnOffer("lnbc1qgsqvgnwgcg35z6ee2h3yczraddm72xrfua9") === null
+    && parseNameLnOffer("lno1qgsq vgnw") === null);
+
+  // --- lnNodeStatus: the one derivation every surface reads.
+  const ready0 = lnNodeStatus({ running: true, network: "bitcoin", nodeId: "02cf9ef2e783d99c", receivableMsat: 0, spendableMsat: 0 });
+  ok("lnstatus: running on mainnet reads ready with the plain headline",
+    ready0.state === "ready" && ready0.headline === "Your Fluid node is ready ✓" && ready0.detail.includes("Bitcoin mainnet"));
+  ok("lnstatus: 0 receiving / 0 sending room reads as normal, never broken",
+    ready0.detail.includes("That's normal for a new node") && ready0.detail.includes("first incoming payment opens receiving room"));
+  ok("lnstatus: rooms with sats show without the new-node note",
+    (() => { const r = lnNodeStatus({ running: true, network: "bitcoin", receivableMsat: 5000, spendableMsat: 2000 }); return r.detail.includes("Receiving room: 5 sats") && !r.detail.includes("That's normal"); })());
+  ok("lnstatus: a test network is named as test coins",
+    lnNodeStatus({ running: true, network: "signet" }).detail.includes("test coins"));
+  ok("lnstatus: running beats an earlier failure (a retry that worked clears it)",
+    lnNodeStatus({ running: true, failed: { stage: "download", message: "x" } }).state === "ready");
+  ok("lnstatus: starting shows while a boot is in flight",
+    lnNodeStatus({ starting: true }).state === "starting");
+  const failed = lnNodeStatus({ failed: { stage: "download", message: "Your Lightning node couldn't load — the node program didn't finish downloading." } });
+  ok("lnstatus: a failed boot stays a plain failure with retry, not a start button",
+    failed.state === "failed" && failed.headline === "Your Fluid node couldn't start" && failed.nativeBtnLabel === "Try starting my node again");
+  ok("lnstatus: a created-but-stopped node reads set up, not absent",
+    (() => { const s = lnNodeStatus({ exists: true, network: "bitcoin", nodeId: "02cf9ef2e783d99c" }); return s.state === "setup" && s.headline === "Your Fluid node is set up ✓" && s.nativeBtnLabel === "Start my node"; })());
+  ok("lnstatus: nothing created reads not-started with the original start label",
+    (() => { const s = lnNodeStatus({}); return s.state === "not-started" && s.nativeBtnLabel === "Use my Fluid node"; })());
+  ok("lnstatus: the ready name-card label offers registration, not a fresh start",
+    lnNodeStatus({ running: true, network: "bitcoin" }).nativeBtnLabel === "Register my node — it's ready");
+
+  // --- lnLightningAddressState: live only when the registry says so.
+  ok("lnaddr: no name, no address",
+    lnLightningAddressState({}).state === "no-name" && lnLightningAddressState({}).address === null);
+  const notPub = lnLightningAddressState({ name: "ethuram", registryOffer: null, currentOffer: LDK_OFFER });
+  ok("lnaddr: a name with nothing published is not-published with the publish action",
+    notPub.state === "not-published" && notPub.address === "ethuram@fluidwallet.dpdns.org" && notPub.publishLabel === "Publish my Lightning address");
+  ok("lnaddr: published offer matching the node's is live, no action offered",
+    (() => { const s = lnLightningAddressState({ name: "ethuram", registryOffer: LDK_OFFER, currentOffer: LDK_OFFER }); return s.state === "live" && s.publishLabel === null; })());
+  ok("lnaddr: comparison normalises case and a lightning: prefix",
+    lnLightningAddressState({ name: "ethuram", registryOffer: LDK_OFFER, currentOffer: "LIGHTNING:" + LDK_OFFER.toUpperCase() }).state === "live");
+  ok("lnaddr: a different published offer is live but offers Update",
+    (() => { const s = lnLightningAddressState({ name: "ethuram", registryOffer: LEGACY_OFFER, currentOffer: LDK_OFFER }); return s.state === "update-available" && s.publishLabel === "Update my Lightning address"; })());
+  ok("lnaddr: published with no current offer to compare is simply live",
+    lnLightningAddressState({ name: "ethuram", registryOffer: LDK_OFFER, currentOffer: null }).state === "live");
+
+  // --- Wiring pins: panel, home row, name card all read the one
+  // derivation; the publish action rides the existing claim
+  // pipeline and verifies against the registry before saying live.
+  const appNs = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxNs = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("lnstatus wiring: the panel paints the shared status under its title",
+    appNs.includes("const statusNow = lnStatusSnapshot();") && appNs.includes("statusNow.headline") && appNs.includes("statusNow.detail"));
+  ok("lnstatus wiring: reopening the panel with a live session goes straight to it",
+    appNs.includes("if (lnSession && lnSession.network === lnNetKey()) { paintLnPanel(); paintLnNodeStatus(); return; }"));
+  ok("lnstatus wiring: a failed boot is recorded as state in lnEnsureSession",
+    appNs.includes("lnBootUiState.failed = { stage:") && appNs.includes("lnRememberNode(session)"));
+  ok("lnstatus wiring: home rows carry the shared status line",
+    idxNs.includes('class="lnNodeStatusText"') && appNs.includes('class="lnNodeStatusText"'));
+  ok("lnstatus wiring: the name card carries a persistent status line beside the button",
+    idxNs.includes('id="ownedLnNodeStatus"') && appNs.includes("lnNativeOfferError"));
+  ok("lnstatus wiring: step-1 success states the node is ready inside the terms",
+    appNs.includes("✓ Your Fluid node is ready — set up and running on this device. "));
+  const pubNs = appNs.slice(appNs.indexOf("async function lnPublishAddress"), appNs.indexOf("function paintLnSis"));
+  ok("lnaddr wiring: publish rides submitNameClaim with the node's offer, hosted address preserved",
+    pubNs.includes("submitNameClaim(name, keepLn, offer)") && pubNs.includes("hit.ln ? hit.ln : null") && pubNs.includes("createOffer(null, \"Fluid\")") === false && appNs.includes("lnSession.createOffer(null, \"Fluid\")"));
+  ok("lnaddr wiring: publish verifies against the registry before claiming published",
+    pubNs.includes("lnAddrPending = { name, offer }") && pubNs.includes('lnAddrView = { status: "published" }') && pubNs.includes("resolveFluidName(name)"));
+  ok("lnaddr wiring: the panel Receive section carries the address block",
+    appNs.includes('id="lnAddrOut"') && appNs.includes("paintLnAddress();") && appNs.includes("Not live yet"));
 }
 
 // ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------

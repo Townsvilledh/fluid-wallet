@@ -403,7 +403,7 @@
       <div id="assetList">Loading assets…</div>
       <button class="card lnrow" id="lightningRow">
         <span class="logowrap"><span class="coin lncoin"><svg class="ic ic-wht"><use href="#i-bolt"/></svg></span></span>
-        <span class="grow"><b class="rname">Bitcoin Lightning</b><small>Your own Lightning node — pay, receive and manage channels</small></span>
+        <span class="grow"><b class="rname">Bitcoin Lightning</b><small class="lnNodeStatusText">Your own Lightning node — pay, receive and manage channels</small></span>
         <span style="color:var(--dim)"><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></span>
       </button>
       <div class="card game">
@@ -532,6 +532,7 @@
           </div>
           <p class="tag hidden" id="ownedLnNote" style="margin:2px 0 6px"></p>
           <div id="ownedLnAdd">
+            <p class="tag" id="ownedLnNodeStatus" style="margin:6px 0"></p>
             <button class="btn" id="ownedLnNativeBtn" style="width:auto;padding:6px 12px">Use my Fluid node</button>
             <div id="ownedLnNativeTerms" class="hidden">
               <p class="tag" id="ownedLnNativeCopy" style="margin:6px 0"></p>

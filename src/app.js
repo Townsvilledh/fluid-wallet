@@ -31,6 +31,7 @@ import {
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
+  lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
@@ -1422,7 +1423,7 @@ function paintAssets() {
   // Lightning panel (the Wallet tab's Lightning button covers All).
   grp("lightning", "", [`<div class="row" data-ln="1">
       <span class="logowrap"><span class="coin" style="background:#f7931a">${icon("bolt", "ic ic-wht")}</span></span>
-      <span class="grow"><b class="rname">Bitcoin Lightning</b><small>Your own node — pay invoices, offers and Lightning addresses</small></span>
+      <span class="grow"><b class="rname">Bitcoin Lightning</b><small class="lnNodeStatusText">Your own node — pay invoices, offers and Lightning addresses</small></span>
       <span>›</span></div>`]);
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
   grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [famLoaded.has("litecoin") ? `<div class="row" data-ltc="1">
@@ -1556,6 +1557,7 @@ function paintAssets() {
   }
   html += `<button class="btn ghost" id="zeroToggle">${showZeroBalances ? "Hide zero balances" : "Show zero balances"}</button>`;
   $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
+  paintLnNodeStatus();
   persistBalanceCache();
   document.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
   const zt = $("zeroToggle");
@@ -3869,6 +3871,66 @@ function openCosmosSheet(row) {
 // a clearly-labelled fallback for builds without the chunk (the
 // single-file build) or users who prefer an external wallet.
 let lnSession = null, lnChunk = null, lnEvents = [];
+// Node-status clarity (owner directive, 2026-11-10): every Lightning
+// surface — home row, panel, name card — derives what it says from
+// lnStatusSnapshot() below, never from its own local guess. The boot
+// bookkeeping lives here: a boot in flight, and the last boot's
+// failure (stage + plain headline), so a failed start stays VISIBLE
+// as a failure with a retry instead of silently reverting to a
+// start button. A successful boot also records the node (id +
+// network) per wallet on this device, so "you have created your
+// Fluid node" stays true and sayable across restarts even while
+// the node isn't running.
+let lnBootUiState = { starting: false, failed: null };
+let lnNativeOfferError = null; // name-card step-1 offer failure, painted beside the button
+let lnNativeLabelHold = false; // the "Check the registry again" label owns the button while set
+let lnNativeTermsPainted = false; // the terms step owns the button label while painted
+const LN_NODE_REC_KEY = "fluid_ln_node_v1";
+function lnNodeRecord() {
+  try {
+    if (!wallet || !wallet.address) return null;
+    const all = JSON.parse(localStorage.getItem(LN_NODE_REC_KEY) || "{}");
+    return all[String(wallet.address).toLowerCase()] || null;
+  } catch { return null; }
+}
+function lnRememberNode(session) {
+  try {
+    if (!wallet || !wallet.address || !session) return;
+    const all = JSON.parse(localStorage.getItem(LN_NODE_REC_KEY) || "{}");
+    all[String(wallet.address).toLowerCase()] = { nodeId: session.nodeId, network: session.network };
+    localStorage.setItem(LN_NODE_REC_KEY, JSON.stringify(all));
+  } catch { /* storage blocked — status falls back to the live session alone */ }
+}
+function lnStatusSnapshot() {
+  let running = false, nodeId = null, network = null, recv = 0, spend = 0;
+  if (lnSession) {
+    running = true; nodeId = lnSession.nodeId; network = lnSession.network;
+    try { const b = lnSession.balance(); recv = Number(b.receivableMsat || 0); spend = Number(b.spendableMsat || 0); } catch { recv = 0; spend = 0; }
+  }
+  const rec = lnNodeRecord();
+  return lnNodeStatus({
+    running,
+    exists: !!rec,
+    starting: lnBootUiState.starting,
+    failed: lnBootUiState.failed,
+    network: network || (rec && rec.network) || null,
+    nodeId: nodeId || (rec && rec.nodeId) || null,
+    receivableMsat: recv,
+    spendableMsat: spend,
+  });
+}
+// Paint the shared status onto every surface currently in the DOM:
+// the home Lightning rows (class), and the name card's status line
+// + resting button label (ids; the button keeps a held label —
+// "Check the registry again" — while lnNativeLabelHold is set).
+function paintLnNodeStatus() {
+  const st = lnStatusSnapshot();
+  document.querySelectorAll(".lnNodeStatusText").forEach((el) => { el.textContent = st.short; });
+  const nc = $("ownedLnNodeStatus");
+  if (nc) nc.textContent = lnNativeOfferError && lnSession ? lnNativeOfferError : st.headline + " — " + st.detail;
+  const nb = $("ownedLnNativeBtn");
+  if (nb && !nb.disabled && !lnNativeLabelHold && !lnNativeTermsPainted) nb.textContent = st.nativeBtnLabel;
+}
 let satoraPollTimer = null;
 let mayanPollTimer = null;
 const lnNetKey = () => localStorage.getItem("fluid_ln_network") || "bitcoin";
@@ -3937,6 +3999,7 @@ function lnHandleEvents(evs) {
   }
   lnEvents = [...evs].reverse().concat(lnEvents).slice(0, 8);
   if ($("lnPanel")) paintLnPanel();
+  paintLnNodeStatus();
 }
 function lnWaitEvent(type, { timeoutMs = 45000, match = null, failTypes = ["lsps2_failed", "lsps1_failed"] } = {}) {
   return new Promise((resolve, reject) => {
@@ -3957,18 +4020,34 @@ async function lnEnsureSession(network, onProgress) {
   const net = network || lnNetKey();
   if (lnSession && lnSession.network === net) return lnSession;
   if (lnSession) { lnSession.stopLoops(); lnSession = null; }
-  const chunk = await lnLoadChunk();
-  const session = await chunk.bootLightning({
-    phrase: wallet.mnemonic.phrase,
-    network: net,
-    wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "",
-    wasmPin: LN_WASM_PIN,
-    onProgress: onProgress || (() => {}),
-  });
-  lnSession = session;
-  session.startLoops((evs) => lnHandleEvents(evs));
-  session.syncNow().catch(() => {});
-  return session;
+  lnBootUiState.starting = true;
+  lnBootUiState.failed = null;
+  paintLnNodeStatus();
+  try {
+    const chunk = await lnLoadChunk();
+    const session = await chunk.bootLightning({
+      phrase: wallet.mnemonic.phrase,
+      network: net,
+      wsProxy: localStorage.getItem("fluid_ln_wsproxy") || "",
+      wasmPin: LN_WASM_PIN,
+      onProgress: onProgress || (() => {}),
+    });
+    lnSession = session;
+    session.startLoops((evs) => lnHandleEvents(evs));
+    session.syncNow().catch(() => {});
+    lnBootUiState.starting = false;
+    lnRememberNode(session);
+    paintLnNodeStatus();
+    return session;
+  } catch (e) {
+    // A failed boot is a STATE, not a moment: it stays painted on
+    // every Lightning surface (with its stage named) until a retry
+    // succeeds — never a silent revert to a start button.
+    lnBootUiState.starting = false;
+    lnBootUiState.failed = { stage: (e && e.stage) || "software", message: lnBootStageHeadline((e && e.stage) || "software") };
+    paintLnNodeStatus();
+    throw e;
+  }
 }
 
 function lnBootStageHeadline(stage) {
@@ -4002,6 +4081,10 @@ function lnBootFailedSheet(e) {
 }
 
 async function openLightningPanel() {
+  // Already running on the chosen network: go straight to the
+  // panel and its plain "Your Fluid node is ready ✓" status — no
+  // "Starting…" sheet flash that reads as if nothing existed.
+  if (lnSession && lnSession.network === lnNetKey()) { paintLnPanel(); paintLnNodeStatus(); return; }
   openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning</h3>
     <p class="tag" id="lnBootLine"><span class="spinner"></span> Starting your Lightning node… it runs entirely on your device, from your own seed. Nobody custodies your sats.</p>`);
   const line = (html) => { const el = $("lnBootLine"); if (el) el.innerHTML = html; };
@@ -4041,7 +4124,10 @@ function paintLnPanel() {
   const peers = s.peerStatus();
   const relayDefault = s.defaultRelayUrl || "";
   const relayVal = relayDefault || localStorage.getItem("fluid_ln_relay") || "";
+  const statusNow = lnStatusSnapshot();
   openSheet(`<div id="lnPanel"><h3>${icon("bolt", "ic ic-brand")} Lightning — your own node</h3>
+    <p style="margin:8px 0 2px"><b>${esc(statusNow.headline)}</b></p>
+    <p class="tag" style="margin:0 0 8px">${esc(statusNow.detail)}</p>
     <p class="tag">Node <span class="mono">${esc(s.nodeId.slice(0, 16))}…</span> · network:
       <select id="lnNetSel">
         <option value="bitcoin" ${net === "bitcoin" ? "selected" : ""}>Bitcoin mainnet</option>
@@ -4056,6 +4142,7 @@ function paintLnPanel() {
     <div class="stickyfoot"><button class="btn" id="lnPayBtn">Pay with my node</button></div>
     <p class="msg err" id="lnPayMsg"></p>
     <h4>Receive</h4>
+    <div id="lnAddrOut"></div>
     <input id="lnRcvSats" inputmode="numeric" placeholder="Sats (optional for the offer)">
     <input id="lnRcvDesc" placeholder="What is it for? (optional)">
     <button class="btn ghost" id="lnInvoiceBtn">New one-time invoice</button>
@@ -4122,6 +4209,7 @@ function paintLnPanel() {
   paintLnReceive();
   paintLnBuy();
   paintLnSis();
+  paintLnAddress();
 }
 
 async function lnPayWithNode() {
@@ -4220,6 +4308,171 @@ function paintLnReceive() {
     $("lnRcvRetry").onclick = () => lnShowReceive(lnReceiveWhich);
   } else out.innerHTML = "";
 }
+// --- Your Lightning address (owner directive, 2026-11-10) ---
+// The panel's Receive section shows <name>@fluidwallet.dpdns.org
+// and — truth over looks — calls it live ONLY when the published
+// registry entry for the name actually carries this node's BOLT 12
+// offer (lnLightningAddressState decides). Publishing rides the
+// SAME signed-claim pipeline as the name card (submitNameClaim:
+// EIP-191 claim → Nostr kind-30078 → processor → names.json) with
+// the node's current offer as lnOffer, preserving any hosted
+// address already on the entry. State-driven like the other
+// receive displays: the panel's event pump repaints the whole
+// panel, so everything renders from the state below (F6 rule).
+let lnAddrView = { status: "idle" }; // idle | publishing | published | sent | failed{message}
+let lnAddrEntry = undefined; // undefined = registry not read yet this panel session; null = no entry
+let lnAddrOffer = undefined; // undefined = not built yet; null = the node couldn't build one
+let lnAddrOfferSession = null;
+let lnAddrPending = null; // { name, offer } — sent, registry hasn't shown it yet
+let lnAddrFetching = false;
+function lnAddrOfferNow() {
+  if (!lnSession) return null;
+  if (lnAddrOfferSession === lnSession && lnAddrOffer !== undefined) return lnAddrOffer;
+  try { lnAddrOffer = lnSession.createOffer(null, "Fluid"); }
+  catch { lnAddrOffer = null; }
+  lnAddrOfferSession = lnSession;
+  return lnAddrOffer;
+}
+async function lnAddrRefresh() {
+  const name = localStorage.getItem("fluid_name");
+  if (!name || lnAddrFetching) return;
+  lnAddrFetching = true;
+  try {
+    const hit = await resolveFluidName(name).catch(() => null);
+    lnAddrEntry = hit || null;
+  } finally {
+    lnAddrFetching = false;
+    if ($("lnAddrOut")) paintLnAddress();
+  }
+}
+function paintLnAddress() {
+  const out = $("lnAddrOut"); if (!out) return;
+  const name = localStorage.getItem("fluid_name");
+  if (lnAddrView.status === "publishing") {
+    out.innerHTML = `<p class="tag"><span class="spinner"></span> Publishing your Lightning address — signing the update and sending it to the registry…</p>`;
+    return;
+  }
+  if (lnAddrView.status === "failed") {
+    out.innerHTML = `<p class="msg err">${esc(lnAddrView.message)}</p>
+      <button class="btn ghost" id="lnAddrRetry">Try again</button>`;
+    $("lnAddrRetry").onclick = () => { lnAddrView = { status: "idle" }; lnPublishAddress(); };
+    return;
+  }
+  if (!name) {
+    out.innerHTML = `<p class="tag"><b>Your Lightning address</b> is built from your Fluid name — like <span class="mono">you@fluidwallet.dpdns.org</span> — and people pay it to send you sats. You don't have a Fluid name yet: claim one first under <b>More tab → “Your Fluid name”</b>, then come back here and publish your address.</p>`;
+    return;
+  }
+  if (lnAddrEntry === undefined) {
+    out.innerHTML = `<p class="tag"><span class="spinner"></span> Checking the registry for your Lightning address…</p>`;
+    lnAddrRefresh();
+    return;
+  }
+  const current = lnAddrOfferNow();
+  const st = lnLightningAddressState({
+    name,
+    registryOffer: lnAddrEntry ? lnAddrEntry.lnOffer : null,
+    currentOffer: current,
+    hostedLn: lnAddrEntry ? lnAddrEntry.ln : null,
+  });
+  const addrHtml = `<p class="tag" style="margin-bottom:2px">Your Lightning address:</p>
+    <p class="mono" style="font-size:15px;margin:2px 0"><b>${esc(st.address)}</b></p>`;
+  const copyShare = `
+    <button class="btn ghost" id="lnAddrCopy">Copy address</button>
+    <button class="btn ghost" id="lnAddrShare">Share</button>`;
+  const bindCopyShare = () => {
+    $("lnAddrCopy").onclick = () => copyText(st.address, $("lnAddrCopy"));
+    $("lnAddrShare").onclick = async () => {
+      if (navigator.share) { try { await navigator.share({ title: "My Fluid Lightning address", text: st.address }); } catch { /* user closed the share sheet */ } }
+      else copyText(st.address, $("lnAddrShare"));
+    };
+  };
+  if (st.state === "live") {
+    out.innerHTML = `${addrHtml}
+      <p class="tag"><b>✓ Live</b> — the registry carries your node's offer under this address, so anyone can pay it to send you sats. Payments come to your own node inside this app; Fluid must be open on this device when you're paid.${lnAddrView.status === "published" ? " <b>Published ✓ — just confirmed in the registry.</b>" : ""}</p>
+      <p>${copyShare}</p>`;
+    bindCopyShare();
+    return;
+  }
+  if (st.state === "update-available") {
+    out.innerHTML = `${addrHtml}
+      <p class="tag"><b>✓ Live</b> — but your node has a newer offer than the one published under this address. Update it so payments keep coming to this node.</p>
+      <p><button class="btn" id="lnAddrPublish">${esc(st.publishLabel)}</button></p>
+      <p>${copyShare}</p>`;
+    $("lnAddrPublish").onclick = () => lnPublishAddress();
+    bindCopyShare();
+    return;
+  }
+  // not-published: the address is shown, but plainly NOT live —
+  // never present an address that resolves to nothing as usable.
+  out.innerHTML = `${addrHtml}
+    <p class="tag"><b>Not live yet</b> — nothing is published under this address, so it can't receive anything yet. Publish it and your node's offer is registered under this address through the same signed claim that published your name.${st.hostedLn ? " (A hosted address is registered to your name; publishing adds your own node's offer alongside it.)" : ""}</p>
+    ${lnAddrView.status === "sent" ? `<p class="tag">Your signed update was sent, but the registry doesn't show it yet — claims usually appear within a few minutes.</p>
+    <p><button class="btn ghost" id="lnAddrCheck">Check the registry again</button></p>` : ""}
+    ${current ? `<p><button class="btn" id="lnAddrPublish">${esc(st.publishLabel)}</button></p>`
+      : `<p class="tag">Your node needs a connection to another node before it can build its offer — connect under <b>Advanced</b> below, then publish.</p>`}`;
+  const pub = $("lnAddrPublish"); if (pub) pub.onclick = () => lnPublishAddress();
+  const chk = $("lnAddrCheck"); if (chk) chk.onclick = () => lnAddrCheckAgain();
+}
+async function lnAddrCheckAgain() {
+  if (!lnAddrPending) { lnAddrRefresh(); return; }
+  const hit = await resolveFluidName(lnAddrPending.name).catch(() => null);
+  if (hit && hit.lnOffer && lnAddrPending.offer
+    && String(hit.lnOffer).trim().toLowerCase() === String(lnAddrPending.offer).trim().toLowerCase()) {
+    lnAddrEntry = hit;
+    lnAddrPending = null;
+    lnAddrView = { status: "published" };
+  }
+  if ($("lnAddrOut")) paintLnAddress();
+}
+async function lnPublishAddress() {
+  const name = localStorage.getItem("fluid_name");
+  if (!name || !lnSession) return;
+  const offer = lnAddrOfferNow();
+  if (!offer) {
+    lnAddrView = { status: "failed", message: "Your node couldn't build its offer yet — it needs a connection to another node first. Connect under Advanced below, then try again." };
+    paintLnAddress();
+    return;
+  }
+  lnAddrView = { status: "publishing" };
+  paintLnAddress();
+  try {
+    const hit = await resolveFluidName(name).catch(() => null);
+    if (hit && hit.evm && wallet && String(hit.evm).toLowerCase() !== String(wallet.address).toLowerCase()) {
+      throw new Error("That name is registered to a different wallet — this wallet can't publish a Lightning address for it.");
+    }
+    lnAddrEntry = hit || null;
+    const keepLn = hit && hit.ln ? hit.ln : null;
+    const n = await submitNameClaim(name, keepLn, offer);
+    if (n === 0) {
+      // Held claim: a defined state, NOT a publication — the offer
+      // publishes together with the name when the name goes live.
+      lnAddrView = { status: "failed", message: "Your node's offer was saved into the claim held on this device — it publishes together with your name when the name goes live. It is not in the registry yet, so the address isn't live." };
+      paintLnAddress();
+      return;
+    }
+    // Sent is not published: verify against the registry itself,
+    // polling like the creation wait sheet, and say which it is.
+    let verified = null;
+    for (let i = 0; i < 9 && !verified; i++) {
+      await new Promise((r) => setTimeout(r, 8000));
+      const check = await resolveFluidName(name).catch(() => null);
+      if (check && check.lnOffer && String(check.lnOffer).trim().toLowerCase() === offer.trim().toLowerCase()) verified = check;
+    }
+    if (verified) {
+      lnAddrEntry = verified;
+      lnAddrPending = null;
+      lnAddrView = { status: "published" };
+    } else {
+      lnAddrPending = { name, offer };
+      lnAddrView = { status: "sent" };
+    }
+    paintLnAddress();
+  } catch (e) {
+    lnAddrView = { status: "failed", message: "Couldn't publish your Lightning address: " + lnErrorText(e) };
+    paintLnAddress();
+  }
+}
+
 function paintLnSis() {
   const out = $("lnSisOut"); if (!out) return;
   const v = lnReceiveView(lnSisState);
@@ -7038,6 +7291,8 @@ function renderNameSection() {
     }
   };
   paintOwnedLn(null);
+  lnNativeTermsPainted = false; // a fresh section render has no terms painted (the label hold survives by design)
+  paintLnNodeStatus();
   $("ownedLn").textContent = "Checking the registry…";
   show("copyOwnedLn", false); show("ownedLnAdd", false);
   // --- Native Lightning registration: "Use my Fluid node" ---
@@ -7064,14 +7319,19 @@ function renderNameSection() {
   const paintNativeTerms = () => {
     const terms = $("ownedLnNativeTerms"), copy = $("ownedLnNativeCopy"), btn = $("ownedLnNativeBtn");
     if (!terms || !copy || !btn) return;
-    if (!lnNativeState) { terms.classList.add("hidden"); btn.textContent = "Use my Fluid node"; return; }
+    if (!lnNativeState) { terms.classList.add("hidden"); lnNativeTermsPainted = false; btn.textContent = lnStatusSnapshot().nativeBtnLabel; return; }
     terms.classList.remove("hidden");
+    lnNativeTermsPainted = true;
+    // Explicit success state (owner directive, 2026-11-10): step 1
+    // ends by SAYING the node is created and ready, in the terms
+    // themselves — the flow never just reverts to the start button.
+    const readyLead = "✓ Your Fluid node is ready — set up and running on this device. ";
     const recvSats = Math.floor((lnNativeState.receivableMsat || 0) / 1000);
     if (recvSats > 0) {
-      copy.textContent = "Your node can receive up to ~" + recvSats.toLocaleString("en-GB") + " sats right now. Payments to your name will come to this node — Fluid must be open on this device when you're paid.";
+      copy.textContent = readyLead + "Your node can receive up to ~" + recvSats.toLocaleString("en-GB") + " sats right now. Payments to your name will come to this node — Fluid must be open on this device when you're paid.";
       btn.textContent = "Register my node";
     } else {
-      copy.textContent = "Registered but not yet payable: your node can't receive yet — it has no channel with room in it. A channel with room is what lets sats arrive. You can register now and get a channel later (Wallet tab → Lightning → Channels) — this registration becomes payable the moment a channel has room; you won't need to register again. Until then, payments to your name will fail.";
+      copy.textContent = readyLead + "Registered but not yet payable: your node can't receive yet — it has no channel with room in it. A channel with room is what lets sats arrive. You can register now and get a channel later (Wallet tab → Lightning → Channels) — this registration becomes payable the moment a channel has room; you won't need to register again. Until then, payments to your name will fail.";
       btn.textContent = "Register anyway — I'll get a channel";
     }
   };
@@ -7081,6 +7341,7 @@ function renderNameSection() {
     // Re-check path: a sent registration that the registry hadn't
     // shown yet gets one fresh registry read and a plain answer.
     if (lnPendingVerify && !lnNativeState) {
+      lnNativeLabelHold = false;
       if (btn) btn.disabled = true;
       try {
         const hit = await resolveFluidName(lnPendingVerify.name).catch(() => null);
@@ -7091,11 +7352,14 @@ function renderNameSection() {
         } else {
           msg("nameMsg", "Still not in the registry — your signed registration was sent, but the registry doesn't show your node's offer yet. Give it a few more minutes and check again.");
           if (btn) btn.textContent = "Check the registry again";
+          lnNativeLabelHold = true;
         }
       } finally { if (btn) btn.disabled = false; }
       return;
     }
     if (!lnNativeState) {
+      lnNativeOfferError = null;
+      paintLnNodeStatus();
       if (lnSession && lnSession.network !== "bitcoin") return msg("nameMsg", "Your Lightning node is on a test network right now — switch it to Bitcoin (mainnet) in the Lightning panel first, so the offer you register can receive real payments.");
       if (btn) btn.disabled = true;
       // The busy label ("Starting your node…") is restored on
@@ -7120,6 +7384,13 @@ function renderNameSection() {
         try {
           offer = lnSession.createOffer(null, "Fluid");
         } catch {
+          // The node DID start — say so where the user is looking
+          // (the status line beside this button), persistently.
+          // Before this, the only trace was a message at the card's
+          // foot that could sit off-screen while the button label
+          // reverted — the owner's "starting… then nothing" report.
+          lnNativeOfferError = "✓ Your Fluid node is ready — it started and is running on this device. It couldn't build its offer yet: it needs a connection to another node first. Open the Lightning panel (Wallet tab → Lightning) → Advanced, connect to a peer, then tap again.";
+          paintLnNodeStatus();
           return msg("nameMsg", "Your node started, but it couldn't build its offer yet — it needs a connection to another node first. Open the Lightning panel (Wallet tab → Lightning) → Advanced, connect to a peer, then tap again.");
         }
         let recv = 0;
@@ -7136,8 +7407,13 @@ function renderNameSection() {
       } finally {
         if (btn) {
           btn.disabled = false;
-          if (!painted) btn.textContent = "Use my Fluid node";
+          // The resting label is state-derived, never a blind
+          // revert: with a node running it offers registration,
+          // with none it offers the start — the label itself tells
+          // the user which world they're in.
+          if (!painted) btn.textContent = lnStatusSnapshot().nativeBtnLabel;
         }
+        paintLnNodeStatus();
       }
       return;
     }
@@ -7173,6 +7449,7 @@ function renderNameSection() {
         lnPendingVerify = { offer, name: stored };
         msg("nameMsg", "Your signed registration was sent, but the registry doesn't show it yet — claims usually appear within a few minutes.");
         if (btn) btn.textContent = "Check the registry again";
+        lnNativeLabelHold = true;
       }
     } catch (e) { msg("nameMsg", "Could not register your node: " + (e.message || e)); }
     if (btn) btn.disabled = false;

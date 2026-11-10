@@ -4556,13 +4556,49 @@ function tu64(bytes) { let v = 0n; for (const b of bytes) v = (v << 8n) | BigInt
  *  silently. Full payment handling lives in the node chunk — this is
  *  the validation/display layer the wallet UI and BIP-353 resolver use
  *  before an offer is shown or handed to the node. */
+const BOLT12_HRPS = ["lno", "lnr", "lni"];
+const BECH32_WORD_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+/** BOLT 12's bech32 carries NO checksum — the spec drops the 6-char
+ *  bech32 checksum for offers, invoice requests and invoices, so a
+ *  string produced by a spec-conformant encoder (LDK's, e.g.) is
+ *  REFUSED by bech32m.decode, whose checksum verification can never
+ *  pass. Decode such a string by hand: HRP-gated to the three BOLT
+ *  12 prefixes, every data character must sit in the bech32
+ *  alphabet, and the payload words are returned whole (there is no
+ *  checksum tail to strip). Structural validity is then decided by
+ *  the TLV walk in parseBolt12Offer — garbage still dies there.
+ *  (Field root cause, 2026-11-10: the shipped node's own offers are
+ *  checksum-less with blinded paths; the checksummed-only parser
+ *  rejected every one, so a name claim carrying a current node's
+ *  offer could never verify, publish or be paid by name.) */
+function decodeBolt12WordsNoChecksum(s) {
+  const fail = () => { throw new Error("That is not a valid BOLT 12 string."); };
+  const sep = s.lastIndexOf("1");
+  if (sep <= 0) fail();
+  const prefix = s.slice(0, sep);
+  if (!BOLT12_HRPS.includes(prefix)) fail();
+  const data = s.slice(sep + 1);
+  if (!data) fail();
+  const words = [];
+  for (const ch of data) {
+    const v = BECH32_WORD_ALPHABET.indexOf(ch);
+    if (v < 0) fail();
+    words.push(v);
+  }
+  return { prefix, words };
+}
+
 export function parseBolt12Offer(input) {
   let s = String(input || "").trim();
   if (/^lightning:/i.test(s)) s = s.slice(10);
   s = s.toLowerCase();
   let dec;
+  // Strict path first: offers that DO carry a valid bech32m checksum
+  // (older encoders, this parser's own test fixtures) verify exactly
+  // as before. Only a string the strict decoder refuses falls to
+  // the spec's checksum-less form.
   try { dec = bech32m.decode(s, 8000); }
-  catch { throw new Error("That is not a valid BOLT 12 string (bech32m checksum failed)."); }
+  catch { dec = decodeBolt12WordsNoChecksum(s); }
   const kind = { lno: "offer", lnr: "invoice_request", lni: "invoice" }[dec.prefix];
   if (!kind) throw new Error("That is not a BOLT 12 string.");
   const bytes = wordsToBytesStrict(dec.words);
@@ -4816,6 +4852,106 @@ export function lnReceivePlan({ receivableMsat = 0, requestedMsat = null, hasLsp
     ? { kind: "need-amount", amountMsat: null, partial: false, receivableMsat: 0 }
     : { kind: "need-channel", amountMsat: null, partial: false, receivableMsat: 0 };
 }
+/** NODE STATUS (owner directive, 2026-11-10): one pure derivation
+ *  every Lightning surface reads — the panel, the home row and the
+ *  name card must never disagree about whether the user's own node
+ *  exists or is running. The owner started his node, watched the
+ *  button silently revert to its start label, and only learned the
+ *  node was live from a later panel visit. States, in precedence
+ *  order: ready (a session is running — the only state allowed to
+ *  claim readiness) > starting > failed (the last boot's stage is
+ *  named, retry is offered) > setup (a node was created on this
+ *  device for this wallet and is saved, but not running now) >
+ *  not-started. Copy law: a ready fresh node with 0 receiving and
+ *  0 sending room is NORMAL, never broken or incomplete — the
+ *  first incoming payment opens receiving room inside the node —
+ *  and a test network is always named as test coins. */
+export function lnNodeStatus({ running = false, exists = false, starting = false, failed = null, network = null, nodeId = null, receivableMsat = 0, spendableMsat = 0 } = {}) {
+  const sats = (msat) => Math.floor(Math.max(0, Number(msat) || 0) / 1000).toLocaleString("en-GB");
+  const shortId = nodeId ? String(nodeId).slice(0, 8) + "…" : null;
+  const netName = network === "bitcoin" ? "Bitcoin mainnet"
+    : network === "signet" ? "Signet (test coins — not real Bitcoin)"
+    : network === "testnet" ? "Testnet (test coins — not real Bitcoin)"
+    : null;
+  if (running) {
+    let detail = "Your own node is running on this device" + (netName ? ", on " + netName : "") + (shortId ? " · Node " + shortId : "")
+      + " · Receiving room: " + sats(receivableMsat) + " sats · Sending room: " + sats(spendableMsat) + " sats.";
+    if (!(Number(receivableMsat) > 0) && !(Number(spendableMsat) > 0)) {
+      detail += " That's normal for a new node — nothing is missing: your first incoming payment opens receiving room inside your node.";
+    }
+    return {
+      state: "ready",
+      headline: "Your Fluid node is ready ✓",
+      detail,
+      short: "Your Fluid node is ready ✓ — running on this device",
+      nativeBtnLabel: network === "bitcoin" ? "Register my node — it's ready" : "Use my Fluid node",
+    };
+  }
+  if (starting) {
+    return {
+      state: "starting",
+      headline: "Starting your Fluid node…",
+      detail: "It runs entirely on your device, from your own seed — nobody custodies your sats.",
+      short: "Starting your Fluid node…",
+      nativeBtnLabel: "Starting your node…",
+    };
+  }
+  if (failed) {
+    const why = failed && failed.message ? String(failed.message) : "Your Lightning node couldn't start.";
+    return {
+      state: "failed",
+      headline: "Your Fluid node couldn't start",
+      detail: why + " Nothing was sent or changed, and your funds are untouched — tap to try again.",
+      short: "Your Fluid node couldn't start — tap to retry",
+      nativeBtnLabel: "Try starting my node again",
+    };
+  }
+  if (exists) {
+    return {
+      state: "setup",
+      headline: "Your Fluid node is set up ✓",
+      detail: "You have created your own Fluid node — it is saved on this device" + (shortId ? " (Node " + shortId + ")" : "") + ". It isn't running right now: open Lightning and it starts again from your seed.",
+      short: "Your Fluid node is set up ✓ — tap to start it",
+      nativeBtnLabel: "Start my node",
+    };
+  }
+  return {
+    state: "not-started",
+    headline: "No Fluid node yet",
+    detail: "You haven't created your Fluid node yet. It runs entirely on this device, from your own seed — nobody custodies your sats.",
+    short: "Your own Lightning node — pay, receive and manage channels",
+    nativeBtnLabel: "Use my Fluid node",
+  };
+}
+
+/** LIGHTNING ADDRESS STATE (owner directive, 2026-11-10): whether
+ *  the wallet's `<name>@fluidwallet.dpdns.org` address may be
+ *  presented as LIVE. Truth over looks: the address resolves
+ *  through the published names registry, so it is live only when
+ *  the published entry for the wallet's name actually carries a
+ *  Lightning offer. A published offer that differs from the node's
+ *  current offer is live but stale — the update action is offered.
+ *  Comparison is on the normalised offer string (lowercase, any
+ *  "lightning:" prefix stripped), the same normalisation the
+ *  registry's own sanitizer applies. Pure; unit-tested. */
+export function lnLightningAddressState({ name = null, registryOffer = null, currentOffer = null, hostedLn = null } = {}) {
+  const norm = (v) => {
+    if (typeof v !== "string") return null;
+    const s = v.trim().toLowerCase().replace(/^lightning:/, "");
+    return s || null;
+  };
+  const clean = typeof name === "string" && name.trim() ? name.trim().toLowerCase() : null;
+  if (!clean) return { state: "no-name", address: null, publishLabel: null, publishedOffer: null };
+  const address = clean + "@fluidwallet.dpdns.org";
+  const published = norm(registryOffer);
+  const current = norm(currentOffer);
+  if (published && current && published !== current) {
+    return { state: "update-available", address, publishLabel: "Update my Lightning address", publishedOffer: published };
+  }
+  if (published) return { state: "live", address, publishLabel: null, publishedOffer: published };
+  return { state: "not-published", address, publishLabel: "Publish my Lightning address", publishedOffer: null, hostedLn: typeof hostedLn === "string" && hostedLn.trim() ? hostedLn.trim() : null };
+}
+
 /** The LSPS2 opening fee for a payment, mirroring the reference
  *  client's arithmetic (lightning-liquidity lsps2 utils):
  *  max(min_fee, ceil(payment_size × proportional / 1_000_000)).
