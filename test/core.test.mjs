@@ -383,7 +383,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const MTP_EXT_EUR = ["AT", "BE", "BG", "CY", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IS", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "RO", "SI", "SK"];
   const MTP_EXT_OWN = { CZ: "CZK", DK: "DKK", HU: "HUF", LI: "CHF", NO: "NOK", PL: "PLN", SE: "SEK", CA: "CAD", AU: "AUD", SG: "SGD" };
   const MTP_EXT_ALL = [...MTP_EXT_EUR, ...Object.keys(MTP_EXT_OWN)];
-  ok("extensions: 32 new corridors take the picker to 50 countries", RAMP_COUNTRIES.length === 50
+  ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries", RAMP_COUNTRIES.length === 54
     && MTP_EXT_ALL.length === 32 && MTP_EXT_ALL.every(code => RAMP_COUNTRIES.some(c => c.code === code)));
   ok("extensions: every new corridor is Mt Pelerin only, badge buy-only", MTP_EXT_ALL.every(code =>
     JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
@@ -404,6 +404,42 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     && rampRoutesFor("AU", "buy", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/buy-tether-usdt?bsc=AUD&bdc=USDT&rfr=Fp3dGFX3"
     && rampRoutesFor("SG", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=SGD&bdc=USDC&rfr=Fp3dGFX3"
     && rampRoutesFor("FR", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=EUR&bdc=USDC&rfr=Fp3dGFX3");
+  // Corridor extensions batch 2 (global ramp coverage matrix,
+  // 2026-11-10): CH, JP, HK, NZ join on the same Mt Pelerin
+  // referral preset, re-verified on the provider's own pricing
+  // page the same day (CHF/JPY/HKD/NZD in the bank-transfer buy
+  // AND sell lists; min buy CHF 1, min sell CHF 50; none of the
+  // four on the published exclusion list, Hong Kong expressly
+  // accepted). CH is the provider's home market (SIC transfers
+  // free) so — like LI on the same CHF preset — it carries NO
+  // SWIFT line; JP/HK/NZ ride SWIFT on buys and carry the
+  // P1-12 addendum, buy-side only.
+  const MTP_EXT2 = { CH: "CHF", JP: "JPY", HK: "HKD", NZ: "NZD" };
+  ok("extensions batch 2: CH/JP/HK/NZ are in the picker with their fiats", Object.entries(MTP_EXT2).every(([code, fiat]) =>
+    RAMP_COUNTRIES.some(c => c.code === code && c.fiat === fiat)));
+  ok("extensions batch 2: every corridor is Mt Pelerin only, badge buy-only", Object.keys(MTP_EXT2).every(code =>
+    JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged(code)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged(code, "sell")) === JSON.stringify([])));
+  ok("extensions batch 2: every link carries the referral + its preset fiat", Object.entries(MTP_EXT2).every(([code, fiat]) => {
+    const r = rampRoutesFor(code, "buy", "bsc", "USDC");
+    const buy = r.routes[0], sell = rampRoutesFor(code, "sell", "bsc", "USDC").routes[0];
+    return buy.url.includes(`bsc=${fiat}&`) && buy.url.includes("rfr=Fp3dGFX3")
+      && sell.url.includes(`sdc=${fiat}`) && sell.url.includes("rfr=Fp3dGFX3")
+      && r.mtpUnavailable === false;
+  }));
+  ok("extensions batch 2: exact preset URLs (CH buy, JP sell, HK buy, NZ buy)",
+    rampRoutesFor("CH", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=CHF&bdc=USDC&rfr=Fp3dGFX3"
+    && rampRoutesFor("JP", "sell", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/sell-tether-usdt?ssc=USDT&sdc=JPY&rfr=Fp3dGFX3"
+    && rampRoutesFor("HK", "buy", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/buy-tether-usdt?bsc=HKD&bdc=USDT&rfr=Fp3dGFX3"
+    && rampRoutesFor("NZ", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=NZD&bdc=USDC&rfr=Fp3dGFX3");
+  ok("extensions batch 2: SWIFT line on JP/HK/NZ buys only; CH carries none (SIC is free)", (() => {
+    const n = (code, mode) => (rampRoutesFor(code, mode, "bsc", "USDC").routes[0] || {}).note || "";
+    return ["JP", "HK", "NZ"].every(code => n(code, "buy").includes("SWIFT") && !n(code, "sell").includes("SWIFT"))
+      && !n("CH", "buy").includes("SWIFT") && !n("CH", "sell").includes("SWIFT");
+  })());
+
   // Honest labels: no corridor's assembled route (name, URL or
   // note) — and neither app shell source — may claim the domestic
   // instant-payment rails that belong to providers failing the
@@ -8307,13 +8343,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && rampRoutesFor("US", "sell").routes[0].note.includes("or any amount if you hold a free personal Mt Pelerin IBAN")
     && rampRoutesFor("US", "sell").routes[0].note.includes("(about $61)"));
 
-  // P1-12 — SWIFT line on the 12 own-fiat corridors, buy-side only.
+  // P1-12 — SWIFT line on the 15 own-fiat corridors, buy-side only
+  // (12 from 2026-11-09 + JP/HK/NZ from batch 2, 2026-11-10; CH
+  // rides SIC for free and carries no SWIFT line, like LI).
   ok("P1-12: GB buy note carries the SWIFT line", note("GB", "buy", "Mt Pelerin").includes("SWIFT"));
   ok("P1-12: DE buy note (SEPA) carries no SWIFT line", !note("DE", "buy", "Mt Pelerin").includes("SWIFT"));
-  ok("P1-12: exactly the 12 own-fiat corridors carry the SWIFT line, buy-side only",
-    ["ZA", "GB", "MX", "CA", "AU", "SG", "CZ", "DK", "HU", "NO", "PL", "SE"].every(code =>
+  ok("P1-12: exactly the 15 own-fiat corridors carry the SWIFT line, buy-side only",
+    ["ZA", "GB", "MX", "CA", "AU", "SG", "CZ", "DK", "HU", "NO", "PL", "SE", "JP", "HK", "NZ"].every(code =>
       note(code, "buy", "Mt Pelerin").includes("SWIFT") && !note(code, "sell", "Mt Pelerin").includes("SWIFT"))
-    && ["DE", "FR", "AT", "NL"].every(code => !note(code, "buy", "Mt Pelerin").includes("SWIFT")));
+    && ["DE", "FR", "AT", "NL", "CH"].every(code => !note(code, "buy", "Mt Pelerin").includes("SWIFT")));
 
   // Removal (2026-11-10) — the own-charge disclosure line left
   // with the scrapped rows; no assembled note carries it.

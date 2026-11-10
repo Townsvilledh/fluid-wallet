@@ -5049,6 +5049,18 @@ export const RAMP_COUNTRIES = [
   { code: "SE", name: "Sweden · SEK", fiat: "SEK" },
   { code: "SI", name: "Slovenia · EUR", fiat: "EUR" },
   { code: "SK", name: "Slovakia · EUR", fiat: "EUR" },
+  // Corridor extensions batch 2 (global ramp coverage matrix,
+  // 2026-11-10): Switzerland, Japan, Hong Kong and New Zealand —
+  // all four are Mt Pelerin fiats (CHF/JPY/HKD/NZD) and none of
+  // the four sits on its published exclusion list (Hong Kong is
+  // expressly accepted there). Re-verified on Mt Pelerin's own
+  // pricing page 2026-11-10: min buy CHF 1, min sell CHF 50,
+  // SIC transfers free in Switzerland, SWIFT elsewhere — see
+  // the batch-2 plan entries below.
+  { code: "CH", name: "Switzerland · CHF", fiat: "CHF" },
+  { code: "JP", name: "Japan · JPY", fiat: "JPY" },
+  { code: "HK", name: "Hong Kong · HKD", fiat: "HKD" },
+  { code: "NZ", name: "New Zealand · NZD", fiat: "NZD" },
 ];
 // Mt Pelerin: the consumer site IS the checkout (no account, no partner
 // key). URL params prefill the fiat + crypto pair (bsc/bdc buy, ssc/sdc
@@ -5342,8 +5354,10 @@ export const RAMP_COUNTRY_PLAN = {
   // rails belong to providers that fail Fluid's bar. SG verified
   // on Mt Pelerin's own pricing page (2026-11-09): SGD is listed
   // for bank-transfer buys AND sells, and Singapore is absent
-  // from its published exclusion list. JP deliberately stays out:
-  // JPY being a supported fiat is not, by itself, a route.
+  // from its published exclusion list. JP stayed out that day on
+  // caution alone (a supported fiat is not, by itself, a route);
+  // the 2026-11-10 re-verification retired that caution — see
+  // batch 2 below.
   CA: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   AU: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   SG: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
@@ -5376,6 +5390,25 @@ export const RAMP_COUNTRY_PLAN = {
   SE: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   SI: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
   SK: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  // Corridor extensions batch 2 (global ramp coverage matrix,
+  // 2026-11-10): the same Mt Pelerin referral preset extended
+  // to CH, JP, HK and NZ, re-verified on the provider's own
+  // pricing page the same day — CHF, JPY, HKD and NZD all sit
+  // in the bank-transfer buy AND sell currency lists, min buy
+  // CHF 1, min sell CHF 50, and none of the four countries is
+  // on the published exclusion list (Hong Kong expressly
+  // accepted). CH is Mt Pelerin's home market: Swiss CHF
+  // transfers ride SIC, which is free, so NO swift flag —
+  // exactly like LI on the same CHF preset. JP, HK and NZ ride
+  // SWIFT on buys from banks outside their currency's home
+  // area, so they carry the P1-12 flag like CA/AU/SG. Copy
+  // discipline identical to batch 1: the provider default note
+  // only (buy leads on the CHF 1 start; sell leads on the free
+  // personal-IBAN zero-minimum path).
+  CH: [["Mt Pelerin", { badge: true, badgeModes: ["buy"] }]],
+  JP: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  HK: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
+  NZ: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +
  *  asset, in ranked order. Each route: { name, url, note, badge,

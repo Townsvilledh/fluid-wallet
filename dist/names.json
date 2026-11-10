@@ -372,5 +372,30 @@
     "sol": "FXKK3NF5nnhc5qYtE2kPPF6d2UJ52C9c5KC8DvRoaPzT",
     "tron": "TLAqjc2LxBUK8n42tAKgPPqn5GuQVZpxPk",
     "sui": "0x0664854c9bb8973870a83d09d94e9b707e72ab336febf09da354badcf48e4b32"
+  },
+  "lnpubqa3110": {
+    "evm": "0x0c3dd1514C641f318aeEc8736C73F8696e2B3B1C",
+    "btc": "bc1qslsv24ehec0hw5a3n0mlgvuv4fmqdkc5txdlgk",
+    "algo": "XSM2FZQNHPX477MDF3JH46B3NQMRXWLN4W2PW5SD6WTWO6SSOCBQP43QOE",
+    "sol": "C9BVjdXeerRNGc5z2drLdJgKoTyqx4v9AbrHzzrrHpVy",
+    "tron": "TB5wAXUw1GMtXb1GapuazvEhwU6xotfr9f",
+    "sui": "0x5144a162e18ed22a84bbc15f3020fbb7ac313313ade5e82752fb91f0ff48cf0e"
+  },
+  "lnpubqa4110": {
+    "evm": "0x68F08c748ecE980d3ae23Af456d28DC8da7d0030",
+    "btc": "bc1q5z0p20zz7k3v9qs4zz7mr8etznzuvvhvttx7qp",
+    "algo": "F6LZYYE53QJ6OR73R74CPRVLSVIRVP2V6TGSXMV3KN3A2Z565GWE6ORJ5I",
+    "sol": "3S7fji4FxttVJZFF6Mn6TyVhQHSizkrGKPkWUbT9swyc",
+    "tron": "TKY5Sd5RGK23T6rPSi7nsBKxAi4NrzFeT9",
+    "sui": "0xfae0ae3fe4b20714217d9f95d696342140a0af3947f2b7d7cec3ce18062789fa"
+  },
+  "lnpubqa5110": {
+    "evm": "0xeD01f912aEA96871C1EB3E86BA227DbC56d4b4B3",
+    "btc": "bc1qtmyc37rdlv59g0625llm4xhyhzmg4s3mvhrr8x",
+    "lnOffer": "lno1pgz5vmr4d9jpplgpwyp5qehzneqzm884ttc6uypxe3ddlyhw68swggtc23p02dch45298vqznejsw0gz434mj74nhr9yx83z9d4g5t4zj3ua025ya50c4frhx26syq6zr58v8sc79za5fh4ds4a9urcgfcgw3ceax2cg7t375m3njfag55q8gkz4lwnzuu0jcd6htezyd2vck60sv5stkdsrayawjhkx0wrnzrdqxquh0y4tyvkecg6cus3t8dkq354afcej2n6g49w4s8jgqjma65pts6l3g7u3k7t3q8pt9829eqzegf8tk5ksrtp48j2w0nfmzewd95u8rfw3al84t8n33w296ak29hgr0u5smasrzzjsmp706p8gxtrcd8wzjahqynwsapr83xqgxeqzf9zx5d97q6xqqa96wf2wsc38ykawzkxwlk28ke3rvteftk3d7r9gewc8trq4k8aqpq7maeqsvp9slra8ttmfza5v9ghef89qhmka6f0utc99lafaegnkwh8h0slph6pzd27fj0lqhg25rl5j8sqjzumg2ewndtcqlc976plcqdrn95xmv88tc2kvtxmaah3spx07ea5hzcss9g6lu43qywcwtfv4kwgwptpy0yuqhlxdavtsghngwv8nqtqcpmsp",
+    "algo": "BXJ7TAFO5KFXVUUKSIKSXV7HTVML4XJ5EVGYASE5K2I37BRO5AXHCXKGHY",
+    "sol": "AXDN2fc6jG83hbSmoJnhDraeHY7yzz6jGsjt8Fk9qWvf",
+    "tron": "TXaPWc44Yd2hWEKRSNDq7HTzRVHcZb7Tws",
+    "sui": "0xd8148c9f37cf102b6e3aa6fb06bfc975861316c8a88dadb24489740f409a6388"
   }
 }
