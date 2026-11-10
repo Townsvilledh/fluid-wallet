@@ -46,6 +46,12 @@ export const LN_NETWORKS = {
  *  their own proxy template in the panel's Advanced section. The
  *  value is a URL template with {host}/{port}, same shape as the
  *  panel's per-user setting. */
+// Generation marker: the app bundle verifies the chunk it loaded
+// carries this flag before trusting it with a boot. A stale cached
+// chunk from an older build lacks it and is refused plainly (with a
+// reload hint) instead of silently booting an old harness.
+export const LN_PINNED_BOOT = true;
+
 export const LN_DEFAULT_WS_PROXY = "";
 
 /** Fluid's notification relay for wake-up pushes (tools/

@@ -3350,9 +3350,12 @@ $("lightningRow").onclick = () => openLightningPanel();
 
 // The Lightning chunk is verified against the fingerprint pinned in
 // THIS bundle (ln-asset-pins.generated.js) before it is imported —
-// code that doesn't match the pin never executes. The import uses a
-// pin-derived version query so a stale cached chunk from a previous
-// build can never be the copy that runs.
+// the exact bytes served for the chunk URL are fetched fresh and
+// hashed first, and the module that actually loads must carry the
+// pinned-boot marker, so a stale cached chunk from a previous build
+// is refused plainly (reload) instead of silently running. (The
+// import specifier must stay the literal "./lightning.chunk.js":
+// the bundler externalises exactly that string.)
 let lnChunkPromise = null;
 function lnLoadChunk() {
   if (lnChunk) return Promise.resolve(lnChunk);
@@ -3370,7 +3373,13 @@ function lnLoadChunk() {
         e.stage = "integrity";
         throw e;
       }
-      lnChunk = await import("./lightning.chunk.js?v=" + LN_CHUNK_SHA256.slice(0, 10));
+      const mod = await import("./lightning.chunk.js");
+      if (!mod || mod.LN_PINNED_BOOT !== true) {
+        const e = new Error("The Lightning code on this device is from an older Fluid build — reload the page to update it, then try again. Nothing ran.");
+        e.stage = "integrity";
+        throw e;
+      }
+      lnChunk = mod;
       return lnChunk;
     } catch (e) {
       lnChunkPromise = null;
