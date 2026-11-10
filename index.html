@@ -94,6 +94,8 @@
   .banner.ok{ background:rgba(47,208,140,.12); border:1px solid rgba(47,208,140,.35); color:var(--txt); }
   .banner .ic{ flex:0 0 auto; margin-top:1px; }
   .seed{ font-family:var(--font-mono); background:var(--surface-input); border:1px dashed var(--brand-1); border-radius:12px; padding:12px; word-break:break-word; }
+  .seedword{ display:inline-block; margin:2px 10px 2px 0; white-space:nowrap; }
+  .seedword b{ color:var(--brand-1); font-weight:600; margin-right:4px; }
   /* icons */
   .ic{ width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; vertical-align:middle; }
   .ic-sm{ width:16px; height:16px; } .ic-xl{ width:40px; height:40px; } .ic-brand{ color:var(--brand-1); }
@@ -271,7 +273,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="eb8559eb94"></head>
+<meta name="fluid-build" content="cc5762165f"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -334,10 +336,13 @@
       <input id="createPw2" type="password" placeholder="Repeat password" autocomplete="new-password">
       <button class="btn" id="createBtn">Create new wallet</button>
       <div class="hidden" id="seedBox">
-        <p>⚠️ Write these 12 words down on paper, in order. They ARE the wallet — on every chain. Anyone with them has your money; nobody can recover them for you.</p>
-        <div class="seed" id="seedOut"></div>
-        <label style="display:block;margin:12px 0"><input type="checkbox" id="seedCheck" style="width:auto"> I wrote my seed phrase down</label>
-        <button class="btn" id="seedDoneBtn">Enter Fluid →</button>
+        <div id="seedWordsView">
+          <p>⚠️ Write these 12 words down on paper, in order. They ARE the wallet — on every chain. Anyone with them has your money; nobody can recover them for you.</p>
+          <div class="seed" id="seedOut"></div>
+          <label style="display:block;margin:12px 0"><input type="checkbox" id="seedCheck" style="width:auto"> I wrote my seed phrase down</label>
+          <button class="btn" id="seedDoneBtn">Continue →</button>
+        </div>
+        <div class="hidden" id="seedQuizBox"></div>
       </div>
       <hr style="border-color:var(--line)">
       <textarea id="importPhrase" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" rows="2" placeholder="Import instead: paste a 12/24-word seed phrase"></textarea>
@@ -378,6 +383,14 @@
         <b class="t-strong">⏳ Your Fluid name is not live yet</b>
         <p class="tag" id="homeClaimText" style="margin:6px 0 10px"></p>
         <button class="btn ghost" id="homeClaimBtn" style="width:auto;padding:8px 14px">Publish my name</button>
+      </div>
+      <div class="card hidden" id="homeBackupCard">
+        <b class="t-strong">⚠️ Your seed backup isn't confirmed yet</b>
+        <p class="tag" style="margin:6px 0 10px">You entered without the word check, so Fluid can't be sure the words you wrote down are right. If you lose this device and the words are wrong, the wallet can't be recovered. The check takes ten seconds.</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" id="homeBackupBtn" style="width:auto;padding:8px 14px">Check my backup now</button>
+          <button class="btn ghost" id="homeBackupDismiss" style="width:auto;padding:8px 14px">Later</button>
+        </div>
       </div>
       <div class="card hidden" id="homeZero" style="text-align:center">
         <b class="t-title">Your wallet is empty</b>
@@ -612,6 +625,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=eb8559eb94"></script>
+<script src="app.bundle.js?v=cc5762165f"></script>
 </body>
 </html>
