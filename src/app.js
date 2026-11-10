@@ -32,6 +32,7 @@ import {
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
@@ -389,9 +390,10 @@ function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName,
 
 // ---------- tabs ----------
 function goTab(name) {
-  for (const t of ["wallet", "play", "activity", "scan", "more"]) show("tab-" + t, t === name);
+  for (const t of ["wallet", "play", "activity", "scan", "more", "bridge"]) show("tab-" + t, t === name);
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   if (name === "activity") clearActivityDot();
+  if (name === "bridge") bridgeRefresh().catch(() => {});
   const pane = $("tab-" + name);
   if (pane) { pane.classList.remove("tabenter"); void pane.offsetWidth; pane.classList.add("tabenter"); }
 }
@@ -4153,6 +4155,371 @@ function lnFallbackSheet(note) {
   };
 }
 
+// ---------- BTC exit tab: Lightning -> Arkade -> Bitcoin ----------
+// ALWAYS-WARN LAW v2 (owner, 2026-11-09): this tab is the only
+// home of the bridge; its static warnings and unticked
+// acknowledgements live in index.html, and nothing in this
+// section runs until all three are ticked. The route: Satora
+// Lightning -> Arkade (V-HTLC, lands in the user's own Arkade
+// VTXO), then the Arkade operator's batched offboard to the
+// user's Bitcoin address. Core holds the quote math and the
+// ≈740-sat honesty gate; the Arkade SDK runs in the lazy
+// arkade chunk. No custodial moment anywhere: the swap is
+// atomic (pay the invoice or it fails back), the claim reveals
+// the preimage into the user's own VTXO, and the exit is the
+// operator batching outputs it cannot redirect.
+let arkChunk = null, arkChunkPromise = null, arkSession = null, arkBootPromise = null;
+let bridgePair = null, bridgeFeesInfo = null, bridgeQuote = null, bridgeBusy = false;
+let bridgeForm = { sourceSats: "", btcAddress: "" };
+
+function arkLoadChunk() {
+  if (arkChunk) return Promise.resolve(arkChunk);
+  if (arkChunkPromise) return arkChunkPromise;
+  arkChunkPromise = (async () => {
+    let mod;
+    try { mod = await import("./arkade.chunk.js"); }
+    catch {
+      const err = new Error("The Arkade module isn't included in this build (the single-file build doesn't carry it). Open Fluid from fluidwallet.dpdns.org to use the bridge.");
+      err.stage = "asset";
+      throw err;
+    }
+    if (!mod || mod.ARKADE_CHUNK_MARKER !== true) {
+      const err = new Error("The Arkade module loaded but doesn't match this build — hard-refresh the page and try again.");
+      err.stage = "integrity";
+      throw err;
+    }
+    arkChunk = mod;
+    return mod;
+  })();
+  return arkChunkPromise;
+}
+
+function arkEnsureSession() {
+  if (arkSession) return Promise.resolve(arkSession);
+  if (arkBootPromise) return arkBootPromise;
+  arkBootPromise = (async () => {
+    const mod = await arkLoadChunk();
+    const session = await mod.bootArkade({ phrase: wallet.mnemonic.phrase });
+    arkSession = session;
+    return session;
+  })();
+  arkBootPromise.catch(() => { arkBootPromise = null; });
+  return arkBootPromise;
+}
+
+function bridgeAcksOk() {
+  return ["bridgeAck1", "bridgeAck2", "bridgeAck3"].every((id) => { const el = $(id); return !!el && el.checked; });
+}
+for (const id of ["bridgeAck1", "bridgeAck2", "bridgeAck3"]) {
+  const el = $(id);
+  if (el) el.onchange = () => { bridgeQuote = null; if (wallet) bridgeRefresh().catch(() => {}); };
+}
+
+async function bridgeRefresh() {
+  if (!wallet || !$("tab-bridge")) return;
+  paintBridgeRecords();
+  if (bridgeAcksOk()) paintBridgeForm(); else paintBridgeLocked();
+  paintBridgeArkade(`<p class="tag" style="margin:0">Loading your Arkade wallet…</p>`);
+  try {
+    await arkEnsureSession();
+    const session = arkSession;
+    const [info, pair] = await Promise.all([
+      session.operatorInfo().catch(() => null),
+      fetchLnArkadePair().catch(() => null),
+    ]);
+    if (info) bridgeFeesInfo = info;
+    if (pair) bridgePair = pair;
+    if (!prices.BTC) { try { const p = await getPrices(); if (p && p.BTC) prices.BTC = p.BTC; } catch {} }
+    await bridgeSyncRecords();
+    paintBridgeRecords();
+    await paintBridgeArkadeLive();
+    if (bridgeAcksOk()) paintBridgeForm(); else paintBridgeLocked();
+  } catch (e) {
+    paintBridgeArkade(`<p class="msg err" style="margin:0">${esc(e.message || String(e))}</p>`);
+    if (bridgeAcksOk()) paintBridgeForm();
+  }
+}
+
+function paintBridgeLocked() {
+  const el = $("bridgeMain");
+  if (el) el.innerHTML = `<div class="card"><p class="tag" style="margin:0">Tick the three confirmations above and the bridge form opens. Nothing here runs until you do — that's deliberate.</p></div>`;
+}
+
+function paintBridgeForm() {
+  const el = $("bridgeMain");
+  if (!el) return;
+  if (!bridgeAcksOk()) { paintBridgeLocked(); return; }
+  const pair = bridgePair;
+  const pairLine = pair
+    ? `Satora's live Lightning → Arkade route terms: ${pair.feePercentage * 100}% + ${pair.networkFeeSats} sat per swap · this route's minimum is ${pair.minSats.toLocaleString()} sats · maximum ${pair.maxSats.toLocaleString()} sats.`
+    : "Satora's live pair table couldn't be read just now — quoting is paused until it can be. Nothing is guessed.";
+  el.innerHTML = `<div class="card">
+    <p class="t-strong" style="margin:0 0 6px">Cross to Bitcoin mainnet</p>
+    <p class="tag" style="margin:0 0 10px">${esc(pairLine)}</p>
+    <label class="fld"><span>Amount in sats (from your Lightning balance)</span><input id="bridgeAmount" inputmode="numeric" placeholder="e.g. 2700" value="${esc(bridgeForm.sourceSats)}"></label>
+    <label class="fld"><span>Destination Bitcoin address (your external wallet)</span><input id="bridgeBtcAddr" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
+    <p class="msg" id="bridgeMsg"></p>
+    <div id="bridgeQuoteBox"></div>
+    <button class="btn" id="bridgeQuoteBtn" ${pair ? "" : "disabled"}>Get the exact quote</button>
+    <p class="tag" style="margin:10px 0 0">The quote is a real, live Satora creation — unpaid, and it simply expires if you stop here. Fluid refuses the crossing, plainly, if the true costs would push the route above its honesty cap.</p>
+  </div>`;
+  $("bridgeAmount").oninput = (e) => { bridgeForm.sourceSats = e.target.value; };
+  $("bridgeBtcAddr").oninput = (e) => { bridgeForm.btcAddress = e.target.value; };
+  $("bridgeQuoteBtn").onclick = () => bridgeDoQuote().catch((e) => msg("bridgeMsg", e.message || String(e), false));
+  if (bridgeQuote) paintBridgeQuoteReview();
+}
+
+async function bridgeDoQuote() {
+  if (bridgeBusy) return;
+  const sourceSats = Math.floor(Number(bridgeForm.sourceSats));
+  const btcAddress = String(bridgeForm.btcAddress || "").trim();
+  if (!Number.isFinite(sourceSats) || sourceSats <= 0) throw new Error("Enter the amount in sats.");
+  if (!bridgePair) throw new Error("Satora's pair table isn't readable right now — try again in a moment.");
+  if (sourceSats < bridgePair.minSats) throw new Error(`This route's minimum is ${bridgePair.minSats} sats — that's Satora's Lightning → Arkade pair floor, not a Fluid minimum.`);
+  if (sourceSats > bridgePair.maxSats) throw new Error(`Satora's Lightning → Arkade maximum is ${bridgePair.maxSats.toLocaleString()} sats per swap.`);
+  if (!isValidBitcoinAddress(btcAddress)) throw new Error("That doesn't look like a Bitcoin mainnet address — check it and try again.");
+  const session = await arkEnsureSession();
+  const info = bridgeFeesInfo || await session.operatorInfo().catch(() => null);
+  const program = info ? parseArkadeIntentFees(info.fees) : null;
+  if (!program) throw new Error("The Arkade operator's current fee program isn't one Fluid recognises — quoting is paused rather than guessed. Nothing was created.");
+  bridgeBusy = true;
+  msg("bridgeMsg", "Asking Satora for the exact quote…", true);
+  try {
+    const idx = bridgeCreationIndex(localStorage);
+    const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, idx);
+    const creation = await createLnArkadeSwap({ identity, sourceSats, targetArkadeAddress: session.address, extraFeesBps: 0 });
+    bumpBridgeCreationIndex(localStorage, idx);
+    const quote = composeBridgeQuote({ sourceSats, pair: bridgePair, legAQuoteSats: creation.legAFeeSats, offboardProgram: program, btcUsd: prices.BTC || 0 });
+    if (!quote) throw new Error("After the quoted fees nothing would arrive — increase the amount.");
+    bridgeQuote = { quote, quoteLegAFeeSats: creation.legAFeeSats, sourceSats, btcAddress };
+    paintBridgeQuoteReview();
+    msg("bridgeMsg", "", true);
+  } finally { bridgeBusy = false; }
+}
+
+function paintBridgeQuoteReview() {
+  const box = $("bridgeQuoteBox");
+  if (!box || !bridgeQuote) return;
+  const { quote, sourceSats, btcAddress } = bridgeQuote;
+  const lines = formatBridgeQuoteLines({ ...quote, sourceSats, btcAddress });
+  if (!quote.gate.ok) {
+    box.innerHTML = `<div class="subcard" style="margin-top:12px">${lines.map((l) => `<p class="tag" style="margin:0 0 4px">${esc(l)}</p>`).join("")}
+      <p class="msg err" style="margin:8px 0 0">Fluid won't run this crossing: the true route cost (${quote.routeCostSats} sats) is above the ${BRIDGE_ROUTE_COST_CAP_SATS}-sat honesty cap for this route. Nothing was paid; the quote creation above simply expires unpaid.</p></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="subcard" style="margin-top:12px">${lines.map((l) => `<p class="tag" style="margin:0 0 4px">${esc(l)}</p>`).join("")}
+    <button class="btn" id="bridgeGoBtn" style="margin-top:8px">Create the swap</button>
+    <p class="tag" style="margin:8px 0 0">Creating charges nothing. You then review the invoice and pay it from your own Lightning node — paying is the irreversible step.</p></div>`;
+  $("bridgeGoBtn").onclick = () => bridgeCreateReal().catch((e) => msg("bridgeMsg", e.message || String(e), false));
+}
+
+async function bridgeCreateReal() {
+  if (bridgeBusy || !bridgeQuote) return;
+  const { quote, quoteLegAFeeSats, sourceSats, btcAddress } = bridgeQuote;
+  const session = await arkEnsureSession();
+  bridgeBusy = true;
+  msg("bridgeMsg", "Creating the real swap…", true);
+  try {
+    const idx = bridgeCreationIndex(localStorage);
+    const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, idx);
+    const real = await createLnArkadeSwap({ identity, sourceSats, targetArkadeAddress: session.address, extraFeesBps: quote.fluidFeeBps });
+    bumpBridgeCreationIndex(localStorage, idx);
+    // Two-pass honesty: the real creation's deduction over the
+    // fee-free quote creation must be exactly Fluid's quoted fee
+    // (±1 sat of integer rounding) — anything else means the
+    // server moved the price between quote and creation.
+    const expectedExtra = real.legAFeeSats - quoteLegAFeeSats;
+    if (Math.abs(expectedExtra - quote.fluidFeeSats) > 1)
+      throw new Error(`Satora priced the real swap differently from its own quote (expected Fluid's fee of ${quote.fluidFeeSats} sats on top, saw ${expectedExtra}). Nothing was paid — the created swap expires unpaid.`);
+    // Self-check before any money moves: Fluid recomputes the
+    // VHTLC lock address from the swap's own parameters and
+    // refuses if it differs from the address Satora will fund.
+    const mod = await arkLoadChunk();
+    const local = mod.bridgeVhtlc({ record: { ...real, receiverPk: identity.claimPk }, hashLock: identity.hashLock });
+    if (local.address !== real.vhtlcAddress)
+      throw new Error("Fluid computed a different Arkade lock address than the swap's — nothing was paid, and the created swap expires unpaid. This should never happen; please report it.");
+    const record = {
+      id: real.id, index: idx, phase: "awaiting-payment",
+      sourceSats, targetSats: real.targetSats, legAFeeSats: real.legAFeeSats,
+      fluidFeeSats: quote.fluidFeeSats, offboardFeeQuotedSats: quote.offboardFeeSats,
+      receiveSats: quote.receiveSats, btcAddress, arkadeAddress: session.address,
+      vhtlcAddress: real.vhtlcAddress, senderPk: real.senderPk, serverPk: real.serverPk,
+      receiverPk: identity.claimPk, refundLocktime: real.refundLocktime,
+      unilateralClaimDelay: real.unilateralClaimDelay, unilateralRefundDelay: real.unilateralRefundDelay,
+      unilateralRefundWithoutReceiverDelay: real.unilateralRefundWithoutReceiverDelay,
+      invoice: real.invoice, invoiceExpiresAt: real.invoiceExpiresAt || null,
+      satoraStatus: real.status || "", createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    saveBridgeRecord(localStorage, record);
+    bridgeQuote = null;
+    msg("bridgeMsg", "Swap created. Pay its invoice below to start the crossing.", true);
+    paintBridgeForm();
+    paintBridgeRecords();
+  } finally { bridgeBusy = false; }
+}
+
+async function bridgeSyncRecords() {
+  if (!wallet) return;
+  const records = loadBridgeRecords(localStorage);
+  const mod = arkChunk || await arkLoadChunk().catch(() => null);
+  for (const r of records) {
+    if (["done", "expired", "failed"].includes(r.phase)) continue;
+    let changed = false;
+    try {
+      if (r.phase === "awaiting-payment") {
+        const st = await fetchLnArkadeSwapStatus(r.id).catch(() => null);
+        if (st && st.status && st.status !== r.satoraStatus) { r.satoraStatus = st.status; changed = true; }
+        if (!r.paidAt && r.invoiceExpiresAt && Date.now() > r.invoiceExpiresAt) { r.phase = "expired"; changed = true; }
+        else if (r.paidAt) { r.phase = "funding"; changed = true; }
+      }
+      if (r.phase === "funding" && mod) {
+        const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, r.index);
+        const funded = await mod.bridgeVhtlcFundedSats(r, identity.hashLock).catch(() => 0);
+        if (funded > 0) { r.fundedSats = funded; r.phase = "claimable"; changed = true; }
+      }
+    } catch {}
+    if (changed) { r.updatedAt = Date.now(); saveBridgeRecord(localStorage, r); }
+  }
+}
+
+function paintBridgeRecords() {
+  const el = $("bridgeRecords");
+  if (!el || !wallet) return;
+  const records = loadBridgeRecords(localStorage);
+  if (!records.length) { el.innerHTML = `<p class="tag" style="margin:0">None yet.</p>`; return; }
+  el.innerHTML = records.map((r) => {
+    const line = bridgeHistoryLine(r);
+    let action = "";
+    if (r.phase === "awaiting-payment") action = `<button class="btn ghost" data-bridge-pay="${esc(r.id)}">Pay the invoice (${Number(r.sourceSats).toLocaleString()} sats)</button>`;
+    else if (r.phase === "claimable") action = `<button class="btn ghost" data-bridge-claim="${esc(r.id)}">Claim ${Number(r.fundedSats || r.targetSats).toLocaleString()} sats into my Arkade wallet</button>`;
+    else if (r.phase === "claimed") action = `<button class="btn ghost" data-bridge-exit="${esc(r.id)}">Exit to ${esc(String(r.btcAddress || "").slice(0, 10))}… (review the live fee first)</button>`;
+    return `<div class="subcard" style="margin:0 0 8px"><p class="tag" style="margin:0 0 2px">${esc(line)}</p><p class="tag" style="margin:0 0 ${action ? 8 : 0}px">Status: ${esc(bridgePhaseLabel(r))}${r.claimTxId ? ` · claim tx ${esc(String(r.claimTxId).slice(0, 16))}…` : ""}${r.exitTxId ? ` · exit tx ${esc(String(r.exitTxId).slice(0, 16))}…` : ""}</p>${action}</div>`;
+  }).join("");
+  el.querySelectorAll("[data-bridge-pay]").forEach((b) => b.onclick = () => bridgePay(b.dataset.bridgePay).catch((e) => toast(e.message || String(e))));
+  el.querySelectorAll("[data-bridge-claim]").forEach((b) => b.onclick = () => bridgeClaim(b.dataset.bridgeClaim).catch((e) => toast(e.message || String(e))));
+  el.querySelectorAll("[data-bridge-exit]").forEach((b) => b.onclick = () => bridgeExit(b.dataset.bridgeExit).catch((e) => toast(e.message || String(e))));
+}
+
+async function bridgePay(id) {
+  const record = loadBridgeRecords(localStorage).find((r) => r.id === id);
+  if (!record || record.phase !== "awaiting-payment") return;
+  if (record.invoiceExpiresAt && Date.now() > record.invoiceExpiresAt) throw new Error("That invoice has expired — start a fresh crossing.");
+  const session = await lnEnsureSession("bitcoin");
+  toast("Paying the swap invoice from your Lightning node…");
+  await session.payInvoice(record.invoice, null);
+  record.paidAt = Date.now();
+  record.phase = "funding";
+  record.updatedAt = Date.now();
+  saveBridgeRecord(localStorage, record);
+  paintBridgeRecords();
+  try { await lnWaitEvent("payment_sent", { timeoutMs: 120000, failTypes: ["payment_failed"] }); }
+  catch (e) { toast(`Payment problem: ${e.message} — the bridge record below tracks the ground truth.`); }
+  await bridgeSyncRecords();
+  paintBridgeRecords();
+}
+
+async function bridgeClaim(id) {
+  const record = loadBridgeRecords(localStorage).find((r) => r.id === id);
+  if (!record || record.phase !== "claimable") return;
+  const session = await arkEnsureSession();
+  const mod = await arkLoadChunk();
+  const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, record.index);
+  toast("Claiming into your Arkade wallet…");
+  const res = await mod.claimBridgeVhtlc({
+    secretKeyHex: identity.secretKeyHex, claimPkHex: identity.claimPk,
+    preimageHex: identity.secretHex, hashLockHex: identity.hashLock,
+    record, destinationAddress: session.address,
+  });
+  record.phase = "claimed";
+  record.claimTxId = res.txId;
+  record.claimedSats = Number(res.claimAmount);
+  record.updatedAt = Date.now();
+  saveBridgeRecord(localStorage, record);
+  paintBridgeRecords();
+  await paintBridgeArkadeLive();
+  toast(`Claimed ${Number(res.claimAmount).toLocaleString()} sats into your Arkade wallet ✓`);
+}
+
+async function bridgeExit(id) {
+  const record = loadBridgeRecords(localStorage).find((r) => r.id === id);
+  if (!record || record.phase !== "claimed") return;
+  const session = await arkEnsureSession();
+  const info = await session.operatorInfo();
+  const program = parseArkadeIntentFees(info.fees);
+  if (!program) throw new Error("The Arkade operator's current fee program isn't one Fluid recognises — the exit is paused rather than guessed.");
+  const vtxos = await session.vtxos();
+  const earliest = vtxos.reduce((m, v) => (v.expirySecs && (!m || v.expirySecs < m) ? v.expirySecs : m), null);
+  const fee = arkadeOffboardFeeSats(record.claimedSats, program, { vtxoExpirySecs: earliest, nowSecs: Math.floor(Date.now() / 1000) });
+  const net = record.claimedSats - fee;
+  if (net <= 0) throw new Error("The exit fee would consume the whole amount — nothing to exit.");
+  if (!window.confirm(`Exit ${record.claimedSats.toLocaleString()} sats to ${record.btcAddress}?\n\nArkade exit fee (live): ${fee} sats\nYou receive on Bitcoin mainnet: ≈ ${net.toLocaleString()} sats\n\nOnce submitted to the batch this cannot be recalled.`)) return;
+  toast("Submitting the exit to the operator's next batch…");
+  const txid = await session.offboard({ btcAddress: record.btcAddress, feeInfo: info.fees, amountSats: record.claimedSats });
+  record.phase = "done";
+  record.exitTxId = txid;
+  record.exitFeeQuotedSats = fee;
+  record.updatedAt = Date.now();
+  saveBridgeRecord(localStorage, record);
+  paintBridgeRecords();
+  await paintBridgeArkadeLive();
+  toast("Exit submitted ✓ — it lands on-chain with the operator's next batch, then confirms like any Bitcoin transaction.");
+}
+
+function paintBridgeArkade(html) {
+  const el = $("bridgeArkadeBody");
+  if (el) el.innerHTML = html;
+}
+
+async function paintBridgeArkadeLive() {
+  const el = $("bridgeArkadeBody");
+  if (!el) return;
+  try {
+    const session = await arkEnsureSession();
+    const [balance, vtxos] = await Promise.all([session.balanceSats().catch(() => null), session.vtxos().catch(() => [])]);
+    if (balance == null) { paintBridgeArkade(`<p class="msg err" style="margin:0">Your Arkade balance couldn't be read just now — reopen the tab to retry. Nothing is guessed.</p>`); return; }
+    const earliest = vtxos.reduce((m, v) => (v.expirySecs && (!m || v.expirySecs < m) ? v.expirySecs : m), null);
+    const soon = earliest && earliest * 1000 - Date.now() < 7 * 24 * 3600 * 1000;
+    const rows = vtxos.slice(0, 12).map((v) => `<p class="tag" style="margin:0 0 2px">${Number(v.valueSats).toLocaleString()} sats${v.expirySecs ? ` · expires ${esc(new Date(v.expirySecs * 1000).toLocaleString())}` : ""}</p>`).join("");
+    paintBridgeArkade(`
+      <p style="margin:0 0 4px"><b>${Number(balance).toLocaleString()} sats</b> in Arkade</p>
+      <p class="tag" style="margin:0 0 6px">Your Arkade address: <span class="mono">${esc(session.address)}</span></p>
+      ${rows}
+      ${earliest ? `<p class="tag" style="margin:6px 0 0${soon ? ";color:#e5484d" : ""}">Earliest expiry: ${esc(new Date(earliest * 1000).toLocaleString())}${soon ? " — renew or exit soon; past expiry the operator can sweep unspent coins." : ""}</p>` : ""}
+      ${balance > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn ghost" id="bridgeRenewBtn" style="width:auto">Renew my Arkade balance</button></div>
+      <label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" placeholder="bc1…" autocapitalize="none"></label>
+      <p class="msg" id="bridgeArkadeMsg"></p>
+      <button class="btn ghost" id="bridgeExitAllBtn">Review the exit</button>` : `<p class="tag" style="margin:6px 0 0">Sats you bridge land here first; from here you exit them to Bitcoin mainnet.</p>`}`);
+    if (balance > 0) {
+      $("bridgeRenewBtn").onclick = async () => {
+        try {
+          toast("Renewing your Arkade balance…");
+          await session.renew();
+          toast("Renewed ✓ — your VTXOs carry a fresh expiry.");
+          await paintBridgeArkadeLive();
+        } catch (e) { msg("bridgeArkadeMsg", e.message || String(e), false); }
+      };
+      $("bridgeExitAllBtn").onclick = async () => {
+        try {
+          const addr = String($("bridgeExitAllAddr").value || "").trim();
+          if (!isValidBitcoinAddress(addr)) throw new Error("Enter a valid Bitcoin mainnet address.");
+          const info = await session.operatorInfo();
+          const program = parseArkadeIntentFees(info.fees);
+          if (!program) throw new Error("The Arkade operator's current fee program isn't one Fluid recognises — the exit is paused rather than guessed.");
+          const fee = arkadeOffboardFeeSats(balance, program, { vtxoExpirySecs: earliest, nowSecs: Math.floor(Date.now() / 1000) });
+          const net = balance - fee;
+          if (net <= 0) throw new Error("The exit fee would consume the whole balance.");
+          if (!window.confirm(`Exit your whole Arkade balance (${Number(balance).toLocaleString()} sats) to ${addr}?\n\nArkade exit fee (live): ${fee} sats\nYou receive on Bitcoin mainnet: ≈ ${net.toLocaleString()} sats\n\nOnce submitted to the batch this cannot be recalled.`)) return;
+          await session.offboard({ btcAddress: addr, feeInfo: info.fees });
+          toast("Exit submitted ✓ — it lands on-chain with the operator's next batch.");
+          await paintBridgeArkadeLive();
+        } catch (e) { msg("bridgeArkadeMsg", e.message || String(e), false); }
+      };
+    }
+  } catch (e) {
+    paintBridgeArkade(`<p class="msg err" style="margin:0">${esc(e.message || String(e))}</p>`);
+  }
+}
+
 // ---------- WalletConnect ----------
 // Fluid as a wallet for OTHER apps: paste a wc: URI, review the
 // session proposal, and every later signing request comes back here
@@ -6169,7 +6536,7 @@ $("refreshBtn").onclick = async () => {
     delete btn.dataset.busy;
   }
 };
-function lockWallet() { wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; msg("onboardMsg", ""); refreshGate(); }
+function lockWallet() { wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate(); }
 $("lockBtn").onclick = lockWallet;
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
 if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;

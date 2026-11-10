@@ -6267,10 +6267,10 @@ function satoraVersionHeaders(destKey) {
   if (destKey === "lightning") h["x-satora-lightning-version"] = String(SATORA_LIGHTNING_VERSION);
   return h;
 }
-async function satoraFetchJson(path, { method = "GET", destKey = null, body = null } = {}) {
+async function satoraFetchJson(path, { method = "GET", destKey = null, body = null, extraHeaders = null } = {}) {
   const res = await fetch(SATORA_API_BASE + path, {
     method,
-    headers: { "Content-Type": "application/json", ...satoraVersionHeaders(destKey) },
+    headers: { "Content-Type": "application/json", ...satoraVersionHeaders(destKey), ...(extraHeaders || {}) },
     ...(body != null ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20000),
   });
@@ -6284,7 +6284,7 @@ async function satoraFetchJson(path, { method = "GET", destKey = null, body = nu
 // never cached — a transient outage must not poison the session.
 let satoraVersionPromise = null;
 let satoraPairsPromise = null;
-export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; satoraIrisFeeCache = new Map(); }
+export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; satoraIrisFeeCache = new Map(); lnArkadePairPromise = null; }
 async function satoraAssertVersion() {
   if (!satoraVersionPromise) {
     satoraVersionPromise = (async () => {
@@ -6677,6 +6677,23 @@ export function satoraSwapIdentity(phrase, index) {
 export function satoraClaimKey(phrase) {
   const k = btcTaprootKeys(phrase, 0);
   return { claimPk: hexOf(k.child.publicKey), address: k.address };
+}
+/** The full swap identity for destinations the user claims with
+ *  the swap key itself (the Arkade VHTLC of the Lightning ->
+ *  Bitcoin bridge): everything satoraSwapIdentity derives, plus
+ *  the child private key that signs the claim. The key never
+ *  leaves this derivation's caller — it is re-derived from the
+ *  Fluid seed on demand (same recovery story: seed + index), and
+ *  the preimage (secretHex) is the one-way hash of it, exactly
+ *  as in satoraSwapIdentity, so revealing the preimage at claim
+ *  time exposes nothing about the key. */
+export function satoraSwapClaimKey(phrase, index) {
+  const base = satoraSwapIdentity(phrase, index);
+  const i = Math.max(0, Math.floor(Number(index) || 0));
+  const seed = mnemonicToSeedSync(String(phrase || "").trim().toLowerCase().replace(/\s+/g, " "));
+  const child = HDKey.fromMasterSeed(seed).derive("m/9419/121923").deriveChild(i);
+  if (!child.privateKey) throw new Error("Could not derive this wallet's Satora swap key.");
+  return { ...base, claimPk: hexOf(child.publicKey), secretKeyHex: hexOf(child.privateKey) };
 }
 /** What kind of Lightning destination did the user give? A BOLT11
  *  invoice (parsed strictly — amount + payment hash come from
@@ -7382,7 +7399,375 @@ export async function pollSatoraSwapStatuses(storage) {
   if (changed) { try { storage.setItem(SATORA_SWAPS_STORAGE_KEY, JSON.stringify(records.slice(0, 50))); } catch { /* as above */ } }
   return records;
 }
-// ---------- CCTP burn construction (the bridge pre-leg) ----------
+// ---------- Lightning -> Bitcoin bridge: LN ->(Satora) Arkade ->(operator offboard) BTC mainnet ----------
+// The composition the 2026-11-09 research selected (report:
+// research_notes/fluid-ln-btc-composition-20261109): the direct
+// LN->BTC pairs floor at 10,000 sats, so small exits compose two
+// legs — a Satora Lightning->Arkade V-HTLC swap (live pair: min
+// 335 sats, 0.15% + 1 sat) into the user's OWN Arkade wallet, then
+// the Arkade operator's collaborative offboard (live program:
+// 200 sats flat per on-chain output + up to 0.2% on the inputs).
+// No custodial moment anywhere: leg A is an atomic V-HTLC the
+// user claims with their own swap key (the preimage reveal is
+// what settles the hold invoice), the Arkade VTXO carries a
+// pre-signed unilateral exit, and the offboard is operator-
+// cosigned but can never trap funds (the exit path exists).
+// This module is the pure core: pair/quote/gate arithmetic, the
+// creation request + bounds-checked response, the operator fee
+// program parser, and the persisted bridge records. The Arkade
+// SDK work (wallet, VHTLC claim, offboard execution) lives in
+// the lazy arkade chunk (src/arkade.js); the Lightning payment
+// is the in-app LDK node's, driven by app.js.
+export const ARKADE_SERVER_URL = "https://arkade.computer";
+/** The pinned Arkade VHTLC script version (the reference SDK's
+ *  ARKADE_HTLC_SCRIPT_VERSION_STRICT): creations naming any
+ *  other version are refused, never improvised around. */
+export const SATORA_ARKADE_HTLC_VERSION = 1;
+/** The leg-A fee gate (build gate 1 of the composition
+ *  research): the whole route's cost (both legs, Fluid's own fee
+ *  excluded) must stay at or below the Rootstock composition's
+ *  measured $2 cost — 739 sats, stated as ~740 — or the bridge
+ *  refuses the quote plainly. The route's costs are near-flat
+ *  (the offboard's 200-sat flat dominates), so the cap is applied
+ *  at the quoted size, not only at $2. Measured live 2026-11-10:
+ *  leg A fee_sats 5 at 2,673 sats (total deduction 6), offboard
+ *  ~205 — a ~211-sat route, far inside the gate. */
+export const BRIDGE_ROUTE_COST_CAP_SATS = 740;
+export const BRIDGE_RECORDS_STORAGE_KEY = "fluid_ln_btc_bridge_v1";
+export const BRIDGE_INDEX_STORAGE_KEY = "fluid_ln_btc_bridge_next_index";
+const xonlyHex = (h) => {
+  const s = String(h || "").toLowerCase().replace(/^0x/, "");
+  return s.length === 66 ? s.slice(2) : s;
+};
+/** The Lightning->Arkade row of Satora's live pair table, or
+ *  null when the pair is not served. Pure; the caller fetches
+ *  /swap-pairs (fetchLnArkadePair below). */
+export function parseLnArkadePair(pairsData) {
+  const pairs = Array.isArray(pairsData) ? pairsData : (Array.isArray(pairsData?.pairs) ? pairsData.pairs : null);
+  if (!pairs) return null;
+  const pair = pairs.find(p => p && p.source === "Lightning" && p.target === "Arkade");
+  if (!pair) return null;
+  const minSats = Number(pair.min_sats), maxSats = Number(pair.max_sats);
+  const feePercentage = Number(pair.fee_percentage), networkFeeSats = Number(pair.network_fee_sats);
+  if (![minSats, maxSats, feePercentage, networkFeeSats].every(Number.isFinite)) return null;
+  if (minSats <= 0 || maxSats < minSats || feePercentage < 0 || networkFeeSats < 0) return null;
+  return { minSats, maxSats, feePercentage, networkFeeSats };
+}
+let lnArkadePairPromise = null;
+export async function fetchLnArkadePair() {
+  if (!lnArkadePairPromise) {
+    lnArkadePairPromise = (async () => {
+      const data = await satoraFetchJson("/swap-pairs");
+      const pair = parseLnArkadePair(data);
+      if (!pair) throw new Error("Satora does not serve a Lightning -> Arkade pair right now.");
+      return pair;
+    })();
+    lnArkadePairPromise.catch(() => { lnArkadePairPromise = null; });
+  }
+  return lnArkadePairPromise;
+}
+/** The pair-table estimate of leg A's TOTAL deduction (protocol
+ *  + network, Fluid's fee excluded): ceil(source x fee%) +
+ *  network fee. Measured against the live creation at 2,673 sats
+ *  (2026-11-10): estimate 5 + 1 = 6, creation deduction exactly
+ *  6. An estimate only — the creation is the truth the flow
+ *  re-prices from before anything is paid. */
+export function estimateLnArkadeFeeSats(sourceSats, pair) {
+  const src = Math.floor(Number(sourceSats) || 0);
+  if (!pair || src <= 0) return null;
+  return Math.ceil(src * Number(pair.feePercentage)) + Math.floor(Number(pair.networkFeeSats) || 0);
+}
+/** The creation body for POST /swap/lightning/arkade — the
+ *  reference SDK's exact shape (reverse-read from
+ *  @lendasat/lendaswap-sdk-pure 2.8.1 and proven against the
+ *  live API 2026-11-10). Exactly one amount field: the source
+ *  (the invoice amount; fees come out of it). */
+export function buildLnArkadeCreateRequest({ identity, sourceSats, targetArkadeAddress, extraFeesBps = 0 } = {}) {
+  if (!identity || !identity.hashLock || !identity.claimPk || !identity.userId)
+    throw new Error("The bridge needs the wallet's swap identity.");
+  const src = Math.floor(Number(sourceSats) || 0);
+  if (src <= 0) throw new Error("The bridge amount must be a positive number of sats.");
+  if (typeof targetArkadeAddress !== "string" || !/^ark1[0-9a-z]+$/.test(targetArkadeAddress))
+    throw new Error("The bridge needs the wallet's own Arkade address.");
+  const fee = satoraFeeConfig(extraFeesBps);
+  return {
+    hash_lock: identity.hashLock,
+    claim_pk: identity.claimPk,
+    user_id: identity.userId,
+    source_amount_sats: src,
+    target_arkade_address: targetArkadeAddress,
+    arkade_htlc_script_version: SATORA_ARKADE_HTLC_VERSION,
+    ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
+    invoice_description: "Fluid: Lightning to Arkade (bridge to Bitcoin)",
+  };
+}
+/** Bounds-check a LN->Arkade creation response before the flow
+ *  trusts a single field of it (the checkSatoraCreateResponse
+ *  discipline): the swap must be OURS — our hash lock, our claim
+ *  key as receiver, our Arkade address as target, the requested
+ *  amount, the pinned script version — and the hold invoice the
+ *  user will pay must be for exactly the source amount with the
+ *  payment hash equal to our hash lock (that equality is what
+ *  makes the payment atomic against the VHTLC claim). Fee
+ *  arithmetic is deliberately NOT pinned here: the caller
+ *  judges it against the quote pass (the differential identity),
+ *  because the server folds extra_fees into fee_sats. */
+export function checkLnArkadeCreateResponse(data, { identity, sourceSats, targetArkadeAddress, nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this Satora swap: " + m });
+  if (!data || typeof data !== "object") return refuse("the creation response was unreadable.");
+  if (typeof data.id !== "string" || !data.id) return refuse("the creation response carried no swap id.");
+  if (data.status !== "pending") return refuse("the created swap was not in the expected pending state.");
+  if (!identity || String(data.hash_lock || "").toLowerCase() !== String(identity.hashLock || "").toLowerCase())
+    return refuse("the created swap's hash lock is not the one Fluid derived from your seed.");
+  if (xonlyHex(data.receiver_pk) !== xonlyHex(identity.claimPk))
+    return refuse("the created swap's claim key is not your Fluid swap key.");
+  if (String(data.target_arkade_address || "") !== String(targetArkadeAddress || ""))
+    return refuse("the created swap does not target your own Arkade address.");
+  if (Number(data.source_amount) !== Math.floor(Number(sourceSats) || 0))
+    return refuse("the created swap's amount differs from the amount you reviewed.");
+  if (Number(data.arkade_htlc_script_version) !== SATORA_ARKADE_HTLC_VERSION)
+    return refuse(`the created swap uses Arkade HTLC script version ${data.arkade_htlc_script_version}, not the pinned version ${SATORA_ARKADE_HTLC_VERSION} Fluid was built against.`);
+  if (!/^ark1[0-9a-z]+$/.test(String(data.arkade_vhtlc_address || "")))
+    return refuse("the created swap carried no usable Arkade VHTLC address.");
+  if (!/^[0-9a-fA-F]{64}$/.test(String(data.sender_pk || "")))
+    return refuse("the created swap carried a malformed sender key.");
+  if (!/^([0-9a-fA-F]{64}|[0-9a-fA-F]{66})$/.test(String(data.arkade_server_pk || "")))
+    return refuse("the created swap carried a malformed Arkade operator key.");
+  if (!(Number(data.vhtlc_refund_locktime) > Number(nowSec)))
+    return refuse("the created swap's refund timelock is not in the future.");
+  const target = Number(data.target_amount);
+  if (!Number.isFinite(target) || target <= 0 || target >= Number(data.source_amount))
+    return refuse("the created swap's payout is not a sane amount below the source.");
+  for (const k of ["unilateral_claim_delay", "unilateral_refund_delay", "unilateral_refund_without_receiver_delay"]) {
+    if (!Number.isFinite(Number(data[k])) || Number(data[k]) <= 0) return refuse("the created swap carried an unusable exit delay.");
+  }
+  let parsed = null;
+  try { parsed = parseBolt11(String(data.bolt11_invoice || "")); } catch { /* handled below */ }
+  if (!parsed) return refuse("the created swap's Lightning invoice was unreadable.");
+  if (Number(parsed.amountMsat) !== Math.floor(Number(sourceSats) || 0) * 1000)
+    return refuse("the swap's invoice asks for a different amount than the one you reviewed.");
+  if (String(parsed.paymentHash || "").toLowerCase() !== String(identity.hashLock || "").toLowerCase().replace(/^0x/, ""))
+    return refuse("the swap's invoice payment hash is not your hash lock — paying it would not be atomic against the claim.");
+  return { ok: true };
+}
+/** The parsed, record-shaped facts of a bounds-checked creation.
+ *  legAFeeSats is the creation's TOTAL deduction (source -
+ *  target) — the only fee figure that reconciles in one pass;
+ *  protocolFeeSats/networkFeeSats keep the server's attribution
+ *  for display. */
+export function parseLnArkadeCreation(data) {
+  const source = Math.round(Number(data?.source_amount) || 0);
+  const target = Math.round(Number(data?.target_amount) || 0);
+  return {
+    id: String(data.id), status: String(data.status),
+    sourceSats: source, targetSats: target,
+    legAFeeSats: source - target,
+    feeSats: Number.isFinite(Number(data.fee_sats)) ? Math.round(Number(data.fee_sats)) : null,
+    networkFeeSats: Number.isFinite(Number(data.network_fee_sats)) ? Math.round(Number(data.network_fee_sats)) : null,
+    invoice: String(data.bolt11_invoice || ""),
+    // invoice_expires_at is in SECONDS on the wire (verified
+    // against the live record); the app compares against
+    // Date.now(), so it is normalised to milliseconds here.
+    invoiceExpiresAt: Number(data.invoice_expires_at) ? Number(data.invoice_expires_at) * 1000 : null,
+    vhtlcAddress: String(data.arkade_vhtlc_address || ""),
+    senderPk: String(data.sender_pk || ""),
+    receiverPk: String(data.receiver_pk || ""),
+    serverPk: String(data.arkade_server_pk || ""),
+    refundLocktime: Number(data.vhtlc_refund_locktime) || null,
+    unilateralClaimDelay: Number(data.unilateral_claim_delay) || null,
+    unilateralRefundDelay: Number(data.unilateral_refund_delay) || null,
+    unilateralRefundWithoutReceiverDelay: Number(data.unilateral_refund_without_receiver_delay) || null,
+  };
+}
+/** Create the LN->Arkade swap server-side (bounds-checked) and
+ *  return its parsed facts. Creation moves NO funds: the swap
+ *  sits pending until the user pays the hold invoice, and an
+ *  unpaid swap simply expires. */
+export async function createLnArkadeSwap({ identity, sourceSats, targetArkadeAddress, extraFeesBps = 0 } = {}) {
+  await satoraAssertVersion();
+  const body = buildLnArkadeCreateRequest({ identity, sourceSats, targetArkadeAddress, extraFeesBps });
+  const data = await satoraFetchJson("/swap/lightning/arkade", {
+    method: "POST", destKey: "lightning",
+    extraHeaders: { "x-satora-arkade-vhtlc-version": String(SATORA_ARKADE_HTLC_VERSION) },
+    body,
+  });
+  const check = checkLnArkadeCreateResponse(data, { identity, sourceSats, targetArkadeAddress });
+  if (!check.ok) throw new Error(check.reason);
+  return parseLnArkadeCreation(data);
+}
+export async function fetchLnArkadeSwapStatus(id) {
+  const data = await satoraFetchJson("/swap/" + encodeURIComponent(String(id)), { destKey: "lightning" });
+  if (!data || typeof data.status !== "string") throw new Error("Satora returned an unreadable swap status.");
+  return data;
+}
+/** Parse the Arkade operator's LIVE intent-fee program (from
+ *  getArkadeInfo's fees.intentFee — CEL expressions the operator
+ *  advertises) into the two numbers the offboard quote needs.
+ *  STRICT by design: only the program shapes Fluid has verified
+ *  against the live operator are recognised —
+ *    onchainOutput: "" (none) or a bare number ("200.0" = a flat
+ *      200 sats per on-chain output);
+ *    offchainInput: "" / "0.0" (no input fee), or the conditional
+ *      percentage "inputType == 'vtxo' && expiry - now() > N ?
+ *      amount * R : 0.0" (R on inputs with more than N seconds
+ *      of VTXO life left).
+ *  Anything else returns null and the route refuses to quote
+ *  rather than guess at a fee program it cannot read. Live
+ *  program at build time (2026-11-10): onchainOutput "200.0",
+ *  offchainInput the conditional at R = 0.002, N = 2505216. */
+export function parseArkadeIntentFees(fees) {
+  const intent = fees?.intentFee;
+  if (!intent || typeof intent !== "object") return null;
+  const flat = (v) => {
+    const s = String(v ?? "").trim();
+    if (s === "") return 0;
+    if (!/^[0-9]+(\.[0-9]+)?$/.test(s)) return null;
+    const n = Number(s);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const onchainOutputFlatSats = flat(intent.onchainOutput);
+  if (onchainOutputFlatSats === null) return null;
+  const inExpr = String(intent.offchainInput ?? "").trim();
+  let offchainInputRate = 0, offchainInputMinExpirySecs = 0;
+  if (inExpr !== "" && inExpr !== "0.0" && inExpr !== "0") {
+    const m = inExpr.match(/^inputType\s*==\s*'vtxo'\s*&&\s*expiry\s*-\s*now\(\)\s*>\s*([0-9]+(?:\.[0-9]+)?)\s*\?\s*amount\s*\*\s*([0-9]+(?:\.[0-9]+)?)\s*:\s*0\.0$/);
+    if (!m) return null;
+    offchainInputMinExpirySecs = Number(m[1]);
+    offchainInputRate = Number(m[2]);
+    if (!Number.isFinite(offchainInputMinExpirySecs) || !Number.isFinite(offchainInputRate) || offchainInputRate < 0 || offchainInputRate > 0.1) return null;
+  }
+  return { onchainOutputFlatSats, offchainInputRate, offchainInputMinExpirySecs };
+}
+/** The offboard (leg B) fee in sats for spending `amountSats`
+ *  of Arkade VTXOs into ONE on-chain output, under a parsed
+ *  program. The input percentage applies only when the VTXO's
+ *  remaining life exceeds the program's threshold; quote-time
+ *  callers pass worstCase (the VTXO does not exist yet, so its
+ *  expiry is unknowable) and the offboard review re-prices with
+ *  the real expiry once the VTXO exists. */
+export function arkadeOffboardFeeSats(amountSats, program, { vtxoExpirySecs = null, nowSecs = Math.floor(Date.now() / 1000), worstCase = false } = {}) {
+  const amt = Math.floor(Number(amountSats) || 0);
+  if (!program || amt <= 0) return null;
+  let fee = Math.ceil(Number(program.onchainOutputFlatSats) || 0);
+  const rate = Number(program.offchainInputRate) || 0;
+  if (rate > 0) {
+    const applies = worstCase || (vtxoExpirySecs != null && (Number(vtxoExpirySecs) - Number(nowSecs)) > Number(program.offchainInputMinExpirySecs || 0));
+    if (applies) fee += Math.ceil(amt * rate);
+  }
+  return fee;
+}
+/** Compose the full bridge quote in sats: leg A (estimated from
+ *  the pair table, or the creation's true fee when legAQuoteSats
+ *  is given), leg B offboard (worst case at quote time), and
+ *  Fluid's fee under the shipped fee law — computed by
+ *  platformFeeBpsForRoute against the BITCOIN ceiling with the
+ *  route cost = both legs' fees, then expressed in sats at the
+ *  live BTC price and floored (the bps helper floors: the charge
+ *  can land under the law's target, never above it). The GATE
+ *  verdict judges the route cost alone (Fluid's fee excluded):
+ *  above BRIDGE_ROUTE_COST_CAP_SATS the composition is not the
+ *  cheapest completable route any more and the flow refuses. */
+export function composeBridgeQuote({ sourceSats, pair, legAQuoteSats = null, offboardProgram, btcUsd } = {}) {
+  const src = Math.floor(Number(sourceSats) || 0);
+  if (src <= 0 || !pair || !offboardProgram) return null;
+  const legA = legAQuoteSats != null ? Math.floor(Number(legAQuoteSats) || 0) : estimateLnArkadeFeeSats(src, pair);
+  if (legA == null || legA < 0 || legA >= src) return null;
+  const inArkade = src - legA;
+  const legB = arkadeOffboardFeeSats(inArkade, offboardProgram, { worstCase: true });
+  if (legB == null || legB >= inArkade) return null;
+  const price = Number(btcUsd);
+  const satsToUsd = (s) => Number.isFinite(price) && price > 0 ? (s / 1e8) * price : null;
+  const amountUsd = satsToUsd(src);
+  const routeCostUsd = satsToUsd(legA + legB);
+  let fluidFeeBps = 0, fluidFeeSats = 0;
+  if (amountUsd != null && routeCostUsd != null) {
+    fluidFeeBps = platformFeeBpsForRoute(routeCostUsd, amountUsd, "bitcoin");
+    fluidFeeSats = Math.floor(src * fluidFeeBps / 10000);
+  }
+  const receive = inArkade - legB - fluidFeeSats;
+  if (receive <= 0) return null;
+  return {
+    sourceSats: src, legAFeeSats: legA, legAIsCreationTruth: legAQuoteSats != null,
+    inArkadeSats: inArkade, offboardFeeSats: legB, fluidFeeBps, fluidFeeSats,
+    routeCostSats: legA + legB, totalCostSats: legA + legB + fluidFeeSats,
+    receiveSats: receive,
+    gate: { ok: (legA + legB) <= BRIDGE_ROUTE_COST_CAP_SATS, routeCostSats: legA + legB, capSats: BRIDGE_ROUTE_COST_CAP_SATS },
+  };
+}
+/** The itemised review lines for a composed quote — plain text,
+ *  real figures only, the same lines the confirm sheet paints
+ *  (tests pin them so the copy cannot drift from the numbers). */
+export function formatBridgeQuoteLines(q) {
+  if (!q) return [];
+  const n = (s) => `${Math.round(Number(s) || 0).toLocaleString()} sats`;
+  return [
+    `You send: ${n(q.sourceSats)} from your Lightning balance`,
+    `Satora swap fee (Lightning -> Arkade): ${n(q.legAFeeSats)}`,
+    `Fluid's fee (inside the swap, capped by the fee law): ${n(q.fluidFeeSats)}`,
+    `Lands in your Arkade wallet: ${n(q.inArkadeSats - q.fluidFeeSats)}`,
+    `Arkade exit fee (operator, on the way out): ${n(q.offboardFeeSats)}`,
+    `You receive on Bitcoin mainnet: ${n(q.receiveSats)}`,
+    `Total cost: ${n(q.totalCostSats)}`,
+  ];
+}
+// --- persisted bridge records (the swap id is the recovery key) ---
+// Phases are Fluid-side states (the Satora wire status is kept
+// verbatim on the record): awaiting-payment (created, invoice
+// unpaid) -> funding (paid; the server is funding the VHTLC) ->
+// claimable (the VTXO is visible at the VHTLC address) ->
+// claimed (in the user's Arkade wallet) -> exiting (offboard
+// submitted to a batch) -> done. expired/failed are terminal
+// and honest: an unpaid swap expires with nothing locked; a
+// paid swap whose VHTLC never appears keeps its refund truth
+// (the preimage was never revealed, so the hold invoice can
+// never settle — the payment fails back to the sender).
+function validBridgeRecord(r) {
+  return !!r && typeof r === "object" && typeof r.id === "string" && !!r.id && typeof r.phase === "string";
+}
+export function loadBridgeRecords(storage) {
+  try {
+    const list = JSON.parse(storage.getItem(BRIDGE_RECORDS_STORAGE_KEY) || "[]");
+    return Array.isArray(list) ? list.filter(validBridgeRecord) : [];
+  } catch { return []; }
+}
+export function saveBridgeRecord(storage, record) {
+  if (!validBridgeRecord(record)) return loadBridgeRecords(storage);
+  const list = loadBridgeRecords(storage).filter(r => r.id !== record.id);
+  list.unshift(record);
+  try { storage.setItem(BRIDGE_RECORDS_STORAGE_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* storage full/blocked: the in-memory record still stands */ }
+  return list;
+}
+/** The next swap-identity index for bridge creations. Every
+ *  creation (the fee-free quote pass AND the fee-bearing real
+ *  one) consumes an index, persisted under its own counter so a
+ *  discarded quote pass never lets a later creation reuse a
+ *  hash lock the server has already seen. */
+export function bridgeCreationIndex(storage, records) {
+  const fromRecords = nextSatoraSwapIndex(records || loadBridgeRecords(storage));
+  let stored = 0;
+  try { stored = Math.floor(Number(storage.getItem(BRIDGE_INDEX_STORAGE_KEY)) || 0); } catch { /* storage blocked */ }
+  return Math.max(fromRecords, stored);
+}
+export function bumpBridgeCreationIndex(storage, usedIndex) {
+  try { storage.setItem(BRIDGE_INDEX_STORAGE_KEY, String(Math.floor(Number(usedIndex) || 0) + 1)); } catch { /* storage blocked */ }
+}
+export const BRIDGE_PHASES = {
+  "awaiting-payment": { label: "Created — the swap's invoice has not been paid yet", terminal: false },
+  "funding": { label: "Paid — Satora is funding the Arkade side", terminal: false },
+  "claimable": { label: "Funded — ready to claim into your Arkade wallet", terminal: false },
+  "claimed": { label: "In your Arkade wallet — ready to exit to Bitcoin", terminal: false },
+  "exiting": { label: "Exit submitted — waiting for the operator's next batch", terminal: false },
+  "done": { label: "Complete — your Bitcoin is on its way on-chain", terminal: true },
+  "expired": { label: "Expired unpaid — nothing was locked and nothing was lost", terminal: true },
+  "failed": { label: "Failed — see the note on this bridge", terminal: true },
+};
+export function bridgePhaseLabel(record) {
+  return (BRIDGE_PHASES[record?.phase] || { label: "Status: " + String(record?.phase || "unknown") }).label;
+}
+export function bridgeHistoryLine(record) {
+  const n = (s) => `${Math.round(Number(s) || 0).toLocaleString()} sats`;
+  return `Lightning -> Bitcoin bridge: ${n(record?.sourceSats)} from Lightning → ${n(record?.receiveSats)} to ${record?.btcAddress || "your Bitcoin address"} — ${bridgePhaseLabel(record)}.`;
+}
 // Base: two ordinary EVM transactions (exact-amount approve +
 // depositForBurn on Circle's canonical TokenMessengerV2 — the
 // same address on every EVM chain). Solana: one hand-rolled

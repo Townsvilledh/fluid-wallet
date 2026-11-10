@@ -11,6 +11,10 @@ await build({ entryPoints: ["src/lightning-node.js"], bundle: true, minify: true
 // WalletConnect chunk: the Reown/WalletKit SDK, built separately and
 // loaded lazily by app.js only when the WalletConnect panel opens.
 await build({ entryPoints: ["src/walletconnect.js"], bundle: true, minify: true, format: "esm", outfile: "dist/walletconnect.chunk.js" });
+// Arkade chunk: the Arkade SDK (wallet, VHTLC claim, offboard),
+// built separately and loaded lazily by app.js only when the
+// Lightning -> Bitcoin bridge tab opens.
+await build({ entryPoints: ["src/arkade.js"], bundle: true, minify: true, format: "esm", outfile: "dist/arkade.chunk.js" });
 copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_bg.wasm");
 // Asset fingerprint pins (owner security requirement, 2026-11-10):
 // the SHA-256 of the Lightning WASM and of the Lightning chunk are
@@ -32,7 +36,7 @@ copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_
     `export const LN_WASM_PIN = { sha256: "${wasmSha256}", bytes: ${wasmBytes.length} };\n` +
     `export const LN_CHUNK_SHA256 = "${chunkSha256}";\n`);
 }
-await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js", "./walletconnect.chunk.js"] });
+await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js", "./walletconnect.chunk.js", "./arkade.chunk.js"] });
 copyFileSync("src/sw.js", "dist/sw.js");
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");

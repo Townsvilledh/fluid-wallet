@@ -9,6 +9,7 @@ import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer } from "../src/wallet-core.js";
+import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -4022,7 +4023,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && scanIdxSrc.includes('id="scanBtn"') && scanIdxSrc.includes('data-tab="scan"'));
   ok("scan: the privacy truth is printed under the search box, verbatim",
     scanIdxSrc.includes("Scan shows what is public on-chain for a name's registered addresses. Unregistered addresses stay private."));
-  ok("scan: goTab knows the scan pane", scanAppSrc.includes('["wallet", "play", "activity", "scan", "more"]'));
+  ok("scan: goTab knows the scan pane", scanAppSrc.includes('["wallet", "play", "activity", "scan", "more", "bridge"]'));
   ok("scan: the controller resolves names via the shared registry path and addresses via detection",
     scanAppSrc.includes("resolveFluidName(input)") && scanAppSrc.includes("detectScanFamily(input)")
     && scanAppSrc.includes("scanTargetsForName(entry)") && scanAppSrc.includes("fetchScan(targets)"));
@@ -8765,6 +8766,109 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("pins: the app imports the in-bundle asset pins", appLz.includes("ln-asset-pins.generated.js") && appLz.includes("LN_WASM_PIN"));
   ok("pins: the loaded chunk must carry the pinned-boot marker (stale chunk refused)", appLz.includes("LN_PINNED_BOOT") && nodeLz.includes("export const LN_PINNED_BOOT = true") && appLz.includes('import("./lightning.chunk.js")'));
   ok("defaults: ws-proxy + relay ship empty (not yet deployed), LSP is Megalith", nodeLz.includes('LN_DEFAULT_WS_PROXY = ""') && nodeLz.includes('LN_DEFAULT_RELAY_URL = ""') && nodeLz.includes("034066e29e402d9cf55af1ae1026cc5adf92eed1e0e421785442f53717ad1453b0"));
+}
+
+// ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------
+// The fixture below is a REAL creation record, read back from
+// api.satora.io on 2026-11-10 (an unpaid probe creation from
+// the standard public test mnemonic — it was never funded and
+// simply expires). It pins Fluid's derivation, bounds checker
+// and VHTLC port against the live server's own answers.
+{
+  const PHRASE_ARK = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const identityArk = satoraSwapClaimKey(PHRASE_ARK, 0);
+  ok("ark: swap claim key is deterministic per index", satoraSwapClaimKey(PHRASE_ARK, 0).claimPk === identityArk.claimPk && satoraSwapClaimKey(PHRASE_ARK, 0).secretKeyHex === identityArk.secretKeyHex);
+  ok("ark: a different index derives a different claim key", satoraSwapClaimKey(PHRASE_ARK, 1).claimPk !== identityArk.claimPk);
+  ok("ark: the derivation matches the live server record (hash lock + receiver key)",
+    identityArk.hashLock === "0x2acc06197820cfcb43f88795103d130328e7f1d8570f99df88d65513b0b9d202" && identityArk.claimPk === "0294d0fd77f72c0334807b1d982e92e51e9ab0adcac84107bc4d0f674684098818");
+
+  const pairArk = parseLnArkadePair({ pairs: [
+    { source: "Bitcoin", target: "1", min_sats: 20000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "Lightning", target: "Arkade", min_sats: 335, max_sats: 1000000, fee_percentage: 0.0015, network_fee_sats: 1 },
+  ] });
+  ok("ark: the live pair row parses (335 min, 0.15% + 1 sat)", !!pairArk && pairArk.minSats === 335 && pairArk.maxSats === 1000000 && pairArk.feePercentage === 0.0015 && pairArk.networkFeeSats === 1);
+  ok("ark: a missing pair parses to null, never a guess", parseLnArkadePair({ pairs: [] }) === null && parseLnArkadePair(null) === null && parseLnArkadePair({}) === null);
+  ok("ark: the leg-A estimate equals the live creation's deduction (2673 -> 6)", estimateLnArkadeFeeSats(2673, pairArk) === 6);
+
+  const ARK_ADDR = "ark1qzpq904am6clw3pgqwyh4p02708fy4xs0hcpwt7rwfdttuxsjameeq5ydpgnhyjuyzeun9sycc5gek0d0a4yphmje25s9lwqdfafk0027450qg";
+  const reqArk = buildLnArkadeCreateRequest({ identity: identityArk, sourceSats: 2673, targetArkadeAddress: ARK_ADDR, extraFeesBps: 0 });
+  ok("ark: create request is the reference shape (source amount only, script version pinned)",
+    reqArk.hash_lock === identityArk.hashLock && reqArk.claim_pk === identityArk.claimPk && reqArk.user_id === identityArk.userId
+    && reqArk.source_amount_sats === 2673 && reqArk.target_arkade_address === ARK_ADDR && reqArk.arkade_htlc_script_version === 1
+    && !("target_amount_sats" in reqArk) && reqArk.extra_fees === 0);
+  const reqArkFee = buildLnArkadeCreateRequest({ identity: identityArk, sourceSats: 2673, targetArkadeAddress: ARK_ADDR, extraFeesBps: 25 });
+  ok("ark: a fee-bearing request carries the referral code + extra_fees", reqArkFee.extra_fees === 25 && typeof reqArkFee.referral_code === "string" && reqArkFee.referral_code.length > 0);
+
+  const FIXTURE_ARK = {
+    direction: "lightning_to_arkade", id: "3f4cb859-083e-4c80-992f-f6f52cd39001", status: "pending",
+    bolt11_invoice: "lnbc26730n1p40y77qpp59txqvxtcyr8ukslcs723q0gnqv5w0uwc2u8enhug6e238v9e6gpqsp53pg90usyvd6mn75f7z4kc8upd3uve9xuj6svt7pdytradlu8hdsqxqrwzqnp4qvyndeaqzman7h898jxm98dzkm0mlrsx36s93smrur7h0azyyuxc5rzjqwghf7zxvfkxq5a6sr65g0gdkv768p83mhsnt0msszapamzx2qvuxqqqqrt49lmtcqqqqqqqqqqq86qq9qcqzpudpugek826tyypxyutf7g9exkctyv5s8qun0vfjjq2rwv4mx2u3qve6kuer9vs5s9qyyssqm2un37crzljjpcy7f6w77ycc98ul374tqtwddc4g9sjw66kjtmz3x966kt5l9q59xtzdaztn24j07mswq852xgl2m4gzuuhcrg0qemcpkyw3jl",
+    invoice_expires_at: 1794290687, fee_sats: 5, network_fee_sats: 1,
+    hash_lock: "0x2acc06197820cfcb43f88795103d130328e7f1d8570f99df88d65513b0b9d202",
+    arkade_vhtlc_address: "ark1qzpq904am6clw3pgqwyh4p02708fy4xs0hcpwt7rwfdttuxsjameefmz99ake0ad8qfmemxl8t2hh5tztppfvjfdtla6dycm3dg3dyvmm84y9n",
+    arkade_htlc_script_version: 1, target_arkade_address: ARK_ADDR,
+    sender_pk: "6e644a3034da6e1278ba287c89e0dd0dad14ca02df92ae02a4d4662b8f9867cb",
+    receiver_pk: "0294d0fd77f72c0334807b1d982e92e51e9ab0adcac84107bc4d0f674684098818",
+    arkade_server_pk: "038202bebddeb1f7442803897a85eaf3ce9254d07df0172fc3725ab5f0d097779c",
+    vhtlc_refund_locktime: 1794278087, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, network: "bitcoin", source_amount: "2673", target_amount: "2667",
+  };
+  const checkArkArgs = { identity: identityArk, sourceSats: 2673, targetArkadeAddress: ARK_ADDR, nowSec: 1794270000 };
+  ok("ark: the live creation record passes the bounds check", checkLnArkadeCreateResponse(FIXTURE_ARK, checkArkArgs).ok === true);
+  const tamperArk = (patch) => checkLnArkadeCreateResponse({ ...FIXTURE_ARK, ...patch }, checkArkArgs).ok === false;
+  ok("ark: tampered creations are refused (amount, lock, receiver, version, status, invoice)",
+    tamperArk({ target_amount: "9999" }) && tamperArk({ source_amount: "2000" })
+    && tamperArk({ hash_lock: "0x" + "00".repeat(32) }) && tamperArk({ receiver_pk: "02" + "11".repeat(32) })
+    && tamperArk({ arkade_htlc_script_version: 2 }) && tamperArk({ status: "funded" })
+    && tamperArk({ bolt11_invoice: "lnbc1invalid" }) && tamperArk({ arkade_vhtlc_address: "not-an-address" })
+    && tamperArk({ vhtlc_refund_locktime: 1000 }));
+  const parsedArk = parseLnArkadeCreation(FIXTURE_ARK);
+  ok("ark: creation parse — leg-A truth is 6 sats, invoice expiry normalised to ms",
+    parsedArk.legAFeeSats === 6 && parsedArk.targetSats === 2667 && parsedArk.feeSats === 5 && parsedArk.networkFeeSats === 1
+    && parsedArk.invoiceExpiresAt === 1794290687000 && parsedArk.invoice === FIXTURE_ARK.bolt11_invoice);
+
+  const LIVE_PROGRAM_ARK = { intentFee: { offchainInput: "inputType == 'vtxo' && expiry - now() > 2505216.0? amount * 0.002: 0.0", onchainInput: "", offchainOutput: "", onchainOutput: "200.0" }, txFeeRate: "0" };
+  const progArk = parseArkadeIntentFees(LIVE_PROGRAM_ARK);
+  ok("ark: the live operator fee program parses (200 flat + 0.2% conditional)", !!progArk && progArk.onchainOutputFlatSats === 200 && progArk.offchainInputRate === 0.002 && progArk.offchainInputMinExpirySecs === 2505216);
+  ok("ark: unrecognised fee programs are refused, never guessed",
+    parseArkadeIntentFees({ intentFee: { offchainInput: "amount * 0.5", onchainOutput: "200.0" } }) === null
+    && parseArkadeIntentFees({ intentFee: { offchainInput: "", onchainOutput: "amount * 2" } }) === null
+    && parseArkadeIntentFees({ intentFee: { offchainInput: "inputType == 'vtxo' && expiry - now() > 100.0? amount * 0.5: 0.0", onchainOutput: "200.0" } }) === null
+    && parseArkadeIntentFees(null) === null && parseArkadeIntentFees({}) === null);
+  ok("ark: offboard fee math (worst case / fresh VTXO / long-lived VTXO)",
+    arkadeOffboardFeeSats(2667, progArk, { worstCase: true }) === 206
+    && arkadeOffboardFeeSats(2667, progArk, { vtxoExpirySecs: 1100, nowSecs: 1000 }) === 200
+    && arkadeOffboardFeeSats(2667, progArk, { vtxoExpirySecs: 3001000, nowSecs: 1000 }) === 206);
+
+  const quoteArk = composeBridgeQuote({ sourceSats: 2673, pair: pairArk, legAQuoteSats: 6, offboardProgram: progArk, btcUsd: 74832 });
+  ok("ark: the $2 quote composes inside the honesty gate (route cost 212 sats)", !!quoteArk && quoteArk.gate.ok === true && quoteArk.routeCostSats === 212 && quoteArk.offboardFeeSats === 206 && quoteArk.gate.capSats === BRIDGE_ROUTE_COST_CAP_SATS);
+  ok("ark: the $2 quote's receive lands in the research band (~2,450 sats)", quoteArk.receiveSats > 2400 && quoteArk.receiveSats < 2500);
+  ok("ark: Fluid's fee obeys the fee law's 0.5% amount cap", quoteArk.fluidFeeSats <= Math.floor(2673 * 0.005) && quoteArk.fluidFeeBps > 0);
+  const quoteGateArk = composeBridgeQuote({ sourceSats: 2673, pair: pairArk, legAQuoteSats: 600, offboardProgram: progArk, btcUsd: 74832 });
+  ok("ark: a 600-sat leg A trips the gate — the flow refuses", !!quoteGateArk && quoteGateArk.gate.ok === false && quoteGateArk.routeCostSats > BRIDGE_ROUTE_COST_CAP_SATS);
+  const linesArk = formatBridgeQuoteLines(quoteArk);
+  ok("ark: quote lines are itemised and carry the real figures", linesArk.length === 7 && linesArk[0].includes("2,673") && linesArk[5].includes(quoteArk.receiveSats.toLocaleString()) && linesArk[6].includes(quoteArk.totalCostSats.toLocaleString()));
+
+  const storeArk = { m: new Map(), getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }, setItem(k, v) { this.m.set(k, String(v)); } };
+  ok("ark: the creation index starts at 0 and bumps persist", bridgeCreationIndex(storeArk) === 0 && (bumpBridgeCreationIndex(storeArk, 0), bridgeCreationIndex(storeArk) === 1));
+  saveBridgeRecord(storeArk, { id: "ark-test-1", index: 0, phase: "claimable", sourceSats: 2673, receiveSats: 2448, btcAddress: "bc1qexampleaddress" });
+  const recsArk = loadBridgeRecords(storeArk);
+  ok("ark: records round-trip with an honest history line", recsArk.length === 1 && bridgeHistoryLine(recsArk[0]).includes("2,673") && bridgeHistoryLine(recsArk[0]).includes("2,448") && bridgePhaseLabel(recsArk[0]).includes("ready to claim"));
+  ok("ark: the index never reuses a spent record index", bridgeCreationIndex(storeArk, [{ index: 7 }]) >= 8);
+
+  const arkChunkMod = await import("../src/arkade.js");
+  ok("ark: the lazy chunk carries its load marker", arkChunkMod.ARKADE_CHUNK_MARKER === true);
+  const vhtlcArk = arkChunkMod.bridgeVhtlc({ record: parsedArk, hashLock: identityArk.hashLock });
+  ok("ark: the ported VHTLC reproduces the live server address byte-exact", vhtlcArk.address === FIXTURE_ARK.arkade_vhtlc_address);
+
+  const htmlArk = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const appArk = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("ark: the bridge has its own tab (ALWAYS-WARN LAW v2)", htmlArk.includes('data-tab="bridge"') && htmlArk.includes('id="tab-bridge"') && htmlArk.includes("Getting onto Lightning is safe and locked down"));
+  ok("ark: the three acknowledgements exist and none is pre-ticked", ["bridgeAck1", "bridgeAck2", "bridgeAck3"].every((id) => htmlArk.includes(`id="${id}"`)) && !/id="bridgeAck[123]"[^>]*checked/.test(htmlArk));
+  ok("ark: the warnings name expiry, irreversibility and the operator's limits", htmlArk.includes("Arkade coins expire") && htmlArk.includes("cannot be undone") || htmlArk.includes("can't be undone") || htmlArk.includes("Irreversible steps"));
+  ok("ark: app.js drives the tab through the lazy chunk + core gate", appArk.includes('import("./arkade.chunk.js")') && appArk.includes("ARKADE_CHUNK_MARKER") && appArk.includes("BRIDGE_ROUTE_COST_CAP_SATS") && appArk.includes("bridgeRefresh"));
+  const buildArk = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  const publishArk = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  ok("ark: the chunk is built and published as its own artifact", buildArk.includes("dist/arkade.chunk.js") && buildArk.includes('"./arkade.chunk.js"') && publishArk.includes('"arkade.chunk.js"'));
 }
 
 console.log(`\n${passed} checks passed`);
