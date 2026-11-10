@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
@@ -9272,6 +9272,77 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("rampfee: orders persist and reload with amounts intact",
     loaded.length === 2 && loaded.find(r => r.id === "ramp-test-2").feeRaw === "95000"
     && loaded.find(r => r.id === "ramp-test-1").status === "settled");
+}
+
+// ---------- audit fix batch 2 (2026-11-10): P2-1 dust display /
+// P2-4 sheet focus + no-autocorrect identifier fields ----------
+{
+  const appSrcB2 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrcB2 = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+
+  // P2-1 behaviour: the core display formatters.
+  ok("P2-1: a dust fee renders as <smallest unit, never as zero",
+    dustDisplayFloor(0.0000004, 6) === "<0.000001"
+    && formatDisplayFixed(0.0000004) === "<0.000001"
+    && formatDisplayFixed("0.00000049", 6) === "<0.000001"
+    && formatDisplayAmount(0.0000004) === "<0.000001"
+    && formatDisplayAmount(0.0000000004, 8) === "<0.00000001");
+  ok("P2-1: a true zero still renders as plain zero",
+    dustDisplayFloor(0, 6) === null
+    && formatDisplayFixed(0) === "0.000000"
+    && formatDisplayAmount(0) === "0"
+    && formatDisplayUsd(0) === "$0.00");
+  ok("P2-1: normal amounts are byte-for-byte unchanged",
+    formatDisplayFixed(0.000105) === "0.000105"
+    && formatDisplayFixed(1.5) === "1.500000"
+    && formatDisplayAmount(2.5) === "2.5"
+    && formatDisplayAmount(0.000001) === "0.000001"
+    && formatDisplayAmount(0.1234567) === "0.123457"
+    && formatDisplayUsd(12.3) === "$12.30"
+    && formatDisplayUsd(0.01) === "$0.01");
+  ok("P2-1: dust fiat renders as <$0.01, never $0.00",
+    formatDisplayUsd(0.004) === "<$0.01" && formatDisplayUsd(0.0000001) === "<$0.01");
+  ok("P2-1: the smallest visible unit itself is not dust",
+    dustDisplayFloor(0.000001, 6) === null && dustDisplayFloor(0.01, 2) === null
+    && formatDisplayFixed(0.000001) === "0.000001");
+
+  // P2-1 wiring: the app shell's formatters delegate to core, and the
+  // fixed-precision fee display sites route through fmtFixed.
+  ok("P2-1: app fmt/usd delegate to the core dust-aware formatters",
+    appSrcB2.includes("const usd = (n) => formatDisplayUsd(n);")
+    && appSrcB2.includes("const fmt = (n, d = 6) => formatDisplayAmount(n, d);")
+    && appSrcB2.includes("const fmtFixed = (n, d = 6) => formatDisplayFixed(n, d);"));
+  ok("P2-1: send review + receipt fees render through fmtFixed",
+    appSrcB2.includes("feeNative: fmtFixed(fee)")
+    && appSrcB2.includes("`≈ ${fmtFixed(done.feeNative)} ${NETWORKS[networkKey].symbol}`")
+    && !appSrcB2.includes("feeNative: Number(fee).toFixed(6)")
+    && !appSrcB2.includes("done.feeNative.toFixed(6)"));
+  ok("P2-1: cash-out network fee and Cosmos fee render through fmtFixed",
+    appSrcB2.includes("fmtFixed(2 * Number(est.bareGasNativeText))")
+    && appSrcB2.includes("fmtFixed(Number(est.gasNativeText))")
+    && appSrcB2.includes("feeText: `${fmtFixed(est.feeText)} ${est.feeSymbol}`")
+    && appSrcB2.includes("feeAmount: fmtFixed(est.feeText)"));
+
+  // P2-4: focus placement on sheet open.
+  ok("P2-4: openSheet focuses the sheet's marked primary field on a fresh open only",
+    appSrcB2.includes("function focusSheetPrimary()")
+    && appSrcB2.includes('body.querySelector("[data-autofocus]")')
+    && appSrcB2.includes("if (!wasOpen) focusSheetPrimary();"));
+  const tagOf = (src, id) => { const m = src.match(new RegExp(`<(?:input|textarea)\\b[^>]*?id="${id}"[^>]*?>`)); return m ? m[0] : ""; };
+  const focusIds = ["sTo", "bTo", "tTo", "oTo", "uTo", "stTo", "tnTo", "nrTo", "agTo", "xrTo", "dtTo", "apTo", "sxTo", "lTo", "cTo", "gTo", "kTo", "ctAddr", "ncNewName", "lnTarget", "lnInv", "wcUri", "wAmt"];
+  ok("P2-4: every form sheet's primary field carries data-autofocus",
+    focusIds.every(id => tagOf(appSrcB2, id).includes("data-autofocus")));
+
+  // P2-4: no keyboard correction on address/identifier fields.
+  const identApp = [...focusIds.filter(id => id !== "wAmt"), "xrTag", "bridgeBtcAddr", "bridgeExitAllAddr", "wDestAddr", "wFromSearch", "wToSearch", "lnPeerKey", "lnPeerHost", "lnProxy", "lnRelay", "lnFundHex", "lnSisPaths"];
+  const identIdx = ["createName", "scanInput", "ownedLnInput", "nameInput", "lnInput", "agentNameInput", "importPhrase"];
+  const noCorrect = (tag) => tag.includes('spellcheck="false"') && tag.includes('autocomplete="off"') && tag.includes('autocorrect="off"') && tag.includes('autocapitalize="none"');
+  ok("P2-4: every address/identifier field in app sheets refuses autocorrect",
+    identApp.every(id => noCorrect(tagOf(appSrcB2, id))));
+  ok("P2-4: every address/identifier field in the static shell refuses autocorrect",
+    identIdx.every(id => noCorrect(tagOf(idxSrcB2, id))));
+  ok("P2-4: prose fields keep their keyboard behaviour (invoice description untouched)",
+    !tagOf(appSrcB2, "lnRcvDesc").includes("spellcheck"));
 }
 
 console.log(`\n${passed} checks passed`);

@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
+  dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
   mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
@@ -100,8 +101,12 @@ const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#27
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
   TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a" };
-const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmt = (n, d = 6) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+// P2-1: the display formatters live in wallet-core (dustDisplayFloor &
+// friends) so a nonzero value can never render as an apparent zero —
+// dust shows as "<0.000001" / "<$0.01", a true zero stays plain zero.
+const usd = (n) => formatDisplayUsd(n);
+const fmt = (n, d = 6) => formatDisplayAmount(n, d);
+const fmtFixed = (n, d = 6) => formatDisplayFixed(n, d);
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, btcTrAddr = null, btcTrBal = 0, pendingSend = null;
 let tronAddr = null, tronBalances = [], tronLoadFailed = false;
@@ -202,7 +207,19 @@ addEventListener("popstate", () => {
   if (sheetHistSwallow) { sheetHistSwallow = false; return; }
   if (sheetHistArmed) { sheetHistArmed = false; closeSheet(); }
 });
-function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); armSheetHistory(); }
+function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); const wasOpen = !!(r && !r.classList.contains("hidden")); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); armSheetHistory(); if (!wasOpen) focusSheetPrimary(); }
+/** P2-4: when a sheet opens, the cursor lands in its primary field —
+ *  the field the sheet's markup marks data-autofocus (the recipient
+ *  field on sends, the amount on Swap, the paste field on Lightning /
+ *  WalletConnect). Only on a FRESH open: in-place repaints of an
+ *  already-open sheet (the Lightning panel refreshes itself on node
+ *  events) must never steal focus from what the user is typing. */
+function focusSheetPrimary() {
+  const body = $("sheetBody"); if (!body) return;
+  const el = body.querySelector("[data-autofocus]");
+  if (!el || typeof el.focus !== "function") return;
+  try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch { /* field already gone — sheet replaced */ } }
+}
 function closeSheet(force = false) {
   if (sheetBusy && !force) return;
   fireSheetCloseHook();
@@ -1765,7 +1782,7 @@ function openAddTokenSheet() {
   const net = NETWORKS[networkKey], chainId = net.chainId;
   openSheet(`<h3>Add a token on ${esc(net.name)}</h3>
     <p class="tag">Paste any ERC-20 contract address on this network. Fluid reads its name, symbol and decimals straight from the contract — nothing is taken on trust from a list. A token added this way is marked ⚠ unverified unless a verified list also knows it.</p>
-    <input id="ctAddr" placeholder="Contract address 0x…" autocapitalize="none">
+    <input id="ctAddr" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Contract address 0x…" autocapitalize="none">
     <button class="btn" id="ctLookup">Look up token</button>
     <div id="ctInfo"></div>
     <p class="msg err" id="ctMsg"></p>`);
@@ -2217,7 +2234,7 @@ function openEvmSendSheet() {
     <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
-    <input id="sTo" placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
+    <input id="sTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
     ${rampFeeFieldsHtml("s")}
     <button class="btn" id="sReview">Review send</button>
@@ -2284,8 +2301,8 @@ function openEvmSendSheet() {
         const feeText = ethers.formatUnits(quote.feeRaw, dec);
         const totalText = ethers.formatUnits(quote.totalRaw, dec);
         const netFeeText = (quote.tier === 2
-          ? (2 * Number(est.bareGasNativeText)).toFixed(6)
-          : Number(est.gasNativeText).toFixed(6)) + " " + NETWORKS[networkKey].symbol;
+          ? fmtFixed(2 * Number(est.bareGasNativeText))
+          : fmtFixed(Number(est.gasNativeText))) + " " + NETWORKS[networkKey].symbol;
         $("sIntentText").textContent = formatRampSellIntent({ tier: quote.tier,
           amountText: amount, symbol: b.symbol, authorisation: quote.tier === 1,
           fiatText: rampIn.fiatText || ("$" + (Number.isFinite(amountInUsd) ? amountInUsd.toFixed(2) : amount)),
@@ -2309,7 +2326,7 @@ function openEvmSendSheet() {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
       pendingSend = { to, amount, token: b.address ? b : null, symbol: b.symbol, name: sendName, feeNative: Number(fee) };
-      $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: Number(fee).toFixed(6), name: sendName })
+      $("sIntentText").textContent = formatSendIntent({ amount, symbol: b.symbol, to, networkKey, feeNative: fmtFixed(fee), name: sendName })
         + (b.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       setBalanceAfter($("sIntentText"), { balance: b.amount, amount, fee: b.address ? null : Number(fee), symbol: b.symbol });
       show("sIntent"); msg("sMsg", poisonNote);
@@ -2386,7 +2403,7 @@ function openEvmSendSheet() {
       showTxSuccess({ verb: "Sent", amount: done.amount, symbol: done.symbol,
         logoHtml: tokenLogoHtml({ symbol: done.symbol, address: done.token ? done.token.address : null }, "evm"),
         to: done.to, toName: done.name, familyName: NETWORKS[networkKey].name,
-        feeText: done.feeNative != null ? `≈ ${done.feeNative.toFixed(6)} ${NETWORKS[networkKey].symbol}` : null,
+        feeText: done.feeNative != null ? `≈ ${fmtFixed(done.feeNative)} ${NETWORKS[networkKey].symbol}` : null,
         explorerUrl: historyTxUrl({ hash: tx.hash, explorer: NETWORKS[networkKey].explorer }), txid: tx.hash, pending: false });
     } catch (e) { sendFailed(btn, "sMsg", e); }
   };
@@ -2413,7 +2430,7 @@ function openBtcSheet() {
       <option value="segwit">SegWit account (bc1q…)</option>
       <option value="taproot">Taproot account (bc1p…)</option>
     </select>
-    <input id="bTo" placeholder="Recipient bc1… address or Fluid name">
+    <input id="bTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient bc1… address or Fluid name">
     <input id="bAmt" inputmode="decimal" placeholder="Amount in BTC">
     <button class="btn" id="bSend">Review &amp; send BTC</button>
     <div id="bIntent" class="hidden">
@@ -2596,7 +2613,7 @@ function openTronSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Tron</h3>
     <div id="tRampOrder"></div>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${tronAddr}</span></p>
-    <input id="tTo" placeholder="Recipient T… address or Fluid name" autocapitalize="none">
+    <input id="tTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient T… address or Fluid name" autocapitalize="none">
     <input id="tAmt" inputmode="decimal" placeholder="Amount">
     ${rampFeeFieldsHtml("t")}
     <button class="btn" id="tReview">Review send</button>
@@ -2722,7 +2739,7 @@ function openSolanaSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Solana</h3>
     <div id="oRampOrder"></div>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${solAddr}</span></p>
-    <input id="oTo" placeholder="Recipient Solana address or Fluid name" autocapitalize="none">
+    <input id="oTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Solana address or Fluid name" autocapitalize="none">
     <input id="oAmt" inputmode="decimal" placeholder="Amount">
     ${rampFeeFieldsHtml("o")}
     <button class="btn" id="oReview">Review send</button>
@@ -2894,7 +2911,7 @@ function openSuiSheet(tok) {
   let pendingSui = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Sui</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${suiAddr}</span></p>
-    <input id="uTo" placeholder="Recipient Sui address (0x…) or Fluid name" autocapitalize="none">
+    <input id="uTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Sui address (0x…) or Fluid name" autocapitalize="none">
     <input id="uAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="uReview">Review send</button>
     <div id="uIntent" class="hidden">
@@ -2970,7 +2987,7 @@ function openStellarSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Stellar</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${stellarAddr}</span></p>
     ${tok.address ? `<p class="tag">Issuer <span class="mono">${esc(tok.issuer)}</span></p>` : ""}
-    <input id="stTo" placeholder="Recipient Stellar address (G…)" autocapitalize="none">
+    <input id="stTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Stellar address (G…)" autocapitalize="none">
     <input id="stAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="stReview">Review send</button>
     <div id="stIntent" class="hidden">
@@ -3039,7 +3056,7 @@ function openTonSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on TON</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${tonAddr}</span></p>
     ${tok.address ? `<p class="tag">Jetton master <span class="mono">${esc(tok.address)}</span></p>` : ""}
-    <input id="tnTo" placeholder="Recipient TON address (EQ… / UQ…)" autocapitalize="none">
+    <input id="tnTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient TON address (EQ… / UQ…)" autocapitalize="none">
     <input id="tnAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="tnReview">Review send</button>
     <div id="tnIntent" class="hidden">
@@ -3099,7 +3116,7 @@ function openNearSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on NEAR</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${nearAddr}</span></p>
     ${tok.address ? `<p class="tag">Token contract <span class="mono">${esc(tok.address)}</span></p>` : ""}
-    <input id="nrTo" placeholder="Recipient NEAR account (name.near or 64-hex)" autocapitalize="none">
+    <input id="nrTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient NEAR account (name.near or 64-hex)" autocapitalize="none">
     <input id="nrAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="nrReview">Review send</button>
     <div id="nrIntent" class="hidden">
@@ -3167,7 +3184,7 @@ function openAlgoSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Algorand</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${algoAddr}</span></p>
     ${tok.address ? `<p class="tag">ASA id <span class="mono">${esc(tok.address)}</span></p>` : ""}
-    <input id="agTo" placeholder="Recipient Algorand address or Fluid name (e.g. dripbot)" autocapitalize="none">
+    <input id="agTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Algorand address or Fluid name (e.g. dripbot)" autocapitalize="none">
     <input id="agAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="agReview">Review send</button>
     <div id="agIntent" class="hidden">
@@ -3257,9 +3274,9 @@ function openXrplSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on the XRP Ledger</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${xrpAddr}</span></p>
     ${tok.address ? `<p class="tag">Issuer <span class="mono">${esc(tok.issuer)}</span></p>` : ""}
-    <input id="xrTo" placeholder="Recipient XRP Ledger address (r…)" autocapitalize="none">
+    <input id="xrTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient XRP Ledger address (r…)" autocapitalize="none">
     <input id="xrAmt" inputmode="decimal" placeholder="Amount">
-    <input id="xrTag" inputmode="numeric" placeholder="Destination tag (optional — exchanges often require one)">
+    <input id="xrTag" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" inputmode="numeric" placeholder="Destination tag (optional — exchanges often require one)">
     <button class="btn" id="xrReview">Review send</button>
     <div id="xrIntent" class="hidden">
       <p class="seed" id="xrIntentText"></p>
@@ -3323,7 +3340,7 @@ function openDotSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Polkadot Asset Hub</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${dotAddr}</span></p>
     ${tok.address ? `<p class="tag">Asset id <span class="mono">${esc(tok.address)}</span> · Polkadot Asset Hub</p>` : ""}
-    <input id="dtTo" placeholder="Recipient Polkadot address" autocapitalize="none">
+    <input id="dtTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Polkadot address" autocapitalize="none">
     <input id="dtAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="dtReview">Review send</button>
     <div id="dtIntent" class="hidden">
@@ -3384,7 +3401,7 @@ function openAptosSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Aptos</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${aptosAddr}</span></p>
     ${tok.address ? `<p class="tag">Asset <span class="mono">${esc(tok.address)}</span></p>` : ""}
-    <input id="apTo" placeholder="Recipient Aptos address (0x…)" autocapitalize="none">
+    <input id="apTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Aptos address (0x…)" autocapitalize="none">
     <input id="apAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="apReview">Review send</button>
     <div id="apIntent" class="hidden">
@@ -3442,7 +3459,7 @@ function openStacksSheet(tok) {
   openSheet(`<h3>Send ${esc(tok.symbol)} on Stacks</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${stacksAddr}</span></p>
     ${tok.contract ? `<p class="tag">Token contract <span class="mono">${esc(tok.contract)}</span></p>` : ""}
-    <input id="sxTo" placeholder="Recipient Stacks address (SP…)" autocapitalize="none">
+    <input id="sxTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient Stacks address (SP…)" autocapitalize="none">
     <input id="sxAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="sxReview">Review send</button>
     <div id="sxIntent" class="hidden">
@@ -3493,7 +3510,7 @@ function openLtcSheet() {
   let pendingLtc = null;
   openSheet(`<h3>Send LTC on Litecoin</h3>
     <p><b>${ltcLoadFailed ? "Balance couldn't load" : fmt(ltcBal, 8) + " LTC"}</b> · from <span class="mono">${ltcAddr}</span></p>
-    <input id="lTo" placeholder="Recipient ltc1… address" autocapitalize="none">
+    <input id="lTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient ltc1… address" autocapitalize="none">
     <input id="lAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="lReview">Review send</button>
     <div id="lIntent" class="hidden">
@@ -3552,7 +3569,7 @@ function openBchSheet() {
   let pendingBch = null;
   openSheet(`<h3>Send BCH on Bitcoin Cash</h3>
     <p><b>${bchLoadFailed ? "Balance couldn't load" : fmt(bchBal, 8) + " BCH"}</b> · from <span class="mono">${bchAddr}</span></p>
-    <input id="cTo" placeholder="Recipient bitcoincash:q… or legacy address" autocapitalize="none">
+    <input id="cTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient bitcoincash:q… or legacy address" autocapitalize="none">
     <input id="cAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="cReview">Review send</button>
     <div id="cIntent" class="hidden">
@@ -3618,7 +3635,7 @@ function openDogeSheet() {
     <button class="btn ghost" id="cpDoge2">Copy address</button>
     <hr style="border-color:var(--line)">
     <h3>Send DOGE</h3>
-    <input id="gTo" placeholder="Recipient D… address" autocapitalize="none">
+    <input id="gTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient D… address" autocapitalize="none">
     <input id="gAmt" inputmode="decimal" placeholder="Amount">
     <button class="btn" id="gReview">Review send</button>
     <div id="gIntent" class="hidden">
@@ -3710,7 +3727,7 @@ function openCosmosSheet(row) {
          </button>`).join("")}</div>`
     : "";
   const sendBlock = `<h3>Send <span id="kSendSym">${esc(sel ? sel.symbol : chain.symbol)}</span></h3>
-       <input id="kTo" placeholder="Recipient ${chain.prefix}1… address" autocapitalize="none">
+       <input id="kTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient ${chain.prefix}1… address" autocapitalize="none">
        <input id="kAmt" inputmode="decimal" placeholder="Amount">
        <button class="btn" id="kReview">Review send</button>
        <div id="kIntent" class="hidden">
@@ -3758,10 +3775,10 @@ function openCosmosSheet(row) {
       msg("kMsg", "Estimating fee…", true);
       const est = await estimateCosmosFee(wallet.mnemonic.phrase, chain.key, { to, amount, denom: sel.denom, decimals: sel.decimals });
       pendingCosmos = { to, amount, fee: est.fee, denom: sel.denom, decimals: sel.decimals, symbol: sel.symbol,
-        feeText: `${Number(est.feeText).toFixed(6)} ${est.feeSymbol}`, feeAmt: Number(est.feeText) };
+        feeText: `${fmtFixed(est.feeText)} ${est.feeSymbol}`, feeAmt: Number(est.feeText) };
       $("kIntentText").textContent = formatCosmosSendIntent({
         amount, symbol: sel.symbol, to, chainName: chain.name,
-        feeAmount: Number(est.feeText).toFixed(6), feeSymbol: est.feeSymbol })
+        feeAmount: fmtFixed(est.feeText), feeSymbol: est.feeSymbol })
         + (sel.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       setBalanceAfter($("kIntentText"), { balance: sel.amount, amount, fee: sel.denom === chain.denom ? Number(est.feeText) : null, symbol: sel.symbol });
       show("kIntent"); msg("kMsg", "");
@@ -3978,7 +3995,7 @@ function paintLnPanel() {
     <p><b>Receiving room:</b> ${lnSats(bal.receivableMsat)} · <b>Sending room:</b> ${lnSats(bal.spendableMsat)}${bal.claimableOnchainSat ? ` · <b>Claimable on-chain:</b> ${Number(bal.claimableOnchainSat).toLocaleString()} sats` : ""}</p>
     ${lnEvents.length ? `<p class="tag">${lnEvents.map(lnEventLine).filter(Boolean).map(esc).join("<br>")}</p>` : ""}
     <h4>Pay</h4>
-    <textarea id="lnTarget" rows="3" placeholder="lnbc… invoice, lno… offer, ₿name@domain, name@domain, or a Fluid name"></textarea>
+    <textarea id="lnTarget" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus rows="3" placeholder="lnbc… invoice, lno… offer, ₿name@domain, name@domain, or a Fluid name"></textarea>
     <input id="lnSatsIn" inputmode="numeric" placeholder="Sats (for offers / addresses / amountless invoices)">
     <div class="stickyfoot"><button class="btn" id="lnPayBtn">Pay with my node</button></div>
     <p class="msg err" id="lnPayMsg"></p>
@@ -4011,18 +4028,18 @@ function paintLnPanel() {
     <details id="lnAdvanced" ${lnAdvancedOpen ? "open" : ""}>
       <summary><b>Advanced — connect to any peer</b></summary>
       <p class="tag">Connect to any Lightning peer and open a channel from your own on-chain Bitcoin. Peers you connect to are remembered and reconnected automatically.</p>
-      <input id="lnPeerKey" placeholder="Peer pubkey (66 hex chars)">
-      <input id="lnPeerHost" placeholder="Peer host — wss://… endpoint, or host for your proxy">
+      <input id="lnPeerKey" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Peer pubkey (66 hex chars)">
+      <input id="lnPeerHost" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Peer host — wss://… endpoint, or host for your proxy">
       <input id="lnPeerPort" inputmode="numeric" placeholder="Port (e.g. 9735)">
       <input id="lnChanSats" inputmode="numeric" placeholder="Channel size in sats">
-      <input id="lnProxy" placeholder="Optional WebSocket proxy template: wss://proxy.example/{host}/{port}" value="${esc(localStorage.getItem("fluid_ln_wsproxy") || s.defaultWsProxy || "")}">
+      <input id="lnProxy" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Optional WebSocket proxy template: wss://proxy.example/{host}/{port}" value="${esc(localStorage.getItem("fluid_ln_wsproxy") || s.defaultWsProxy || "")}">
       <button class="btn ghost" id="lnOpenBtn">Connect &amp; open channel</button>
       <p class="msg" id="lnChanMsg"></p>
       <p class="tag" style="margin-top:14px">Offline receive (manual): if a peer acts as your holding peer, ask it for blinded paths (the DripBot keeper provides them) and paste them here — Fluid builds your offline-receive offer from them. ${esc(holdWindowCopy(24))}</p>
-      <textarea id="lnSisPaths" rows="2" placeholder='Blinded paths from your holding peer (JSON list)'></textarea>
+      <textarea id="lnSisPaths" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" rows="2" placeholder='Blinded paths from your holding peer (JSON list)'></textarea>
       <button class="btn ghost" id="lnSisBtn">Use these paths &amp; show my offline offer</button>
       <p class="tag" style="margin-top:14px">Wake-up relay (self-hosted): a relay URL you run yourself. Holds no keys and no funds.</p>
-      <input id="lnRelay" placeholder="Relay URL, e.g. https://relay.example.com" value="${esc(relayVal)}">
+      <input id="lnRelay" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" placeholder="Relay URL, e.g. https://relay.example.com" value="${esc(relayVal)}">
       <button class="btn ghost" id="lnWakeBtnAdv">Enable wake-up notifications via this relay</button>
       <p class="msg" id="lnWakeMsgAdv"></p>
     </details>
@@ -4555,7 +4572,7 @@ function lnWatchFunding() {
       }
     } else {
       out.innerHTML = `<p class="tag">Fund the channel from any ${esc(lnSession.network)} wallet: pay exactly <b>${Number(req.valueSat).toLocaleString()} sats</b> to the funding script <span class="mono">${esc(req.scriptPubkey)}</span> (address form: <span class="mono">${esc(fundingAddressFromScript(req.scriptPubkey, lnSession.network))}</span>), then paste the raw signed transaction hex:</p>
-        <textarea id="lnFundHex" rows="2" placeholder="Raw funding transaction hex"></textarea>
+        <textarea id="lnFundHex" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" rows="2" placeholder="Raw funding transaction hex"></textarea>
         <button class="btn" id="lnFundBtn">Submit funding transaction</button>
         <p class="msg" id="lnFundMsg"></p>`;
       $("lnFundBtn").onclick = () => {
@@ -4572,7 +4589,7 @@ function lnFallbackSheet(note) {
   openSheet(`<h3>${icon("bolt", "ic ic-brand")} Lightning payment (fallback)</h3>
     ${note ? `<p class="tag">${esc(note)}</p>` : ""}
     <p class="tag">Fluid never custodies Lightning funds. Paste an invoice — your own WebLN wallet (e.g. Alby) pays it.</p>
-    <textarea id="lnInv" rows="3" placeholder="lnbc… invoice — or a Fluid name / Lightning address"></textarea>
+    <textarea id="lnInv" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus rows="3" placeholder="lnbc… invoice — or a Fluid name / Lightning address"></textarea>
     <input id="lnSats" inputmode="numeric" placeholder="Sats (only for name / Lightning address)">
     <div class="stickyfoot"><button class="btn" id="lnPay">Pay</button></div>
     <p class="msg err" id="lnMsg"></p>`);
@@ -4716,7 +4733,7 @@ function paintBridgeForm() {
     <p class="t-strong" style="margin:0 0 6px">Cross to Bitcoin mainnet</p>
     <p class="tag" style="margin:0 0 10px">${esc(pairLine)}</p>
     <label class="fld"><span>Amount in sats (from your Lightning balance)</span><input id="bridgeAmount" inputmode="numeric" placeholder="e.g. 2700" value="${esc(bridgeForm.sourceSats)}"></label>
-    <label class="fld"><span>Destination Bitcoin address (your external wallet)</span><input id="bridgeBtcAddr" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
+    <label class="fld"><span>Destination Bitcoin address (your external wallet)</span><input id="bridgeBtcAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none" value="${esc(bridgeForm.btcAddress)}"></label>
     <p class="msg" id="bridgeMsg"></p>
     <div id="bridgeQuoteBox"></div>
     <button class="btn" id="bridgeQuoteBtn" ${pair ? "" : "disabled"}>Get the exact quote</button>
@@ -4945,7 +4962,7 @@ async function paintBridgeArkadeLive() {
       ${rows}
       ${earliest ? `<p class="tag" style="margin:6px 0 0${soon ? ";color:#e5484d" : ""}">Earliest expiry: ${esc(new Date(earliest * 1000).toLocaleString())}${soon ? " — renew or exit soon; past expiry the operator can sweep unspent coins." : ""}</p>` : ""}
       ${balance > 0 ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn ghost" id="bridgeRenewBtn" style="width:auto">Renew my Arkade balance</button></div>
-      <label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" placeholder="bc1…" autocapitalize="none"></label>
+      <label class="fld" style="margin-top:10px"><span>Or exit everything to a Bitcoin address</span><input id="bridgeExitAllAddr" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="bc1…" autocapitalize="none"></label>
       <p class="msg" id="bridgeArkadeMsg"></p>
       <button class="btn ghost" id="bridgeExitAllBtn">Review the exit</button>` : `<p class="tag" style="margin:6px 0 0">Sats you bridge land here first; from here you exit them to Bitcoin mainnet.</p>`}`);
     if (balance > 0) {
@@ -5038,7 +5055,7 @@ async function openWcPanel() {
 function paintWcPanel() {
   openSheet(`<div id="wcPanel"><h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
     <p class="tag">Connect Fluid to an app: open the app, choose WalletConnect, copy its pairing code (it starts with <span class="mono">wc:</span>) and paste it here. You'll review the connection before anything is shared. (Pairing codes are copied text for now — Fluid has no camera scanner yet.)</p>
-    <textarea id="wcUri" rows="3" placeholder="wc:… pairing code from the app" autocapitalize="none"></textarea>
+    <textarea id="wcUri" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus rows="3" placeholder="wc:… pairing code from the app" autocapitalize="none"></textarea>
     <div class="stickyfoot"><button class="btn" id="wcConnectBtn">Connect</button></div>
     <p class="msg err" id="wcMsg"></p>
     <h4>Connected apps</h4>
@@ -5414,10 +5431,10 @@ $("actSwap").onclick = () => {
       <button class="btn ghost" id="wFromTokBtn" style="flex:1;margin:6px 0">Select token ▾</button>
     </div>
     <div id="wFromPick" class="hidden">
-      <input id="wFromSearch" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
+      <input id="wFromSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
       <div id="wFromList" style="max-height:240px;overflow:auto"></div>
     </div>
-    <input id="wAmt" inputmode="decimal" placeholder="Amount">
+    <input id="wAmt" data-autofocus inputmode="decimal" placeholder="Amount">
     <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
     <div style="display:flex;gap:8px">
@@ -5425,12 +5442,12 @@ $("actSwap").onclick = () => {
       <button class="btn ghost" id="wToTokBtn" style="flex:1;margin:6px 0">Select token ▾</button>
     </div>
     <div id="wToPick" class="hidden">
-      <input id="wToSearch" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
+      <input id="wToSearch" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Search name or symbol, or paste an address…" autocapitalize="none">
       <div id="wToList" style="max-height:240px;overflow:auto"></div>
     </div>
     <div id="wDestWrap" class="hidden">
       <label class="tag" id="wDestLabel"></label>
-      <input id="wDestAddr" autocapitalize="none" spellcheck="false">
+      <input id="wDestAddr" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
     <button class="btn" id="wRoutes">Get routes</button>
     <div id="wList"></div>
@@ -6436,7 +6453,7 @@ function showNameCreationWait(name, accepted, { startConflict = false } = {}) {
       <button class="btn ghost" id="ncRetryBtn">Retry the claim submission</button>
     </div>
     <div id="ncConflictBox" class="${startConflict ? "" : "hidden"}">
-      <input id="ncNewName" placeholder="Pick a different name" autocapitalize="none" style="margin-top:10px">
+      <input id="ncNewName" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Pick a different name" autocapitalize="none" style="margin-top:10px">
       <button class="btn" id="ncClaimOtherBtn">Claim this name instead</button>
       <p class="msg err" id="ncSheetMsg"></p>
     </div>

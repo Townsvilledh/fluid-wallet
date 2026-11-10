@@ -328,7 +328,7 @@
     <div class="card" id="createBox">
       <button class="btn ghost hidden" id="restoreBackBtn" style="margin-bottom:10px">← Back to unlock</button>
       <h3 style="margin-top:0">Create or import</h3>
-      <input id="createName" placeholder="Pick your Fluid username" autocapitalize="none">
+      <input id="createName" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Pick your Fluid username" autocapitalize="none">
       <p class="tag" style="margin:2px 0 8px">Your name on every chain: <span class="mono" id="createNamePreview">you.fluid.is-a.dev</span> — people send to your name, not a long address. Publishing starts when your wallet is created, and your name goes live once it lands in the public registry; first come, first served.</p>
       <input id="createPw" type="password" placeholder="Set a password (12+ characters)" autocomplete="new-password">
       <input id="createPw2" type="password" placeholder="Repeat password" autocomplete="new-password">
@@ -340,7 +340,7 @@
         <button class="btn" id="seedDoneBtn">Enter Fluid →</button>
       </div>
       <hr style="border-color:var(--line)">
-      <textarea id="importPhrase" rows="2" placeholder="Import instead: paste a 12/24-word seed phrase"></textarea>
+      <textarea id="importPhrase" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" rows="2" placeholder="Import instead: paste a 12/24-word seed phrase"></textarea>
       <button class="btn ghost" id="importBtn">Import wallet</button>
       <p class="tag" style="margin-top:10px">Same phrase, every chain — this address is identical on all EVM networks, and it also derives your Bitcoin address.</p>
     </div>
@@ -434,7 +434,7 @@
       <h2 style="margin:8px 0">Scan</h2>
       <p class="tag">Fluid's own explorer. Look up any Fluid name — or any wallet address — and see its public on-chain activity across chains, in one feed. A pasted transaction ID or Solana signature looks up that transaction instead.</p>
       <div style="display:flex;gap:8px;align-items:flex-start">
-        <input id="scanInput" placeholder="Fluid name, wallet address or transaction ID" autocapitalize="none" style="flex:1;margin:0">
+        <input id="scanInput" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Fluid name, wallet address or transaction ID" autocapitalize="none" style="flex:1;margin:0">
         <button class="btn" id="scanBtn" style="width:auto;margin:0;padding:14px 20px">Search</button>
       </div>
       <p class="tag" style="margin:8px 0">Scan shows what is public on-chain for a name's registered addresses. Unregistered addresses stay private.</p>
@@ -524,7 +524,7 @@
               <p class="tag" id="ownedLnNativeCopy" style="margin:6px 0"></p>
             </div>
             <p class="tag" style="margin:6px 0">First choice: your own Lightning node, registered to your name — payments come to the node inside this app, with no outside service and no other wallet to create. Or, only if you already have one, a Lightning address hosted by another provider:</p>
-            <input id="ownedLnInput" placeholder="Hosted Lightning address (e.g. you@getalby.com)" autocapitalize="none">
+            <input id="ownedLnInput" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Hosted Lightning address (e.g. you@getalby.com)" autocapitalize="none">
             <button class="btn ghost" id="ownedLnAddBtn" style="width:auto;padding:6px 12px">Add hosted address</button>
             <p class="tag" style="margin:6px 0">Nothing Lightning is registered to this name yet — register your node, or add a hosted address, and publish the updated entry so people can pay your name over Lightning.</p>
           </div>
@@ -535,8 +535,8 @@
           </div>
         </div>
         <div id="claimForm">
-          <input id="nameInput" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
-          <input id="lnInput" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
+          <input id="nameInput" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Pick a name (e.g. ethuram)" autocapitalize="none">
+          <input id="lnInput" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Lightning address (optional, e.g. you@getalby.com)" autocapitalize="none">
           <button class="btn" id="claimNameBtn">Claim this name</button>
           <div id="claimBox" class="hidden">
             <p class="tag"><b>Publish it yourself instead (fallback):</b> your claim already publishes from inside Fluid — use this only if you prefer to do it by hand. Copy your entry, then add it into <b>names.json</b> in the GitHub repo:</p>
@@ -550,7 +550,7 @@
       <div class="card">
         <b>Agentic wallet</b>
         <p class="tag" style="margin:6px 0">Give an AI agent its own wallet on Fluid. Agents get <b>full blockchain access</b> — every chain — with <b>no KYC and no on/off-ramps, ever</b>. The agent wallet is a separate account from yours (same seed backup), with spending caps you set. The agent can only <i>request</i> transfers; you approve and Fluid signs.</p>
-        <input id="agentNameInput" placeholder="Agent name (e.g. DripBot)" autocapitalize="none">
+        <input id="agentNameInput" spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Agent name (e.g. DripBot)" autocapitalize="none">
         <button class="btn" id="createAgentBtn">Create agent wallet</button>
         <div id="agentBox" class="hidden">
           <p class="tag">Hand this descriptor to your agent — it contains only public addresses and its rules, never keys:</p>

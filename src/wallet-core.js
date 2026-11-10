@@ -305,6 +305,35 @@ export function formatWelcomeHeader(name) {
   return n ? `Welcome, ${n}` : "Welcome";
 }
 
+/** Display formatting that never lets a nonzero value pose as zero
+ *  (audit P2-1). A real fee of 0.0000004 ETH rendered "0.000000 ETH" in
+ *  the send review sentence and again in the receipt — against the
+ *  fee-disclosure law in spirit: the screen says the fee is nothing,
+ *  then the balance drops by more than the amount sent. Rule: when a
+ *  NONZERO value rounds to all-zeros at the display precision, render
+ *  "<" + the smallest unit visible at that precision ("<0.000001" at
+ *  6 dp, "<$0.01" for fiat). A true zero still renders as plain zero,
+ *  and every value that displays nonzero is byte-for-byte unchanged.
+ *  These are the only formatters behind the app shell's fmt/usd and
+ *  the fixed-precision fee display sites. */
+export function dustDisplayFloor(value, decimals) {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v === 0) return null;
+  if (Number(v.toFixed(decimals)) !== 0) return null;
+  return (v < 0 ? "-<" : "<") + (10 ** -decimals).toFixed(decimals);
+}
+export function formatDisplayAmount(value, decimals = 6) {
+  return dustDisplayFloor(value, decimals) ?? Number(value).toLocaleString(undefined, { maximumFractionDigits: decimals });
+}
+export function formatDisplayFixed(value, decimals = 6) {
+  return dustDisplayFloor(value, decimals) ?? Number(value).toFixed(decimals);
+}
+export function formatDisplayUsd(value) {
+  const v = Number(value || 0);
+  return dustDisplayFloor(v, 2) != null ? (v < 0 ? "-<$0.01" : "<$0.01")
+    : "$" + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 /** The signer principle from the Fluid spec: the user approves a sentence,
  *  never a hex blob. Returns the intent text + the tx the wallet would send. */
 export function formatSendIntent({ amount, symbol, to, networkKey, feeNative, name }) {
