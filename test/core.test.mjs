@@ -9081,11 +9081,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     qTron.tier === 0 && qTron.feeRaw === 0n && qTron.reason === "zero-law");
 
   // The review sentences (design §2) — the fee line is never omitted.
-  const s1 = formatRampSellIntent({ tier: 1, amountText: "20", symbol: "USDT", fiatText: "₦27,400", providerName: "Paycrest", feeText: "0.095", totalText: "20.095", networkFeeText: "0.0011 BNB" });
+  const s1 = formatRampSellIntent({ tier: 1, amountText: "20", symbol: "USDT", fiatText: "₦27,400", providerName: "Paycrest", feeText: "0.095", totalText: "20.095", networkFeeText: "0.0011 BNB", authorisation: true });
   ok("rampfee: the tier-1 sentence names every figure, the same-transaction promise and the refund promise",
     s1.includes("Sell 20 USDT") && s1.includes("₦27,400") && s1.includes("Fluid's fee: 0.095 USDT")
     && s1.includes("in the same transaction") && s1.includes("fee comes back to you automatically")
     && s1.includes("expires in 30 minutes") && s1.includes("Paycrest"));
+  const s1Sol = formatRampSellIntent({ tier: 1, amountText: "20", symbol: "USDC", fiatText: "₦27,400", providerName: "Paycrest", feeText: "0.1", totalText: "20.1", networkFeeText: "0.000005 SOL" });
+  ok("rampfee: the Solana tier-1 sentence claims no authorisation expiry — there is no authorisation to expire",
+    s1Sol.includes("in the same transaction") && !s1Sol.includes("expires") && !s1Sol.includes("authorisation"));
   const s2 = formatRampSellIntent({ tier: 2, amountText: "20", symbol: "BNB", fiatText: "$19.90", feeText: "0.000138", totalText: "20.000138", networkFeeText: "0.002 BNB" });
   ok("rampfee: the tier-2 sentence promises the fee moves only after the provider confirms — never a same-transaction claim",
     s2.includes("only after the provider confirms") && s2.includes("Fluid's fee: 0.000138 BNB") && !s2.includes("same transaction"));

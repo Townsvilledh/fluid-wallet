@@ -3960,7 +3960,8 @@ export function rampFeeQuote({ family, chainKey = null, tier1Eligible = false,
  *  the provider confirms); tier 1's carries the refund promise and
  *  the authorisation's expiry; a $0 fee still prints its line. */
 export function formatRampSellIntent({ tier = 0, amountText, symbol, fiatText, providerName,
-  feeText, totalText, networkFeeText, deadlineMins = Math.round(RAMP_FEE_PERMIT_DEADLINE_SECS / 60) } = {}) {
+  feeText, totalText, networkFeeText, authorisation = false,
+  deadlineMins = Math.round(RAMP_FEE_PERMIT_DEADLINE_SECS / 60) } = {}) {
   const rawName = String(providerName || "").trim() || "the provider";
   const Name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
   const head = `Sell ${amountText} ${symbol} → ${fiatText}. ${Name} receives the full ${amountText} ${symbol} it quoted.`;
@@ -3968,7 +3969,11 @@ export function formatRampSellIntent({ tier = 0, amountText, symbol, fiatText, p
     return `${head} Fluid's fee: $0 — this sale carries no Fluid fee. Total leaving your wallet: ${amountText} ${symbol} + network fee ≈ ${networkFeeText}. Confirm?`;
   }
   if (tier === 1) {
-    return `${head} Fluid's fee: ${feeText} ${symbol}, shown separately, sent in the same transaction. Total leaving your wallet: ${totalText} ${symbol} + network fee ≈ ${networkFeeText}. If this order is refunded, Fluid's fee comes back to you automatically. The authorisation expires in ${deadlineMins} minutes. Confirm?`;
+    // The expiry line belongs only to the Permit2 shape (EVM): the
+    // Solana split is an ordinary signed transaction with nothing
+    // to expire, and the sentence must not claim otherwise.
+    const expiry = authorisation ? ` The authorisation expires in ${deadlineMins} minutes.` : "";
+    return `${head} Fluid's fee: ${feeText} ${symbol}, shown separately, sent in the same transaction. Total leaving your wallet: ${totalText} ${symbol} + network fee ≈ ${networkFeeText}. If this order is refunded, Fluid's fee comes back to you automatically.${expiry} Confirm?`;
   }
   return `${head} Fluid's fee: ${feeText} ${symbol}, shown separately — a second send you make only after ${rawName} confirms your sale, so a sale that fails never costs you the fee. Total if the sale completes: ${totalText} ${symbol} + network fees ≈ ${networkFeeText}. If the provider refunds after the fee was sent, Fluid's fee comes back to you automatically. Confirm?`;
 }

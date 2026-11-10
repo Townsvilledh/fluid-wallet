@@ -2287,7 +2287,7 @@ function openEvmSendSheet() {
           ? (2 * Number(est.bareGasNativeText)).toFixed(6)
           : Number(est.gasNativeText).toFixed(6)) + " " + NETWORKS[networkKey].symbol;
         $("sIntentText").textContent = formatRampSellIntent({ tier: quote.tier,
-          amountText: amount, symbol: b.symbol,
+          amountText: amount, symbol: b.symbol, authorisation: quote.tier === 1,
           fiatText: rampIn.fiatText || ("$" + (Number.isFinite(amountInUsd) ? amountInUsd.toFixed(2) : amount)),
           providerName: rampIn.providerName, feeText, totalText, networkFeeText: netFeeText })
           + (b.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
