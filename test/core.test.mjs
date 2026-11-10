@@ -8917,8 +8917,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     !appB4.includes("setTimeout(r, 4000)"));
   ok("F3 open-channel: the 10,000-sat minimum still guards OPENS (not connects)",
     openB4.includes("sats < 10000"));
-  ok("F3 explainer: the name-card instruction points at a connect that now exists",
-    appB4.includes("→ Advanced, connect to a peer, then tap again.") && advB4.includes("Connecting alone needs no Bitcoin and opens no channel"));
+  // SUPERSEDED by the 2026-11-10 reachability fix: the owner
+  // directive that replaced this pin's behaviour — the normal
+  // flow must never send the user into Advanced to connect a
+  // peer; the app connects itself (lnAutoConnect). The Advanced
+  // section keeps its explainer for power users.
+  ok("F3 explainer: the manual-connect instruction is GONE from the app (auto-connect replaced it)",
+    !appB4.includes("→ Advanced, connect to a peer, then tap again.") && !appB4.includes("Connect under Advanced below")
+    && appB4.includes("function lnAutoConnect(session)") && advB4.includes("Connecting alone needs no Bitcoin and opens no channel"));
 
   // F1 — the name-card handler: the busy label is restored by the
   // branch finally on every non-success exit (offer failure, boot
@@ -8931,8 +8937,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     nativeB4.includes("if (!painted) btn.textContent = lnStatusSnapshot().nativeBtnLabel;"));
   ok("F1 handler: the resting label is state-derived, never a blind revert to start",
     nativeB4.includes("lnStatusSnapshot().nativeBtnLabel") && !nativeB4.includes('btn.textContent = "Use my Fluid node";'));
-  ok("F1 handler: the offer-failure message is unchanged and returns through the finally",
-    nativeB4.includes("couldn't build its offer yet") && nativeB4.includes("finally {"));
+  // SUPERSEDED by the 2026-11-10 reachability fix: the old
+  // offer-failure message claimed "ready" while pointing into
+  // Advanced — the dead-button defect. The new flow waits for
+  // the offer with the button disabled, in a single honest
+  // connecting state, and returns through the same finally.
+  ok("F1 handler: the no-offer path waits for the offer in an honest connecting state (no Advanced pointer, no ready claim)",
+    nativeB4.includes("await lnAwaitOffer(60000)") && nativeB4.includes("Connecting your node…")
+    && nativeB4.includes("couldn't connect to the Lightning network just now") && nativeB4.includes("finally {")
+    && !nativeB4.includes("→ Advanced, connect to a peer"));
   ok("F1 handler: no exit path sets the busy label without the finally behind it",
     (nativeB4.match(/btn\.textContent = "Starting your node…"/g) || []).length === 1
     && nativeB4.indexOf('btn.textContent = "Starting your node…"') < nativeB4.indexOf("if (!painted)"));
@@ -9039,6 +9052,53 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const offerNowNs = appNs.slice(appNs.indexOf("function lnAddrOfferNow"), appNs.indexOf("async function lnAddrRefresh"));
   ok("lnaddr wiring: an offer failure is never cached for the session (publish stays reachable after connecting)",
     offerNowNs.includes("catch { return null; }") && !offerNowNs.includes("lnAddrOffer = null"));
+}
+
+// ---------- LN publish reachability + auto-connect (2026-11-10) ----------
+// Owner field evidence, second report of the day: (1) the publish
+// control shipped inside the Lightning panel only — the Receive
+// sheet the asset view's Receive button opens had no address
+// block at all, so "Wallet → Lightning → Receive → Publish" led
+// nowhere; (2) on the name card, "Register my node — it's ready"
+// was a live-looking dead button: a fresh node has no peer, so
+// createOffer threw, and the handler restored the ready label
+// over the failure — every tap re-ran the same instant failure
+// with nothing on screen changing; (3) the Lightning scoped view
+// rendered the node-status card twice (scoped row + static row).
+// The fixes pinned here: the app connects to its default peer
+// itself on boot; the card waits for the offer in a disabled,
+// honestly-labelled connecting state and ends failure in a held
+// Try again state; the address block paints on both Receive
+// surfaces from one state; the static row hides in the LN view.
+{
+  const appR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("lnreach: boot auto-connects the default peer (and the reuse path tops it up)",
+    appR.includes("lnAutoConnect(session);") && appR.includes("if (lnSession && lnSession.network === net) { lnAutoConnect(lnSession); return lnSession; }")
+    && appR.includes("session.connectPeer(lsp.pubkey, lsp.host, lsp.port)"));
+  ok("lnreach: auto-connect is mainnet-only, rate-limited, and skips a live/dialling peer",
+    appR.includes('session.network !== "bitcoin"') && appR.includes("lnLastAutoDialMs < 15000")
+    && appR.includes('p.state === "connected" || p.state === "connecting"'));
+  ok("lnreach: the offer wait is shared (one helper, success-cached getter)",
+    appR.includes("async function lnAwaitOffer(timeoutMs = 60000)") && appR.includes("const offer = lnAddrOfferNow();"));
+  const nativeR = appR.slice(appR.indexOf('$("ownedLnNativeBtn").onclick'), appR.indexOf("const lnPendingVerifyName"));
+  ok("lnreach: the card's no-offer tap ends held in Try again — the ready label is never restored over a failure",
+    nativeR.includes('btn.textContent = "Try again"; lnNativeLabelHold = true;') && nativeR.includes("let held = false;")
+    && nativeR.includes("if (btn && !held)"));
+  ok("lnreach: the card's connecting copy is the single true state (running, connecting, automatic)",
+    nativeR.includes("It's connecting to the Lightning network so it can build its offer")
+    && nativeR.includes("you don't need to connect anything yourself"));
+  ok("lnreach: the address block paints every surface from one state (class-painted, per-container binding)",
+    appR.includes('document.querySelectorAll(".lnAddrOut").forEach((out) => paintLnAddressInto(out));')
+    && appR.includes('class="lnAddrOut"') && appR.includes('id="lnAddrOut" class="lnAddrOut"')
+    && appR.includes("paintLnAddress();\n      const paintLn = (ln, name, kind = \"address\") => {"));
+  ok("lnreach: the block's no-offer states never point into Advanced (start button / connecting + poll)",
+    appR.includes('class="btn ghost lnAddrOpenNode">Start my Fluid node</button>') && appR.includes("lnAddrEnsurePoll();")
+    && !appR.includes("connect under <b>Advanced</b> below"));
+  ok("lnreach: publish itself waits out a dropped connection before failing, in plain words",
+    appR.includes("if (!offer) offer = await lnAwaitOffer(30000);")
+    && appR.includes("it's still connecting to the Lightning network"));
+  ok("lnreach: the Lightning scoped view hides the static row (status card renders once per view)",
+    appR.includes('lrRow.classList.toggle("hidden", viewKey === "lightning")'));
 }
 
 // ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------

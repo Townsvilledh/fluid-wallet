@@ -1557,6 +1557,14 @@ function paintAssets() {
   }
   html += `<button class="btn ghost" id="zeroToggle">${showZeroBalances ? "Hide zero balances" : "Show zero balances"}</button>`;
   $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
+  // The static Lightning row under the list is the All view's
+  // entry into the panel; the Lightning scoped view renders its
+  // OWN Lightning row inside the list. Showing both stacked two
+  // identical node-status cards on one screen (owner screenshot,
+  // 2026-11-10) — in the Lightning view the static row hides, so
+  // the status card renders exactly once per view.
+  const lrRow = $("lightningRow");
+  if (lrRow) lrRow.classList.toggle("hidden", viewKey === "lightning");
   paintLnNodeStatus();
   persistBalanceCache();
   document.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
@@ -1939,7 +1947,8 @@ $("actReceive").onclick = () => {
       <img class="qr" id="qrBtcTr"><p class="mono">${btcTrAddr}</p>
       <button class="btn ghost" id="cpBtcTr">Copy Taproot address</button>
       <p class="tag">Both addresses are yours and both can receive BTC. Taproot is the newer format — some older services only send to SegWit.</p>`,
-    lightning: `<div id="rcvLnSlot"><p class="tag">Checking for your Lightning receive address…</p></div>
+    lightning: `<div class="lnAddrOut"></div>
+      <div id="rcvLnSlot"><p class="tag">Checking for your Lightning receive address…</p></div>
       <p class="tag">Fluid's Lightning is a real node inside this app, run from your own seed — nobody custodies your sats. Your reusable BOLT 12 offer (below, once the node has run) is your shareable Lightning address; a Lightning address registered to your Fluid name also works.</p>`,
     tron: `<p class="tag">Tron address (TRX and TRC20 tokens):</p>
       <img class="qr" id="qrTron"><p class="mono">${tronAddr}</p>
@@ -2004,6 +2013,12 @@ $("actReceive").onclick = () => {
     bitcoin: () => { qr("qrBtc", btcAddr); $("cpBtc").onclick = () => copyText(btcAddr, $("cpBtc"));
       qr("qrBtcTr", btcTrAddr); $("cpBtcTr").onclick = () => copyText(btcTrAddr, $("cpBtcTr")); },
     lightning: () => {
+      // The "Your Lightning address" block tops this panel: the
+      // Receive flow is where a user looks for the address people
+      // pay them at, so its publish action lives here too — the
+      // same block, from the same state, as the Lightning panel's
+      // Receive section (paintLnAddress paints every surface).
+      paintLnAddress();
       const paintLn = (ln, name, kind = "address") => {
         const slot = $("rcvLnSlot"); if (!slot) return; // sheet has moved on
         if (ln) {
@@ -4012,13 +4027,40 @@ function lnWaitEvent(type, { timeoutMs = 45000, match = null, failTypes = ["lsps
   });
 }
 
+// --- Automatic peer connection (channel-free presentation) ---
+// A fresh node has an empty peer book, and the node can only
+// build its BOLT 12 offer — or route anything — once it is
+// connected to at least one peer. Connecting is plumbing, so the
+// app does it itself: on boot it dials the default peer (Megalith,
+// the same LSP the JIT flows use, reached through the deployed
+// WebSocket proxy) with no channel and no user action, and the
+// user is never sent into Advanced to connect by hand (owner
+// directive, 2026-11-10: the manual remedy shipped earlier made
+// registration silently impossible for a normal user). Dial
+// attempts are rate-limited, and a peer already live or dialling
+// is left alone; the supervisor only re-dials channel peers, so
+// this also tops the connection back up if it drops.
+let lnLastAutoDialMs = 0;
+function lnAutoConnect(session) {
+  try {
+    if (!session || session.network !== "bitcoin") return;
+    if (session.peerStatus().some((p) => p.state === "connected" || p.state === "connecting")) return;
+    const now = Date.now();
+    if (now - lnLastAutoDialMs < 15000) return;
+    const lsp = session.lsp;
+    if (!lsp || !lsp.pubkey) return;
+    lnLastAutoDialMs = now;
+    session.connectPeer(lsp.pubkey, lsp.host, lsp.port);
+  } catch { /* a failed dial is retried by the offer waits below */ }
+}
+
 // Boot (or reuse) the node session on a network. Throws an error
 // carrying .stage ("software" | "download" | "integrity" | "chain" |
 // "node") so callers can say exactly which leg failed — never a bare
 // "Failed to fetch" (owner field evidence, 2026-11-10).
 async function lnEnsureSession(network, onProgress) {
   const net = network || lnNetKey();
-  if (lnSession && lnSession.network === net) return lnSession;
+  if (lnSession && lnSession.network === net) { lnAutoConnect(lnSession); return lnSession; }
   if (lnSession) { lnSession.stopLoops(); lnSession = null; }
   lnBootUiState.starting = true;
   lnBootUiState.failed = null;
@@ -4034,6 +4076,7 @@ async function lnEnsureSession(network, onProgress) {
     });
     lnSession = session;
     session.startLoops((evs) => lnHandleEvents(evs));
+    lnAutoConnect(session);
     session.syncNow().catch(() => {});
     lnBootUiState.starting = false;
     lnRememberNode(session);
@@ -4117,6 +4160,7 @@ function lnEventLine(ev) {
 let lnAdvancedOpen = false;
 function paintLnPanel() {
   const s = lnSession; if (!s) return;
+  lnAutoConnect(s);
   const bal = s.balance();
   const chans = s.channels();
   const hist = s.history().slice(-8).reverse();
@@ -4142,7 +4186,7 @@ function paintLnPanel() {
     <div class="stickyfoot"><button class="btn" id="lnPayBtn">Pay with my node</button></div>
     <p class="msg err" id="lnPayMsg"></p>
     <h4>Receive</h4>
-    <div id="lnAddrOut"></div>
+    <div id="lnAddrOut" class="lnAddrOut"></div>
     <input id="lnRcvSats" inputmode="numeric" placeholder="Sats (optional for the offer)">
     <input id="lnRcvDesc" placeholder="What is it for? (optional)">
     <button class="btn ghost" id="lnInvoiceBtn">New one-time invoice</button>
@@ -4338,6 +4382,42 @@ function lnAddrOfferNow() {
     return offer;
   } catch { return null; }
 }
+// Wait for the node's offer to exist, keeping the automatic peer
+// connection topped up while waiting. The node builds its offer
+// itself once a peer handshake lands (seconds, normally); the
+// success is cached by lnAddrOfferNow, so every surface that asks
+// afterwards — the name card's Register step and the Receive
+// address block alike — works from the same offer. One wait, one
+// source of truth.
+async function lnAwaitOffer(timeoutMs = 60000) {
+  if (!lnSession) return null;
+  lnAutoConnect(lnSession);
+  const t0 = Date.now();
+  for (;;) {
+    const offer = lnAddrOfferNow();
+    if (offer) return offer;
+    if (Date.now() - t0 >= timeoutMs) return null;
+    lnAutoConnect(lnSession);
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+// While an address block is on screen with no offer yet, keep
+// retrying in the background: the moment the offer lands, the
+// block repaints with its Publish button — the user watches it
+// arrive instead of hunting for the next step.
+let lnAddrPollTimer = null;
+function lnAddrEnsurePoll() {
+  if (lnAddrPollTimer || !lnSession) return;
+  let tries = 0;
+  lnAddrPollTimer = setInterval(() => {
+    tries++;
+    if (!document.querySelector(".lnAddrOut") || !lnSession || tries > 40) {
+      clearInterval(lnAddrPollTimer); lnAddrPollTimer = null; return;
+    }
+    lnAutoConnect(lnSession);
+    if (lnAddrOfferNow()) { clearInterval(lnAddrPollTimer); lnAddrPollTimer = null; paintLnAddress(); }
+  }, 2500);
+}
 async function lnAddrRefresh() {
   const name = localStorage.getItem("fluid_name");
   if (!name || lnAddrFetching) return;
@@ -4347,11 +4427,19 @@ async function lnAddrRefresh() {
     lnAddrEntry = hit || null;
   } finally {
     lnAddrFetching = false;
-    if ($("lnAddrOut")) paintLnAddress();
+    if (document.querySelector(".lnAddrOut")) paintLnAddress();
   }
 }
+// The address block lives on TWO surfaces — the Lightning
+// panel's Receive section and the Receive sheet the asset view's
+// Receive button opens — painted from the ONE state above
+// (lnAddrView / lnAddrEntry / the session's cached offer), so the
+// two can never disagree. Buttons are classes, bound per
+// container; the panel instance also keeps the historical id.
 function paintLnAddress() {
-  const out = $("lnAddrOut"); if (!out) return;
+  document.querySelectorAll(".lnAddrOut").forEach((out) => paintLnAddressInto(out));
+}
+function paintLnAddressInto(out) {
   const name = localStorage.getItem("fluid_name");
   if (lnAddrView.status === "publishing") {
     out.innerHTML = `<p class="tag"><span class="spinner"></span> Publishing your Lightning address — signing the update and sending it to the registry…</p>`;
@@ -4359,8 +4447,8 @@ function paintLnAddress() {
   }
   if (lnAddrView.status === "failed") {
     out.innerHTML = `<p class="msg err">${esc(lnAddrView.message)}</p>
-      <button class="btn ghost" id="lnAddrRetry">Try again</button>`;
-    $("lnAddrRetry").onclick = () => { lnAddrView = { status: "idle" }; lnPublishAddress(); };
+      <button class="btn ghost lnAddrRetry">Try again</button>`;
+    out.querySelector(".lnAddrRetry").onclick = () => { lnAddrView = { status: "idle" }; lnPublishAddress(); };
     return;
   }
   if (!name) {
@@ -4382,13 +4470,14 @@ function paintLnAddress() {
   const addrHtml = `<p class="tag" style="margin-bottom:2px">Your Lightning address:</p>
     <p class="mono" style="font-size:15px;margin:2px 0"><b>${esc(st.address)}</b></p>`;
   const copyShare = `
-    <button class="btn ghost" id="lnAddrCopy">Copy address</button>
-    <button class="btn ghost" id="lnAddrShare">Share</button>`;
+    <button class="btn ghost lnAddrCopy">Copy address</button>
+    <button class="btn ghost lnAddrShare">Share</button>`;
   const bindCopyShare = () => {
-    $("lnAddrCopy").onclick = () => copyText(st.address, $("lnAddrCopy"));
-    $("lnAddrShare").onclick = async () => {
+    const cp = out.querySelector(".lnAddrCopy"), sh = out.querySelector(".lnAddrShare");
+    if (cp) cp.onclick = () => copyText(st.address, cp);
+    if (sh) sh.onclick = async () => {
       if (navigator.share) { try { await navigator.share({ title: "My Fluid Lightning address", text: st.address }); } catch { /* user closed the share sheet */ } }
-      else copyText(st.address, $("lnAddrShare"));
+      else copyText(st.address, sh);
     };
   };
   if (st.state === "live") {
@@ -4401,22 +4490,40 @@ function paintLnAddress() {
   if (st.state === "update-available") {
     out.innerHTML = `${addrHtml}
       <p class="tag"><b>✓ Live</b> — but your node has a newer offer than the one published under this address. Update it so payments keep coming to this node.</p>
-      <p><button class="btn" id="lnAddrPublish">${esc(st.publishLabel)}</button></p>
+      <p><button class="btn lnAddrPublish">${esc(st.publishLabel)}</button></p>
       <p>${copyShare}</p>`;
-    $("lnAddrPublish").onclick = () => lnPublishAddress();
+    out.querySelector(".lnAddrPublish").onclick = () => lnPublishAddress();
     bindCopyShare();
     return;
   }
   // not-published: the address is shown, but plainly NOT live —
   // never present an address that resolves to nothing as usable.
+  // The offer is the node's to build, and building it needs a peer
+  // connection — which the app makes itself (lnAutoConnect). The
+  // states below are the ONE truth per moment: publish when the
+  // offer exists; a start button when the node isn't running; a
+  // plain "connecting — it happens on its own" while the offer is
+  // on its way, with the background poll armed so the Publish
+  // button replaces it the moment the offer lands. No state ever
+  // sends the user into Advanced to connect a peer by hand.
+  let actionHtml;
+  if (current) {
+    actionHtml = `<p><button class="btn lnAddrPublish">${esc(st.publishLabel)}</button></p>`;
+  } else if (!lnSession) {
+    actionHtml = `<p class="tag">Your Lightning node isn't running right now — it builds the offer this address publishes. Start it and the publish button appears here.</p>
+    <p><button class="btn ghost lnAddrOpenNode">Start my Fluid node</button></p>`;
+  } else {
+    actionHtml = `<p class="tag">Your node is connecting to the Lightning network so it can build its offer — that happens on its own and takes a few seconds. The publish button appears here the moment the offer is ready; you don't need to do anything.</p>`;
+    lnAddrEnsurePoll();
+  }
   out.innerHTML = `${addrHtml}
     <p class="tag"><b>Not live yet</b> — nothing is published under this address, so it can't receive anything yet. Publish it and your node's offer is registered under this address through the same signed claim that published your name.${st.hostedLn ? " (A hosted address is registered to your name; publishing adds your own node's offer alongside it.)" : ""}</p>
     ${lnAddrView.status === "sent" ? `<p class="tag">Your signed update was sent, but the registry doesn't show it yet — claims usually appear within a few minutes.</p>
-    <p><button class="btn ghost" id="lnAddrCheck">Check the registry again</button></p>` : ""}
-    ${current ? `<p><button class="btn" id="lnAddrPublish">${esc(st.publishLabel)}</button></p>`
-      : `<p class="tag">Your node needs a connection to another node before it can build its offer — connect under <b>Advanced</b> below, then publish.</p>`}`;
-  const pub = $("lnAddrPublish"); if (pub) pub.onclick = () => lnPublishAddress();
-  const chk = $("lnAddrCheck"); if (chk) chk.onclick = () => lnAddrCheckAgain();
+    <p><button class="btn ghost lnAddrCheck">Check the registry again</button></p>` : ""}
+    ${actionHtml}`;
+  const pub = out.querySelector(".lnAddrPublish"); if (pub) pub.onclick = () => lnPublishAddress();
+  const chk = out.querySelector(".lnAddrCheck"); if (chk) chk.onclick = () => lnAddrCheckAgain();
+  const opn = out.querySelector(".lnAddrOpenNode"); if (opn) opn.onclick = () => openLightningPanel();
 }
 async function lnAddrCheckAgain() {
   if (!lnAddrPending) { lnAddrRefresh(); return; }
@@ -4427,14 +4534,20 @@ async function lnAddrCheckAgain() {
     lnAddrPending = null;
     lnAddrView = { status: "published" };
   }
-  if ($("lnAddrOut")) paintLnAddress();
+  if (document.querySelector(".lnAddrOut")) paintLnAddress();
 }
 async function lnPublishAddress() {
   const name = localStorage.getItem("fluid_name");
   if (!name || !lnSession) return;
-  const offer = lnAddrOfferNow();
+  // The publish button only renders once an offer exists, but the
+  // session may have dropped its connection since the paint —
+  // give the automatic connection a chance to land the offer
+  // before declaring anything, and never point the user at
+  // Advanced as the remedy.
+  let offer = lnAddrOfferNow();
+  if (!offer) offer = await lnAwaitOffer(30000);
   if (!offer) {
-    lnAddrView = { status: "failed", message: "Your node couldn't build its offer yet — it needs a connection to another node first. Connect under Advanced below, then try again." };
+    lnAddrView = { status: "failed", message: "Your node couldn't build its offer yet — it's still connecting to the Lightning network. Check your internet connection, give it a few seconds, then try again." };
     paintLnAddress();
     return;
   }
@@ -7420,6 +7533,7 @@ function renderNameSection() {
       return;
     }
     if (!lnNativeState) {
+      lnNativeLabelHold = false;
       lnNativeOfferError = null;
       paintLnNodeStatus();
       if (lnSession && lnSession.network !== "bitcoin") return msg("nameMsg", "Your Lightning node is on a test network right now — switch it to Bitcoin (mainnet) in the Lightning panel first, so the offer you register can receive real payments.");
@@ -7428,11 +7542,11 @@ function renderNameSection() {
       // EVERY exit path of this branch (audit batch 4, F1): the
       // finally below puts the resting label back unless the
       // success path ran, where paintNativeTerms() takes over the
-      // label with the registration step's own wording. Before
-      // this, the offer-failure return below skipped the restore
-      // and the button sat at "Starting your node…" indefinitely
-      // while fully functional.
+      // label with the registration step's own wording, or the
+      // connecting-failure path ended in its own deliberate state
+      // (held), which owns the button until the next tap.
       let painted = false;
+      let held = false;
       try {
         if (!lnSession) {
           if (btn) btn.textContent = "Starting your node…";
@@ -7442,19 +7556,38 @@ function renderNameSection() {
           // degrades into a fallback.
           await lnEnsureSession("bitcoin");
         }
-        let offer;
-        try {
-          offer = lnSession.createOffer(null, "Fluid");
-        } catch {
-          // The node DID start — say so where the user is looking
-          // (the status line beside this button), persistently.
-          // Before this, the only trace was a message at the card's
-          // foot that could sit off-screen while the button label
-          // reverted — the owner's "starting… then nothing" report.
-          lnNativeOfferError = "✓ Your Fluid node is ready — it started and is running on this device. It couldn't build its offer yet: it needs a connection to another node first. Open the Lightning panel (Wallet tab → Lightning) → Advanced, connect to a peer, then tap again.";
+        let offer = lnAddrOfferNow();
+        if (!offer) {
+          // The node is running but has no offer yet: building one
+          // needs a peer connection, and connecting is the APP's
+          // job — lnEnsureSession dialled the default peer on its
+          // own when the node booted. State the ONE true state
+          // beside the button (running, connecting, automatic —
+          // never "ready" before an offer exists, and never a
+          // pointer into Advanced), keep the button disabled for
+          // the whole wait so it can never sit live-looking but
+          // dead, and let the wait finish this step when the offer
+          // lands. Before this fix, this branch returned at once
+          // with the label restored to "Register my node — it's
+          // ready": the next tap re-ran the same instant failure
+          // and nothing on screen changed — a dead button (owner
+          // field evidence, 2026-11-10).
+          lnNativeOfferError = "Your Fluid node is running on this device. It's connecting to the Lightning network so it can build its offer — that happens on its own and takes a few seconds. You don't need to do anything, and you don't need to connect anything yourself.";
+          if (btn) btn.textContent = "Connecting your node…";
           paintLnNodeStatus();
-          return msg("nameMsg", "Your node started, but it couldn't build its offer yet — it needs a connection to another node first. Open the Lightning panel (Wallet tab → Lightning) → Advanced, connect to a peer, then tap again.");
+          offer = await lnAwaitOffer(60000);
         }
+        if (!offer) {
+          // A full minute with no connection: say so plainly, in
+          // the same persistent place, and leave an honest working
+          // control — Try again — never the register promise.
+          lnNativeOfferError = "Your Fluid node is running, but it couldn't connect to the Lightning network just now — check your internet connection, then tap Try again. Nothing was registered.";
+          paintLnNodeStatus();
+          if (btn) { btn.disabled = false; btn.textContent = "Try again"; lnNativeLabelHold = true; }
+          held = true;
+          return msg("nameMsg", "Your node is running, but it couldn't connect to the Lightning network just now — check your internet connection, then tap Try again. Nothing was registered.");
+        }
+        lnNativeOfferError = null;
         let recv = 0;
         try { recv = Number(lnSession.balance().receivableMsat || 0); } catch { recv = 0; }
         lnNativeState = { offer, receivableMsat: recv };
@@ -7467,7 +7600,7 @@ function renderNameSection() {
         else if (stage === "chain") msg("nameMsg", "Your node couldn't load — it couldn't read the Bitcoin chain tip to start. Nothing was registered.");
         else msg("nameMsg", "Your node couldn't start just now: " + lnErrorText(e) + " Nothing was registered.");
       } finally {
-        if (btn) {
+        if (btn && !held) {
           btn.disabled = false;
           // The resting label is state-derived, never a blind
           // revert: with a node running it offers registration,
