@@ -42,6 +42,20 @@ honest empty state — rather than a bad route.
 - **India, Brazil, Philippines, Indonesia** — no route passes the bars
   yet; honestly empty.
 
+## Live infrastructure
+
+- **Cash-out fee composition (shipped 2026-11-10)** — the send
+  sheets (EVM, Solana, Tron) carry a "cash-out" declaration: a user
+  who completed any provider's own sale steps and holds its deposit
+  address and exact quoted amount can declare the send, and Fluid
+  composes its fee-law fee into the sale — atomically where the
+  chain allows it, sequentially after the provider confirms where
+  it does not, and at $0 (printed as $0) whenever the law or the
+  collection cost says no fee. It is route-agnostic: any
+  deposit-address sell can use it, and the Gateway sheet below will
+  carry its fee natively via Paycrest's own senderFee when it wires.
+  See FEES.md §4 for the full mechanism.
+
 ## In build (NOT live yet)
 
 - **Gateway (Paycrest network)** — an in-Fluid sell sheet settling

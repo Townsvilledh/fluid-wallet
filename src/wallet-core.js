@@ -1995,6 +1995,112 @@ export async function sendSolana(phrase, { to, amount, token = null }) {
   return { hash: signature, createsAta };
 }
 
+// ---------- Solana ramp-fee split (tier 1, native composition) ----------
+// The Solana variant of the fee-composed sell (see the ramp-fee
+// section): ONE versioned-format transaction — built here as a legacy
+// Transaction like every other Solana send in this file — carries the
+// provider's full quoted amount AND Fluid's disclosed fee, one
+// signature, all-or-nothing. No contract, no permit, no approval:
+// Solana transfers are direct, which makes this the cheapest atomic
+// split in the design. The fee recipient is the DripBot collection
+// wallet (FEE_SPLIT.dripbot.agentWallet.solana) — the same wallet
+// Jupiter platform fees already land in.
+/** Plan a split send: which token accounts must be created first.
+ *  The provider's ATA is the ordinary send plan; the fee ATA is the
+ *  DripBot collection wallet's account for this mint (it exists for
+ *  the curated tokens — the fee engine prices its creation rent into
+ *  the composition gate on the rare first-ever sale of a mint). */
+export async function solanaRampSplitPlan(fromAddress, { to, token = null } = {}) {
+  if (!token) return { createsProviderAta: false, createsFeeAta: false, ataRentLamports: 0 };
+  const program = token.program || SOLANA_PROGRAMS.token;
+  const providerPlan = await solanaSendPlan(fromAddress, { to, token });
+  const feeAtaExists = await solanaAccountExists(
+    solanaAtaAddress(FEE_SPLIT.dripbot.agentWallet.solana, token.address, program));
+  const createsFeeAta = !feeAtaExists;
+  return { createsProviderAta: providerPlan.createsAta, createsFeeAta,
+    ataRentLamports: (providerPlan.createsAta ? SOLANA_ATA_RENT_LAMPORTS : 0)
+      + (createsFeeAta ? SOLANA_ATA_RENT_LAMPORTS : 0) };
+}
+/** The split transaction itself, built purely from its parts so the
+ *  composition is test-pinned offline: [create provider ATA if
+ *  needed, create fee ATA if needed, transfer P to the provider,
+ *  transfer F to the fee wallet] — or, for native SOL, two System
+ *  transfers in the same order. Amounts are raw base units. */
+export function buildSolanaRampSplitTx({ fromAddress, to, feeTo, token = null,
+  providerRaw, feeRaw, blockhash, createsProviderAta = false, createsFeeAta = false }) {
+  const from = new SolPublicKey(fromAddress);
+  const tx = new SolTransaction({ feePayer: from, recentBlockhash: blockhash });
+  const P = BigInt(providerRaw), F = BigInt(feeRaw);
+  if (P <= 0n) throw new Error("Enter an amount.");
+  if (F <= 0n) throw new Error("That split carries no fee — use the plain send.");
+  if (!token) {
+    tx.add(SolSystemProgram.transfer({ fromPubkey: from, toPubkey: new SolPublicKey(to), lamports: P }));
+    tx.add(SolSystemProgram.transfer({ fromPubkey: from, toPubkey: new SolPublicKey(feeTo), lamports: F }));
+    return tx;
+  }
+  const program = token.program || SOLANA_PROGRAMS.token;
+  const is2022 = program === SOLANA_PROGRAMS.token2022;
+  const fromAta = new SolPublicKey(solanaAtaAddress(fromAddress, token.address, program));
+  const toAta = solanaAtaAddress(to, token.address, program);
+  const feeAta = solanaAtaAddress(feeTo, token.address, program);
+  if (createsProviderAta) tx.add(solanaCreateAtaInstruction(from, toAta, to, token.address, program));
+  if (createsFeeAta) tx.add(solanaCreateAtaInstruction(from, feeAta, feeTo, token.address, program));
+  const transfer = (destAta, raw) => is2022
+    ? solanaSplTransferCheckedInstruction(fromAta, token.address, new SolPublicKey(destAta), from, raw, token.decimals ?? 6, program)
+    : solanaSplTransferInstruction(fromAta, new SolPublicKey(destAta), from, raw);
+  tx.add(transfer(toAta, P));
+  tx.add(transfer(feeAta, F));
+  return tx;
+}
+/** Execute a tier-1 Solana sell: the provider's exact quoted amount
+ *  plus Fluid's fee, atomically, from the wallet's own key. Mirrors
+ *  sendSolana's balance discipline (held-check on the ATA's own data,
+ *  SOL for base fee + any ATA rent, the rent-exempt leftover rule on
+ *  native sends) with the total P + F in place of the single amount. */
+export async function sendSolanaRampSplit(phrase, { to, amount, feeAmount, token = null }) {
+  if (!isValidSolanaAddress(to)) throw new Error("That is not a valid Solana address.");
+  const feeTo = FEE_SPLIT.dripbot.agentWallet.solana;
+  const kp = solanaKeypair(phrase);
+  const from = kp.publicKey;
+  const fromAddr = from.toBase58();
+  const balance = BigInt((await solanaRpc("getBalance", [fromAddr]))?.value ?? 0);
+  const plan = await solanaRampSplitPlan(fromAddr, { to, token });
+  const solNeeded = SOLANA_BASE_FEE_LAMPORTS + BigInt(plan.ataRentLamports);
+  let providerRaw, feeRaw;
+  if (!token) {
+    providerRaw = solSolToLamports(amount);
+    feeRaw = solSolToLamports(feeAmount);
+    if (providerRaw <= 0n) throw new Error("Enter an amount.");
+    if (feeRaw <= 0n) throw new Error("That split carries no fee — use the plain send.");
+    const remaining = balance - providerRaw - feeRaw - SOLANA_BASE_FEE_LAMPORTS;
+    if (remaining < 0n) throw new Error("Not enough SOL to cover the amount plus Fluid's fee and the network fee.");
+    if (remaining > 0n && remaining < BigInt(SOLANA_RENT_EXEMPT_LAMPORTS)) {
+      throw new Error(`That would leave ${solLamportsToSol(remaining)} SOL behind — below Solana's rent-exempt minimum of ${solLamportsToSol(SOLANA_RENT_EXEMPT_LAMPORTS)} SOL, so the network would reject it. Send a little less, or everything but the fee.`);
+    }
+  } else {
+    providerRaw = ethers.parseUnits(String(amount), token.decimals ?? 6);
+    feeRaw = ethers.parseUnits(String(feeAmount), token.decimals ?? 6);
+    if (providerRaw <= 0n) throw new Error("Enter an amount.");
+    if (feeRaw <= 0n) throw new Error("That split carries no fee — use the plain send.");
+    const held = await solanaAtaRawBalance(fromAddr, token.address, token.program || SOLANA_PROGRAMS.token);
+    if (held < providerRaw + feeRaw) {
+      throw new Error(`Not enough ${token.symbol || "tokens"} on Solana for the amount plus Fluid's fee (you have ${ethers.formatUnits(held, token.decimals ?? 6)}).`);
+    }
+    if (balance < solNeeded) {
+      throw new Error(plan.createsProviderAta || plan.createsFeeAta
+        ? `Not enough SOL for the network fee plus token-account rent (about ${solLamportsToSol(solNeeded)} SOL needed).`
+        : "Not enough SOL to pay the network fee for this token send.");
+    }
+  }
+  const { blockhash } = (await solanaRpc("getLatestBlockhash", [])).value;
+  const tx = buildSolanaRampSplitTx({ fromAddress: fromAddr, to, feeTo, token,
+    providerRaw, feeRaw, blockhash,
+    createsProviderAta: plan.createsProviderAta, createsFeeAta: plan.createsFeeAta });
+  tx.sign(kp);
+  const signature = await solanaBroadcast(tx.serialize(), "That sale");
+  return { hash: signature, createsProviderAta: plan.createsProviderAta, createsFeeAta: plan.createsFeeAta };
+}
+
 // ---------- Sui (SLIP-0010 Ed25519 branch, coin type 784) ----------
 // Sui keys are Ed25519, like Solana's — so Sui reuses the SAME SLIP-0010
 // derivation as the Solana branch (deriveSlip10Ed25519), at Sui's own
@@ -3700,6 +3806,279 @@ export function splitGameFee(amount) {
   const sessionLottery = Math.floor((a * GAME_FEE_SPLIT.sessionLottery) / 100);
   const weeklyReferrals = Math.floor((a * GAME_FEE_SPLIT.weeklyReferrals) / 100);
   return { treasury: a - top100 - sessionLottery - weeklyReferrals, top100, sessionLottery, weeklyReferrals };
+}
+
+// ---------- Non-custodial ramp fees (fee-composed ramp sells) ----------
+// The owner's workaround, designed 2026-11-09 (research_notes/
+// fluid-noncustodial-ramp-fee-20261109/report.md) and built here: on a
+// DEPOSIT-ADDRESS SELL — the user returns from the provider's own
+// surface with a deposit address and the provider's exact quoted
+// amount P — Fluid composes the send so the provider receives P to
+// the unit and Fluid's own fee F rides WITH it, disclosed in the
+// inspect-before-sign sentence and sized by the same fee law as swaps
+// (platformFeeUsdForRoute). The fee is always ON TOP (the user sends
+// P + F); it is never netted out of the provider's amount, because
+// deposit-matching rails read a netted deposit as an underpayment.
+// Three tiers, chosen per sale by rampFeeQuote:
+//   Tier 1 (atomic): EVM via Uniswap's Permit2 signed batch (§ below,
+//     next to the other Permit2 code) and Solana via a native
+//     multi-instruction transaction — one signature, both legs or
+//     neither. NO Fluid-authored contract anywhere in this design.
+//   Tier 2 (sequential): the provider send goes first at the full
+//     quoted amount; the fee send is presented only after the provider
+//     confirms — a failed ramp can never cost the user a fee. The
+//     universal fallback (Tron; non-standard tokens; native EVM).
+//   Tier 0 (bare): the plain send, fee $0, whenever the law says $0,
+//     the quote can't be measured, or composition costs more than the
+//     fee is worth. The sentence still prints "Fluid's fee: $0" —
+//     the line is never omitted.
+// Buys and hosted flows carry NO mechanism by design (money that
+// never passes a step Fluid composes cannot be split without
+// custody); referral remains their whole answer. The fee lands in
+// the DripBot collection wallet (FEE_SPLIT.dripbot.agentWallet) —
+// the 60/40 split happens later, at settlement, exactly as swap fees.
+// Refunds: tier-1/tier-2 fees that settled before a provider refund
+// are covered by the fee-refund promise (§6 of the design): the
+// order records below persist every fee-bearing sale locally so the
+// return is executable and auditable, and rampFeeRefundInstruction
+// produces the exact return the fee wallet owes.
+/** Canonical Uniswap Permit2 — immutable, unowned, deployed 2022.
+ *  The same address the Satora funding path pins
+ *  (SATORA_PERMIT2_ADDRESS); tests pin the two equal so the ramp
+ *  path can never drift onto a lookalike contract. */
+export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+/** Storage key for ramp-fee order records (fluid_ prefix, so the
+ *  full wipe removes them with everything else Fluid owns). */
+export const RAMP_FEE_ORDERS_STORAGE_KEY = "fluid_ramp_fee_orders_v1";
+/** Modelled extra gas of the Permit2 batch over a bare transfer
+ *  (design §8: ~+40–80k across BSC/L2s; 60k is the planning figure).
+ *  Modelled, labelled as such — the viability gate only needs the
+ *  order of magnitude, and it errs on the user's side. */
+export const RAMP_FEE_COMPOSE_EXTRA_GAS_UNITS = 60000n;
+/** Modelled cost of ONE extra Tron leg (design §5/§8: a TRC-20
+ *  transfer's energy runs ≈$0.3–1.5 unstaked; $1.00 is the planning
+ *  figure). Fed honestly into R, this is what makes small Tron
+ *  sells fee-free under the law — by design, not by omission. */
+export const RAMP_FEE_TRON_LEG_GAS_USD = 1.0;
+/** The Permit2 authorisation's lifetime: 30 minutes, at most the
+ *  provider's deposit window, and printed in the sentence. */
+export const RAMP_FEE_PERMIT_DEADLINE_SECS = 1800;
+
+/** A ramp's route cost R (design §2): the provider's explicit fee +
+ *  its spread — the final quote's crypto-in USD minus its fiat-out
+ *  USD — + the network gas the user pays for the legs Fluid
+ *  composes. Returns null when the quote cannot be measured (either
+ *  side unpriced): an unmeasured quote is a fee of $0, never a
+ *  guessed one. Negative spreads (a provider paying above the
+ *  crypto's value) clamp to zero — they are not negative cost. */
+export function rampRouteCostUsd({ providerFeeUsd = 0, amountInUsd, amountOutUsd, gasUsd = 0 } = {}) {
+  // null/undefined on either side means UNMEASURED — never coerce
+  // (Number(null) is 0, which would fake a 100% spread and with it
+  // a fee the route never justified).
+  const inUsd = Number(amountInUsd);
+  const outUsd = amountOutUsd == null ? NaN : Number(amountOutUsd);
+  if (!Number.isFinite(inUsd) || inUsd <= 0 || !Number.isFinite(outUsd) || outUsd < 0) return null;
+  const fee = Number(providerFeeUsd), gas = Number(gasUsd);
+  return (Number.isFinite(fee) && fee > 0 ? fee : 0)
+    + Math.max(0, inUsd - outUsd)
+    + (Number.isFinite(gas) && gas > 0 ? gas : 0);
+}
+/** Whether a sale can ride the atomic tier on its family: EVM needs
+ *  a curated-list ERC-20 (Permit2 pulls tokens, never the native
+ *  asset, and non-standard — taxed/rebasing — tokens are refused
+ *  composition because a permit's exact pull would deliver less
+ *  than P to the provider); Solana composes natively, so the native
+ *  asset and curated SPL tokens both qualify; Tron has no atomic
+ *  tier at all. `token` is null for the native asset, else
+ *  { address } in the family's own list shape. */
+export function rampTier1Eligible(family, chainKey, token) {
+  if (family === "evm") {
+    if (!token || !token.address) return false;
+    const list = (NETWORKS[chainKey] && NETWORKS[chainKey].tokens) || [];
+    return list.some(t => String(t.address).toLowerCase() === String(token.address).toLowerCase());
+  }
+  if (family === "solana") {
+    if (!token) return true;
+    return SOLANA_TOKENS.some(t => t.address === token.address);
+  }
+  return false;
+}
+/** Quote one deposit-address sell: measure R from the final quote,
+ *  size the fee by the fee law, convert to the sale token's base
+ *  units (floored, and cross-capped by the raw 0.5% cap so the
+ *  charged fee can never exceed the law under any price feed), then
+ *  pick the tier. All gas figures are caller-supplied from the
+ *  family's own estimators (or the modelled constants above) — this
+ *  function is pure so the whole matrix is test-pinned.
+ *  Returns { tier, feeUsd, feeRaw, providerRaw, totalRaw,
+ *  routeCostUsd, reason } — tier 0 means "send bare, fee $0" and
+ *  reason says why, in a word the tests pin and the UI can show. */
+export function rampFeeQuote({ family, chainKey = null, tier1Eligible = false,
+  providerFeeUsd = 0, amountInUsd, amountOutUsd, gasUsd = 0,
+  composeExtraUsd = 0, leg2GasUsd = 0, providerRaw, tokenDecimals = 6, tokenPriceUsd } = {}) {
+  let rawEcho = 0n;
+  try { rawEcho = BigInt(providerRaw ?? 0); } catch { /* refusal echo stays 0 */ }
+  const zero = (reason, routeCostUsd = null) => ({ tier: 0, feeUsd: 0, feeRaw: 0n,
+    providerRaw: rawEcho, totalRaw: rawEcho, routeCostUsd, reason });
+  let P;
+  try { P = BigInt(providerRaw); } catch { return zero("bad-amount"); }
+  if (P <= 0n) return zero("bad-amount");
+  const R = rampRouteCostUsd({ providerFeeUsd, amountInUsd, amountOutUsd, gasUsd });
+  if (R == null) return { ...zero("unmeasured"), providerRaw: P, totalRaw: P };
+  const destKey = family === "solana" ? "solana" : family === "tron" ? "tron" : chainKey;
+  // Nanodollar rounding: the law's ceiling subtraction carries
+  // binary-float dust (0.20 − 0.105 = 0.09499999999999859) that must
+  // not shave a raw unit off the design's exact figures.
+  const feeUsd = Math.round(platformFeeUsdForRoute(R, amountInUsd, destKey) * 1e9) / 1e9;
+  if (!(feeUsd > 0)) return { ...zero("zero-law", R), providerRaw: P, totalRaw: P };
+  const px = Number(tokenPriceUsd);
+  if (!Number.isFinite(px) || px <= 0) return { ...zero("unmeasured", R), providerRaw: P, totalRaw: P };
+  let feeRaw = BigInt(Math.max(0, Math.floor((feeUsd / px) * 10 ** Number(tokenDecimals))));
+  const rawCap = platformFeeOn(P, PLATFORM_FEE_BPS);
+  if (feeRaw > rawCap) feeRaw = rawCap;
+  if (feeRaw < 1n || feeRaw >= P) return { ...zero("dust", R), providerRaw: P, totalRaw: P };
+  const extra = Number(composeExtraUsd) || 0, leg2 = Number(leg2GasUsd) || 0;
+  // The composition must be worth its own execution (design §8):
+  // the atomic tier composes only when the fee clears twice its
+  // extra cost; the sequential tier only when the fee clears the
+  // second leg's gas. Below either bar the sale sends bare — the
+  // user is never charged a fee that mostly pays for its own
+  // collection machinery.
+  if (tier1Eligible) {
+    if (feeUsd > 2 * extra) return { tier: 1, feeUsd, feeRaw, providerRaw: P, totalRaw: P + feeRaw, routeCostUsd: R, reason: "ok" };
+    return { ...zero("compose-gas", R), providerRaw: P, totalRaw: P };
+  }
+  if (feeUsd > leg2) return { tier: 2, feeUsd, feeRaw, providerRaw: P, totalRaw: P + feeRaw, routeCostUsd: R, reason: "ok" };
+  return { ...zero("leg2-gas", R), providerRaw: P, totalRaw: P };
+}
+/** The inspect-before-sign sentence for a fee-composed sell (design
+ *  §2 — a fee that cannot be written into this shape does not ship).
+ *  All amounts arrive pre-formatted by the caller from the final
+ *  quote; the provider always reads as receiving the FULL quoted
+ *  amount, the fee is its own named line, and the total is stated.
+ *  Tier 2's sentence carries the ordering promise (fee only after
+ *  the provider confirms); tier 1's carries the refund promise and
+ *  the authorisation's expiry; a $0 fee still prints its line. */
+export function formatRampSellIntent({ tier = 0, amountText, symbol, fiatText, providerName,
+  feeText, totalText, networkFeeText, deadlineMins = Math.round(RAMP_FEE_PERMIT_DEADLINE_SECS / 60) } = {}) {
+  const rawName = String(providerName || "").trim() || "the provider";
+  const Name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+  const head = `Sell ${amountText} ${symbol} → ${fiatText}. ${Name} receives the full ${amountText} ${symbol} it quoted.`;
+  if (!tier || tier === 0 || feeText == null) {
+    return `${head} Fluid's fee: $0 — this sale carries no Fluid fee. Total leaving your wallet: ${amountText} ${symbol} + network fee ≈ ${networkFeeText}. Confirm?`;
+  }
+  if (tier === 1) {
+    return `${head} Fluid's fee: ${feeText} ${symbol}, shown separately, sent in the same transaction. Total leaving your wallet: ${totalText} ${symbol} + network fee ≈ ${networkFeeText}. If this order is refunded, Fluid's fee comes back to you automatically. The authorisation expires in ${deadlineMins} minutes. Confirm?`;
+  }
+  return `${head} Fluid's fee: ${feeText} ${symbol}, shown separately — a second send you make only after ${rawName} confirms your sale, so a sale that fails never costs you the fee. Total if the sale completes: ${totalText} ${symbol} + network fees ≈ ${networkFeeText}. If the provider refunds after the fee was sent, Fluid's fee comes back to you automatically. Confirm?`;
+}
+// --- ramp-fee order records: the refund promise's memory ---
+// Every fee-bearing sale persists locally (rail, amounts, txids,
+// provider status) so the fee-refund promise is executable — the
+// fee wallet acts on rampFeeRefundInstruction — and auditable by
+// the user. Records are plain JSON; transitions are a closed state
+// machine, and illegal transitions throw rather than corrupt state.
+export const RAMP_FEE_ORDER_STATUSES = ["created", "settled", "leg1-sent", "provider-confirmed",
+  "fee-sent", "complete", "refunded", "fee-return-due", "fee-returned"];
+const RAMP_FEE_ORDER_TRANSITIONS = {
+  // Tier 1 settles both legs in one transaction; tier 0 likewise.
+  "created": ["settled", "leg1-sent"],
+  "settled": ["fee-return-due", "refunded"],
+  "leg1-sent": ["provider-confirmed", "refunded"],
+  "provider-confirmed": ["fee-sent", "refunded"],
+  "fee-sent": ["complete", "fee-return-due", "refunded"],
+  "complete": ["fee-return-due", "refunded"],
+  "refunded": [],
+  "fee-return-due": ["fee-returned"],
+  "fee-returned": [],
+};
+/** Plain-language status for the sheet (never a raw enum). */
+export const RAMP_FEE_ORDER_STATUS_TEXT = {
+  "created": "being set up",
+  "settled": "sent — Fluid's fee settled with the sale",
+  "leg1-sent": "deposit sent — waiting for the provider to confirm",
+  "provider-confirmed": "provider confirmed — Fluid's fee is ready to send",
+  "fee-sent": "fee sent",
+  "complete": "complete",
+  "refunded": "provider refunded — no Fluid fee was taken",
+  "fee-return-due": "provider refunded — Fluid's fee is on its way back to you",
+  "fee-returned": "Fluid's fee returned",
+};
+/** Build one order record. Amounts are base-unit strings (BigInt-safe
+ *  through JSON). feeTo is the family's DripBot collection address;
+ *  userAddress is where a refunded fee returns to. */
+export function newRampFeeOrder({ id, tier, family, chainKey = null, token, providerTo, providerRaw,
+  feeRaw, feeTo, userAddress, fiatText = "", providerName = "", nowMs = Date.now() } = {}) {
+  if (!id) throw new Error("A ramp fee order needs an id.");
+  if (![0, 1, 2].includes(tier)) throw new Error("A ramp fee order needs a tier of 0, 1 or 2.");
+  let P, F;
+  try { P = BigInt(providerRaw); F = BigInt(feeRaw ?? 0); } catch { throw new Error("A ramp fee order's amounts were unreadable."); }
+  if (P <= 0n) throw new Error("A ramp fee order needs the provider's quoted amount.");
+  if (F < 0n) throw new Error("A ramp fee order's fee cannot be negative.");
+  if (!providerTo || !userAddress) throw new Error("A ramp fee order needs both addresses.");
+  if (F > 0n && !feeTo) throw new Error("A fee-bearing ramp order needs the fee destination.");
+  return { id: String(id), kind: "ramp-sell", tier, family, chainKey,
+    token: { symbol: token?.symbol || "", address: token?.address || null, decimals: token?.decimals ?? 6, program: token?.program || null },
+    providerTo: String(providerTo), providerRaw: P.toString(), feeRaw: F.toString(),
+    feeTo: feeTo ? String(feeTo) : null, userAddress: String(userAddress),
+    fiatText: String(fiatText || ""), providerName: String(providerName || ""),
+    status: "created", txids: [], createdAt: nowMs, updatedAt: nowMs };
+}
+/** Advance a record. `event` is one of: settled, leg1-sent,
+ *  provider-confirmed, fee-sent, complete, provider-refunded,
+ *  fee-returned. The provider-refunded event is status-aware: when
+ *  the fee already settled (tier-1 settled, or tier-2 fee sent) the
+ *  record lands on fee-return-due — the state rampFeeRefundInstruction
+ *  acts on; when no fee was ever taken it lands on refunded, a
+ *  terminal state needing nothing from anyone. Returns a NEW record;
+ *  the input is never mutated. */
+export function rampFeeOrderTransition(record, event, { txid = null, nowMs = Date.now() } = {}) {
+  if (!record || typeof record !== "object" || !RAMP_FEE_ORDER_STATUSES.includes(record.status)) {
+    throw new Error("That cash-out record was unreadable.");
+  }
+  const feeSettled = BigInt(record.feeRaw || "0") > 0n
+    && (record.status === "settled" || record.status === "fee-sent" || record.status === "complete");
+  const target = event === "provider-refunded" ? (feeSettled ? "fee-return-due" : "refunded")
+    : { "settled": "settled", "leg1-sent": "leg1-sent", "provider-confirmed": "provider-confirmed",
+        "fee-sent": "fee-sent", "complete": "complete", "fee-returned": "fee-returned" }[event];
+  if (!target || !RAMP_FEE_ORDER_TRANSITIONS[record.status].includes(target)) {
+    throw new Error(`A cash-out in state "${record.status}" cannot take the step "${event}".`);
+  }
+  const next = { ...record, status: target, updatedAt: nowMs };
+  if (txid) next.txids = [...(record.txids || []), { step: target, txid: String(txid), at: nowMs }];
+  return next;
+}
+/** The exact return the fee wallet owes on a refunded fee-bearing
+ *  order — amount, asset, from the collection wallet the fee landed
+ *  in, back to the user's own address on that chain. Null for every
+ *  other state: no instruction exists until the refund is real. */
+export function rampFeeRefundInstruction(record) {
+  if (!record || record.status !== "fee-return-due") return null;
+  return { family: record.family, chainKey: record.chainKey,
+    token: record.token, amountRaw: record.feeRaw,
+    from: record.feeTo, to: record.userAddress };
+}
+/** One plain line per record, for the sheet's resume/status area. */
+export function rampFeeOrderSummary(record) {
+  if (!record || typeof record !== "object") return "";
+  const amt = (raw, dec) => ethers.formatUnits(BigInt(raw || "0"), dec ?? 6);
+  const sym = record.token?.symbol || "";
+  const fee = BigInt(record.feeRaw || "0");
+  return `Cash-out: ${amt(record.providerRaw, record.token?.decimals)} ${sym} to the provider`
+    + (fee > 0n ? ` · Fluid fee ${amt(record.feeRaw, record.token?.decimals)} ${sym}` : " · no Fluid fee")
+    + ` · ${RAMP_FEE_ORDER_STATUS_TEXT[record.status] || record.status}`;
+}
+export function loadRampFeeOrders(storage) {
+  try {
+    const list = JSON.parse(storage.getItem(RAMP_FEE_ORDERS_STORAGE_KEY) || "[]");
+    return Array.isArray(list) ? list.filter(r => r && typeof r === "object" && r.id) : [];
+  } catch { return []; }
+}
+export function saveRampFeeOrder(storage, record) {
+  const list = loadRampFeeOrders(storage).filter(r => r.id !== record.id);
+  list.unshift(record);
+  try { storage.setItem(RAMP_FEE_ORDERS_STORAGE_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* storage full/blocked: the in-memory record still stands */ }
+  return record;
 }
 /** Ramp ranking is by MEASURED effective price against the market rate,
  *  per country — never by headline fee % (price research, 6 Nov 2026:
@@ -6221,7 +6600,7 @@ export const SATORA_BITCOIN_CHAIN_ID = BITCOIN_LIFI_CHAIN_ID;
 export const SATORA_LIGHTNING_CHAIN_ID = 20000000000002;
 export const SATORA_MIN_NET_SATS = { bitcoin: 10000, lightning: 356 };
 export const SATORA_SWAPS_STORAGE_KEY = "fluid_satora_swaps_v1";
-const SATORA_PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+export const SATORA_PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const SATORA_SOURCE_CHAINS = { ethereum: 1, polygon: 137, arbitrum: 42161 };
 const SATORA_DEST_NAMES = { bitcoin: "Bitcoin", lightning: "Lightning" };
 // ---------- CCTP bridge sources (Base + Solana USDC, 2026-11-09) ----------
@@ -7418,6 +7797,221 @@ export async function pollSatoraSwapStatuses(storage) {
   if (changed) { try { storage.setItem(SATORA_SWAPS_STORAGE_KEY, JSON.stringify(records.slice(0, 50))); } catch { /* as above */ } }
   return records;
 }
+// ---------- Ramp-fee Permit2 batch split (tier 1, EVM) ----------
+// The EVM half of the fee-composed sell (design §4a): ONE EIP-712
+// batch permit under Permit2's own domain authorises exact amounts
+// to exact recipients — the provider's full quoted amount to its
+// deposit address, Fluid's fee to the DripBot collection wallet —
+// and one user-signed transaction executes both legs atomically.
+// Permit2's batch pairs permitted[i] with transferDetails[i] by
+// index, so the permitted array names the sale token once per leg.
+// The spender is the OWNER: the user self-relays (their own wallet
+// calls Permit2), so no third party ever holds a usable permit.
+// Construction follows the house pattern from the Satora witness
+// code above: build the typed data from the plan, then CHECK it
+// field-by-field against the plan again before any key signs —
+// and the allowance Permit2 pulls against is the EXACT order total
+// (P + F), granted per order, never unlimited.
+/** The batch type string, verbatim (sub-types alphabetical per
+ *  EIP-712) — its keccak is Permit2's PERMIT_BATCH_TRANSFER_FROM
+ *  typehash; tests recompute both independently. */
+export const RAMP_PERMIT_BATCH_TYPE_STRING = "PermitBatchTransferFrom(TokenPermissions[] permitted,address spender,uint256 nonce,uint256 deadline)TokenPermissions(address token,uint256 amount)";
+export const RAMP_PERMIT_BATCH_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes(RAMP_PERMIT_BATCH_TYPE_STRING));
+const RAMP_PERMIT_TYPES = {
+  PermitBatchTransferFrom: [
+    { name: "permitted", type: "TokenPermissions[]" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+};
+/** Permit2's batch entry point, as a JSON ABI fragment (the JSON
+ *  form leaves no room for tuple-syntax ambiguity): permit =
+ *  (permitted[], nonce, deadline) — spender is part of the signed
+ *  typed data, not of the calldata struct. */
+export const RAMP_PERMIT2_ABI = [{
+  type: "function", name: "permitTransferFrom", stateMutability: "nonpayable", outputs: [],
+  inputs: [
+    { name: "permit", type: "tuple", components: [
+      { name: "permitted", type: "tuple[]", components: [
+        { name: "token", type: "address" }, { name: "amount", type: "uint256" }] },
+      { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }] },
+    { name: "transferDetails", type: "tuple[]", components: [
+      { name: "to", type: "address" }, { name: "requestedAmount", type: "uint256" }] },
+    { name: "owner", type: "address" },
+    { name: "signature", type: "bytes" }],
+}];
+const RAMP_ERC20_ALLOWANCE_ABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+];
+/** A one-use Permit2 nonce: 32 CSPRNG bytes as a uint256 (Permit2
+ *  nonces are unordered, so a random one is never reused). */
+export function rampPermitNonce() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return BigInt("0x" + hexOf(bytes));
+}
+const rampAddr = (v) => ethers.getAddress(String(v).toLowerCase());
+/** Construct the batch permit typed data for one composed sell.
+ *  `legs` is the ordered split — [{ to, amountRaw }] — in the sale
+ *  token; every leg is validated (real address, positive amount),
+ *  the deadline must sit inside the sane window (future, at most
+ *  RAMP_FEE_PERMIT_DEADLINE_SECS + an hour's grace out), and the
+ *  nonce must be a positive uint256. Returns { ok: false, reason }
+ *  rather than throwing, in the house style: the executor signs
+ *  only an { ok: true } result, after re-checking it. */
+export function buildRampPermitBatch({ chainId, owner, token, legs, nonce, deadline,
+  nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this cash-out authorisation: " + m });
+  if (!Number.isInteger(Number(chainId)) || Number(chainId) <= 0) return refuse("the network was unreadable.");
+  if (!ethers.isAddress(owner || "")) return refuse("the wallet's address was unreadable.");
+  if (!ethers.isAddress(token || "")) return refuse("the sale token was unreadable.");
+  if (!Array.isArray(legs) || legs.length < 1 || legs.length > 8) return refuse("the split must name between one and eight recipients.");
+  const normLegs = [];
+  for (const leg of legs) {
+    if (!leg || !ethers.isAddress(leg.to || "")) return refuse("a recipient in the split was not a valid address.");
+    let amt;
+    try { amt = BigInt(leg.amountRaw); } catch { return refuse("an amount in the split was unreadable."); }
+    if (amt <= 0n) return refuse("every amount in the split must be positive.");
+    normLegs.push({ to: rampAddr(leg.to), amountRaw: amt });
+  }
+  let nonceBn;
+  try { nonceBn = BigInt(nonce); } catch { return refuse("the authorisation nonce was unreadable."); }
+  if (nonceBn <= 0n || nonceBn >= (1n << 256n)) return refuse("the authorisation nonce is out of range.");
+  let deadlineBn;
+  try { deadlineBn = BigInt(deadline); } catch { return refuse("the authorisation deadline was unreadable."); }
+  const now = Math.floor(Number(nowSec) || 0);
+  if (deadlineBn <= BigInt(now) || deadlineBn > BigInt(now + RAMP_FEE_PERMIT_DEADLINE_SECS + 3600)) {
+    return refuse("the authorisation deadline is outside its sane bound.");
+  }
+  const domain = { name: "Permit2", chainId: Number(chainId), verifyingContract: PERMIT2_ADDRESS };
+  const types = RAMP_PERMIT_TYPES;
+  const message = {
+    permitted: normLegs.map(l => ({ token: rampAddr(token), amount: l.amountRaw })),
+    spender: rampAddr(owner),
+    nonce: nonceBn,
+    deadline: deadlineBn,
+  };
+  const transferDetails = normLegs.map(l => ({ to: l.to, requestedAmount: l.amountRaw }));
+  return { ok: true, domain, types, message, transferDetails,
+    digest: ethers.TypedDataEncoder.hash(domain, types, message) };
+}
+/** The independent re-check, run on the constructed typed data
+ *  against the plan it was built from — every field the signature
+ *  will bind is compared: the domain (Permit2, this chain, the
+ *  canonical contract), the spender (the owner themselves — a
+ *  permit naming anyone else as spender is refused outright), the
+ *  token, and each leg's recipient + amount, in order, with no
+ *  extra legs. The digest is recomputed from the returned parts so
+ *  a tampered object cannot pass on a borrowed digest. */
+export function checkRampPermitBatch(built, { chainId, owner, token, legs } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this cash-out authorisation: " + m });
+  if (!built || built.ok !== true) return refuse("the authorisation was not constructed.");
+  const eq = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
+  if (!built.domain || built.domain.name !== "Permit2"
+    || !eq(built.domain.verifyingContract, PERMIT2_ADDRESS)
+    || Number(built.domain.chainId) !== Number(chainId)) {
+    return refuse("the authorisation is not addressed to the canonical Permit2 on this network.");
+  }
+  const m = built.message;
+  if (!m || !eq(m.spender, owner)) return refuse("the authorisation names a spender other than your own wallet.");
+  if (!Array.isArray(m.permitted) || !Array.isArray(legs) || m.permitted.length !== legs.length) {
+    return refuse("the authorisation's split does not match the reviewed split.");
+  }
+  if (!Array.isArray(built.transferDetails) || built.transferDetails.length !== legs.length) {
+    return refuse("the authorisation's transfers do not match the reviewed split.");
+  }
+  for (let i = 0; i < legs.length; i++) {
+    if (!eq(m.permitted[i].token, token)) return refuse("the authorisation names a different token than the sale.");
+    let amt, want;
+    try { amt = BigInt(m.permitted[i].amount); want = BigInt(legs[i].amountRaw); } catch { return refuse("an amount in the authorisation was unreadable."); }
+    if (amt !== want) return refuse("an amount in the authorisation differs from the reviewed split.");
+    if (!eq(built.transferDetails[i].to, legs[i].to)) return refuse("a recipient in the authorisation differs from the reviewed split.");
+    let req;
+    try { req = BigInt(built.transferDetails[i].requestedAmount); } catch { return refuse("a transfer amount in the authorisation was unreadable."); }
+    if (req !== want) return refuse("a transfer amount in the authorisation differs from the reviewed split.");
+  }
+  let digest;
+  try { digest = ethers.TypedDataEncoder.hash(built.domain, built.types, built.message); } catch { return refuse("the authorisation could not be re-hashed."); }
+  if (digest !== built.digest) return refuse("the authorisation's digest does not match its contents.");
+  return { ok: true };
+}
+/** Permit2's current pull-allowance for one token (base units). */
+export async function permit2TokenAllowance(owner, tokenAddress, networkKey) {
+  const c = new ethers.Contract(tokenAddress, RAMP_ERC20_ALLOWANCE_ABI, providerFor(networkKey));
+  return c.allowance(owner, PERMIT2_ADDRESS);
+}
+/** An EVM gas quote for a composed sell, for the fee engine: the
+ *  bare transfer's estimated gas (the same estimate the plain send
+ *  shows) plus the modelled composition extra, both priced in USD
+ *  from the live fee data. Returns { gasUsd, extraGasUsd,
+ *  gasNativeText } — gasNativeText is the composed total in the
+ *  chain's native asset, for the sentence's network-fee figure. */
+export async function estimateRampFeeEvmGasUsd(wallet, networkKey, { to, amount, token, nativePriceUsd } = {}) {
+  const net = NETWORKS[networkKey];
+  const provider = providerFor(networkKey);
+  const feeData = await provider.getFeeData();
+  const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+  let bareGas;
+  try {
+    if (!token) {
+      bareGas = await provider.estimateGas({ from: wallet.address, to, value: ethers.parseEther(String(amount)) });
+    } else {
+      const c = new ethers.Contract(token.address, ERC20, wallet.connect(provider));
+      bareGas = await c.transfer.estimateGas(to, ethers.parseUnits(String(amount), token.decimals));
+    }
+  } catch {
+    // Estimation reverts on an underfunded wallet (a token's transfer
+    // checks the balance inside the simulation) — the review must
+    // still paint with the standard planning figures rather than
+    // dying before the sentence exists; the confirm step re-checks
+    // the balance against the real send anyway.
+    bareGas = token ? 65000n : 21000n;
+  }
+  const px = Number(nativePriceUsd);
+  const toUsd = (units) => Number(ethers.formatEther(units * gasPrice)) * (Number.isFinite(px) && px > 0 ? px : 0);
+  const composedGas = bareGas + RAMP_FEE_COMPOSE_EXTRA_GAS_UNITS;
+  return { gasUsd: toUsd(composedGas), extraGasUsd: toUsd(RAMP_FEE_COMPOSE_EXTRA_GAS_UNITS),
+    gasNativeText: ethers.formatEther(composedGas * gasPrice),
+    bareGasNativeText: ethers.formatEther(bareGas * gasPrice), gasPrice, netSymbol: net.symbol };
+}
+/** Execute a tier-1 EVM sell: exact-amount Permit2 allowance (only
+ *  if short — granted for precisely P + F, this order), then the
+ *  batch permit signed by the user's own key, then the single
+ *  settlement transaction from the user's own wallet. Any refusal
+ *  in construction or checking throws BEFORE a signature exists.
+ *  Returns the settlement transaction (caller awaits .wait()). */
+export async function executeRampFeeSendEvm(wallet, networkKey, { token, legs, deadlineSecs = RAMP_FEE_PERMIT_DEADLINE_SECS } = {}) {
+  if (!token || !ethers.isAddress(token.address || "")) throw new Error("That sale token was unreadable.");
+  const net = NETWORKS[networkKey];
+  const provider = providerFor(networkKey);
+  const signer = wallet.connect(provider);
+  const owner = wallet.address;
+  const total = (legs || []).reduce((s, l) => s + BigInt(l.amountRaw), 0n);
+  if (total <= 0n) throw new Error("Enter an amount.");
+  const tokenContract = new ethers.Contract(token.address, RAMP_ERC20_ALLOWANCE_ABI, signer);
+  const allowance = await tokenContract.allowance(owner, PERMIT2_ADDRESS);
+  if (allowance < total) {
+    const approveTx = await tokenContract.approve(PERMIT2_ADDRESS, total);
+    await approveTx.wait();
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  const built = buildRampPermitBatch({ chainId: net.chainId, owner, token: token.address, legs,
+    nonce: rampPermitNonce(), deadline: nowSec + deadlineSecs, nowSec });
+  if (!built.ok) throw new Error(built.reason);
+  const checked = checkRampPermitBatch(built, { chainId: net.chainId, owner, token: token.address, legs });
+  if (!checked.ok) throw new Error(checked.reason);
+  const signature = await signer.signTypedData(built.domain, built.types, built.message);
+  const permit2 = new ethers.Contract(PERMIT2_ADDRESS, RAMP_PERMIT2_ABI, signer);
+  const permit = { permitted: built.message.permitted, nonce: built.message.nonce, deadline: built.message.deadline };
+  return permit2.permitTransferFrom(permit, built.transferDetails, owner, signature);
+}
+
 // ---------- Lightning -> Bitcoin bridge: LN ->(Satora) Arkade ->(operator offboard) BTC mainnet ----------
 // The composition the 2026-11-09 research selected (report:
 // research_notes/fluid-ln-btc-composition-20261109): the direct

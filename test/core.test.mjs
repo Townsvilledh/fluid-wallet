@@ -28,6 +28,11 @@ import { Keypair as StellarKeypair, StrKey as StellarStrKey } from "@stellar/ste
 import { chunkArray, parseDexScreenerPairs, lifiTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
   shortAddrLabel, tronDecodeAbiString, formatTokenAmount, dexChainIdForEvmChain, SOLANA_TOKEN2022_PROGRAM,
   MULTICALL3_ADDRESS } from "../src/wallet-core.js";
+import { rampRouteCostUsd, rampTier1Eligible, rampFeeQuote, formatRampSellIntent,
+  PERMIT2_ADDRESS, RAMP_PERMIT_BATCH_TYPE_STRING, RAMP_PERMIT2_ABI, buildRampPermitBatch, checkRampPermitBatch,
+  buildSolanaRampSplitTx, newRampFeeOrder, rampFeeOrderTransition, rampFeeRefundInstruction,
+  rampFeeOrderSummary, loadRampFeeOrders, saveRampFeeOrder } from "../src/wallet-core.js";
+import { SATORA_PERMIT2_ADDRESS } from "../src/wallet-core.js";
 import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAddress, tonNanoToTon, tonTonToNano, formatTonSendIntent, tonJettonTransferBody, TON_USDT_MASTER,
   nearAddressFromPhrase, nearAddressFromSeed, nearSeedFromSeed, isValidNearAddress, nearYoctoToNear, nearNearToYocto, nearMinExistYocto, nearTransactionBytes, nearSignedTransactionBytes, nearActionTransfer, nearActionFunctionCall, formatNearSendIntent, NEAR_TOKENS,
   algoAddressFromPhrase, algoAddressFromSeed, algoSeedFromSeed, algoAddressFromPubkey, algoAddressDecode, isValidAlgorandAddress, algoMicroToAlgo, algoAlgoToMicro, formatAlgoSendIntent, ALGO_USDC, ALGO_USDC_ASA,
@@ -9000,6 +9005,270 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("P1-17: sheets arm a history entry; back closes the sheet, not the app",
     appSrcBatch.includes("history.pushState({ fluidSheet: 1 }") && appSrcBatch.includes('addEventListener("popstate"')
     && appSrcBatch.includes("sheetHistSwallow"));
+}
+
+// ---------- non-custodial ramp fees (2026-11-10) ----------
+// The own-charge mechanism for deposit-address ramp sells, per
+// research_notes/fluid-noncustodial-ramp-fee-20261109: Tier 1
+// Permit2 batch split (EVM) / native split (Solana), Tier 2
+// sequential fallback, fee sized by the shipped fee law and
+// disclosed in the review sentence. These pins lock the design's
+// worked table, the gates, and every refusal path.
+{
+  const appSrcRf = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const BSC_USDT = NETWORKS.bsc.tokens.find(t => t.symbol === "USDT");
+  const worked = { family: "evm", chainKey: "bsc", tier1Eligible: true, gasUsd: 0.005,
+    composeExtraUsd: 0.003, leg2GasUsd: 0.002, tokenDecimals: 6, tokenPriceUsd: 1 };
+
+  // The design §2 worked table (provider quotes at a 0.5% spread).
+  const q20 = rampFeeQuote({ ...worked, amountInUsd: 20, amountOutUsd: 19.9, providerRaw: 20_000_000n });
+  ok("rampfee: the $20 row composes at tier 1 with the design's $0.095 fee, provider whole",
+    q20.tier === 1 && q20.feeRaw === 95000n && q20.providerRaw === 20_000_000n
+    && q20.totalRaw === 20_095_000n && Math.abs(q20.routeCostUsd - 0.105) < 1e-9 && q20.reason === "ok");
+  const q1 = rampFeeQuote({ ...worked, amountInUsd: 1, amountOutUsd: 0.995, providerRaw: 1_000_000n });
+  ok("rampfee: the $1 row prices a $0.005 fee that fails the compose gate — bare send, fee $0",
+    q1.tier === 0 && q1.feeRaw === 0n && q1.totalRaw === 1_000_000n && q1.reason === "compose-gas");
+  const q100 = rampFeeQuote({ ...worked, amountInUsd: 100, amountOutUsd: 99.5, providerRaw: 100_000_000n });
+  ok("rampfee: the $100 row's route cost alone exceeds the $0.20 ceiling — the law itself charges $0",
+    q100.tier === 0 && q100.feeRaw === 0n && q100.reason === "zero-law");
+
+  // Route cost is fair-value shortfall + declared provider fee +
+  // gas; an unmeasured side never yields a guessed fee.
+  ok("rampfee: route cost clamps a negative spread to zero and adds the provider's declared fee",
+    rampRouteCostUsd({ amountInUsd: 20, amountOutUsd: 20.5, gasUsd: 0.005 }) === 0.005
+    && Math.abs(rampRouteCostUsd({ providerFeeUsd: 0.02, amountInUsd: 20, amountOutUsd: 19.9, gasUsd: 0.005 }) - 0.125) < 1e-12
+    && rampRouteCostUsd({ amountInUsd: 20, amountOutUsd: null }) === null);
+  const qUnmeasured = rampFeeQuote({ ...worked, amountInUsd: 20, amountOutUsd: null, providerRaw: 20_000_000n });
+  ok("rampfee: an unmeasured quote sends bare and says why — never a guessed fee",
+    qUnmeasured.tier === 0 && qUnmeasured.feeRaw === 0n && qUnmeasured.reason === "unmeasured");
+  const qFeeInR = rampFeeQuote({ ...worked, providerFeeUsd: 0.02, amountInUsd: 20, amountOutUsd: 19.9, providerRaw: 20_000_000n });
+  ok("rampfee: a declared provider fee counts in the route cost (fee $0.075 at the worked numbers)",
+    qFeeInR.tier === 1 && qFeeInR.feeRaw === 75000n);
+  const qDust = rampFeeQuote({ ...worked, gasUsd: 0, amountInUsd: 0.0001, amountOutUsd: 0.0000995, providerRaw: 100n });
+  ok("rampfee: a fee that floors below one raw unit is dust — refused, not rounded up",
+    qDust.tier === 0 && qDust.feeRaw === 0n && qDust.reason === "dust");
+  ok("rampfee: a zero or unreadable provider amount is refused outright",
+    rampFeeQuote({ ...worked, amountInUsd: 20, amountOutUsd: 19.9, providerRaw: 0n }).reason === "bad-amount");
+  ok("rampfee: the raw fee never exceeds the shipped law's own raw-units cap and never reaches the principal",
+    q20.feeRaw <= platformFeeOn(20_000_000n, PLATFORM_FEE_BPS) && q20.feeRaw < q20.providerRaw);
+
+  // Tier eligibility by shape (design §4/§5).
+  ok("rampfee: tier-1 eligibility is the listed-token test on EVM, native-or-listed on Solana, never Tron",
+    rampTier1Eligible("evm", "bsc", BSC_USDT) === true
+    && rampTier1Eligible("evm", "bsc", { address: "0x000000000000000000000000000000000000dEaD", symbol: "XXX", decimals: 18 }) === false
+    && rampTier1Eligible("evm", "bsc", null) === false
+    && rampTier1Eligible("solana", null, null) === true
+    && rampTier1Eligible("solana", null, SOLANA_TOKENS.find(t => t.symbol === "USDC")) === true
+    && rampTier1Eligible("solana", null, { address: "So11111111111111111111111111111111111111111", symbol: "X", decimals: 9 }) === false
+    && rampTier1Eligible("tron", null, null) === false);
+  const qNative = rampFeeQuote({ ...worked, tier1Eligible: false, amountInUsd: 20, amountOutUsd: 19.9, providerRaw: 20_000_000n });
+  ok("rampfee: a shape tier 1 cannot cover falls to tier 2 when the fee clears the second leg's gas",
+    qNative.tier === 2 && qNative.feeRaw === 95000n && qNative.totalRaw === 20_095_000n);
+  const qNativeSmall = rampFeeQuote({ ...worked, tier1Eligible: false, leg2GasUsd: 0.5, amountInUsd: 20, amountOutUsd: 19.9, providerRaw: 20_000_000n });
+  ok("rampfee: tier 2 refuses when the second leg's gas would eat the fee",
+    qNativeSmall.tier === 0 && qNativeSmall.feeRaw === 0n && qNativeSmall.reason === "leg2-gas");
+  const qSolRent = rampFeeQuote({ family: "solana", tier1Eligible: true, amountInUsd: 20, amountOutUsd: 19.9,
+    gasUsd: 0.14, composeExtraUsd: 0.13, leg2GasUsd: 0.0008, providerRaw: 20_000_000n, tokenDecimals: 6, tokenPriceUsd: 1 });
+  ok("rampfee: a first-ever Solana fee whose collection account rent dwarfs it sends bare",
+    qSolRent.tier === 0 && qSolRent.reason === "compose-gas" && qSolRent.feeRaw === 0n);
+  const qSolRentCap = rampFeeQuote({ family: "solana", tier1Eligible: true, amountInUsd: 20, amountOutUsd: 19.9,
+    gasUsd: 0.31, composeExtraUsd: 0.306, leg2GasUsd: 0.0008, providerRaw: 20_000_000n, tokenDecimals: 6, tokenPriceUsd: 1 });
+  ok("rampfee: when the rent-inclusive route cost alone passes Solana's $0.30 ceiling the law charges $0 first",
+    qSolRentCap.tier === 0 && qSolRentCap.reason === "zero-law" && qSolRentCap.feeRaw === 0n);
+  const qTron = rampFeeQuote({ family: "tron", tier1Eligible: false, amountInUsd: 100, amountOutUsd: 99.6,
+    gasUsd: 2, leg2GasUsd: 1, providerRaw: 100_000_000n, tokenDecimals: 6, tokenPriceUsd: 1 });
+  ok("rampfee: Tron prices out under the fee law — two honest energy legs exceed the total ceiling at any size",
+    qTron.tier === 0 && qTron.feeRaw === 0n && qTron.reason === "zero-law");
+
+  // The review sentences (design §2) — the fee line is never omitted.
+  const s1 = formatRampSellIntent({ tier: 1, amountText: "20", symbol: "USDT", fiatText: "₦27,400", providerName: "Paycrest", feeText: "0.095", totalText: "20.095", networkFeeText: "0.0011 BNB" });
+  ok("rampfee: the tier-1 sentence names every figure, the same-transaction promise and the refund promise",
+    s1.includes("Sell 20 USDT") && s1.includes("₦27,400") && s1.includes("Fluid's fee: 0.095 USDT")
+    && s1.includes("in the same transaction") && s1.includes("fee comes back to you automatically")
+    && s1.includes("expires in 30 minutes") && s1.includes("Paycrest"));
+  const s2 = formatRampSellIntent({ tier: 2, amountText: "20", symbol: "BNB", fiatText: "$19.90", feeText: "0.000138", totalText: "20.000138", networkFeeText: "0.002 BNB" });
+  ok("rampfee: the tier-2 sentence promises the fee moves only after the provider confirms — never a same-transaction claim",
+    s2.includes("only after the provider confirms") && s2.includes("Fluid's fee: 0.000138 BNB") && !s2.includes("same transaction"));
+  const s0 = formatRampSellIntent({ tier: 0, amountText: "20", symbol: "USDT", fiatText: "₦27,400", feeText: "0", totalText: "20", networkFeeText: "0.001 BNB" });
+  ok("rampfee: a bare sale still prints the fee line — as $0",
+    s0.includes("Fluid's fee: $0 — this sale carries no Fluid fee."));
+
+  // Sends stay free: the ramp mechanism never touches the send path's
+  // fee posture.
+  ok("rampfee: plain sends remain outside platform-fee scope",
+    platformFeeApplies("send") === false && platformFeeApplies("receive") === false);
+
+  // The send sheets carry the cash-out composition.
+  ok("rampfee: all three send sheets offer the cash-out declaration and the composition paths",
+    appSrcRf.includes("This is a cash-out") && appSrcRf.includes("executeRampFeeSendEvm")
+    && appSrcRf.includes("sendSolanaRampSplit") && appSrcRf.includes("openRampOrderSheet")
+    && appSrcRf.includes("formatRampSellIntent"));
+}
+
+// ---------- ramp fees: Permit2 batch construction (2026-11-10) ----------
+{
+  const BSC_USDT = NETWORKS.bsc.tokens.find(t => t.symbol === "USDT");
+  const PROVIDER = "0x1111111111111111111111111111111111111111";
+  const testWallet = new ethers.Wallet("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+  const DL = Math.floor(Date.now() / 1000) + 1800; // inside the builder's sane deadline bound
+  ok("rampfee: the ramp composition targets the canonical Permit2 — the same contract the Satora flow pins",
+    PERMIT2_ADDRESS === "0x000000000022D473030F116dDEE9F6B43aC78BA3" && PERMIT2_ADDRESS === SATORA_PERMIT2_ADDRESS);
+  ok("rampfee: the batch type string is the canonical Permit2 batch shape, spender included",
+    RAMP_PERMIT_BATCH_TYPE_STRING === "PermitBatchTransferFrom(TokenPermissions[] permitted,address spender,uint256 nonce,uint256 deadline)TokenPermissions(address token,uint256 amount)");
+
+  const built = buildRampPermitBatch({ chainId: 56, owner: testWallet.address, token: BSC_USDT.address,
+    legs: [{ to: PROVIDER, amountRaw: 20_000_000n }, { to: FEE_SPLIT.dripbot.agentWallet.evm, amountRaw: 95000n }],
+    nonce: 424242n, deadline: DL });
+  ok("rampfee: the batch builds with the user as their own spender (self-relayed, no third party)",
+    built.ok === true && built.message.spender === testWallet.address
+    && built.message.permitted.length === 2 && built.transferDetails.length === 2);
+  ok("rampfee: permitted[i] pairs with transferDetails[i] — same token twice, amounts and recipients aligned",
+    built.transferDetails.every((d, i) => d.requestedAmount === built.message.permitted[i].amount)
+    && built.transferDetails[0].to === PROVIDER && built.transferDetails[0].requestedAmount === 20_000_000n
+    && built.transferDetails[1].to === FEE_SPLIT.dripbot.agentWallet.evm && built.transferDetails[1].requestedAmount === 95000n
+    && built.message.permitted.every(p => p.token === BSC_USDT.address));
+
+  // The digest, recomputed by hand from the type strings with noble
+  // keccak — independent of ethers' encoder.
+  const K = (b) => keccak_256(b);
+  const utf8 = (s) => new TextEncoder().encode(s);
+  const cat = (...parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+  const padAddr = (a) => ethers.getBytes(ethers.zeroPadValue(a, 32));
+  const u256 = (n) => ethers.getBytes(ethers.toBeHex(BigInt(n), 32));
+  const domainSep = K(cat(K(utf8("EIP712Domain(string name,uint256 chainId,address verifyingContract)")), K(utf8("Permit2")), u256(56), padAddr(PERMIT2_ADDRESS)));
+  const itemHash = (p) => K(cat(K(utf8("TokenPermissions(address token,uint256 amount)")), padAddr(p.token), u256(p.amount)));
+  const structHash = K(cat(K(utf8(RAMP_PERMIT_BATCH_TYPE_STRING)), K(cat(...built.message.permitted.map(itemHash))), padAddr(testWallet.address), u256(424242n), u256(DL)));
+  const manualDigest = "0x" + Buffer.from(K(cat(new Uint8Array([0x19, 0x01]), domainSep, structHash))).toString("hex");
+  ok("rampfee: the batch digest matches a hand-computed EIP-712 digest from the type strings",
+    manualDigest === built.digest
+    && manualDigest === ethers.TypedDataEncoder.hash(built.domain, built.types, built.message));
+  const sig = await testWallet.signTypedData(built.domain, built.types, built.message);
+  ok("rampfee: a signature over the batch recovers the owner — the construction is signable as built",
+    ethers.verifyTypedData(built.domain, built.types, built.message, sig) === testWallet.address);
+  const iface = new ethers.Interface(RAMP_PERMIT2_ABI);
+  const canonicalSig = "permitTransferFrom(((address,uint256)[],uint256,uint256),(address,uint256)[],address,bytes)";
+  ok("rampfee: the batch call's selector is the canonical Permit2 batch selector",
+    iface.getFunction("permitTransferFrom").selector === "0x" + Buffer.from(K(utf8(canonicalSig))).toString("hex").slice(0, 8));
+
+  // The independent re-check refuses every tamper that matters.
+  const CTX = { chainId: 56, owner: testWallet.address, token: BSC_USDT.address,
+    legs: [{ to: PROVIDER, amountRaw: 20_000_000n }, { to: FEE_SPLIT.dripbot.agentWallet.evm, amountRaw: 95000n }] };
+  ok("rampfee: the pre-broadcast re-check accepts the untampered batch against the reviewed split",
+    checkRampPermitBatch(built, CTX).ok === true);
+  const tamper = (fn) => { const c = JSON.parse(JSON.stringify(built, (k, v) => typeof v === "bigint" ? v.toString() + "n" : v),
+    (k, v) => typeof v === "string" && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v); fn(c); return checkRampPermitBatch(c, CTX).ok; };
+  ok("rampfee: the re-check refuses a swapped fee recipient, a raised leg, a foreign spender and an extra leg",
+    tamper(c => { c.transferDetails[1].to = PROVIDER; }) === false
+    && tamper(c => { c.transferDetails[0].requestedAmount = 21_000_000n; }) === false
+    && tamper(c => { c.message.spender = PROVIDER; }) === false
+    && tamper(c => { c.transferDetails.push({ token: BSC_USDT.address, requestedAmount: 1n, to: PROVIDER }); }) === false);
+  ok("rampfee: the builder refuses an expired deadline, a zero leg and a native (non-token) composition",
+    buildRampPermitBatch({ chainId: 56, owner: testWallet.address, token: BSC_USDT.address, legs: [{ to: PROVIDER, amountRaw: 1n }], nonce: 1n, deadline: 1000 }).ok === false
+    && buildRampPermitBatch({ chainId: 56, owner: testWallet.address, token: BSC_USDT.address, legs: [{ to: PROVIDER, amountRaw: 0n }], nonce: 1n, deadline: DL }).ok === false
+    && buildRampPermitBatch({ chainId: 56, owner: testWallet.address, token: null, legs: [{ to: PROVIDER, amountRaw: 1n }], nonce: 1n, deadline: DL }).ok === false);
+}
+
+// ---------- ramp fees: Solana native split construction ----------
+{
+  const from = solanaAddressFromSeed(mnemonicToSeedSync("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"));
+  const other = solanaAddressFromSeed(mnemonicToSeedSync("legal winner thank year wave sausage worth useful legal winner thank yellow"));
+  const USDC = SOLANA_TOKENS.find(t => t.symbol === "USDC");
+  const FEE_TO = FEE_SPLIT.dripbot.agentWallet.solana;
+  const BH = "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM";
+  const u64At = (data, off) => new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(off, true);
+
+  const full = buildSolanaRampSplitTx({ fromAddress: from, to: other, feeTo: FEE_TO,
+    token: { address: USDC.address, decimals: 6 }, providerRaw: 20_000_000n, feeRaw: 95000n,
+    blockhash: BH, createsProviderAta: true, createsFeeAta: true });
+  const fi = full.instructions;
+  ok("rampfee: the Solana split creates both missing token accounts, then transfers provider-then-fee in one transaction",
+    fi.length === 4
+    && fi[0].programId.toBase58() === "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" && fi[0].data[0] === 1
+    && fi[1].programId.toBase58() === "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    && fi[2].data[0] === 3 && u64At(fi[2].data, 1) === 20_000_000n
+    && fi[3].data[0] === 3 && u64At(fi[3].data, 1) === 95000n);
+  ok("rampfee: the split's legs land in the provider's and the collection wallet's own token accounts",
+    fi[0].keys[1].pubkey.toBase58() === solanaAtaAddress(other, USDC.address)
+    && fi[1].keys[1].pubkey.toBase58() === solanaAtaAddress(FEE_TO, USDC.address)
+    && fi[2].keys[1].pubkey.toBase58() === solanaAtaAddress(other, USDC.address)
+    && fi[3].keys[1].pubkey.toBase58() === solanaAtaAddress(FEE_TO, USDC.address));
+  const lean = buildSolanaRampSplitTx({ fromAddress: from, to: other, feeTo: FEE_TO,
+    token: { address: USDC.address, decimals: 6 }, providerRaw: 20_000_000n, feeRaw: 95000n, blockhash: BH });
+  ok("rampfee: with both token accounts existing the split is exactly two transfers",
+    lean.instructions.length === 2);
+  const t22 = buildSolanaRampSplitTx({ fromAddress: from, to: other, feeTo: FEE_TO,
+    token: { address: USDC.address, decimals: 6, program: SOLANA_TOKEN2022_PROGRAM },
+    providerRaw: 20_000_000n, feeRaw: 95000n, blockhash: BH });
+  ok("rampfee: Token-2022 splits use TransferChecked against the 2022 program and its own ATAs",
+    t22.instructions.length === 2
+    && t22.instructions[0].programId.toBase58() === SOLANA_TOKEN2022_PROGRAM
+    && t22.instructions[0].data[0] === 12 && t22.instructions[0].data[9] === 6
+    && t22.instructions[1].keys[2].pubkey.toBase58() === solanaAtaAddress(FEE_TO, USDC.address, SOLANA_TOKEN2022_PROGRAM));
+  const native = buildSolanaRampSplitTx({ fromAddress: from, to: other, feeTo: FEE_TO,
+    token: null, providerRaw: 2_000_000_000n, feeRaw: 4_750_000n, blockhash: BH });
+  ok("rampfee: native SOL splits as two system transfers in one transaction",
+    native.instructions.length === 2
+    && native.instructions.every(ix => ix.programId.toBase58() === "11111111111111111111111111111111")
+    && u64At(native.instructions[0].data, 4) === 2_000_000_000n
+    && u64At(native.instructions[1].data, 4) === 4_750_000n
+    && native.instructions[1].keys[1].pubkey.toBase58() === FEE_TO);
+  let threw = false;
+  try {
+    buildSolanaRampSplitTx({ fromAddress: from, to: other, feeTo: FEE_TO, token: null, providerRaw: 1n, feeRaw: 0n, blockhash: BH });
+  } catch { threw = true; }
+  ok("rampfee: the Solana builder refuses a zero fee leg rather than building a bare send in disguise", threw);
+}
+
+// ---------- ramp fees: order records & the refund path ----------
+{
+  const BSC_USDT = NETWORKS.bsc.tokens.find(t => t.symbol === "USDT");
+  const mk = (tier) => newRampFeeOrder({ id: "ramp-test-" + tier, tier, family: "evm", chainKey: "bsc",
+    token: { symbol: "USDT", address: BSC_USDT.address, decimals: 6 },
+    providerTo: "0x1111111111111111111111111111111111111111", providerRaw: 20000000n, feeRaw: 95000n,
+    feeTo: FEE_SPLIT.dripbot.agentWallet.evm, userAddress: "0x2222222222222222222222222222222222222222",
+    fiatText: "₦27,400", providerName: "Paycrest" });
+
+  const t2 = mk(2);
+  ok("rampfee: a tier-2 order starts created, keeps its fiat quote and provider, and its summary states the fee",
+    t2.status === "created" && t2.fiatText === "₦27,400" && t2.providerName === "Paycrest"
+    && rampFeeOrderSummary(t2).includes("Cash-out") && rampFeeOrderSummary(t2).includes("0.095 USDT"));
+  const s1 = rampFeeOrderTransition(t2, "leg1-sent", { txid: "0xabc" });
+  const s2 = rampFeeOrderTransition(s1, "provider-confirmed");
+  const s3 = rampFeeOrderTransition(s2, "fee-sent", { txid: "0xdef" });
+  const s4 = rampFeeOrderTransition(s3, "complete");
+  ok("rampfee: the tier-2 lifecycle walks deposit → confirmed → fee → complete, immutably, txids recorded",
+    s4.status === "complete" && t2.status === "created"
+    && s4.txids.some(t => t.step === "leg1-sent" && t.txid === "0xabc")
+    && s4.txids.some(t => t.step === "fee-sent" && t.txid === "0xdef"));
+  let illegal = false;
+  try { rampFeeOrderTransition(t2, "complete"); } catch { illegal = true; }
+  ok("rampfee: an illegal jump (created → complete) is refused", illegal);
+  const refundedEarly = rampFeeOrderTransition(s1, "provider-refunded");
+  ok("rampfee: a sale refunded before the fee moved owes nothing back",
+    refundedEarly.status === "refunded" && rampFeeRefundInstruction(refundedEarly) === null);
+  const refundedLate = rampFeeOrderTransition(s3, "provider-refunded");
+  const instr = rampFeeRefundInstruction(refundedLate);
+  ok("rampfee: a sale refunded after the fee settled lands on fee-return-due with an executable return instruction",
+    refundedLate.status === "fee-return-due" && instr !== null && instr.amountRaw === "95000"
+    && instr.to === "0x2222222222222222222222222222222222222222" && instr.from === FEE_SPLIT.dripbot.agentWallet.evm);
+  const t1 = rampFeeOrderTransition(mk(1), "settled", { txid: "0x999" });
+  const t1Refunded = rampFeeOrderTransition(t1, "provider-refunded");
+  ok("rampfee: a settled tier-1 sale that later refunds also lands on fee-return-due",
+    t1Refunded.status === "fee-return-due" && rampFeeRefundInstruction(t1Refunded) !== null);
+  let badOrder = false;
+  try {
+    newRampFeeOrder({ id: "x", tier: 1, family: "evm", token: { symbol: "USDT", decimals: 6 },
+      providerTo: "0x1111111111111111111111111111111111111111", providerRaw: 1n, feeRaw: 1n,
+      userAddress: "0x2222222222222222222222222222222222222222" });
+  } catch { badOrder = true; }
+  ok("rampfee: an order without a fee destination is refused at creation", badOrder);
+  const store = { data: {}, getItem(k) { return this.data[k] ?? null; }, setItem(k, v) { this.data[k] = v; } };
+  saveRampFeeOrder(store, s4);
+  saveRampFeeOrder(store, t1);
+  const loaded = loadRampFeeOrders(store);
+  ok("rampfee: orders persist and reload with amounts intact",
+    loaded.length === 2 && loaded.find(r => r.id === "ramp-test-2").feeRaw === "95000"
+    && loaded.find(r => r.id === "ramp-test-1").status === "settled");
 }
 
 console.log(`\n${passed} checks passed`);

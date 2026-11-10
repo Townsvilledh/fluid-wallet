@@ -79,11 +79,10 @@ the weekly follower drip and the OGO ERA player pools; see
    cross. The review sheet discloses the route's own cost ("route
    cost ≈ $X") and Fluid's fee as separate lines — computed from the
    quote's actual amounts, never hidden in a spread. Plain
-   sends/receives never carry it. **Known issue (2026-11-09):** the
-   route-cost measure behind that label was found to misstate on some
-   routes (Relay zkSync routes overstate ~180×; Mayan dust
-   understates) — the fix is queued in the audit batch; the fee law
-   itself is unchanged. Collection rides each router's native
+   sends/receives never carry it. (The route-cost measure behind
+   that label was corrected in the 2026-11-10 audit fix batch: cost
+   is now the fair-value shortfall between the two sides, with
+   declared router components kept only as a fallback.) Collection rides each router's native
    mechanism into the DripBot agent wallet — Relay App Fees, LI.FI's
    integrator fee, Satora's developer markup, Jupiter/Mayan fee
    accounts. LI.FI pays
@@ -110,6 +109,33 @@ the weekly follower drip and the OGO ERA player pools; see
    Every other chain family (Bitcoin, Litecoin, Dogecoin, Bitcoin
    Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
    Stacks, Lightning) has no swap route at all — sends/receives only.
+4. **Cash-out deposit sales (shipped 2026-11-10):** when a user
+   finishes a ramp provider's own sale steps and sends the quoted
+   amount to the provider's deposit address from a Fluid send sheet,
+   they can declare the send a cash-out. Fluid then composes its own
+   fee into the sale — sized by the same fee law as swaps, from the
+   route cost the user declares (the provider's payout against the
+   amount sent, plus network cost) — and the review sentence states
+   every figure before anything is signed. The provider always
+   receives its full quoted amount; the fee is a separate, disclosed
+   amount on top, paid to the DripBot collection wallet (the 60/40
+   settlement split applies as usual). Composition is atomic where
+   the chain allows it — one Permit2 batch authorisation on EVM for
+   listed ERC-20 tokens, one transaction with two transfers on
+   Solana — and sequential where it does not (EVM native coins and
+   unlisted tokens, Tron): the provider's amount moves first, and
+   the fee is sent only after the user confirms the provider
+   completed the sale, so a failed sale never costs the fee. Two
+   honesty gates ride on top of the fee law: a composition is only
+   used when the fee clears twice its own execution cost, and when
+   no lawful fee clears its collection cost — small sales, Tron
+   sales under the law's total ceiling, sales whose payout the user
+   does not declare — the sale simply sends with the fee printed as
+   $0. If a provider later refunds a sale whose fee already settled,
+   the order record lands on a fee-return state and the fee comes
+   back to the user's address automatically. Plain sends are never
+   affected: the declaration is off by default, and an undeclared
+   send carries no fee, ever.
 
 ## Ramp referrals
 - Mt Pelerin: every buy/sell link carries the owner's referral code

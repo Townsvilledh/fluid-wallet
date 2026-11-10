@@ -45,7 +45,14 @@ import {
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,
+  FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
+  newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
+  loadRampFeeOrders, saveRampFeeOrder,
+  estimateRampFeeEvmGasUsd, executeRampFeeSendEvm,
+  solanaRampSplitPlan, sendSolanaRampSplit, SOLANA_ATA_RENT_LAMPORTS, solLamportsToSol,
+  RAMP_FEE_TRON_LEG_GAS_USD,
 } from "./wallet-core.js";
+import { ethers } from "ethers";
 import { LN_WASM_PIN, LN_CHUNK_SHA256 } from "./ln-asset-pins.generated.js";
 
 const $ = (id) => document.getElementById(id);
@@ -2072,12 +2079,147 @@ $("actSend").onclick = () => {
   if (viewKey === "stacks") return openStacksSheet(nativeOf(stacksBalances));
   return openEvmSendSheet();
 };
+// ---------- cash-out deposits (non-custodial ramp fees) ----------
+// A send the user declares as a CASH-OUT — they finished a provider's
+// own sale steps and came back with the provider's deposit address
+// and its exact quoted amount — is composed with Fluid's own fee
+// under the ramp-fee design (wallet-core's rampFeeQuote and friends):
+// the provider receives its full quoted amount, Fluid's fee is a
+// separate line in the review sentence, sized by the fee law. Plain
+// sends are untouched: the toggle defaults off, and every refusal
+// inside the composition falls back to the plain send with the fee
+// printed as $0 — never a silent charge, and never a silently
+// dropped one either (the sentence always shows the fee line).
+const RAMP_FEE_FIAT_SYMBOLS = { NGN: "₦", KES: "KSh ", GHS: "GH₵", ZAR: "R ", USD: "$", EUR: "€", GBP: "£" };
+function rampFeeFieldsHtml(p) {
+  return `<label class="tag" style="display:block;margin-top:10px"><input type="checkbox" id="${p}Ramp"> This is a cash-out — I'm sending to a provider's deposit address for a sale</label>
+  <div id="${p}RampFields" class="hidden">
+    <input id="${p}ProvName" placeholder="Provider name (optional)" autocapitalize="words">
+    <input id="${p}FiatAmt" inputmode="decimal" placeholder="The provider will pay you (fiat amount)">
+    <input id="${p}FiatRate" inputmode="decimal" placeholder="Provider's rate — fiat per $1 (e.g. 1378)">
+    <input id="${p}FiatCur" placeholder="Currency (e.g. NGN)" autocapitalize="characters">
+    <p class="tag">Fluid composes the sale with its own fee where the fee law allows — the provider still receives the full amount in the amount box. The review sentence shows the fee before you confirm. Leave the rate blank and the sale simply carries no Fluid fee.</p>
+  </div>`;
+}
+function wireRampFeeFields(p) {
+  const box = $(p + "Ramp");
+  if (box) box.onchange = () => { const f = $(p + "RampFields"); if (f) f.classList.toggle("hidden", !box.checked); };
+}
+function readRampFeeInputs(p) {
+  const box = $(p + "Ramp");
+  if (!box || !box.checked) return null;
+  const fiatAmt = Number(($(p + "FiatAmt") || {}).value);
+  const rate = Number(($(p + "FiatRate") || {}).value);
+  const cur = String((($(p + "FiatCur") || {}).value || "")).trim().toUpperCase();
+  const sym = RAMP_FEE_FIAT_SYMBOLS[cur] || (cur ? cur + " " : "");
+  return {
+    providerName: String((($(p + "ProvName") || {}).value || "")).trim(),
+    fiatText: Number.isFinite(fiatAmt) && fiatAmt > 0 ? sym + fiatAmt.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "",
+    amountOutUsd: Number.isFinite(fiatAmt) && fiatAmt > 0 && Number.isFinite(rate) && rate > 0 ? fiatAmt / rate : null,
+  };
+}
+function saveRampOrder(record) {
+  try { saveRampFeeOrder(localStorage, record); } catch { /* storage blocked: the in-sheet flow still stands */ }
+  return record;
+}
+function openRampOrder(family, chainKey = null) {
+  try {
+    return loadRampFeeOrders(localStorage).find(r => r.family === family
+      && (chainKey == null || r.chainKey === chainKey)
+      && (r.status === "leg1-sent" || r.status === "provider-confirmed" || r.status === "fee-return-due")) || null;
+  } catch { return null; }
+}
+function rampOrderId() {
+  return "ramp-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36);
+}
+/** The tier-2 continuation panel: the deposit is sent; the fee send
+ *  waits for the provider's confirmation (the ordering IS the safety
+ *  property — a failed sale never costs the fee), and a refund marks
+ *  the order closed with nothing owed. Self-contained: it re-renders
+ *  itself into its container after every step, and the same panel is
+ *  what a reopened send sheet offers for an unfinished sale. */
+function mountRampOrderPanel(container, record, sendFee) {
+  if (!container) return;
+  container.innerHTML = `<p class="tag">${esc(rampFeeOrderSummary(record))}</p>`
+    + ((record.status === "leg1-sent" || record.status === "provider-confirmed")
+      ? `<button class="btn" data-ramp-fee-send>Provider confirmed — send Fluid's fee</button>
+         <button class="btn ghost" data-ramp-refunded>The sale failed / was refunded</button>` : "")
+    + (record.status === "fee-return-due"
+      ? `<p class="tag">Fluid's fee for this sale is on its way back to your address — it returns automatically.</p>` : "")
+    + `<p class="msg err" data-ramp-msg></p>`;
+  const msgEl = container.querySelector("[data-ramp-msg]");
+  const refBtn = container.querySelector("[data-ramp-refunded]");
+  if (refBtn) refBtn.onclick = () => {
+    try {
+      const next = rampFeeOrderTransition(record, "provider-refunded");
+      saveRampOrder(next);
+      mountRampOrderPanel(container, next, sendFee);
+    } catch (e) { if (msgEl) msgEl.textContent = e.message; }
+  };
+  const feeBtn = container.querySelector("[data-ramp-fee-send]");
+  if (feeBtn) feeBtn.onclick = async () => {
+    try {
+      feeBtn.disabled = true;
+      let rec = record;
+      if (rec.status === "leg1-sent") { rec = rampFeeOrderTransition(rec, "provider-confirmed"); saveRampOrder(rec); }
+      if (msgEl) msgEl.textContent = "Sending Fluid's fee…";
+      const { hash } = await sendFee(rec);
+      rec = rampFeeOrderTransition(rec, "fee-sent", { txid: hash }); saveRampOrder(rec);
+      rec = rampFeeOrderTransition(rec, "complete"); saveRampOrder(rec);
+      mountRampOrderPanel(container, rec, sendFee);
+    } catch (e) {
+      if (msgEl) msgEl.textContent = "Fee send failed: " + (e.shortMessage || e.message);
+      feeBtn.disabled = false;
+    }
+  };
+}
+function openRampOrderSheet(record, sendFee) {
+  openSheet(`<h3>Cash-out in progress</h3>
+    <div id="roPanel"></div>
+    <p class="tag">You can close this and finish later — the sale is saved on this device, and the send sheet will offer to complete it.</p>`);
+  mountRampOrderPanel($("roPanel"), record, sendFee);
+}
+/** The tier-2 fee send, per family — an ordinary plain send of the
+ *  recorded fee amount to the recorded collection address. */
+function evmRampSendFee(record) {
+  return async (rec) => {
+    const dec = rec.token.decimals ?? 6;
+    const tx = await executeSend(wallet, rec.chainKey, {
+      to: rec.feeTo, amount: ethers.formatUnits(BigInt(rec.feeRaw), dec),
+      token: rec.token.address ? { address: rec.token.address, decimals: dec } : null,
+    });
+    return { hash: tx.hash };
+  };
+}
+function solanaRampSendFee() {
+  return async (rec) => {
+    const dec = rec.token.decimals ?? 6;
+    const { hash } = await sendSolana(wallet.mnemonic.phrase, {
+      to: rec.feeTo, amount: ethers.formatUnits(BigInt(rec.feeRaw), dec),
+      token: rec.token.address ? { address: rec.token.address, decimals: dec, program: rec.token.program || undefined } : null,
+    });
+    return { hash };
+  };
+}
+function tronRampSendFee() {
+  return async (rec) => {
+    const dec = rec.token.decimals ?? 6;
+    const { hash } = await sendTron(wallet, {
+      to: rec.feeTo, amount: ethers.formatUnits(BigInt(rec.feeRaw), dec),
+      token: rec.token.address ? { address: rec.token.address, decimals: dec } : null,
+    });
+    return { hash };
+  };
+}
+
 function openEvmSendSheet() {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
+    <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
     <input id="sTo" placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
+    ${rampFeeFieldsHtml("s")}
     <button class="btn" id="sReview">Review send</button>
     <div id="sIntent" class="hidden">
       <p class="seed" id="sIntentText"></p>
@@ -2085,6 +2227,9 @@ function openEvmSendSheet() {
     </div>
     <p class="msg err" id="sMsg"></p>
     <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
+  wireRampFeeFields("s");
+  const sOpenOrder = openRampOrder("evm", networkKey);
+  if (sOpenOrder) mountRampOrderPanel($("sRampOrder"), sOpenOrder, evmRampSendFee(sOpenOrder));
   $("sReview").onclick = async () => {
     let to = $("sTo").value.trim();
     let sendName = null;
@@ -2115,6 +2260,50 @@ function openEvmSendSheet() {
     if (evmLoadFailed) return msg("sMsg", warnPrefix + resolvedNote + "Balances couldn't load right now — tap More → Refresh and try again.");
     if (!b) return msg("sMsg", warnPrefix + resolvedNote + "Balances are still loading — wait a moment and try again.");
     if (!amount || Number(amount) <= 0) return msg("sMsg", warnPrefix + resolvedNote + "Enter an amount.");
+    // Cash-out deposits take their own review path: the composition
+    // is priced and the design's sentence painted BEFORE the balance
+    // gate, so the fee disclosure exists even when the send itself
+    // then refuses on funds.
+    const rampIn = readRampFeeInputs("s");
+    if (rampIn) {
+      pendingSend = null;
+      show("sIntent", false);
+      try {
+        msg("sMsg", "Pricing this cash-out…", true);
+        const token = b.address ? b : null;
+        const dec = token ? token.decimals : 18;
+        const px = Number(prices[b.symbol]);
+        const amountInUsd = Number(amount) * px;
+        const est = await estimateRampFeeEvmGasUsd(wallet, networkKey, { to, amount, token, nativePriceUsd: prices[NETWORKS[networkKey].priceSym] });
+        const quote = rampFeeQuote({ family: "evm", chainKey: networkKey,
+          tier1Eligible: rampTier1Eligible("evm", networkKey, token),
+          amountInUsd, amountOutUsd: rampIn.amountOutUsd,
+          gasUsd: est.gasUsd, composeExtraUsd: est.extraGasUsd,
+          leg2GasUsd: Math.max(0, est.gasUsd - est.extraGasUsd),
+          providerRaw: ethers.parseUnits(String(amount), dec), tokenDecimals: dec, tokenPriceUsd: px });
+        const feeText = ethers.formatUnits(quote.feeRaw, dec);
+        const totalText = ethers.formatUnits(quote.totalRaw, dec);
+        const netFeeText = (quote.tier === 2
+          ? (2 * Number(est.bareGasNativeText)).toFixed(6)
+          : Number(est.gasNativeText).toFixed(6)) + " " + NETWORKS[networkKey].symbol;
+        $("sIntentText").textContent = formatRampSellIntent({ tier: quote.tier,
+          amountText: amount, symbol: b.symbol,
+          fiatText: rampIn.fiatText || ("$" + (Number.isFinite(amountInUsd) ? amountInUsd.toFixed(2) : amount)),
+          providerName: rampIn.providerName, feeText, totalText, networkFeeText: netFeeText })
+          + (b.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+        setBalanceAfter($("sIntentText"), { balance: b.amount, amount: totalText, fee: null, symbol: b.symbol });
+        show("sIntent");
+        if (Number(totalText) > Number(b.amount)) {
+          return msg("sMsg", warnPrefix + resolvedNote + (quote.tier
+            ? "That amount plus Fluid's fee is more than your balance."
+            : "Amount is more than your balance."));
+        }
+        pendingSend = { to, amount, token, symbol: b.symbol, name: sendName,
+          feeNative: Number(est.gasNativeText), ramp: { quote, rampIn } };
+        msg("sMsg", poisonNote);
+      } catch (e) { msg("sMsg", warnPrefix + "Could not price this cash-out: " + (e.shortMessage || e.message)); }
+      return;
+    }
     if (Number(amount) > Number(b.amount)) return msg("sMsg", warnPrefix + resolvedNote + "Amount is more than your balance.");
     try {
       msg("sMsg", "Estimating fee…", true);
@@ -2129,6 +2318,63 @@ function openEvmSendSheet() {
   $("sConfirm").onclick = async () => {
     if (!pendingSend) return;
     const btn = $("sConfirm");
+    // Cash-out, tier 1: one Permit2 batch transaction settles the
+    // provider's full amount and Fluid's fee atomically.
+    if (pendingSend.ramp && pendingSend.ramp.quote.tier === 1) {
+      const { quote, rampIn } = pendingSend.ramp;
+      try {
+        setSendBusy(btn, true);
+        msg("sMsg", "Composing the sale — the provider's amount and Fluid's fee move together…", true);
+        const feeTo = FEE_SPLIT.dripbot.agentWallet.evm;
+        const tx = await executeRampFeeSendEvm(wallet, networkKey, {
+          token: pendingSend.token,
+          legs: [{ to: pendingSend.to, amountRaw: quote.providerRaw },
+                 { to: feeTo, amountRaw: quote.feeRaw }],
+        });
+        const dec = pendingSend.token ? pendingSend.token.decimals : 18;
+        saveRampOrder(rampFeeOrderTransition(newRampFeeOrder({
+          id: rampOrderId(), tier: 1, family: "evm", chainKey: networkKey,
+          token: { symbol: pendingSend.symbol, address: pendingSend.token ? pendingSend.token.address : null, decimals: dec },
+          providerTo: pendingSend.to, providerRaw: quote.providerRaw, feeRaw: quote.feeRaw,
+          feeTo, userAddress: wallet.address, fiatText: rampIn.fiatText, providerName: rampIn.providerName,
+        }), "settled", { txid: tx.hash }));
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash: tx.hash, amount: pendingSend.amount, symbol: pendingSend.symbol, to: pendingSend.to, explorer: NETWORKS[networkKey].explorer, at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        const done = pendingSend; pendingSend = null;
+        showTxSuccess({ verb: "Sold", amount: done.amount, symbol: done.symbol,
+          logoHtml: tokenLogoHtml({ symbol: done.symbol, address: done.token ? done.token.address : null }, "evm"),
+          to: done.to, toName: done.name, familyName: NETWORKS[networkKey].name,
+          feeText: `Fluid fee ${ethers.formatUnits(quote.feeRaw, dec)} ${done.symbol} — settled in the same transaction`,
+          explorerUrl: historyTxUrl({ hash: tx.hash, explorer: NETWORKS[networkKey].explorer }), txid: tx.hash, pending: false });
+      } catch (e) { sendFailed(btn, "sMsg", e); }
+      return;
+    }
+    // Cash-out, tier 2: the provider's amount goes first, in full;
+    // the fee send waits for the provider's confirmation.
+    if (pendingSend.ramp && pendingSend.ramp.quote.tier === 2) {
+      const { quote, rampIn } = pendingSend.ramp;
+      try {
+        setSendBusy(btn, true);
+        msg("sMsg", "Sending the provider's amount first…", true);
+        const tx = await executeSend(wallet, networkKey, pendingSend);
+        const dec = pendingSend.token ? pendingSend.token.decimals : 18;
+        const feeTo = FEE_SPLIT.dripbot.agentWallet.evm;
+        let record = newRampFeeOrder({
+          id: rampOrderId(), tier: 2, family: "evm", chainKey: networkKey,
+          token: { symbol: pendingSend.symbol, address: pendingSend.token ? pendingSend.token.address : null, decimals: dec },
+          providerTo: pendingSend.to, providerRaw: quote.providerRaw, feeRaw: quote.feeRaw,
+          feeTo, userAddress: wallet.address, fiatText: rampIn.fiatText, providerName: rampIn.providerName,
+        });
+        record = saveRampOrder(rampFeeOrderTransition(record, "leg1-sent", { txid: tx.hash }));
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash: tx.hash, amount: pendingSend.amount, symbol: pendingSend.symbol, to: pendingSend.to, explorer: NETWORKS[networkKey].explorer, at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        pendingSend = null;
+        openRampOrderSheet(record, evmRampSendFee(record));
+      } catch (e) { sendFailed(btn, "sMsg", e); }
+      return;
+    }
     try {
       setSendBusy(btn, true);
       msg("sMsg", "Sending…", true);
@@ -2348,9 +2594,11 @@ function openBtcSheet() {
 function openTronSheet(tok) {
   let pendingTron = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Tron</h3>
+    <div id="tRampOrder"></div>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${tronAddr}</span></p>
     <input id="tTo" placeholder="Recipient T… address or Fluid name" autocapitalize="none">
     <input id="tAmt" inputmode="decimal" placeholder="Amount">
+    ${rampFeeFieldsHtml("t")}
     <button class="btn" id="tReview">Review send</button>
     <div id="tIntent" class="hidden">
       <p class="seed" id="tIntentText"></p>
@@ -2360,6 +2608,9 @@ function openTronSheet(tok) {
     <p class="tag">${tok.address
       ? "Token sends burn a little TRX for energy — keep some TRX in this wallet."
       : "Tron network fees are paid in TRX (bandwidth/energy). Sends are final."}</p>`);
+  wireRampFeeFields("t");
+  const tOpenOrder = openRampOrder("tron");
+  if (tOpenOrder) mountRampOrderPanel($("tRampOrder"), tOpenOrder, tronRampSendFee());
   $("tReview").onclick = async () => {
     let to = $("tTo").value.trim();
     const amount = $("tAmt").value.trim();
@@ -2374,6 +2625,37 @@ function openTronSheet(tok) {
       } catch (e) { return msg("tMsg", e.message); }
     }
     if (!amount || Number(amount) <= 0) return msg("tMsg", "Enter an amount.");
+    // Cash-out deposits: Tron composes sequentially (tier 2) — the
+    // provider's send first, the fee only after it confirms — and
+    // the honest energy cost of the second leg is fed into the fee
+    // law, which is why small Tron sales price at a $0 fee.
+    const rampInTron = readRampFeeInputs("t");
+    if (rampInTron) {
+      pendingTron = null;
+      show("tIntent", false);
+      const dec = tok.decimals ?? 6;
+      const px = Number(prices[tok.symbol]);
+      const amountInUsd = Number(amount) * px;
+      const quote = rampFeeQuote({ family: "tron", tier1Eligible: false,
+        amountInUsd, amountOutUsd: rampInTron.amountOutUsd,
+        gasUsd: 2 * RAMP_FEE_TRON_LEG_GAS_USD, leg2GasUsd: RAMP_FEE_TRON_LEG_GAS_USD,
+        providerRaw: ethers.parseUnits(String(amount), dec), tokenDecimals: dec, tokenPriceUsd: px });
+      const feeText = ethers.formatUnits(quote.feeRaw, dec);
+      const totalText = ethers.formatUnits(quote.totalRaw, dec);
+      $("tIntentText").textContent = formatRampSellIntent({ tier: quote.tier,
+        amountText: amount, symbol: tok.symbol,
+        fiatText: rampInTron.fiatText || ("$" + (Number.isFinite(amountInUsd) ? amountInUsd.toFixed(2) : amount)),
+        providerName: rampInTron.providerName, feeText, totalText,
+        networkFeeText: "$" + (2 * RAMP_FEE_TRON_LEG_GAS_USD).toFixed(2) + " of TRX (modelled, two sends)" })
+        + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("tIntentText"), { balance: tok.amount, amount: totalText, fee: null, symbol: tok.symbol });
+      show("tIntent");
+      if (Number(totalText) > Number(tok.amount)) {
+        return msg("tMsg", quote.tier ? "That amount plus Fluid's fee is more than your balance." : "Amount is more than your balance.");
+      }
+      pendingTron = { to, amount, ramp: { quote, rampIn: rampInTron } };
+      return msg("tMsg", "");
+    }
     if (Number(amount) > Number(tok.amount)) return msg("tMsg", "Amount is more than your balance.");
     pendingTron = { to, amount };
     $("tIntentText").textContent = formatTronSendIntent({ amount, symbol: tok.symbol, to })
@@ -2384,6 +2666,34 @@ function openTronSheet(tok) {
   $("tConfirm").onclick = async () => {
     if (!pendingTron) return;
     const btn = $("tConfirm");
+    // Cash-out, tier 2: the provider's amount goes first, in full;
+    // the fee send waits for the provider's confirmation.
+    if (pendingTron.ramp && pendingTron.ramp.quote.tier === 2) {
+      const { quote, rampIn } = pendingTron.ramp;
+      try {
+        setSendBusy(btn, true);
+        msg("tMsg", "Sending the provider's amount first…", true);
+        const { hash } = await sendTron(wallet, {
+          to: pendingTron.to, amount: pendingTron.amount,
+          token: tok.address ? { address: tok.address, decimals: tok.decimals } : null,
+        });
+        const feeTo = FEE_SPLIT.dripbot.agentWallet.tron;
+        let record = newRampFeeOrder({
+          id: rampOrderId(), tier: 2, family: "tron", chainKey: "tron",
+          token: { symbol: tok.symbol, address: tok.address || null, decimals: tok.decimals ?? 6 },
+          providerTo: pendingTron.to, providerRaw: quote.providerRaw, feeRaw: quote.feeRaw,
+          feeTo, userAddress: tronAddr, fiatText: rampIn.fiatText, providerName: rampIn.providerName,
+        });
+        record = saveRampOrder(rampFeeOrderTransition(record, "leg1-sent", { txid: hash }));
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash, amount: pendingTron.amount, symbol: tok.symbol, to: pendingTron.to,
+          link: `https://tronscan.org/#/transaction/${hash}`, explorer: "https://tronscan.org", at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        pendingTron = null;
+        openRampOrderSheet(record, tronRampSendFee());
+      } catch (e) { sendFailed(btn, "tMsg", e); }
+      return;
+    }
     try {
       setSendBusy(btn, true);
       msg("tMsg", "Signing locally and broadcasting…", true);
@@ -2410,9 +2720,11 @@ function openTronSheet(tok) {
 function openSolanaSheet(tok) {
   let pendingSol = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Solana</h3>
+    <div id="oRampOrder"></div>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${solAddr}</span></p>
     <input id="oTo" placeholder="Recipient Solana address or Fluid name" autocapitalize="none">
     <input id="oAmt" inputmode="decimal" placeholder="Amount">
+    ${rampFeeFieldsHtml("o")}
     <button class="btn" id="oReview">Review send</button>
     <div id="oIntent" class="hidden">
       <p class="seed" id="oIntentText"></p>
@@ -2422,6 +2734,9 @@ function openSolanaSheet(tok) {
     <p class="tag">${tok.address
       ? "Token sends pay a small SOL fee. If the recipient has no " + esc(tok.symbol) + " account yet, one is created for them and you pay about 0.002 SOL rent for it — the review sentence tells you when that applies."
       : "A Solana account must always keep at least 0.00089 SOL (the rent-exempt minimum) or be emptied completely — sends that would strand less than that are blocked. Sends are final."}</p>`);
+  wireRampFeeFields("o");
+  const oOpenOrder = openRampOrder("solana");
+  if (oOpenOrder) mountRampOrderPanel($("oRampOrder"), oOpenOrder, solanaRampSendFee());
   $("oReview").onclick = async () => {
     let to = $("oTo").value.trim();
     const amount = $("oAmt").value.trim();
@@ -2435,6 +2750,45 @@ function openSolanaSheet(tok) {
       } catch (e) { return msg("oMsg", e.message); }
     }
     if (!amount || Number(amount) <= 0) return msg("oMsg", "Enter an amount.");
+    // Cash-out deposits: priced and sentenced before the balance
+    // gate, exactly as on the EVM sheet.
+    const rampInSol = readRampFeeInputs("o");
+    if (rampInSol) {
+      pendingSol = null;
+      show("oIntent", false);
+      try {
+        msg("oMsg", "Pricing this cash-out…", true);
+        const token = tok.address ? { address: tok.address, decimals: tok.decimals, program: tok.program } : null;
+        const dec = tok.decimals ?? 6;
+        const px = Number(prices[tok.symbol]);
+        const amountInUsd = Number(amount) * px;
+        const plan = await solanaRampSplitPlan(solAddr, { to, token });
+        const solPx = Number(prices.SOL) || 0;
+        const quote = rampFeeQuote({ family: "solana",
+          tier1Eligible: rampTier1Eligible("solana", null, token),
+          amountInUsd, amountOutUsd: rampInSol.amountOutUsd,
+          gasUsd: ((5000 + plan.ataRentLamports) / 1e9) * solPx,
+          composeExtraUsd: (plan.createsFeeAta ? SOLANA_ATA_RENT_LAMPORTS / 1e9 : 0) * solPx,
+          leg2GasUsd: (5000 / 1e9) * solPx,
+          providerRaw: ethers.parseUnits(String(amount), dec), tokenDecimals: dec, tokenPriceUsd: px });
+        const feeText = ethers.formatUnits(quote.feeRaw, dec);
+        const totalText = ethers.formatUnits(quote.totalRaw, dec);
+        $("oIntentText").textContent = formatRampSellIntent({ tier: quote.tier,
+          amountText: amount, symbol: tok.symbol,
+          fiatText: rampInSol.fiatText || ("$" + (Number.isFinite(amountInUsd) ? amountInUsd.toFixed(2) : amount)),
+          providerName: rampInSol.providerName, feeText, totalText,
+          networkFeeText: solLamportsToSol(5000 + plan.ataRentLamports) + " SOL" })
+          + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+        setBalanceAfter($("oIntentText"), { balance: tok.amount, amount: totalText, fee: null, symbol: tok.symbol });
+        show("oIntent");
+        if (Number(totalText) > Number(tok.amount)) {
+          return msg("oMsg", quote.tier ? "That amount plus Fluid's fee is more than your balance." : "Amount is more than your balance.");
+        }
+        pendingSol = { to, amount, ramp: { quote, rampIn: rampInSol } };
+        msg("oMsg", "");
+      } catch (e) { msg("oMsg", "Could not price this cash-out: " + e.message); }
+      return;
+    }
     if (Number(amount) > Number(tok.amount)) return msg("oMsg", "Amount is more than your balance.");
     try {
       msg("oMsg", "Checking the recipient…", true);
@@ -2449,6 +2803,64 @@ function openSolanaSheet(tok) {
   $("oConfirm").onclick = async () => {
     if (!pendingSol) return;
     const btn = $("oConfirm");
+    // Cash-out, tier 1: one transaction carries the provider's full
+    // amount and Fluid's fee together (native Solana composition).
+    if (pendingSol.ramp && pendingSol.ramp.quote.tier === 1) {
+      const { quote, rampIn } = pendingSol.ramp;
+      try {
+        setSendBusy(btn, true);
+        msg("oMsg", "Composing the sale — both amounts move in one transaction…", true);
+        const feeTo = FEE_SPLIT.dripbot.agentWallet.solana;
+        const { hash } = await sendSolanaRampSplit(wallet.mnemonic.phrase, {
+          to: pendingSol.to, amount: pendingSol.amount,
+          feeAmount: ethers.formatUnits(quote.feeRaw, tok.decimals ?? 6),
+          token: tok.address ? { address: tok.address, decimals: tok.decimals, program: tok.program } : null,
+        });
+        saveRampOrder(rampFeeOrderTransition(newRampFeeOrder({
+          id: rampOrderId(), tier: 1, family: "solana", chainKey: "solana",
+          token: { symbol: tok.symbol, address: tok.address || null, decimals: tok.decimals ?? 6, program: tok.program || null },
+          providerTo: pendingSol.to, providerRaw: quote.providerRaw, feeRaw: quote.feeRaw,
+          feeTo, userAddress: solAddr, fiatText: rampIn.fiatText, providerName: rampIn.providerName,
+        }), "settled", { txid: hash }));
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash, amount: pendingSol.amount, symbol: tok.symbol, to: pendingSol.to,
+          link: `${SOLANA_EXPLORER}/tx/${hash}`, explorer: SOLANA_EXPLORER, at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        const done = pendingSol; pendingSol = null;
+        showTxSuccess({ verb: "Sold", amount: done.amount, symbol: tok.symbol,
+          logoHtml: tokenLogoHtml(tok, "solana"), to: done.to, familyName: "Solana",
+          feeText: `Fluid fee ${ethers.formatUnits(quote.feeRaw, tok.decimals ?? 6)} ${tok.symbol} — settled in the same transaction`,
+          explorerUrl: historyTxUrl({ link: `${SOLANA_EXPLORER}/tx/${hash}` }), txid: hash, pending: false });
+      } catch (e) { sendFailed(btn, "oMsg", e); }
+      return;
+    }
+    // Cash-out, tier 2: provider first, fee after confirmation.
+    if (pendingSol.ramp && pendingSol.ramp.quote.tier === 2) {
+      const { quote, rampIn } = pendingSol.ramp;
+      try {
+        setSendBusy(btn, true);
+        msg("oMsg", "Sending the provider's amount first…", true);
+        const { hash } = await sendSolana(wallet.mnemonic.phrase, {
+          to: pendingSol.to, amount: pendingSol.amount,
+          token: tok.address ? { address: tok.address, decimals: tok.decimals, program: tok.program } : null,
+        });
+        const feeTo = FEE_SPLIT.dripbot.agentWallet.solana;
+        let record = newRampFeeOrder({
+          id: rampOrderId(), tier: 2, family: "solana", chainKey: "solana",
+          token: { symbol: tok.symbol, address: tok.address || null, decimals: tok.decimals ?? 6, program: tok.program || null },
+          providerTo: pendingSol.to, providerRaw: quote.providerRaw, feeRaw: quote.feeRaw,
+          feeTo, userAddress: solAddr, fiatText: rampIn.fiatText, providerName: rampIn.providerName,
+        });
+        record = saveRampOrder(rampFeeOrderTransition(record, "leg1-sent", { txid: hash }));
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash, amount: pendingSol.amount, symbol: tok.symbol, to: pendingSol.to,
+          link: `${SOLANA_EXPLORER}/tx/${hash}`, explorer: SOLANA_EXPLORER, at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+        pendingSol = null;
+        openRampOrderSheet(record, solanaRampSendFee());
+      } catch (e) { sendFailed(btn, "oMsg", e); }
+      return;
+    }
     try {
       setSendBusy(btn, true);
       msg("oMsg", "Signing locally and broadcasting…", true);
