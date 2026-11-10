@@ -2,7 +2,11 @@
   "ethuram": {
     "evm": "0x0EBf5563F905E3B9D58718E28E08143511DC763b",
     "btc": "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw",
-    "algo": "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4"
+    "lnOffer": "lno1pgz5vmr4d9jpplgpwyp5qehzneqzm884ttc6uypxe3ddlyhw68swggtc23p02dch45298vqzfwtdr3wywup20c9fuqk45epmdhzffguwpf96pwmqpd454dg0hrjsyqesukhvuh0yuyjqz9fxaq08a8j7uefmauw25e0sy74jxwrghdhylqq8ff2yav28lct2nuvqhp0taq6780p074q3athey7wzd42e9t2dws4ukswugsay632dpzvpmflswj57sj7p3feegmrual5as857x4l88upfuwxentw3q32vv0mp39vjm064ycv7rez3lcz30dpgsdrxn2xkwvvyydwkkwg6kpjn7ldet03wth9287nvqhgzerk55yx7j5prskm5u380wl2hk6effemlggefkvqpwy3n4htwxuhsqa8aee0yap2u00dhqlkrfz03hwjmgv43g7vvxmepeljgu6faccnmfl86499r83x83xw6peypavssagvn95x7qf3l2tzzc73g8jtntw2c5p738qrguta7ym6c5su5vdglqtult96r6tcwxmqd6ym2t8794k04y827z9wgnewdg7d0w2srudeqy52sun57zcss8vcnfus9pqu8qq968ay20w4awxe9hrgz9ggl4mwjl6vfkwwfrewv",
+    "algo": "IHRNG3GNVJILY66Y6D5V3NS6BSOBACXJGHAUSAR37S77JS4HRPEDWWWSC4",
+    "sol": "3fk5FVGSAJLoKHrp51a3CNygtZ97L6oxCvYfTqwnZNbr",
+    "tron": "TBKBfqHAHqBYWmPsNg6GGBnMypAFPrrpTy",
+    "sui": "0xc0f8ff4e8d738a2de68fcaaea493dcd63d88f62c3628e0689d1ac22147d6a6be"
   },
   "dripbot": {
     "evm": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
