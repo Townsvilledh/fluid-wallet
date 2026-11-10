@@ -5244,9 +5244,10 @@ export const RAMP_ADDRESS_ENTRY = {
   // external wallet (its own wallet is non-custodial, keys
   // exportable, and bought crypto withdraws to any address the
   // user pastes), so it is not a WalletConnect-only route. Its
-  // Fluid rows are SELL-only regardless (GH, batches 1–2 below),
-  // so it never reaches a buy sheet; the caps entry exists
-  // because every planned provider carries one.
+  // Fluid rows are SELL-only regardless (the surviving
+  // size-bar corridors below), so it never reaches a buy
+  // sheet; the caps entry exists because every planned
+  // provider carries one.
   "LocalCoinSwap": "paste",
 };
 // CAPTURE GATE (owner's ruling, 2026-11-09 ~13:51 WAT): a ramp
@@ -5258,8 +5259,8 @@ export const RAMP_ADDRESS_ENTRY = {
 // REMOVED and the side shows the honest empty state — the old
 // "Fluid earns nothing from it" fallback class is abolished.
 // Application in this plan: Mt Pelerin keeps both sides via (a)
-// (rfr=Fp3dGFX3 pays 25% of its fees). LocalCoinSwap's GH sell
-// row also qualifies via (a) — its ambassador referral pays
+// (rfr=Fp3dGFX3 pays 25% of its fees). LocalCoinSwap's surviving
+// sell rows also qualify via (a) — its ambassador referral pays
 // 10% of platform fees in BTC — and only in the sanctioned
 // labelled-external-marketplace shape (external:true, plainly
 // labelled, per-corridor live book check before surfacing). The African off-ramp
@@ -5285,59 +5286,59 @@ export const RAMP_COUNTRY_PLAN = {
   // 2026-11-09 as a dead platform — see the REMOVED note above;
   // the LocalCoinSwap buy book sat +10% to +36% over market on
   // the 2026-11-10 live check) and stays honestly empty. SELL's
-  // last in-plan row — the African off-ramp provider restored
-  // 2026-11-09 — was REMOVED IN FULL 2026-11-10 on the owner's
-  // direct order; the same day, SELL gained the labelled
-  // external-marketplace row (batch 1, after GH): the fresh
-  // live book check (the platform's own streamed offer book
-  // for Nigeria, ~22:55 WAT) showed 10 live sell-side offers,
-  // market deltas −7% to 0%, bank transfer, minimums from
-  // ₦30,000 (≈ $22 at $1 = ₦1,347), several established
-  // vendors online (one with 250k+ trades) — a real book a
-  // seller can actually take. Nigeria is NOT on the
-  // platform's restricted-jurisdictions list (live Terms
-  // checked the same day). The in-Fluid Paycrest Gateway sell
-  // (native senderFee capture, Class 1) remains NG sell's
-  // end-state behind its standing gates — see
+  // labelled LocalCoinSwap row (batch 1, 2026-11-10) was REMOVED
+  // the same night under the owner's SIZE BAR (ruling 2026-11-10
+  // ~23:55 WAT): a ramp row must pass on size as well as price —
+  // a person holding ₦1,000–₦1,500 must be able to start. The
+  // fresh deep book check (the platform's streamed book read ~60
+  // pages deep, not just the front page) put Nigeria's smallest
+  // GENUINE offer — verified vendor, ≥1,000 completed trades,
+  // bank transfer, sane price — at ₦4,000 (≈ $2.97: Coinmagnate,
+  // 65,786 trades). That beats the ₦30,000 front-page figure the
+  // row shipped with, but it is still ~3× the $1 bar, so the row
+  // comes out and both sides resolve to the honest empty state.
+  // Sub-tier ads below the bar exist (a verified, online vendor
+  // at ₦1,000 with 9 trades; an unverified 7,824-trade vendor at
+  // ₦100) and are recorded in the evidence — they cannot carry a
+  // published "from" figure. Nigeria is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked
+  // 2026-11-10). The in-Fluid Paycrest Gateway sell (native
+  // senderFee capture, Class 1) remains NG sell's end-state
+  // behind its standing gates — see
   // research_notes/fluid-ng-repair-20261109/report.md.
-  // Evidence: research_notes/fluid-lcs-batch1-20261110/.
-  NG: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Nigeria offers (checked 10 Nov 2026): buyers pay by bank transfer at about 1–5% below the market rate, trades from ₦30,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // Evidence: research_notes/fluid-lcs-size-correction-20261110/.
+  NG: [],
   // KE: BUY resolves empty (the LocalCoinSwap buy book sat
   // +4.5% to +7.6% over market on the 2026-11-10 live check).
-  // SELL's only row — the African off-ramp provider restored
-  // 2026-11-09 — was REMOVED IN FULL 2026-11-10 on the owner's
-  // direct order; the same day, SELL gained the labelled
-  // external-marketplace row (batch 1, after GH): the fresh
-  // live book check (the platform's own streamed offer book
-  // for Kenya, ~22:55 WAT) showed 10 live sell-side offers,
-  // market deltas −2% to −5%, M-Pesa among the payment
-  // methods, minimums from KES 4,972 (≈ $38 at $1 = KES
-  // 129.88), vendors online. Kenya is NOT on the platform's
-  // restricted-jurisdictions list (live Terms checked the
-  // same day). The row is a labelled fallback beside the
-  // in-Fluid Paycrest Gateway sell (Class 1), which remains
-  // KE sell's end-state behind its standing gates. Evidence:
-  // research_notes/fluid-lcs-batch1-20261110/.
-  KE: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Kenya offers (checked 10 Nov 2026): buyers pay by M-Pesa at about 2–5% below the market rate, trades from KES 4,972 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // SELL's labelled LocalCoinSwap row (batch 1, 2026-11-10) was
+  // REMOVED the same night under the owner's SIZE BAR (ruling
+  // 2026-11-10 ~23:55 WAT): the fresh deep book check (the
+  // platform's streamed book read ~60 pages deep) put Kenya's
+  // smallest GENUINE offer — verified vendor, ≥1,000 completed
+  // trades, M-Pesa/bank transfer, sane price — at KES 1,000
+  // (≈ $7.70: MR_Beast, 751k trades). The shipped "from
+  // KES 4,972" front-page figure was beatable, but not down to
+  // the $1 bar, so both sides resolve to the honest empty
+  // state. Kenya is NOT on the platform's restricted-jurisdictions
+  // list (live Terms checked 2026-11-10). The in-Fluid Paycrest
+  // Gateway sell (Class 1) remains KE sell's end-state behind
+  // its standing gates. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  KE: [],
   // GH: BUY stays honestly empty (the LocalCoinSwap buy book
   // sat +1% to +54% over market on the 2026-11-10 live check —
   // the cheap rows are bank-transfer-only outliers and the
-  // depth fails the price bar). SELL carries the labelled
-  // external-marketplace row: the fresh live book check the
-  // same day (the platform's own streamed offer book for
-  // Ghana, ~17:05 WAT) showed 10 live sell-side offers,
-  // market deltas −1% to −6%, MTN MoMo among the payment
-  // methods, minimums from GH₵100 (≈ $8.55 at $1 = GH₵11.70),
-  // several vendors online with 10k+ trades — a real book a
-  // seller can actually take. The row is modes:["sell"] +
-  // external:true, so it renders with the EXTERNAL APP pill
-  // and its note states plainly that the trade happens on
-  // LocalCoinSwap, not inside Fluid. Evidence:
-  // research_notes/fluid-localcoinswap-rows-20261110/.
+  // depth fails the price bar). SELL's labelled
+  // external-marketplace row (2026-11-10) was REMOVED the same
+  // night under the owner's SIZE BAR (ruling 2026-11-10
+  // ~23:55 WAT): the fresh deep book check (the platform's
+  // streamed book read ~60 pages deep) confirmed Ghana's
+  // smallest GENUINE offer — verified vendor, ≥1,000 completed
+  // trades, MTN MoMo, sane price — at GH₵100 (≈ $8.55:
+  // BitPluxeExch, 45,957 trades, online). A real book, but its
+  // floor is ~8× the $1 bar, so both sides resolve to the
+  // honest empty state. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   // RUSSIA was checked the same day and REFUSED: the
   // platform's own Terms of Service list the Russian
   // Federation as a restricted jurisdiction (residents may
@@ -5346,29 +5347,30 @@ export const RAMP_COUNTRY_PLAN = {
   // book is two offers from one vendor at +56%/+63% over
   // market. No RU country or row is added — a corridor is
   // never surfaced without a passing live check.
-  GH: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Ghana offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 1–6% below the market rate, trades from GH₵100 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  GH: [],
   ZA: [
     ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
   ],
   // UG: BUY resolves empty (the LocalCoinSwap buy book was
   // junk / +19% to +29% over market on the 2026-11-10 live
   // check; Paycrest lists UGX but had zero provider quotes at
-  // any size the same day). SELL gained the labelled
-  // external-marketplace row 2026-11-10 (batch 1, after GH):
-  // the fresh live book check (the platform's own streamed
-  // offer book for Uganda, ~22:55 WAT) showed 10 live
-  // sell-side offers, market deltas −3.3% to −8.9% — a deeper
-  // spread than the other batch-1 books, disclosed in the
-  // note as-is — MTN MoMo among the payment methods,
-  // minimums from UGX 50,000 (≈ $12 at $1 = UGX 4,080),
-  // vendors online. Uganda is NOT on the platform's
-  // restricted-jurisdictions list (live Terms checked the
-  // same day). Evidence:
-  // research_notes/fluid-lcs-batch1-20261110/.
+  // any size the same day). SELL carries the labelled
+  // external-marketplace row (batch 1, 2026-11-10), KEPT and
+  // re-figured the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep, not
+  // just the front page) found Uganda's smallest GENUINE
+  // offer — verified vendor, ≥1,000 completed trades, sane
+  // price — at UGX 1,000 (≈ $0.25: btcrk, 6,751 trades,
+  // online, bank transfer across BTC/ETH/USDT), with an
+  // established tier of 80 offers behind it and MTN MoMo
+  // among the book's methods. Inside the $1 bar, so the row
+  // stays with the true figure. Uganda is NOT on the
+  // platform's restricted-jurisdictions list (live Terms
+  // checked 2026-11-10). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   UG: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Uganda offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 3–9% below the market rate, trades from UGX 50,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Uganda offers (checked 10 Nov 2026): buyers pay by bank transfer or MTN MoMo at about 3–9% below the market rate, trades from UGX 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
   ],
   // TZ, SN, CI, ZM: BUY resolves empty. SELL's only row —
   // the African off-ramp provider restored 2026-11-09 — was
@@ -5378,20 +5380,19 @@ export const RAMP_COUNTRY_PLAN = {
   TZ: [],
   // CM: BUY resolves empty (the LocalCoinSwap buy book's real
   // rows sat +2.9%/+8.9% over market on the 2026-11-10 live
-  // check). SELL gained the labelled external-marketplace
-  // row 2026-11-10 (batch 1, after GH) — Cameroon's
-  // first-ever route in the plan: the fresh live book check
-  // (the platform's own streamed offer book for Cameroon,
-  // ~22:55 WAT) showed 9 live XAF sell-side offers, market
-  // deltas −2% to −7.5%, MTN MoMo among the payment methods,
-  // minimums from XAF 10,000 (≈ $17 at $1 = XAF 588),
-  // vendors online. Cameroon is NOT on the platform's
-  // restricted-jurisdictions list (live Terms checked the
-  // same day). Evidence:
-  // research_notes/fluid-lcs-batch1-20261110/.
-  CM: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Cameroon offers (checked 10 Nov 2026): buyers pay by MTN MoMo at about 2–7% below the market rate, trades from XAF 10,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // check). SELL's labelled external-marketplace row (batch
+  // 1, 2026-11-10 — Cameroon's first-ever route in the plan)
+  // was REMOVED the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep)
+  // confirmed Cameroon's smallest GENUINE offer — verified
+  // vendor, ≥1,000 completed trades, MTN MoMo, sane price —
+  // at XAF 10,000 (≈ $17: DollarFlex_, 11,352 trades). Both
+  // sides resolve to the honest empty state. Cameroon is NOT
+  // on the platform's restricted-jurisdictions list (live
+  // Terms checked 2026-11-10). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  CM: [],
   SN: [],
   CI: [],
   ZM: [],
@@ -5417,36 +5418,37 @@ export const RAMP_COUNTRY_PLAN = {
   IN: [],
   // BR: BUY resolves empty (the LocalCoinSwap buy book sat
   // +9.9% to +35% over market on the 2026-11-10 live check,
-  // mostly gift-card rows). SELL gained the labelled
-  // external-marketplace row 2026-11-10 (batch 2, after GH
-  // and batch 1): the fresh live book check (the platform's
-  // own streamed offer book for Brazil, ~23:05 WAT) showed
-  // 10 live sell-side offers, market deltas −2.5% to −8%,
-  // bank transfer, minimums from R$500 (≈ $90 at $1 =
-  // R$5.58) — a high minimum next to the African books,
-  // disclosed in the note as-is — most vendors online.
-  // Brazil is NOT on the platform's restricted-jurisdictions
-  // list (live Terms checked the same day). Evidence:
-  // research_notes/fluid-lcs-batch2-20261110/.
-  BR: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Brazil offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–8% below the market rate, trades from R$500 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // mostly gift-card rows). SELL's labelled
+  // external-marketplace row (batch 2, 2026-11-10) was
+  // REMOVED the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep) put
+  // Brazil's smallest GENUINE offer — verified vendor,
+  // ≥1,000 completed trades, bank transfer, sane price — at
+  // R$100 (≈ $18: Mratm1, 1,064 trades). The R$1 ads in the
+  // book belong to a single 823-trade vendor and cannot carry
+  // the corridor. Both sides resolve to the honest empty
+  // state. Brazil is NOT on the platform's
+  // restricted-jurisdictions list (live Terms checked
+  // 2026-11-10). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  BR: [],
   // PH: BUY resolves empty (the LocalCoinSwap buy book sat
   // +9% to +45% over market on the 2026-11-10 live check).
-  // SELL gained the labelled external-marketplace row
-  // 2026-11-10 (batch 2): the fresh live book check (the
-  // platform's own streamed offer book for the Philippines,
-  // ~23:05 WAT) showed 10 live sell-side offers, market
-  // deltas −2% to −5%, bank transfer (GCash also present in
-  // the book), minimums from ₱4,000 (≈ $63 at $1 = ₱63.12)
-  // — disclosed in the note as-is — vendors online. The
-  // Philippines is NOT on the platform's
-  // restricted-jurisdictions list (live Terms checked the
-  // same day). Evidence:
-  // research_notes/fluid-lcs-batch2-20261110/.
-  PH: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Philippines offers (checked 10 Nov 2026): buyers pay by bank transfer at about 2–5% below the market rate, trades from ₱4,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // SELL's labelled external-marketplace row (batch 2,
+  // 2026-11-10) was REMOVED the same night under the owner's
+  // SIZE BAR (ruling 2026-11-10 ~23:55 WAT): the fresh deep
+  // book check (the platform's streamed book read ~60 pages
+  // deep) put the Philippines' smallest GENUINE offer —
+  // verified vendor, ≥1,000 completed trades, GCash/bank
+  // transfer, sane price — at ₱100 (≈ $1.59: Eagleexchanger,
+  // 1,554 trades, online). The nearest miss in the whole
+  // set — $0.59 over the bar, and over is over. Both sides
+  // resolve to the honest empty state. The Philippines is
+  // NOT on the platform's restricted-jurisdictions list
+  // (live Terms checked 2026-11-10). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  PH: [],
   ID: [],
   MX: [["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }]],
   // Corridor extensions (global ramp scout, 2026-11-09; approved
@@ -5531,70 +5533,126 @@ export const RAMP_COUNTRY_PLAN = {
   // referral (10% of platform fees in BTC) — the sanctioned
   // labelled-external-marketplace exception shape. Evidence:
   // research_notes/fluid-lcs-batch2-20261110/.
+  // SIZE-BAR CORRECTION the same night (owner ruling
+  // 2026-11-10 ~23:55 WAT): every LocalCoinSwap row was
+  // retested against the smallest GENUINE offer in a fresh
+  // deep book check (see the SIZE BAR section in the tests).
+  // Of this batch, BD/EG/VN were removed (established floors
+  // ≈ $8 / $19 / $20) and PK/AR/CO/AE kept with corrected
+  // "from" figures (Rs 50 / ARS 1,000 / COP 1,000 / AED 1).
+  // The earlier rows got the same test: NG/KE/GH/CM removed
+  // (₦4,000 / KES 1,000 / GH₵100 / XAF 10,000 floors), UG
+  // kept (UGX 1,000). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   // PK: BUY resolves empty (the buy book sat +28% to +50%
   // over market; two +1% rows from one 501-trade vendor are
-  // not a book). SELL: 10 live offers, market deltas −3.35%
-  // to −7.9% (main cluster −3.35% to −6%), bank transfer,
-  // minimums from Rs 100 (≈ $0.36 at $1 = Rs 276.59 — the
-  // lowest minimum in the whole LocalCoinSwap set), the
-  // book's biggest vendor online (76k trades).
+  // not a book). SELL carries the labelled
+  // external-marketplace row (batch 2, 2026-11-10), KEPT and
+  // re-figured the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep) found
+  // Pakistan's smallest GENUINE offer — verified vendor,
+  // ≥1,000 completed trades, bank transfer, sane price — at
+  // Rs 50 (≈ $0.18: Aaroon, 10,431 trades), with real depth
+  // behind it: 16 established offers at ≤ $1 from 4 vendors,
+  // including the book's biggest vendor online at Rs 100
+  // (satoshiseller, 76,181 trades). Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   PK: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Pakistan offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–6% below the market rate, trades from Rs 100 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Pakistan offers (checked 10 Nov 2026): buyers pay by bank transfer at about 5–6% below the market rate, trades from Rs 50 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
   ],
   // BD: BUY resolves empty (the buy book sat +19.8% to +45%
-  // over market; the cheap rows are 1–7-trade vendors). SELL:
-  // 10 live offers, market deltas −2% to −5%, bank transfer,
-  // minimums from ৳1,000 (≈ $8 at $1 = ৳124.68), most of the
-  // book online.
-  BD: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Bangladesh offers (checked 10 Nov 2026): buyers pay by bank transfer at about 2–5% below the market rate, trades from ৳1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // over market; the cheap rows are 1–7-trade vendors).
+  // SELL's labelled external-marketplace row (batch 2,
+  // 2026-11-10) was REMOVED the same night under the owner's
+  // SIZE BAR (ruling 2026-11-10 ~23:55 WAT): the fresh deep
+  // book check (the platform's streamed book read ~60 pages
+  // deep) put Bangladesh's smallest GENUINE offer — verified
+  // vendor, ≥1,000 completed trades, bank transfer, sane
+  // price — at ৳1,000 (≈ $8: satoshiseller, 76,181 trades,
+  // online). Both sides resolve to the honest empty state;
+  // the country stays in the picker. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  BD: [],
   // EG: BUY resolves empty (the buy book sat +29.9% to +69%
-  // over market, plus EUR/USD filler rows). SELL: 10 live
-  // offers, market deltas −2.9% to −7%, bank transfer with
-  // Vodafone Cash present in the book, minimums from
-  // EGP 1,000 (≈ $19 at $1 = EGP 53.32), vendors online.
-  EG: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Egypt offers (checked 10 Nov 2026): buyers pay by bank transfer or Vodafone Cash at about 3–7% below the market rate, trades from EGP 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // over market, plus EUR/USD filler rows). SELL's labelled
+  // external-marketplace row (batch 2, 2026-11-10) was
+  // REMOVED the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep) put
+  // Egypt's smallest GENUINE offer — verified vendor, ≥1,000
+  // completed trades, bank transfer, sane price — at
+  // EGP 1,000 (≈ $19: Cryptomaster25, 1,008 trades). Both
+  // sides resolve to the honest empty state; the country
+  // stays in the picker. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  EG: [],
   // VN: BUY resolves empty (the +2% rows are cash-in-person
   // from one vendor; bank-transfer rows sat +5.88% to +23.4%
-  // over market). SELL: 10 live offers, bank-transfer rows
-  // clustered at −3.9% to −5% (one vendor at −10%), bank
-  // transfer, minimums from ₫500,000 (≈ $20 at $1 =
-  // ₫25,600), the market's biggest vendor online
-  // (137k trades).
-  VN: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Vietnam offers (checked 10 Nov 2026): buyers pay by bank transfer at about 4–5% below the market rate, trades from ₫500,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
-  ],
+  // over market). SELL's labelled external-marketplace row
+  // (batch 2, 2026-11-10) was REMOVED the same night under
+  // the owner's SIZE BAR (ruling 2026-11-10 ~23:55 WAT): the
+  // fresh deep book check (the platform's streamed book read
+  // ~60 pages deep) found nothing genuine below the
+  // placeholder ads of near-zero-history accounts (min ₫100
+  // = $0.004 template spam) — Vietnam's smallest GENUINE
+  // offer (verified vendor, ≥1,000 completed trades, bank
+  // transfer, sane price) is ₫500,000 (≈ $20: Mintt, 137,223
+  // trades, online). Both sides resolve to the honest empty
+  // state; the country stays in the picker. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
+  VN: [],
   // AR: BUY resolves empty (the buy book's best real row sat
-  // +6.88% over market, the rest +19.9% to +100%). SELL: 10
-  // live offers, market deltas −3.19% to −5%, bank transfer,
-  // minimums from ARS 100,000 (≈ $65 at $1 = ARS 1,545.65),
-  // most of the book online.
+  // +6.88% over market, the rest +19.9% to +100%). SELL
+  // carries the labelled external-marketplace row (batch 2,
+  // 2026-11-10), KEPT and re-figured the same night under
+  // the owner's SIZE BAR (ruling 2026-11-10 ~23:55 WAT): the
+  // fresh deep book check (the platform's streamed book read
+  // ~60 pages deep) found Argentina's smallest GENUINE offer
+  // — verified vendor, ≥1,000 completed trades, bank
+  // transfer, sane price — at ARS 1,000 (≈ $0.65), offered
+  // by TWO established vendors (Cryptomaster25, 1,008
+  // trades; Metabtc, 4,469 trades). The ARS 100,000 figure
+  // the row shipped with was the front page's smallest, not
+  // the book's. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   AR: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Argentina offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–5% below the market rate, trades from ARS 100,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Argentina offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–8% below the market rate, trades from ARS 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
   ],
   // CO: BUY resolves empty (the +2.8% to +3.5% rows are all
   // from offline vendors; online rows start at +9.99%, with
-  // gift-card junk behind them). SELL: 10 live offers,
-  // market deltas −3% to −10% (good offers −3% to −7%),
-  // bank transfer with Bancolombia present in the book,
-  // minimums from COP 700,000 (≈ $212 at $1 = COP 3,301.39)
-  // — a high minimum, disclosed in the note as-is; the
-  // COP 100,000 rows the morning research saw are gone, so
-  // the note quotes the fresh figure — vendors online.
+  // gift-card junk behind them). SELL carries the labelled
+  // external-marketplace row (batch 2, 2026-11-10), KEPT and
+  // re-figured the same night under the owner's SIZE BAR
+  // (ruling 2026-11-10 ~23:55 WAT): the fresh deep book check
+  // (the platform's streamed book read ~60 pages deep) found
+  // Colombia's smallest GENUINE offer — verified vendor,
+  // ≥1,000 completed trades, bank transfer, sane price — at
+  // COP 1,000 (≈ $0.30: Metabtc, 4,469 trades), with deep
+  // established depth behind it (a 170-offer tier; the next
+  // floor is COP 10,000 ≈ $3). The COP 700,000 figure the
+  // row shipped with was the front page's smallest, not the
+  // book's. Evidence:
+  // research_notes/fluid-lcs-size-correction-20261110/.
   CO: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Colombia offers (checked 10 Nov 2026): buyers pay by bank transfer or Bancolombia at about 3–7% below the market rate, trades from COP 700,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Colombia offers (checked 10 Nov 2026): buyers pay by bank transfer or Bancolombia at about 3–7% below the market rate, trades from COP 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
   ],
   // AE: BUY resolves empty (real buy rows sat +11% to
   // +14.9% over market, gift-card junk at +20% to +70%).
-  // SELL: 10 live offers, market deltas −3% to −6%, bank
-  // transfer, minimums from AED 500 (≈ $136 at $1 =
-  // AED 3.673) — still a high minimum in dollar terms,
-  // disclosed in the note as-is — most of the book online.
+  // SELL carries the labelled external-marketplace row
+  // (batch 2, 2026-11-10), KEPT and re-figured the same night
+  // under the owner's SIZE BAR (ruling 2026-11-10 ~23:55
+  // WAT): the fresh deep book check (the platform's streamed
+  // book read ~60 pages deep) found the UAE's smallest
+  // GENUINE offer — verified vendor, ≥1,000 completed
+  // trades, bank transfer, sane price — at AED 1 (≈ $0.27:
+  // Aaroon, 10,431 trades, rating 5.0, LTC). The floor is
+  // THIN — the next established offer is AED 70 (≈ $19) —
+  // and the evidence file says so plainly; the bar asks for
+  // the smallest genuine start, and this one is genuine.
+  // Evidence: research_notes/fluid-lcs-size-correction-20261110/.
   AE: [
-    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live UAE offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–6% below the market rate, trades from AED 500 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live UAE offers (checked 10 Nov 2026): buyers pay by bank transfer at about 3–8% below the market rate, trades from AED 1 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
   ],
 };
 /** Assemble the ramp sheet's routes for one country + mode + network +

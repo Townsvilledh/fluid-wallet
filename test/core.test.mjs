@@ -276,28 +276,25 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const names = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
   const badged = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
 
-  // Nigeria (updated 2026-11-10): BUY stays honestly empty —
-  // its last route (NoOnes) was removed as a dead platform
-  // (winding-down announced 17 Aug 2026, P2P trading closed
-  // permanently 21 Aug 2026, withdrawal-only since 22 Aug
-  // 2026). SELL's last in-plan row — the African off-ramp
-  // provider restored 2026-11-09 — was REMOVED IN FULL
-  // 2026-11-10 on the owner's direct order; later the same
-  // day, batch 1 added the labelled LocalCoinSwap
-  // external-marketplace row after a fresh live book check
-  // (10 offers, −7% to 0% vs market, bank transfer, from
-  // ₦30,000), so NG sell carries exactly that row.
-  // §73/§74 pin the removed providers' absence.
-  ok("NG buy stays honestly empty; NG sell is the LocalCoinSwap row alone after batch 1", JSON.stringify(names("NG")) === JSON.stringify([])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["LocalCoinSwap"]));
+  // Nigeria (updated 2026-11-10; size-bar correction the
+  // same night): BUY stays honestly empty — its last route
+  // (NoOnes) was removed as a dead platform (winding-down
+  // announced 17 Aug 2026, P2P trading closed permanently
+  // 21 Aug 2026, withdrawal-only since 22 Aug 2026). SELL's
+  // labelled LocalCoinSwap row (batch 1, earlier the same
+  // day) was REMOVED under the owner's SIZE BAR: the fresh
+  // deep book check put Nigeria's smallest GENUINE offer at
+  // ₦4,000 (≈ $2.97 — verified vendor, ≥1,000 trades),
+  // ~3× the $1 bar. §16d pins the size bar itself; §73/§74
+  // pin the removed providers' absence.
+  ok("NG buy and sell both honestly empty after the size-bar removal", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
   ok("NG buy resolves to the empty state", rampRoutesFor("NG", "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor("NG", "buy", "linea", "USDT").routes.length === 0);
-  ok("NG sell is the LocalCoinSwap row alone on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k => {
-    const rs = rampRoutesFor("NG", "sell", k, "USDT").routes;
-    return rs.length === 1 && rs[0].name === "LocalCoinSwap";
-  }));
+  ok("NG sell resolves to the empty state on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
+    rampRoutesFor("NG", "sell", k, "USDT").routes.length === 0));
   ok("NG has no badges", badged("NG").length === 0 && badged("NG", "sell").length === 0);
-  ok("NG has exactly one route: the sell-side LocalCoinSwap row", names("NG").length === 0 && names("NG", "sell").length === 1);
+  ok("NG has no routes at all", names("NG").length === 0 && names("NG", "sell").length === 0);
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the absence of ANY
@@ -332,62 +329,60 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     return !ns.includes("Paybis") && !ns.includes("Spritz");
   })));
 
-  // Kenya: BUY honestly empty (live book +4.5% to +7.6% over
-  // market fails the price bar; Mercuryo stays out
-  // everywhere); SELL carries the labelled LocalCoinSwap
-  // external-marketplace row since 2026-11-10 batch 1 (fresh
-  // live book check: 10 offers, −2% to −5% vs market, M-Pesa,
-  // minimums from KES 4,972). Ghana: BUY still honestly empty
-  // (live book +1% to +54%), SELL carries the same labelled
-  // row since earlier on 2026-11-10 (10 offers, −1% to −6%,
-  // MTN MoMo, from GH₵100). Nigeria, Cameroon and Uganda
-  // complete batch 1 the same day (pins below); capture
-  // everywhere = ambassador referral rc=EC82BA22, 10% of
-  // platform fees in BTC — the sanctioned exception shape.
-  ok("KE buy stays honestly empty; KE sell is the LocalCoinSwap row alone", JSON.stringify(names("KE")) === JSON.stringify([])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["LocalCoinSwap"]));
-  ok("GH buy stays honestly empty; GH sell is the LocalCoinSwap row alone", JSON.stringify(names("GH")) === JSON.stringify([])
-    && JSON.stringify(names("GH", "sell")) === JSON.stringify(["LocalCoinSwap"]));
-  ok("GH sell row is a labelled external link-out carrying the referral, never an in-Fluid trade", (() => {
-    const r = rampRoutesFor("GH", "sell", "bsc", "USDT").routes[0];
+  // Kenya and Ghana: BUY honestly empty (live books +4.5%
+  // to +7.6% / +1% to +54% over market fail the price bar;
+  // Mercuryo stays out everywhere). Their labelled
+  // LocalCoinSwap SELL rows (2026-11-10) were REMOVED the
+  // same night under the owner's SIZE BAR — the fresh deep
+  // book checks put the smallest GENUINE offers at
+  // KES 1,000 (≈ $7.70) and GH₵100 (≈ $8.55), both far over
+  // the $1 bar (§16d pins the bar). Uganda is batch 1's sole
+  // survivor (UGX 1,000 ≈ $0.25). Capture on the surviving
+  // rows = ambassador referral rc=EC82BA22, 10% of platform
+  // fees in BTC — the sanctioned exception shape.
+  ok("KE buy and sell both honestly empty after the size-bar removal", JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
+  ok("GH buy and sell both honestly empty after the size-bar removal", JSON.stringify(names("GH")) === JSON.stringify([])
+    && JSON.stringify(names("GH", "sell")) === JSON.stringify([]));
+  ok("UG sell row is a labelled external link-out carrying the referral, never an in-Fluid trade", (() => {
+    const r = rampRoutesFor("UG", "sell", "bsc", "USDT").routes[0];
     return r.external === true && r.badge === false && r.unavailable === false
       && r.url === "https://localcoinswap.com/?rc=EC82BA22"
-      && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("GH₵100");
+      && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("trades from UGX 1,000");
   })());
-  ok("batch-1 sell rows (NG/KE/CM/UG) are the LocalCoinSwap row alone; their buy sides stay honestly empty", ["NG", "KE", "CM", "UG"].every(code =>
+  ok("batch-1 outcome after the size bar: NG/KE/CM empty on both sides; UG sell is the LocalCoinSwap row alone", ["NG", "KE", "CM"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"])));
-  ok("batch-1 sell rows are labelled external link-outs carrying the referral and their fresh-check figures", (() => {
-    const want = { NG: ["bank transfer", "₦30,000"], KE: ["M-Pesa", "KES 4,972"], CM: ["MTN MoMo", "XAF 10,000"], UG: ["MTN MoMo", "UGX 50,000"] };
-    return Object.entries(want).every(([code, [method, min]]) => {
-      const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes[0];
-      return r && r.external === true && r.badge === false && r.unavailable === false
-        && r.url === "https://localcoinswap.com/?rc=EC82BA22"
-        && r.note.includes("not inside Fluid") && r.note.includes(method) && r.note.includes(min);
-    });
-  })());
+    && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
+    && JSON.stringify(names("UG")) === JSON.stringify([])
+    && JSON.stringify(names("UG", "sell")) === JSON.stringify(["LocalCoinSwap"]));
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => ["GH", "NG", "KE", "CM", "UG", "PK", "BD", "EG", "VN", "AR", "CO", "AE", "BR", "PH"].includes(c.code) && m === "sell"
+    ["buy", "sell"].every(m => ["UG", "PK", "AR", "CO", "AE"].includes(c.code) && m === "sell"
       || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
-  // Batch 2 (2026-11-10, later the same day): nine more SELL
-  // corridors on the same labelled row, each on a fresh live
-  // book check run by the build (books marketDelta −2% to
-  // −10% on the good offers, established vendors online,
-  // minimums from Rs 100 / ৳1,000 / EGP 1,000 / ₫500,000 /
-  // ARS 100,000 / COP 700,000 / AED 500 / R$500 / ₱4,000 —
-  // the COP/AED/BR/PH minimums are high and the notes
-  // disclose them as-is). PK/BD/EG/VN/AR/CO/AE also enter the
-  // picker here; BR/PH were already in it. Every batch-2 buy
-  // book failed the price bar (+2.8% at best, and only from
-  // offline or cash-in-person rows), so all nine buy sides
-  // stay honestly empty. None of the nine is on the
-  // platform's restricted-jurisdictions list (live Terms
-  // checked by the build).
-  ok("batch-2 sell rows (PK/BD/EG/VN/AR/CO/AE/BR/PH) are the LocalCoinSwap row alone; their buy sides stay honestly empty", ["PK", "BD", "EG", "VN", "AR", "CO", "AE", "BR", "PH"].every(code =>
+  // Batch 2 (2026-11-10, later the same day) put nine more
+  // SELL corridors on the same labelled row; the SIZE-BAR
+  // correction the same night (owner ruling ~23:55 WAT)
+  // retested all nine against the smallest GENUINE offer in
+  // a fresh deep book check: PK/AR/CO/AE survive with
+  // corrected "from" figures (Rs 50 / ARS 1,000 / COP 1,000
+  // / AED 1 — ≈ $0.18 / $0.65 / $0.30 / $0.27); BD/EG/VN/
+  // BR/PH were removed (established floors ৳1,000 ≈ $8 /
+  // EGP 1,000 ≈ $19 / ₫500,000 ≈ $20 / R$100 ≈ $18 /
+  // ₱100 ≈ $1.59). §16d pins the bar itself. PK/BD/EG/VN/
+  // AR/CO/AE entered the picker with batch 2 and stay in it
+  // (empty sides resolve to the honest empty state); BR/PH
+  // were already in it. Every batch-2 buy book failed the
+  // price bar, so all nine buy sides stay honestly empty.
+  // None of the nine is on the platform's
+  // restricted-jurisdictions list (live Terms checked by
+  // the batch-2 build).
+  ok("batch-2 outcome after the size bar: PK/AR/CO/AE sell is the LocalCoinSwap row alone; BD/EG/VN/BR/PH empty on both sides", ["PK", "AR", "CO", "AE"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"])));
-  ok("batch-2 sell rows are labelled external link-outs carrying the referral and their fresh-check figures", (() => {
-    const want = { PK: ["bank transfer", "Rs 100"], BD: ["bank transfer", "৳1,000"], EG: ["Vodafone Cash", "EGP 1,000"], VN: ["bank transfer", "₫500,000"], AR: ["bank transfer", "ARS 100,000"], CO: ["Bancolombia", "COP 700,000"], AE: ["bank transfer", "AED 500"], BR: ["bank transfer", "R$500"], PH: ["bank transfer", "₱4,000"] };
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"]))
+    && ["BD", "EG", "VN", "BR", "PH"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify([])));
+  ok("surviving sell rows are labelled external link-outs carrying the referral and their size-bar figures", (() => {
+    const want = { UG: ["MTN MoMo", "trades from UGX 1,000"], PK: ["bank transfer", "trades from Rs 50"], AR: ["bank transfer", "trades from ARS 1,000"], CO: ["Bancolombia", "trades from COP 1,000"], AE: ["bank transfer", "trades from AED 1 ·"] };
     return Object.entries(want).every(([code, [method, min]]) => {
       const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes[0];
       return r && r.external === true && r.badge === false && r.unavailable === false
@@ -408,8 +403,9 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // and which still have no qualifying route: both sides
   // honestly empty now. (UG and CM left this set later on
   // 2026-11-10 — batch 1 gave their sell sides the labelled
-  // LocalCoinSwap row after fresh live book checks; the pins
-  // above assert that end-state.)
+  // LocalCoinSwap row after fresh live book checks; CM
+  // returned to the empty end-state the same night under the
+  // size bar, §16d, while UG's row survived it.)
   ok("scrapped corridors: buy and sell both honestly empty", ["TZ", "SN", "CI", "ZM"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
@@ -520,8 +516,9 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // gate — both sides resolve to the honest empty state.
   // (BR and PH left this set on 2026-11-10 — LCS batch 2 gave
   // their sell sides the labelled LocalCoinSwap row after
-  // fresh live book checks; the batch-2 pins above assert
-  // that end-state, and their buy sides stay empty.)
+  // fresh live book checks — and returned to it the same
+  // night under the size bar, §16d: their established floors
+  // were R$100 ≈ $18 and ₱100 ≈ $1.59.)
   ok("IN/ID resolve honestly empty on both sides", ["IN", "ID"].every(code =>
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
@@ -551,18 +548,87 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => !r.unavailable && r.url.startsWith("https://"))));
   // After the 2026-11-10 removal the formerly restored
   // corridors were empty on every network, supported or not;
-  // ZM still is. KE and UG gained the network-agnostic
-  // labelled LocalCoinSwap sell row in batch 1 (later on
-  // 2026-11-10), so on unsupported networks their buy side is
-  // empty and their sell side is that row alone.
-  ok("scrapped corridors on unsupported networks: ZM empty; KE/UG buy empty, sell the LocalCoinSwap row alone", ["ZM"].every(code =>
+  // ZM still is. UG gained the network-agnostic labelled
+  // LocalCoinSwap sell row in batch 1 (later on 2026-11-10)
+  // and kept it through the size-bar correction (§16d), so
+  // on unsupported networks its buy side is empty and its
+  // sell side is that row alone. KE gained the row in batch
+  // 1 and lost it to the size bar, so it is empty again on
+  // every network.
+  ok("scrapped corridors on unsupported networks: ZM/KE empty; UG buy empty, sell the LocalCoinSwap row alone", ["ZM", "KE"].every(code =>
     rampRoutesFor(code, "buy", "linea", "USDT").routes.length === 0
     && rampRoutesFor(code, "sell", "linea", "USDT").routes.length === 0)
-    && ["KE", "UG"].every(code => {
+    && ["UG"].every(code => {
       const rs = rampRoutesFor(code, "sell", "linea", "USDT").routes;
       return rampRoutesFor(code, "buy", "linea", "USDT").routes.length === 0
         && rs.length === 1 && rs[0].name === "LocalCoinSwap";
     }));
+}
+
+// 16d. THE SIZE BAR (owner ruling, 2026-11-10 ~23:55 WAT,
+// generalised globally 2026-11-11 ~00:07 WAT): a ramp row
+// must pass on SIZE as well as price. The aim is a $0.10
+// entry; the shipped global fiat floor is $1; a row passes
+// only if a real user can start at ≤ $1.00 equivalent (buy
+// target $0.50 — someone in America can get in with $0.50,
+// any country $0.50 or under one dollar). For marketplace
+// rows the start is the smallest GENUINE offer in a fresh
+// deep book check — GENUINE meaning: the country's own
+// fiat, a normal local payment method (bank transfer /
+// mobile money, never gift cards), a platform-verified
+// vendor with ≥1,000 completed trades, and a non-bait price
+// (marketDelta −15%..0%). Placeholder ads from
+// near-zero-history accounts (identical min-100 ads posted
+// across 15+ countries) and unverified accounts do NOT
+// count; the evidence file records them per country so the
+// judgement stays auditable. APPLIED 2026-11-10/11
+// (evidence: research_notes/fluid-lcs-size-correction-20261110/):
+// LocalCoinSwap SELL — KEPT: UG UGX 1,000 ≈ $0.25,
+// PK Rs 50 ≈ $0.18, AR ARS 1,000 ≈ $0.65, CO COP 1,000
+// ≈ $0.30, AE AED 1 ≈ $0.27. REMOVED: NG ₦4,000 ≈ $2.97
+// (the owner named Nigeria himself — the shipped "from
+// ₦30,000" was the front page's smallest, not the book's;
+// the true established floor still fails the bar),
+// KE KES 1,000 ≈ $7.70, GH GH₵100 ≈ $8.55, CM XAF 10,000
+// ≈ $17, BD ৳1,000 ≈ $8, EG EGP 1,000 ≈ $19, VN ₫500,000
+// ≈ $20, BR R$100 ≈ $18, PH ₱100 ≈ $1.59 (the nearest
+// miss — over is over). Mt Pelerin — BUY passes at CHF 1,
+// the route's own smallest unit (≈ $1.13 at the owner's
+// ruling, 2026-11-11 ~00:10 WAT: ACCEPTED in his words —
+// that figure is still fair because it is the smallest the
+// route itself offers; the bar reads: smallest real start
+// ≤ $1 target, and a route's own smallest unit marginally
+// above $1 is acceptable where the route offers nothing
+// smaller). SELL passes on the personal-IBAN zero-minimum
+// path ("any amount if you hold a free personal Mt Pelerin
+// IBAN"), which every sell note states in its lead
+// sentence — the CHF 50 headline never stands alone. Do
+// not re-add a removed row without a fresh deep book check
+// showing a genuine ≤ $1 floor.
+{
+  const LCS_KEPT = ["UG", "PK", "AR", "CO", "AE"];
+  const LCS_REMOVED = ["NG", "KE", "GH", "CM", "BD", "EG", "VN", "BR", "PH"];
+  ok("size bar: removed LocalCoinSwap corridors resolve honestly empty on both sides and hold no plan row", LCS_REMOVED.every(code =>
+    rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
+    && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0
+    && RAMP_COUNTRY_PLAN[code].every(([n]) => n !== "LocalCoinSwap")));
+  ok("size bar: LocalCoinSwap survives only as the five kept sell rows, each quoting a ≤$1 floor", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
+      r.name !== "LocalCoinSwap" || (LCS_KEPT.includes(c.code) && m === "sell"))))
+    && LCS_KEPT.every(code => {
+      const r = rampRoutesFor(code, "sell", "bsc", "USDC").routes[0];
+      return r && r.name === "LocalCoinSwap" && r.external === true
+        && /trades from (UGX 1,000|Rs 50|ARS 1,000|COP 1,000|AED 1) ·/.test(r.note);
+    }));
+  ok("size bar: no assembled ramp note quotes a removed corridor's old 'trades from' figure", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
+      !/trades from (₦30,000|KES 4,972|GH₵100|XAF 10,000|UGX 50,000|Rs 100|৳1,000|EGP 1,000|₫500,000|ARS 100,000|COP 700,000|AED 500|R\$500|₱4,000)/.test(r.note)))));
+  ok("size bar (Mt Pelerin sell): every sell note states the personal-IBAN zero-minimum path", RAMP_COUNTRIES.every(c =>
+    rampRoutesFor(c.code, "sell", "bsc", "USDC").routes.every(r =>
+      r.name !== "Mt Pelerin" || r.note.includes("any amount if you hold a free personal Mt Pelerin IBAN"))));
+  ok("size bar (Mt Pelerin buy): every navigating buy note states the CHF 1 smallest start (owner-accepted 2026-11-11)", RAMP_COUNTRIES.every(c =>
+    rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r =>
+      r.name !== "Mt Pelerin" || r.unavailable || r.note.includes("CHF 1"))));
 }
 
 // 17. Fluid Names
@@ -8176,14 +8242,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // the African off-ramp provider restored the same day — was
 // itself REMOVED IN FULL 2026-11-10 on the owner's direct
 // order; §74 pins that end-state, and the first pin below now
-// asserts the NG sell sheet carries only the labelled
+// asserts the NG sell sheet carried only the labelled
 // LocalCoinSwap row added later that day, in batch 1, after a
-// fresh live book check.) Evidence:
+// fresh live book check — a state itself superseded the same
+// night by the owner's SIZE BAR (§16d): Nigeria's smallest
+// genuine offer was ₦4,000 ≈ $2.97, so the row was removed
+// and NG sell is honestly empty again.) Evidence:
 // research_notes/fluid-ramp-disclosure-global-audit-20261109/
 // report.md (§1.9).
 {
   const ngSell = rampRoutesFor("NG", "sell", "bsc", "BNB").routes;
-  ok("capture gate + 2026-11-10 removal: NG sell sheet carries only the labelled LocalCoinSwap row (batch 1)", ngSell.length === 1 && ngSell[0].name === "LocalCoinSwap" && ngSell[0].external === true);
+  ok("capture gate + size bar: NG sell sheet is honestly empty (the batch-1 LocalCoinSwap row failed the $1 size bar)", ngSell.length === 0);
   ok("capture gate: the removed provider appears in no corridor and never on a buy sheet",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -8194,7 +8263,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("capture gate: NG buy still resolves empty on every network/asset",
     rampRoutesFor("NG", "buy", "bsc", "BNB").routes.length === 0
     && rampRoutesFor("NG", "buy", "base", "USDC").routes.length === 0);
-  ok("removal: the NG plan holds no removed-provider row — only the LocalCoinSwap sell row", RAMP_COUNTRY_PLAN.NG.length === 1 && RAMP_COUNTRY_PLAN.NG[0][0] === "LocalCoinSwap");
+  ok("removal: the NG plan holds no row at all (the LocalCoinSwap sell row was itself removed under the size bar)", RAMP_COUNTRY_PLAN.NG.length === 0);
 }
 
 // 74. Fonbnk removal (2026-11-10, owner's direct order —
@@ -8206,7 +8275,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // corridor, no mode, no table; its ten former sell corridors
 // resolved to the honest empty state at removal (five later
 // gained the labelled LocalCoinSwap row on fresh live book
-// checks — GH, then NG/KE/CM/UG in batch 1, all 2026-11-10;
+// checks — GH, then NG/KE/CM/UG in batch 1, all 2026-11-10 —
+// of which four returned to the empty state the same night
+// under the owner's size bar, §16d; only UG's row survives;
 // ZA keeps Mt Pelerin alone), and no network carries its
 // network code.
 {
@@ -8219,12 +8290,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Fonbnk")));
   ok("removal: no network carries the provider's network code",
     Object.values(NETWORKS).every(n => !("fonbnkNetwork" in n)));
-  // (GH left this set later on 2026-11-10: its sell side gained
-  // the labelled LocalCoinSwap external-marketplace row after a
-  // fresh live book check — §16c pins that end-state. NG, KE,
-  // UG and CM left it the same day in batch 1, same pattern.)
-  ok("removal: the four still-empty sell-only corridors are honestly empty on both sides",
-    CORRIDORS.filter(code => !["ZA", "GH", "NG", "KE", "UG", "CM"].includes(code)).every(code => ["buy", "sell"].every(m =>
+  // (GH, NG, KE and CM left this set later on 2026-11-10 —
+  // their sell sides gained the labelled LocalCoinSwap row in
+  // batch 1 — and returned to it the same night under the
+  // owner's size bar, §16d. UG left in batch 1 and stayed
+  // out: its row survived the size bar at UGX 1,000 ≈ $0.25.)
+  ok("removal: the eight still-empty sell-only corridors are honestly empty on both sides",
+    CORRIDORS.filter(code => !["ZA", "UG"].includes(code)).every(code => ["buy", "sell"].every(m =>
       rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
   ok("removal: ZA keeps Mt Pelerin alone on both sides, badge buy-only",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
@@ -8333,10 +8405,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const rs = rampRoutesFor("US", m, "bsc", "USDC").routes;
       return rs.every(r => r.unavailable === true && r.url === null && r.badge === false);
     }));
-  ok("gate removal: IN/ID are honestly empty on both sides (BR/PH sell later gained the capture-clean LCS row, batch 2)",
-    ["IN", "ID"].every(code => ["buy", "sell"].every(m =>
-      rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
-    && ["BR", "PH"].every(code => rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0));
+  ok("gate removal: IN/ID are honestly empty on both sides (BR/PH gained the capture-clean LCS sell row in batch 2 and lost it to the size bar, §16d — empty again too)",
+    ["IN", "ID", "BR", "PH"].every(code => ["buy", "sell"].every(m =>
+      rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
   ok("gate removal + 2026-11-10 scrap: ZA sell is Mt Pelerin only, no removed row",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   ok("gate removal: GB/DE/MX keep Mt Pelerin only",
@@ -8353,8 +8424,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // F4 — the interim minimum line left with the scrapped rows
   // (2026-11-10 removal): the corridors that carried it are
   // honestly empty on sell now (ZA keeps Mt Pelerin alone; CM
-  // left this set in batch 1, later on 2026-11-10 — its sell
-  // side carries the labelled LocalCoinSwap row, §16c), and
+  // left this set in batch 1, later on 2026-11-10, when its
+  // sell side gained the labelled LocalCoinSwap row, and
+  // returned under the size bar the same night, §16d), and
   // no assembled note anywhere carries the line.
   ok("removal: SN/CI/ZM sell sheets are honestly empty", ["SN", "CI", "ZM"].every(code =>
     rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
