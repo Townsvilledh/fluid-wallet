@@ -356,5 +356,13 @@
     "sol": "87chMwJfhLNdWewMLyKQH6sa3psK19gCVkWebtkVMzEs",
     "tron": "TCMVLENXs6q8U6XhkcVsbWmUM6JVzTUbRz",
     "sui": "0xab482484c3c256281cd28b1f26b79476217281591418373543158253018c8eae"
+  },
+  "btcexitqa1110": {
+    "evm": "0xD8d75747c4d6949aF5DA62c6f9a7E49B5B4835d6",
+    "btc": "bc1q9j2q8z2s4wzn27gkrjrwqcptfmlxs7nmpcdnmk",
+    "algo": "SOPNZHVJZIO5SRRF4LBBMC35VBPCZT222QG7MAAWLQOCTJQLT65JFB27YI",
+    "sol": "HnxWCJwcYV8hBLQxVY4owXwS6aKzoqmkWGgtqSdY3CGj",
+    "tron": "TVjkveNPZjfKGpf1E6cTLhNZzck9joZ9rQ",
+    "sui": "0x440c5cbf462f8361169d158096619a40224add4b8ca2dcac29728dcd48cb0a28"
   }
 }
