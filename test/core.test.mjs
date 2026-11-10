@@ -8774,6 +8774,31 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const got = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: fullFetch, chunkBytes: dlChunk, sleepImpl: noSleep });
     ok("download: a Range-ignoring server still yields a verified, stored download", (await sha256Hex(new Uint8Array(got.bytes))) === dlPin && [...store.map.keys()].filter((k) => k.includes(":chunk:")).length === Math.ceil(dlTotal / dlChunk));
   }
+  // (e) short bodies are RETRIED, never fatal on first sight (the
+  // owner's rule: the download must not cut off at the slightest
+  // drop — a truncated chunk through a flaky proxy is a drop)
+  {
+    const store = mkStore();
+    let calls = 0;
+    const flakyFetch = async (url, opts) => {
+      calls++;
+      const mm = /^bytes=(\d+)-(\d+)$/.exec((opts && opts.headers && opts.headers.Range) || "");
+      const a = Number(mm[1]), b = Number(mm[2]);
+      const body = calls <= 2 ? dlData.slice(a, a + 100) : dlData.slice(a, b + 1);
+      return new Response(body.buffer, { status: 206, headers: { "Content-Range": `bytes ${a}-${a + body.length - 1}/${dlTotal}` } });
+    };
+    const got = await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store, fetchImpl: flakyFetch, chunkBytes: dlChunk, sleepImpl: noSleep });
+    ok("download: short chunk bodies are retried and the download completes", (await sha256Hex(new Uint8Array(got.bytes))) === dlPin);
+    const store2 = mkStore();
+    const alwaysShort = async (url, opts) => {
+      const mm = /^bytes=(\d+)-(\d+)$/.exec((opts && opts.headers && opts.headers.Range) || "");
+      const a = Number(mm[1]);
+      return new Response(dlData.slice(a, a + 100).buffer, { status: 206, headers: { "Content-Range": `bytes ${a}-${a + 99}/${dlTotal}` } });
+    };
+    let err2 = null;
+    try { await fetchPinnedAsset({ url: "https://x/wasm", sha256: dlPin, bytes: dlTotal, store: store2, fetchImpl: alwaysShort, chunkBytes: dlChunk, sleepImpl: noSleep }); } catch (e) { err2 = e; }
+    ok("download: persistently short bodies give up as a DOWNLOAD error (kept progress), not an integrity refusal", err2 instanceof LnAssetError && err2.stage === "download");
+  }
 
   // --- verbatim copy + wiring pins (source text) ---
   const appLz = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");

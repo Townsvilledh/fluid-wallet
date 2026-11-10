@@ -187,5 +187,21 @@
     "sol": "oeYf6KAJkLYhBuR8CiGc6L4D4Xtfepr85fuDgA9kq96",
     "tron": "TYBNgWfhGuNzdLtjKtxXTfskAhTbMcqbaG",
     "sui": "0xc88ef07b9b8b2fc3b7daad9478f4e1337f01792e2eab9c3794494e610636026e"
+  },
+  "lnqacomp2110": {
+    "evm": "0x26789e06d69E272E81aC8c5f12ffFa09107cB986",
+    "btc": "bc1qe85fkvvnhhsgvpqlkklh2vw3s487sc7r884pkg",
+    "algo": "FKYW6O2LQMTL5AXDAMRSCAROM3WMI4NA6WQBRSM27Z5SEPOJIRFBZEXH6A",
+    "sol": "5dZm5PJ2MAEXfNbGD7eXGj5xBNUEEtUnmV5H5xPj8T1J",
+    "tron": "TDUdAz5WRhYjr5PESFebZBi66LcF3DVoHN",
+    "sui": "0xf1d5b8da3c3a4dfd76c3a32eee9e6fc07b5a29a515fe9e01979b3a67ce3d8981"
+  },
+  "lnqacomp1110": {
+    "evm": "0xb98415EE7aa552d497FDdE17c4e9b1b8324C41Fc",
+    "btc": "bc1qshdvy5l2u06h329yqwv6hdjdkz5psurdlgewsz",
+    "algo": "LPXIKFZPNM7JESX2JYBJSYMONKNDBN3QG3B4TZPQGM5O6TBUMC5TOXTBEM",
+    "sol": "37ghViYAWDaUFTP8wCWtimrcNbWUVcYx9md7N4weK6Zi",
+    "tron": "TSt8F2AVpGN9JFDCeYELXiYQ3ddupi8TJJ",
+    "sui": "0x8228a72d55cd988cd7557854d754bff8c3beac8c5dd692c2b2787b9bbcc35151"
   }
 }

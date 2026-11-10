@@ -106,7 +106,7 @@ export async function fetchPinnedAsset({
   onProgress({ downloadedBytes: storedBytes, totalBytes });
 
   const storeChunk = async (i, u8) => {
-    if (u8.length !== chunkLen(i)) throw new LnAssetError("download", `Chunk ${i} arrived with the wrong size (${u8.length} of ${chunkLen(i)} bytes).`);
+    if (u8.length !== chunkLen(i)) throw new Error(`Chunk ${i} arrived with the wrong size (${u8.length} of ${chunkLen(i)} bytes).`);
     manifest.hashes[i] = await sha256Hex(u8);
     await store.set(chunkKey(i), u8);
     stored[i] = u8;
@@ -131,8 +131,12 @@ export async function fetchPinnedAsset({
           const cr = res.headers && res.headers.get ? res.headers.get("content-range") : null;
           if (cr) {
             const m = /\/(\d+)\s*$/.exec(cr);
-            if (m && Number(m[1]) !== totalBytes) throw new LnAssetError("integrity", "The served node program is a different size than this app's fingerprint expects — refusing it.");
+            // A mismatched total is retried like any other drop —
+            // the pinned SHA-256 below is the integrity authority,
+            // never a header.
+            if (m && Number(m[1]) !== totalBytes) throw new Error("The served node program reports a different total size than this app's fingerprint expects.");
           }
+          if (body.length !== end - start + 1) throw new Error(`Chunk ${i} arrived short (${body.length} of ${end - start + 1} bytes).`);
           await storeChunk(i, body);
           return;
         }
@@ -140,7 +144,7 @@ export async function fetchPinnedAsset({
           // The server ignored Range and sent the whole file: slice
           // it into chunks so everything fetched is still kept.
           const body = new Uint8Array(await res.arrayBuffer());
-          if (body.length !== totalBytes) throw new LnAssetError("integrity", "The served node program is a different size than this app's fingerprint expects — refusing it.");
+          if (body.length !== totalBytes) throw new Error("The served node program arrived incomplete (a different size than this app's fingerprint expects).");
           for (let j = 0; j < nChunks; j++) {
             if (!stored[j]) await storeChunk(j, body.subarray(j * chunkBytes, j * chunkBytes + chunkLen(j)));
           }
