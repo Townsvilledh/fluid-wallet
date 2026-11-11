@@ -2096,11 +2096,22 @@ $("actReceive").onclick = () => {
   // preselects that family's entry; All/EVM preselect the shared EVM
   // panel (the active network is an EVM chain).
   let selected = (viewKey === "all" || viewKey === "evm") ? "evm" : viewKey;
+  // Sheet order (owner feedback, 2026-11-11): the network list
+  // LEADS and the selected network's panel follows it — a normal
+  // multi-network receive sheet. The Lightning address block lives
+  // inside the Lightning panel like every other network's own
+  // section, never as a banner over the list; and the search
+  // drives BOTH halves: the list filters, and while a query is
+  // typed the shown panel must be one of the hits, so a match is
+  // on screen the moment it's typed. (Field report: searching
+  // "algo" left the Algorand row at the bottom of the scroll box
+  // under an unrelated Lightning panel — most users never found
+  // it.)
   openSheet(`<h3>Receive</h3>
     <input id="rcvSearch" placeholder="Search networks…" autocapitalize="none">
-    <div id="rcvPanel"></div>
+    <div id="rcvList" style="max-height:38dvh;overflow-y:auto"></div>
     <hr style="border-color:var(--line)">
-    <div id="rcvList" style="max-height:38dvh;overflow-y:auto"></div>`);
+    <div id="rcvPanel"></div>`);
   const paintPanel = () => {
     const host = $("rcvPanel"); if (!host) return;
     host.innerHTML = panels[selected] || "";
@@ -2108,7 +2119,17 @@ $("actReceive").onclick = () => {
   };
   const paintList = () => {
     const host = $("rcvList"); if (!host) return;
-    const hits = filterReceiveNetworks($("rcvSearch").value);
+    const q = $("rcvSearch").value;
+    const hits = filterReceiveNetworks(q);
+    // Search moves the panel too: if the current selection fell
+    // out of the hits, the panel follows the top hit — the match
+    // and its address are visible without scrolling or a tap.
+    // A selection that still matches (or a blank query) is left
+    // exactly where the user put it.
+    if (String(q).trim() && hits.length && !hits.some(m => m.id === selected)) {
+      selected = hits[0].id;
+      paintPanel();
+    }
     host.innerHTML = hits.length
       ? hits.map(m => `<button class="netitem" data-rcv="${m.id}"><span>${esc(m.name)}${m.sub ? ` <small style="color:var(--dim)">${esc(m.sub)}</small>` : ""}</span>${m.id === selected ? '<span class="pill">SHOWING</span>' : ""}</button>`).join("")
       : `<p class="tag">No networks match.</p>`;
@@ -4261,6 +4282,18 @@ function paintLnPanel() {
   paintLnAddress();
 }
 
+// First-receive warning state (owner Q&A, 2026-11-11): the
+// "name:sats" pair the sender was last warned about, so the
+// warning shows once per payment and the second tap sends.
+let lnFirstReceiveWarnedFor = null;
+function lnFirstReceiveWarning(sats) {
+  const fmt = (n) => n.toLocaleString();
+  if (sats >= 2502) {
+    return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — so ${fmt(sats - 2500)} of your ${fmt(sats)} sats would reach them. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. Tap Pay again to send.`;
+  }
+  return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — a payment of ${fmt(sats)} sats is too small to survive that: it either can't go through at all or leaves almost nothing behind. Send around 5,000 sats or more so a meaningful amount lands in that case. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. Tap Pay again to send anyway, or raise the amount.`;
+}
+
 async function lnPayWithNode() {
   const target = $("lnTarget").value.trim();
   const sats = Number($("lnSatsIn").value) || 0;
@@ -4314,6 +4347,22 @@ async function lnPayWithNode() {
       if (!t) return msg("lnPayMsg", "That Fluid name has no Lightning address or node offer in the registry.");
       if (!msat) return msg("lnPayMsg", "Enter the sats amount for a name payment.");
       if (t.kind === "offer") {
+        // First-receive honesty (owner Q&A, 2026-11-11): this
+        // payment goes to the name's own Fluid node. If that node
+        // has never received, the payment opens its first channel
+        // through Megalith, whose live opening terms take a flat
+        // 2,500 sats out of the payment — and a payment too close
+        // to that fee can't land at all in that case. The sender
+        // can't see the recipient's channels, so the warning is
+        // worded for the case it might be; it shows once per
+        // (name, amount) before anything is paid, and a second
+        // tap sends. (A hosted address on the name is NOT this
+        // case — that path's terms are the host's, below.)
+        const warnKey = target.toLowerCase() + ":" + sats;
+        if (lnFirstReceiveWarnedFor !== warnKey) {
+          lnFirstReceiveWarnedFor = warnKey;
+          return msg("lnPayMsg", lnFirstReceiveWarning(sats), true);
+        }
         lnSession.payOffer(t.value, msat);
       } else {
         const invoice = await lightningInvoiceForAddress(t.value, sats);
@@ -4486,8 +4535,12 @@ function paintLnAddressInto(out) {
     };
   };
   if (st.state === "live") {
+    // Copy truth (2026-11-11): the payability claim is scoped to
+    // Fluid — outside wallets cannot resolve a Fluid address until
+    // the LNURL bridge ships AND its external proof passes.
+    // Restore the unscoped "anyone can pay it" wording then.
     out.innerHTML = `${addrHtml}
-      <p class="tag"><b>✓ Live</b> — the registry carries your node's offer under this address, so anyone can pay it to send you sats. Payments come to your own node inside this app; Fluid must be open on this device when you're paid.${lnAddrView.status === "published" ? " <b>Published ✓ — just confirmed in the registry.</b>" : ""}</p>
+      <p class="tag"><b>✓ Live</b> — the registry carries your node's offer under this address, so anyone in Fluid can pay it to send you sats. Payments come to your own node inside this app; Fluid must be open on this device when you're paid.${lnAddrView.status === "published" ? " <b>Published ✓ — just confirmed in the registry.</b>" : ""}</p>
       <p>${copyShare}</p>
       ${lnBridgeBlockHtml()}`;
     bindCopyShare();

@@ -2173,6 +2173,65 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "foo") === true
     && receiveNetworkMatches({ name: "Foo Chain", aliases: ["foo"] }, "bar") === false
     && receiveNetworkMatches({ name: "Foo Chain", aliases: [] }, "") === true);
+  ok("receive: sats → Lightning (the alias the sheet search relies on)",
+    JSON.stringify(ids("sats")) === '["lightning"]');
+}
+
+// ---------- Receive sheet composition: list leads, search drives the panel ----------
+// Owner field evidence (2026-11-11, screenshot): searching "algo"
+// in the Receive sheet left the Algorand row at the bottom of the
+// list's scroll box, under a full Lightning panel the search never
+// moved — most users never found the match. And the Lightning
+// address block sat on top of the sheet whatever was searched, as
+// if Lightning were the whole product; it is one network Fluid
+// supports, and its block belongs inside its own section. The
+// fixes pinned here: the sheet template renders the network list
+// BEFORE the selected panel; the search handler moves the panel
+// to the top hit whenever the current selection falls out of the
+// hits; and the address block's Live line claims payability only
+// inside Fluid until the LNURL bridge's external proof passes
+// (restore the unscoped wording then — see the comment in app.js).
+{
+  const appSheet = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const sheetStart = appSheet.indexOf('$("actReceive").onclick');
+  const sheet = appSheet.slice(sheetStart, appSheet.indexOf("// ---------- send (EVM) ----------", sheetStart));
+  ok("receive sheet: the network list renders before the selected panel",
+    sheet.indexOf('id="rcvList"') !== -1 && sheet.indexOf('id="rcvPanel"') !== -1
+    && sheet.indexOf('id="rcvList"') < sheet.indexOf('id="rcvPanel"'));
+  ok("receive sheet: search moves the panel to the top hit when the selection falls out",
+    sheet.includes("!hits.some(m => m.id === selected)") && sheet.includes("selected = hits[0].id;"));
+  ok("receive sheet: the Lightning address block lives only inside the Lightning panel",
+    sheet.includes('lightning: `<div class="lnAddrOut"></div>') && sheet.indexOf('class="lnAddrOut"') === sheet.lastIndexOf('class="lnAddrOut"'));
+  ok("lnaddr copy: Live line is scoped to Fluid until external resolution is proven",
+    appSheet.includes("so anyone in Fluid can pay it to send you sats")
+    && !appSheet.includes("so anyone can pay it to send you sats")
+    && appSheet.includes("Fluid must be open on this device when you're paid."));
+}
+
+// ---------- LN send: first-receive channel-opening warning ----------
+// Owner Q&A (2026-11-11): paying a Fluid name's node offer can be
+// that node's first-ever receive — the payment then opens its
+// first channel through Megalith, whose live terms take a flat
+// 2,500 sats out of the payment, and a payment too close to the
+// fee can't land at all in that case. The send flow said none of
+// this. The warning is pinned here: it lives in the fluid-name
+// offer branch of lnPayWithNode, fires BEFORE payOffer, is keyed
+// per (name, amount) so a second tap sends, and carries the
+// plain figures — the fee, the sub-fee dead zone, the ~5,000-sat
+// guidance, and the no-fee-if-received-before truth.
+{
+  const appPay = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const pay = appPay.slice(appPay.indexOf("async function lnPayWithNode"), appPay.indexOf("// Receive + offline-offer displays", appPay.indexOf("async function lnPayWithNode")));
+  ok("ln send: the first-receive warning exists with the plain figures",
+    appPay.includes("function lnFirstReceiveWarning(sats)")
+    && appPay.includes("takes a one-time 2,500 sats out of it for the opening")
+    && appPay.includes("Send around 5,000 sats or more")
+    && appPay.includes("the full ${fmt(sats)} sats lands and no fee is taken")
+    && appPay.includes("Tap Pay again to send"));
+  ok("ln send: the warning gates the name-offer payment (shown once per name+amount, before payOffer)",
+    pay.includes("lnFirstReceiveWarnedFor !== warnKey")
+    && pay.indexOf("lnFirstReceiveWarning(sats)") !== -1
+    && pay.indexOf("lnFirstReceiveWarning(sats)") < pay.indexOf("lnSession.payOffer(t.value, msat)"));
 }
 
 // ---------- Stacks family (Bitcoin L2, Build A step 2) ----------
