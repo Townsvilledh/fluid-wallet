@@ -2234,29 +2234,47 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && pay.indexOf("lnFirstReceiveWarning(sats)") < pay.indexOf("lnSession.payOffer(t.value, msat)"));
 }
 
-// ---------- LN channel fee: the one-time clarification (owner rule, 2026-11-11) ----------
+// ---------- LN channel fee: the simple canonical sentence (owner refinement, 2026-11-11) ----------
 // Standing instruction: wherever the UI names the 2,500-sat first-
-// receive charge, it must ALWAYS clarify in plain words that the fee
-// is one-time, for OPENING the channel, and that afterwards ANY
-// amount of sats (even 1 sat) can be sent/received with no opening
-// fee. Pinned on every surface that names the fee: both branches of
-// the send-side warning, the JIT receive fee review, and the
-// buy-receiving-room intro.
+// receive charge, it carries ONE simple sentence in the owner's
+// shape: opening a channel on the Lightning Network requires 2,500
+// sats (about $X at the LIVE price); after that, every transfer to
+// the wallet can be as little as 1 sat. $X is computed at render
+// time from the app's BTC price feed (prices.BTC, the getPrices
+// source) via the price-injected helper lnChannelOpenSentence —
+// never hardcoded; with no price loaded the parenthetical is
+// omitted. Pinned on every surface that names the fee: both
+// branches of the send-side warning ("their"), the JIT receive fee
+// review ("your"), and the buy-receiving-room intro ("your").
 {
   const appChan = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const helperSrc = appChan.slice(appChan.indexOf("function lnChannelOpenSentence("), appChan.indexOf("function lnFirstReceiveWarning(sats)"));
+  ok("ln copy: the canonical sentence helper carries the owner's shape + the live-price computation",
+    helperSrc.includes("Opening a channel on the Lightning Network requires 2,500 sats")
+    && helperSrc.includes("After that, every transfer to ${whose} wallet can be as little as 1 sat.")
+    && helperSrc.includes("(2500 * btc / 1e8).toFixed(2)")
+    && helperSrc.includes("Number.isFinite(btc) && btc > 0"));
+  const lnChannelOpenSentence = new Function(helperSrc + "\nreturn lnChannelOpenSentence;")();
+  ok("ln copy: the sentence renders the dollar figure from the injected price, and omits it without one",
+    lnChannelOpenSentence("your", 73653) === "Opening a channel on the Lightning Network requires 2,500 sats (about $1.84). After that, every transfer to your wallet can be as little as 1 sat."
+    && lnChannelOpenSentence("their", 100000) === "Opening a channel on the Lightning Network requires 2,500 sats (about $2.50). After that, every transfer to their wallet can be as little as 1 sat."
+    && lnChannelOpenSentence("your", undefined) === "Opening a channel on the Lightning Network requires 2,500 sats. After that, every transfer to your wallet can be as little as 1 sat."
+    && !lnChannelOpenSentence("your", 0).includes("$"));
   const warnFn = appChan.slice(appChan.indexOf("function lnFirstReceiveWarning(sats)"), appChan.indexOf("async function lnPayWithNode"));
-  const sendClar = "The 2,500 sats is one-time, for opening the channel only — once the channel is open, any amount can be sent, even 1 sat, with no opening fee.";
-  ok("ln copy: BOTH send-warning branches carry the one-time + afterwards-any-amount clarification with the fee figure",
-    (warnFn.match(/The 2,500 sats is one-time, for opening the channel only/g) || []).length === 2
-    && warnFn.split(sendClar).length - 1 === 2
+  ok("ln copy: BOTH send-warning branches carry the canonical sentence (their wallet, live price injected)",
+    (warnFn.split('lnChannelOpenSentence("their", prices.BTC)').length - 1) === 2
     && warnFn.includes("takes a one-time 2,500 sats out of it for the opening"));
   const jitSeg = appChan.slice(appChan.indexOf("function paintLnJitFlow"), appChan.indexOf("async function lnStartJitReceive"));
-  ok("ln copy: the JIT receive fee review pairs the opening fee with the one-time + any-amount clarification",
+  ok("ln copy: the JIT receive fee review pairs the opening fee with the canonical sentence (your wallet, live price)",
     jitSeg.includes("Your first payment opens your channel. The provider (Megalith) takes")
-    && jitSeg.includes("That opening fee is one-time — once your channel is open, you can receive any amount, even 1 sat, with no opening fee."));
-  ok("ln copy: the buy-receiving-room intro states pay-once + any-amount afterwards",
+    && jitSeg.includes('lnChannelOpenSentence("your", prices.BTC)'));
+  ok("ln copy: the buy-receiving-room intro carries the canonical sentence (your wallet, live price)",
     appChan.includes("Pay Megalith once to open a channel to your node")
-    && appChan.includes("You pay once — after that, payments of any amount, even 1 sat, can come in without an opening fee each time."));
+    && appChan.includes('lnChannelOpenSentence("your", prices.BTC)'));
+  ok("ln copy: the previous long clarification sentences are gone from the app",
+    !appChan.includes("The 2,500 sats is one-time, for opening the channel only")
+    && !appChan.includes("That opening fee is one-time")
+    && !appChan.includes("You pay once — after that, payments of any amount"));
 }
 
 // ---------- Stacks family (Bitcoin L2, Build A step 2) ----------
