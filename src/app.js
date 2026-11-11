@@ -37,6 +37,7 @@ import {
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
+  formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -3973,6 +3974,7 @@ function paintLnNodeStatus() {
 }
 let satoraPollTimer = null;
 let mayanPollTimer = null;
+let gfbPollTimer = null;
 const lnNetKey = () => localStorage.getItem("fluid_ln_network") || "bitcoin";
 const lnSats = (msat) => `${(Number(msat || 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })} sats`;
 
@@ -6122,6 +6124,7 @@ function swapRouteName(route) {
   if (route && route.provider === "satora") return "Satora";
   if (route && route.provider === "jupiter") return "Jupiter";
   if (route && route.provider === "mayan") return "Mayan";
+  if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
   return names.join(" → ") || "LI.FI route";
 }
@@ -6242,6 +6245,7 @@ $("actSwap").onclick = () => {
     </div>
     <div id="wSatoraSwaps"></div>
     <div id="wMayanSwaps"></div>
+    <div id="wGasFallback"></div>
     <p class="msg err" id="wMsg"></p>`);
   const P = {
     from: { btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList", netBtn: "wFromNetBtn", netPanel: "wFromNetPick", netSearch: "wFromNetSearch", netList: "wFromNetList" },
@@ -6370,6 +6374,45 @@ $("actSwap").onclick = () => {
   }
   paintMayanSwaps();
   pollMayanSwapStatuses(localStorage).then(() => paintMayanSwaps()).catch(() => {});
+  // Gas-fallback two-step swaps, same conventions: the persisted
+  // record is the recovery key; a record whose first leg landed
+  // surfaces its line plus the one-tap "Complete the swap"
+  // button (the user holds the native token throughout — the
+  // completion is a fresh same-chain swap, signed on tap).
+  const recordEvmApprovalGfb = (rec) => {
+    try {
+      const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+      list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+      localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+    } catch { /* the approvals list is a nicety, never a blocker */ }
+  };
+  function paintGasFallbackSwaps() {
+    const host = $("wGasFallback"); if (!host) return;
+    const records = loadGasFallbackRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>Two-step swaps</h4>` + records.map(r => `<p class="tag" data-gfb-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-gfb-line]").forEach((el, i) => {
+      const r = records[i];
+      el.textContent = gasFallbackHistoryLine(r);
+      if (gasFallbackNeedsAction(r)) {
+        const b = document.createElement("button");
+        b.className = "btn";
+        b.textContent = "Complete the swap";
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await completeGasFallbackSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
+            msg("wMsg", "Swap complete ✓");
+          } catch (e) { msg("wMsg", String(e?.shortMessage || e?.message || e)); }
+          paintGasFallbackSwaps();
+        };
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(b);
+      }
+    });
+  }
+  paintGasFallbackSwaps();
+  advanceGasFallbackRecords(localStorage).then(() => paintGasFallbackSwaps()).catch(() => {});
   function renderPickList(side) {
     const netKey = netSel[side];
     const q = $(P[side].search).value.trim().toLowerCase();
@@ -6558,6 +6601,13 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "gasfallback" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Gas-fallback composite: core summed BOTH legs' fees
+          // under the law into platformFeeUsd at quote time —
+          // disclose exactly that figure, like Mayan's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         } else if (r.provider === "mayan" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
           // Mayan states the fee it will actually take in the
           // final quote's own referrerFeeUsd (paid in the source
@@ -6585,6 +6635,13 @@ $("actSwap").onclick = () => {
         }) + ((fromTok.verified === false || toTok.verified === false) ? " ⚠ " + UNVERIFIED_CAUTION : "");
         if (r.provider === "across") $("wIntentText").textContent += " If the bridge does not fill, your deposit is refunded automatically to this same wallet — refunds take several hours, never seconds.";
         if (r.provider === "mayan") $("wIntentText").textContent += formatMayanRefundNote(r);
+        // Destination gas (2026-11-11): the plan's one plain line —
+        // the drop alongside, the two-step fallback, or the honest
+        // warning — appended to the review before the user confirms.
+        // It is the user's own swap slice, never the fee (the fee
+        // clause above stays separate and unchanged).
+        const gasLine = formatDestGasLine(r);
+        if (gasLine) $("wIntentText").textContent += " " + gasLine;
         show("wConfirm"); msg("wMsg", "");
       });
     } catch (e) {
@@ -6609,7 +6666,23 @@ $("actSwap").onclick = () => {
         list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
         localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
       };
-      if (route.provider === "satora") {
+      if (route.provider === "gasfallback") {
+        // Destination-gas fallback (2026-11-11): two legs, ONE
+        // confirmation — leg 1 lands the destination's native
+        // token, leg 2 swaps into the target leaving the gas
+        // reserve behind. Core orchestrates both legs and
+        // persists the record; if leg 2 cannot complete, its
+        // error says exactly where the money is (the native
+        // token, in the user's wallet, movable) and the sheet's
+        // "Complete the swap" button finishes it later.
+        const out = await executeGasFallbackRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+        hashes = out.hashes;
+        srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
+        if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+        else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+        else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+        try { paintGasFallbackSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "satora") {
         // Satora route (Bitcoin / Lightning destinations): the
         // executor creates the swap, persists its id, verifies
         // the funding payload + the Permit2 witness field by
@@ -7163,6 +7236,10 @@ $("unlockBtn").onclick = async () => {
     // (source hashes are the recovery key).
     pollMayanSwapStatuses(localStorage).catch(() => {});
     if (!mayanPollTimer) mayanPollTimer = setInterval(() => { if (wallet) pollMayanSwapStatuses(localStorage).catch(() => {}); }, 60000);
+    // Gas-fallback records advance on the same cadence: a landed
+    // first leg becomes the sheet's "Complete the swap" action.
+    advanceGasFallbackRecords(localStorage).catch(() => {});
+    if (!gfbPollTimer) gfbPollTimer = setInterval(() => { if (wallet) advanceGasFallbackRecords(localStorage).catch(() => {}); }, 60000);
   }
   catch (e) { msg("onboardMsg", e.message); }
 };

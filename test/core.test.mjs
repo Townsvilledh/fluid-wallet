@@ -12,6 +12,7 @@ import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook,
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -7369,9 +7370,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "sui" }) === false && mayanSupportsPair({ ...argsSolM, toChainKey: "sui" }) === false);
   ok("mayan: chains outside the catalog are out", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "fuse" }) === false
     && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "bitcoin" }) === false && mayanSupportsPair({ ...argsSolM, fromChainKey: "tron" }) === false);
-  ok("mayan: chain/token mapping", mayanChainNameOf("base") === "base" && mayanChainNameOf("solana") === "solana" && mayanChainNameOf("sui") === null && mayanChainNameOf("tron") === null
+  ok("mayan: chain/token mapping", mayanChainNameOf("base") === "base" && mayanChainNameOf("solana") === "solana" && mayanChainNameOf("tron") === null
     && mayanTokenOf("base", LIFI_NATIVE_TOKEN) === "0x0000000000000000000000000000000000000000"
     && mayanTokenOf("solana", SOLANA_SWAP_NATIVE_TOKEN) === WSOL_M && mayanTokenOf("solana", "not-an-address") === null);
+  // 2026-11-11 (destination-gas build): Sui became NAMEABLE so the
+  // gas-drop lift can quote Fast MCTP into it — the contest gate
+  // pinned above still excludes every Sui pair, and exactly one
+  // Sui token (USDC, the CCTP asset) resolves there.
+  ok("mayan: Sui is nameable for the gas lift but only USDC resolves there",
+    mayanChainNameOf("sui") === "sui"
+    && mayanTokenOf("sui", SUI_TOKENS.find(t => t.symbol === "USDC").address) === SUI_TOKENS.find(t => t.symbol === "USDC").address
+    && mayanTokenOf("sui", SUI_COIN_TYPE) === null && mayanTokenOf("sui", "0x123") === null);
 
   // Quote-request wire shape: the API's traps are all disarmed.
   {
@@ -7627,9 +7636,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   }
 
   // RANKING — the owner's rule, enforced at runtime. The
-  // incumbent cascade and Mayan quote the same pair; Mayan is
-  // offered only when it ranks first, and when it loses the
-  // incumbent's routes come back untouched (no Mayan entry).
+  // incumbent cascade and Mayan quote the same pair. UPDATED
+  // 2026-11-11 (destination-gas build): the rule is now MERIT
+  // ranking — every serving route returns as one ranked list;
+  // the pre-2026-11-11 form ("Mayan offered only when it ranks
+  // first, else dropped and the incumbent returned untouched")
+  // was superseded by the owner's merit-ranking direction.
   const lifiRouteM = (toUsd) => ({ id: "lifi-mayan-fixture", fromAmountUSD: "100.10", toAmountUSD: String(toUsd), fromAmount: "100000000", toAmount: String(Math.round(toUsd * 1e6)),
     steps: [{ estimate: { feeCosts: [{ amountUSD: "0.20" }], gasCosts: [{ amountUSD: "0.01" }], toAmountUSD: String(toUsd), fromAmountUSD: "100.10" } }] });
   const relayQuoteM = (outUsd) => ({ requestId: "0x68", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: EVM_USER_M, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
@@ -7660,8 +7672,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM(), lifiToUsd: 99.95 });
     try {
       const routes = await getSwapRoutes(argsSolM);
-      ok("mayan: RANKED — a pricier Mayan quote is dropped and the incumbent serves untouched",
-        routes.length === 1 && routes[0].id === "lifi-mayan-fixture" && routes.every(r => r.provider !== "mayan"));
+      ok("mayan: RANKED — a pricier Mayan quote ranks behind the incumbent (merit list, never dropped, never leading)",
+        routes.length === 2 && routes[0].id === "lifi-mayan-fixture" && routes[1].provider === "mayan");
     } finally { stub.restore(); }
   }
   {
@@ -7676,8 +7688,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftEvmDirectQuoteM(), b.referrerBps, 99.93 - (b.referrerBps / 100) / 0.99976) : swiftEvmDirectQuoteM(), relayOutUsd: 99.99 });
     try {
       const routes = await getSwapRoutes(argsEvmDirectM);
-      ok("mayan: RANKED (EVM) — a cheaper Relay quote serves; Mayan does not appear",
-        routes.length === 1 && routes[0].provider === "relay");
+      ok("mayan: RANKED (EVM) — a cheaper Relay quote leads; Mayan ranks behind it (merit list)",
+        routes.length === 2 && routes[0].provider === "relay" && routes[1].provider === "mayan");
     } finally { stub.restore(); }
   }
   {
@@ -7708,8 +7720,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const coreSrcM = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     const appSrcM = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("mayan: wiring — getSwapRoutes gates Mayan behind mayanSupportsPair and rankSwapRoutes",
-      coreSrcM.includes("if (!mayanSupportsPair(args)) return getSwapRoutesCascade(args);")
-      && coreSrcM.includes("rankSwapRoutes(candidates, null)") && coreSrcM.includes("ranked[0].provider === \"mayan\""));
+      // UPDATED 2026-11-11 (destination-gas build): the dispatcher
+      // now plans destination gas first, admits Mayan through the
+      // pair gate OR the narrow Sui gas-drop lift, and returns one
+      // merit-ranked list.
+      coreSrcM.includes("gasPlan = await planDestGas(args)")
+      && coreSrcM.includes("mayanSupportsPair(planArgs) || mayanSupportsSuiGasDropPair(planArgs)")
+      && coreSrcM.includes("return rankSwapRoutes(routes, null, { gasNeed: gasPlan });"));
     ok("mayan: wiring — the app names, fee-discloses, refund-notes, executes and history-tracks Mayan routes",
       appSrcM.includes("provider === \"mayan\"") && appSrcM.includes("executeMayanSwapRoute") && appSrcM.includes("formatMayanRefundNote")
       && appSrcM.includes("saveMayanSwapRecord") && appSrcM.includes("wMayanSwaps") && appSrcM.includes("pollMayanSwapStatuses"));
@@ -10209,6 +10226,316 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("P1-9: the refresh state is an honest update message with a clean reload action",
     appSrc.includes("Fluid has updated since you opened it")
     && appSrc.includes("btn.onclick = () => location.reload();"));
+}
+
+// ============================================================
+// Destination gas + merit ranking (2026-11-11): the mechanic
+// that never strands a user — gas drop alongside first, the
+// all-to-native two-step fallback second, a plain warning last.
+// ============================================================
+{
+  const ABANDON_G = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const EVM_G = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const SUI_G = suiAddressFromPhrase(ABANDON_G);
+  const SOL_G = solanaAddressFromPhrase(ABANDON_G);
+  const USDC_BASE_G = NETWORKS.base.tokens.find(t => t.symbol === "USDC").address;
+  const USDC_ARB_G = NETWORKS.arbitrum.tokens.find(t => t.symbol === "USDC").address;
+  const USDC_BSC_G = NETWORKS.bsc.tokens.find(t => t.symbol === "USDC").address;
+  const SUI_USDC_G = SUI_TOKENS.find(t => t.symbol === "USDC").address;
+  const SUI_USDT_G = SUI_TOKENS.find(t => t.symbol === "USDT").address;
+  const SOL_USDC_G = SOLANA_TOKENS.find(t => t.symbol === "USDC").address;
+  const jsonResG = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+
+  // Thresholds: the evidenced figures, in one table.
+  ok("destgas: thresholds are the evidenced per-chain figures",
+    DEST_GAS_ENOUGH.sui.enough === "0.06" && DEST_GAS_ENOUGH.solana.enough === "0.01" && DEST_GAS_ENOUGH.tron.enough === "15"
+    && DEST_GAS_ENOUGH.base.enough === "0.0001" && DEST_GAS_ENOUGH.ethereum.enough === "0.002" && DEST_GAS_ENOUGH.bsc.enough === "0.0005"
+    && DEST_GAS_ENOUGH.polygon.enough === "0.5" && DEST_GAS_ENOUGH.avalanche.enough === "0.01");
+  ok("destgas: the L2 fallback covers unlisted ETH chains; Bitcoin/Lightning have no spec (no gas token)",
+    destGasSpec("zksync")?.enough === "0.0001" && destGasSpec("scroll")?.enough === "0.0001"
+    && destGasSpec("bitcoin") === null && destGasSpec("lightning") === null);
+
+  // (i) The trigger: cross-ecosystem + below threshold only.
+  ok("destgas: below threshold plans exactly the shortfall top-up",
+    (() => { const p = destGasPlanFromBalance("sui", 0n, 0.85); return !!p && p.needed === true && p.shortfallHuman === 0.06 && Math.abs(p.shortfallUsd - 0.051) < 1e-9 && p.chainName === "Sui" && p.symbol === "SUI"; })());
+  ok("destgas: a partial balance plans only its shortfall",
+    (() => { const p = destGasPlanFromBalance("sui", 25000000n, 1); return !!p && Math.abs(p.shortfallHuman - 0.035) < 1e-12; })());
+  ok("destgas: at or above enough — no plan",
+    destGasPlanFromBalance("sui", 60000000n, 0.85) === null && destGasPlanFromBalance("sui", 100000000n, 0.85) === null
+    && destGasPlanFromBalance("base", 100000000000000n, 2000) === null);
+  ok("destgas: an unknown balance plans nothing (unread is never treated as zero)",
+    destGasPlanFromBalance("sui", null, 0.85) === null && destGasPlanFromBalance("sui", undefined, 0.85) === null);
+  ok("destgas: an unpriced native still plans, without USD figures",
+    (() => { const p = destGasPlanFromBalance("sui", 0n, null); return !!p && p.shortfallUsd === null && p.nativePriceUsd === null; })());
+  ok("destgas: native-token detection per family (the delivery that IS gas never plans)",
+    isDestNativeToken("sui", SUI_COIN_TYPE) === true && isDestNativeToken("sui", SUI_SWAP_NATIVE_TOKEN) === true && isDestNativeToken("sui", SUI_USDC_G) === false
+    && isDestNativeToken("solana", SOLANA_SWAP_NATIVE_TOKEN) === true && isDestNativeToken("solana", SOL_USDC_G) === false
+    && isDestNativeToken("tron", TRON_SWAP_NATIVE_TOKEN) === true
+    && isDestNativeToken("base", LIFI_NATIVE_TOKEN) === true && isDestNativeToken("base", USDC_BASE_G) === false && isDestNativeToken("base", null) === true);
+  {
+    const realFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => { fetchCalls++; throw new Error("must not be called"); };
+    try {
+      ok("destgas: same-chain swaps never plan (and never read a balance)",
+        (await planDestGas({ fromChainKey: "sui", toChainKey: "sui", toTokenAddress: SUI_USDC_G, fromAddress: SUI_G, toAddress: SUI_G })) === null && fetchCalls === 0);
+      ok("destgas: a native target never plans (the delivery IS the gas)",
+        (await planDestGas({ fromChainKey: "base", toChainKey: "sui", toTokenAddress: SUI_COIN_TYPE, fromAddress: EVM_G, toAddress: SUI_G })) === null && fetchCalls === 0);
+      ok("destgas: Bitcoin and Lightning destinations have no gas token to plan",
+        (await planDestGas({ fromChainKey: "base", toChainKey: "bitcoin", toTokenAddress: USDC_BASE_G, fromAddress: EVM_G, toAddress: EVM_G })) === null && fetchCalls === 0);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    const stubSui = (totalBalance) => async (url) => {
+      const u = String(url);
+      if (u.includes("graphql")) return jsonResG({ data: { address: { balance: { totalBalance } } } });
+      if (u.includes("api.binance.com")) return jsonResG([{ symbol: "SUIUSDT", price: "0.85" }]);
+      if (u.includes("api.coingecko.com")) return jsonResG({ sui: { usd: 0.85 } });
+      throw new Error("unexpected fetch in destgas stub: " + u);
+    };
+    try {
+      globalThis.fetch = stubSui("0");
+      const p = await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G });
+      ok("destgas: a zero SUI balance plans the full 0.06 top-up, priced from the feed",
+        !!p && p.shortfallHuman === 0.06 && Math.abs(p.shortfallUsd - 0.051) < 1e-9 && p.balanceHuman === 0);
+      globalThis.fetch = stubSui("25000000");
+      const p2 = await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G });
+      ok("destgas: a partial SUI balance plans only the missing 0.035",
+        !!p2 && Math.abs(p2.shortfallHuman - 0.035) < 1e-12);
+      globalThis.fetch = stubSui("100000000");
+      ok("destgas: 0.1 SUI held — no plan",
+        (await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G })) === null);
+      globalThis.fetch = async () => { throw new Error("down"); };
+      ok("destgas: an unreadable SUI balance plans nothing",
+        (await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G })) === null);
+      globalThis.fetch = async (url, opts) => {
+        const u = String(url);
+        if (opts?.body && String(opts.body).includes("\"getBalance\"")) return jsonResG({ result: { value: 0 } });
+        if (u.includes("api.binance.com")) return jsonResG([{ symbol: "SOLUSDT", price: "150" }]);
+        if (u.includes("api.coingecko.com")) return jsonResG({ solana: { usd: 150 } });
+        throw new Error("unexpected fetch in destgas sol stub: " + u);
+      };
+      const ps = await planDestGas({ fromChainKey: "base", toChainKey: "solana", fromTokenAddress: USDC_BASE_G, toTokenAddress: SOL_USDC_G, fromAddress: EVM_G, toAddress: SOL_G });
+      ok("destgas: zero SOL plans the 0.01 SOL rent-aware reserve, priced",
+        !!ps && ps.shortfallHuman === 0.01 && Math.abs(ps.shortfallUsd - 1.5) < 1e-9);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // (ii) The review line: correct slice figure, absent otherwise.
+  const planSuiG = destGasPlanFromBalance("sui", 0n, 0.85);
+  ok("destgas line: a drop alongside renders the owner's sentence with the slice figure",
+    formatDestGasLine({ destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 } })
+      === "You have no gas token on Sui, so a little of this swap (about $0.05) will arrive as SUI for gas.");
+  ok("destgas line: the fallback renders the two-leg sentence with the kept reserve",
+    formatDestGasLine({ destGas: planSuiG, gasMechanism: "reserve", gasReserve: { amountHuman: 0.06 }, toToken: { symbol: "USDC" } })
+      === "This route can't bring gas alongside, so your swap lands as SUI first, then swaps to USDC on Sui, keeping about 0.06 SUI for gas.");
+  ok("destgas line: no mechanism — the plain pre-confirm warning, never silent stranding",
+    formatDestGasLine({ destGas: planSuiG })
+      === "These funds will land without gas on Sui; you'll need SUI before you can move them.");
+  ok("destgas line: absent without a plan",
+    formatDestGasLine({}) === "" && formatDestGasLine({ destGas: null }) === "" && formatDestGasLine({ destGas: { needed: false } }) === "");
+  ok("destgas line: an unpriced drop falls back to the native figure",
+    formatDestGasLine({ destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: null } }).includes("(0.06 SUI)"));
+
+  // (iii) Merit ranking: capability first, net among the capable,
+  // LI.FI demoted on ties.
+  {
+    const incapable = { id: "cheap-nodrop", provider: "relay", toAmountUSD: 10.0, gasCostUSD: 0.01, destGas: planSuiG, steps: [] };
+    const capable = { id: "drop", provider: "mayan", toAmountUSD: 9.90, gasCostUSD: 0.01, destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 }, steps: [] };
+    const ranked = rankSwapRoutes([incapable, capable], null);
+    ok("merit: a gas-drop route beats a slightly-cheaper incapable route when gas is needed",
+      ranked[0].id === "drop" && ranked[0].cheapest === true && ranked[1].gasCovered === false && ranked[0].gasCovered === true);
+    const composite = { id: "composite", provider: "gasfallback", toAmountUSD: 9.97, gasCostUSD: 0.01, destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 }, gasMechanism: "reserve", steps: [] };
+    ok("merit: drop vs all-to-native — the cheaper total outcome wins (fallback dearer in reverse)",
+      rankSwapRoutes([capable, composite], null)[0].id === "composite"
+      && rankSwapRoutes([{ ...composite, id: "composite2", toAmountUSD: 9.80 }, capable], null)[0].id === "drop");
+    ok("merit: without a gas need the drop confers nothing — best net wins",
+      rankSwapRoutes([{ ...incapable, destGas: null }, { ...capable, destGas: null }], null)[0].id === "cheap-nodrop");
+    const tieLifi = { id: "tie-lifi", provider: "lifi", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
+    const tieRelay = { id: "tie-relay", provider: "relay", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
+    const rankedTie = rankSwapRoutes([tieLifi, tieRelay], null);
+    ok("merit: LI.FI loses a net tie it used to win by position",
+      rankedTie[0].id === "tie-relay" && rankedTie.find(r => r.cheapest).id === "tie-relay");
+    ok("merit: provider-less routes (LI.FI's real shape) are demoted on ties too",
+      rankSwapRoutes([{ id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }, tieRelay], null)[0].id === "tie-relay");
+    ok("merit: LI.FI still wins when demonstrably better on net (sole-best is its lane)",
+      rankSwapRoutes([{ ...tieLifi, id: "lifi-better", toAmountUSD: 10.5 }, tieRelay], null)[0].id === "lifi-better");
+  }
+}
+
+{
+  const EVM_G = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const ABANDON_G = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const SUI_G = suiAddressFromPhrase(ABANDON_G);
+  const USDC_BASE_G = NETWORKS.base.tokens.find(t => t.symbol === "USDC").address;
+  const USDC_ARB_G = NETWORKS.arbitrum.tokens.find(t => t.symbol === "USDC").address;
+  const USDC_BSC_G = NETWORKS.bsc.tokens.find(t => t.symbol === "USDC").address;
+  const SUI_USDC_G = SUI_TOKENS.find(t => t.symbol === "USDC").address;
+  const SUI_USDT_G = SUI_TOKENS.find(t => t.symbol === "USDT").address;
+  const SOL_USDC_G = SOLANA_TOKENS.find(t => t.symbol === "USDC").address;
+  const jsonResG = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const planArbG = destGasPlanFromBalance("arbitrum", 0n, 2060);
+  const planSuiG = destGasPlanFromBalance("sui", 0n, 0.85);
+
+  // Relay: the top-up request + quote-side verification.
+  ok("relay: a top-up rides the quote request only when sized (never Relay's $2 default)",
+    (() => { const args = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_BASE_G, toTokenAddress: USDC_ARB_G, fromAmount: "5000000", fromAddress: EVM_G };
+      const withT = buildRelayQuoteRequest(args, { includeFee: false, topupGasAmount: "206000" });
+      const without = buildRelayQuoteRequest(args, { includeFee: false });
+      return withT.topupGas === true && withT.topupGasAmount === "206000" && !("topupGas" in without); })());
+  ok("relay: top-up sizing converts the USD shortfall through the quote's own valuation; the 25% rule refuses oversize slices",
+    relayTopupOriginRaw(planArbG, { fromAmount: "5000000", fromAmountUSD: 5 }) === "206000"
+    && relayTopupOriginRaw(planSuiG, { fromAmount: "1000000", fromAmountUSD: 0.1 }) === null
+    && relayTopupOriginRaw(planArbG, { fromAmount: "5000000", fromAmountUSD: null }) === null);
+  {
+    const quoteTopup = {
+      requestId: "0x1", steps: [{ id: "deposit", kind: "transaction", items: [{ data: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678" } }] }],
+      fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
+      details: { sender: EVM_G,
+        currencyIn: { currency: { chainId: 8453, address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, amount: "5000000", amountUsd: "5.0" },
+        currencyOut: { currency: { chainId: 42161, address: USDC_ARB_G, symbol: "USDC", decimals: 6 }, amount: "4990000", amountUsd: "4.99", minimumAmount: "4980000" },
+        currencyGasTopup: { currency: { chainId: 42161, address: LIFI_NATIVE_TOKEN, symbol: "ETH", decimals: 18, metadata: { isNative: true } }, amount: "100000000000000", amountFormatted: "0.0001", amountUsd: "0.21" },
+        timeEstimate: 2 },
+    };
+    const ctx = { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: EVM_G };
+    const parsed = parseRelayQuote(quoteTopup, { ...ctx, gasDrop: planArbG });
+    ok("relay: a quote-stated top-up annotates the route as gas-capable, at the quote's own figures",
+      !!parsed && parsed.gasDrop.usd === 0.21 && parsed.gasDrop.amountHuman === 0.0001 && parsed.gasMechanism === "drop");
+    ok("relay: no plan in context — no annotation; no topup in quote — not capable",
+      parseRelayQuote(quoteTopup, ctx).gasDrop === undefined
+      && (() => { const q2 = structuredClone(quoteTopup); delete q2.details.currencyGasTopup; return parseRelayQuote(q2, { ...ctx, gasDrop: planArbG }).gasDrop === undefined; })());
+  }
+
+  // LI.FI: the gas-fronting parameter + the strict evidence rule.
+  ok("lifi: fromAmountForGas rides both builders only when given",
+    (() => { const a = { fromChainId: 8453, toChainId: 42161, fromTokenAddress: USDC_BASE_G, toTokenAddress: USDC_ARB_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: EVM_G };
+      const body = buildLifiRoutesRequest(a, { includeFee: false, fromAmountForGas: "51000" });
+      const plain = buildLifiRoutesRequest(a, { includeFee: false });
+      const params = buildLifiQuoteParams(a, { includeFee: false, fromAmountForGas: "51000" });
+      return body.fromAmountForGas === "51000" && !("fromAmountForGas" in plain) && params.get("fromAmountForGas") === "51000"; })());
+  ok("lifi: gas sizing mirrors the top-up rule (valuation conversion + 25% cap)",
+    lifiGasFromRaw(planArbG, { fromAmount: "5000000", fromAmountUSD: 5 }) === "206000"
+    && lifiGasFromRaw(planSuiG, { fromAmount: "1000000", fromAmountUSD: 0.1 }) === null);
+  {
+    const gasRoute = { steps: [{ action: { toChainId: 8453, toToken: { address: USDC_BASE_G } },
+      includedSteps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_SWAP_NATIVE_TOKEN } }, estimate: { toAmount: "60000000", toAmountUSD: "0.051" } }] }] };
+    ok("lifi evidence: a final-step native delivery is a gas drop, at its own figures",
+      (() => { const ev = lifiGasDropEvidence(gasRoute, planSuiG); return !!ev && ev.amountHuman === 0.06 && ev.usd === 0.051 && ev.symbol === "SUI"; })());
+    ok("lifi evidence: an intermediate native hop is NOT a gas drop",
+      lifiGasDropEvidence({ steps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_SWAP_NATIVE_TOKEN } }, estimate: { toAmount: "60000000" } },
+        { action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_USDC_G } }, estimate: { toAmount: "4900000" } }] }, planSuiG) === null);
+    ok("lifi evidence: a final step delivering the target asset is NOT a gas drop; no plan — no evidence",
+      lifiGasDropEvidence({ steps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_USDC_G } }, estimate: { toAmount: "4900000" } }] }, planSuiG) === null
+      && lifiGasDropEvidence(gasRoute, null) === null);
+  }
+
+  // Mayan: the quote-body field, the parse-side verification, the lift gate.
+  ok("mayan: gasDrop rides the quote body only when requested, in human units",
+    (() => { const a = { fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G };
+      const withD = buildMayanQuoteBody(a, { gasDrop: 0.06 });
+      const plain = buildMayanQuoteBody(a);
+      return withD.gasDrop === "0.06" && withD.toChain === "sui" && withD.toToken === SUI_USDC_G && !("gasDrop" in plain); })());
+  ok("mayan: the Sui gas lift admits exactly the proven shape (EVM CCTP source, USDC pair, plan present)",
+    mayanSupportsSuiGasDropPair({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, gasDrop: planSuiG }) === true
+    && mayanSupportsSuiGasDropPair({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, gasDrop: null }) === false
+    && mayanSupportsSuiGasDropPair({ fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: USDC_BSC_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, gasDrop: planSuiG }) === false
+    && mayanSupportsSuiGasDropPair({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDT_G, fromAmount: "5000000", fromAddress: EVM_G, gasDrop: planSuiG }) === false
+    && mayanSupportsSuiGasDropPair({ fromChainKey: "solana", toChainKey: "sui", fromTokenAddress: SOL_USDC_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, gasDrop: planSuiG }) === false);
+  const mayanSuiQuoteG = (over = {}) => ({
+    type: "FAST_MCTP", gasless: false, hasAuction: false, fromChain: "base", toChain: "sui",
+    fromToken: { contract: USDC_BASE_G, symbol: "USDC", name: "USD Coin", decimals: 6 },
+    toToken: { contract: SUI_USDC_G, symbol: "USDC", name: "USD Coin", decimals: 6 },
+    effectiveAmountIn64: "5000000", effectiveAmountIn: 5,
+    expectedAmountOut: 4.9, expectedAmountOutBaseUnits: "4900000", minReceivedBaseUnits: "4800000", minAmountOut: 4.8,
+    price: 0.98, toPrice: 1, toTokenPrice: 1,
+    referrerBps: 0, referrerFeeUsd: 0, protocolFeeUsd: 0.001,
+    fastMctpMayanContract: "0x337685fdaB40D39bd02028545a4FfA7D287cC3E2", fastMctpInputContract: USDC_BASE_G,
+    redeemRelayerFee: 0.01, redeemRelayerFee64: "10000", circleMaxFee64: "10", fastMctpMinFinality: 1000,
+    deadline64: "2000000000", etaSeconds: 30, gasDrop: 0.06, ...over,
+  });
+  const mayanArgsG = { fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G };
+  ok("mayan: a quote's own gasDrop is the verification — annotated when real, absent when zero or unplanned",
+    (() => { const r = parseMayanQuote(mayanSuiQuoteG(), mayanArgsG, { feeBps: 0, symbolPricesUsd: { SUI: 0.85, USDC: 1 }, gasDropPlan: planSuiG });
+        return !!r && r.gasDrop.amountHuman === 0.06 && Math.abs(r.gasDrop.usd - 0.051) < 1e-9 && r.gasMechanism === "drop"; })()
+    && parseMayanQuote(mayanSuiQuoteG({ gasDrop: 0 }), mayanArgsG, { feeBps: 0, symbolPricesUsd: { SUI: 0.85, USDC: 1 }, gasDropPlan: planSuiG }).gasDrop === undefined
+    && parseMayanQuote(mayanSuiQuoteG(), mayanArgsG, { feeBps: 0, symbolPricesUsd: { SUI: 0.85, USDC: 1 } }).gasDrop === undefined);
+
+  // Fallback selection, end to end (fetch stubbed per host):
+  // Base USDC → Sui USDC with an empty SUI balance. Without a
+  // Mayan drop, the composite is built and leads; with one, the
+  // drop route wins and no composite exists.
+  {
+    const realFetch = globalThis.fetch;
+    const lifiRouteG = ({ toAmount, toAmountUSD, toToken }) => ({
+      id: "lifi-g", fromAmountUSD: "5.0", toAmountUSD: String(toAmountUSD), fromAmount: "5000000", toAmount: String(toAmount),
+      fromToken: { address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, toToken,
+      steps: [{ id: "lifi-step-g", type: "cross",
+        action: { fromChainId: 8453, toChainId: SUI_LIFI_CHAIN_ID, fromAmount: "5000000", fromToken: { address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, toToken },
+        estimate: { toAmount: String(toAmount), toAmountMin: String(toAmount), toAmountUSD: String(toAmountUSD), fromAmountUSD: "5.0", gasCosts: [{ amountUSD: "0.01" }], feeCosts: [], executionDuration: 60 },
+        transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: 8453 } }],
+    });
+    const stubSelection = (mayanDrop) => {
+      globalThis.fetch = async (url, opts) => {
+        const u = String(url);
+        if (u.includes("graphql")) return jsonResG({ data: { address: { balance: { totalBalance: "0" } } } });
+        if (u.includes("api.binance.com")) return jsonResG([{ symbol: "SUIUSDT", price: "0.85" }]);
+        if (u.includes("api.coingecko.com")) return jsonResG({ sui: { usd: 0.85 } });
+        if (u.includes("jup.ag")) return jsonResG({});
+        if (u.includes("price-api.mayan.finance")) {
+          const b = JSON.parse(opts.body);
+          return jsonResG({ quotes: [mayanSuiQuoteG({ referrerBps: b.referrerBps || 0, referrerFeeUsd: b.referrerBps ? 0.025 : 0, gasDrop: mayanDrop && b.gasDrop ? 0.06 : 0 })] });
+        }
+        if (u.includes("li.quest")) {
+          const b = JSON.parse(opts.body);
+          if (b.fromChainId === b.toChainId) return jsonResG({ routes: [lifiRouteG({ toAmount: 800000, toAmountUSD: 0.8, toToken: { address: SUI_USDC_G, symbol: "USDC", decimals: 6 } })] });
+          if (b.toTokenAddress === SUI_SWAP_NATIVE_TOKEN) return jsonResG({ routes: [lifiRouteG({ toAmount: 1000000000, toAmountUSD: 0.85, toToken: { address: SUI_SWAP_NATIVE_TOKEN, symbol: "SUI", decimals: 9 } })] });
+          return jsonResG({ routes: [lifiRouteG({ toAmount: 4900000, toAmountUSD: 4.9, toToken: { address: SUI_USDC_G, symbol: "USDC", decimals: 6 } })] });
+        }
+        throw new Error("unexpected fetch in destgas selection stub: " + u);
+      };
+    };
+    try {
+      stubSelection(false);
+      const routes = await getSwapRoutes({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G });
+      const comp = routes.find(r => r.provider === "gasfallback");
+      ok("destgas selection: no route can carry a drop → the all-to-native fallback is built and leads",
+        !!comp && routes[0].provider === "gasfallback" && comp.gasReserve.amountHuman === 0.06 && comp.legs.leg2Preview.fromAmount === "940000000");
+      ok("destgas selection: the fallback's review line is the two-leg sentence",
+        formatDestGasLine(comp) === "This route can't bring gas alongside, so your swap lands as SUI first, then swaps to USDC on Sui, keeping about 0.06 SUI for gas.");
+      stubSelection(true);
+      const routes2 = await getSwapRoutes({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G });
+      ok("destgas selection: a route WITH a drop wins outright and no fallback is synthesized",
+        routes2[0].provider === "mayan" && Math.abs(routes2[0].gasDrop.usd - 0.051) < 1e-9 && !routes2.some(r => r.provider === "gasfallback"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Fallback records: the reserve math + the retry state.
+  ok("gasfallback: leg 2 swaps exactly what arrived minus the reserve — the reserve remains",
+    gasFallbackLeg2AmountRaw("1000000000", "60000000") === "940000000"
+    && gasFallbackLeg2AmountRaw("60000000", "60000000") === null && gasFallbackLeg2AmountRaw("50000000", "60000000") === null
+    && gasFallbackLeg2AmountRaw(null, "60000000") === null);
+  {
+    const store = new Map();
+    const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+    saveGasFallbackRecord(storage, newGasFallbackRecord({ id: "0xleg1", toChainKey: "sui", nativeSymbol: "SUI", toSymbol: "USDC", reserveHuman: 0.06, state: "leg2-due" }));
+    const loaded = loadGasFallbackRecords(storage);
+    ok("gasfallback: a leg2-due record persists, demands the one-tap completion, and says so plainly",
+      loaded.length === 1 && gasFallbackNeedsAction(loaded[0]) === true
+      && gasFallbackHistoryLine(loaded[0]).includes("Complete the swap into USDC") && gasFallbackHistoryLine(loaded[0]).includes("0.06 SUI")
+      && store.has(GAS_FALLBACK_STORAGE_KEY));
+    ok("gasfallback: other states do not demand action; their lines stay honest",
+      gasFallbackNeedsAction({ state: "awaiting-credit" }) === false && gasFallbackNeedsAction({ state: "done" }) === false
+      && gasFallbackHistoryLine({ state: "awaiting-credit", toChainKey: "sui", nativeSymbol: "SUI", toSymbol: "USDC", reserveHuman: 0.06 }).includes("on its way")
+      && gasFallbackHistoryLine({ state: "holds-native", toChainKey: "sui", nativeSymbol: "SUI", toSymbol: "USDC", reserveHuman: 0.06 }).includes("stays as gas money"));
+  }
+  ok("gasfallback: the leg-2 failure surface exists — marked error in core, completion button in the app",
+    readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8").includes("gasFallbackLeg2Due")
+    && readFileSync(new URL("../src/app.js", import.meta.url), "utf8").includes("completeGasFallbackSwap"));
+  ok("destgas: the app renders the review line, names, executes and fee-discloses composite routes",
+    (() => { const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+      return app.includes("formatDestGasLine(r)") && app.includes('route.provider === "gasfallback"') && app.includes("executeGasFallbackRoute")
+        && app.includes('id="wGasFallback"') && app.includes('"Two-step via "'); })());
 }
 
 console.log(`\n${passed} checks passed`);

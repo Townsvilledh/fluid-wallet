@@ -82,7 +82,17 @@ the weekly follower drip and the OGO ERA player pools; see
    sends/receives never carry it. (The route-cost measure behind
    that label was corrected in the 2026-11-10 audit fix batch: cost
    is now the fair-value shortfall between the two sides, with
-   declared router components kept only as a fallback.) Collection rides each router's native
+   declared router components kept only as a fallback.)
+   **Destination gas is not a fee** (2026-11-11): when a cross-chain
+   swap tops the user up with the destination chain's gas token
+   (see `docs/SWAPS.md`, "Destination gas"), that slice is the
+   user's own swap changing shape — the fee law above is computed
+   on drop-free first-pass quotes exactly as before, and the review
+   shows the gas slice and Fluid's fee as separate lines. Ranking
+   is merit-based (a route that fulfils the full requirement,
+   gas included, outranks one that cannot; best net wins among
+   those that can; LI.FI is demoted for cause and loses ties) —
+   the law itself, its multipliers and ceilings, is unchanged. Collection rides each router's native
    mechanism into the DripBot agent wallet — Relay App Fees, LI.FI's
    integrator fee, Satora's developer markup, Jupiter/Mayan fee
    accounts. LI.FI pays

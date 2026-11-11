@@ -6081,15 +6081,24 @@ export function swapFeeCollectingChain(chainId) {
  *  gate for tests and probes, and an explicit feeFraction (the
  *  two-pass search's computed rate, bps / 10000) replaces the
  *  PLATFORM_FEE_FRACTION cap default. */
-export function buildLifiRoutesRequest({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeFraction = null } = {}) {
+export function buildLifiRoutesRequest({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeFraction = null, fromAmountForGas = null } = {}) {
   const withFee = includeFee ?? (PLATFORM_FEE_COLLECTION_ENABLED && swapFeeCollectingChain(fromChainId));
   const options = { integrator: LIFI_INTEGRATOR, order: "RECOMMENDED" };
   if (withFee) options.fee = feeFraction ?? PLATFORM_FEE_FRACTION;
-  return { fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount: String(fromAmount), fromAddress, toAddress, options };
+  const body = { fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount: String(fromAmount), fromAddress, toAddress, options };
+  // Destination gas (2026-11-11): LI.Fuel gas fronting — part of
+  // the FROM amount (smallest units of the from token) is delivered
+  // as destination gas. Documented on both /routes and /quote
+  // (docs.li.fi, "Gas Options" / request-routes parameter table);
+  // Fluid credits it ONLY when the returned route evidences the
+  // native delivery (lifiGasDropEvidence) — an ignored parameter
+  // degrades to an ordinary route, never a false promise.
+  if (fromAmountForGas != null) body.fromAmountForGas = String(fromAmountForGas);
+  return body;
 }
 /** Build the GET /v1/quote params (same fee gating as the routes body;
  *  on /quote, integrator and fee are top-level parameters). */
-export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeFraction = null } = {}) {
+export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeFraction = null, fromAmountForGas = null } = {}) {
   const withFee = includeFee ?? (PLATFORM_FEE_COLLECTION_ENABLED && swapFeeCollectingChain(fromChainId));
   const q = new URLSearchParams({
     fromChain: fromChainId, toChain: toChainId,
@@ -6098,6 +6107,7 @@ export function buildLifiQuoteParams({ fromChainId, toChainId, fromTokenAddress,
     integrator: LIFI_INTEGRATOR,
   });
   if (withFee) q.set("fee", String(feeFraction ?? PLATFORM_FEE_FRACTION));
+  if (fromAmountForGas != null) q.set("fromAmountForGas", String(fromAmountForGas));
   return q;
 }
 /** Per-source-family fee coverage for Fluid's LI.FI swap engine
@@ -6257,6 +6267,72 @@ async function fetchLifiQuoteStep(reqArgs, opts) {
   if (!res.ok) throw new Error("Route search failed: " + (step.message || ("HTTP " + res.status)));
   return step;
 }
+/** The fromAmountForGas figure (smallest units of the FROM token)
+ *  for a destination-gas plan, converted through a fee-free
+ *  reference route's own valuation — the LI.FI twin of
+ *  relayTopupOriginRaw, including the same not-a-big-fraction rule
+ *  (a slice worth more than 25% of the swap is never requested). */
+export function lifiGasFromRaw(plan, referenceRoute) {
+  const wantUsd = Number(plan?.shortfallUsd);
+  const inUsd = Number(referenceRoute?.fromAmountUSD);
+  if (!(wantUsd > 0) || !(inUsd > 0) || referenceRoute?.fromAmount == null) return null;
+  if (wantUsd > 0.25 * inUsd) return null;
+  try {
+    const raw = (BigInt(referenceRoute.fromAmount) * BigInt(Math.round(wantUsd * 1e6))) / BigInt(Math.round(inUsd * 1e6));
+    return raw > 0n ? raw.toString() : null;
+  } catch { return null; }
+}
+/** The destination chain's native token as LI.FI names it (the
+ *  addresses a gas-fronting delivery step would carry). */
+function destNativeLifiAddresses(chainKey) {
+  if (chainKey === "solana") return [SOLANA_SWAP_NATIVE_TOKEN];
+  if (chainKey === "tron") return [TRON_SWAP_NATIVE_TOKEN];
+  if (chainKey === "sui") return [SUI_SWAP_NATIVE_TOKEN, SUI_COIN_TYPE];
+  return [LIFI_NATIVE_TOKEN, LIFI_API_NATIVE_SENTINEL];
+}
+function lifiTokenAddrEq(a, b, chainKey) {
+  if (chainKey === "sui") return suiCoinTypeEq(a, b);
+  if (chainKey === "solana" || chainKey === "tron") return String(a) === String(b);
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+/** Verify, from a returned LI.FI route itself, that it delivers
+ *  destination gas alongside the target asset: the FINAL step (or
+ *  one of its included steps) must deliver the destination chain's
+ *  native token, on the destination chain, in a positive amount.
+ *  Anything weaker — an intermediate hop through the native token,
+ *  a step on another chain — is not a gas drop. Returns the
+ *  { symbol, amountHuman, usd } the route evidences, or null.
+ *  (LI.FI's live response shape could not be re-probed at build
+ *  time — the keyless API was rate-limiting this machine, HTTP
+ *  429 — so this evidence rule is deliberately strict: if the
+ *  delivery is not visible in the route, Fluid does not claim it.) */
+export function lifiGasDropEvidence(route, plan) {
+  if (!route || !plan?.needed) return null;
+  const dest = swapChainOf(plan.chainKey);
+  if (!dest) return null;
+  const steps = Array.isArray(route.steps) ? route.steps : [];
+  const last = steps[steps.length - 1];
+  if (!last) return null;
+  const natives = destNativeLifiAddresses(plan.chainKey);
+  const candidates = [last, ...(Array.isArray(last.includedSteps) ? last.includedSteps : [])];
+  for (const s of candidates) {
+    const a = s?.action;
+    if (!a || Number(a.toChainId) !== dest.chainId) continue;
+    const addr = a.toToken?.address;
+    if (addr == null || !natives.some(n => lifiTokenAddrEq(addr, n, plan.chainKey))) continue;
+    const raw = s.estimate?.toAmount;
+    if (raw == null) continue;
+    let human;
+    try { human = Number(ethers.formatUnits(BigInt(String(raw)), plan.decimals)); } catch { continue; }
+    if (!(human > 0)) continue;
+    const usdField = Number(s.estimate?.toAmountUSD);
+    const usd = Number.isFinite(usdField) && usdField > 0 ? usdField
+      : (plan.nativePriceUsd ? human * plan.nativePriceUsd : null);
+    return { symbol: plan.symbol, amountHuman: human, usd };
+  }
+  return null;
+}
+
 /** Ask LI.FI for routes. fromAmount is the RAW integer amount (string)
  *  in the from-token's smallest unit. Primary path is POST /v1/routes
  *  (several competing routes). That endpoint can be very slow, so on a
@@ -6281,11 +6357,26 @@ async function fetchLifiQuoteStep(reqArgs, opts) {
  *  /quote path is single-route, so its fee is exact for the route
  *  executed. Where the source chain does not collect, the original
  *  single-pass behaviour runs unchanged. */
-export async function getLifiSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }) {
+export async function getLifiSwapRoutes({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress, gasDrop = null }) {
   const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
   if (!from || !to) throw new Error("Unknown network in swap.");
   const destAddress = toAddress || fromAddress;
   const reqArgs = { fromChainId: from.chainId, toChainId: to.chainId, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress: destAddress };
+  // Destination gas (2026-11-11): when the search carries a plan
+  // for this destination, the gas-fronting amount is computed from
+  // the fee-free reference (so the fee law prices the route, not
+  // the user's own gas slice) and rides the final fetch; routes
+  // are annotated ONLY from their own evidenced native delivery
+  // (lifiGasDropEvidence) — see that function's note on why the
+  // evidence bar is strict.
+  const plan = gasDrop && gasDrop.needed && gasDrop.chainKey === toChainKey ? gasDrop : null;
+  const finishRoutes = (routes, withGas) => {
+    if (withGas && plan) for (const r of routes) {
+      const ev = lifiGasDropEvidence(r, plan);
+      if (ev) { r.gasDrop = ev; r.gasMechanism = "drop"; }
+    }
+    return routes;
+  };
   const fetchRoutes = async (opts) => {
     const res = await fetch(`${LIFI_API}/routes`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -6299,37 +6390,63 @@ export async function getLifiSwapRoutes({ fromChainKey, toChainKey, fromTokenAdd
   if (!(PLATFORM_FEE_COLLECTION_ENABLED && swapFeeCollectingChain(from.chainId))) {
     try {
       const routes = await fetchRoutes();
-      if (routes) return routes;
+      if (routes) {
+        const gasRaw = plan ? lifiGasFromRaw(plan, routes[0]) : null;
+        if (gasRaw) {
+          try {
+            const gassed = await fetchRoutes({ fromAmountForGas: gasRaw });
+            if (gassed) return finishRoutes(gassed, true);
+          } catch { /* keep the gas-free routes */ }
+        }
+        return routes;
+      }
     } catch { /* slow or unavailable — fall back to /quote below */ }
-    return [quoteStepToRoute(await fetchLifiQuoteStep(reqArgs))];
+    const plainRoute = quoteStepToRoute(await fetchLifiQuoteStep(reqArgs));
+    const gasRaw = plan ? lifiGasFromRaw(plan, plainRoute) : null;
+    if (gasRaw) {
+      try { return finishRoutes([quoteStepToRoute(await fetchLifiQuoteStep(reqArgs, { fromAmountForGas: gasRaw }))], true); }
+      catch { /* keep the gas-free route */ }
+    }
+    return [plainRoute];
   }
   let firstRoutes = null;
   try { firstRoutes = await fetchRoutes({ includeFee: false }); } catch { /* /quote path below */ }
   if (firstRoutes) {
     const reference = rankSwapRoutes(firstRoutes, null)[0];
     const bps = platformFeeBpsForRoute(lifiRouteFeeUsd(reference), reference?.fromAmountUSD, toChainKey);
-    if (bps <= 0) {
+    const gasRaw = plan ? lifiGasFromRaw(plan, reference) : null;
+    if (bps <= 0 && !gasRaw) {
       for (const r of firstRoutes) r.platformFeeBps = 0;
       return firstRoutes;
     }
     try {
-      const routes = await fetchRoutes({ includeFee: true, feeFraction: bps / 10000 });
+      const routes = await fetchRoutes(bps > 0
+        ? { includeFee: true, feeFraction: bps / 10000, ...(gasRaw ? { fromAmountForGas: gasRaw } : {}) }
+        : { includeFee: false, fromAmountForGas: gasRaw });
       if (routes) {
         for (const r of routes) r.platformFeeBps = bps;
-        return routes;
+        return finishRoutes(routes, !!gasRaw);
       }
     } catch { /* /quote path below */ }
+    if (bps <= 0) {
+      // The gas-carrying refetch failed; the fee-free routes stand.
+      for (const r of firstRoutes) r.platformFeeBps = 0;
+      return firstRoutes;
+    }
   }
   const firstStep = await fetchLifiQuoteStep(reqArgs, { includeFee: false });
   const firstRoute = quoteStepToRoute(firstStep);
   const bps = platformFeeBpsForRoute(lifiRouteFeeUsd(firstRoute), firstStep.estimate?.fromAmountUSD, toChainKey);
-  if (bps <= 0) {
+  const gasRaw = plan ? lifiGasFromRaw(plan, firstRoute) : null;
+  if (bps <= 0 && !gasRaw) {
     firstRoute.platformFeeBps = 0;
     return [firstRoute];
   }
-  const route = quoteStepToRoute(await fetchLifiQuoteStep(reqArgs, { includeFee: true, feeFraction: bps / 10000 }));
+  const route = quoteStepToRoute(await fetchLifiQuoteStep(reqArgs, bps > 0
+    ? { includeFee: true, feeFraction: bps / 10000, ...(gasRaw ? { fromAmountForGas: gasRaw } : {}) }
+    : { includeFee: false, fromAmountForGas: gasRaw }));
   route.platformFeeBps = bps;
-  return [route];
+  return finishRoutes([route], !!gasRaw);
 }
 
 // ---------- Relay (PRIMARY swap router; LI.FI above is the fallback) ----------
@@ -6446,7 +6563,7 @@ export function relayCurrencyFor(chainId, tokenAddress) {
  *  per-chain portal registration, so unlike LI.FI there is no
  *  per-chain gate. An explicit includeFee overrides for tests.
  *  Returns null for pairs Relay doesn't cover. */
-export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeBps = null } = {}) {
+export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddress, toTokenAddress, fromAmount, fromAddress, toAddress }, { includeFee = null, feeBps = null, topupGasAmount = null } = {}) {
   const from = relayChainOf(fromChainKey), to = relayChainOf(toChainKey);
   if (!from || !to) return null;
   const withFee = includeFee ?? PLATFORM_FEE_COLLECTION_ENABLED;
@@ -6472,6 +6589,14 @@ export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddr
   const destAddress = toAddress || fromAddress;
   if (destAddress && destAddress !== fromAddress) body.recipient = destAddress;
   if (withFee) body.appFees = [{ recipient: RELAY_APP_FEE_RECIPIENT, fee: String(feeBps ?? PLATFORM_FEE_BPS) }];
+  // Destination gas (2026-11-11): Relay's gas top-up. The amount is
+  // denominated in the ORIGIN currency's base units (Relay's own
+  // feature doc, docs.relay.link/features/gas-top-up) — the caller
+  // converts the plan's USD shortfall through pass 1's own valuation
+  // (relayTopupOriginRaw). An explicit amount is ALWAYS sent when a
+  // top-up is wanted: omitting it makes Relay apply its $2.00
+  // default, far above Fluid's "enough for several transactions".
+  if (topupGasAmount != null) { body.topupGas = true; body.topupGasAmount = String(topupGasAmount); }
   return body;
 }
 /** Parse a Relay /quote/v2 response into Fluid's route shape (the
@@ -6484,7 +6609,7 @@ export function buildRelayQuoteRequest({ fromChainKey, toChainKey, fromTokenAddr
  *  Fluid's own id space (swapChainOf), NOT Relay's, so every
  *  existing consumer (fee gates, explorers, ranking) sees the ids
  *  it expects; Relay's ids live on route.relay. */
-export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = null, fromAddress = null } = {}) {
+export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = null, fromAddress = null, gasDrop = null } = {}) {
   const d = quote?.details;
   if (!d || !Array.isArray(quote?.steps) || !quote.steps.length) return null;
   const from = swapChainOf(fromChainKey), to = swapChainOf(toChainKey);
@@ -6526,7 +6651,7 @@ export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = 
   }
   const routeFeeUsd = routeCostUsd(explicitFeeUsd,
     Number(d.currencyIn?.amountUsd) - Number(d.currencyOut?.amountUsd) - appFeeUsd);
-  return {
+  const route = {
     provider: "relay",
     id: "relay:" + (quote.requestId || ""),
     type: "relay",
@@ -6551,6 +6676,27 @@ export function parseRelayQuote(quote, { fromChainKey, toChainKey, fromAmount = 
       sender: d.sender || null, steps: quote.steps,
     },
   };
+  // Destination gas (2026-11-11): Relay states a top-up it will
+  // actually deliver in details.currencyGasTopup — that, and only
+  // that, marks the route capable. Relay silently skips a top-up
+  // it judges unnecessary, so a request alone proves nothing. The
+  // native figure is read only when the top-up's currency is
+  // verifiably the destination chain's native token; the USD
+  // figure (Relay's own valuation) is what ranking and the review
+  // line use either way.
+  const topup = d.currencyGasTopup;
+  const topupUsd = Number(topup?.amountUsd);
+  if (gasDrop && gasDrop.needed && gasDrop.chainKey === toChainKey && topup && Number(topup.amount) > 0
+      && Number.isFinite(topupUsd) && topupUsd > 0) {
+    let amountHuman = null;
+    const cur = topup.currency;
+    if (cur && Number(cur.chainId) === relayTo.chainId && cur.metadata?.isNative && cur.decimals != null) {
+      try { amountHuman = Number(ethers.formatUnits(BigInt(String(topup.amount)), Number(cur.decimals))); } catch { amountHuman = null; }
+    }
+    route.gasDrop = { symbol: gasDrop.symbol, amountHuman, usd: topupUsd };
+    route.gasMechanism = "drop";
+  }
+  return route;
 }
 /** The Relay steps Fluid can actually sign: transaction steps with
  *  complete EVM transaction items, on an EVM source chain. Anything
@@ -6604,16 +6750,52 @@ async function fetchRelayRoute(args, opts) {
  *  returns a materially different route cost, the charged bps
  *  stays as set — the DISCLOSED fee is recomputed from the final
  *  quote's own fees.app by the caller, never from pass 1. */
+/** The Relay top-up amount (origin-currency base units) for a
+ *  destination-gas plan, converted through a fee-free quote's own
+ *  valuation of the input — exact, with no extra price source.
+ *  Null when the plan carries no USD figure, the quote cannot
+ *  value the input, or the slice would break the owner's
+ *  not-a-big-fraction rule (more than 25% of the swap's value:
+ *  the drop is then not requested and the review warns instead). */
+export function relayTopupOriginRaw(plan, quoteRoute) {
+  const wantUsd = Number(plan?.shortfallUsd);
+  const inUsd = Number(quoteRoute?.fromAmountUSD);
+  if (!(wantUsd > 0) || !(inUsd > 0) || quoteRoute?.fromAmount == null) return null;
+  if (wantUsd > 0.25 * inUsd) return null;
+  try {
+    const raw = (BigInt(quoteRoute.fromAmount) * BigInt(Math.round(wantUsd * 1e6))) / BigInt(Math.round(inUsd * 1e6));
+    return raw > 0n ? raw.toString() : null;
+  } catch { return null; }
+}
+
 async function getRelaySwapRoute(args) {
-  if (!PLATFORM_FEE_COLLECTION_ENABLED) return fetchRelayRoute(args);
+  const gasPlan = args.gasDrop && args.gasDrop.needed && args.gasDrop.chainKey === args.toChainKey ? args.gasDrop : null;
+  if (!PLATFORM_FEE_COLLECTION_ENABLED) {
+    if (!gasPlan) return fetchRelayRoute(args);
+    // No fee passes to protect, but the top-up still needs an
+    // origin-denominated amount: quote once fee-free to value the
+    // input, then re-quote with the top-up riding.
+    const probe = await fetchRelayRoute(args);
+    if (!probe) return null;
+    const topup = relayTopupOriginRaw(gasPlan, probe);
+    if (!topup) return probe;
+    try { return (await fetchRelayRoute(args, { topupGasAmount: topup })) || probe; }
+    catch { return probe; }
+  }
   const first = await fetchRelayRoute(args, { includeFee: false });
   if (!first) return null;
   const bps = platformFeeBpsForRoute(first.routeFeeUsd, first.fromAmountUSD, args.toChainKey);
-  if (bps <= 0) {
+  // Pass 1 quoted without a top-up so the fee law prices the
+  // route's own cost; the top-up (sized off pass 1's valuation)
+  // rides pass 2 alongside the fee.
+  const topup = gasPlan ? relayTopupOriginRaw(gasPlan, first) : null;
+  if (bps <= 0 && !topup) {
     first.platformFeeBps = 0;
     return first;
   }
-  const final = await fetchRelayRoute(args, { includeFee: true, feeBps: bps });
+  const final = await fetchRelayRoute(args, bps > 0
+    ? { includeFee: true, feeBps: bps, ...(topup ? { topupGasAmount: topup } : {}) }
+    : { includeFee: false, ...(topup ? { topupGasAmount: topup } : {}) });
   if (!final) return null;
   final.platformFeeBps = bps;
   return final;
@@ -10396,6 +10578,13 @@ const MAYAN_SYSVAR_RENT = "SysvarRent111111111111111111111111111111111";
  *  (50) never approaches them; asserted anyway so a future law
  *  change can never attach an uncollectable rate. */
 export const MAYAN_REFERRER_CAPS_BPS = { SWIFT: 200, FAST_MCTP: 100 };
+/** Mayan gasDrop maximum per destination chain, in human units of
+ *  the native token, where live probing established one (Sui: the
+ *  quote API answers GAS_DROP_TOO_HIGH above 0.1 SUI — probed
+ *  2026-11-11, research_notes/fluid-gateway-micro-tests-20261109/
+ *  sui-gas-rescue-20261111.md). Chains absent here get the plan's
+ *  shortfall uncapped; the quote itself remains the verification. */
+export const MAYAN_GAS_DROP_CAPS = { sui: 0.1 };
 /** The quote-level fee identity: always a Solana address (the
  *  DripBot collection wallet's), whatever the source chain. */
 export const MAYAN_REFERRER_SOLANA = FEE_SPLIT.dripbot.agentWallet.solana;
@@ -10411,6 +10600,12 @@ export const MAYAN_SWAPS_STORAGE_KEY = "fluid_mayan_swaps_v1";
 const MAYAN_CHAIN_NAME_BY_ID = new Map([[1, "ethereum"], [56, "bsc"], [137, "polygon"], [43114, "avalanche"], [42161, "arbitrum"], [10, "optimism"], [8453, "base"], [59144, "linea"]]);
 export function mayanChainNameOf(chainKey) {
   if (chainKey === "solana") return "solana";
+  // Sui is nameable so the destination-gas lift (mayanSupports-
+  // SuiGasDropPair) can quote Fast MCTP into Sui; mayanSupportsPair
+  // still excludes every Sui pair from the normal contest, and
+  // mayanTokenOf names exactly one Sui token (USDC), so naming the
+  // chain opens no other Mayan lane.
+  if (chainKey === "sui") return "sui";
   const n = NETWORKS[chainKey];
   return n ? (MAYAN_CHAIN_NAME_BY_ID.get(n.chainId) ?? null) : null;
 }
@@ -10446,6 +10641,14 @@ export function mayanTokenOf(chainKey, tokenAddress) {
     const a = String(tokenAddress);
     return isValidSolanaAddress(a) ? a : null;
   }
+  if (chainKey === "sui") {
+    // Exactly one Sui token is nameable in Mayan's space: USDC, the
+    // CCTP asset of the Fast MCTP lane proven live on 2026-11-11
+    // (Base USDC → Sui USDC with a gasDrop, research_notes/fluid-
+    // gateway-micro-tests-20261109/sui-gas-rescue-20261111.md).
+    const usdc = SUI_TOKENS.find(t => t.symbol === "USDC");
+    return usdc && tokenAddress != null && suiCoinTypeEq(tokenAddress, usdc.address) ? usdc.address : null;
+  }
   if (!NETWORKS[chainKey]) return null;
   if (tokenAddress == null) return MAYAN_ZERO_ADDRESS;
   const a = String(tokenAddress);
@@ -10462,7 +10665,11 @@ export function mayanSupportsPair(args) {
   const fromName = mayanChainNameOf(args?.fromChainKey), toName = mayanChainNameOf(args?.toChainKey);
   if (!fromName || !toName || fromName === toName) return false;
   if (toName === "solana") return false; // EVM → Solana: tie, excluded
-  if (fromName !== "solana" && toName === "sui") return false;
+  // Sui is excluded on BOTH sides of the normal contest (hardened
+  // 2026-11-11: mayanChainNameOf now names Sui so the gas-drop
+  // lift can quote it — the lift is mayanSupportsSuiGasDropPair's
+  // narrow gate, never this one).
+  if (toName === "sui" || fromName === "sui") return false;
   if (!mayanTokenOf(args.fromChainKey, args.fromTokenAddress)) return false;
   if (!mayanTokenOf(args.toChainKey, args.toTokenAddress)) return false;
   if (!args.fromAddress) return false;
@@ -10537,7 +10744,7 @@ function mayanAnchorDisc(name) { return sha256(new TextEncoder().encode("global:
  *  a fee is actually being charged (pass 2 of the two-pass
  *  search) — never decoratively. amountIn64 carries Fluid's raw
  *  amount, so no decimal knowledge is needed to ask. */
-export function buildMayanQuoteBody(args, { feeBps = 0 } = {}) {
+export function buildMayanQuoteBody(args, { feeBps = 0, gasDrop = null } = {}) {
   const body = {
     swift: true, fastMctp: true, mctp: false, wormhole: false, monoChain: false,
     shuttle: false, gasless: false, onlyDirect: false, fullList: true,
@@ -10554,6 +10761,14 @@ export function buildMayanQuoteBody(args, { feeBps = 0 } = {}) {
     sdkVersion: MAYAN_SDK_VERSION,
   };
   if (Number(feeBps) > 0) body.referrerBps = Math.floor(Number(feeBps));
+  // Destination gas (2026-11-11): Mayan's native gas drop, in HUMAN
+  // units of the destination chain's native token — the exact field
+  // the 2026-11-11 Sui rescue executed with (0.025 SUI delivered
+  // alongside USDC). Sent only when the destination-gas plan asked
+  // for it; the returned quote's own gasDrop is what parseMayanQuote
+  // verifies and annotates — a quote that silently drops it yields
+  // a route with no gasDrop and ranking treats it as incapable.
+  if (gasDrop != null && Number(gasDrop) > 0) body.gasDrop = String(gasDrop);
   return body;
 }
 
@@ -10600,7 +10815,8 @@ export function parseMayanQuote(quote, args, ctx = {}) {
   const toTok = mayanTokenOf(args.toChainKey, args.toTokenAddress);
   if (!fromTok || !toTok) return null;
   const sameAddr = (a, b, chainName) => chainName === "solana"
-    ? String(a) === String(b) : String(a).toLowerCase() === String(b).toLowerCase();
+    ? String(a) === String(b) : chainName === "sui"
+    ? suiCoinTypeEq(a, b) : String(a).toLowerCase() === String(b).toLowerCase();
   if (!quote.fromToken || !sameAddr(quote.fromToken.contract, fromTok, fromName)) return null;
   if (!quote.toToken || !sameAddr(quote.toToken.contract, toTok, toName)) return null;
   if (String(quote.effectiveAmountIn64) !== String(args.fromAmount)) return null;
@@ -10722,18 +10938,57 @@ export function parseMayanQuote(quote, args, ctx = {}) {
       tx: null, // EVM sources: the bounds-checked Forwarder payload, built by getMayanSwapRoute
     },
   };
+  // Destination gas (2026-11-11): when the search carried a gas
+  // plan for this destination, the quote's OWN gasDrop is the
+  // verification — a positive figure means this route really
+  // delivers that much native token alongside; zero/absent means
+  // it does not, whatever was requested, and the route is left
+  // unannotated so ranking treats it as incapable. The USD figure
+  // is priced from the same fair symbol prices as the route cost.
+  const gasPlan = ctx.gasDropPlan;
+  if (gasPlan && gasPlan.needed && gasPlan.chainKey === args?.toChainKey) {
+    const dropped = Number(quote.gasDrop);
+    if (Number.isFinite(dropped) && dropped > 0) {
+      const px = Number(ctx.symbolPricesUsd?.[gasPlan.symbol]);
+      route.gasDrop = { symbol: gasPlan.symbol, amountHuman: dropped, usd: Number.isFinite(px) && px > 0 ? dropped * px : null };
+      route.gasMechanism = "drop";
+    }
+  }
   return route;
+}
+/** The destination-gas lift (2026-11-11): the ONLY Sui shape
+ *  Mayan contests beyond mayanSupportsPair — an EVM → Sui Fast
+ *  MCTP quote for the USDC pair, and only when a destination-gas
+ *  plan is asking for a drop there. This is the exact shape
+ *  Fluid executed live on 2026-11-11 (Base USDC → Sui USDC +
+ *  0.025 SUI gasDrop, sui-gas-rescue-20261111.md): CCTP domain 8
+ *  on the destination, the payload construction already shipped
+ *  and bounds-checked. Sui sources stay out; non-USDC pairs stay
+ *  out; sources without a CCTP domain (BSC) stay out. Pure. */
+export function mayanSupportsSuiGasDropPair(args) {
+  if (!args?.gasDrop?.needed || args.gasDrop.chainKey !== "sui") return false;
+  if (args.toChainKey !== "sui") return false;
+  if (mayanSupportsPair(args)) return false;
+  const fromName = mayanChainNameOf(args.fromChainKey);
+  if (!fromName || fromName === "sui" || fromName === "solana") return false;
+  if (!MAYAN_CCTP_DOMAINS[fromName]) return false;
+  const usdc = SUI_TOKENS.find(t => t.symbol === "USDC");
+  if (!usdc || args.toTokenAddress == null || !suiCoinTypeEq(args.toTokenAddress, usdc.address)) return false;
+  const fromUsdc = (NETWORKS[args.fromChainKey]?.tokens || []).find(t => t.symbol === "USDC");
+  if (!fromUsdc || String(args.fromTokenAddress || "").toLowerCase() !== fromUsdc.address.toLowerCase()) return false;
+  if (!args.fromAddress) return false;
+  return true;
 }
 /** One POST /v3/quote round: returns the response's quote list
  *  (possibly empty). Throws on transport/HTTP failure and on a
  *  response whose minimum SDK version has moved past the pin —
  *  an API that outruns the ported construction must fall back,
  *  never improvise. */
-async function fetchMayanQuotes(args, feeBps = 0) {
+async function fetchMayanQuotes(args, feeBps = 0, gasDrop = null) {
   const res = await fetch(`${MAYAN_PRICE_API}/quote`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(20000),
-    body: JSON.stringify(buildMayanQuoteBody(args, { feeBps })),
+    body: JSON.stringify(buildMayanQuoteBody(args, { feeBps, gasDrop })),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("Mayan route search failed: " + (data?.msg || data?.message || ("HTTP " + res.status)));
@@ -10775,7 +11030,11 @@ function pickMayanQuote(quotes, wantType = null) {
  *  checkMayanEvmTxBounds) — a payload Fluid cannot verify
  *  refuses the route before the user ever sees it. */
 export async function getMayanSwapRoute(args) {
-  if (!mayanSupportsPair(args)) return null;
+  // The Sui gas-drop lift (mayanSupportsSuiGasDropPair) is the one
+  // addition to the normal gate: a Fast MCTP quote into Sui USDC,
+  // only when a destination-gas plan is asking for a drop there.
+  const suiGasLift = mayanSupportsSuiGasDropPair(args);
+  if (!mayanSupportsPair(args) && !suiGasLift) return null;
   let solPriceUsd = 0;
   // Fair prices for the F2 route-cost measure: the wallet's
   // verified symbol prices (stables pinned at 1) plus Jupiter
@@ -10794,10 +11053,30 @@ export async function getMayanSwapRoute(args) {
     solPriceUsd = prices.get(JUPITER_WRAPPED_SOL_MINT)?.usdPrice || 0;
     for (const [mint, p] of prices) if (p?.usdPrice > 0) mintPricesUsd[mint] = p.usdPrice;
   } catch { /* rent stays unpriced (gasCostUSD 0) and the parser falls back per side */ }
-  const firstRaw = pickMayanQuote(await fetchMayanQuotes(args, 0));
+  // Destination gas (2026-11-11): the drop this search wants, if
+  // any — the plan's shortfall (top the destination up to "enough"),
+  // capped at Mayan's per-chain gasDrop maximum where one is known
+  // (Sui: 0.1 SUI, live-probed — GAS_DROP_TOO_HIGH above it). Pass 1
+  // still quotes WITHOUT the drop so the fee law prices the route's
+  // own cost, never the user's own gas slice; the drop rides the
+  // final quote only, and is itself subject to the owner's
+  // not-a-big-fraction rule: a slice worth more than 25% of the
+  // swap is not requested (the review then warns instead).
+  const gasPlan = args.gasDrop && args.gasDrop.needed && args.gasDrop.chainKey === args.toChainKey ? args.gasDrop : null;
+  let dropHuman = null;
+  if (gasPlan) {
+    dropHuman = Number(gasPlan.shortfallHuman);
+    const cap = MAYAN_GAS_DROP_CAPS[args.toChainKey];
+    if (cap != null) dropHuman = Math.min(dropHuman, cap);
+    if (!(dropHuman > 0)) dropHuman = null;
+  }
+  const parseCtx = (feeBps) => ({ feeBps, solPriceUsd, symbolPricesUsd, mintPricesUsd, gasDropPlan: gasPlan });
+  const firstRaw = pickMayanQuote(await fetchMayanQuotes(args, 0), suiGasLift ? "FAST_MCTP" : null);
   if (!firstRaw) throw new Error("Mayan returned no usable route for that pair.");
-  const first = parseMayanQuote(firstRaw, args, { feeBps: 0, solPriceUsd, symbolPricesUsd, mintPricesUsd });
+  const first = parseMayanQuote(firstRaw, args, parseCtx(0));
   if (!first) throw new Error("Mayan returned no usable route for that pair.");
+  if (dropHuman != null && gasPlan.nativePriceUsd && Number(first.fromAmountUSD) > 0
+      && dropHuman * gasPlan.nativePriceUsd > 0.25 * Number(first.fromAmountUSD)) dropHuman = null;
   const finish = (route) => {
     if (route.mayan.fromChainName !== "solana") {
       const tx = buildMayanEvmTxPayload(route.mayan.quote, {
@@ -10810,14 +11089,32 @@ export async function getMayanSwapRoute(args) {
     }
     return route;
   };
-  if (!PLATFORM_FEE_COLLECTION_ENABLED) { first.platformFeeBps = 0; return finish(first); }
+  const quoteFinal = async (feeBps, drop) => {
+    const raw = pickMayanQuote(await fetchMayanQuotes(args, feeBps, drop), first.mayan.routeType);
+    if (!raw) return null;
+    return parseMayanQuote(raw, args, parseCtx(feeBps));
+  };
+  if (!PLATFORM_FEE_COLLECTION_ENABLED) {
+    if (dropHuman != null) {
+      const withDrop = await quoteFinal(0, dropHuman).catch(() => null);
+      if (withDrop) { withDrop.platformFeeBps = 0; return finish(withDrop); }
+    }
+    first.platformFeeBps = 0; return finish(first);
+  }
   let bps = platformFeeBpsForRoute(first.routeFeeUsd, first.fromAmountUSD, args.toChainKey);
   bps = Math.min(bps, MAYAN_REFERRER_CAPS_BPS[first.mayan.routeType] ?? 0);
-  if (bps <= 0) { first.platformFeeBps = 0; return finish(first); }
-  const finalRaw = pickMayanQuote(await fetchMayanQuotes(args, bps), first.mayan.routeType);
-  if (!finalRaw) throw new Error("Mayan returned no usable route for that pair.");
-  const final = parseMayanQuote(finalRaw, args, { feeBps: bps, solPriceUsd, symbolPricesUsd, mintPricesUsd });
-  if (!final) throw new Error("Mayan's fee-bearing quote disagreed with its fee-free quote — refusing it.");
+  if (bps <= 0 && dropHuman == null) { first.platformFeeBps = 0; return finish(first); }
+  let final = null;
+  try { final = await quoteFinal(bps, dropHuman); } catch (e) { if (dropHuman == null) throw e; }
+  if (!final && dropHuman != null) {
+    // The drop broke this quote (a cap or a pair limit) — the route
+    // itself is still valid without it; ranking will treat it as
+    // incapable and the review will say what that means.
+    final = await quoteFinal(bps, null);
+  }
+  if (!final) throw new Error(bps > 0
+    ? "Mayan's fee-bearing quote disagreed with its fee-free quote — refusing it."
+    : "Mayan returned no usable route for that pair.");
   final.platformFeeBps = bps;
   return finish(final);
 }
@@ -11798,12 +12095,586 @@ export async function executeMayanSwapRoute(wallet, route, onProgress = () => {}
   return [txr.hash];
 }
 
-/** The incumbent route search — Satora, Jupiter, Across,
- *  Relay, LI.FI, in the order this dispatcher has always used.
- *  getSwapRoutes (below) wraps it with Mayan's ranked
- *  candidacy; for pairs Mayan does not contest this function
- *  IS the search, byte for byte as before. */
-async function getSwapRoutesCascade(args) {
+/* ---------- Destination gas + merit ranking (2026-11-11) ----------
+ * The owner's design (Ethuram, 2026-11-11 ~06:09 + ~06:26 +
+ * ~06:38 WAT), after a live swap chain landed 0.45123 USDC on a
+ * Sui wallet holding zero SUI — movable value, unusable wallet.
+ * The rule: when a swap crosses ecosystems, Fluid checks the
+ * user's native-gas balance on the DESTINATION chain before
+ * executing, and if it is below "enough" (DEST_GAS_ENOUGH),
+ * delivery is adjusted so the user is never stranded:
+ *
+ *   1. GAS DROP ALONGSIDE (first choice): a small slice of the
+ *      swap lands as the destination's native token next to the
+ *      target asset, via the route's own mechanism.
+ *   2. ALL-TO-NATIVE, THEN SWAP BACK (fallback): where no route
+ *      can carry the slice alongside, the swap bridges 100% to
+ *      the native token and then swaps into the intended asset
+ *      on the destination chain, leaving the reserve behind
+ *      (buildGasFallbackRoute / executeGasFallbackRoute). One
+ *      review, one confirmation; if leg 2 fails after leg 1
+ *      landed, the user holds the NATIVE token — movable, never
+ *      stranded — and a persisted record surfaces a one-tap
+ *      "Complete the swap" retry.
+ *   3. WARN BEFORE CONFIRM: only if neither mechanism works —
+ *      the review says plainly the funds will land without gas.
+ *
+ * The gas slice is part of the user's own swap, NOT a fee: the
+ * fee law (platformFeeBpsForRoute) is computed on fee-free,
+ * drop-free first passes exactly as before, and the review shows
+ * the slice and the fee as separate lines.
+ *
+ * PER-SOURCE GAS-DROP SUPPORT (mapped 2026-11-11 from live
+ * APIs/docs + Fluid's own executed evidence):
+ *   - Mayan: YES — quote field `gasDrop` (human units of the
+ *     destination native). PROVEN LIVE by Fluid: 0.025 SUI
+ *     delivered alongside USDC on a Base → Sui Fast MCTP order
+ *     for ~$0.04 total (sui-gas-rescue-20261111.md). Sui cap
+ *     0.1 SUI (GAS_DROP_TOO_HIGH above it, probed).
+ *   - Relay: YES — request fields topupGas / topupGasAmount
+ *     (docs.relay.link/features/gas-top-up), EVM destinations
+ *     only, output must not be the native token, topupGasAmount
+ *     denominated in ORIGIN-currency base units (Relay's $2.00
+ *     default applies when omitted — Fluid always sends one).
+ *     The quote verifies itself via details.currencyGasTopup.
+ *     Relay has NO Sui chain and refuses ~$0.01-scale moves, so
+ *     it never serves the headline case.
+ *   - LI.FI: YES ON PAPER — LI.Fuel `fromAmountForGas` (part of
+ *     the from amount, smallest units; docs.li.fi "Gas Options").
+ *     Its live response shape could not be re-probed at build
+ *     time (keyless API rate-limiting this machine, HTTP 429),
+ *     so Fluid credits a LI.FI drop ONLY when the returned route
+ *     evidences the native delivery in its final step
+ *     (lifiGasDropEvidence). LI.FI's other demerits (the 429s,
+ *     the 0.05 SUI in-account budget it demands before building
+ *     any Sui swap, micro-size refusals, a 45%-cost Tron quote)
+ *     are why it is demoted in the ranking below.
+ *   - Across: NO alongside drop — its Swap API delivers a single
+ *     output token; its own published answer to "no gas" is
+ *     making the native token the WHOLE output (a different
+ *     trade — which is mechanism 2's shape, not a drop).
+ *   - Satora: N/A — destinations are Bitcoin and Lightning;
+ *     neither has a separate gas token.
+ *   - Jupiter: N/A — same-chain Solana only; the mechanic is
+ *     cross-ecosystem only.
+ *
+ * MERIT RANKING (the owner's rule, same date): the dispatcher
+ * order is no longer brand-fixed. A route that fulfils the FULL
+ * requirement — including the gas delivery when one is needed,
+ * at the user's actual size — outranks one that cannot; among
+ * routes that can, best net output wins (the delivered gas
+ * counts as value received, because it is). LI.FI is demoted
+ * for the causes above: it is reached last in the source walk,
+ * loses net-output ties to every other provider, and serves
+ * where it is the sole working source or demonstrably best.
+ * The pre-2026-11-11 rule "Mayan is offered only when it ranks
+ * first, else the incumbent returns untouched" is superseded:
+ * candidates now return as one ranked list. */
+
+/** Coin-type equality with the package address normalized
+ *  (0x2… short form vs zero-padded long form are the same type). */
+export function suiCoinTypeEq(a, b) {
+  const norm = (t) => {
+    const parts = String(t || "").split("::");
+    if (parts.length < 3) return String(t || "").toLowerCase();
+    return (normalizeSuiAddress(parts[0]) || parts[0].toLowerCase()) + "::" + parts.slice(1).join("::");
+  };
+  return norm(a) === norm(b);
+}
+
+/** "Enough" native gas per destination chain: enough for several
+ *  typical transactions, kept genuinely small. Each figure cites
+ *  its fee evidence; the table IS the mechanic's scope (a chain
+ *  with no entry gets no plan — no invented numbers). */
+export const DEST_GAS_ENOUGH = {
+  // Mainnet: a plain transfer runs ≈ $0.30–0.60 and a DEX swap
+  // ≈ $1–3 at typical 2026 gas; 0.002 ETH (≈ $4 at $2,060)
+  // covers several transfers or a swap with change.
+  ethereum: { symbol: "ETH", priceSym: "ETH", decimals: 18, enough: "0.002" },
+  // L2s (Base/Arbitrum/Optimism/Linea and, via destGasSpec's
+  // fallback, zkSync/Scroll): swap gas is $0.01–0.05, so
+  // 0.0001 ETH (≈ $0.21) covers roughly 4–20 typical actions.
+  base: { symbol: "ETH", priceSym: "ETH", decimals: 18, enough: "0.0001" },
+  arbitrum: { symbol: "ETH", priceSym: "ETH", decimals: 18, enough: "0.0001" },
+  optimism: { symbol: "ETH", priceSym: "ETH", decimals: 18, enough: "0.0001" },
+  linea: { symbol: "ETH", priceSym: "ETH", decimals: 18, enough: "0.0001" },
+  // BSC swap gas ≈ 0.00005–0.00015 BNB → several swaps (≈ $0.34 at $681).
+  bsc: { symbol: "BNB", priceSym: "BNB", decimals: 18, enough: "0.0005" },
+  // Polygon swap gas ≈ 0.01–0.05 POL → 10+ actions.
+  polygon: { symbol: "POL", priceSym: "POL", decimals: 18, enough: "0.5" },
+  // C-Chain swap ≈ 0.001–0.003 AVAX → several.
+  avalanche: { symbol: "AVAX", priceSym: "AVAX", decimals: 18, enough: "0.01" },
+  celo: { symbol: "CELO", priceSym: "CELO", decimals: 18, enough: "0.05" },
+  // Gnosis gas is fractions of a cent; 0.01 xDAI is many actions.
+  gnosis: { symbol: "XDAI", priceSym: "DAI", decimals: 18, enough: "0.01" },
+  mantle: { symbol: "MNT", priceSym: "MNT", decimals: 18, enough: "0.05" },
+  // Solana's base fee (5,000 lamports) is nothing; the real cost
+  // is rent — 0.00204 SOL per new token account — so 0.01 SOL
+  // covers ~4 new ATAs plus fees.
+  solana: { symbol: "SOL", priceSym: "SOL", decimals: 9, enough: "0.01" },
+  // An unstaked TRC-20 transfer burns ≈ 13.5 TRX of energy;
+  // 15 TRX covers one plus margin (Tron gas is simply dear).
+  tron: { symbol: "TRX", priceSym: "TRX", decimals: 6, enough: "15" },
+  // Sui evidence (2026-11-11 rescue record): a real swap's
+  // compute cost was 0.0001 SUI, storage-inclusive totals run
+  // ≈ 0.01–0.015 SUI, and LI.FI refuses to build ANY Sui swap
+  // unless the account already holds 0.05 SUI — 0.06 SUI clears
+  // every observed bar with margin (≈ $0.05 at $0.83).
+  sui: { symbol: "SUI", priceSym: "SUI", decimals: 9, enough: "0.06" },
+};
+/** The gas spec for a chain key: the table, plus the L2 fallback
+ *  (any non-mainnet ETH-gas chain in NETWORKS prices like an L2). */
+export function destGasSpec(chainKey) {
+  if (DEST_GAS_ENOUGH[chainKey]) return DEST_GAS_ENOUGH[chainKey];
+  const net = NETWORKS[chainKey];
+  if (net && net.symbol === "ETH" && net.chainId !== 1) return DEST_GAS_ENOUGH.base;
+  return null;
+}
+/** Display name for a swap-universe chain key. */
+export function destChainName(chainKey) {
+  if (chainKey === "solana") return "Solana";
+  if (chainKey === "tron") return "Tron";
+  if (chainKey === "sui") return "Sui";
+  return NETWORKS[chainKey]?.name || String(chainKey || "");
+}
+/** Whether a token address IS the destination chain's native gas
+ *  token (the delivery then remedies gas itself — no plan). */
+export function isDestNativeToken(chainKey, tokenAddress) {
+  if (tokenAddress == null) return true;
+  const a = String(tokenAddress);
+  if (chainKey === "solana") return a === SOLANA_SWAP_NATIVE_TOKEN;
+  if (chainKey === "tron") return a === TRON_SWAP_NATIVE_TOKEN;
+  if (chainKey === "sui") return suiCoinTypeEq(a, SUI_COIN_TYPE) || suiCoinTypeEq(a, SUI_SWAP_NATIVE_TOKEN);
+  return a.toLowerCase() === LIFI_NATIVE_TOKEN;
+}
+/** The destination native token's address in the swap universe's
+ *  (LI.FI's) naming — the target a gas-fallback leg 1 aims at. */
+export function destNativeTokenAddress(chainKey) {
+  if (chainKey === "solana") return SOLANA_SWAP_NATIVE_TOKEN;
+  if (chainKey === "tron") return TRON_SWAP_NATIVE_TOKEN;
+  if (chainKey === "sui") return SUI_SWAP_NATIVE_TOKEN;
+  if (NETWORKS[chainKey]) return LIFI_NATIVE_TOKEN;
+  return null;
+}
+/** The user's native-token balance on a chain, in raw units —
+ *  the one read the gas plan, the credit poll and the record
+ *  advancer all share. Null when the read fails (unknown is
+ *  never treated as zero). */
+export async function readDestNativeRaw(chainKey, address) {
+  try {
+    if (chainKey === "sui") {
+      const human = await getSuiTokenBalance(address, SUI_COIN_TYPE);
+      return ethers.parseUnits(String(human || "0"), 9);
+    }
+    if (chainKey === "solana") {
+      const bal = await solanaRpc("getBalance", [address]);
+      return bal && bal.value != null ? BigInt(bal.value) : null;
+    }
+    if (chainKey === "tron") {
+      const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+      return BigInt((acct && acct.balance) ?? 0);
+    }
+    if (!NETWORKS[chainKey]) return null;
+    // A plain JSON-RPC eth_getBalance over fetch (the Solana/Tron
+    // pattern above), NOT the ethers provider: the read must fail
+    // soft and stay inside the caller's fetch discipline.
+    const urls = [NETWORKS[chainKey].rpc, NETWORKS[chainKey].rpcFallback].filter(Boolean);
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) continue;
+        const data = await res.json().catch(() => null);
+        if (data && typeof data.result === "string") return BigInt(data.result);
+      } catch { /* try the fallback RPC */ }
+    }
+    return null;
+  } catch { return null; }
+}
+/** The pure threshold decision: given a destination and the raw
+ *  native balance read there, the gas plan (or null when the
+ *  balance is already "enough", the chain is out of scope, or
+ *  the balance is unknown). Exported for tests. */
+export function destGasPlanFromBalance(chainKey, rawBalance, nativePriceUsd = null) {
+  const spec = destGasSpec(chainKey);
+  if (!spec || rawBalance == null) return null;
+  let raw;
+  try { raw = BigInt(rawBalance); } catch { return null; }
+  const enoughRaw = ethers.parseUnits(spec.enough, spec.decimals);
+  if (raw >= enoughRaw) return null;
+  const shortfallRaw = enoughRaw - raw;
+  const shortfallHuman = Number(ethers.formatUnits(shortfallRaw, spec.decimals));
+  const px = Number(nativePriceUsd);
+  const priced = Number.isFinite(px) && px > 0;
+  return {
+    needed: true, chainKey,
+    chainName: destChainName(chainKey),
+    symbol: spec.symbol, decimals: spec.decimals,
+    enoughHuman: Number(spec.enough),
+    balanceHuman: Number(ethers.formatUnits(raw, spec.decimals)),
+    shortfallRaw: shortfallRaw.toString(), shortfallHuman,
+    nativePriceUsd: priced ? px : null,
+    shortfallUsd: priced ? shortfallHuman * px : null,
+  };
+}
+/** Plan the destination-gas adjustment for a swap, or return
+ *  null: same-chain swap, destination out of scope (Bitcoin /
+ *  Lightning have no gas token), the target IS the gas token,
+ *  the balance read failed, or the balance is already enough.
+ *  Triggers ONLY cross-ecosystem and ONLY below threshold. */
+export async function planDestGas(args) {
+  const { fromChainKey, toChainKey, toTokenAddress, fromAddress, toAddress } = args || {};
+  if (!fromChainKey || !toChainKey || fromChainKey === toChainKey) return null;
+  const spec = destGasSpec(toChainKey);
+  if (!spec) return null;
+  if (isDestNativeToken(toChainKey, toTokenAddress)) return null;
+  const destAddress = toAddress || fromAddress;
+  if (!destAddress) return null;
+  const raw = await readDestNativeRaw(toChainKey, destAddress);
+  if (raw == null) return null;
+  if (raw >= ethers.parseUnits(spec.enough, spec.decimals)) return null;
+  let price = null;
+  try {
+    const prices = await getPrices();
+    const v = Number(prices?.[spec.priceSym]);
+    if (Number.isFinite(v) && v > 0) price = v;
+  } catch { /* unpriced natives still get a plan, without USD figures */ }
+  return destGasPlanFromBalance(toChainKey, raw, price);
+}
+/** Render a human gas amount without float noise (0.06, 15, 0.0001). */
+export function trimGasNum(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return String(Math.round(n * 1e6) / 1e6);
+}
+/** The swap review's destination-gas line for the route the user
+ *  is about to confirm — one plain sentence, in the owner's
+ *  shape, or "" when no plan applies. Pure; the single source
+ *  the sheet renders and tests pin. */
+export function formatDestGasLine(route) {
+  const plan = route?.destGas;
+  if (!plan || !plan.needed) return "";
+  if (route.gasMechanism === "reserve" && route.gasReserve) {
+    const target = route.toToken?.symbol || "your asset";
+    return `This route can't bring gas alongside, so your swap lands as ${plan.symbol} first, then swaps to ${target} on ${plan.chainName}, keeping about ${trimGasNum(route.gasReserve.amountHuman)} ${plan.symbol} for gas.`;
+  }
+  const drop = route.gasDrop;
+  if (drop && Number(drop.usd) > 0)
+    return `You have no gas token on ${plan.chainName}, so a little of this swap (about $${Number(drop.usd).toFixed(2)}) will arrive as ${plan.symbol} for gas.`;
+  if (drop && Number(drop.amountHuman) > 0)
+    return `You have no gas token on ${plan.chainName}, so a little of this swap (${trimGasNum(drop.amountHuman)} ${plan.symbol}) will arrive as ${plan.symbol} for gas.`;
+  return `These funds will land without gas on ${plan.chainName}; you'll need ${plan.symbol} before you can move them.`;
+}
+
+/* ----- Gas fallback (mechanism 2): persisted two-leg records -----
+ * A leg-1 landing is a durable state, not a moment: the record is
+ * written when leg 1 broadcasts and drives everything after —
+ * the in-flow completion attempt, the background advancer, and
+ * the swap sheet's "Complete the swap" retry. States:
+ * awaiting-credit → leg2-due → done, with holds-native for the
+ * case where what landed is best kept whole as gas money. */
+export const GAS_FALLBACK_STORAGE_KEY = "fluid_gas_fallback_v1";
+function validGasFallbackRecord(r) {
+  return !!r && typeof r === "object" && typeof r.id === "string" && !!r.id && typeof r.state === "string";
+}
+export function loadGasFallbackRecords(storage) {
+  try {
+    const list = JSON.parse(storage.getItem(GAS_FALLBACK_STORAGE_KEY) || "[]");
+    return Array.isArray(list) ? list.filter(validGasFallbackRecord) : [];
+  } catch { return []; }
+}
+export function saveGasFallbackRecord(storage, record) {
+  if (!validGasFallbackRecord(record)) return loadGasFallbackRecords(storage);
+  const list = loadGasFallbackRecords(storage).filter(r => r.id !== record.id);
+  list.unshift({ ...record, updatedAt: Date.now() });
+  try { storage.setItem(GAS_FALLBACK_STORAGE_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* storage full/blocked: the in-memory record still stands */ }
+  return list;
+}
+export function newGasFallbackRecord(fields) {
+  return { at: Date.now(), receivedRaw: null, leg2Hash: null, state: "awaiting-credit", ...fields };
+}
+/** The second leg's input: what arrived minus the reserve that
+ *  stays behind as gas. Null when what arrived does not exceed
+ *  the reserve (nothing to swap — the native stays as gas money). */
+export function gasFallbackLeg2AmountRaw(receivedRaw, reserveRaw) {
+  try {
+    const rec = BigInt(receivedRaw), res = BigInt(reserveRaw);
+    return rec > res ? (rec - res).toString() : null;
+  } catch { return null; }
+}
+/** Whether this record is waiting on the user's one tap. */
+export function gasFallbackNeedsAction(record) {
+  return !!record && record.state === "leg2-due";
+}
+/** One plain line per record for the swap sheet (rendered as
+ *  text only, like the Satora/Mayan lists). */
+export function gasFallbackHistoryLine(record) {
+  const chain = destChainName(record?.toChainKey);
+  const native = record?.nativeSymbol || "gas token";
+  const target = record?.toSymbol || "your asset";
+  const reserve = record?.reserveHuman != null ? `${trimGasNum(record.reserveHuman)} ${native}` : native;
+  switch (record?.state) {
+    case "awaiting-credit": return `Two-step swap to ${chain}: your ${native} is on its way — when it lands, finish the swap into ${target} here, keeping ${reserve} for gas.`;
+    case "leg2-due": return `Your ${native} arrived on ${chain}. Complete the swap into ${target}, keeping ${reserve} for gas.`;
+    case "holds-native": return `Your swap landed as ${native} on ${chain} — small enough that it stays as gas money.`;
+    case "done": return `Two-step swap complete: ${native} → ${target} on ${chain}, with ${reserve} kept for gas.`;
+    default: return `Two-step swap on ${chain}.`;
+  }
+}
+
+/** Build the mechanism-2 composite route for a swap whose gas
+ *  plan no quoted route could serve with a drop: leg 1 delivers
+ *  the DESTINATION'S NATIVE TOKEN (quoted by the plain machinery
+ *  — no plan inside, the target IS the gas token), leg 2 is a
+ *  same-chain swap on the destination from (expected leg-1
+ *  output − reserve) into the intended asset, preview-quoted so
+ *  the review states the combined result. No leg-2 preview, no
+ *  composite: the review never guesses. The composite carries
+ *  gasDrop-shaped credit (the reserve IS delivered gas) so merit
+ *  ranking weighs it against drop routes on net output alone. */
+export async function buildGasFallbackRoute(args, plan) {
+  if (!plan?.needed || plan.chainKey !== args?.toChainKey) return null;
+  const destKey = args.toChainKey;
+  const nativeAddr = destNativeTokenAddress(destKey);
+  if (!nativeAddr) return null;
+  const destAddress = args.toAddress || args.fromAddress;
+  if (!destAddress) return null;
+  const leg1Args = {
+    fromChainKey: args.fromChainKey, toChainKey: destKey,
+    fromTokenAddress: args.fromTokenAddress, toTokenAddress: nativeAddr,
+    fromAmount: args.fromAmount, fromAddress: args.fromAddress, toAddress: args.toAddress,
+  };
+  let leg1Routes = [];
+  try { const c = await getSwapRoutesCascade(leg1Args, {}); if (c) leg1Routes.push(...c); } catch { return null; }
+  if (mayanSupportsPair(leg1Args)) {
+    try { const m = await getMayanSwapRoute(leg1Args); if (m) leg1Routes.push(m); } catch { /* candidate only */ }
+  }
+  if (!leg1Routes.length) return null;
+  const leg1 = rankSwapRoutes(leg1Routes, null)[0];
+  if (!leg1) return null;
+  const reserveRaw = BigInt(plan.shortfallRaw);
+  let expectedNativeRaw;
+  try { expectedNativeRaw = BigInt(leg1.toAmount); } catch { return null; }
+  const leg2FromRaw = expectedNativeRaw - reserveRaw;
+  if (leg2FromRaw <= 0n) return null; // the whole delivery is the reserve — no second leg to promise
+  let leg2 = null;
+  try {
+    const routes2 = await getSwapRoutes({
+      fromChainKey: destKey, toChainKey: destKey,
+      fromTokenAddress: nativeAddr, toTokenAddress: args.toTokenAddress,
+      fromAmount: leg2FromRaw.toString(), fromAddress: destAddress, toAddress: destAddress,
+    });
+    leg2 = routes2 && routes2[0];
+  } catch { leg2 = null; }
+  if (!leg2) return null;
+  const feeUsdOf = (r) => {
+    if (Number(r?.platformFeeUsd) > 0) return Number(r.platformFeeUsd);
+    if (Number(r?.platformFeeBps) > 0 && Number(r?.fromAmountUSD) > 0) return (Number(r.platformFeeBps) / 10000) * Number(r.fromAmountUSD);
+    return 0;
+  };
+  const platformFeeUsd = feeUsdOf(leg1) + feeUsdOf(leg2);
+  return {
+    provider: "gasfallback", id: "gasfallback:" + leg1.id, type: "composite",
+    fromChainId: leg1.fromChainId, toChainId: leg1.toChainId,
+    fromChainKey: args.fromChainKey, toChainKey: destKey,
+    fromAmount: leg1.fromAmount, fromToken: leg1.fromToken,
+    toToken: leg2.toToken || leg2.steps?.[leg2.steps.length - 1]?.action?.toToken || { address: args.toTokenAddress, symbol: null, decimals: null },
+    toAmount: leg2.toAmount, toAmountMin: leg2.toAmountMin ?? null,
+    toAmountUSD: leg2.toAmountUSD, fromAmountUSD: leg1.fromAmountUSD,
+    gasCostUSD: (Number(leg1.gasCostUSD) || 0) + (Number(leg2.gasCostUSD) || 0),
+    routeFeeUsd: (Number(leg1.routeFeeUsd) || 0) + (Number(leg2.routeFeeUsd) || 0),
+    executionDuration: (Number(leg1.executionDuration) || 0) + (Number(leg2.executionDuration) || 0) + 60,
+    platformFeeUsd: platformFeeUsd > 0 ? platformFeeUsd : null,
+    platformFeeCollecting: platformFeeUsd > 0,
+    platformFeeBps: leg1.platformFeeBps ?? null,
+    steps: leg1.steps,
+    gasMechanism: "reserve",
+    gasDrop: { symbol: plan.symbol, amountHuman: plan.shortfallHuman, usd: plan.shortfallUsd },
+    gasReserve: { symbol: plan.symbol, amountHuman: plan.shortfallHuman, raw: reserveRaw.toString() },
+    gasDestAddress: destAddress,
+    targetTokenAddress: args.toTokenAddress,
+    legs: {
+      leg1,
+      leg2Preview: { fromAmount: leg2FromRaw.toString(), toAmount: leg2.toAmount, toAmountMin: leg2.toAmountMin ?? null, toAmountUSD: leg2.toAmountUSD, provider: leg2.provider },
+    },
+  };
+}
+
+/** Poll a destination native balance until it has risen by at
+ *  least minDeltaRaw over preRaw (the credit landing), or the
+ *  bounded wait expires. Returns the delta (raw string) or null. */
+export async function pollDestNativeCredit(chainKey, address, preRaw, minDeltaRaw, { timeoutMs = 150000, intervalMs = 5000 } = {}) {
+  let pre = 0n;
+  try { pre = preRaw == null ? 0n : BigInt(preRaw); } catch { pre = 0n; }
+  let need = 0n;
+  try { need = BigInt(minDeltaRaw); } catch { need = 0n; }
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const bal = await readDestNativeRaw(chainKey, address);
+    if (bal != null && bal - pre >= need) return (bal - pre).toString();
+    if (Date.now() >= deadline) return null;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+}
+/** Execute one already-quoted route with the right family
+ *  executor — the dispatch the swap sheet performs, shared by
+ *  the gas fallback's two legs (leg routes are ordinary routes
+ *  of their own providers). */
+async function dispatchSwapExecution(wallet, route, progress, { onApprove = null, onApproveMayan = null } = {}) {
+  if (route.provider === "relay") return executeRelaySwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "across") return executeAcrossSwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "mayan") return executeMayanSwapRoute(wallet, route, progress, onApproveMayan || onApprove);
+  if (route.provider === "jupiter") return executeJupiterSwapRoute(wallet?.mnemonic?.phrase, route, progress);
+  if (Number(route.fromChainId) === SOLANA_LIFI_CHAIN_ID) return executeSolanaSwapRoute(wallet?.mnemonic?.phrase, route, progress);
+  if (Number(route.fromChainId) === TRON_LIFI_CHAIN_ID) return executeTronSwapRoute(wallet, route, progress, onApprove);
+  if (Number(route.fromChainId) === SUI_LIFI_CHAIN_ID) return executeSuiSwapRoute(wallet?.mnemonic?.phrase, route, progress);
+  return executeSwapRoute(wallet, route, progress, onApprove);
+}
+/** Run a gas-fallback record's second leg from what ACTUALLY
+ *  arrived: fresh same-chain route search for (received −
+ *  reserve), executed immediately. On any failure the record
+ *  lands in leg2-due and the thrown error says exactly where
+ *  the user's money is and how to finish — the user holds the
+ *  native token throughout, never the stranded asset. */
+async function runGasFallbackLeg2(wallet, record, progress, { storage = null, onApprove = null, onApproveMayan = null } = {}) {
+  const leg2Raw = gasFallbackLeg2AmountRaw(record.receivedRaw, record.reserveRaw);
+  if (leg2Raw == null) {
+    record.state = "holds-native";
+    if (storage) saveGasFallbackRecord(storage, record);
+    return { holdsNative: true };
+  }
+  try {
+    const routes = await getSwapRoutes({
+      fromChainKey: record.toChainKey, toChainKey: record.toChainKey,
+      fromTokenAddress: record.nativeTokenAddress, toTokenAddress: record.targetTokenAddress,
+      fromAmount: leg2Raw, fromAddress: record.destAddress, toAddress: record.destAddress,
+    });
+    const r2 = routes && routes[0];
+    if (!r2) throw new Error("No route for the second leg yet.");
+    const leg2Hashes = await dispatchSwapExecution(wallet, r2, progress, { onApprove, onApproveMayan });
+    record.state = "done";
+    record.leg2Hash = leg2Hashes[0];
+    if (storage) saveGasFallbackRecord(storage, record);
+    return { leg2Hashes, done: true };
+  } catch (e) {
+    record.state = "leg2-due";
+    if (storage) saveGasFallbackRecord(storage, record);
+    const err = new Error(`Your ${record.nativeSymbol} arrived on ${destChainName(record.toChainKey)}, but the swap into ${record.toSymbol || "your asset"} didn't complete. The ${record.nativeSymbol} is in your wallet and movable — open the swap sheet and tap "Complete the swap" to finish.`);
+    err.gasFallbackLeg2Due = true;
+    err.recordId = record.id;
+    throw err;
+  }
+}
+/** Execute a composite gas-fallback route as ONE user action:
+ *  leg 1 broadcasts, the record persists, the credit is awaited
+ *  in-flow for a bounded window, and leg 2 runs from what
+ *  actually arrived. If the credit outlasts the window the
+ *  result is { pending: true } — the advancer + the sheet's
+ *  completion button carry it from there. */
+export async function executeGasFallbackRoute(wallet, route, progress = () => {}, { storage = null, onApprove = null, onApproveMayan = null } = {}) {
+  const plan = route?.destGas;
+  if (!plan?.needed || route?.provider !== "gasfallback" || !route.legs?.leg1)
+    throw new Error("That route is not a gas-fallback route.");
+  const destKey = plan.chainKey;
+  const destAddress = route.gasDestAddress;
+  const pre = await readDestNativeRaw(destKey, destAddress);
+  const leg1 = route.legs.leg1;
+  const hashes = await dispatchSwapExecution(wallet, leg1, progress, { onApprove, onApproveMayan });
+  const record = newGasFallbackRecord({
+    id: hashes[0],
+    fromChainKey: route.fromChainKey || null, toChainKey: destKey,
+    destAddress, nativeTokenAddress: destNativeTokenAddress(destKey),
+    targetTokenAddress: route.targetTokenAddress,
+    fromSymbol: route.fromToken?.symbol || null, toSymbol: route.toToken?.symbol || null,
+    nativeSymbol: plan.symbol, nativeDecimals: plan.decimals,
+    reserveRaw: route.gasReserve.raw, reserveHuman: plan.shortfallHuman,
+    expectedNativeRaw: leg1.toAmount != null ? String(leg1.toAmount) : null,
+    preNativeRaw: pre != null ? pre.toString() : null,
+    leg1Provider: leg1.provider || null,
+  });
+  if (storage) saveGasFallbackRecord(storage, record);
+  progress(`First leg sent: your ${plan.symbol} is on its way to ${plan.chainName}.`);
+  if (record.preNativeRaw == null) return { hashes, record, pending: true };
+  let expected = 0n;
+  try { expected = BigInt(record.expectedNativeRaw || "0"); } catch { expected = 0n; }
+  const minDelta = expected > 0n ? ((expected * 9n) / 10n).toString() : "0";
+  const delta = await pollDestNativeCredit(destKey, destAddress, record.preNativeRaw, minDelta).catch(() => null);
+  if (delta == null) return { hashes, record, pending: true };
+  record.receivedRaw = delta;
+  if (storage) saveGasFallbackRecord(storage, record);
+  const out = await runGasFallbackLeg2(wallet, record, progress, { storage, onApprove, onApproveMayan });
+  return { hashes, record, ...out };
+}
+/** Advance awaiting-credit records whose leg 1 has landed
+ *  (called on unlock / sheet open / the poll timer): a record
+ *  whose destination balance rose by ≥ 90% of the expected
+ *  delivery becomes leg2-due (or holds-native when the reserve
+ *  swallows it). Returns how many records changed. */
+export async function advanceGasFallbackRecords(storage) {
+  if (!storage) return 0;
+  let changed = 0;
+  for (const r of loadGasFallbackRecords(storage)) {
+    if (r.state !== "awaiting-credit") continue;
+    const bal = await readDestNativeRaw(r.toChainKey, r.destAddress);
+    if (bal == null) continue;
+    let expected = 0n;
+    try { expected = BigInt(r.expectedNativeRaw || "0"); } catch { expected = 0n; }
+    if (expected <= 0n) continue;
+    let received = null;
+    if (r.preNativeRaw != null) {
+      let delta = 0n;
+      try { delta = bal - BigInt(r.preNativeRaw); } catch { delta = 0n; }
+      if (delta >= (expected * 9n) / 10n) received = delta;
+    } else if (bal >= expected) {
+      received = expected;
+    }
+    if (received != null) {
+      r.receivedRaw = received.toString();
+      r.state = gasFallbackLeg2AmountRaw(r.receivedRaw, r.reserveRaw) == null ? "holds-native" : "leg2-due";
+      saveGasFallbackRecord(storage, r);
+      changed++;
+    }
+  }
+  return changed;
+}
+/** The one-tap completion behind the swap sheet's button: run a
+ *  record's second leg now (re-checking the credit first when
+ *  the advancer hasn't seen it yet). */
+export async function completeGasFallbackSwap(wallet, recordId, progress = () => {}, { storage, onApprove = null, onApproveMayan = null } = {}) {
+  const record = loadGasFallbackRecords(storage).find(r => r.id === recordId);
+  if (!record) throw new Error("That swap record is gone.");
+  if (record.state === "done") return { record, done: true };
+  if (record.state === "holds-native") return { record, holdsNative: true };
+  if (record.receivedRaw == null) {
+    await advanceGasFallbackRecords(storage);
+    const fresh = loadGasFallbackRecords(storage).find(r => r.id === recordId);
+    if (!fresh || fresh.receivedRaw == null)
+      throw new Error(`Your ${record.nativeSymbol} hasn't landed yet — try again in a few minutes.`);
+    return runGasFallbackLeg2(wallet, fresh, progress, { storage, onApprove, onApproveMayan });
+  }
+  return runGasFallbackLeg2(wallet, record, progress, { storage, onApprove, onApproveMayan });
+}
+
+/** The source walk — Satora, Jupiter, Across, Relay, LI.FI.
+ *  Without a gas plan this is the incumbent cascade, byte for
+ *  byte: the first source that serves IS the answer and later
+ *  sources are never called. With a destination-gas plan
+ *  (needGas), the walk continues past a source whose routes
+ *  cannot carry the gas delivery, collecting candidates until
+ *  a capable route is in hand or the sources run out — merit
+ *  ranking in getSwapRoutes then decides, and LI.FI (last, for
+ *  the causes recorded above) is reached only when nothing
+ *  earlier served or nothing earlier could carry the gas. */
+async function getSwapRoutesCascade(args, { needGas = false } = {}) {
+  const found = [];
+  const collect = (routes) => { if (routes && routes.length) found.push(...routes); };
+  const more = () => !found.length || (needGas && !found.some(r => r && r.gasDrop));
   // Satora serves the destinations nobody else in this dispatcher
   // can — Bitcoin mainnet and Lightning, from USDC/USDT on
   // Arbitrum, Polygon or Ethereum. Its pairs never overlap the
@@ -11818,7 +12689,7 @@ async function getSwapRoutesCascade(args) {
   if (satoraSupportsPair(args)) {
     try {
       const route = await getSatoraSwapRoute(args);
-      if (route) return [route];
+      if (route) collect([route]);
     } catch (e) {
       if (e && e.satoraTerminal) throw e;
       /* Satora failed or is on an unknown version — fall through */
@@ -11831,58 +12702,67 @@ async function getSwapRoutesCascade(args) {
   // what used to serve them. Any Jupiter failure (throttle,
   // unusable quote, refused instructions) falls through to the
   // unchanged order below.
-  if (jupiterSupportsPair(args)) {
+  if (more() && jupiterSupportsPair(args)) {
     try {
       const route = await getJupiterSwapRoute(args);
-      if (route) return [route];
+      if (route) collect([route]);
     } catch { /* Jupiter failed or throttled — LI.FI below is the Solana fallback */ }
   }
-  if (acrossSupportsPair(args)) {
+  if (more() && acrossSupportsPair(args)) {
     try {
       const route = await getAcrossSwapRoute(args);
-      if (route) return [route];
+      if (route) collect([route]);
     } catch { /* Across failed, throttled or refused the quote — Relay below */ }
   }
-  if (relaySupportsPair(args.fromChainKey, args.toChainKey)) {
+  if (more() && relaySupportsPair(args.fromChainKey, args.toChainKey)) {
     try {
       const route = await getRelaySwapRoute(args);
-      if (route) return [route];
+      if (route) collect([route]);
     } catch { /* Relay failed or has no route — LI.FI below is the fallback */ }
   }
-  return getLifiSwapRoutes(args);
-}
-/** The one route search the swap sheet calls. Cheapest route
- *  wins. For pairs Mayan does not contest (mayanSupportsPair),
- *  this is exactly the incumbent cascade above — no Mayan call
- *  is made at all. For contested pairs, Mayan's live quote is
- *  fetched alongside the cascade's answer and the two compete
- *  in rankSwapRoutes — the dispatcher's own ordering by net
- *  USD value (destination amount minus gas; the route cost and
- *  Fluid's fee under the law are already inside the quoted
- *  amounts on both sides). THE OWNER'S RULE, enforced here at
- *  runtime: the Mayan route is offered ONLY when it ranks
- *  first. When it loses, the incumbent's routes are returned
- *  untouched — Mayan is a ranked candidate, never a priority,
- *  so its integration can never make an existing swap worse.
- *  A Mayan failure (outage, unusable quote, unverifiable
- *  payload) likewise just removes the candidate; the cascade's
- *  own failure still surfaces when nothing can serve. */
-export async function getSwapRoutes(args) {
-  if (!mayanSupportsPair(args)) return getSwapRoutesCascade(args);
-  let incumbent = null, incumbentError = null;
-  try { incumbent = await getSwapRoutesCascade(args); } catch (e) { incumbentError = e; }
-  let mayan = null;
-  try { mayan = await getMayanSwapRoute(args); } catch { mayan = null; }
-  if (mayan) {
-    const candidates = [mayan, ...(incumbent || [])];
-    const ranked = rankSwapRoutes(candidates, null);
-    if (ranked[0] && ranked[0].provider === "mayan") return ranked;
-    if (incumbent && incumbent.length) return incumbent;
-    return ranked;
+  if (more()) {
+    try { collect(await getLifiSwapRoutes(args)); }
+    catch (e) { if (!found.length) throw e; /* a serving source already answered; LI.FI's failure adds nothing */ }
   }
-  if (incumbent && incumbent.length) return incumbent;
-  if (incumbentError) throw incumbentError;
-  return incumbent || [];
+  return found.length ? found : null;
+}
+/** The one route search the swap sheet calls. As of 2026-11-11
+ *  the ranking is MERIT-based (the owner's rule): every serving
+ *  source's routes compete in rankSwapRoutes — a route that
+ *  fulfils the full requirement (including the destination-gas
+ *  delivery when planDestGas asks for one) outranks one that
+ *  cannot, and among those that can, best net output wins. This
+ *  supersedes the pre-2026-11-11 rules (brand-fixed cascade
+ *  order; "Mayan offered only when it ranks first, else the
+ *  incumbent returns untouched") — the walk still QUOTES in the
+ *  incumbent order and stops at the first serving source when
+ *  no gas is needed, so an ordinary search costs exactly what
+ *  it cost before; what changed is that the returned list is
+ *  ranked by merit and Mayan competes as a candidate like any
+ *  other. The cascade's own failure still surfaces when nothing
+ *  can serve. */
+export async function getSwapRoutes(args) {
+  let gasPlan = null;
+  try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
+  const planArgs = gasPlan ? { ...args, gasDrop: gasPlan } : args;
+  let routes = null, cascadeError = null;
+  try { routes = await getSwapRoutesCascade(planArgs, { needGas: !!gasPlan }); } catch (e) { cascadeError = e; }
+  routes = routes || [];
+  if (mayanSupportsPair(planArgs) || mayanSupportsSuiGasDropPair(planArgs)) {
+    try { const m = await getMayanSwapRoute(planArgs); if (m) routes.push(m); } catch { /* Mayan is a candidate, never a single point of failure */ }
+  }
+  // Mechanism 2 (all-to-native, then swap back) is synthesized
+  // only when a gas plan exists and no quoted route can carry
+  // the delivery — it is the fallback, never a rival to a drop.
+  if (gasPlan && routes.length && !routes.some(r => r && r.gasDrop)) {
+    try { const comp = await buildGasFallbackRoute(args, gasPlan); if (comp) routes.push(comp); } catch { /* the warning path remains */ }
+  }
+  if (!routes.length) {
+    if (cascadeError) throw cascadeError;
+    return routes;
+  }
+  if (gasPlan) for (const r of routes) if (!r.destGas) r.destGas = gasPlan;
+  return rankSwapRoutes(routes, null, { gasNeed: gasPlan });
 }
 /** Bounds-check one Relay step item BEFORE anything is signed (the
  *  Relay twin of checkSwapStepBounds). Relay builds complete
@@ -12011,7 +12891,19 @@ function swapRouteDurationSec(route) {
 /** Pure ranking: annotate each route with netUsd (what you receive in
  *  USD minus gas in USD), durationSec, and cheapest / fastest flags, and
  *  sort best-value first. Input routes are NOT mutated. */
-export function rankSwapRoutes(routes, toTokenPriceUsd = null) {
+export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
+  // Merit ranking (2026-11-11, the owner's rule): when a
+  // destination-gas plan is in force — passed explicitly, or
+  // carried on the routes themselves (route.destGas, which is
+  // how the swap sheet's own re-rank sees it) — a route that
+  // delivers the gas (route.gasDrop, either mechanism) outranks
+  // one that cannot, and the delivered gas counts in its net:
+  // it is value the user receives, not a cost. LI.FI is demoted
+  // for cause (429 rate-limiting of this machine, the 0.05 SUI
+  // in-account budget refusal, micro-size refusals, a 45%-cost
+  // Tron quote — recorded at the destination-gas section): it
+  // loses net-output ties to every other provider.
+  const gasNeed = opts.gasNeed ?? (routes || []).find(r => r?.destGas?.needed)?.destGas ?? null;
   const scored = (routes || []).map(r => {
     const gas = swapRouteGasUsd(r);
     const out = Number(r?.toAmountUSD);
@@ -12031,25 +12923,44 @@ export function rankSwapRoutes(routes, toTokenPriceUsd = null) {
         netUsd = expected - gas;
       }
     }
+    const dropUsd = gasNeed ? Number(r?.gasDrop?.usd) : NaN;
+    const gasCovered = Number.isFinite(dropUsd) && dropUsd > 0;
+    if (gasNeed && gasCovered) netUsd += dropUsd;
     return {
       ...r,
       gasCostUSD: gas,
       netUsd,
+      gasCovered,
       usdMismatch,
       durationSec: swapRouteDurationSec(r),
       cheapest: false, fastest: false,
     };
   });
+  const byMerit = (a, b) => {
+    if (gasNeed) {
+      const c = Number(b.gasCovered === true) - Number(a.gasCovered === true);
+      if (c) return c;
+    }
+    const dn = b.netUsd - a.netUsd;
+    if (Math.abs(dn) > 0.001) return dn;
+    // LI.FI routes are the dispatcher's provider-less ones (raw
+    // /routes answers and quote-converted routes carry no
+    // provider field — every other source stamps its own).
+    const isLifi = (r) => r.provider === "lifi" || r.provider == null;
+    const l = (isLifi(a) ? 1 : 0) - (isLifi(b) ? 1 : 0);
+    if (l) return l;
+    return a.durationSec - b.durationSec;
+  };
   if (scored.length) {
     const honest = scored.filter(r => !r.usdMismatch);
     let best = honest[0] || null;
-    for (const r of honest) if (!best || r.netUsd > best.netUsd || (r.netUsd === best.netUsd && r.durationSec < best.durationSec)) best = r;
+    for (const r of honest) if (!best || byMerit(r, best) < 0) best = r;
     if (best) best.cheapest = true;
     let fast = scored[0];
     for (const r of scored) if (r.durationSec < fast.durationSec || (r.durationSec === fast.durationSec && r.netUsd > fast.netUsd)) fast = r;
     fast.fastest = true;
   }
-  return scored.sort((a, b) => (b.netUsd - a.netUsd) || (a.durationSec - b.durationSec));
+  return scored.sort(byMerit);
 }
 
 /** The steps of a route Fluid can actually sign: those carrying a
