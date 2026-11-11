@@ -2234,6 +2234,31 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && pay.indexOf("lnFirstReceiveWarning(sats)") < pay.indexOf("lnSession.payOffer(t.value, msat)"));
 }
 
+// ---------- LN channel fee: the one-time clarification (owner rule, 2026-11-11) ----------
+// Standing instruction: wherever the UI names the 2,500-sat first-
+// receive charge, it must ALWAYS clarify in plain words that the fee
+// is one-time, for OPENING the channel, and that afterwards ANY
+// amount of sats (even 1 sat) can be sent/received with no opening
+// fee. Pinned on every surface that names the fee: both branches of
+// the send-side warning, the JIT receive fee review, and the
+// buy-receiving-room intro.
+{
+  const appChan = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const warnFn = appChan.slice(appChan.indexOf("function lnFirstReceiveWarning(sats)"), appChan.indexOf("async function lnPayWithNode"));
+  const sendClar = "The 2,500 sats is one-time, for opening the channel only — once the channel is open, any amount can be sent, even 1 sat, with no opening fee.";
+  ok("ln copy: BOTH send-warning branches carry the one-time + afterwards-any-amount clarification with the fee figure",
+    (warnFn.match(/The 2,500 sats is one-time, for opening the channel only/g) || []).length === 2
+    && warnFn.split(sendClar).length - 1 === 2
+    && warnFn.includes("takes a one-time 2,500 sats out of it for the opening"));
+  const jitSeg = appChan.slice(appChan.indexOf("function paintLnJitFlow"), appChan.indexOf("async function lnStartJitReceive"));
+  ok("ln copy: the JIT receive fee review pairs the opening fee with the one-time + any-amount clarification",
+    jitSeg.includes("Your first payment opens your channel. The provider (Megalith) takes")
+    && jitSeg.includes("That opening fee is one-time — once your channel is open, you can receive any amount, even 1 sat, with no opening fee."));
+  ok("ln copy: the buy-receiving-room intro states pay-once + any-amount afterwards",
+    appChan.includes("Pay Megalith once to open a channel to your node")
+    && appChan.includes("You pay once — after that, payments of any amount, even 1 sat, can come in without an opening fee each time."));
+}
+
 // ---------- Stacks family (Bitcoin L2, Build A step 2) ----------
 // Derivation/address vectors cross-checked against @stacks/transactions
 // (getAddressFromPrivateKey) + the c32check package's decoder; signed-tx

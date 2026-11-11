@@ -4219,7 +4219,7 @@ function paintLnPanel() {
     <button class="btn ghost" id="lnOfferBtn">My reusable offer (my Lightning address)</button>
     <div id="lnRcvOut"></div>
     <h4>Buy receiving room</h4>
-    <p class="tag">Pay Megalith once to open a channel to your node with the sats on their side — that side is your receiving room. The channel's sats sit on the provider's side; what you then receive into the room becomes yours to spend.</p>
+    <p class="tag">Pay Megalith once to open a channel to your node with the sats on their side — that side is your receiving room. The channel's sats sit on the provider's side; what you then receive into the room becomes yours to spend. You pay once — after that, payments of any amount, even 1 sat, can come in without an opening fee each time.</p>
     <p>
       <button class="btn ghost lnBuyPreset" data-sats="100000">100,000 sats</button>
       <button class="btn ghost lnBuyPreset" data-sats="500000">500,000 sats</button>
@@ -4289,9 +4289,9 @@ let lnFirstReceiveWarnedFor = null;
 function lnFirstReceiveWarning(sats) {
   const fmt = (n) => n.toLocaleString();
   if (sats >= 2502) {
-    return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — so ${fmt(sats - 2500)} of your ${fmt(sats)} sats would reach them. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. Tap Pay again to send.`;
+    return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — so ${fmt(sats - 2500)} of your ${fmt(sats)} sats would reach them. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. The 2,500 sats is one-time, for opening the channel only — once the channel is open, any amount can be sent, even 1 sat, with no opening fee. Tap Pay again to send.`;
   }
-  return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — a payment of ${fmt(sats)} sats is too small to survive that: it either can't go through at all or leaves almost nothing behind. Send around 5,000 sats or more so a meaningful amount lands in that case. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. Tap Pay again to send anyway, or raise the amount.`;
+  return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — a payment of ${fmt(sats)} sats is too small to survive that: it either can't go through at all or leaves almost nothing behind. Send around 5,000 sats or more so a meaningful amount lands in that case. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. The 2,500 sats is one-time, for opening the channel only — once the channel is open, any amount can be sent, even 1 sat, with no opening fee. Tap Pay again to send anyway, or raise the amount.`;
 }
 
 async function lnPayWithNode() {
@@ -4944,7 +4944,7 @@ function paintLnJitFlow(out) {
   const a = Math.floor(f.amountMsat / 1000);
   const fee = Math.max(1, Math.round(f.feeMsat / 1000));
   const landed = a - fee;
-  out.innerHTML = `<p>Your first payment opens your channel. The provider (Megalith) takes ${fee.toLocaleString()} sats of this ${a.toLocaleString()}-sat payment for opening it, so ${landed.toLocaleString()} sats land in your wallet. Keep Fluid open until the payment lands.</p>
+  out.innerHTML = `<p>Your first payment opens your channel. The provider (Megalith) takes ${fee.toLocaleString()} sats of this ${a.toLocaleString()}-sat payment for opening it, so ${landed.toLocaleString()} sats land in your wallet. That opening fee is one-time — once your channel is open, you can receive any amount, even 1 sat, with no opening fee. Keep Fluid open until the payment lands.</p>
     <button class="btn" id="lnJitGo">Show my invoice</button>
     <button class="btn ghost" id="lnJitCancel">Cancel</button>`;
   $("lnJitGo").onclick = () => lnConfirmJitReceive();
