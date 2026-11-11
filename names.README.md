@@ -39,6 +39,16 @@ registry entry — add it to `names.json` in this repo via a GitHub
 edit or PR. First come, first served either way; names are public and
 permanent in git history, so choose one you're happy to be known by.
 
+**Retired names:** the registry operator can retire a name by
+listing it in `names-retired.json` at the repo root (first done
+2026-11-11 for 46 QA/walk test names whose wallet keys no longer
+exist). A retired name is removed from this registry, and the
+claims processor refuses every future claim for it — from any
+wallet, including the original owner's — so it can never resolve
+again to a wallet nobody controls. The name stays visible in git
+history and in `names-retired.json` itself; un-retiring is an
+operator hand edit of that file, never a claim.
+
 **Updating your own entry:** a name's owner can add fields to their
 published entry — or refresh its Lightning fields (`ln` / `lnOffer`) —
 by publishing a fresh signed claim from the app; the processor

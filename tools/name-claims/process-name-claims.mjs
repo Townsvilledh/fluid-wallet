@@ -29,6 +29,16 @@
 // can ever do this; it exists so a live name can gain or refresh
 // its Lightning fields (ln / lnOffer) through the same pipeline
 // instead of a hand edit.
+// The operator-removal path (2026-11-11): names-retired.json at the
+// repo root lists names the registry operator has retired (first
+// used for the 46 QA/walk test names whose wallet keys no longer
+// exist anywhere). A retired name is stripped from the registry if
+// present, and EVERY claim for it is refused — including a rescan
+// of its original winning event after a state loss, and any fresh
+// claim from any wallet. The names stay in the processor state's
+// winners map as well, so FCFS refuses them twice over. Retirement
+// is deliberately one-way: un-retiring is a hand edit of
+// names-retired.json by the operator, never a claim.
 // The same names.json is then published to the gh-pages branch:
 // the live site (and the registry URL every wallet reads) is served
 // from gh-pages, so a main-only names commit never resolves for
@@ -60,6 +70,21 @@ export const MAX_NEW_NAMES_PER_RUN = 10;
 
 const ROOT = new URL("../..", import.meta.url).pathname;
 const NAMES_PATH = join(ROOT, "names.json");
+const RETIRED_PATH = join(ROOT, "names-retired.json");
+
+/** The operator's retired-names list (names-retired.json at the
+ *  repo root): a JSON object whose `retired` map keys are the
+ *  retired names. Returns a Set of normalized names. A missing or
+ *  corrupt file yields an empty set — a broken list must never
+ *  wedge the run, and the state's winners map still refuses
+ *  re-claims of ever-won names on its own. */
+export function loadRetiredNames(path = RETIRED_PATH) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    const names = parsed && parsed.retired ? Object.keys(parsed.retired) : [];
+    return new Set(names.map((n) => normalizeFluidName(n)).filter(Boolean));
+  } catch { return new Set(); }
+}
 const STATE_DIR = process.env.FLUID_NAME_CLAIMS_STATE_DIR
   || join(process.env.HOME || "/home/hatch", "workspace/goals/fluid-universal-wallet-and-ogo-era/hidden_files");
 const STATE_PATH = join(STATE_DIR, "name-claims-state.json");
@@ -171,7 +196,7 @@ export async function fetchClaimsPaged(queryFn, filter, pageSize = RELAY_PAGE_SI
   return events;
 }
 
-export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RUN) {
+export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RUN, retired = null) {
   const processed = (state && state.processed) || {};
   const priorWinners = (state && state.winners) || {};
   const sorted = [...(events || [])]
@@ -199,6 +224,12 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
     ours = true;
     const check = verifyNameClaim(claim);
     if (!check.ok) { decide("rejected", name, check.reason); continue; }
+    // Retired names refuse EVERY verified claim — a fresh claim, a
+    // same-owner update, or a rescan of the original winning event
+    // after a state loss — before any registry/FCFS handling, so a
+    // retired name can never re-enter the registry through this
+    // pipeline.
+    if (retired && retired.has(name)) { decide("rejected", name, "name retired by the registry operator — claims refused"); continue; }
     const existing = registry ? registry[name] : null;
     if (existing) {
       if (nameEntriesEqual(existing, check.entry)) decide("duplicate", name, "identical claim already published — no-op");
@@ -310,8 +341,18 @@ async function main() {
   }
   const events = [...byId.values()];
 
+  const retired = loadRetiredNames();
   const registry = JSON.parse(readFileSync(NAMES_PATH, "utf8"));
-  const { decisions, winners, updates = [] } = decideClaims(events, registry, state);
+  // Self-heal: a retired name that reappears in the registry (a
+  // hand commit, a stale checkout) is stripped again here, and the
+  // strip rides the same names commit as any winners/updates below
+  // — or its own, when it is the only change.
+  const stripped = [];
+  for (const name of Object.keys(registry)) {
+    if (retired.has(name)) { delete registry[name]; stripped.push(name); }
+  }
+  if (stripped.length) console.log(`name-claims: stripped retired name(s) from the registry: ${stripped.join(", ")}`);
+  const { decisions, winners, updates = [] } = decideClaims(events, registry, state, MAX_NEW_NAMES_PER_RUN, retired);
 
   for (const d of decisions) console.log(`name-claims: ${d.decision} ${d.name || "?"} ${d.eventId.slice(0, 12)}… ${d.reason}`.trim());
   console.log(`name-claims: ${events.length} claim event(s) seen, ${winners.length} winner(s), ${updates.length} update(s), ${decisions.filter((d) => d.decision === "rejected").length} rejected.`);
@@ -325,13 +366,15 @@ async function main() {
   const commitLabel = [
     winners.length ? `add ${winners.map((w) => w.name).join(", ")}` : "",
     updates.length ? `update ${updates.map((u) => u.name).join(", ")}` : "",
+    stripped.length ? `retire ${stripped.join(", ")}` : "",
   ].filter(Boolean).join("; ");
-  if (winners.length || updates.length) {
+  const claimSuffix = (winners.length || updates.length) ? " (in-app claim)" : " (operator retirement)";
+  if (winners.length || updates.length || stripped.length) {
     for (const w of winners) registry[w.name] = w.entry;
     for (const u of updates) registry[u.name] = u.entry;
     writeFileSync(NAMES_PATH, JSON.stringify(registry, null, 2) + "\n");
     git(["add", "names.json"]);
-    git(["commit", "-m", `names: ${commitLabel} (in-app claim)`], { stdio: "inherit" });
+    git(["commit", "-m", `names: ${commitLabel}${claimSuffix}`], { stdio: "inherit" });
     git(["push", "origin", "main"], { stdio: "inherit" });
     console.log(`name-claims: names.json committed + pushed (${commitLabel}).`);
   }
@@ -365,7 +408,7 @@ async function main() {
   // sync failure still fails the run (exit 1, reported by the cron)
   // — but the record above is already durable when it does.
   try {
-    syncGhPagesNames((winners.length || updates.length) ? `names: ${commitLabel} (in-app claim)` : undefined);
+    syncGhPagesNames(commitLabel ? `names: ${commitLabel}${claimSuffix}` : undefined);
   } catch (e) {
     console.error("name-claims: gh-pages sync FAILED (decisions + state already recorded) —", e.message || e);
     process.exitCode = 1;

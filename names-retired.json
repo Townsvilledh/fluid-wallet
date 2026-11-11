@@ -1,0 +1,188 @@
+{
+  "retired": {
+    "fluidqa1": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "fluidqa2": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "fluidqa3": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "auditwalk26": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "ngwalk89680": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "ngwalk72613": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "auditqa1109": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "repairqa1109": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "totwalk66426": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "themeqa1109": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "destroywalk92413": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "destroywalk1821": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "destroywalk75816": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "destroywalk50154": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "destroywalk23547": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqa1109": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqa1109c": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqapipe1": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqacomp2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqacomp1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "scrapqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "arkqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "arkqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "rampqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "rampqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "rampqa3110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "rampqa4110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "audit2qa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnqaretry1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "audit3qa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "audit3qa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "audit3qa3110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnfixqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "mtpcopyqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnproxyqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnproxyqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnstatusqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnstatusqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnstatusqa3110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "btcexitqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnpubqa2110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnpubqa3110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnpubqa4110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lnpubqa5110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "mtpextqa1110": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "lcssizeqa1111": {
+      "at": "2026-11-11",
+      "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    }
+  }
+}

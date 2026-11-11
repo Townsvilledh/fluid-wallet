@@ -327,4 +327,29 @@ ok("merge: ln replaceable, silent fields preserved, foreign evm refused",
   ok("emission: corrupted content is rewritten to the canonical bytes", plan.writes.get(lnurlPathFor("ethuram")) === lnurlPayRequestJson("ethuram"));
 }
 
+// 21. Retired names (names-retired.json, 2026-11-11): a VERIFIED
+// claim for a retired name is refused — a fresh claim from any
+// wallet, the original winner's own event rescanned with an empty
+// processed set (the state-loss resurrection path), and a
+// same-owner update against a hand-re-added entry alike — while
+// non-retired claims are unaffected by a retired set being present.
+{
+  const retired = new Set(["deadqa1"]);
+  const ev = await claimEvent(PHRASE_B, walletB, "deadqa1", 1000);
+  const fresh = decideClaims([ev], reg(), emptyState(), 10, retired);
+  ok("retired: fresh claim from another wallet refused", fresh.winners.length === 0 && fresh.decisions[0].decision === "rejected" && /retired/.test(fresh.decisions[0].reason));
+  const own = await claimEvent(PHRASE_A, walletA, "deadqa1", 1000);
+  const rescan = decideClaims([own], reg(), emptyState(), 10, retired);
+  ok("retired: original winner's rescanned event refused", rescan.winners.length === 0 && rescan.decisions[0].decision === "rejected" && /retired/.test(rescan.decisions[0].reason));
+  const upd = await claimEventLn(PHRASE_A, walletA, "deadqa1", 2000, { ln: "dead@getalby.com" });
+  const readded = { deadqa1: { evm: walletA.address, btc: bitcoinAddress(PHRASE_A) } };
+  const updRes = decideClaims([upd], readded, emptyState(), 10, retired);
+  ok("retired: same-owner update on a re-added entry refused", updRes.updates.length === 0 && updRes.decisions[0].decision === "rejected" && /retired/.test(updRes.decisions[0].reason));
+  const fine = await claimEvent(PHRASE_A, walletA, "newname9", 1000);
+  const fineRes = decideClaims([fine], reg(), emptyState(), 10, retired);
+  ok("retired: non-retired claim still wins", fineRes.winners.length === 1 && fineRes.winners[0].name === "newname9");
+  const noSet = decideClaims([ev], reg(), emptyState());
+  ok("retired: no retired set supplied — behaviour unchanged", noSet.winners.length === 1);
+}
+
 console.log(`\n${passed} processor checks passed`);
