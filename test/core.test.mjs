@@ -3356,8 +3356,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("names-host: the page canonical and social images point at the Fluid domain",
     html.includes('<link rel="canonical" href="https://fluidwallet.dpdns.org/">')
     && html.includes('<meta property="og:url" content="https://fluidwallet.dpdns.org/">')
-    && html.includes('<meta property="og:image" content="https://fluidwallet.dpdns.org/og-image.png">')
-    && html.includes('<meta name="twitter:image" content="https://fluidwallet.dpdns.org/og-image.png">'));
+    && html.includes('<meta property="og:image" content="https://fluidwallet.dpdns.org/og-card.png">')
+    && html.includes('<meta name="twitter:image" content="https://fluidwallet.dpdns.org/og-card.png">'));
 }
 
 // ---------- red-team F-08: route ranking / CHEAPEST badge capture ----------

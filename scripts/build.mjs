@@ -54,6 +54,12 @@ writeFileSync("dist/.nojekyll", "");
 copyFileSync("public/robots.txt", "dist/robots.txt");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");
+// Social card lives at a NEW filename (og-card.png, 2026-11-11): X and
+// other crawlers cache card images by URL, and the old /og-image.png URL
+// was still serving them the pre-rebrand purple card from cache long
+// after the image at that URL had been replaced. A fresh URL forces a
+// fresh fetch everywhere. og-image.png stays for the WalletConnect icon.
+copyFileSync("public/og-card.png", "dist/og-card.png");
 copyFileSync("public/favicon.png", "dist/favicon.png");
 copyFileSync("public/CNAME", "dist/CNAME");
 mkdirSync("dist/fonts", { recursive: true });
