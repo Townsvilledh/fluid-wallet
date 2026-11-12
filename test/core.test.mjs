@@ -10598,7 +10598,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist)",
     app.includes("rows: balances.filter(b => !b.scanned && !b.custom)"));
   ok("repair: a failed scan or missing token list reconciles scanned rows DOWN",
-    (app.match(/mergeEvmRows\(customRows, \[\]\);/g) || []).length >= 2);
+    app.includes('evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: quickRows })')
+    && app.includes('status: quickRows.length ? "limited" : "failed"')
+    && (app.match(/mergeEvmRows\(customRows, quickRows\);/g) || []).length >= 2);
   ok("repair: the EVM send sheet has MAX + USD line; MAX fills a fresh exact read, never the display",
     app.includes('id="sMax"') && app.includes('id="sAmtUsd"') && app.includes('$("sAmt").value = exact != null ? exact : String(b.amount);'));
   ok("repair: the EVM send review gates on a fresh exact balance with the plain sentence",
@@ -10721,14 +10723,25 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 
   // E3: the app wires prioritisation + progressive merge + the
-  // addresses-only held memory (never amounts — the phantom rule).
+  // metadata-only held memory (never amounts — the phantom rule).
   ok("E: hydrate scans a prioritised list and merges per chunk",
     app.includes("orderEvmScanList(list, priority)") && app.includes("onChunk: async (balMap)")
     && app.includes("rowsFromBalances(balMap)"));
-  ok("E: held memory persists addresses only, fed by completed scans",
+  ok("E: held memory persists token metadata only, fed by completed scans",
     app.includes('const HELD_TOKENS_KEY = "fluid_held_tokens_v1"')
-    && app.includes("saveHeldTokenAddresses(chainId, [...scan.balances.keys()")
-    && app.includes("loadHeldTokenAddresses(chainId)"));
+    && app.includes("saveHeldTokens(chainId, [...scan.balances.keys()]")
+    && app.includes("loadHeldTokens(chainId)")
+    && !app.includes("saveHeldTokens(chainId, [...scan.balances.entries()"));
+  // E4: the quick read — the priority set is scanned as one small
+  // round BEFORE the full token list is fetched, and its landed
+  // rows survive a later full-scan/list failure.
+  const quickIdx = app.indexOf("scanEvmTokenBalances(myKey, wallet.address, quickTokens");
+  const listIdx = app.indexOf("const list = await lifiTokensForChain(chainId)");
+  ok("E: quick read runs before the token-list fetch, capped small",
+    quickIdx > -1 && listIdx > quickIdx && app.includes("slice(0, 60)") && app.includes("quickRowsFromBalances"));
+  ok("E: quick-read rows are retained when the full scan fails",
+    app.includes("mergeEvmRows(customRows, quickRows)")
+    && app.includes('status: quickRows.length ? "limited" : "failed"'));
 
   // F1: CoinGecko chart parsing — thinning, garbage dropped, <2 → null.
   const chart = parseCgMarketChart({ prices: Array.from({ length: 100 }, (_, i) => [i * 1000, 100 + i]) });

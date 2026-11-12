@@ -176,25 +176,46 @@ function removeCustomToken(chainId, address) {
   if (Array.isArray(all[chainId])) all[chainId] = all[chainId].filter(c => c.address.toLowerCase() !== address.toLowerCase());
   try { localStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(all)); } catch { /* best effort */ }
 }
-/* Ever-held EVM token ADDRESSES per chain id (item E, 2026-11-12):
- * the scan's read order memory. Only addresses persist — NEVER
- * amounts — so a spent token can never resurrect as a cached
- * balance (the phantom rule): every figure on screen still comes
- * from a fresh chain read this session. The set only grows from
- * completed scans (union, capped), so a partial scan can never
- * shrink it, and the worst a stale entry costs is one early
- * balanceOf read that comes back zero. */
+/* Ever-held EVM token identities per chain id (item E, 2026-11-12):
+ * the scan's read order + quick-read memory. Only token metadata
+ * persists — NEVER amounts — so a spent token can never resurrect
+ * as a cached balance (the phantom rule): every figure on screen
+ * still comes from a fresh chain read this session. The set only
+ * grows from completed scans (union, capped), so a partial scan
+ * can never shrink it, and the worst a stale entry costs is one
+ * early balanceOf read that comes back zero. */
 const HELD_TOKENS_KEY = "fluid_held_tokens_v1";
-function loadHeldTokenAddresses(chainId) {
-  try { const all = JSON.parse(localStorage.getItem(HELD_TOKENS_KEY) || "{}"); return Array.isArray(all[chainId]) ? all[chainId] : []; }
-  catch { return []; }
+function normalizeHeldToken(entry) {
+  if (typeof entry === "string") return { address: entry };
+  if (!entry || typeof entry.address !== "string") return null;
+  const out = { address: entry.address };
+  if (typeof entry.symbol === "string" && entry.symbol) out.symbol = entry.symbol;
+  if (typeof entry.name === "string" && entry.name) out.name = entry.name;
+  if (Number.isInteger(entry.decimals) && entry.decimals >= 0 && entry.decimals <= 36) out.decimals = entry.decimals;
+  if (typeof entry.logoURI === "string" && entry.logoURI) out.logoURI = entry.logoURI;
+  return out;
 }
-function saveHeldTokenAddresses(chainId, addresses) {
+function loadHeldTokens(chainId) {
+  try {
+    const all = JSON.parse(localStorage.getItem(HELD_TOKENS_KEY) || "{}");
+    return (Array.isArray(all[chainId]) ? all[chainId] : []).map(normalizeHeldToken).filter(Boolean);
+  } catch { return []; }
+}
+function saveHeldTokens(chainId, entries) {
   let all = {};
   try { all = JSON.parse(localStorage.getItem(HELD_TOKENS_KEY) || "{}"); } catch { /* start fresh */ }
-  const set = new Set((Array.isArray(all[chainId]) ? all[chainId] : []).map(a => String(a).toLowerCase()));
-  for (const a of addresses || []) if (a) set.add(String(a).toLowerCase());
-  all[chainId] = [...set].slice(0, 500);
+  const byAddress = new Map();
+  for (const entry of Array.isArray(all[chainId]) ? all[chainId] : []) {
+    const held = normalizeHeldToken(entry);
+    if (held) byAddress.set(held.address.toLowerCase(), held);
+  }
+  for (const entry of entries || []) {
+    const held = normalizeHeldToken(entry);
+    if (!held) continue;
+    const key = held.address.toLowerCase();
+    byAddress.set(key, { ...(byAddress.get(key) || {}), ...held });
+  }
+  all[chainId] = [...byAddress.values()].slice(-500);
   try { localStorage.setItem(HELD_TOKENS_KEY, JSON.stringify(all)); } catch { /* best effort */ }
 }
 function lifiCacheGet(chainId) {
@@ -1844,15 +1865,66 @@ async function hydrateEvmTokens() {
   if (!alive()) return;
   const prev = evmScanCache.get(chainId);
   mergeEvmRows(customRows, (prev && prev.rows) || []);
-  // 2) The chain's LI.FI list (24h on-device cache when it fits).
+  // 2) QUICK READ (item E): curated + custom + ever-held tokens with
+  // persisted metadata are read as one small Multicall round BEFORE
+  // the full token list is fetched. This is the snapshot Ethuram
+  // asked for: what the wallet actually holds paints from a single
+  // small chain read, not after a 3,000-token list + 250-wide chunk.
+  // The full scan below still runs and reconciles everything.
+  const heldTokens = loadHeldTokens(chainId);
+  const quickByAddr = new Map();
+  const addQuickToken = (t) => {
+    if (!t || !t.address) return;
+    const key = t.address.toLowerCase();
+    if (!quickByAddr.has(key)) quickByAddr.set(key, t);
+  };
+  for (const t of NETWORKS[myKey].tokens || []) addQuickToken(t);
+  for (const r of customRows) addQuickToken(r);
+  for (const t of [...heldTokens].reverse()) {
+    if (t.symbol && Number.isInteger(t.decimals)) addQuickToken(t);
+  }
+  const quickTokens = [...quickByAddr.values()].slice(0, 60);
+  const quickRows = [];
+  const quickSeen = new Set();
+  const quickRowsFromBalances = (balMap) => {
+    for (const [addrLower, raw] of balMap) {
+      if (quickSeen.has(addrLower)) continue;
+      const t = quickByAddr.get(addrLower);
+      if (!t) continue;
+      quickSeen.add(addrLower);
+      quickRows.push({ symbol: t.symbol || "TOKEN", name: t.name || t.symbol || "Token",
+                       amount: formatTokenAmount(raw, t.decimals), address: t.address,
+                       decimals: t.decimals, verified: false, priceUsd: null, logoURI: t.logoURI || null });
+    }
+  };
+  if (quickTokens.length) {
+    evmScanState = { key: myKey, status: "scanning" };
+    paintAssets();
+    try {
+      const quick = await scanEvmTokenBalances(myKey, wallet.address, quickTokens, {
+        onChunk: async (balMap) => {
+          if (!alive()) return;
+          const before = quickRows.length;
+          quickRowsFromBalances(balMap);
+          if (quickRows.length !== before) mergeEvmRows(customRows, quickRows);
+        },
+      });
+      if (!alive()) return;
+      quickRowsFromBalances(quick.balances);
+      if (quickRows.length) mergeEvmRows(customRows, quickRows);
+    } catch { /* the full scan below remains the fallback */ }
+  }
+  // 3) The chain's LI.FI list (24h on-device cache when it fits).
   const list = await lifiTokensForChain(chainId);
   if (!alive()) return;
   if (!list) {
-    // No token list, no scan: previously merged scanned rows must
-    // not stand as truth (2026-11-12 phantom fix) — drop to the
-    // freshly-read custom rows only.
-    mergeEvmRows(customRows, []);
-    evmScanState = { key: myKey, status: "failed" }; paintAssets(); return;
+    // No token list, no full scan: previously merged scanned rows
+    // must not stand as truth (2026-11-12 phantom fix) — drop to
+    // the freshly-read custom rows plus this session's quick read,
+    // which is itself a fresh chain read of the priority set.
+    mergeEvmRows(customRows, quickRows);
+    evmScanState = { key: myKey, status: quickRows.length ? "limited" : "failed" };
+    paintAssets(); return;
   }
   const byAddr = new Map(list.map(t => [t.address.toLowerCase(), t]));
   for (const cr of customRows) {
@@ -1865,7 +1937,7 @@ async function hydrateEvmTokens() {
     paintAssets();
     return;
   }
-  // 3) The scan itself — PRIORITISED and PROGRESSIVE (item E,
+  // 4) The full scan — PRIORITISED and PROGRESSIVE (item E,
   // 2026-11-12): curated + custom + ever-held tokens read in the
   // FIRST chunk round, and every chunk's finds merge + paint as
   // they land. The held snapshot is complete within seconds; the
@@ -1876,11 +1948,11 @@ async function hydrateEvmTokens() {
   const priority = [
     ...(NETWORKS[myKey].tokens || []).map(t => t.address),
     ...loadCustomTokens(chainId).map(t => t.address),
-    ...loadHeldTokenAddresses(chainId),
+    ...heldTokens.map(t => t.address),
   ];
   const orderedList = orderEvmScanList(list, priority);
   const scannedRows = [];
-  const seenScanned = new Set();
+  const seenScanned = new Set(quickSeen);
   const rowsFromBalances = (balMap) => {
     for (const [addrLower, raw] of balMap) {
       if (seenScanned.has(addrLower)) continue;
@@ -1898,29 +1970,39 @@ async function hydrateEvmTokens() {
         if (!alive()) return;
         const before = scannedRows.length;
         rowsFromBalances(balMap);
-        if (scannedRows.length !== before) mergeEvmRows(customRows, scannedRows);
+        if (scannedRows.length !== before) mergeEvmRows(customRows, [...quickRows, ...scannedRows]);
       },
     });
   }
   catch {
     if (!alive()) return;
     // A failed scan reconciles DOWN (2026-11-12 phantom fix):
-    // scanned rows merged earlier this session are dropped rather
-    // than left standing as unreconciled truth.
-    mergeEvmRows(customRows, []);
-    evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: [] });
+    // long-tail rows merged earlier this session are dropped rather
+    // than left standing as unreconciled truth. The quick read's
+    // rows stay: they are a completed fresh read of the priority
+    // set from this session, not an unreconciled cache.
+    mergeEvmRows(customRows, quickRows);
+    evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: quickRows });
     evmScanState = { key: myKey, status: "limited" };
     paintAssets();
     return;
   }
   if (!alive()) return;
   rowsFromBalances(scan.balances);
-  // Remember every held address (addresses only — never amounts)
-  // so the next open reads them in its first chunk round.
-  saveHeldTokenAddresses(chainId, [...scan.balances.keys(),
-    ...customRows.filter(r => Number(r.amount) > 0).map(r => r.address)]);
-  // 4) DexScreener prices for held rows no list could price.
-  const unpriced = [...customRows, ...scannedRows].filter(r => r.priceUsd == null && Number(r.amount) > 0);
+  // Enrich quick-read rows with the list's verification + price
+  // metadata now that the list is here (their balances were read
+  // before it arrived).
+  for (const r of quickRows) {
+    const t = byAddr.get(r.address.toLowerCase());
+    if (t) { r.verified = lifiTokenVerified(t); if (t.priceUSD != null) r.priceUsd = t.priceUSD; if (t.logoURI) r.logoURI = t.logoURI; }
+  }
+  const allScannedRows = [...quickRows, ...scannedRows];
+  // Remember every held token's identity (metadata only — never
+  // amounts) so the next open quick-reads it before the list loads.
+  saveHeldTokens(chainId, [...scan.balances.keys()].map(a => byAddr.get(a)).filter(Boolean)
+    .concat(quickRows, customRows.filter(r => Number(r.amount) > 0)));
+  // 5) DexScreener prices for held rows no list could price.
+  const unpriced = [...customRows, ...allScannedRows].filter(r => r.priceUsd == null && Number(r.amount) > 0);
   const dexId = dexChainIdForEvmChain(chainId);
   if (unpriced.length && dexId) {
     const info = await getDexScreenerTokenInfo(dexId, unpriced.map(r => r.address));
@@ -1930,8 +2012,8 @@ async function hydrateEvmTokens() {
       if (d && d.priceUsd != null) r.priceUsd = d.priceUsd;
     }
   }
-  evmScanCache.set(chainId, { at: Date.now(), status: "done", rows: scannedRows });
-  mergeEvmRows(customRows, scannedRows);
+  evmScanCache.set(chainId, { at: Date.now(), status: "done", rows: allScannedRows });
+  mergeEvmRows(customRows, allScannedRows);
   evmScanState = { key: myKey, status: "done" };
   paintAssets();
 }
