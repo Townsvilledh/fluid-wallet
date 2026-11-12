@@ -14625,6 +14625,103 @@ export async function getDexScreenerTokenInfo(dexChainId, addresses) {
   return out;
 }
 
+// ----- Token detail extras: price history + market data (item F) -----
+// The token detail screen shows ONLY what a real source provides:
+// a 24h price history, a 24h volume and a market cap, each nullable
+// and omitted by the UI when null — never estimated, never filled
+// in from the token's own claims. Source: CoinGecko's keyless public
+// API, the same price family getPrices already trusts — by contract
+// address on its asset-platform ids where one is known, else by the
+// coin id behind a major symbol (CG_IDS). Any failure (rate limit,
+// unknown token, no platform) yields nulls, not an error.
+const CG_PLATFORM_IDS = { 1: "ethereum", 56: "binance-smart-chain", 8453: "base", 42161: "arbitrum-one",
+  10: "optimistic-ethereum", 137: "polygon-pos", 43114: "avalanche", 100: "xdai", 42220: "celo",
+  59144: "linea", 324: "zksync", 5000: "mantle", 534352: "scroll" };
+export function cgPlatformForChain(chainId) {
+  return CG_PLATFORM_IDS[Number(chainId)] || null;
+}
+/** The CoinGecko coin id behind a major symbol (the same table
+ *  getPrices prices from) — the coin route for native assets and
+ *  majors whose contract route doesn't apply. Null when unknown. */
+export function cgIdForSymbol(symbol) {
+  return CG_IDS[symbol] || null;
+}
+/** Pure parser for a CoinGecko market_chart reply: [[ms, price], …]
+ *  → at most maxPoints { t, p } samples, evenly thinned, garbage
+ *  dropped. Fewer than 2 sane points → null (no chart to draw). */
+export function parseCgMarketChart(data, maxPoints = 48) {
+  const raw = data && Array.isArray(data.prices) ? data.prices : null;
+  if (!raw) return null;
+  const pts = [];
+  for (const p of raw) {
+    if (!Array.isArray(p)) continue;
+    const t = Number(p[0]), v = Number(p[1]);
+    if (Number.isFinite(t) && Number.isFinite(v) && v > 0) pts.push({ t, p: v });
+  }
+  if (pts.length < 2) return null;
+  if (pts.length <= maxPoints) return pts;
+  const step = (pts.length - 1) / (maxPoints - 1);
+  const out = [];
+  for (let i = 0; i < maxPoints; i++) out.push(pts[Math.round(i * step)]);
+  return out;
+}
+/** Fetch the detail extras for one token. Exactly one of
+ *  { cgPlatform + address } (contract route) or { cgId } (coin
+ *  route) is used; the contract route wins when both are offered.
+ *  Returns { history, marketCapUsd, volume24hUsd } — every field
+ *  independently nullable. Never throws. */
+export async function fetchTokenMarketExtras({ cgPlatform = null, address = null, cgId = null, days = 1, fetchImpl } = {}) {
+  const F = fetchImpl || fetch;
+  const out = { history: null, marketCapUsd: null, volume24hUsd: null };
+  const base = cgPlatform && address
+    ? `https://api.coingecko.com/api/v3/coins/${cgPlatform}/contract/${address}`
+    : cgId ? `https://api.coingecko.com/api/v3/coins/${cgId}` : null;
+  if (!base) return out;
+  try {
+    const res = await F(`${base}/market_chart?vs_currency=usd&days=${days}`, { signal: AbortSignal.timeout(12000) });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      out.history = parseCgMarketChart(data);
+      const mc = data && Array.isArray(data.market_caps) && data.market_caps.length ? Number(data.market_caps[data.market_caps.length - 1][1]) : NaN;
+      if (Number.isFinite(mc) && mc > 0) out.marketCapUsd = mc;
+      const tv = data && Array.isArray(data.total_volumes) && data.total_volumes.length ? Number(data.total_volumes[data.total_volumes.length - 1][1]) : NaN;
+      if (Number.isFinite(tv) && tv > 0) out.volume24hUsd = tv;
+    }
+  } catch { /* history stays null — the UI omits the chart */ }
+  if (out.marketCapUsd == null || out.volume24hUsd == null) {
+    try {
+      const res = await F(base, { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const md = data && data.market_data;
+        if (md) {
+          if (out.marketCapUsd == null && Number(md.market_cap && md.market_cap.usd) > 0) out.marketCapUsd = Number(md.market_cap.usd);
+          if (out.volume24hUsd == null && Number(md.total_volume && md.total_volume.usd) > 0) out.volume24hUsd = Number(md.total_volume.usd);
+        }
+      }
+    } catch { /* fields stay null — omitted, never invented */ }
+  }
+  return out;
+}
+/** A dependency-free SVG sparkline for a price-history point list.
+ *  Pure: numbers in, markup out (every value is a finite number by
+ *  construction, so nothing attacker-shaped can reach the string).
+ *  Fewer than 2 points → "" (the caller omits the chart). */
+export function sparklineSvg(points, { width = 300, height = 72 } = {}) {
+  const pts = (points || []).filter(p => p && Number.isFinite(Number(p.p)) && Number(p.p) > 0);
+  if (pts.length < 2) return "";
+  const vals = pts.map(p => Number(p.p));
+  let min = Math.min(...vals), max = Math.max(...vals);
+  if (max === min) { max = min * 1.001 + 1e-12; min = min * 0.999; }
+  const X = (i) => (i / (pts.length - 1)) * (width - 2) + 1;
+  const Y = (v) => height - 3 - ((v - min) / (max - min)) * (height - 6);
+  const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(Number(p.p)).toFixed(1)}`).join(" ");
+  const area = `1,${(height - 1).toFixed(1)} ${line} ${(width - 1).toFixed(1)},${(height - 1).toFixed(1)}`;
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none" aria-hidden="true">`
+    + `<polygon points="${area}" fill="rgba(247,147,26,0.15)"></polygon>`
+    + `<polyline points="${line}" fill="none" stroke="#f7931a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline></svg>`;
+}
+
 // ----- LI.FI token lists (the swap universe doubles as a registry) -----
 function lifiTokenShape(t) {
   if (!t || !t.address || !t.symbol) return null;
@@ -15142,9 +15239,38 @@ export async function hasMulticall3(networkKey) {
  *  Multicall3 and a failed batch throws instead of hammering a
  *  public RPC with thousands of calls (the app shows the scan as
  *  "limited" on that chain; curated + custom tokens still work). */
-export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250 } = {}) {
+/** Order a scan list so the tokens that matter to THIS wallet read
+ *  FIRST (2026-11-12, item E): curated + custom + ever-held token
+ *  addresses lead, the long tail follows in list order. Pure and
+ *  stable — within each group the input order is preserved, and
+ *  duplicate addresses collapse to their first entry. The full list
+ *  is still scanned; only the ORDER changes, so a held token's
+ *  balance lands in the first chunk round instead of the last. */
+export function orderEvmScanList(tokens, priorityAddresses) {
+  const pri = new Set((priorityAddresses || []).map(a => String(a || "").toLowerCase()).filter(Boolean));
+  const seen = new Set();
+  const head = [], tail = [];
+  for (const t of tokens || []) {
+    if (!t || !t.address) continue;
+    const k = String(t.address).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    (pri.has(k) ? head : tail).push(t);
+  }
+  return [...head, ...tail];
+}
+
+export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250, onChunk = null } = {}) {
   const net = NETWORKS[networkKey];
   if (!net) throw new Error("Unknown network: " + networkKey);
+  // Progressive surfacing (item E): after each chunk round the
+  // caller hears about every balance found SO FAR, so held rows can
+  // paint in seconds while the long tail keeps scanning behind
+  // them. A throwing callback never fails the scan.
+  const emitChunk = async () => {
+    if (!onChunk) return;
+    try { await onChunk(balances); } catch { /* surfacing is best-effort */ }
+  };
   // GAP-1: the chain's native-asset predeploy (Arc's USDC) is the
   // native coin itself — scanning it would re-add the same funds as
   // a discovered token row beside the native row.
@@ -15165,6 +15291,7 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
           if (v > 0n) balances.set(grp[i].address.toLowerCase(), v);
         } catch { /* a non-ERC20 reply — not a balance */ }
       });
+      await emitChunk();
     }
     return { balances, method: "multicall3" };
   }
@@ -15182,6 +15309,7 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
         if (!t || !item.result || item.result === "0x") continue;
         try { const v = BigInt(item.result); if (v > 0n) balances.set(t.address.toLowerCase(), v); } catch { /* not a number */ }
       }
+      await emitChunk();
     }
     return { balances, method: "batch" };
   } catch { /* batching refused — direct calls or an honest "limited" */ }
@@ -15194,6 +15322,7 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
         if (v > 0n) balances.set(t.address.toLowerCase(), v);
       } catch { /* that contract didn't answer — not a balance */ }
     }));
+    await emitChunk();
   }
   return { balances, method: "direct" };
 }

@@ -3862,7 +3862,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ui-p0: send dispatches to the family's own sheet from a family view",
     appSrc.includes('if (viewKey === "algorand") return openAlgoSheet')
     && appSrc.includes('if (viewKey === "bitcoin") return openBtcSheet()')
-    && appSrc.includes("function openEvmSendSheet()"));
+    && appSrc.includes("function openEvmSendSheet(prefer = null)"));
   // §4.8: the shared success helper is wired into every send family.
   ok("ui-p0: showTxSuccess is defined once and called by every family",
     appSrc.includes("function showTxSuccess({")
@@ -10642,6 +10642,138 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     app.includes("evmScanCache.delete(NETWORKS[networkKey].chainId)"));
   ok("repair B: swap success, the ambiguous path and the EVM send paths rescan too",
     (app.match(/rescanAfterActivity\(\);/g) || []).length >= 5);
+}
+
+/* ================== Item E + F (2026-11-12): fast held-token
+ * snapshot + token detail ================== */
+{
+  const core2 = await import("../src/wallet-core.js");
+  const { orderEvmScanList, parseCgMarketChart, sparklineSvg, fetchTokenMarketExtras,
+          cgPlatformForChain, cgIdForSymbol } = core2;
+  const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+
+  // E1: scan order — priority (curated/custom/ever-held) first,
+  // stable within groups, duplicates collapsed, tail complete.
+  const A = "0x00000000000000000000000000000000000000aA";
+  const B = "0x00000000000000000000000000000000000000Bb";
+  const C = "0x00000000000000000000000000000000000000Cc";
+  const D = "0x00000000000000000000000000000000000000Dd";
+  const ordered = orderEvmScanList(
+    [{ address: A }, { address: B }, { address: C }, { address: B }, { address: D }],
+    [C.toLowerCase(), A]);
+  ok("E: scan order puts ever-held/curated tokens first, keeps list order, dedupes",
+    ordered.map(t => t.address).join(",") === [A, C, B, D].join(","));
+  ok("E: scan order with no priorities is the list itself (full coverage kept)",
+    orderEvmScanList([{ address: A }, { address: B }], []).length === 2);
+
+  // E2: progressive scan — onChunk fires per chunk round with the
+  // balances found SO FAR (batch path on a Multicall3-less stub
+  // chain): 60 tokens in 50-chunks = 2 emissions, growing map.
+  registerNetworks({ c999999: { name: "Stub", chainId: 999999, symbol: "STB", priceSym: null,
+    rpc: "https://rpc-stub.invalid", explorer: null, tokens: [] } });
+  const { FetchRequest, FetchResponse } = await import("ethers");
+  const prevGetUrl = FetchRequest.createGetUrlFunc();
+  const realFetchE = globalThis.fetch;
+  const toks60 = Array.from({ length: 60 }, (_, i) => ({
+    symbol: "T" + i, decimals: 18,
+    address: "0x" + String(i + 1).padStart(40, "0"),
+  }));
+  const balHex = (to) => {
+    const idx = parseInt(to.slice(-4), 16) - 1;
+    const amt = idx < 3 ? BigInt((idx + 1) * 1000) : 0n; // first three tokens held
+    return "0x" + amt.toString(16).padStart(64, "0");
+  };
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (r) => {
+        let result;
+        if (r.method === "eth_chainId") result = "0xf423f";
+        else if (r.method === "net_version") result = "999999";
+        else if (r.method === "eth_getCode") result = "0x"; // no Multicall3 → batch path
+        else if (r.method === "eth_call") result = balHex(r.params[0].to);
+        else throw new Error("unexpected rpc method " + r.method);
+        return { jsonrpc: "2.0", id: r.id, result };
+      };
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" },
+        new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("rpc-stub.invalid")) {
+        const parsed = JSON.parse(opts.body);
+        const payload = parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: balHex(r.params[0].to) }));
+        return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetchE(url, opts);
+    };
+    const emissions = [];
+    const scanE = await scanEvmTokenBalances("c999999", "0x00000000000000000000000000000000000000ff", toks60, {
+      onChunk: async (m) => { emissions.push(m.size); },
+    });
+    ok("E: the scan surfaces balances progressively, chunk by chunk",
+      scanE.method === "batch" && emissions.length === 2 && emissions[0] === 3 && emissions[1] === 3);
+    ok("E: progressive scan still ends with the complete positive set",
+      scanE.balances.size === 3 && scanE.balances.get(toks60[0].address.toLowerCase()) === 1000n);
+  } finally {
+    FetchRequest.registerGetUrl(prevGetUrl);
+    globalThis.fetch = realFetchE;
+  }
+
+  // E3: the app wires prioritisation + progressive merge + the
+  // addresses-only held memory (never amounts — the phantom rule).
+  ok("E: hydrate scans a prioritised list and merges per chunk",
+    app.includes("orderEvmScanList(list, priority)") && app.includes("onChunk: async (balMap)")
+    && app.includes("rowsFromBalances(balMap)"));
+  ok("E: held memory persists addresses only, fed by completed scans",
+    app.includes('const HELD_TOKENS_KEY = "fluid_held_tokens_v1"')
+    && app.includes("saveHeldTokenAddresses(chainId, [...scan.balances.keys()")
+    && app.includes("loadHeldTokenAddresses(chainId)"));
+
+  // F1: CoinGecko chart parsing — thinning, garbage dropped, <2 → null.
+  const chart = parseCgMarketChart({ prices: Array.from({ length: 100 }, (_, i) => [i * 1000, 100 + i]) });
+  ok("F: market_chart parses and thins to the point budget, ends preserved",
+    chart.length === 48 && chart[0].p === 100 && chart[47].p === 199);
+  ok("F: unparseable or single-point charts are null (chart omitted, never drawn)",
+    parseCgMarketChart(null) === null && parseCgMarketChart({ prices: [[1, 5]] }) === null
+    && parseCgMarketChart({ prices: [["x", "y"], [1, -2]] }) === null);
+
+  // F2: sparkline — real polyline from points; <2 points → "".
+  const spark = sparklineSvg([{ t: 1, p: 10 }, { t: 2, p: 20 }, { t: 3, p: 15 }]);
+  ok("F: sparkline renders an orange polyline through every point",
+    spark.includes("<polyline") && spark.includes("#f7931a") && (spark.match(/,/g) || []).length >= 3);
+  ok("F: sparkline refuses fewer than two points", sparklineSvg([{ t: 1, p: 5 }]) === "" && sparklineSvg(null) === "");
+
+  // F3: market extras — contract route wins; failures null out.
+  const extras = await fetchTokenMarketExtras({
+    cgPlatform: "binance-smart-chain", address: "0xABC", cgId: "bitcoin",
+    fetchImpl: async (url) => {
+      if (String(url).includes("market_chart")) return { ok: true, json: async () => ({ prices: [[1, 2], [2, 3]], market_caps: [[1, 0], [2, 123456]], total_volumes: [[1, 0], [2, 789]] }) };
+      return { ok: false, json: async () => ({}) };
+    },
+  });
+  ok("F: extras read history + latest market cap + volume from the chart reply",
+    extras.history.length === 2 && extras.marketCapUsd === 123456 && extras.volume24hUsd === 789);
+  const extrasDead = await fetchTokenMarketExtras({ cgPlatform: "binance-smart-chain", address: "0xABC",
+    fetchImpl: async () => { throw new Error("offline"); } });
+  ok("F: extras never throw and never invent — dead source → all null",
+    extrasDead.history === null && extrasDead.marketCapUsd === null && extrasDead.volume24hUsd === null);
+  ok("F: platform + coin-id maps cover the shipped chains and majors",
+    cgPlatformForChain(56) === "binance-smart-chain" && cgPlatformForChain(8453) === "base"
+    && cgPlatformForChain(999999) === null && cgIdForSymbol("BNB") === "binancecoin" && cgIdForSymbol("NOPE") === null);
+
+  // F4: the app wires rows → detail, chips → copy (unambiguous),
+  // and detail Send/Swap into the shipped flows pre-selected.
+  ok("F: EVM rows carry a detail tap and every token row its copyable address chip",
+    app.includes('data-evmrow="${i}"') && app.includes('data-copyaddr="${esc(b.address)}"')
+    && app.includes("e.stopPropagation()") && app.includes("openTokenDetail(evmDetailDesc(b))"));
+  ok("F: detail screen sources fields honestly and reuses the shipped send/swap flows",
+    app.includes("function openTokenDetail(d)") && app.includes("fetchTokenMarketExtras(d.extras)")
+    && app.includes("openEvmSendSheet({ address: b.address || null })")
+    && app.includes("pendingSwapFrom = { netKey: networkKey, address: b.address || null }")
+    && app.includes("const swapPre = pendingSwapFrom; pendingSwapFrom = null;"));
+  ok("F: natives show no fake contract — the detail says so in plain words",
+    app.includes("This is the network's native asset — it has no contract address."));
 }
 
 console.log(`\n${passed} checks passed`);

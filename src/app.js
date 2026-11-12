@@ -43,6 +43,7 @@ import {
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
+  orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
   detectScanFamily, detectScanTxid, fetchScanTxid, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
@@ -174,6 +175,27 @@ function removeCustomToken(chainId, address) {
   try { all = JSON.parse(localStorage.getItem(CUSTOM_TOKENS_KEY) || "{}"); } catch { return; }
   if (Array.isArray(all[chainId])) all[chainId] = all[chainId].filter(c => c.address.toLowerCase() !== address.toLowerCase());
   try { localStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(all)); } catch { /* best effort */ }
+}
+/* Ever-held EVM token ADDRESSES per chain id (item E, 2026-11-12):
+ * the scan's read order memory. Only addresses persist — NEVER
+ * amounts — so a spent token can never resurrect as a cached
+ * balance (the phantom rule): every figure on screen still comes
+ * from a fresh chain read this session. The set only grows from
+ * completed scans (union, capped), so a partial scan can never
+ * shrink it, and the worst a stale entry costs is one early
+ * balanceOf read that comes back zero. */
+const HELD_TOKENS_KEY = "fluid_held_tokens_v1";
+function loadHeldTokenAddresses(chainId) {
+  try { const all = JSON.parse(localStorage.getItem(HELD_TOKENS_KEY) || "{}"); return Array.isArray(all[chainId]) ? all[chainId] : []; }
+  catch { return []; }
+}
+function saveHeldTokenAddresses(chainId, addresses) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(HELD_TOKENS_KEY) || "{}"); } catch { /* start fresh */ }
+  const set = new Set((Array.isArray(all[chainId]) ? all[chainId] : []).map(a => String(a).toLowerCase()));
+  for (const a of addresses || []) if (a) set.add(String(a).toLowerCase());
+  all[chainId] = [...set].slice(0, 500);
+  try { localStorage.setItem(HELD_TOKENS_KEY, JSON.stringify(all)); } catch { /* best effort */ }
 }
 function lifiCacheGet(chainId) {
   try {
@@ -1149,9 +1171,16 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
     : (v != null ? `<b>${fmt(b.amount)}</b><small>${usd(v)}</small>`
         : (Number(b.amount) > 0 ? `<b>${fmt(b.amount)}</b><small>price unavailable</small>`
             : `<b>${fmt(b.amount)}</b><small>${usd(0)}</small>`));
+  // Contract/mint/coin-type chip (item F addendum, 2026-11-12):
+  // every token row carries its on-chain identifier, tap-to-copy —
+  // the tap copies and does NOT trigger the row's own tap (detail
+  // view), wired with stopPropagation in paintAssets. Native rows
+  // have no address and show nothing here — never a fake contract.
+  const addrLine = b.address && ["evm", "solana", "sui", "tron"].includes(famKey)
+    ? `<br><small class="addrchip" data-copyaddr="${esc(b.address)}" title="Copy address">${esc(shortAddr(b.address))} ⧉</small>` : "";
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
       <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
-      <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small></span>
+      <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small>${addrLine}</span>
       <span class="amt">${amt}</span></div>`;
 }
 // ---------- zero-balance collapse + skeletons (§4.5/§4.13) ----------
@@ -1351,7 +1380,10 @@ function paintAssets() {
   // null) — never an empty list under a $0.00 header.
   {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, net.name, "", "evm");
+    const render = ({ b, v }) => {
+      const i = balances.indexOf(b);
+      return tokenRowHtml(b, v, net.name, i >= 0 ? `data-evmrow="${i}"` : "", "evm");
+    };
     const evmRows = evmLoadFailed
       ? [{ symbol: net.symbol, amount: null, address: null, verified: true },
          ...net.tokens.map(t => ({ ...t, amount: null }))]
@@ -1619,6 +1651,17 @@ function paintAssets() {
       || cosmosRows.some(r => Number(r.amount) > 0);
     hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !anyBal && scopedTotal() === 0));
   }
+  // Address chips copy WITHOUT opening the row's destination —
+  // the two taps are unambiguous (chip = copy, row = detail).
+  document.querySelectorAll("[data-copyaddr]").forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    copyText(el.dataset.copyaddr, el);
+    toast("Address copied");
+  });
+  document.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
+    const b = balances[Number(r.dataset.evmrow)];
+    if (b) openTokenDetail(evmDetailDesc(b));
+  });
   const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
   const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
@@ -1626,15 +1669,15 @@ function paintAssets() {
   const lnEl = document.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
-    if (b) openTronSheet(b);
+    if (b) openTokenDetail(tronDetailDesc(b));
   });
   document.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
     const b = solBalances[Number(r.dataset.sol)];
-    if (b) openSolanaSheet(b);
+    if (b) openTokenDetail(solanaDetailDesc(b));
   });
   document.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
     const b = suiBalances[Number(r.dataset.sui)];
-    if (b) openSuiSheet(b);
+    if (b) openTokenDetail(suiDetailDesc(b));
   });
   document.querySelectorAll("[data-stellar]").forEach(r => r.onclick = () => {
     const b = stellarBalances[Number(r.dataset.stellar)];
@@ -1822,11 +1865,43 @@ async function hydrateEvmTokens() {
     paintAssets();
     return;
   }
-  // 3) The scan itself.
+  // 3) The scan itself — PRIORITISED and PROGRESSIVE (item E,
+  // 2026-11-12): curated + custom + ever-held tokens read in the
+  // FIRST chunk round, and every chunk's finds merge + paint as
+  // they land. The held snapshot is complete within seconds; the
+  // long tail keeps scanning behind it (skeleton rows stay up
+  // until it finishes — never a blank, never a fake zero).
   evmScanState = { key: myKey, status: "scanning" };
   paintAssets();
+  const priority = [
+    ...(NETWORKS[myKey].tokens || []).map(t => t.address),
+    ...loadCustomTokens(chainId).map(t => t.address),
+    ...loadHeldTokenAddresses(chainId),
+  ];
+  const orderedList = orderEvmScanList(list, priority);
+  const scannedRows = [];
+  const seenScanned = new Set();
+  const rowsFromBalances = (balMap) => {
+    for (const [addrLower, raw] of balMap) {
+      if (seenScanned.has(addrLower)) continue;
+      const t = byAddr.get(addrLower);
+      if (!t) continue;
+      seenScanned.add(addrLower);
+      scannedRows.push({ symbol: t.symbol, name: t.name, amount: formatTokenAmount(raw, t.decimals),
+                         address: t.address, decimals: t.decimals, verified: lifiTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
+    }
+  };
   let scan;
-  try { scan = await scanEvmTokenBalances(myKey, wallet.address, list); }
+  try {
+    scan = await scanEvmTokenBalances(myKey, wallet.address, orderedList, {
+      onChunk: async (balMap) => {
+        if (!alive()) return;
+        const before = scannedRows.length;
+        rowsFromBalances(balMap);
+        if (scannedRows.length !== before) mergeEvmRows(customRows, scannedRows);
+      },
+    });
+  }
   catch {
     if (!alive()) return;
     // A failed scan reconciles DOWN (2026-11-12 phantom fix):
@@ -1839,13 +1914,11 @@ async function hydrateEvmTokens() {
     return;
   }
   if (!alive()) return;
-  const scannedRows = [];
-  for (const [addrLower, raw] of scan.balances) {
-    const t = byAddr.get(addrLower);
-    if (!t) continue;
-    scannedRows.push({ symbol: t.symbol, name: t.name, amount: formatTokenAmount(raw, t.decimals),
-                       address: t.address, decimals: t.decimals, verified: lifiTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
-  }
+  rowsFromBalances(scan.balances);
+  // Remember every held address (addresses only — never amounts)
+  // so the next open reads them in its first chunk round.
+  saveHeldTokenAddresses(chainId, [...scan.balances.keys(),
+    ...customRows.filter(r => Number(r.amount) > 0).map(r => r.address)]);
   // 4) DexScreener prices for held rows no list could price.
   const unpriced = [...customRows, ...scannedRows].filter(r => r.priceUsd == null && Number(r.amount) > 0);
   const dexId = dexChainIdForEvmChain(chainId);
@@ -1861,6 +1934,115 @@ async function hydrateEvmTokens() {
   mergeEvmRows(customRows, scannedRows);
   evmScanState = { key: myKey, status: "done" };
   paintAssets();
+}
+
+// ---------- token detail (item F, 2026-11-12) ----------
+// Tapping an asset row opens this screen. Every field comes from
+// a source the app already holds: the balance + price are the home
+// screen's own state (one source of truth), the identifier is the
+// exact contract/mint/coin-type the balance was read from, and the
+// chart / market cap / volume arrive from CoinGecko keyless — each
+// omitted cleanly when no source provides it, never fabricated.
+// Send and Swap reuse the shipped flows, pre-selected with this
+// token (the send sheet's token picker / the swap sheet's From
+// pick via pendingSwapFrom, consumed synchronously by actSwap).
+let pendingSwapFrom = null; // { netKey, address|null } — set by a detail Swap tap immediately before actSwap fires
+let tokenDetailSeq = 0;
+const tdPriceText = (p) => p == null ? null : (p >= 0.01 ? usd(p) : "$" + Number(p.toPrecision(3)).toString());
+function evmDetailDesc(b) {
+  const net = NETWORKS[networkKey];
+  const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
+  return {
+    family: "evm", row: b, chainLabel: net.name,
+    identLabel: b.address ? "Contract address" : null, ident: b.address || null,
+    price: price != null ? price : null,
+    extras: b.address
+      ? { cgPlatform: cgPlatformForChain(net.chainId), address: b.address, cgId: b.verified === false ? null : cgIdForSymbol(b.symbol) }
+      : { cgId: cgIdForSymbol(net.priceSym || b.symbol) },
+    send: () => openEvmSendSheet({ address: b.address || null }),
+    swap: () => { pendingSwapFrom = { netKey: networkKey, address: b.address || null }; $("actSwap").click(); },
+  };
+}
+function solanaDetailDesc(b) {
+  const price = priceOfRow(b, prices[b.symbol]);
+  return {
+    family: "solana", row: b, chainLabel: "Solana",
+    identLabel: b.address ? "Mint address" : null, ident: b.address || null,
+    price: price != null ? price : null,
+    extras: b.address ? { cgPlatform: "solana", address: b.address, cgId: null } : { cgId: cgIdForSymbol("SOL") },
+    send: () => openSolanaSheet(b),
+    swap: () => { pendingSwapFrom = { netKey: "solana", address: b.address || null }; $("actSwap").click(); },
+  };
+}
+function suiDetailDesc(b) {
+  const price = priceOfRow(b, prices[b.symbol]);
+  return {
+    family: "sui", row: b, chainLabel: "Sui",
+    identLabel: b.address ? "Coin type" : null, ident: b.address || null,
+    price: price != null ? price : null,
+    // CoinGecko's contract route doesn't address Sui coin types;
+    // only the native asset takes the coin route. Others omit.
+    extras: b.address ? {} : { cgId: cgIdForSymbol("SUI") },
+    send: () => openSuiSheet(b),
+    swap: () => { pendingSwapFrom = { netKey: "sui", address: b.address || null }; $("actSwap").click(); },
+  };
+}
+function tronDetailDesc(b) {
+  const price = priceOfRow(b, prices[b.symbol]);
+  return {
+    family: "tron", row: b, chainLabel: "Tron",
+    identLabel: b.address ? "Contract address" : null, ident: b.address || null,
+    price: price != null ? price : null,
+    extras: b.address ? { cgPlatform: "tron", address: b.address, cgId: null } : { cgId: cgIdForSymbol("TRX") },
+    send: () => openTronSheet(b),
+    swap: () => { pendingSwapFrom = { netKey: "tron", address: b.address || null }; $("actSwap").click(); },
+  };
+}
+function openTokenDetail(d) {
+  const b = d.row;
+  const seq = ++tokenDetailSeq;
+  const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
+  const valLine = d.price != null && b.amount != null ? usd(Number(b.amount) * d.price)
+    : (Number(b.amount) > 0 ? "price unavailable" : null);
+  const hasExtrasRoute = !!(d.extras && (d.extras.address || d.extras.cgId));
+  openSheet(`<h3>${esc(title)}${b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : ""}</h3>
+    <p class="tag">${esc(b.symbol)} · ${esc(d.chainLabel)}</p>
+    <p style="margin:10px 0 2px"><b style="font-size:20px">${b.amount == null ? "—" : fmt(b.amount)} ${esc(b.symbol)}</b></p>
+    ${b.amount == null ? `<p class="tag">This balance couldn't load right now.</p>` : (valLine ? `<p class="tag">${valLine}</p>` : "")}
+    ${d.price != null ? `<p class="tag">Price: <b>${esc(tdPriceText(d.price))}</b> per ${esc(b.symbol)}</p>` : `<p class="tag">No live price available for this token right now.</p>`}
+    <div id="tdChart">${hasExtrasRoute ? `<p class="tag">Loading price chart…</p>` : ""}</div>
+    <div id="tdMarket"></div>
+    ${d.ident ? `<label class="tag" style="display:block;margin-top:10px">${esc(d.identLabel)}</label>
+      <p class="seed" style="word-break:break-all">${esc(d.ident)}</p>
+      <button class="btn ghost" id="tdCopyIdent">Copy ${esc(String(d.identLabel).toLowerCase())}</button>`
+    : `<p class="tag" style="margin-top:10px">This is the network's native asset — it has no contract address.</p>`}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn" id="tdSend" style="flex:1">Send</button>
+      ${d.swap ? `<button class="btn" id="tdSwap" style="flex:1">Swap</button>` : ""}
+    </div>`);
+  const copyBtn = $("tdCopyIdent");
+  if (copyBtn) copyBtn.onclick = () => { copyText(d.ident, copyBtn); toast("Address copied"); };
+  $("tdSend").onclick = () => d.send();
+  const swapBtn = $("tdSwap");
+  if (swapBtn && d.swap) swapBtn.onclick = () => d.swap();
+  if (hasExtrasRoute) {
+    fetchTokenMarketExtras(d.extras).then(x => {
+      if (seq !== tokenDetailSeq || !$("tdChart")) return; // a different sheet owns the screen now
+      const chartHost = $("tdChart"), mktHost = $("tdMarket");
+      if (x.history) {
+        const vals = x.history.map(p => p.p);
+        chartHost.innerHTML = `<label class="tag" style="display:block;margin-top:10px">Price — last 24 hours</label>`
+          + sparklineSvg(x.history)
+          + `<p class="tag">Low ${esc(tdPriceText(Math.min(...vals)))} · High ${esc(tdPriceText(Math.max(...vals)))}</p>`;
+      } else chartHost.innerHTML = "";
+      const lines = [];
+      if (x.marketCapUsd != null) lines.push(`Market cap: <b>${esc(usd(x.marketCapUsd))}</b>`);
+      if (x.volume24hUsd != null) lines.push(`Volume (24h): <b>${esc(usd(x.volume24hUsd))}</b>`);
+      if (lines.length && mktHost) mktHost.innerHTML = `<p class="tag">${lines.join("<br>")}</p>`;
+    }).catch(() => {
+      if (seq === tokenDetailSeq && $("tdChart")) $("tdChart").innerHTML = "";
+    });
+  }
 }
 
 // ---------- custom token add (by contract address, read from chain) ----------
@@ -2343,7 +2525,7 @@ function tronRampSendFee() {
   };
 }
 
-function openEvmSendSheet() {
+function openEvmSendSheet(prefer = null) {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag" id="sLoadNote">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
@@ -2375,6 +2557,13 @@ function openEvmSendSheet() {
   };
   $("sAmt").addEventListener("input", paintSendAmtUsd);
   $("sToken").addEventListener("change", paintSendAmtUsd);
+  // Token-detail entry (item F): open with the tapped token already
+  // selected — the picker holds balances indices; a null address is
+  // the native row. An unmatched preference leaves the default.
+  if (prefer) {
+    const idx = balances.findIndex(x => (x.address || null) === (prefer.address || null));
+    if (idx >= 0) { $("sToken").value = String(idx); paintSendAmtUsd(); }
+  }
   // MAX fills the EXACT on-chain balance (a fresh read; the row's
   // exact string as fallback) — never the rounded display value,
   // which can exceed the real balance by dust (2026-11-12 repair).
@@ -6268,11 +6457,15 @@ async function swapBalanceOf(chainKey, tok) {
 }
 $("actSwap").onclick = () => {
   pendingSwap = null;
+  // Token-detail entry (item F): a detail Swap tap names its source
+  // network + token; consumed here, synchronously, exactly once.
+  const swapPre = pendingSwapFrom; pendingSwapFrom = null;
   const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui"];
   // Bitcoin and Lightning are receive-only swap destinations
   // (Satora, from EVM stablecoins) — they appear in the To list only.
   const swapDestNets = [...swapNets, "bitcoin", "lightning"];
-  const fromKey0 = (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+  const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
@@ -6542,6 +6735,20 @@ $("actSwap").onclick = () => {
   setPick("from", defaultTok("from", fromKey0));
   setPick("to", defaultTok("to", toKey0));
   syncDestRow();
+  // Detail preselect (item F): apply the tapped token as the From
+  // pick — instantly when the picker's base list already carries
+  // it, else once the chain's full list lands. A token the picker
+  // never learns leaves the default pick standing.
+  if (swapPre && swapPre.netKey === fromKey0) {
+    const applyPre = () => {
+      const t = swapPre.address == null
+        ? swapTokensFor(fromKey0).find(x => x.native)
+        : findTok(fromKey0, swapPre);
+      if (t) { setPick("from", t); return true; }
+      return false;
+    };
+    if (!applyPre()) ensureSwapList(fromKey0).then(() => applyPre());
+  }
   ensureStableTokens(fromKey0).then(() => ensureSwapList(fromKey0));
   ensureStableTokens(toKey0).then(() => ensureSwapList(toKey0));
   $("wFlip").onclick = async () => {
