@@ -1911,7 +1911,12 @@ async function hydrateEvmTokens() {
       });
       if (!alive()) return;
       quickRowsFromBalances(quick.balances);
-      if (quickRows.length) mergeEvmRows(customRows, quickRows);
+      if (quickRows.length) {
+        mergeEvmRows(customRows, quickRows);
+        // The quick read is a completed fresh read: its positives
+        // join held memory now, even if the full scan later fails.
+        saveHeldTokens(chainId, quickRows);
+      }
     } catch { /* the full scan below remains the fallback */ }
   }
   // 3) The chain's LI.FI list (24h on-device cache when it fits).
@@ -1980,7 +1985,11 @@ async function hydrateEvmTokens() {
     // long-tail rows merged earlier this session are dropped rather
     // than left standing as unreconciled truth. The quick read's
     // rows stay: they are a completed fresh read of the priority
-    // set from this session, not an unreconciled cache.
+    // set from this session, not an unreconciled cache. Chunks that
+    // DID land before the failure still feed held memory — each was
+    // a completed read of its slice, and remembering the token's
+    // identity (never an amount) lets the next open quick-read it.
+    if (scannedRows.length) saveHeldTokens(chainId, scannedRows);
     mergeEvmRows(customRows, quickRows);
     evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: quickRows });
     evmScanState = { key: myKey, status: "limited" };

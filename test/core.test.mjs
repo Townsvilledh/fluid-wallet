@@ -10742,6 +10742,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("E: quick-read rows are retained when the full scan fails",
     app.includes("mergeEvmRows(customRows, quickRows)")
     && app.includes('status: quickRows.length ? "limited" : "failed"'));
+  ok("E: landed reads feed held memory even when a later chunk fails",
+    app.includes("saveHeldTokens(chainId, quickRows);")
+    && app.includes("if (scannedRows.length) saveHeldTokens(chainId, scannedRows)"));
 
   // F1: CoinGecko chart parsing — thinning, garbage dropped, <2 → null.
   const chart = parseCgMarketChart({ prices: Array.from({ length: 100 }, (_, i) => [i * 1000, 100 + i]) });
