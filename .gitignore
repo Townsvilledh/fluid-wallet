@@ -7,3 +7,6 @@ fluid-keystore-backup.json
 *wallet.json
 *.enc
 .env*
+
+# Cargo build artifacts — never tracked (a dirty target/ starved the name-claims processor 2026-11-11→12)
+lightning/target/
