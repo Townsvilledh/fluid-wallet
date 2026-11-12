@@ -9,6 +9,7 @@ import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
+import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
@@ -10536,6 +10537,78 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     (() => { const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
       return app.includes("formatDestGasLine(r)") && app.includes('route.provider === "gasfallback"') && app.includes("executeGasFallbackRoute")
         && app.includes('id="wGasFallback"') && app.includes('"Two-step via "'); })());
+}
+
+// ---------- 2026-11-12 repair: error language, exact balances, USD line, phantom rows ----------
+{
+  const coalesce = new Error("could not coalesce error"); coalesce.code = "UNKNOWN_ERROR";
+  ok("repair: 'could not coalesce error' can never surface — it maps to the unreadable-node sentence",
+    !humanizeTxError(coalesce).includes("coalesce") && humanizeTxError(coalesce).includes("couldn't read"));
+  const bep20 = new Error('execution reverted: "BEP20: transfer amount exceeds balance"'); bep20.code = "CALL_EXCEPTION";
+  ok("repair: a raw BEP20 revert string maps to the more-than-you-hold sentence, never the raw text",
+    !humanizeTxError(bep20).includes("BEP20") && humanizeTxError(bep20).includes("more than this wallet holds"));
+  const tff = { message: "execution reverted (unknown custom error)", code: "CALL_EXCEPTION", data: "0x7939f424" };
+  ok("repair: LI.FI TransferFromFailed (0x7939f424) maps to the more-than-you-hold sentence",
+    humanizeTxError(tff).includes("more than this wallet holds"));
+  const ins = new Error("insufficient funds for intrinsic transaction cost"); ins.code = "INSUFFICIENT_FUNDS";
+  ok("repair: insufficient funds maps to the network-fee sentence",
+    humanizeTxError(ins).includes("network fee"));
+  ok("repair: a generic revert maps to the would-fail sentence",
+    humanizeTxError({ message: "execution reverted", code: "CALL_EXCEPTION" }).includes("would fail on the network"));
+  ok("repair: user rejection maps plainly",
+    humanizeTxError({ message: "user rejected the request", code: "ACTION_REJECTED" }) === "You cancelled this transaction.");
+  ok("repair: rate limiting maps plainly",
+    humanizeTxError(new Error("Rate limit exceeded, retry in 1 hour")).includes("rate-limited"));
+  ok("repair: the app's own plain sentences pass through untouched",
+    humanizeTxError(new Error("Swap source chain is not a Fluid network.")) === "Swap source chain is not a Fluid network.");
+  const blob = new Error('execution reverted (transaction={ "data": "0x2c57e884" }, reason=null, code=CALL_EXCEPTION)');
+  ok("repair: a long library blob never passes through raw",
+    !humanizeTxError(blob).includes("transaction={") && !humanizeTxError(blob).includes("CALL_EXCEPTION"));
+  ok("repair: humanizeTxError is idempotent over its own output",
+    humanizeTxError(new Error(humanizeTxError(coalesce))) === humanizeTxError(coalesce)
+    && humanizeTxError(new Error(humanizeTxError(bep20))) === humanizeTxError(bep20));
+
+  // Exact-balance compare (wei): the item-3 case — the typed amount
+  // equals the ROUNDED display (0.00001) but exceeds the exact
+  // balance by dust, and must be caught BEFORE estimation.
+  ok("repair: amount == rounded display but > exact balance (by 1 wei) is caught, flagged slight",
+    (() => { const v = amountVsBalance("0.00001", "0.000009999999999999", 18); return v && v.exceeds === true && v.slight === true; })());
+  ok("repair: amount == exact balance passes; amount below passes",
+    amountExceedsBalance("0.00001", "0.00001", 18) === false && amountExceedsBalance("0.000009", "0.00001", 18) === false);
+  ok("repair: a large overage is caught and NOT flagged slight",
+    (() => { const v = amountVsBalance("0.01", "0.00001", 18); return v && v.exceeds === true && v.slight === false; })());
+  ok("repair: unparseable amounts compare as null, never a silent pass or a crash",
+    amountExceedsBalance("abc", "0.00001", 18) === null && amountExceedsBalance("0.00001", "", 18) === null);
+  ok("repair: the compare is decimal-aware (6-dp stablecoins)",
+    amountExceedsBalance("1.000001", "1.0", 6) === true && amountExceedsBalance("1.0", "1.0", 6) === false);
+
+  // USD line: priced rendering + clean omission.
+  ok("repair: amountUsdLine renders from a held price",
+    amountUsdLine("0.00001", 73000) === "≈ $0.73" && amountUsdLine("2", 0.5) === "≈ $1.00");
+  ok("repair: amountUsdLine omits cleanly with no price / no amount / zero",
+    amountUsdLine("0.00001", null) === null && amountUsdLine("", 73000) === null && amountUsdLine("0", 73000) === null && amountUsdLine("0.5", 0) === null);
+
+  // App/core wiring pins.
+  const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const core = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("repair: sendFailed humanizes — the raw shortMessage passthrough is gone from it",
+    app.includes("showSheetError(prefix + humanizeTxError(e))") && !app.includes("showSheetError(prefix + ((e && (e.shortMessage"));
+  ok("repair: both EVM executors simulate before broadcasting",
+    (core.match(/simulateEvmStepOrThrow\(fromKey, provider, txReq, wallet\.address\)/g) || []).length === 2);
+  ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist)",
+    app.includes("rows: balances.filter(b => !b.scanned && !b.custom)"));
+  ok("repair: a failed scan or missing token list reconciles scanned rows DOWN",
+    (app.match(/mergeEvmRows\(customRows, \[\]\);/g) || []).length >= 2);
+  ok("repair: the EVM send sheet has MAX + USD line; MAX fills a fresh exact read, never the display",
+    app.includes('id="sMax"') && app.includes('id="sAmtUsd"') && app.includes('$("sAmt").value = exact != null ? exact : String(b.amount);'));
+  ok("repair: the EVM send review gates on a fresh exact balance with the plain sentence",
+    app.includes("amountVsBalance(amount, balStr, b.address ? b.decimals : 18)") && app.includes("your exact balance is ${balStr} ${b.symbol}"));
+  ok("repair: the swap sheet has the USD line under the amount, repainted on input and pick",
+    app.includes('id="wAmtUsd"') && app.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd)') && app.includes("pendingSwap = null; paintSwapAmtUsd(); }"));
+  ok("repair: the swap balance check is wei-exact",
+    app.includes("amountExceedsBalance(amount, have, fromTok.decimals) === true"));
+  ok("repair: raw 'Could not estimate' passthroughs in the send sheets are humanized",
+    !app.includes('"Could not estimate: " + (e.shortMessage || e.message)') && !app.includes('"Could not estimate: " + e.message') && !app.includes('"Could not estimate the fee: " + e.message'));
 }
 
 console.log(`\n${passed} checks passed`);

@@ -357,6 +357,108 @@ export function fluidStorageKeysToWipe(keys) {
   return [...(keys || [])].filter(k => typeof k === "string" && k.startsWith("fluid_"));
 }
 
+/* ---------- user-facing error language (2026-11-12 repair) ----------
+ * Raw library/RPC error text must never reach a banner: ethers'
+ * "could not coalesce error" (its UNKNOWN_ERROR wrapper for an RPC
+ * error payload it cannot parse) reached the swap banner verbatim
+ * on 2026-11-12, and raw BEP20 revert strings reached the send
+ * review. humanizeTxError maps any thrown value to ONE plain
+ * sentence carrying the real cause class; the raw error belongs in
+ * the console only. Deliberately conservative: a short, clean
+ * message (the app's own plain sentences) passes through untouched;
+ * anything long, hex-bearing or library-shaped falls to a class
+ * sentence or the generic one — never to the raw text. */
+const TX_ERROR_SELECTOR_TRANSFER_FROM_FAILED = "0x7939f424"; // LI.FI diamond TransferFromFailed()
+export function humanizeTxError(e) {
+  const msg = String((e && (e.shortMessage || e.message)) || e || "");
+  const code = String((e && e.code) || "");
+  let data = "";
+  try { data = String((e && (e.data || (e.error && e.error.data) || (e.info && e.info.error && e.info.error.data))) || ""); } catch { /* shape varies */ }
+  const hay = (msg + " " + code + " " + data).toLowerCase();
+  if (hay.includes(TX_ERROR_SELECTOR_TRANSFER_FROM_FAILED)
+      || /transfer amount exceeds|exceeds balance|transferfromfailed/.test(hay)) {
+    return "The network says that's more than this wallet holds — the balance may have changed since it was shown. Refresh your balances and try again.";
+  }
+  if (code === "INSUFFICIENT_FUNDS" || /insufficient funds/.test(hay)) {
+    return "There isn't enough of the network's own coin in this wallet to pay the network fee. Top that up first, then try again.";
+  }
+  if (/could not coalesce/.test(hay) || code === "UNKNOWN_ERROR") {
+    return "The network node sent back an answer the wallet couldn't read, so nothing was sent. Check your connection and try again.";
+  }
+  if (code === "CALL_EXCEPTION" || /execution reverted|\brevert(ed)?\b/.test(hay)) {
+    return "This would fail on the network, so it wasn't sent. Amounts and prices move — refresh and try again.";
+  }
+  if (code === "ACTION_REJECTED" || /user rejected|user denied|rejected the request/.test(hay)) {
+    return "You cancelled this transaction.";
+  }
+  if (/rate limit|too many requests|\b429\b/.test(hay)) {
+    return "Requests are being rate-limited right now — wait a few minutes and try again.";
+  }
+  if (/timeout|timed out|abort|failed to fetch|fetch failed|network error/.test(hay)) {
+    return "The network request didn't finish — check your connection and try again.";
+  }
+  // Passthrough for the app's own plain sentences only: short, no
+  // hex blobs, no library internals.
+  if (msg && msg.length <= 170 && !/0x[0-9a-f]{16,}/i.test(msg)
+      && !/reason=|transaction=|coalesce|call_exception|unknown_error/.test(hay)) {
+    return msg;
+  }
+  return "Something went wrong preparing this — nothing was sent. Please try again.";
+}
+
+/** Exact amount-vs-balance comparison in the token's smallest unit
+ * (2026-11-12 repair): the float compare it replaces could let a
+ * typed amount equal to the ROUNDED display value pass against a
+ * smaller exact balance. Returns { exceeds, slight } — slight when
+ * the overage is within 1% (the dust-over case) — or null when
+ * either side is unparseable. balance is the exact decimal string
+ * a balanceOf read formats to (ethers.formatUnits output). */
+export function amountVsBalance(amount, balance, decimals = 18) {
+  try {
+    const a = ethers.parseUnits(String(amount ?? "").trim(), decimals);
+    const b = ethers.parseUnits(String(balance ?? "").trim(), decimals);
+    if (a <= b) return { exceeds: false, slight: false };
+    const dust = b / 100n;
+    return { exceeds: true, slight: a - b <= (dust > 1n ? dust : 1n) };
+  } catch { return null; }
+}
+export function amountExceedsBalance(amount, balance, decimals = 18) {
+  const r = amountVsBalance(amount, balance, decimals);
+  return r ? r.exceeds : null;
+}
+
+/** The live USD line under an amount field (2026-11-12): priced
+ * ONLY from a price the app already holds — a missing price, an
+ * empty/invalid amount or a zero value omits the line (null),
+ * never a placeholder and never a hardcoded figure. */
+export function amountUsdLine(amount, priceUsd) {
+  const a = Number(amount), p = Number(priceUsd);
+  if (!Number.isFinite(a) || !(a > 0) || !Number.isFinite(p) || !(p > 0)) return null;
+  return "≈ " + formatDisplayUsd(a * p);
+}
+
+/** Simulate one EVM step exactly as it would be broadcast and
+ * refuse BEFORE signing when the chain already refuses it
+ * (2026-11-12 repair): a quote can be generated for a token the
+ * wallet does not hold — execution cannot. The thrown error is
+ * pre-humanized (humanizeTxError is idempotent over its own
+ * sentences). An UNREADABLE answer from the primary node (the
+ * coalesce class) is not a verdict — the fallback node is asked
+ * before refusing. */
+async function simulateEvmStepOrThrow(networkKey, provider, txReq, from) {
+  const call = { from, to: txReq.to, data: txReq.data, value: txReq.value };
+  try { await provider.call(call); return; }
+  catch (e) {
+    const unreadable = /could not coalesce/i.test(String((e && e.message) || "")) || (e && e.code === "UNKNOWN_ERROR");
+    const fallback = unreadable ? providerForFallback(networkKey) : null;
+    if (fallback) {
+      try { await fallback.call(call); return; }
+      catch (e2) { throw new Error(humanizeTxError(e2)); }
+    }
+    throw new Error(humanizeTxError(e));
+  }
+}
+
 export async function estimateSend(wallet, networkKey, { to, amount, token }) {
   const net = NETWORKS[networkKey];
   const provider = providerFor(networkKey);
@@ -12856,6 +12958,11 @@ export async function executeRelaySwapRoute(wallet, route, onProgress = () => {}
       if (data.gas != null) { try { txReq.gasLimit = BigInt(data.gas); } catch { /* let the node estimate */ } }
       if (data.maxFeePerGas != null) { try { txReq.maxFeePerGas = BigInt(data.maxFeePerGas); } catch { /* node default */ } }
       if (data.maxPriorityFeePerGas != null) { try { txReq.maxPriorityFeePerGas = BigInt(data.maxPriorityFeePerGas); } catch { /* node default */ } }
+      // Same pre-broadcast simulation as the LI.FI executor (the
+      // approve items are Relay's own exact-amount approvals — the
+      // swap/deposit items are what must not broadcast into a
+      // refusal).
+      if (step.id !== "approve") await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
       const tx = await signer.sendTransaction(txReq);
       hashes.push(tx.hash);
       if (step.id === "approve") {
@@ -13914,6 +14021,11 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}, onA
     onProgress(`Signing step ${i + 1} of ${steps.length}…`);
     const txReq = { to: tr.to, data: tr.data || "0x", value: tr.value != null ? BigInt(tr.value) : 0n };
     if (tr.gasLimit != null) { try { txReq.gasLimit = BigInt(tr.gasLimit); } catch { /* let the node estimate */ } }
+    // Simulate AFTER any approval above (the approval is what makes
+    // the step collectable) and BEFORE broadcasting: a step the
+    // chain already refuses dies here with its real cause, not as a
+    // reverted broadcast or an unreadable node error.
+    await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
     const tx = await signer.sendTransaction(txReq);
     hashes.push(tx.hash);
     onProgress(`Step ${i + 1} sent — waiting for it to mine…`);

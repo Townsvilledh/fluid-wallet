@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
+  humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine,
   dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
   mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
@@ -295,11 +296,16 @@ function showSheetError(text) {
   b.innerHTML = `<svg class="ic"><use href="#i-alert"/></svg><span></span>`;
   b.querySelector("span").textContent = text;
 }
-/** Send-confirm failure path shared by every family sheet. */
+/** Send-confirm failure path shared by every family sheet. The
+ *  banner text is ALWAYS humanized (2026-11-12 repair): raw
+ *  library/RPC strings — "could not coalesce error", BEP20 revert
+ *  text — reached this banner verbatim before; the raw error now
+ *  goes to the console only. */
 function sendFailed(btn, msgId, e, prefix = "Send failed: ") {
   setSendBusy(btn, false);
   if (msgId) msg(msgId, "");
-  showSheetError(prefix + ((e && (e.shortMessage || e.message)) || e));
+  try { console.warn("[fluid] raw failure:", e); } catch { /* logging must never break the sheet */ }
+  showSheetError(prefix + humanizeTxError(e));
 }
 /** Tiny toast for micro-confirmations ("Copied", "Name resolved"). */
 let toastTimer = null;
@@ -604,8 +610,14 @@ function persistBalanceCache() {
     if (liveFams.has("litecoin")) scalars.ltcBal = ltcBal;
     if (liveFams.has("dogecoin")) scalars.dogeBal = dogeBal;
     if (liveFams.has("bitcoincash")) scalars.bchBal = bchBal;
+    // Phantom-balance fix (2026-11-12): only CURATED rows are
+    // persisted. Scanned/custom rows are session reads — persisting
+    // them let a stale scan result (a token the wallet no longer
+    // holds, e.g. BTCB 0.00001 against an on-chain zero) repaint
+    // next session as spendable truth in the Send/Swap sheets.
+    // They now re-enter only from a fresh scan/read this session.
     const evm = liveFams.has("evm") && !evmLoadFailed
-      ? { network: networkKey, rows: balances }
+      ? { network: networkKey, rows: balances.filter(b => !b.scanned && !b.custom) }
       : (prev && prev.evm ? prev.evm : null);
     const cosmosRowsSnap = liveFams.has("cosmos") ? cosmosRows
       : (prev && prev.fams && Array.isArray(prev.fams.cosmos) ? prev.fams.cosmos : null);
@@ -1774,7 +1786,13 @@ async function hydrateEvmTokens() {
   // 2) The chain's LI.FI list (24h on-device cache when it fits).
   const list = await lifiTokensForChain(chainId);
   if (!alive()) return;
-  if (!list) { evmScanState = { key: myKey, status: "failed" }; paintAssets(); return; }
+  if (!list) {
+    // No token list, no scan: previously merged scanned rows must
+    // not stand as truth (2026-11-12 phantom fix) — drop to the
+    // freshly-read custom rows only.
+    mergeEvmRows(customRows, []);
+    evmScanState = { key: myKey, status: "failed" }; paintAssets(); return;
+  }
   const byAddr = new Map(list.map(t => [t.address.toLowerCase(), t]));
   for (const cr of customRows) {
     const t = byAddr.get(cr.address.toLowerCase());
@@ -1793,6 +1811,10 @@ async function hydrateEvmTokens() {
   try { scan = await scanEvmTokenBalances(myKey, wallet.address, list); }
   catch {
     if (!alive()) return;
+    // A failed scan reconciles DOWN (2026-11-12 phantom fix):
+    // scanned rows merged earlier this session are dropped rather
+    // than left standing as unreconciled truth.
+    mergeEvmRows(customRows, []);
     evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: [] });
     evmScanState = { key: myKey, status: "limited" };
     paintAssets();
@@ -2259,7 +2281,7 @@ function mountRampOrderPanel(container, record, sendFee) {
       rec = rampFeeOrderTransition(rec, "complete"); saveRampOrder(rec);
       mountRampOrderPanel(container, rec, sendFee);
     } catch (e) {
-      if (msgEl) msgEl.textContent = "Fee send failed: " + (e.shortMessage || e.message);
+      if (msgEl) msgEl.textContent = "Fee send failed: " + humanizeTxError(e);
       feeBtn.disabled = false;
     }
   };
@@ -2310,6 +2332,10 @@ function openEvmSendSheet() {
     <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
     <input id="sTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
+      <p class="tag" id="sAmtUsd" style="flex:1;margin:0"></p>
+      <button class="btn ghost" id="sMax" style="margin:0;padding:4px 12px">MAX</button>
+    </div>
     ${rampFeeFieldsHtml("s")}
     <button class="btn" id="sReview">Review send</button>
     <div id="sIntent" class="hidden">
@@ -2319,6 +2345,29 @@ function openEvmSendSheet() {
     <p class="msg err" id="sMsg"></p>
     <p class="tag">For Bitcoin, tap the Bitcoin row instead.</p>`);
   wireRampFeeFields("s");
+  // Live USD under the amount (2026-11-12): priced only from a
+  // price the app already holds (the getPrices-fed map, else the
+  // row's own list price); no price → the line stays empty.
+  const paintSendAmtUsd = () => {
+    const el = $("sAmtUsd"); if (!el) return;
+    const b = balances[Number($("sToken").value)];
+    const px = !b ? null : (b.address ? (Number(prices[b.symbol]) || b.priceUsd || null)
+                                     : (Number(prices[NETWORKS[networkKey].priceSym]) || null));
+    el.textContent = amountUsdLine($("sAmt").value.trim(), px) || "";
+  };
+  $("sAmt").addEventListener("input", paintSendAmtUsd);
+  $("sToken").addEventListener("change", paintSendAmtUsd);
+  // MAX fills the EXACT on-chain balance (a fresh read; the row's
+  // exact string as fallback) — never the rounded display value,
+  // which can exceed the real balance by dust (2026-11-12 repair).
+  $("sMax").onclick = async () => {
+    const b = balances[Number($("sToken").value)];
+    if (!b) return;
+    let exact = null;
+    try { exact = await getEvmTokenBalance(wallet, networkKey, b.address ? b : null); } catch { /* row string fallback below */ }
+    $("sAmt").value = exact != null ? exact : String(b.amount);
+    paintSendAmtUsd();
+  };
   // Audit P1-9: the two states above are exactly where a stale
   // build strands this sheet after a deploy — a failed load checks
   // the served build stamp now; a load still unfinished at the
@@ -2410,10 +2459,20 @@ function openEvmSendSheet() {
         pendingSend = { to, amount, token, symbol: b.symbol, name: sendName,
           feeNative: Number(est.gasNativeText), ramp: { quote, rampIn } };
         msg("sMsg", poisonNote);
-      } catch (e) { msg("sMsg", warnPrefix + "Could not price this cash-out: " + (e.shortMessage || e.message)); }
+      } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("sMsg", warnPrefix + "Could not price this cash-out: " + humanizeTxError(e)); }
       return;
     }
-    if (Number(amount) > Number(b.amount)) return msg("sMsg", warnPrefix + resolvedNote + "Amount is more than your balance.");
+    // Exact-balance gate (2026-11-12 repair): compare in the
+    // token's smallest unit against a FRESH on-chain read — never
+    // the old float compare against the (possibly cache-painted)
+    // row, which let a typed amount sail past a balance that
+    // wasn't there and die as a raw revert string at estimation.
+    let exactBal = null;
+    try { exactBal = await getEvmTokenBalance(wallet, networkKey, b.address ? b : null); } catch { /* the row's exact string is the fallback */ }
+    const balStr = exactBal != null ? exactBal : String(b.amount);
+    const vs = amountVsBalance(amount, balStr, b.address ? b.decimals : 18);
+    if (vs && vs.exceeds) return msg("sMsg", warnPrefix + resolvedNote
+      + `That's ${vs.slight ? "slightly " : ""}more than you have — your exact balance is ${balStr} ${b.symbol}.`);
     try {
       msg("sMsg", "Estimating fee…", true);
       const fee = await estimateSend(wallet, networkKey, { to, amount, token: b.address ? b : null });
@@ -2422,7 +2481,7 @@ function openEvmSendSheet() {
         + (b.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       setBalanceAfter($("sIntentText"), { balance: b.amount, amount, fee: b.address ? null : Number(fee), symbol: b.symbol });
       show("sIntent"); msg("sMsg", poisonNote);
-    } catch (e) { msg("sMsg", warnPrefix + "Could not estimate: " + (e.shortMessage || e.message)); }
+    } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("sMsg", warnPrefix + "Could not estimate: " + humanizeTxError(e)); }
   };
   $("sConfirm").onclick = async () => {
     if (!pendingSend) return;
@@ -3461,7 +3520,7 @@ function openDotSheet(tok) {
         + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       setBalanceAfter($("dtIntentText"), { balance: tok.amount, amount, fee: tokenArg ? null : Number(plan.feeDot), symbol: tok.symbol });
       show("dtIntent"); msg("dtMsg", "");
-    } catch (e) { msg("dtMsg", "Could not estimate: " + e.message); }
+    } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("dtMsg", "Could not estimate: " + humanizeTxError(e)); }
   };
   $("dtConfirm").onclick = async () => {
     if (!pendingDot) return;
@@ -3881,7 +3940,7 @@ function openCosmosSheet(row) {
         + (sel.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
       setBalanceAfter($("kIntentText"), { balance: sel.amount, amount, fee: sel.denom === chain.denom ? Number(est.feeText) : null, symbol: sel.symbol });
       show("kIntent"); msg("kMsg", "");
-    } catch (e) { msg("kMsg", "Could not estimate the fee: " + e.message); }
+    } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("kMsg", "Could not estimate the fee: " + humanizeTxError(e)); }
   };
   $("kConfirm").onclick = async () => {
     if (!pendingCosmos) return;
@@ -6214,6 +6273,7 @@ $("actSwap").onclick = () => {
       <div id="wFromList" style="max-height:240px;overflow:auto"></div>
     </div>
     <input id="wAmt" data-autofocus inputmode="decimal" placeholder="Amount">
+    <p class="tag" id="wAmtUsd" style="margin:2px 0 0"></p>
     <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
     <div style="display:flex;gap:8px">
@@ -6285,7 +6345,17 @@ $("actSwap").onclick = () => {
     const t = pick[side];
     $(P[side].btn).textContent = t ? `${t.verified === false ? "⚠ " : ""}${t.symbol} ▾` : "Select token ▾";
   }
-  function setPick(side, t) { pick[side] = t; updatePickBtn(side); show("wConfirm", false); $("wList").innerHTML = ""; pendingSwap = null; }
+  function setPick(side, t) { pick[side] = t; updatePickBtn(side); show("wConfirm", false); $("wList").innerHTML = ""; pendingSwap = null; paintSwapAmtUsd(); }
+  // Live USD under the amount (2026-11-12): priced only from a
+  // price the app already holds (the getPrices-fed map, else the
+  // token's own list price); no price → the line stays empty.
+  function paintSwapAmtUsd() {
+    const el = $("wAmtUsd"); if (!el) return;
+    const t = pick.from;
+    const px = t ? (Number(prices[t.symbol]) || t.priceUSD || null) : null;
+    el.textContent = amountUsdLine($("wAmt").value.trim(), px) || "";
+  }
+  $("wAmt").addEventListener("input", paintSwapAmtUsd);
   function defaultTok(side, netKey) {
     const toks = swapTokensFor(netKey);
     return side === "from" ? (toks.find(t => t.native) || toks[0]) : (toks.find(t => !t.native) || toks[0]);
@@ -6403,7 +6473,7 @@ $("actSwap").onclick = () => {
           try {
             await completeGasFallbackSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
             msg("wMsg", "Swap complete ✓");
-          } catch (e) { msg("wMsg", String(e?.shortMessage || e?.message || e)); }
+          } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); }
           paintGasFallbackSwaps();
         };
         el.appendChild(document.createTextNode(" "));
@@ -6480,7 +6550,9 @@ $("actSwap").onclick = () => {
     try {
       msg("wMsg", "Checking your balance…", true);
       const have = await swapBalanceOf(fromKey, fromTok);
-      if (have == null || Number(amount) > Number(have))
+      // Wei-exact compare (2026-11-12): the float compare could
+      // pass an amount a hair above the real balance.
+      if (have == null || amountExceedsBalance(amount, have, fromTok.decimals) === true)
         return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${have == null ? "0" : fmt(have)}).`);
       msg("wMsg", "Searching routes across chains…", true);
       const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : wallet.address);
@@ -6648,7 +6720,7 @@ $("actSwap").onclick = () => {
       if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && netSel.to === "bitcoin") {
         paintBtcFloorWayThrough(e.satoraBelowFloor);
         msg("wMsg", "");
-      } else msg("wMsg", "Route search failed: " + String(e.shortMessage || e.message || e).replace(/^Route search failed:\s*/, ""));
+      } else { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", "Route search failed: " + humanizeTxError({ message: String((e && (e.shortMessage || e.message)) || e || "").replace(/^Route search failed:\s*/, ""), code: e && e.code, data: e && e.data })); }
     }
   };
   $("wRoutes").onclick = searchRoutes;
