@@ -46,5 +46,21 @@
     "sol": "859p8Zk37F7AqMdzEPVFa1qsAjuZV5etrebVCJ8hS7hj",
     "tron": "TECMGgxn2vALW9oTYunz7C9jC2fVBQZ5p2",
     "sui": "0xa201ad1adcf87e25c9a58d8f2a087fefc4533f3fcf3bbd1d6f43afb4a765aefc"
+  },
+  "abskid": {
+    "evm": "0x9de88360c5E90c1FAef3a5F4306d26EC614ECE93",
+    "btc": "bc1qzz3tjglcnzphmtanhpp47g3wxyjr8zd00refg6",
+    "algo": "4CRPI4DKFAYBO67VY7ZYG4E27XA3SY3MIQBTWGZKKMYEY5ESUISQV2QYUM",
+    "sol": "GF6havLqUXvQvvJHH9Uf4i6jNS623JAbZ6mu8LoiJGL1",
+    "tron": "TQN9dUauSY7qBSnx5TRokShNxpmy6L1ukr",
+    "sui": "0x718190b76cce2bf681098bbe42275fd246f88352e5f0ef15889fb3c4552653cc"
+  },
+  "bollyjay007": {
+    "evm": "0xA1CBF1b69Dd1eE1271AEF569245f0B6c8670f4e6",
+    "btc": "bc1quqyrg86etv48um8ax6z37g7nyc7eacjgghe566",
+    "algo": "A6UQQNKNZFKUNGJHUYFO77TJ63LPJIBKQL75FNF2JNWISCWG4JEK7DUTOI",
+    "sol": "J6DV7Yiun3y4VJBcfZAPWdraPmu3xwebcKHRCwP42bNB",
+    "tron": "TQii7EZZ6R7cyBpj8Wr7JVKhWSVCTGPR3p",
+    "sui": "0x11c01266fac765e3ba3a7880a034e0c70d55976d15d76671ac909e10b33c670d"
   }
 }
