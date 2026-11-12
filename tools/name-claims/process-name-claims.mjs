@@ -89,6 +89,14 @@ const STATE_DIR = process.env.FLUID_NAME_CLAIMS_STATE_DIR
   || join(process.env.HOME || "/home/hatch", "workspace/goals/fluid-universal-wallet-and-ogo-era/hidden_files");
 const STATE_PATH = join(STATE_DIR, "name-claims-state.json");
 const LOG_PATH = join(STATE_DIR, "name-claims-log.jsonl");
+// Skip-health record (2026-11-12): a dirty-tree skip used to return
+// exit 0 with state untouched, so a blocked processor looked exactly
+// like a healthy one for 41h (2026-11-11→12) while real claims queued.
+// Skips now record first/last skip here, a successful scan clears the
+// file, and a blockage older than SKIP_LOUD_AFTER_SECS exits non-zero
+// so the caller's failure reporting fires.
+const HEALTH_PATH = join(STATE_DIR, "name-claims-health.json");
+const SKIP_LOUD_AFTER_SECS = 3600;
 const SSH_ENV = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/config" };
 
 /** Two registry entries are "the same claim" when every field the
@@ -317,6 +325,19 @@ async function main() {
     const dirty = git(["status", "--porcelain", "--untracked-files=no"]).trim();
     if (dirty) {
       console.log("name-claims: skipped — working tree has tracked changes (a release may be in flight).");
+      // Record the blockage; if it has persisted past the loud
+      // threshold, fail the run so the skip can never again pass as
+      // success (see HEALTH_PATH note above).
+      let health = null;
+      try { health = JSON.parse(readFileSync(HEALTH_PATH, "utf8")); } catch { /* first skip */ }
+      if (!health || typeof health.firstSkipAt !== "number") health = { firstSkipAt: now, skips: 0 };
+      health.lastSkipAt = now;
+      health.skips += 1;
+      try { writeFileSync(HEALTH_PATH, JSON.stringify(health, null, 2) + "\n"); } catch { /* health write must not mask the exit decision below */ }
+      if (now - health.firstSkipAt >= SKIP_LOUD_AFTER_SECS) {
+        console.error(`name-claims: BLOCKED — dirty-tree skips have persisted for ${Math.round((now - health.firstSkipAt) / 60)} minutes (${health.skips} skips). Claims are NOT being processed.`);
+        process.exit(3);
+      }
       return;
     }
     git(["fetch", "origin", "main"]);
@@ -402,6 +423,8 @@ async function main() {
   state.lastQuerySince = now - 3600; // 1h overlap; the processed set dedupes
   state.lastRunAt = now;
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+  // A completed scan clears any recorded skip blockage.
+  try { rmSync(HEALTH_PATH, { force: true }); } catch { /* non-fatal */ }
 
   // The live registry is served from gh-pages — sync the file there
   // on EVERY run (not only winner runs) so a failed sync heals. A
