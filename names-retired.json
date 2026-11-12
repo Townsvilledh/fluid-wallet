@@ -183,6 +183,10 @@
     "lcssizeqa1111": {
       "at": "2026-11-11",
       "reason": "QA/walk test wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-11) so the name can never resolve to a wallet nobody controls."
+    },
+    "repairqa1211": {
+      "at": "2026-11-12",
+      "reason": "QA/walk test wallet created by the 2026-11-12 swap/send repair walk; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator (2026-11-12) so a pending claim for this name can never publish or resolve to a wallet nobody controls."
     }
   }
 }
