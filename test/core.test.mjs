@@ -9,7 +9,7 @@ import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
-import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine } from "../src/wallet-core.js";
+import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
@@ -10609,6 +10609,39 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     app.includes("amountExceedsBalance(amount, have, fromTok.decimals) === true"));
   ok("repair: raw 'Could not estimate' passthroughs in the send sheets are humanized",
     !app.includes('"Could not estimate: " + (e.shortMessage || e.message)') && !app.includes('"Could not estimate: " + e.message') && !app.includes('"Could not estimate the fee: " + e.message'));
+
+  // Defect A (final evidence pack, 2026-11-12): the swap outcome
+  // label follows the CHAIN, not the result parser. Ethuram's
+  // BTCB→BNB swap landed (tx 0x172c5122…, receipt status 1) while
+  // tx.wait() threw "could not coalesce error"; the app said
+  // "Swap failed" and he rebroadcast five more times.
+  await (async () => {
+    const coalesceThrower = { getTransactionReceipt: async () => { const e = new Error("could not coalesce error"); e.code = "UNKNOWN_ERROR"; throw e; } };
+    const mined = { getTransactionReceipt: async () => ({ status: 1, transactionHash: "0xabc" }) };
+    const reverted = { getTransactionReceipt: async () => ({ status: 0, transactionHash: "0xabc" }) };
+    const notYet = { getTransactionReceipt: async () => null };
+    ok("repair A: a coalesce-throwing node cannot mislabel a landed swap — the fallback node's receipt decides (mined)",
+      (await resolveBroadcastOutcome([coalesceThrower, mined], "0xabc", { attempts: 2, delayMs: 0 })).state === "mined");
+    ok("repair A: a status-0 receipt reads as reverted, never as a parser error",
+      (await resolveBroadcastOutcome([coalesceThrower, reverted], "0xabc", { attempts: 2, delayMs: 0 })).state === "reverted");
+    ok("repair A: when no node can produce a receipt, the outcome is 'unknown' — not failed, not success",
+      (await resolveBroadcastOutcome([coalesceThrower, notYet], "0xabc", { attempts: 2, delayMs: 0 })).state === "unknown");
+  })();
+  ok("repair A: the LI.FI executor settles broadcasts via the chain, not tx.wait()",
+    !core.slice(core.indexOf("export async function executeSwapRoute"), core.indexOf("export async function revokeApproval")).includes("await tx.wait()")
+    && core.includes("await settleBroadcastOrThrow(fromKey, tx.hash);")
+    && core.includes("await settleBroadcastOrThrow(fromKey, depTx.hash);"));
+  ok("repair A: the swap sheet renders an unconfirmed broadcast as sent-pending, disarmed — never 'Swap failed'",
+    app.includes("e.outcomeUnknown") && app.includes("isn't marked failed") && app.includes("Please don't send it again yet."));
+
+  // Defect B: post-activity rescan — after ANY attempt the figures
+  // are re-read (with the scan cache busted) before the user acts.
+  ok("repair B: sendFailed (every family's failure path) triggers the post-activity rescan",
+    app.includes("showSheetError(prefix + humanizeTxError(e));\n  rescanAfterActivity();"));
+  ok("repair B: the rescan busts the token scan's 5-minute cache so token rows re-read for real",
+    app.includes("evmScanCache.delete(NETWORKS[networkKey].chainId)"));
+  ok("repair B: swap success, the ambiguous path and the EVM send paths rescan too",
+    (app.match(/rescanAfterActivity\(\);/g) || []).length >= 5);
 }
 
 console.log(`\n${passed} checks passed`);

@@ -296,16 +296,34 @@ function showSheetError(text) {
   b.innerHTML = `<svg class="ic"><use href="#i-alert"/></svg><span></span>`;
   b.querySelector("span").textContent = text;
 }
+/** Post-activity rescan (2026-11-12 defect B): after ANY swap/send
+ *  attempt — success, failure or ambiguous — balances are re-read
+ *  before the user can act on them again. The 2026-11-12 incident:
+ *  a swap LANDED but was labelled failed, no rescan ran, and the
+ *  pre-swap rows (BTCB 0.00001 / BNB 0.000157) drove five more
+ *  broadcasts and a string of failed sends. The token scan's
+ *  5-minute cache is busted for the active chain so token rows
+ *  re-read for real, not from the in-session cache. */
+function rescanAfterActivity() {
+  if (!wallet) return;
+  try { evmScanCache.delete(NETWORKS[networkKey].chainId); } catch { /* the rescan must never break the flow */ }
+  try { const p = renderMain(); if (p && p.catch) p.catch(() => {}); } catch { /* a failed rescan keeps the honest load-failure paint */ }
+}
+
 /** Send-confirm failure path shared by every family sheet. The
  *  banner text is ALWAYS humanized (2026-11-12 repair): raw
  *  library/RPC strings — "could not coalesce error", BEP20 revert
  *  text — reached this banner verbatim before; the raw error now
- *  goes to the console only. */
+ *  goes to the console only. Every failure also triggers the
+ *  post-activity rescan (defect B): a failed attempt can still
+ *  have moved funds (a landed swap misread as failed), so the
+ *  figures the user sees next must be fresh chain state. */
 function sendFailed(btn, msgId, e, prefix = "Send failed: ") {
   setSendBusy(btn, false);
   if (msgId) msg(msgId, "");
   try { console.warn("[fluid] raw failure:", e); } catch { /* logging must never break the sheet */ }
   showSheetError(prefix + humanizeTxError(e));
+  rescanAfterActivity();
 }
 /** Tiny toast for micro-confirmations ("Copied", "Name resolved"). */
 let toastTimer = null;
@@ -2515,6 +2533,7 @@ function openEvmSendSheet() {
           to: done.to, toName: done.name, familyName: NETWORKS[networkKey].name,
           feeText: `Fluid fee ${ethers.formatUnits(quote.feeRaw, dec)} ${done.symbol} — settled in the same transaction`,
           explorerUrl: historyTxUrl({ hash: tx.hash, explorer: NETWORKS[networkKey].explorer }), txid: tx.hash, pending: false });
+        rescanAfterActivity();
       } catch (e) { sendFailed(btn, "sMsg", e); }
       return;
     }
@@ -2540,6 +2559,7 @@ function openEvmSendSheet() {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
         pendingSend = null;
         openRampOrderSheet(record, evmRampSendFee(record));
+        rescanAfterActivity();
       } catch (e) { sendFailed(btn, "sMsg", e); }
       return;
     }
@@ -2556,6 +2576,7 @@ function openEvmSendSheet() {
         to: done.to, toName: done.name, familyName: NETWORKS[networkKey].name,
         feeText: done.feeNative != null ? `≈ ${fmtFixed(done.feeNative)} ${NETWORKS[networkKey].symbol}` : null,
         explorerUrl: historyTxUrl({ hash: tx.hash, explorer: NETWORKS[networkKey].explorer }), txid: tx.hash, pending: false });
+      rescanAfterActivity();
     } catch (e) { sendFailed(btn, "sMsg", e); }
   };
 }
@@ -6473,7 +6494,8 @@ $("actSwap").onclick = () => {
           try {
             await completeGasFallbackSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
             msg("wMsg", "Swap complete ✓");
-          } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); }
+            rescanAfterActivity();
+          } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
           paintGasFallbackSwaps();
         };
         el.appendChild(document.createTextNode(" "));
@@ -6847,7 +6869,20 @@ $("actSwap").onclick = () => {
         feeText: route.gasCostUSD != null ? `≈ ${usd(route.gasCostUSD)} network fees` : null,
         explorerUrl: srcLink ? historyTxUrl({ link: srcLink }) : historyTxUrl({ hash: hashes[0], explorer: srcExplorer }),
         txid: hashes[0], pending: fromKey !== toKey });
-    } catch (e) { sendFailed(btn, "wMsg", e, "Swap failed: "); }
+      rescanAfterActivity();
+    } catch (e) {
+      if (e && e.outcomeUnknown) {
+        // Broadcast but unconfirmed (defect A): NEVER labelled
+        // "failed" — the chain hasn't given a verdict. Disarm the
+        // sheet so a re-tap cannot rebroadcast blindly, show the
+        // honest pending state, and rescan (defect B).
+        pendingSwap = null;
+        setSendBusy(btn, false);
+        try { console.warn("[fluid] swap outcome unconfirmed:", e); } catch { /* never break the sheet */ }
+        msg("wMsg", "Your swap was sent — the network hasn't confirmed it yet, so it isn't marked failed. Your balances are refreshing now; the result will show in your activity. Please don't send it again yet.");
+        rescanAfterActivity();
+      } else sendFailed(btn, "wMsg", e, "Swap failed: ");
+    }
   };
 };
 

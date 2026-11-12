@@ -459,6 +459,61 @@ async function simulateEvmStepOrThrow(networkKey, provider, txReq, from) {
   }
 }
 
+/** Resolve a broadcast transaction's outcome FROM THE CHAIN
+ * (2026-11-12 defect A). On 2026-11-12 a BTCB→BNB swap LANDED
+ * (receipt status 1) but ethers' tx.wait() threw "could not
+ * coalesce error" while polling the receipt from a glitching node,
+ * and the app labelled the swap "failed" — the user then
+ * rebroadcast the same route five times against an empty balance.
+ * Rule: after broadcast, the outcome is whatever the CHAIN says.
+ * This polls the receipt on each given provider in turn; a node's
+ * unreadable answer is one failed ATTEMPT, never a verdict. Never
+ * throws for RPC weirdness. Providers are injectable for tests. */
+export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10, delayMs = 3000, sleepFn } = {}) {
+  const sleep = sleepFn || ((ms) => new Promise(r => setTimeout(r, ms)));
+  const list = (providers || []).filter(Boolean);
+  for (let i = 0; i < attempts; i++) {
+    for (const p of list) {
+      try {
+        const rc = await p.getTransactionReceipt(txHash);
+        if (rc) return { state: Number(rc.status) === 1 ? "mined" : "reverted", receipt: rc };
+      } catch { /* unreadable answer: try the next node, then wait and retry */ }
+    }
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return { state: "unknown" };
+}
+
+/** Settle one broadcast step against the chain (defect A):
+ * mined → the receipt; reverted → a plain on-chain-failure error;
+ * still unknown after the polling budget → a FLAGGED error
+ * (e.outcomeUnknown) the UI renders as "sent, unconfirmed" —
+ * never as "failed". */
+async function settleBroadcastOrThrow(networkKey, txHash) {
+  const outcome = await resolveBroadcastOutcome([providerFor(networkKey), providerForFallback(networkKey)], txHash);
+  if (outcome.state === "mined") return outcome.receipt;
+  if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — the tokens it was moving are back in your wallet; only the network fee was spent.");
+  const err = new Error("Sent, but the network hasn't confirmed it yet.");
+  err.outcomeUnknown = true;
+  throw err;
+}
+
+/** Approvals settle differently (defect A): if the receipt can't
+ * be read, the ALLOWANCE is the ground truth — proceed when the
+ * chain shows the approval landed, refuse only when it truly
+ * isn't there. */
+async function settleApprovalOrThrow(networkKey, txHash, recheckAllowance) {
+  try { await settleBroadcastOrThrow(networkKey, txHash); }
+  catch (e) {
+    if (e && e.outcomeUnknown && typeof recheckAllowance === "function") {
+      let okNow = false;
+      try { okNow = await recheckAllowance(); } catch { /* an unreadable recheck refuses below */ }
+      if (okNow) return;
+    }
+    throw e;
+  }
+}
+
 export async function estimateSend(wallet, networkKey, { to, amount, token }) {
   const net = NETWORKS[networkKey];
   const provider = providerFor(networkKey);
@@ -7498,7 +7553,7 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
       onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
       const atx = await c.approve(ac.swapTx.to, need);
       approvalHashes.push(atx.hash);
-      await atx.wait();
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, ac.swapTx.to)) >= need);
       try {
         onApprove({ chainKey: fromKey, token: ac.inputToken, tokenSymbol: route.fromToken?.symbol || null, spender: ac.swapTx.to, amount: need.toString(), decimals: route.fromToken?.decimals ?? null, at: Date.now() });
       } catch { /* recording an approval must never break a swap */ }
@@ -7510,7 +7565,10 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
   if (Number.isFinite(g) && g > 0) { try { txReq.gasLimit = BigInt(Math.floor(g)); } catch { /* let the node estimate */ } }
   const depTx = await signer.sendTransaction(txReq);
   onProgress("Deposit sent — waiting for it to mine…");
-  await depTx.wait();
+  // Chain-decided outcome (defect A): the deposit is the
+  // value-moving transaction — a receipt-read glitch after
+  // broadcast must never label it "failed".
+  await settleBroadcastOrThrow(fromKey, depTx.hash);
   return [depTx.hash, ...approvalHashes];
 }
 // ---------- Satora: EVM stablecoins -> Bitcoin mainnet / Lightning ----------
@@ -12189,7 +12247,7 @@ export async function executeMayanSwapRoute(wallet, route, onProgress = () => {}
     if (current < need) {
       const atx = await token.approve(MAYAN_FORWARDER, need);
       onApprove?.({ hash: atx.hash, spender: MAYAN_FORWARDER, amount: need.toString() });
-      await atx.wait();
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await token.allowance(wallet.address, MAYAN_FORWARDER)) >= need);
     }
   }
   const txr = await signer.sendTransaction({ to: route.mayan.tx.to, data: route.mayan.tx.data, value: BigInt(route.mayan.tx.value || "0") });
@@ -12972,7 +13030,8 @@ export async function executeRelaySwapRoute(wallet, route, onProgress = () => {}
         } catch { /* recording an approval must never break a swap */ }
       }
       onProgress(`Step ${n} sent — waiting for it to mine…`);
-      await tx.wait();
+      // Chain-decided outcome, same as the LI.FI executor (defect A).
+      await settleBroadcastOrThrow(fromKey, tx.hash);
     }
   }
   return hashes;
@@ -14012,7 +14071,7 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}, onA
       if ((await c.allowance(wallet.address, spender)) < need) {
         onProgress(`Approving ${fromToken.symbol || "token"} for the route (exact amount only)…`);
         const atx = await c.approve(spender, need);
-        await atx.wait();
+        await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, spender)) >= need);
         try {
           onApprove({ chainKey: fromKey, token: fromToken.address, tokenSymbol: fromToken.symbol || null, spender, amount: need.toString(), decimals: fromToken.decimals ?? null, at: Date.now() });
         } catch { /* recording an approval must never break a swap */ }
@@ -14029,7 +14088,10 @@ export async function executeSwapRoute(wallet, route, onProgress = () => {}, onA
     const tx = await signer.sendTransaction(txReq);
     hashes.push(tx.hash);
     onProgress(`Step ${i + 1} sent — waiting for it to mine…`);
-    await tx.wait();
+    // The outcome is decided by the CHAIN, not by one node's
+    // receipt parsing (defect A): a landed step must never surface
+    // as "failed" because a receipt read glitched after broadcast.
+    await settleBroadcastOrThrow(fromKey, tx.hash);
   }
   return hashes;
 }
