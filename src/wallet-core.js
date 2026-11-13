@@ -13542,7 +13542,21 @@ export const SWAP_FLOOR_PROBE_USD = [10, 50, 250];
  *  re-labelling a rate limit as a pair verdict would be a lie. */
 export function isNoQuoteSwapError(e) {
   const m = String((e && (e.shortMessage || e.message)) || e || "");
-  if (/rate limit|too many requests|\b429\b|timed?\s?out|network|fetch failed|ECONN|socket/i.test(m)) return false;
+  // A rate limit is a hard stop and keeps that verdict whatever
+  // else the message says — checked first, never re-classified
+  // by anything below.
+  if (/rate limit|too many requests|\b429\b/i.test(m)) return false;
+  // A rail refusing because it does not know or serve the chain
+  // has answered about the PAIR — it has no quote for it. LI.FI's
+  // wrapper throws "Unknown network in swap." for exactly the
+  // destinations swapChainOf deliberately keeps out of LI.FI's
+  // universe (Bitcoin, Lightning), from inside the cascade,
+  // before any fetch. Classifying it as transport (the bare word
+  // "network" used to match) stranded BNB→BTC and BNB→Lightning
+  // on that throw: getSwapRoutes rethrew it before the Stage 1
+  // composition search ever ran (sheet-path probe, 2026-11-13).
+  if (/unknown network/i.test(m)) return true;
+  if (/timed?\s?out|fetch failed|ECONN|socket|networkerror|network (error|request|failure|failed)/i.test(m)) return false;
   return /no available quotes|no route|route not found|not found|no quotes/i.test(m);
 }
 /** The probe ladder for one failed search: the SWAP_FLOOR_PROBE_USD

@@ -10822,6 +10822,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && isNoQuoteSwapError(new Error("Route search failed: Rate limit exceeded, retry in 54 minutes")) === false
     && isNoQuoteSwapError(new Error("The operation timed out")) === false
     && isNoQuoteSwapError(new Error("Mayan route search failed: Route not found")) === true);
+  ok("nq: a rail's 'unknown network' refusal is a pair verdict, not transport — but real network failures still are",
+    isNoQuoteSwapError(new Error("Unknown network in swap.")) === true
+    && isNoQuoteSwapError(new Error("fetch failed: Network error")) === false
+    && isNoQuoteSwapError(new Error("NetworkError when attempting to fetch resource")) === false
+    && isNoQuoteSwapError(new Error("Rate limit exceeded — unknown network")) === false);
   ok("nq: the ladder climbs 10/50/250 above a $0.22 failure and skips rungs near a $60 failure",
     (() => { const r = swapFloorProbeRungs(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628 });
       const r2 = swapFloorProbeRungs({ ...BNB_ARGS, fromAmount: "95541401273885350" }, { fromDecimals: 18, fromPriceUsd: 628 });
@@ -10941,6 +10946,20 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   catch (e) { threw429 = /Rate limit/i.test(e.message || ""); }
   ok("ms: a transport failure is never composed over or re-labelled — it propagates as itself",
     threw429 === true && composeCalls429 === 0);
+  // The LI.FI "unknown network" throw (Bitcoin/Lightning
+  // destinations, whose chains swapChainOf keeps out of LI.FI's
+  // universe) is a no-quote direct failure: composition must run.
+  // Before this pin the bare word "network" classified it as
+  // transport and the sheet path stranded on the throw.
+  let composeCallsUnk = 0;
+  const wrappedUnk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Unknown network in swap."); }, compositionSearch: async () => { composeCallsUnk++; return composedMs; } });
+  ok("ms: a direct 'unknown network' throw falls through to composition instead of stranding the search",
+    wrappedUnk.length === 1 && wrappedUnk[0].provider === "milestone" && composeCallsUnk === 1);
+  let unkThrew = false;
+  try { await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Unknown network in swap."); }, compositionSearch: async () => [] }); }
+  catch (e) { unkThrew = /Unknown network/i.test(e.message || ""); }
+  ok("ms: when composition also finds nothing after an 'unknown network' throw, the original error stands for the sheet",
+    unkThrew === true);
   // When composition also finds nothing, the diagnosis fallback stands.
   const wrappedNone = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => [], compositionSearch: async () => [] });
   const vMsNone = await diagnoseNoRouteSwap(MS_BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { throw new Error("No available quotes"); } });
