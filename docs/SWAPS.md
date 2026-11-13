@@ -154,6 +154,31 @@ destination-gas fallback's durable machinery (persisted per-leg
 records, resume after a landed leg, "complete the swap"), extended
 from its fixed native-only shape to searched compositions.
 
+**Scope (set 2026-11-13, the owner's widening): the requirement
+is any chain → any chain, not the Sui example.** The composition
+search is general — it special-cases no chain: for any pair the
+direct search cannot serve, it tries the origin's hub asset, a
+milestone chain chosen for the property the destination rail
+needs, and the destination's hub asset, across every family
+Fluid swaps in (EVM chains, Solana, Tron, Sui, and — as
+destinations — Bitcoin mainnet and Lightning). Two honest
+boundaries: Bitcoin and Lightning are receive-only swap
+destinations today (no BTC-source leg exists that Fluid can
+sign — `swapChainOf` returns null for Bitcoin by design, its
+step payloads being PSBT shapes Fluid has not inspected), so
+nothing composes FROM Bitcoin yet; and a chain Fluid does not
+support at all (Robinhood Chain, as of this writing) cannot be
+a composition endpoint — support for a chain is its own work,
+never invented here. Bitcoin/Lightning destinations compose
+through USDC on a Satora source chain (Arbitrum first):
+any asset → USDC on Arbitrum → Satora to BTC/Lightning,
+inheriting Satora's floors (10,000 sats to mainnet — below
+which Lightning is the small-size destination — and 356 sats
+to Lightning) and its version gate (Fluid refuses Satora
+routes while the live API's version line differs from the
+audited spec; that gate, not routing, is what stands between
+a composed BNB → BTC and execution whenever it is closed).
+
 ### Worked example, live-priced 2026-11-13: BNB (BNB Chain) → SUI (Sui)
 
 No rail quotes this pair directly (see "Per-pair reality" above).

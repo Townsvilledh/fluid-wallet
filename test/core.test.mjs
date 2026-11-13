@@ -10944,6 +10944,29 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     loadMilestoneRecords(storeMs).length === 1 && milestoneNeedsAction(recMs) === true
     && milestoneNeedsAction({ ...recMs, state: "awaiting-credit" }) === false
     && milestoneHistoryLine(recMs).includes("Complete the swap"));
+  // Cross-family generality (scope clarification, 2026-11-13):
+  // the planner is not Sui-shaped — Bitcoin/Lightning
+  // destinations compose through a Satora source chain, and a
+  // Bitcoin SOURCE composes nothing (no signable leg exists).
+  const BTC_ARGS = { fromChainKey: "bsc", toChainKey: "bitcoin", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "btc", fromAmount: "32000000000000000", fromAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", toAddress: "bc1pqa" };
+  const btcShapes = milestoneShapes(BTC_ARGS);
+  ok("ms: BNB→BTC composes through Arbitrum USDC into the Satora leg, labelled plainly",
+    btcShapes.length === 3 && btcShapes[0].length === 2
+    && btcShapes[0][0].toChainKey === "arbitrum" && btcShapes[0][0].toSymbol === "USDC"
+    && btcShapes[0][1].fromChainKey === "arbitrum" && btcShapes[0][1].toChainKey === "bitcoin" && btcShapes[0][1].toSymbol === "BTC"
+    && milestoneLabelFor("BNB", btcShapes[0]) === "BNB → USDC on Arbitrum → BTC on Bitcoin"
+    && milestoneShapes({ ...BTC_ARGS, toChainKey: "lightning" })[0][1].toChainKey === "lightning");
+  ok("ms: a Bitcoin or Lightning SOURCE gets no composition shapes — no signable leg exists to compose from",
+    milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "base", fromTokenAddress: "btc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", fromAmount: "100000", fromAddress: "bc1pqa", toAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34" }).length === 0);
+  const btcLegSearch = async (a) => {
+    if (a.toChainKey === "arbitrum") return [fakeLeg("b1", "relay", "20000000", 20, { fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.toChainKey === "bitcoin") return [fakeLeg("b2", "satora", "21000", 19.9, { toToken: { address: "btc", symbol: "BTC", decimals: 8 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedBtc = await searchMilestoneCompositions(BTC_ARGS, { searchLeg: btcLegSearch, pricesUsd: { BTC: 95000 } });
+  ok("ms: the BNB→BTC composition is found as one route with the Satora leg last",
+    composedBtc.length === 1 && composedBtc[0].milestone.label === "BNB → USDC on Arbitrum → BTC on Bitcoin"
+    && composedBtc[0].toAmount === "21000" && composedBtc[0].milestone.legs.length === 2);
   const appMs = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("ms: the swap sheet wires the milestone executor, its fee disclosure and its completion list",
     appMs.includes("executeMilestoneRoute(wallet, route") && appMs.includes('r.provider === "milestone"')

@@ -12392,6 +12392,8 @@ export function destGasSpec(chainKey) {
 }
 /** Display name for a swap-universe chain key. */
 export function destChainName(chainKey) {
+  if (chainKey === "bitcoin") return "Bitcoin";
+  if (chainKey === "lightning") return "Lightning";
   if (chainKey === "solana") return "Solana";
   if (chainKey === "tron") return "Tron";
   if (chainKey === "sui") return "Sui";
@@ -12893,6 +12895,7 @@ function isHubTokenOn(chainKey, tokenAddress) {
   return !!hub && tokenAddress != null && swapTokenEq(chainKey, tokenAddress, hub.address);
 }
 function tokenSymbolOn(chainKey, tokenAddress) {
+  if (chainKey === "bitcoin" || chainKey === "lightning") return "BTC";
   if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
   const hub = hubTokenForChain(chainKey);
   if (hub && swapTokenEq(chainKey, tokenAddress, hub.address)) return "USDC";
@@ -12942,6 +12945,33 @@ export function milestoneShapes(args) {
     const clean = legs.filter(l => !(l.fromChainKey === l.toChainKey && swapTokenEq(l.fromChainKey, l.fromTokenAddress, l.toTokenAddress)));
     if (clean.length && clean.length <= 3) shapes.push(clean);
   };
+  // Bitcoin / Lightning destinations: the destination rail
+  // (Satora) sources only USDC/USDT on Ethereum, Polygon or
+  // Arbitrum — so the composition runs any asset into USDC on
+  // a Satora source chain (Arbitrum first, the cheapest
+  // settlement chain), then the Satora leg itself. Above
+  // Satora's floors (10,000 sats to Bitcoin mainnet, 356 sats
+  // to Lightning) this composes at sizes and from origins no
+  // direct Satora route serves; below the Bitcoin floor no
+  // composition to mainnet exists — Lightning is the small-
+  // size destination, exactly as the swap sheet's BTC-floor
+  // way-through already offers. Bitcoin/Lightning as a SOURCE
+  // gets no shapes anywhere in this planner: Fluid's swap
+  // universe has no BTC-source leg it can sign (swapChainOf
+  // returns null for Bitcoin by design), so there is nothing
+  // genuine to compose from — the honest diagnosis stands.
+  if (args.toChainKey === "bitcoin" || args.toChainKey === "lightning") {
+    for (const m of ["arbitrum", "polygon", "ethereum"]) {
+      const mHub = hubTokenForChain(m);
+      if (!mHub) continue;
+      const legs = [];
+      if (!(args.fromChainKey === m && isHubTokenOn(m, args.fromTokenAddress)))
+        legs.push(leg(args.fromChainKey, m, args.fromTokenAddress, mHub.address));
+      legs.push(leg(m, args.toChainKey, mHub.address, args.toTokenAddress));
+      pushShape(legs);
+    }
+    return shapes;
+  }
   // Sui destinations: the destination rail (Mayan Fast MCTP)
   // needs a CCTP-domain source and carries USDC only, so the
   // composition runs through a milestone chain's USDC into
@@ -13250,7 +13280,9 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
     record.pendingExpectedRaw = route.toAmount != null ? String(route.toAmount) : null;
     record.state = "awaiting-credit";
     if (storage) saveMilestoneRecord(storage, record);
-    const hashes = await dispatchSwapExecution(wallet, route, progress, { onApprove, onApproveMayan });
+    const hashes = route.provider === "satora"
+      ? await executeSatoraSwapRoute(wallet, route, progress, { storage, onApprove })
+      : await dispatchSwapExecution(wallet, route, progress, { onApprove, onApproveMayan });
     record.hashes = [...(record.hashes || []), ...hashes];
     if (!record.id) record.id = hashes[0];
     if (storage) saveMilestoneRecord(storage, record);
