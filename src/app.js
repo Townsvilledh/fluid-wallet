@@ -34,7 +34,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain,
+  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
@@ -6897,14 +6897,44 @@ $("actSwap").onclick = () => {
           destInput = t.value;
         }
       }
-      const routes = await getSwapRoutes({
+      const swapArgs = {
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
         fromAmount: swapAmountToRaw(amount, fromTok.decimals),
         fromAddress: addrOf(fromKey),
         toAddress: (toKey === "bitcoin" || toKey === "lightning") ? destInput : addrOf(toKey),
-      });
-      if (!routes.length) return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
+      };
+      let routes = null, routeErr = null;
+      try { routes = await getSwapRoutes(swapArgs); } catch (e) { routeErr = e; }
+      if (!routes || !routes.length) {
+        // A no-quote failure gets a diagnosed answer, not the bare
+        // router error: core probes the pair at climbing sizes and,
+        // for a non-hub token, probes whether the token has any
+        // market at all (diagnoseNoRouteSwap), so the sheet states
+        // WHICH honest case this is — below the pair's minimum, no
+        // market for the token, or no route for the pair yet. A
+        // transport failure (rate limit, network) keeps its own
+        // error below: probing it would burn quota and mislabel it.
+        // Bitcoin/Lightning destinations keep their Satora copy.
+        if (toKey !== "bitcoin" && toKey !== "lightning" && (!routeErr || isNoQuoteSwapError(routeErr))) {
+          try {
+            msg("wMsg", "No route at that size — checking what would work…", true);
+            const verdict = await diagnoseNoRouteSwap(swapArgs, {
+              fromDecimals: fromTok.decimals,
+              fromPriceUsd: Number(prices[fromTok.symbol]) || fromTok.priceUSD || null,
+            });
+            const floorText = verdict.floor?.found ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol} (≈ $${Number(verdict.floor.usd).toFixed(0)})` : "";
+            const nativeSymbol = (swapTokensFor(fromKey).find(t => t.native) || {}).symbol || "";
+            return msg("wMsg", formatSwapNoRouteMessage({
+              fromSymbol: fromTok.symbol, toSymbol: toTok.symbol,
+              amountText: `${amount} ${fromTok.symbol}`,
+              verdict, floorText, nativeSymbol,
+            }));
+          } catch { /* diagnosis is best-effort — the plain messages below still apply */ }
+        }
+        if (routeErr) throw routeErr;
+        return msg("wMsg", "No route found for that pair and amount. Try a different pair or a larger amount.");
+      }
       const ranked = rankSwapRoutes(routes, Number(toTok.priceUSD) || null).slice(0, 3);
       msg("wMsg", "");
       $("wList").innerHTML = ranked.map((r, i) => {

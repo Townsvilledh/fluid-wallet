@@ -12924,6 +12924,168 @@ export async function getSwapRoutes(args) {
   if (gasPlan) for (const r of routes) if (!r.destGas) r.destGas = gasPlan;
   return rankSwapRoutes(routes, null, { gasNeed: gasPlan });
 }
+/** The USD sizes the no-route probe climbs through, smallest
+ *  first. A failed route search usually means the amount is
+ *  under a router's floor for the pair — but a bare "no quotes"
+ *  does not say whether a slightly bigger swap would work, and
+ *  the honest answer is one probe away. The ladder is short on
+ *  purpose (every rung is a full route search, and LI.FI's
+ *  keyless API rate-limits hard): three rungs, each far enough
+ *  above the last that a real floor is crossed in one step. */
+export const SWAP_FLOOR_PROBE_USD = [10, 50, 250];
+/** True when a route-search failure is the "no quote exists"
+ *  kind (a router answered and had nothing) rather than a
+ *  transport failure (rate limit, timeout, network down). Only
+ *  the first kind earns a floor probe: probing a rate limit
+ *  would burn the user's remaining quota to learn nothing, and
+ *  re-labelling a rate limit as a pair verdict would be a lie. */
+export function isNoQuoteSwapError(e) {
+  const m = String((e && (e.shortMessage || e.message)) || e || "");
+  if (/rate limit|too many requests|\b429\b|timed?\s?out|network|fetch failed|ECONN|socket/i.test(m)) return false;
+  return /no available quotes|no route|route not found|not found|no quotes/i.test(m);
+}
+/** The probe ladder for one failed search: the SWAP_FLOOR_PROBE_USD
+ *  rungs that are meaningfully above the amount that just failed
+ *  (a rung within 25% of the failed amount would only repeat the
+ *  answer). Pure; returns [{ usd, amountRaw }] in climbing order. */
+export function swapFloorProbeRungs(args, { fromDecimals = null, fromPriceUsd = null } = {}) {
+  const price = Number(fromPriceUsd), dec = Number(fromDecimals);
+  if (!args?.fromAmount || !Number.isFinite(price) || !(price > 0) || !Number.isFinite(dec) || dec < 0) return [];
+  let human;
+  try { human = Number(ethers.formatUnits(BigInt(String(args.fromAmount)), dec)); } catch { return []; }
+  if (!(human > 0)) return [];
+  const failedUsd = human * price;
+  const rungs = [];
+  for (const usd of SWAP_FLOOR_PROBE_USD) {
+    if (!(usd > failedUsd * 1.25)) continue;
+    // Round the rung amount UP at the token's 8th significant
+    // decimal so the probe never tests a hair under its rung.
+    const amt = usd / price;
+    const rounded = Math.ceil(amt * 1e8) / 1e8;
+    let raw;
+    try { raw = ethers.parseUnits(String(rounded), dec).toString(); } catch { continue; }
+    rungs.push({ usd, amountRaw: raw, amountHuman: rounded });
+  }
+  return rungs;
+}
+/** After a no-quote failure, find the smallest size at which
+ *  the SAME search succeeds, climbing swapFloorProbeRungs.
+ *  Returns { found: true, usd, amountRaw, amountHuman, routes }
+ *  for the first rung that answers, { found: false,
+ *  probedUpToUsd } when no rung does (or no ladder applies —
+ *  then probedUpToUsd is the failed amount's own USD value),
+ *  and never throws: a probe failure (a rate limit arriving
+ *  mid-ladder) just ends the climb with what was learned.
+ *  `search` is injectable for tests; production passes nothing
+ *  and gets getSwapRoutes itself, so the probe judges exactly
+ *  the search the user ran. */
+export async function findSwapRouteFloor(args, { fromDecimals = null, fromPriceUsd = null, search = null } = {}) {
+  const run = search || getSwapRoutes;
+  const rungs = swapFloorProbeRungs(args, { fromDecimals, fromPriceUsd });
+  let probedUpToUsd = null;
+  try {
+    const human = Number(ethers.formatUnits(BigInt(String(args?.fromAmount || "0")), Number(fromDecimals)));
+    if (Number.isFinite(human) && human > 0 && Number(fromPriceUsd) > 0) probedUpToUsd = Math.round(human * Number(fromPriceUsd) * 100) / 100;
+  } catch { /* unvalued — the message then names token amounts only */ }
+  for (const rung of rungs) {
+    probedUpToUsd = rung.usd;
+    let routes = null;
+    try { routes = await run({ ...args, fromAmount: rung.amountRaw }); }
+    catch (e) {
+      // A no-quote answer at this rung is information, not the
+      // end: the next, larger rung may still answer. Anything
+      // else (a rate limit arriving mid-ladder, a network drop)
+      // ends the climb with what was learned.
+      if (isNoQuoteSwapError(e)) continue;
+      break;
+    }
+    if (routes && routes.length) return { found: true, usd: rung.usd, amountRaw: rung.amountRaw, amountHuman: rung.amountHuman, routes };
+  }
+  return { found: false, probedUpToUsd };
+}
+/** Whether the FROM token is one of its chain's canonical
+ *  liquid assets (the native coin, or the chain's listed USDC /
+ *  USDT) — assets whose market existence is not in question, so
+ *  the no-market probe below would only waste router calls.
+ *  Pure; reads the same token lists the picker offers. */
+export function swapFromTokenIsHubAsset(args) {
+  if (!args?.fromChainKey || args.fromTokenAddress == null) return false;
+  const a = String(args.fromTokenAddress);
+  const native = destNativeTokenAddress(args.fromChainKey);
+  if (native && (args.fromChainKey === "sui" ? suiCoinTypeEq(a, native) || suiCoinTypeEq(a, SUI_COIN_TYPE) : a.toLowerCase() === String(native).toLowerCase())) return true;
+  if (a === LIFI_NATIVE_TOKEN || a.toLowerCase() === LIFI_API_NATIVE_SENTINEL.toLowerCase()) return true;
+  const lists = [];
+  if (NETWORKS[args.fromChainKey]?.tokens) lists.push(NETWORKS[args.fromChainKey].tokens);
+  if (args.fromChainKey === "sui") lists.push(SUI_TOKENS);
+  if (args.fromChainKey === "solana") lists.push(SOLANA_TOKENS);
+  if (args.fromChainKey === "tron") lists.push(TRON_TOKENS);
+  for (const list of lists) for (const t of list) {
+    if (!t || !/^(USDC|USDT)$/i.test(t.symbol || "")) continue;
+    const addr = t.address || t.mint;
+    if (addr && (args.fromChainKey === "sui" ? suiCoinTypeEq(a, addr) : String(addr).toLowerCase() === a.toLowerCase())) return true;
+  }
+  return false;
+}
+/** Diagnose a no-quote failure into one of the three honest
+ *  cases, with live probes — never a guess:
+ *   - "below-minimum": a bigger size on the SAME pair answers
+ *     (findSwapRouteFloor found the floor).
+ *   - "no-market": the FROM token cannot be swapped even into
+ *     its own chain's native coin, at the user's amount and at
+ *     100× it — there is no market for the token to route from.
+ *   - "no-route-yet": the token itself trades (or is a hub
+ *     asset, whose market is not in question) but no rail
+ *     connects this pair at any probed size.
+ *  A probe that fails on transport (rate limit, network) reads
+ *  as "unknown", never as a market verdict. Never throws. */
+export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPriceUsd = null, search = null } = {}) {
+  const run = search || getSwapRoutes;
+  const floor = await findSwapRouteFloor(args, { fromDecimals, fromPriceUsd, search: run });
+  if (floor.found) return { kind: "below-minimum", floor, market: null };
+  let market = null;
+  if (!swapFromTokenIsHubAsset(args)) {
+    const nativeAddr = destNativeTokenAddress(args?.fromChainKey);
+    const sameToken = nativeAddr != null && String(args?.fromTokenAddress || "").toLowerCase() === String(nativeAddr).toLowerCase();
+    if (nativeAddr && !sameToken && args?.fromAmount) {
+      let amounts = [String(args.fromAmount)];
+      try { const big = (BigInt(String(args.fromAmount)) * 100n).toString(); if (big !== amounts[0]) amounts.push(big); } catch { /* single probe */ }
+      for (const raw of amounts) {
+        try {
+          const routes = await run({ ...args, toChainKey: args.fromChainKey, toTokenAddress: nativeAddr, toAddress: args.fromAddress, fromAmount: raw });
+          if (routes && routes.length) { market = true; break; }
+          market = false; // an answered-but-empty search is a no-quote answer — try the bigger amount before concluding
+        } catch (e) {
+          if (isNoQuoteSwapError(e)) { market = false; continue; }
+          market = null; break;
+        }
+      }
+    }
+  }
+  if (market === false) return { kind: "no-market", floor, market };
+  return { kind: "no-route-yet", floor, market };
+}
+/** The swap sheet's no-route sentences — one plain statement
+ *  per honest case, from diagnoseNoRouteSwap's verdict, never
+ *  the bare router error. floorText/nativeSymbol are rendered
+ *  by the sheet (it owns the token objects); an optional
+ *  destNote (a destination-side fact the sheet verified, e.g.
+ *  a Sui gas requirement) rides as a final sentence. Pure;
+ *  the sheet renders, tests pin. */
+export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol = "the other token", amountText = "", verdict = null, floorText = "", nativeSymbol = "", destNote = "" } = {}) {
+  const amt = amountText ? ` at ${amountText}` : "";
+  let s;
+  if (verdict?.kind === "below-minimum" && verdict.floor?.found) {
+    s = `No route for ${fromSymbol} → ${toSymbol}${amt} — that amount is below the minimum for this pair. The smallest swap that works right now is about ${floorText || verdict.floor.amountHuman}. Raise the amount and search again.`;
+  } else if (verdict?.kind === "no-market") {
+    s = `No market found for ${fromSymbol}: it can't be swapped into anything right now — not even ${nativeSymbol || "its own chain's coin"} on its own chain. A token with no market can't be swapped at any size.`;
+  } else if (verdict?.kind === "no-route-yet") {
+    const upTo = verdict.floor?.probedUpToUsd != null ? ` — none at this amount, and none at any size up to about $${Number(verdict.floor.probedUpToUsd).toFixed(0)} either` : "";
+    s = `No route exists for ${fromSymbol} → ${toSymbol} yet${upTo}. The route for this pair isn't connected yet; try a different destination for now.`;
+  } else {
+    s = `No route found for ${fromSymbol} → ${toSymbol}${amt}. Try a different pair or a larger amount.`;
+  }
+  return destNote ? `${s} ${destNote}` : s;
+}
 /** Bounds-check one Relay step item BEFORE anything is signed (the
  *  Relay twin of checkSwapStepBounds). Relay builds complete
  *  transactions; Fluid signs only a transaction that is exactly the

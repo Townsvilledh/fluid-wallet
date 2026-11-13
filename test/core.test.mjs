@@ -13,7 +13,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine, 
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -10790,6 +10790,73 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && app.includes("const swapPre = pendingSwapFrom; pendingSwapFrom = null;"));
   ok("F: natives show no fake contract — the detail says so in plain words",
     app.includes("This is the network's native asset — it has no contract address."));
+}
+
+// ---------- no-route diagnosis (2026-11-13): the three honest cases ----------
+// A failed route search must say WHICH case it is — below the
+// pair's minimum, no market for the token, or no route for the
+// pair yet — from live probes, never the bare router error. The
+// searches here are injected fakes; production passes
+// getSwapRoutes itself.
+{
+  const BNB_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "0x2::sui::SUI", fromAmount: "350000000000000", fromAddress: "0xuser", toAddress: "0xsui" };
+  ok("nq: LI.FI's no-quote sentence is a no-quote failure; a rate limit is not",
+    isNoQuoteSwapError(new Error("Route search failed: No available quotes for the requested transfer")) === true
+    && isNoQuoteSwapError(new Error("Route search failed: Rate limit exceeded, retry in 54 minutes")) === false
+    && isNoQuoteSwapError(new Error("The operation timed out")) === false
+    && isNoQuoteSwapError(new Error("Mayan route search failed: Route not found")) === true);
+  ok("nq: the ladder climbs 10/50/250 above a $0.22 failure and skips rungs near a $60 failure",
+    (() => { const r = swapFloorProbeRungs(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628 });
+      const r2 = swapFloorProbeRungs({ ...BNB_ARGS, fromAmount: "95541401273885350" }, { fromDecimals: 18, fromPriceUsd: 628 });
+      return r.length === 3 && r.map(x => x.usd).join() === SWAP_FLOOR_PROBE_USD.join() && r2.length === 1 && r2[0].usd === 250; })());
+  ok("nq: no price, no ladder — the probe never guesses a size",
+    swapFloorProbeRungs(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: null }).length === 0);
+  const floorAt50 = async (a) => { const usd = Number(BigInt(a.fromAmount)) / 1e18 * 628; if (usd >= 40) return [{ id: "r" }]; throw new Error("No available quotes for the requested transfer"); };
+  const foundFloor = await findSwapRouteFloor(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: floorAt50 });
+  ok("nq: the floor probe finds the first size that answers",
+    foundFloor.found === true && foundFloor.usd === 50 && Array.isArray(foundFloor.routes));
+  const never = async () => { throw new Error("No available quotes for the requested transfer"); };
+  const noFloor = await findSwapRouteFloor(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: never });
+  ok("nq: an unanswered ladder reports how high it probed",
+    noFloor.found === false && noFloor.probedUpToUsd === 250);
+  const vMin = await diagnoseNoRouteSwap(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: floorAt50 });
+  ok("nq: a found floor diagnoses as below-minimum",
+    vMin.kind === "below-minimum" && vMin.floor.usd === 50);
+  // SAFU-shaped: a non-hub token whose pair probes AND whose
+  // own-chain market probes (user amount and 100x) all refuse.
+  const SAFU_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0xaDC383D53234f494e6Ed409228eC02334f9330B8", toTokenAddress: "0x2::sui::SUI", fromAmount: "2909090910000000000000000", fromAddress: "0xuser", toAddress: "0xsui" };
+  const vMkt = await diagnoseNoRouteSwap(SAFU_ARGS, { fromDecimals: 18, fromPriceUsd: null, search: never });
+  ok("nq: a token that cannot sell even into its own chain's coin diagnoses as no-market",
+    vMkt.kind === "no-market");
+  const sellsAtHome = async (a) => { if (a.toChainKey === a.fromChainKey) return [{ id: "home" }]; throw new Error("No available quotes for the requested transfer"); };
+  const vPair = await diagnoseNoRouteSwap(SAFU_ARGS, { fromDecimals: 18, fromPriceUsd: null, search: sellsAtHome });
+  ok("nq: a tradable token with no cross-chain answer diagnoses as no-route-yet",
+    vPair.kind === "no-route-yet" && vPair.market === true);
+  // Hub assets never burn a market probe: BNB's market is not
+  // in question, so the ladder is the only search that runs.
+  let hubCalls = 0;
+  const vHub = await diagnoseNoRouteSwap(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { hubCalls++; throw new Error("No available quotes"); } });
+  ok("nq: a hub asset skips the market probe (ladder calls only) and reads no-route-yet",
+    vHub.kind === "no-route-yet" && hubCalls === 3);
+  // A transport failure mid-diagnosis never becomes a verdict.
+  const vBlind = await diagnoseNoRouteSwap(SAFU_ARGS, { fromDecimals: 18, fromPriceUsd: null, search: async () => { throw new Error("Rate limit exceeded"); } });
+  ok("nq: a rate-limited market probe reads unknown, not no-market",
+    vBlind.kind === "no-route-yet" && vBlind.market === null);
+  ok("nq: hub-asset recognition covers natives and listed stables, not long-tail tokens",
+    swapFromTokenIsHubAsset(BNB_ARGS) === true
+    && swapFromTokenIsHubAsset({ fromChainKey: "bsc", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }) === true
+    && swapFromTokenIsHubAsset({ fromChainKey: "sui", fromTokenAddress: "0x2::sui::SUI" }) === true
+    && swapFromTokenIsHubAsset(SAFU_ARGS) === false);
+  ok("nq: the three messages are plain, distinct, and name the learned fact",
+    formatSwapNoRouteMessage({ fromSymbol: "BNB", toSymbol: "SUI", amountText: "0.00035 BNB", verdict: vMin, floorText: "0.08 BNB (≈ $50)" })
+      .includes("below the minimum for this pair")
+    && formatSwapNoRouteMessage({ fromSymbol: "SAFU", toSymbol: "SUI", verdict: vMkt, nativeSymbol: "BNB" })
+      .includes("No market found for SAFU")
+    && formatSwapNoRouteMessage({ fromSymbol: "BNB", toSymbol: "SUI", amountText: "0.00035 BNB", verdict: vHub })
+      .includes("No route exists for BNB → SUI yet"));
+  const appNq = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("nq: the swap sheet wires the diagnosis into its no-route path",
+    appNq.includes("diagnoseNoRouteSwap(swapArgs") && appNq.includes("formatSwapNoRouteMessage({") && appNq.includes("isNoQuoteSwapError(routeErr)"));
 }
 
 console.log(`\n${passed} checks passed`);
