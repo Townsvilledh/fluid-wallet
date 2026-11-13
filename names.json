@@ -62,5 +62,13 @@
     "sol": "J6DV7Yiun3y4VJBcfZAPWdraPmu3xwebcKHRCwP42bNB",
     "tron": "TQii7EZZ6R7cyBpj8Wr7JVKhWSVCTGPR3p",
     "sui": "0x11c01266fac765e3ba3a7880a034e0c70d55976d15d76671ac909e10b33c670d"
+  },
+  "lucaszsd": {
+    "evm": "0xeA8cac8501e95cb714bB0D2A31353BE10314cF34",
+    "btc": "bc1q42zneac8rsy99w5yd7hctl8dg7024n0rshsxru",
+    "algo": "MJ2BE6G3CWMVBH7VBPMKAWLANO3LNF4PIXNIM33JL7TOKUTNEGSR4ZAAUU",
+    "sol": "B97yZMjhigJZm6vy2oqxnjWb2ZxUVGbjWPeLFprGP75d",
+    "tron": "TXMPe9ATG7g3e3V84Kz6yXY47xE8QGFQP1",
+    "sui": "0x92f1262a38c8ac3ddcf4677f5e4378e6de6842f7b946cd2c7956e5bf71f9ba00"
   }
 }
