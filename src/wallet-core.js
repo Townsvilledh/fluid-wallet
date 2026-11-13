@@ -12821,6 +12821,529 @@ export async function completeGasFallbackSwap(wallet, recordId, progress = () =>
   return runGasFallbackLeg2(wallet, record, progress, { storage, onApprove, onApproveMayan });
 }
 
+
+/* ---------- Milestone routing (Stage 1, 2026-11-13) ----------
+ * The owner's requirement (2026-11-13): if there is no direct
+ * route, find the alternative route — milestone to milestone
+ * until the destination. On direct-quote failure getSwapRoutes
+ * searches compositions of ≤3 legs, each leg a route that
+ * genuinely quotes at the user's size:
+ *   - an origin hub leg when the FROM token is not a hub asset,
+ *   - a milestone-chain hop when the destination rail needs a
+ *     chain property the origin lacks (a CCTP domain — Base is
+ *     the milestone for Sui, unlocking Mayan Fast MCTP),
+ *   - a destination hub leg when rails reach the destination
+ *     chain's hub asset but not the target token (USDC on Sui
+ *     → SUI via the LI.FI/Cetus Sui lane).
+ * Composed candidates are priced all-in (the sum of their legs'
+ * costs) and ranked by the same merit rule as direct routes.
+ * FEE CAPTURE on composed routes: there is no extra Fluid
+ * charge and no Fluid contract — every leg is quoted by its own
+ * rail under the same fee law as a direct route (Relay App Fees,
+ * Mayan referrer bps, LI.FI integrator fee, each attached by
+ * that leg's own two-pass quoting), so Fluid's fee is collected
+ * per leg, by the leg's own mechanism, at the moment that leg
+ * executes. The composed route discloses the SUM of its legs'
+ * platformFeeUsd as its fee line, exactly as the gas-fallback
+ * composite does. A leg whose rail collects nothing contributes
+ * 0 to the sum — the composition never invents a fee a rail
+ * cannot collect.
+ * DESTINATION GAS runs across the whole composition: the leg
+ * that enters the destination ecosystem carries the gas drop
+ * when a rail can carry one (Mayan Fast MCTP's gasDrop into
+ * Sui — the drop also satisfies LI.FI's 0.05 SUI build rule
+ * for the final on-Sui leg, which is therefore re-quoted fresh
+ * at execution time, after the drop has landed).
+ * EXECUTION reuses the gas-fallback pattern, generalised from
+ * its fixed native-only shape to searched compositions: a
+ * persisted per-leg record (MILESTONE_SWAPS_STORAGE_KEY), one
+ * confirmation for the whole composition, each leg re-quoted
+ * fresh from what ACTUALLY arrived from the previous leg, and
+ * a one-tap "Complete the swap" resume when a later leg cannot
+ * run yet — the user holds the previous leg's asset throughout,
+ * in their own wallet, movable, never stranded. */
+
+/** Chains holding a Circle CCTP domain Mayan Fast MCTP can
+ *  source from (MAYAN_CCTP_DOMAINS keys, EVM side) — the
+ *  milestone candidates for destinations whose rail needs one,
+ *  Base first (the worked example's milestone, proven live). */
+export const MILESTONE_CCTP_CHAINS = ["base", "arbitrum", "ethereum", "polygon", "optimism", "avalanche", "linea"];
+/** The canonical hub asset of a chain in the swap universe:
+ *  USDC where the chain lists one (the CCTP asset — the only
+ *  hub Mayan Fast MCTP carries into Sui). Null where the chain
+ *  lists no USDC. Pure. */
+export function hubTokenForChain(chainKey) {
+  if (chainKey === "sui") { const t = SUI_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
+  if (chainKey === "solana") { const t = SOLANA_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address || t.mint, decimals: t.decimals } : null; }
+  if (chainKey === "tron") { const t = TRON_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
+  const t = (NETWORKS[chainKey]?.tokens || []).find(x => x.symbol === "USDC");
+  return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null;
+}
+/** Token equality in swap space (Sui coin types compare by
+ *  their normalised form; everything else case-insensitively;
+ *  the LI.FI native sentinel and an absent address both mean
+ *  the chain's native coin). */
+function swapTokenEq(chainKey, a, b) {
+  if (a == null || b == null) return a == null && b == null;
+  if (chainKey === "sui") return suiCoinTypeEq(a, b);
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+function isHubTokenOn(chainKey, tokenAddress) {
+  const hub = hubTokenForChain(chainKey);
+  return !!hub && tokenAddress != null && swapTokenEq(chainKey, tokenAddress, hub.address);
+}
+function tokenSymbolOn(chainKey, tokenAddress) {
+  if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
+  const hub = hubTokenForChain(chainKey);
+  if (hub && swapTokenEq(chainKey, tokenAddress, hub.address)) return "USDC";
+  const lists = [];
+  if (NETWORKS[chainKey]?.tokens) lists.push(NETWORKS[chainKey].tokens);
+  if (chainKey === "sui") lists.push(SUI_TOKENS);
+  if (chainKey === "solana") lists.push(SOLANA_TOKENS);
+  if (chainKey === "tron") lists.push(TRON_TOKENS);
+  for (const list of lists) for (const t of list) {
+    const addr = t.address || t.mint;
+    if (addr && swapTokenEq(chainKey, tokenAddress, addr)) return t.symbol || null;
+  }
+  return null;
+}
+/** The user's address on an intermediate chain of a
+ *  composition, derived from the swap's own endpoints: EVM
+ *  chains share the wallet's EVM address (the FROM address of
+ *  any EVM-sourced swap, the TO address of an EVM-destined
+ *  one); the destination chain's address is the swap's own
+ *  toAddress; the origin chain's is its fromAddress. Null when
+ *  no endpoint names an address for that chain — the shape is
+ *  then not offered, never guessed. */
+function milestoneAddressFor(args, chainKey) {
+  if (!chainKey) return null;
+  if (chainKey === args?.toChainKey) return args.toAddress || args.fromAddress || null;
+  if (chainKey === args?.fromChainKey) return args.fromAddress || null;
+  if (NETWORKS[chainKey]) return NETWORKS[args?.fromChainKey] ? (args.fromAddress || null) : (NETWORKS[args?.toChainKey] ? (args.toAddress || null) : null);
+  return null;
+}
+/** Candidate composition shapes for a swap, as leg-descriptor
+ *  arrays (≤3 legs each). Pure — the search below prices them;
+ *  a shape whose every leg does not genuinely quote is dropped
+ *  there, never presented. Descriptor: {fromChainKey,
+ *  toChainKey, fromTokenAddress, toTokenAddress, fromSymbol,
+ *  toSymbol}. */
+export function milestoneShapes(args) {
+  const shapes = [];
+  if (!args?.fromChainKey || !args?.toChainKey || args.fromChainKey === args.toChainKey) return shapes;
+  if (args.fromTokenAddress == null && args.fromChainKey !== "sui" && args.fromChainKey !== "solana" && args.fromChainKey !== "tron" && !NETWORKS[args.fromChainKey]) return shapes;
+  const fromSym = tokenSymbolOn(args.fromChainKey, args.fromTokenAddress);
+  const toSym = tokenSymbolOn(args.toChainKey, args.toTokenAddress);
+  const leg = (fromChainKey, toChainKey, fromTokenAddress, toTokenAddress) => ({
+    fromChainKey, toChainKey, fromTokenAddress, toTokenAddress,
+    fromSymbol: tokenSymbolOn(fromChainKey, fromTokenAddress), toSymbol: tokenSymbolOn(toChainKey, toTokenAddress),
+  });
+  const pushShape = (legs) => {
+    const clean = legs.filter(l => !(l.fromChainKey === l.toChainKey && swapTokenEq(l.fromChainKey, l.fromTokenAddress, l.toTokenAddress)));
+    if (clean.length && clean.length <= 3) shapes.push(clean);
+  };
+  // Sui destinations: the destination rail (Mayan Fast MCTP)
+  // needs a CCTP-domain source and carries USDC only, so the
+  // composition runs through a milestone chain's USDC into
+  // Sui USDC, then (unless USDC IS the target) the final
+  // on-Sui leg into the target.
+  if (args.toChainKey === "sui") {
+    const suiHub = hubTokenForChain("sui");
+    if (suiHub) {
+      const destIsHub = swapTokenEq("sui", args.toTokenAddress, suiHub.address);
+      const milestones = MILESTONE_CCTP_CHAINS.filter(c => c !== args.fromChainKey);
+      if (MILESTONE_CCTP_CHAINS.includes(args.fromChainKey)) milestones.unshift(args.fromChainKey);
+      for (const m of milestones) {
+        const mHub = hubTokenForChain(m);
+        if (!mHub) continue;
+        const legs = [
+          leg(args.fromChainKey, m, args.fromTokenAddress, mHub.address),
+          leg(m, "sui", mHub.address, suiHub.address),
+        ];
+        if (!destIsHub) legs.push(leg("sui", "sui", suiHub.address, args.toTokenAddress));
+        pushShape(legs);
+      }
+      return shapes;
+    }
+  }
+  // Generic hub composition: origin hub leg (when the FROM
+  // token is not the origin's hub) → hub-to-hub crossing →
+  // destination hub leg (when the target is not the
+  // destination's hub).
+  const fromHub = hubTokenForChain(args.fromChainKey), toHub = hubTokenForChain(args.toChainKey);
+  if (fromHub && toHub) {
+    const legs = [];
+    if (!isHubTokenOn(args.fromChainKey, args.fromTokenAddress)) legs.push(leg(args.fromChainKey, args.fromChainKey, args.fromTokenAddress, fromHub.address));
+    legs.push(leg(args.fromChainKey, args.toChainKey, fromHub.address, toHub.address));
+    if (!isHubTokenOn(args.toChainKey, args.toTokenAddress)) legs.push(leg(args.toChainKey, args.toChainKey, toHub.address, args.toTokenAddress));
+    pushShape(legs);
+  }
+  return shapes;
+}
+/** The plain milestone label of a composition, in the owner's
+ *  shape: "BNB → USDC on Base → USDC on Sui → SUI" — a waypoint
+ *  names its chain when the chain changes, the final same-chain
+ *  leg names only its token. Pure. */
+export function milestoneLabelFor(fromSymbol, legs) {
+  const parts = [fromSymbol || "your asset"];
+  let prevChain = legs?.[0]?.fromChainKey || null;
+  for (const l of legs || []) {
+    const sym = l.toSymbol || "asset";
+    parts.push(l.toChainKey !== prevChain ? `${sym} on ${destChainName(l.toChainKey)}` : sym);
+    prevChain = l.toChainKey;
+  }
+  return parts.join(" → ");
+}
+function milestoneFeeUsdOf(r) {
+  if (Number(r?.platformFeeUsd) > 0) return Number(r.platformFeeUsd);
+  if (Number(r?.platformFeeBps) > 0 && Number(r?.fromAmountUSD) > 0) return (Number(r.platformFeeBps) / 10000) * Number(r.fromAmountUSD);
+  return 0;
+}
+/** An estimated final-leg preview, used ONLY when the final
+ *  leg's rail will not build a quote for the destination
+ *  account yet — the LI.FI Sui lane refuses to build until the
+ *  account holds 0.05 SUI, which the composition's own gas
+ *  drop supplies mid-execution. The preview prices the leg at
+ *  the Cetus pool-fee estimate the 2026-11-13 probes recorded
+ *  (0.25%, the top of the observed 0.05–0.25% band) from
+ *  independent fair prices, and is marked estimated: execution
+ *  re-quotes the leg fresh after the drop lands and executes
+ *  THAT quote, never this estimate. Null when either side has
+ *  no fair price — an unpriceable leg is never invented. */
+export const MILESTONE_FINAL_LEG_FEE_ESTIMATE = 0.0025;
+export function estimateMilestoneFinalLeg(legDesc, fromAmountRaw, { fromPriceUsd = null, toPriceUsd = null, fromDecimals = null, toDecimals = null } = {}) {
+  const fp = Number(fromPriceUsd), tp = Number(toPriceUsd);
+  if (!(fp > 0) || !(tp > 0) || fromDecimals == null || toDecimals == null) return null;
+  let fromHuman;
+  try { fromHuman = Number(ethers.formatUnits(BigInt(String(fromAmountRaw)), Number(fromDecimals))); } catch { return null; }
+  if (!(fromHuman > 0)) return null;
+  const toHuman = fromHuman * fp / tp * (1 - MILESTONE_FINAL_LEG_FEE_ESTIMATE);
+  let toRaw;
+  try { toRaw = ethers.parseUnits(toHuman.toFixed(Math.min(Number(toDecimals), 12)), Number(toDecimals)).toString(); } catch { return null; }
+  return {
+    provider: "estimated", id: "estimated:milestone-final-leg", type: "estimate", estimated: true,
+    fromChainId: swapChainOf(legDesc.fromChainKey)?.chainId ?? null, toChainId: swapChainOf(legDesc.toChainKey)?.chainId ?? null,
+    fromAmount: String(fromAmountRaw),
+    fromToken: { address: legDesc.fromTokenAddress, symbol: legDesc.fromSymbol, decimals: Number(fromDecimals) },
+    toToken: { address: legDesc.toTokenAddress, symbol: legDesc.toSymbol, decimals: Number(toDecimals) },
+    toAmount: toRaw, toAmountMin: null,
+    toAmountUSD: toHuman * tp, fromAmountUSD: fromHuman * fp,
+    gasCostUSD: 0, routeFeeUsd: fromHuman * fp * MILESTONE_FINAL_LEG_FEE_ESTIMATE,
+    executionDuration: 30, platformFeeUsd: null, platformFeeCollecting: false, platformFeeBps: null,
+    steps: [],
+  };
+}
+
+/** Search milestone compositions for a swap whose direct
+ *  search found nothing. Each candidate shape is priced leg by
+ *  leg through `searchLeg` (production: the direct search
+ *  itself, so a leg is exactly a route the direct machinery
+ *  vouches for — and legs never recurse into composition).
+ *  Amounts chain: each leg spends exactly the previous leg's
+ *  quoted output. The first shape whose every leg quotes (the
+ *  final leg may be estimate-previewed, see above) becomes a
+ *  composed route; a shape with a silent leg is dropped.
+ *  Returns an array of composed routes (today at most one —
+ *  the first shape that completes, milestone order being the
+ *  priced preference: Base first for Sui). Never throws. */
+export async function searchMilestoneCompositions(args, { searchLeg = null, pricesUsd = null } = {}) {
+  const run = searchLeg || ((a) => getSwapRoutesDirect(a));
+  const shapes = milestoneShapes(args);
+  if (!shapes.length) return [];
+  const priceOf = async (sym) => {
+    if (pricesUsd && Number(pricesUsd[sym]) > 0) return Number(pricesUsd[sym]);
+    if (sym === "USDC" || sym === "USDT") return 1;
+    try { const p = await getPrices(); const v = Number(p?.[sym]); return Number.isFinite(v) && v > 0 ? v : null; } catch { return null; }
+  };
+  for (const shape of shapes) {
+    const legRoutes = [], legDescs = [];
+    let amount = String(args.fromAmount), ok = true, transport = false;
+    for (let i = 0; i < shape.length; i++) {
+      const d = shape[i];
+      const fromAddress = milestoneAddressFor(args, d.fromChainKey);
+      const toAddress = milestoneAddressFor(args, d.toChainKey);
+      if (!fromAddress || !toAddress) { ok = false; break; }
+      const legArgs = {
+        fromChainKey: d.fromChainKey, toChainKey: d.toChainKey,
+        fromTokenAddress: d.fromTokenAddress, toTokenAddress: d.toTokenAddress,
+        fromAmount: amount, fromAddress, toAddress,
+      };
+      let routes = null;
+      try { routes = await run(legArgs); } catch (e) { if (!isNoQuoteSwapError(e)) transport = true; routes = null; }
+      let picked = routes && routes.length ? rankSwapRoutes(routes, null)[0] : null;
+      if (!picked && i === shape.length - 1 && shape.length >= 2) {
+        // Final-leg estimate preview (see estimateMilestoneFinalLeg).
+        const prev = legRoutes[legRoutes.length - 1];
+        const fromDec = prev?.toToken?.decimals, toDec = d.toChainKey === "sui" && isDestNativeToken("sui", d.toTokenAddress) ? 9 : null;
+        const est = estimateMilestoneFinalLeg(d, amount, {
+          fromPriceUsd: await priceOf(d.fromSymbol), toPriceUsd: await priceOf(d.toSymbol),
+          fromDecimals: fromDec, toDecimals: toDec ?? (d.toSymbol === "SUI" ? 9 : null),
+        });
+        if (est) picked = est;
+      }
+      if (!picked) { ok = false; break; }
+      legRoutes.push(picked);
+      legDescs.push({ ...d, fromAmount: amount, fromAddress, toAddress, expectedToAmount: picked.toAmount != null ? String(picked.toAmount) : null, provider: picked.provider || null, estimated: picked.estimated === true });
+      if (picked.toAmount == null) { ok = false; break; }
+      amount = String(picked.toAmount);
+    }
+    if (!ok || !legRoutes.length) { if (transport) continue; continue; }
+    const first = legRoutes[0], last = legRoutes[legRoutes.length - 1];
+    const platformFeeUsd = legRoutes.reduce((s, r) => s + milestoneFeeUsdOf(r), 0);
+    // The composed route's headline gas drop is the FINAL
+    // destination's — the drop on the leg that ENTERS the
+    // destination ecosystem. An intermediate leg's own drop
+    // (e.g. a Relay ETH top-up on the Base milestone, which
+    // usefully funds the next leg's signing) stays on that
+    // leg's own route object; it is never presented as the
+    // destination's gas.
+    const enterIdx = legDescs.findIndex(d => d.toChainKey === args.toChainKey);
+    const gasDropLeg = enterIdx >= 0 && legRoutes[enterIdx]?.gasDrop && Number(legRoutes[enterIdx].gasDrop.amountHuman) > 0 ? legRoutes[enterIdx] : null;
+    const label = milestoneLabelFor(first.fromToken?.symbol || shape[0].fromSymbol, legDescs);
+    return [{
+      provider: "milestone", id: "milestone:" + (first.id || "composed"), type: "composite",
+      fromChainId: first.fromChainId, toChainId: last.toChainId,
+      fromChainKey: args.fromChainKey, toChainKey: args.toChainKey,
+      fromAmount: first.fromAmount, fromToken: first.fromToken,
+      toToken: last.toToken || { address: args.toTokenAddress, symbol: shape[shape.length - 1].toSymbol, decimals: null },
+      toAmount: last.toAmount, toAmountMin: last.toAmountMin ?? null,
+      toAmountUSD: last.toAmountUSD, fromAmountUSD: first.fromAmountUSD,
+      gasCostUSD: legRoutes.reduce((s, r) => s + (Number(r.gasCostUSD) || 0), 0),
+      routeFeeUsd: legRoutes.reduce((s, r) => s + (Number(r.routeFeeUsd) || 0), 0),
+      executionDuration: legRoutes.reduce((s, r) => s + (Number(r.executionDuration) || 0), 0) + 120 * legRoutes.length,
+      platformFeeUsd: platformFeeUsd > 0 ? platformFeeUsd : null,
+      platformFeeCollecting: platformFeeUsd > 0,
+      platformFeeBps: null,
+      steps: first.steps || [],
+      ...(gasDropLeg ? { gasDrop: gasDropLeg.gasDrop, gasMechanism: "drop" } : {}),
+      milestone: { label, legs: legDescs, finalLegEstimated: last.estimated === true },
+      milestoneLegRoutes: legRoutes,
+    }];
+  }
+  return [];
+}
+
+/* ----- Milestone execution: persisted per-leg records -----
+ * The generalised gas-fallback record: written when leg 1
+ * broadcasts, advanced as credits land, and resumed by the
+ * sheet's "Complete the swap" button. States: awaiting-credit
+ * (a leg is in flight), leg-due (the next leg is ready to run
+ * on one tap), done. The user's money between legs is the
+ * previous leg's asset, in their own wallet. */
+export const MILESTONE_SWAPS_STORAGE_KEY = "fluid_milestone_swaps_v1";
+function validMilestoneRecord(r) {
+  return !!r && typeof r === "object" && typeof r.id === "string" && !!r.id && Array.isArray(r.legs) && typeof r.state === "string";
+}
+export function loadMilestoneRecords(storage) {
+  try {
+    const list = JSON.parse(storage.getItem(MILESTONE_SWAPS_STORAGE_KEY) || "[]");
+    return Array.isArray(list) ? list.filter(validMilestoneRecord) : [];
+  } catch { return []; }
+}
+export function saveMilestoneRecord(storage, record) {
+  if (!validMilestoneRecord(record)) return loadMilestoneRecords(storage);
+  const list = loadMilestoneRecords(storage).filter(r => r.id !== record.id);
+  list.unshift({ ...record, updatedAt: Date.now() });
+  try { storage.setItem(MILESTONE_SWAPS_STORAGE_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* storage full/blocked: the in-memory record still stands */ }
+  return list;
+}
+export function newMilestoneRecord(fields) {
+  return { at: Date.now(), state: "awaiting-credit", currentLeg: 0, pendingLeg: null, receivedRaw: null, hashes: [], ...fields };
+}
+/** Whether this record is waiting on the user's one tap. */
+export function milestoneNeedsAction(record) {
+  return !!record && record.state === "leg-due";
+}
+/** One plain line per record for the swap sheet. */
+export function milestoneHistoryLine(record) {
+  const label = record?.label || "Multi-step swap";
+  switch (record?.state) {
+    case "awaiting-credit": return `${label}: a leg is on its way — when it lands, finish the swap here.`;
+    case "leg-due": return `${label}: the last leg landed in your wallet. Complete the swap to continue.`;
+    case "done": return `${label}: complete.`;
+    default: return `${label}.`;
+  }
+}
+/** A swap token's raw balance on a chain (native via the
+ *  shared native reader; EVM ERC-20 via balanceOf; Sui/Solana
+ *  via their targeted balance reads). Null when the read
+ *  fails — unknown is never treated as zero. */
+export async function readSwapTokenRaw(chainKey, tokenAddress, address, decimals = 18) {
+  try {
+    if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return readDestNativeRaw(chainKey, address);
+    if (chainKey === "sui") {
+      const human = await getSuiTokenBalance(address, tokenAddress, decimals);
+      return ethers.parseUnits(String(human || "0"), decimals);
+    }
+    if (chainKey === "solana") {
+      const human = await getSolanaTokenBalance(address, tokenAddress, decimals);
+      return ethers.parseUnits(String(human || "0"), decimals);
+    }
+    if (!NETWORKS[chainKey]) return null;
+    const provider = providerFor(chainKey);
+    const c = new ethers.Contract(tokenAddress, ["function balanceOf(address) view returns (uint256)"], provider);
+    return await c.balanceOf(address);
+  } catch { return null; }
+}
+/** Poll a token balance until it has risen by at least
+ *  minDeltaRaw over preRaw, or the bounded wait expires —
+ *  the milestone twin of pollDestNativeCredit. */
+export async function pollSwapTokenCredit(chainKey, tokenAddress, address, decimals, preRaw, minDeltaRaw, { timeoutMs = 150000, intervalMs = 5000 } = {}) {
+  let pre = 0n;
+  try { pre = preRaw == null ? 0n : BigInt(preRaw); } catch { pre = 0n; }
+  let need = 0n;
+  try { need = BigInt(minDeltaRaw); } catch { need = 0n; }
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const bal = await readSwapTokenRaw(chainKey, tokenAddress, address, decimals);
+    if (bal != null && bal - pre >= need) return (bal - pre).toString();
+    if (Date.now() >= deadline) return null;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+}
+function milestoneLegTokenDecimals(record, legIndex, side) {
+  const leg = record.legs[legIndex];
+  if (!leg) return 18;
+  if (side === "to") {
+    if (leg.toChainKey === "sui") return isDestNativeToken("sui", leg.toTokenAddress) ? 9 : (SUI_TOKENS.find(t => suiCoinTypeEq(t.address, leg.toTokenAddress))?.decimals ?? 6);
+    if (leg.toChainKey === "solana") return 6;
+    const t = (NETWORKS[leg.toChainKey]?.tokens || []).find(x => String(x.address).toLowerCase() === String(leg.toTokenAddress || "").toLowerCase());
+    if (t) return t.decimals;
+    return isDestNativeToken(leg.toChainKey, leg.toTokenAddress) ? 18 : 18;
+  }
+  return 18;
+}
+/** Run a milestone record forward from its current leg: each
+ *  leg is quoted FRESH from what actually arrived (the first
+ *  leg of a fresh execution may reuse the reviewed route),
+ *  broadcast, and its credit awaited in-flow for a bounded
+ *  window. Shared by executeMilestoneRoute (fresh) and
+ *  completeMilestoneSwap (resume). */
+async function runMilestoneForward(wallet, record, progress, { storage = null, onApprove = null, onApproveMayan = null, firstRoute = null } = {}) {
+  while (record.currentLeg < record.legs.length) {
+    const i = record.currentLeg;
+    const leg = record.legs[i];
+    let route = (i === 0 && firstRoute) ? firstRoute : null;
+    if (!route) {
+      let routes = null;
+      try {
+        routes = await getSwapRoutes({
+          fromChainKey: leg.fromChainKey, toChainKey: leg.toChainKey,
+          fromTokenAddress: leg.fromTokenAddress, toTokenAddress: leg.toTokenAddress,
+          fromAmount: leg.fromAmount, fromAddress: leg.fromAddress, toAddress: leg.toAddress,
+        });
+      } catch { routes = null; }
+      route = routes && routes[0];
+      if (!route) {
+        record.state = "leg-due";
+        if (storage) saveMilestoneRecord(storage, record);
+        const err = new Error(`Your ${leg.fromSymbol || "funds"} is in your wallet on ${destChainName(leg.fromChainKey)}, but the next step of the swap (${leg.fromSymbol || "asset"} → ${leg.toSymbol || "asset"}) has no route right now. Your money is movable — open the swap sheet and tap "Complete the swap" to finish when a route is back.`);
+        err.milestoneLegDue = true;
+        err.recordId = record.id;
+        throw err;
+      }
+    }
+    const toDec = milestoneLegTokenDecimals(record, i, "to");
+    const pre = await readSwapTokenRaw(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec);
+    record.pendingLeg = i;
+    record.pendingPreRaw = pre != null ? pre.toString() : null;
+    record.pendingExpectedRaw = route.toAmount != null ? String(route.toAmount) : null;
+    record.state = "awaiting-credit";
+    if (storage) saveMilestoneRecord(storage, record);
+    const hashes = await dispatchSwapExecution(wallet, route, progress, { onApprove, onApproveMayan });
+    record.hashes = [...(record.hashes || []), ...hashes];
+    if (!record.id) record.id = hashes[0];
+    if (storage) saveMilestoneRecord(storage, record);
+    progress(`Step ${i + 1} of ${record.legs.length} sent: ${leg.fromSymbol || "asset"} → ${leg.toSymbol || "asset"}.`);
+    if (i === record.legs.length - 1) {
+      record.state = "done";
+      record.pendingLeg = null;
+      if (storage) saveMilestoneRecord(storage, record);
+      return { hashes: record.hashes, record, done: true };
+    }
+    if (record.pendingPreRaw == null) return { hashes: record.hashes, record, pending: true };
+    let expected = 0n;
+    try { expected = BigInt(record.pendingExpectedRaw || "0"); } catch { expected = 0n; }
+    const minDelta = expected > 0n ? ((expected * 9n) / 10n).toString() : "0";
+    const delta = await pollSwapTokenCredit(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec, record.pendingPreRaw, minDelta).catch(() => null);
+    if (delta == null) return { hashes: record.hashes, record, pending: true };
+    record.receivedRaw = delta;
+    record.currentLeg = i + 1;
+    record.pendingLeg = null;
+    if (record.legs[i + 1]) record.legs[i + 1].fromAmount = delta;
+    if (storage) saveMilestoneRecord(storage, record);
+  }
+  record.state = "done";
+  if (storage) saveMilestoneRecord(storage, record);
+  return { hashes: record.hashes, record, done: true };
+}
+/** Execute a composed milestone route as ONE user action:
+ *  the record persists at leg 1's broadcast and every later
+ *  leg follows from what actually arrived. If a credit
+ *  outlasts the in-flow window the result is { pending: true }
+ *  — the advancer + the sheet's completion button carry it. */
+export async function executeMilestoneRoute(wallet, route, progress = () => {}, { storage = null, onApprove = null, onApproveMayan = null } = {}) {
+  if (!route || route.provider !== "milestone" || !route.milestone?.legs?.length)
+    throw new Error("That route is not a milestone route.");
+  const record = newMilestoneRecord({
+    id: null,
+    label: route.milestone.label || null,
+    legs: route.milestone.legs.map(l => ({ ...l })),
+    fromSymbol: route.fromToken?.symbol || null, toSymbol: route.toToken?.symbol || null,
+  });
+  const out = await runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan, firstRoute: route.milestoneLegRoutes?.[0] || null });
+  if (!record.id && out.hashes?.[0]) { record.id = out.hashes[0]; if (storage) saveMilestoneRecord(storage, record); }
+  return out;
+}
+/** Advance awaiting-credit milestone records whose pending
+ *  leg has landed: the record becomes leg-due (or done when
+ *  the landed leg was the last). Returns how many changed. */
+export async function advanceMilestoneRecords(storage) {
+  if (!storage) return 0;
+  let changed = 0;
+  for (const r of loadMilestoneRecords(storage)) {
+    if (r.state !== "awaiting-credit" || r.pendingLeg == null) continue;
+    const leg = r.legs[r.pendingLeg];
+    if (!leg) continue;
+    const toDec = milestoneLegTokenDecimals(r, r.pendingLeg, "to");
+    const bal = await readSwapTokenRaw(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec);
+    if (bal == null || r.pendingPreRaw == null) continue;
+    let expected = 0n;
+    try { expected = BigInt(r.pendingExpectedRaw || "0"); } catch { expected = 0n; }
+    if (expected <= 0n) continue;
+    let delta = 0n;
+    try { delta = bal - BigInt(r.pendingPreRaw); } catch { delta = 0n; }
+    if (delta < (expected * 9n) / 10n) continue;
+    r.receivedRaw = delta.toString();
+    if (r.pendingLeg === r.legs.length - 1) { r.state = "done"; }
+    else {
+      r.currentLeg = r.pendingLeg + 1;
+      if (r.legs[r.currentLeg]) r.legs[r.currentLeg].fromAmount = r.receivedRaw;
+      r.state = "leg-due";
+    }
+    r.pendingLeg = null;
+    saveMilestoneRecord(storage, r);
+    changed++;
+  }
+  return changed;
+}
+/** The one-tap completion behind the swap sheet's button:
+ *  continue a record from its current leg (re-checking a
+ *  pending credit first when the advancer hasn't seen it). */
+export async function completeMilestoneSwap(wallet, recordId, progress = () => {}, { storage, onApprove = null, onApproveMayan = null } = {}) {
+  const record = loadMilestoneRecords(storage).find(r => r.id === recordId);
+  if (!record) throw new Error("That swap record is gone.");
+  if (record.state === "done") return { record, done: true };
+  if (record.state === "awaiting-credit") {
+    await advanceMilestoneRecords(storage);
+    const fresh = loadMilestoneRecords(storage).find(r => r.id === recordId);
+    if (!fresh || fresh.state === "awaiting-credit")
+      throw new Error("The last step hasn't landed yet — try again in a few minutes.");
+    return runMilestoneForward(wallet, fresh, progress, { storage, onApprove, onApproveMayan });
+  }
+  return runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan });
+}
+
 /** The source walk — Satora, Jupiter, Across, Relay, LI.FI.
  *  Without a gas plan this is the incumbent cascade, byte for
  *  byte: the first source that serves IS the answer and later
@@ -12901,7 +13424,7 @@ async function getSwapRoutesCascade(args, { needGas = false } = {}) {
  *  ranked by merit and Mayan competes as a candidate like any
  *  other. The cascade's own failure still surfaces when nothing
  *  can serve. */
-export async function getSwapRoutes(args) {
+async function getSwapRoutesDirect(args) {
   let gasPlan = null;
   try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
   const planArgs = gasPlan ? { ...args, gasDrop: gasPlan } : args;
@@ -12923,6 +13446,39 @@ export async function getSwapRoutes(args) {
   }
   if (gasPlan) for (const r of routes) if (!r.destGas) r.destGas = gasPlan;
   return rankSwapRoutes(routes, null, { gasNeed: gasPlan });
+}
+/** The one route search the swap sheet calls (Stage 1,
+ *  2026-11-13): the direct search first, exactly as before —
+ *  a direct answer returns untouched and composition is never
+ *  searched. Only on a no-quote failure (an empty answer or a
+ *  no-quote error) does the milestone composition search run,
+ *  BEFORE any no-route diagnosis speaks: composed candidates
+ *  are returned ranked by the same merit rule, with the
+ *  destination-gas plan attached. A transport failure (rate
+ *  limit, network) is never composed over and never
+ *  re-labelled — it propagates as itself. When composition
+ *  also finds nothing, the empty answer / original error
+ *  stands and diagnoseNoRouteSwap remains the sheet's
+ *  fallback. `directSearch` / `compositionSearch` are
+ *  injectable for tests. */
+export async function getSwapRoutes(args, { directSearch = null, compositionSearch = null } = {}) {
+  const directFn = directSearch || getSwapRoutesDirect;
+  let routes = null, directErr = null;
+  try { routes = await directFn(args); } catch (e) { directErr = e; }
+  if (routes && routes.length) return routes;
+  if (directErr && !isNoQuoteSwapError(directErr)) throw directErr;
+  let composed = [];
+  try {
+    composed = compositionSearch ? await compositionSearch(args) : await searchMilestoneCompositions(args, { searchLeg: (a) => getSwapRoutesDirect(a) });
+  } catch { composed = []; }
+  if (composed && composed.length) {
+    let gasPlan = null;
+    try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
+    if (gasPlan) for (const r of composed) if (!r.destGas) r.destGas = gasPlan;
+    return rankSwapRoutes(composed, null, { gasNeed: gasPlan });
+  }
+  if (directErr) throw directErr;
+  return routes || [];
 }
 /** The USD sizes the no-route probe climbs through, smallest
  *  first. A failed route search usually means the amount is
@@ -13329,6 +13885,20 @@ export function swapRouteExecutable(route) {
     return complete
       ? { ok: true, satora: true }
       : { ok: false, reason: "This Satora route is incomplete — pick another route." };
+  }
+  // Milestone composed routes (Stage 1, 2026-11-13): executable
+  // when the composition carries its legs and its first leg is
+  // itself executable — later legs are re-quoted fresh at
+  // execution time from what actually arrived (the executor
+  // refuses there if a later leg cannot be quoted, with the
+  // user's money in their own wallet), so the gate is the
+  // first leg's signability plus the composition's structure.
+  if (route?.provider === "milestone") {
+    const first = route.milestoneLegRoutes?.[0];
+    if (!first || !route.milestone?.legs?.length)
+      return { ok: false, reason: "This composed route is incomplete — search again." };
+    const inner = swapRouteExecutable(first);
+    return inner.ok ? { ok: true, milestone: true } : { ok: false, reason: inner.reason };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete

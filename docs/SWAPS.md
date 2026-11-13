@@ -127,9 +127,12 @@ Per-pair reality for the Sui lanes (live-probed 2026-11-13):
 
 ## Milestone routing — composing a route when no rail quotes the pair
 
-**The router today asks for direct quotes only.** `getSwapRoutes`
-puts the exact from→to pair to each rail and ranks what answers; if
-no rail lists the pair, the search ends. The only multi-leg
+**The router asks for direct quotes first.** `getSwapRoutes`
+puts the exact from→to pair to each rail and ranks what answers;
+a direct answer returns untouched. Only when no rail lists the
+pair does the milestone composition search below run (Stage 1,
+shipped 2026-11-13) — before it landed, the search simply ended
+there, which is the history this section records. The only multi-leg
 constructions that exist are fixed-purpose: the destination-gas
 fallback (land as the destination's native coin, then swap into the
 target on-chain) and the Satora CCTP composition for Bitcoin /
@@ -195,19 +198,48 @@ $10. Quote-time measurements, not guarantees.
    above: below-minimum (with the working size), no-market,
    no-route-yet. It becomes composition's fallback: it speaks only
    when the composition search also finds nothing.
-2. **Stage 1 — milestone composition search (the headline build).**
-   On direct-quote failure, search compositions of the worked
-   example's shape: an origin hub leg when the FROM token is not a
-   hub asset, a milestone-chain hop when the destination rail needs
-   a chain property the origin lacks (a CCTP domain, a listing),
-   and a destination hub leg when rails reach the destination
-   chain's hub asset but not the target token. Composed candidates
-   enter the same merit ranking as direct quotes, priced all-in
-   under the same fee law; per-pair minimums are measured from live
-   quotes and published here. Destination-gas planning runs across
-   the whole composition, so a zero-gas destination is filled by a
-   gas drop on whichever leg can carry one — never left as a
-   surprise at the last hop.
+2. **Stage 1 — milestone composition search (shipped 2026-11-13).**
+   On direct-quote failure, the router searches compositions of
+   the worked example's shape: an origin hub leg when the FROM
+   token is not a hub asset, a milestone-chain hop when the
+   destination rail needs a chain property the origin lacks (a
+   CCTP domain, a listing), and a destination hub leg when rails
+   reach the destination chain's hub asset but not the target
+   token. Composed candidates are priced all-in (the sum of
+   their legs' costs) and ranked by the same merit rule; every
+   leg is quoted by its own rail under the same fee law as a
+   direct route, so Fluid's fee is collected per leg by that
+   leg's own mechanism (Relay App Fees, Mayan referrer, LI.FI
+   integrator) and disclosed as the sum — there is no extra
+   Fluid charge and no Fluid contract. The review presents the
+   composition as ONE route with one combined output and the
+   milestones named plainly. Execution persists a per-leg
+   record (the gas-fallback pattern, generalised): each later
+   leg is re-quoted fresh from what actually arrived, and a
+   leg that cannot run yet leaves the user holding the
+   previous leg's asset in their own wallet, with a one-tap
+   "Complete the swap" resume. Destination-gas planning runs
+   across the whole composition: the leg entering the
+   destination ecosystem carries the gas drop (into Sui,
+   Mayan's 0.06 SUI drop at the sizes below — which also
+   satisfies LI.FI's 0.05 SUI build rule when the final on-Sui
+   leg is re-quoted after it lands). A transport failure (a
+   rate limit, a network drop) is never composed over: it
+   propagates as itself.
+   Live composed quotes for the worked example, from the
+   shipped search on 2026-11-13 (quote-time measurements, not
+   guarantees; the final on-Sui leg is estimate-previewed at
+   the recorded 0.25% pool-fee estimate until the gas drop
+   lands, then re-quoted fresh for execution):
+   | In | Route | Out (≈) |
+   |---|---|---|
+   | $0.22 (0.00035 BNB) | Relay BNB→USDC-Base ($0.198) → Mayan USDC→Sui ($0.129 + 0.06 SUI drop) → est. SUI | 0.1613 SUI ($0.129) + the 0.06 SUI drop |
+   | $2.02 (0.0032 BNB) | Mayan BNB→USDC-Base ($1.829) → Mayan USDC→Sui ($1.751 + 0.06 SUI drop) → est. SUI | 2.1857 SUI ($1.747) + the 0.06 SUI drop |
+   Per-pair minimum for this composition today: it answers at
+   the smallest size probed ($0.22) — the floor is cost, not
+   availability: fixed leg costs (above all Mayan's ≈$0.06–0.08
+   Fast MCTP shortfall) eat a visible share below a few dollars,
+   and the review shows the true all-in cost before signing.
 
 **The floor no routing can remove:** every leg carries fixed costs
 — a DEX fee, a bridge minimum, destination gas. Composition moves

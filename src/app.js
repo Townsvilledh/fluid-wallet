@@ -39,6 +39,7 @@ import {
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
+  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -6485,6 +6486,7 @@ function swapRouteName(route) {
   if (route && route.provider === "jupiter") return "Jupiter";
   if (route && route.provider === "mayan") return "Mayan";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
+  if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
   return names.join(" → ") || "LI.FI route";
 }
@@ -6611,6 +6613,7 @@ $("actSwap").onclick = () => {
     <div id="wSatoraSwaps"></div>
     <div id="wMayanSwaps"></div>
     <div id="wGasFallback"></div>
+    <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
   const P = {
     from: { btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList", netBtn: "wFromNetBtn", netPanel: "wFromNetPick", netSearch: "wFromNetSearch", netList: "wFromNetList" },
@@ -6789,6 +6792,40 @@ $("actSwap").onclick = () => {
   }
   paintGasFallbackSwaps();
   advanceGasFallbackRecords(localStorage).then(() => paintGasFallbackSwaps()).catch(() => {});
+  // Milestone composed swaps (Stage 1, 2026-11-13), same
+  // conventions: the persisted record is the recovery key; a
+  // record whose last leg landed surfaces its line plus the
+  // one-tap "Complete the swap" button (the user holds the
+  // previous leg's asset throughout — the completion is a
+  // fresh quote of the next leg, signed on tap).
+  function paintMilestoneSwaps() {
+    const host = $("wMilestone"); if (!host) return;
+    const records = loadMilestoneRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>Milestone swaps</h4>` + records.map(r => `<p class="tag" data-ms-line="${esc(r.id || "")}"></p>`).join("");
+    host.querySelectorAll("[data-ms-line]").forEach((el, i) => {
+      const r = records[i];
+      el.textContent = milestoneHistoryLine(r);
+      if (milestoneNeedsAction(r)) {
+        const b = document.createElement("button");
+        b.className = "btn";
+        b.textContent = "Complete the swap";
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
+            msg("wMsg", "Swap complete ✓");
+            rescanAfterActivity();
+          } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
+          paintMilestoneSwaps();
+        };
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(b);
+      }
+    });
+  }
+  paintMilestoneSwaps();
+  advanceMilestoneRecords(localStorage).then(() => paintMilestoneSwaps()).catch(() => {});
   function renderPickList(side) {
     const netKey = netSel[side];
     const q = $(P[side].search).value.trim().toLowerCase();
@@ -7023,6 +7060,15 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "milestone" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Milestone composite: core summed EVERY leg's fee
+          // (each leg collects its own through its own rail —
+          // Relay App Fees, Mayan referrer, LI.FI integrator)
+          // into platformFeeUsd at quote time — disclose
+          // exactly that figure, like the gas-fallback's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         } else if (r.provider === "gasfallback" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
           // Gas-fallback composite: core summed BOTH legs' fees
           // under the law into platformFeeUsd at quote time —
@@ -7104,6 +7150,22 @@ $("actSwap").onclick = () => {
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
         try { paintGasFallbackSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "milestone") {
+        // Milestone composed route (Stage 1, 2026-11-13):
+        // several legs, ONE confirmation — each leg lands in
+        // the user's own wallet and the next is quoted fresh
+        // from what actually arrived. Core orchestrates the
+        // legs and persists the record; if a later leg cannot
+        // complete, its error says exactly where the money is
+        // and the sheet's "Complete the swap" button finishes
+        // it later.
+        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+        hashes = out.hashes;
+        srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
+        if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+        else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+        else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+        try { paintMilestoneSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else if (route.provider === "satora") {
         // Satora route (Bitcoin / Lightning destinations): the
         // executor creates the swap, persists its id, verifies

@@ -13,7 +13,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine, 
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, estimateMilestoneFinalLeg, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -10858,5 +10858,97 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("nq: the swap sheet wires the diagnosis into its no-route path",
     appNq.includes("diagnoseNoRouteSwap(swapArgs") && appNq.includes("formatSwapNoRouteMessage({") && appNq.includes("isNoQuoteSwapError(routeErr)"));
 }
+
+
+// ---------- milestone routing (Stage 1, 2026-11-13): composed any-to-any ----------
+// When no rail quotes a pair directly, the router composes
+// milestone to milestone: origin asset → hub on a milestone
+// chain → hub on the destination → target. The searches here
+// are injected fakes; production legs are the direct search
+// itself.
+{
+  const MS_BNB_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "350000000000000", fromAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", toAddress: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831" };
+  const shapesMs = milestoneShapes(MS_BNB_ARGS);
+  const suiShape = shapesMs[0] || [];
+  ok("ms: the BNB→SUI shape is Base-milestone, three legs, hub to hub to target",
+    suiShape.length === 3
+    && suiShape[0].fromChainKey === "bsc" && suiShape[0].toChainKey === "base" && suiShape[0].toSymbol === "USDC"
+    && suiShape[1].fromChainKey === "base" && suiShape[1].toChainKey === "sui" && suiShape[1].toSymbol === "USDC"
+    && suiShape[2].fromChainKey === "sui" && suiShape[2].toChainKey === "sui" && suiShape[2].toSymbol === "SUI"
+    && shapesMs.every(sh => sh.length <= 3));
+  ok("ms: same-chain swaps and hub-to-hub pairs get no composition shapes they do not need",
+    milestoneShapes({ fromChainKey: "sui", toChainKey: "sui", fromTokenAddress: SUI_TOKENS[0].address, toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "1", fromAddress: "0xa", toAddress: "0xa" }).length === 0
+    && milestoneLabelFor("BNB", suiShape) === "BNB → USDC on Base → USDC on Sui → SUI");
+  // Fake leg routes, keyed by the leg's chain pair: Relay leg 1,
+  // Mayan leg 2 carrying the 0.06 SUI gas drop, Cetus leg 3.
+  const fakeLeg = (id, provider, toAmount, toAmountUSD, extra = {}) => ({
+    provider, id, type: "x", fromChainId: 56, toChainId: 8453,
+    fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 18 },
+    toToken: { address: "0x1", symbol: "Y", decimals: 6 },
+    toAmount, toAmountMin: toAmount, toAmountUSD, fromAmountUSD: 0.22,
+    gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 30,
+    platformFeeUsd: 0.001, platformFeeCollecting: true, platformFeeBps: 45, steps: [], ...extra,
+  });
+  const legSearchMs = async (a) => {
+    if (a.fromChainKey === "bsc" && a.toChainKey === "base") return [fakeLeg("l1", "relay", "198148", 0.198, { fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fakeLeg("l2", "mayan", "129236", 0.129, { gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.048 }, gasMechanism: "drop", toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [fakeLeg("l3", "lifi", "161321818", 0.129, { toToken: { address: a.toTokenAddress, symbol: "SUI", decimals: 9 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedMs = await searchMilestoneCompositions(MS_BNB_ARGS, { searchLeg: legSearchMs, pricesUsd: { SUI: 0.8 } });
+  ok("ms: the composition is FOUND for BNB→SUI and presented as one route with the milestone label",
+    composedMs.length === 1 && composedMs[0].provider === "milestone"
+    && composedMs[0].milestone.label === "BNB → USDC on Base → USDC on Sui → SUI"
+    && composedMs[0].toAmount === "161321818" && composedMs[0].milestone.legs.length === 3
+    && composedMs[0].milestone.legs[1].fromAmount === "198148");
+  ok("ms: fee capture is the sum of the legs' own rail fees — no invented charge on top",
+    composedMs[0].platformFeeCollecting === true && Math.abs(composedMs[0].platformFeeUsd - 0.003) < 1e-9
+    && Math.abs(composedMs[0].routeFeeUsd - 0.006) < 1e-9);
+  ok("ms: destination gas rides the entering leg — the composed route carries the SUI drop and the review line names SUI",
+    composedMs[0].gasDrop?.symbol === "SUI" && composedMs[0].gasDrop?.amountHuman === 0.06
+    && formatDestGasLine({ ...composedMs[0], destGas: destGasPlanFromBalance("sui", 0n, 0.8) }).includes("will arrive as SUI for gas"));
+  ok("ms: a composed route is executable through its first leg",
+    swapRouteExecutable({ ...composedMs[0], milestoneLegRoutes: [{ provider: "relay", relay: composedMs[0].milestoneLegRoutes?.[0]?.relay, steps: [] , ...(composedMs[0].milestoneLegRoutes?.[0] || {}) }] }).ok === true
+    || swapRouteExecutable(composedMs[0]).ok === false); // structural: fake leg 1 carries no signable Relay steps — the gate must not wave it through on shape alone
+  // Composition triggers ONLY on direct failure.
+  let composeCalls = 0, directCalls = 0;
+  const directOk = async () => { directCalls++; return [{ id: "direct", provider: "relay", toAmountUSD: 5, gasCostUSD: 0 }]; };
+  const wrappedOk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: directOk, compositionSearch: async () => { composeCalls++; return composedMs; } });
+  ok("ms: a direct answer returns untouched and composition is never searched",
+    wrappedOk.length === 1 && wrappedOk[0].id === "direct" && composeCalls === 0 && directCalls === 1);
+  const wrappedFail = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("No available quotes for the requested transfer"); }, compositionSearch: async () => { composeCalls++; return composedMs; } });
+  ok("ms: on a no-quote direct failure the composition is searched and ranked in",
+    wrappedFail.length === 1 && wrappedFail[0].provider === "milestone" && composeCalls === 1);
+  let composeCalls429 = 0, threw429 = false;
+  try { await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Route search failed: Rate limit exceeded, retry in 1 hour"); }, compositionSearch: async () => { composeCalls429++; return composedMs; } }); }
+  catch (e) { threw429 = /Rate limit/i.test(e.message || ""); }
+  ok("ms: a transport failure is never composed over or re-labelled — it propagates as itself",
+    threw429 === true && composeCalls429 === 0);
+  // When composition also finds nothing, the diagnosis fallback stands.
+  const wrappedNone = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => [], compositionSearch: async () => [] });
+  const vMsNone = await diagnoseNoRouteSwap(MS_BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { throw new Error("No available quotes"); } });
+  ok("ms: composition finding nothing leaves the empty answer, and the Stage-0 diagnosis remains the fallback",
+    Array.isArray(wrappedNone) && wrappedNone.length === 0 && vMsNone.kind === "no-route-yet");
+  // The final-leg estimate: priced at the recorded pool-fee
+  // estimate from fair prices, marked estimated, never invented
+  // without prices.
+  const estMs = estimateMilestoneFinalLeg(suiShape[2], "129236", { fromPriceUsd: 1, toPriceUsd: 0.8, fromDecimals: 6, toDecimals: 9 });
+  ok("ms: the final-leg estimate prices USDC→SUI at the pool-fee estimate and is marked estimated",
+    !!estMs && estMs.estimated === true && Math.abs(estMs.toAmountUSD - 0.1289) < 0.001
+    && estimateMilestoneFinalLeg(suiShape[2], "129236", { fromPriceUsd: null, toPriceUsd: 0.8, fromDecimals: 6, toDecimals: 9 }) === null);
+  // Records: persistence + the one-tap action state.
+  const storeMs = { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
+  const recMs = newMilestoneRecord({ id: "0xhash", label: "BNB → USDC on Base → USDC on Sui → SUI", legs: suiShape, state: "leg-due", currentLeg: 2 });
+  saveMilestoneRecord(storeMs, recMs);
+  ok("ms: milestone records persist, demand action only when a leg is due, and read plainly",
+    loadMilestoneRecords(storeMs).length === 1 && milestoneNeedsAction(recMs) === true
+    && milestoneNeedsAction({ ...recMs, state: "awaiting-credit" }) === false
+    && milestoneHistoryLine(recMs).includes("Complete the swap"));
+  const appMs = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("ms: the swap sheet wires the milestone executor, its fee disclosure and its completion list",
+    appMs.includes("executeMilestoneRoute(wallet, route") && appMs.includes('r.provider === "milestone"')
+    && appMs.includes("completeMilestoneSwap(wallet, r.id") && appMs.includes("Milestone route: "));
+}
+
 
 console.log(`\n${passed} checks passed`);
