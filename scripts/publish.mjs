@@ -48,7 +48,8 @@ const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "fluid-wallet
   "names.json", "robots.txt", "sitemap.xml", "og-image.png", "og-card.png", "_headers", "CNAME",
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js", "walletconnect.chunk.js", "arkade.chunk.js",
   "fonts/inter-var.woff2", "fonts/space-grotesk-var.woff2", "favicon.png",
-  "fluid-agent.json", ".well-known/fluid-agent.json", ".nojekyll"];
+  "fluid-agent.json", ".well-known/fluid-agent.json", ".nojekyll",
+  "funding.json", ".well-known/funding-manifest-urls"];
 const SSH = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/config" };
 // Directories whose NEW (untracked) files belong in a release commit.
 // Tracked changes are staged repo-wide by `git add -u` regardless.
@@ -131,7 +132,10 @@ function stageAll(dry) {
   // New files under the source directories, plus lightning sources
   // (target excluded) and the freshly built dist/.
   for (const d of SOURCE_DIRS) run("git", ["add", "-A", ...n, "--", d]);
-  run("git", ["add", "-A", ...n, "--", "lightning", ":(exclude)lightning/target"]);
+  // git add exits 1 when everything under lightning/ is gitignored
+  // (target/) and there is nothing stageable — that is a no-op, not an
+  // error (hit 2026-11-13, when it aborted an otherwise clean release).
+  try { run("git", ["add", "-A", ...n, "--", "lightning", ":(exclude)lightning/target"]); } catch { /* nothing stageable under lightning/ */ }
   run("git", ["add", "-A", ...n, "--", "dist"]);
 }
 

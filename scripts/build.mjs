@@ -47,6 +47,12 @@ copyFileSync("public/_headers", "dist/_headers");
 mkdirSync("dist/.well-known", { recursive: true });
 copyFileSync("public/fluid-agent.json", "dist/fluid-agent.json");
 copyFileSync("public/fluid-agent.json", "dist/.well-known/fluid-agent.json");
+// FLOSS/fund manifest (2026-11-13): the funding.json manifest lives at
+// the site root, and its provenance file under .well-known — the repo
+// carries the matching .well-known/funding-manifest-urls for the
+// repositoryUrl provenance link inside the manifest.
+copyFileSync("public/funding.json", "dist/funding.json");
+copyFileSync("public/.well-known/funding-manifest-urls", "dist/.well-known/funding-manifest-urls");
 // Jekyll bypass: GitHub Pages' Jekyll build never serves dot-directories
 // (.well-known 404s without this). The site is fully static — nothing
 // relies on Jekyll processing.
