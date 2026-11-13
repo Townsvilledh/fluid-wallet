@@ -18,7 +18,11 @@ The sources, per pair:
 - **Satora** — EVM stablecoins → Lightning and → Bitcoin mainnet
   (non-custodial HTLC swaps). Note: Satora refunds return WBTC/tBTC,
   not the deposited stablecoin — the review sheet says so before you
-  sign.
+  sign. Version gate: Fluid serves Satora routes only while the
+  live API reports the audited line — re-verified and re-pinned
+  2026-11-13 to `backend-v0.3` (spec 0.3.26) after a full live diff
+  against the 2026-11-08 audit found every depended-on behaviour
+  identical (research_notes/fluid-satora-repin-20261113/REPORT.md).
 - **Jupiter** — Solana same-chain swaps (direct, ~10× cheaper than
   routing Solana through a general aggregator).
 - **Across** — same-asset moves between EVM majors. (No gas drop:
@@ -177,7 +181,10 @@ which Lightning is the small-size destination — and 356 sats
 to Lightning) and its version gate (Fluid refuses Satora
 routes while the live API's version line differs from the
 audited spec; that gate, not routing, is what stands between
-a composed BNB → BTC and execution whenever it is closed).
+a composed BNB → BTC and execution whenever it is closed —
+it closed on 2026-11-13 when Satora moved to backend-v0.3.26
+and re-opened the same day after the re-verification and
+re-pin recorded in the Satora bullet above).
 
 ### Worked example, live-priced 2026-11-13: BNB (BNB Chain) → SUI (Sui)
 

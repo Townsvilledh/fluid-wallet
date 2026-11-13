@@ -7629,8 +7629,21 @@ export const SATORA_API_BASE = "https://api.satora.io";
  *  extra_fees 0 and no referral code; that branch survives in
  *  satoraFeeConfig and is exercised in tests through its seam.) */
 export const SATORA_DEVELOPER_KEY = "lnds_1f58b4d6016ca9fc";
-export const SATORA_API_SPEC_VERSION = "0.3.23";
-export const SATORA_SERVER_TAG_PREFIX = "developer-portal-v0.1";
+/* Re-pinned 2026-11-13: Satora's backend moved lines —
+ * /version now reports backend-v0.3.26 (OpenAPI spec 0.3.26)
+ * where the 2026-11-08 audit verified developer-portal-v0.1.12
+ * (spec 0.3.23). The move was re-earned, not waved through:
+ * every surface Fluid depends on was diffed live against the
+ * audited assumptions (quote shape + two-pass fee folding,
+ * pair floors/fees, creation request/response fields, Permit2
+ * funding payload, status enum, collab-refund params, WBTC/
+ * tBTC refund tokens) and found behaviourally identical —
+ * changes were additive only. Full diff: research_notes/
+ * fluid-satora-repin-20261113/REPORT.md. The per-swap bounds
+ * checks (HTLC v7 / BTC script v1 pins) remain the second
+ * guard if the server ever drifts those. */
+export const SATORA_API_SPEC_VERSION = "0.3.26";
+export const SATORA_SERVER_TAG_PREFIX = "backend-v0.3";
 export const SATORA_ERC20_HTLC_VERSION = 7;
 export const SATORA_BITCOIN_HTLC_VERSION = 1;
 export const SATORA_LIGHTNING_VERSION = 1;

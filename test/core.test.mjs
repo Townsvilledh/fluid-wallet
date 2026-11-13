@@ -6161,7 +6161,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   });
   // A Satora wire stub: routes by URL, records quote URLs + create
   // bodies, and throws on anything unexpected.
-  const satoraStubS7 = ({ quote, pairs = pairsS7, version = { tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" }, status = { healthy: true, swaps_paused: false }, create = null, swapGet = null, permit2 = null, seen = { quotes: [], creates: [] } }) => async (url, opts = {}) => {
+  const satoraStubS7 = ({ quote, pairs = pairsS7, version = { tag: "backend-v0.3.26", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" }, status = { healthy: true, swaps_paused: false }, create = null, swapGet = null, permit2 = null, seen = { quotes: [], creates: [] } }) => async (url, opts = {}) => {
     const u = String(url);
     if (u.includes("api.binance.com")) return jsonResS7([{ symbol: "BTCUSDT", price: String(BTC_USD_S7) }, { symbol: "ETHUSDT", price: "3000" }]);
     if (u.includes("api.coingecko.com")) return jsonResS7({});
@@ -6382,7 +6382,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // Version pinning: unknown epoch refuses; failures are not cached.
   {
     const realFetch = globalThis.fetch;
-    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7(), version: { tag: "developer-portal-v9.9.9", commit_hash: "deadbeef" } });
+    globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7(), version: { tag: "backend-v9.9.9", commit_hash: "deadbeef" } });
     try {
       resetSatoraCaches();
       let vErr = null;
@@ -6399,6 +6399,22 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       try { await getSatoraSwapRoute(ARGS_BTC100_S7); } catch (e) { pErr = e; }
       ok("satora: a paused service refuses the route", !!pErr && pErr.message.includes("paused"));
     } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Re-pin line discipline (2026-11-13): the gate was re-earned
+  // onto the backend-v0.3 line after a full live diff — the
+  // PREVIOUS audited line and any FUTURE line both refuse.
+  {
+    const realFetch = globalThis.fetch;
+    for (const tag of ["developer-portal-v0.1.12", "backend-v0.4.0"]) {
+      globalThis.fetch = satoraStubS7({ quote: quoteBtc100S7(), version: { tag, commit_hash: "deadbeef" } });
+      try {
+        resetSatoraCaches();
+        let vErr = null;
+        try { await getSatoraSwapRoute(ARGS_BTC100_S7); } catch (e) { vErr = e; }
+        ok(`satora: version tag ${tag} refuses the route (not the re-pinned backend-v0.3 line)`, !!vErr && vErr.message.includes("refusing the route rather than improvising"));
+      } finally { globalThis.fetch = realFetch; }
+    }
   }
 
   // Secret derivation from the user's own Fluid seed (verified
@@ -6585,7 +6601,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && coreSrcSatora.includes('"x-satora-evm-erc20-htlc-version"')
     && coreSrcSatora.includes('"x-satora-bitcoin-htlc-version"')
     && coreSrcSatora.includes('"x-satora-lightning-version"')
-    && coreSrcSatora.includes('SATORA_API_SPEC_VERSION = "0.3.23"'));
+    && coreSrcSatora.includes('SATORA_API_SPEC_VERSION = "0.3.26"')
+    && coreSrcSatora.includes('SATORA_SERVER_TAG_PREFIX = "backend-v0.3"'));
 }
 
 // 69. Satora Permit2 witness funding (2026-11-09): the official
@@ -6808,7 +6825,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const u = String(url);
     if (u.includes("api.binance.com")) return jsonResS9([{ symbol: "BTCUSDT", price: String(BTC_USD_S9) }, { symbol: "ETHUSDT", price: "3000" }]);
     if (u.includes("api.coingecko.com")) return jsonResS9({});
-    if (u.includes("api.satora.io/version")) return jsonResS9({ tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
+    if (u.includes("api.satora.io/version")) return jsonResS9({ tag: "backend-v0.3.26", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
     if (u.includes("api.satora.io/status")) return jsonResS9({ healthy: true, swaps_paused: false });
     if (u.includes("api.satora.io/swap-pairs")) return jsonResS9(pairsS9);
     if (u.includes("api.satora.io/quote")) {
@@ -8013,7 +8030,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       if (!attestation) return jsonResS71({ messages: [] });
       return jsonResS71({ messages: [{ status: "complete", message: attestation.message, attestation: attestation.attestation }] });
     }
-    if (u.includes("api.satora.io/version")) return jsonResS71({ tag: "developer-portal-v0.1.12", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
+    if (u.includes("api.satora.io/version")) return jsonResS71({ tag: "backend-v0.3.26", commit_hash: "e869e8a73020c8d33f57c6d346f95c92f0f901ab" });
     if (u.includes("api.satora.io/status")) return jsonResS71({ healthy: true, swaps_paused: false });
     if (u.includes("api.satora.io/swap-pairs")) return jsonResS71(pairsS71);
     if (u.includes("api.satora.io/quote")) {
