@@ -110,5 +110,29 @@
     "sol": "2LdCYvaYoRbLdrMs8zYYGBqVGnp1Nn4XZKgskJVWwGpY",
     "tron": "TKUBhscB7kUqtj2c44uipAcCJZGe2Yshf9",
     "sui": "0xa3b9843238cb1b40b549551b7cb19b4473247815ddaa3a52ae547037c6023cf2"
+  },
+  "warbaby007": {
+    "evm": "0x2d856895e5146c1Fb92eF95EaFfe8DE1982672A4",
+    "btc": "bc1qw3vgdd73cxfq0ktlrv8kdlydl2u9f33h559jxn",
+    "algo": "XEVDX27OWVJJXIKJC3ZDQY3HQ5M7BTFKHIN2QN32ZQIHVRRQJSSUZ2IJNE",
+    "sol": "B1nKgifZE5eq6Mbenq514tWQ5v5gpnkreQPvD9ytpCsU",
+    "tron": "TE7uE5Y8mBHmFDyfesZis1aVnxT4i91kzL",
+    "sui": "0xd86825ac9e0679c3b93e5b97d01c83bb608a31350b654a6485377b2cf529a09b"
+  },
+  "tonwalk116": {
+    "evm": "0xF46B2E90af0527480e0D66e5cD183CfF02AFD178",
+    "btc": "bc1q9933c8l8etwvy5zskfvj4exe7z2sztnjkccrcq",
+    "algo": "QYZQ7DN3VREHJOUBWL4PMO5T6US2JKVVHJBQ3X2NNJOYHGJTBIKDUOFN7A",
+    "sol": "9rJymHZDcE2PCDTZgyFwD6QLZxCzrqhvrx6E4rUpPRpy",
+    "tron": "TYFaGzcw9GkhhCvCu6TBNDZLTuGPfUuruQ",
+    "sui": "0x7e19560b658062a6b273bda07f950490f1b09450ac35ea3c02978721fbe727db"
+  },
+  "isaacxvoxel": {
+    "evm": "0xBAc619243Bab370c3847A7356274296E3b1c55FC",
+    "btc": "bc1qsxyp6fzhts4d4e8q329qkczjl6s8rwqcxlaeu7",
+    "algo": "UM4MOZKOT2B26J272TO2Y7TXUSYDBMDZ4GZKGYHH3SFD27EPEDU5H5WVPI",
+    "sol": "AJNbLwCsEfDWx6di6kGajKTf33SVy3pDoBkPLqvQ4LP4",
+    "tron": "TSzmzqvaEsshTMtHhA2Zniyn1QXVHzPde3",
+    "sui": "0x623af40a293d342f1b149bde777725c8f56551e7d8a600a9ff6c5daad8f141b3"
   }
 }
