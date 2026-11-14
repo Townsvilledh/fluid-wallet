@@ -24,7 +24,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, destChainName, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, familyRollupTotalUsd } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, destChainName, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, familyRollupTotalUsd } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -16449,8 +16449,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("ac app: the home card surfaces all four pending families — milestone, gas-fallback (with its own completion), Satora and Mayan in-flight rows",
     appSrc114.includes("data-home-gfb") && appSrc114.includes("data-home-sat") && appSrc114.includes("data-home-may")
     && appSrc114.includes("satoraSwapHistoryLine(satRecords[i])") && appSrc114.includes("mayanSwapHistoryLine(mayRecords[i])"));
-  ok("ac app: a completed drive re-renders Activity itself — the entries it wrote are visible without waiting for the next scan render",
-    appSrc114.includes("try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }"));
+  ok("ac app: a completed drive re-renders Activity itself when the tab is visible — the entries it wrote are visible without waiting for the next scan render (a hidden Activity is not rebuilt; §118)",
+    appSrc114.includes("try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }")
+    && appSrc114.includes('const actPane = $("tab-activity");'));
 }
 
 // ---------- 115. re-walk fixes: Cosmos rollup honesty (FIX-A) + DOT floor refusal & stale card (FIX-B) (2026-11-14) ----------
@@ -17064,6 +17065,108 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
   }
+}
+
+// ---------- 118. repair release: driver contention fix + composed-refusal floor-naming (2026-11-14) ----------
+// Item 1 (diagnosis: research_notes/fluid-sheet-contention-
+// diagnosis-20261114/report.md): a leg-due record made the
+// auto-driver re-quote through the full route cascade
+// back-to-back — the retry gate was stamped at attempt
+// START and the finally-paint kicked an immediate next
+// pass — starving the swap sheet on any profile carrying a
+// pending swap. Item 2 (the 1Click walk): LTC→DOT at
+// ~$6.76 refused with "isn't connected yet" when what bound
+// was the composed route's DOT leg floor (Chainflip's).
+{
+  const appSrc118 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+
+  // --- the backoff ladder (pure) ---
+  ok("repair118: the retry delay ladder is 60s, then 120s, then a 300s cap — junk counts read as a first failure",
+    milestoneRetryDelayMs(0) === 60000 && milestoneRetryDelayMs(1) === 120000
+    && milestoneRetryDelayMs(2) === 300000 && milestoneRetryDelayMs(9) === 300000
+    && milestoneRetryDelayMs(undefined) === 60000 && milestoneRetryDelayMs(-3) === 60000);
+
+  // --- app wiring: end-stamp + backoff + deferral + repaint guard ---
+  ok("repair118 app: the retry gate is end-stamped by the settle helper for BOTH record kinds — the start-stamps are gone",
+    appSrc118.includes("function settleDriveAttempt(kind, before, fresh)")
+    && appSrc118.includes('settleDriveAttempt("milestone", r, fresh);')
+    && appSrc118.includes('settleDriveAttempt("gasfallback", r, fresh);')
+    && appSrc118.includes("pendingDriveLastTry.set(key, Date.now());")
+    && !appSrc118.includes('pendingDriveLastTry.set("milestone:" + r.id, Date.now());')
+    && !appSrc118.includes('pendingDriveLastTry.set("gasfallback:" + r.id, Date.now());'));
+  ok("repair118 app: an attempt counts as progress only on a state change — the settle helper resets the failure count then, and grows it otherwise",
+    appSrc118.includes("if (!fresh || fresh.state !== before.state) pendingDriveFailures.delete(key);")
+    && appSrc118.includes("pendingDriveFailures.set(key, (pendingDriveFailures.get(key) || 0) + 1);"));
+  ok("repair118 app: the due gate waits out the per-record backoff, not a flat delay",
+    appSrc118.includes('milestoneRetryDelayMs(pendingDriveFailures.get(kind + ":" + r.id) || 0)')
+    && !appSrc118.includes("PENDING_DRIVE_RETRY_MS"));
+  ok("repair118 app: background drives defer while the swap sheet is open — the guard sits beside the in-flight courtesy",
+    appSrc118.includes("function swapSheetIsOpen()")
+    && appSrc118.includes('document.getElementById("wMsg")')
+    && appSrc118.includes("if (!wallet || pendingDriveBusy || swapRunsInFlight > 0 || swapSheetIsOpen()) return;"));
+  ok("repair118 app: the drive's Activity repaint is spent only when the Activity tab is visible",
+    appSrc118.includes('const actPane = $("tab-activity");')
+    && appSrc118.includes('if (actPane && !actPane.classList.contains("hidden")) {'));
+
+  // --- composed floor: the leg's refusal rides out of the composition search ---
+  const cfLegErr118 = new Error("No route at that size: Chainflip's own minimum for BNB → DOT is 0.02 BNB");
+  cfLegErr118.chainflipBelowFloor = { asset: "BNB", minRaw: "20000000000000000", minHuman: "0.02" };
+  const LTC_DOT_118 = { fromChainKey: "litecoin", toChainKey: "polkadot", fromTokenAddress: "ltc", toTokenAddress: "dot", fromAmount: "15000000", fromAddress: "ltc1qrepair118", toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo", addresses: { bsc: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", litecoin: "ltc1qrepair118", polkadot: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" } };
+  const fakeLeg118 = (id, toAmount) => ({
+    provider: "relay", id, type: "x", fromChainId: 56, toChainId: 8453,
+    fromAmount: "0", fromToken: { address: "ltc", symbol: "LTC", decimals: 8 },
+    toToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 },
+    toAmount, toAmountMin: toAmount, toAmountUSD: 6.76, fromAmountUSD: 6.76,
+    gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 30,
+    platformFeeUsd: 0.001, platformFeeCollecting: true, platformFeeBps: 45,
+    steps: [], relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] },
+  });
+  // Only the BNB shape reaches the DOT leg (the USDT shape's
+  // first leg is unserved here); the DOT leg dies on
+  // Chainflip's own floor, exactly the walked failure.
+  const legSearch118 = async (a) => {
+    if (a.fromChainKey === "litecoin" && a.toChainKey === "bsc" && a.toTokenAddress === "0x0000000000000000000000000000000000000000") return [fakeLeg118("l1", "6760000000000000")];
+    if (a.fromChainKey === "bsc" && a.toChainKey === "polkadot") throw cfLegErr118;
+    throw new Error("No available quotes for the requested transfer");
+  };
+  let composedErr118 = null;
+  try { await searchMilestoneCompositions(LTC_DOT_118, { searchLeg: legSearch118, pricesUsd: { LTC: 45 } }); }
+  catch (e) { composedErr118 = e; }
+  ok("repair118: a composition that fails only on a leg's rail floor throws that floor, named with the leg — it does not conclude empty",
+    !!composedErr118?.composedBelowFloor
+    && composedErr118.composedBelowFloor.legFromSymbol === "BNB" && composedErr118.composedBelowFloor.legToSymbol === "DOT"
+    && composedErr118.composedBelowFloor.asset === "BNB" && composedErr118.composedBelowFloor.minHuman === "0.02"
+    && composedErr118.composedBelowFloor.minRaw === "20000000000000000"
+    && /No route at that size/.test(composedErr118.message));
+  ok("repair118: a composition whose legs fail WITHOUT a rail floor still concludes empty, exactly as before",
+    (await searchMilestoneCompositions(LTC_DOT_118, { searchLeg: async () => { throw new Error("No available quotes for the requested transfer"); }, pricesUsd: { LTC: 45 } })).length === 0);
+
+  // --- getSwapRoutes: the composed floor reaches the sheet ---
+  let threwComposed118 = null;
+  try { await getSwapRoutes(LTC_DOT_118, { directSearch: async () => [], compositionSearch: async () => { throw composedErr118; } }); }
+  catch (e) { threwComposed118 = e; }
+  ok("repair118: getSwapRoutes rethrows the composition's floor error when the direct search found nothing",
+    threwComposed118 === composedErr118);
+  const cfDirectErr118 = new Error("No route at that size: Chainflip's own minimum for USDT → DOT is 10 USDT");
+  cfDirectErr118.chainflipBelowFloor = { asset: "USDT", minRaw: "10000000000000000000", minHuman: "10" };
+  let threwDirect118 = null;
+  try { await getSwapRoutes(LTC_DOT_118, { directSearch: async () => { throw cfDirectErr118; }, compositionSearch: async () => { throw composedErr118; } }); }
+  catch (e) { threwDirect118 = e; }
+  ok("repair118: a direct error carrying its OWN rail floor keeps precedence over the composed leg floor",
+    threwDirect118 === cfDirectErr118);
+
+  // --- diagnosis + copy: the refusal names the binding leg and its floor ---
+  let ladderCalls118 = 0;
+  const vComp118 = await diagnoseNoRouteSwap(LTC_DOT_118, { fromDecimals: 8, fromPriceUsd: 45, searchError: composedErr118, search: async () => { ladderCalls118++; return []; } });
+  ok("repair118: the diagnosis reads the composed floor off the search error — below-minimum, the leg named, no probe ladder spent",
+    vComp118.kind === "below-minimum" && vComp118.composedLeg?.fromSymbol === "BNB" && vComp118.composedLeg?.toSymbol === "DOT"
+    && vComp118.composedLeg?.minHuman === "0.02" && vComp118.floor?.found === true && ladderCalls118 === 0);
+  const msgComp118 = formatSwapNoRouteMessage({ fromSymbol: "LTC", toSymbol: "DOT", amountText: "0.15 LTC", verdict: vComp118 });
+  ok("repair118: the refusal names the binding leg and its floor — and never calls a connected pair unconnected",
+    msgComp118.includes("this pair is connected") && msgComp118.includes("BNB → DOT") && msgComp118.includes("at least 0.02 BNB")
+    && !msgComp118.includes("isn't connected yet"));
+  ok("repair118 app: the sheet never re-renders a composed-leg floor in the swap's FROM token",
+    appSrc118.includes("verdict.floor?.found && !verdict.composedLeg"));
 }
 
 console.log(`\n${passed} checks passed`);

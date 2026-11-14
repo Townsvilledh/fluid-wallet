@@ -7399,7 +7399,7 @@ async function fetchOneClickQuote(ctx, { feeRequest = null, feeRecipient = null,
       const human = swapRawToAmount(floor[1], ctx.fromEntry.decimals).replace(/\.0$/, "");
       const e = new Error(`No route at that size: 1Click's own minimum for ${ctx.fromEntry.symbol} -> ${ctx.toEntry.symbol} is ${human} ${ctx.fromEntry.symbol} — the floor is 1Click's, not Fluid's, and it is shown before you commit. Swap at least ${human} ${ctx.fromEntry.symbol}.`);
       e.oneclickTerminal = true;
-      e.oneclickBelowFloor = { asset: ctx.fromEntry.symbol, minRaw: floor[1] };
+      e.oneclickBelowFloor = { asset: ctx.fromEntry.symbol, minRaw: floor[1], minHuman: human };
       throw e;
     }
     if (/quoting for this pair is not available|failed to get quote/i.test(message)) return null;
@@ -20116,7 +20116,31 @@ function milestoneFeeUsdOf(r) {
  *  caps (see the phases at the end of the search). Never
  *  throws. */
 export async function searchMilestoneCompositions(args, { searchLeg = null, pricesUsd = null } = {}) {
-  const run = searchLeg || ((a) => getSwapRoutesDirect(a));
+  const rawLeg = searchLeg || ((a) => getSwapRoutesDirect(a));
+  // Composed floor evidence (repair, 2026-11-14): a leg quote
+  // that dies on a rail's own below-minimum refusal carries
+  // that floor (chainflipBelowFloor / oneclickBelowFloor),
+  // but every leg quoter below swallows errors by design —
+  // so the floor is recorded HERE, at the one quoter every
+  // phase shares, and re-stated at the search's empty exit.
+  // A composition that failed only because a leg's floor
+  // bound must say so, never conclude as if the pair were
+  // unconnected (the 1Click walk's LTC→DOT at ~$6.76: the
+  // DOT leg's Chainflip floor bound, and the sheet answered
+  // "isn't connected yet" for a connected pair).
+  let legFloorHit = null;
+  const run = async (a) => {
+    try { return await rawLeg(a); }
+    catch (e) {
+      const f = e?.chainflipBelowFloor || e?.oneclickBelowFloor;
+      if (f && !legFloorHit) legFloorHit = { floor: f, fromChainKey: a?.fromChainKey ?? null, toChainKey: a?.toChainKey ?? null, fromTokenAddress: a?.fromTokenAddress ?? null, toTokenAddress: a?.toTokenAddress ?? null };
+      throw e;
+    }
+  };
+  // The recorded floor, named with the failing leg's symbols
+  // (the shape descriptor's — the quoter args carry only
+  // addresses), set by priceShape when a leg fails.
+  let composedFloor = null;
   const shapes = milestoneShapes(args);
   const priceOf = async (sym) => {
     if (pricesUsd && Number(pricesUsd[sym]) > 0) return Number(pricesUsd[sym]);
@@ -20197,7 +20221,17 @@ export async function searchMilestoneCompositions(args, { searchLeg = null, pric
       // executable the shape fails here and the search moves on,
       // exactly as when no candidate quotes at all.
       let picked = routes && routes.length ? firstExecutableRoute(rankSwapRoutes(routes, null)) : null;
-      if (!picked) return null;
+      if (!picked) {
+        // If THIS leg is the one whose rail floor bound,
+        // name it for the search's empty exit (see the floor
+        // recording at the shared quoter above).
+        if (!composedFloor && legFloorHit && legFloorHit.fromChainKey === d.fromChainKey && legFloorHit.toChainKey === d.toChainKey
+          && String(legFloorHit.fromTokenAddress ?? "").toLowerCase() === String(d.fromTokenAddress ?? "").toLowerCase()
+          && String(legFloorHit.toTokenAddress ?? "").toLowerCase() === String(d.toTokenAddress ?? "").toLowerCase()) {
+          composedFloor = { asset: legFloorHit.floor.asset, minRaw: legFloorHit.floor.minRaw, minHuman: legFloorHit.floor.minHuman ?? null, legFromSymbol: d.fromSymbol, legToSymbol: d.toSymbol };
+        }
+        return null;
+      }
       legRoutes.push(picked);
       legDescs.push({ ...d, fromAmount: amount, fromAddress, toAddress, expectedToAmount: picked.toAmount != null ? String(picked.toAmount) : null, provider: picked.provider || null, estimated: picked.estimated === true });
       if (picked.toAmount == null) return null;
@@ -20348,7 +20382,17 @@ export async function searchMilestoneCompositions(args, { searchLeg = null, pric
       }
     }
   }
-  return slowBest ? [slowBest] : [];
+  if (slowBest) return [slowBest];
+  // The search found nothing — but if a leg's own rail floor
+  // is what bound, that is a below-minimum verdict about a
+  // CONNECTED pair, and it rides out as an error the sheet's
+  // diagnosis can name (the FIX-B channel, one level up).
+  if (composedFloor) {
+    const e = new Error(`No route at that size: the composed route's ${composedFloor.legFromSymbol} → ${composedFloor.legToSymbol} leg has a minimum of its own${composedFloor.minHuman != null ? ` — at least ${composedFloor.minHuman} ${composedFloor.asset} must go into that leg` : ""}. Raise the amount and search again.`);
+    e.composedBelowFloor = composedFloor;
+    throw e;
+  }
+  return [];
 }
 /** The staged-swap speed standard (Ethuram, 2026-11-13): a
  *  composed swap should complete within ~1–1.5 minutes. */
@@ -20361,6 +20405,20 @@ export const MILESTONE_FAST_TOTAL_SEC = 90;
  *  chained amounts is a dead leg for this search, not a
  *  flicker; a single answer resets the streak. */
 export const MILESTONE_LEG_DOWN_THRESHOLD = 3;
+/** The auto-driver's per-record retry delay after N
+ *  consecutive no-progress attempts (driver contention fix,
+ *  2026-11-14): 60 s, then 120 s, then a 300 s cap. The app
+ *  stamps the gate when an attempt SETTLES and counts an
+ *  attempt as progress only when the record's state changed,
+ *  so a failing record's full route cascades can never chain
+ *  back-to-back — the idle gap holds whatever the network
+ *  does. Pure; tests pin. */
+export function milestoneRetryDelayMs(consecutiveFailures) {
+  const n = Number(consecutiveFailures) || 0;
+  if (n <= 0) return 60000;
+  if (n === 1) return 120000;
+  return 300000;
+}
 
 /* ----- Milestone execution: persisted per-leg records -----
  * The generalised gas-fallback record: written when leg 1
@@ -21219,7 +21277,7 @@ function chainflipFloorError({ srcSymbol, destSymbol, minRaw, decimals }) {
   const human = ethers.formatUnits(BigInt(minRaw), decimals).replace(/\.0$/, "");
   const e = new Error(`No route at that size: Chainflip's own minimum for ${srcSymbol} → ${destSymbol} is ${human} ${srcSymbol} — the floor is Chainflip's, not Fluid's, and it is shown before you commit. Swap at least ${human} ${srcSymbol}.`);
   e.chainflipTerminal = true;
-  e.chainflipBelowFloor = { asset: srcSymbol, minRaw: String(minRaw) };
+  e.chainflipBelowFloor = { asset: srcSymbol, minRaw: String(minRaw), minHuman: human };
   return e;
 }
 function chainflipTerminalError(message) {
@@ -21922,14 +21980,22 @@ export async function getSwapRoutes(args, { directSearch = null, compositionSear
     }
     throw directErr;
   }
-  let composed = [];
-  try { composed = await composeFn(args); } catch { composed = []; }
+  let composed = [], composeErr = null;
+  try { composed = await composeFn(args); } catch (e) { composeErr = e; composed = []; }
   if (composed && composed.length) {
     let gasPlan = null;
     try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
     if (gasPlan) for (const r of composed) if (!r.destGas) r.destGas = gasPlan;
     return withEntryCosts(rankSwapRoutes(composed, null, { gasNeed: gasPlan }));
   }
+  // A leg floor recorded by the composition search is the
+  // more specific verdict when the direct failure carried no
+  // floor of its own (repair, 2026-11-14): it names the
+  // binding leg, where the bare direct failure would leave
+  // the pair mislabelled unconnected. A direct error WITH
+  // its own rail floor keeps precedence — it is the pair's
+  // own refusal, stated first-hand.
+  if (composeErr?.composedBelowFloor && !directErr?.chainflipBelowFloor && !directErr?.oneclickBelowFloor && !directErr?.satoraBelowFloor) throw composeErr;
   if (directErr) throw directErr;
   return routes || [];
 }
@@ -22064,6 +22130,18 @@ export function swapFromTokenIsHubAsset(args) {
  *  as "unknown", never as a market verdict. Never throws. */
 export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPriceUsd = null, search = null, searchError = null } = {}) {
   const run = search || getSwapRoutes;
+  // A COMPOSED floor rides the same channel one level up
+  // (repair, 2026-11-14): the composition search concluded
+  // empty because a leg's own rail floor bound, and its
+  // error names the leg. That is a below-minimum verdict
+  // about a connected pair, stated from the leg's own
+  // refusal — the probe ladder below searches the DIRECT
+  // pair and could only mislabel this "no-route-yet", so
+  // the composed verdict is read first, before any probe.
+  const compFloor = searchError?.composedBelowFloor;
+  if (compFloor && compFloor.minHuman != null && compFloor.legFromSymbol && compFloor.legToSymbol) {
+    return { kind: "below-minimum", floor: { found: true, usd: null, amountRaw: compFloor.minRaw != null ? String(compFloor.minRaw) : null, amountHuman: Number(compFloor.minHuman) }, composedLeg: { fromSymbol: compFloor.legFromSymbol, toSymbol: compFloor.legToSymbol, asset: compFloor.asset || compFloor.legFromSymbol, minHuman: String(compFloor.minHuman) }, market: null };
+  }
   // A rail-confirmed floor rides in on the search's own
   // error (re-walk FIX-B, 2026-11-14): Chainflip refuses a
   // sub-minimum DOT swap BEFORE quoting, and its error
@@ -22119,7 +22197,11 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
   const amt = amountText ? ` at ${amountText}` : "";
   let s;
   if (verdict?.kind === "below-minimum" && verdict.floor?.found) {
-    s = `No route for ${fromSymbol} → ${toSymbol}${amt} — that amount is below the minimum for this pair. The smallest swap that works right now is about ${floorText || verdict.floor.amountHuman}. Raise the amount and search again.`;
+    if (verdict.composedLeg) {
+      s = `No route for ${fromSymbol} → ${toSymbol}${amt} — this pair is connected, but the composed route's ${verdict.composedLeg.fromSymbol} → ${verdict.composedLeg.toSymbol} leg has a minimum of its own: at least ${verdict.composedLeg.minHuman} ${verdict.composedLeg.asset} must go into that leg, and this swap puts less than that into it. Raise the amount and search again.`;
+    } else {
+      s = `No route for ${fromSymbol} → ${toSymbol}${amt} — that amount is below the minimum for this pair. The smallest swap that works right now is about ${floorText || verdict.floor.amountHuman}. Raise the amount and search again.`;
+    }
   } else if (verdict?.kind === "no-market") {
     s = `No market found for ${fromSymbol}: it can't be swapped into anything right now — not even ${nativeSymbol || "its own chain's coin"} on its own chain. A token with no market can't be swapped at any size.`;
   } else if (verdict?.kind === "no-route-yet") {

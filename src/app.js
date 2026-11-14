@@ -41,7 +41,7 @@ import {
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
-  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman,
+  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -8163,7 +8163,10 @@ $("actSwap").onclick = () => {
               searchError: routeErr,
             });
             if (stale()) return;
-            const floorText = verdict.floor?.found ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol}${Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : ""}` : "";
+            // A composed-leg floor is stated by the message
+            // itself, in the LEG's own asset — it is never
+            // re-rendered here in the swap's FROM token.
+            const floorText = verdict.floor?.found && !verdict.composedLeg ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol}${Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : ""}` : "";
             const nativeSymbol = (swapTokensFor(fromKey).find(t => t.native) || {}).symbol || "";
             return msg("wMsg", formatSwapNoRouteMessage({
               fromSymbol: fromTok.symbol, toSymbol: toTok.symbol,
@@ -9547,9 +9550,45 @@ const homeGfbNotes = new Map();
 let pendingDriveTimer = null;
 let pendingDriveBusy = false;
 const pendingDriveLastTry = new Map();
-const PENDING_DRIVE_RETRY_MS = 60000;
+/** Consecutive no-progress attempts per record — the
+ *  backoff input for milestoneRetryDelayMs (driver
+ *  contention fix, 2026-11-14). An attempt counts as
+ *  progress only when the record's state changed across it
+ *  (or the record left the store); anything else grows the
+ *  count, and any progress clears it. */
+const pendingDriveFailures = new Map();
+/** End-stamp one settled drive attempt and update its
+ *  failure count (driver contention fix, 2026-11-14): the
+ *  retry gate is stamped NOW — when the attempt settled,
+ *  never when it started. The old start-stamp let an attempt
+ *  that itself ran past the retry delay (a full route
+ *  cascade under a degraded network, measured at 80–135 s)
+ *  satisfy the gate the moment it ended, and the finally
+ *  repaint's kick chained the next cascade immediately —
+ *  back-to-back cascades starved the swap sheet on any
+ *  profile carrying a leg-due record. */
+function settleDriveAttempt(kind, before, fresh) {
+  const key = kind + ":" + before.id;
+  pendingDriveLastTry.set(key, Date.now());
+  if (!fresh || fresh.state !== before.state) pendingDriveFailures.delete(key);
+  else pendingDriveFailures.set(key, (pendingDriveFailures.get(key) || 0) + 1);
+}
+/** True while the swap sheet is the mounted sheet (its
+ *  message element exists only in that sheet's markup, and
+ *  the sheet root is shown). Background drives defer to it
+ *  (driver contention fix, 2026-11-14) — the same courtesy
+ *  swapRunsInFlight already gets: a drive must not compete
+ *  with the searches of the sheet the user is actively
+ *  using. The record stays visible on the home card, its
+ *  in-sheet completion button remains the manual path, and
+ *  the driver resumes on the next pass after the sheet
+ *  closes. */
+function swapSheetIsOpen() {
+  const r = $("sheetRoot");
+  return !!(r && !r.classList.contains("hidden") && document.getElementById("wMsg"));
+}
 async function drivePendingSwaps() {
-  if (!wallet || pendingDriveBusy || swapRunsInFlight > 0) return;
+  if (!wallet || pendingDriveBusy || swapRunsInFlight > 0 || swapSheetIsOpen()) return;
   pendingDriveBusy = true;
   let droveAny = false;
   try {
@@ -9574,7 +9613,7 @@ async function drivePendingSwaps() {
     const gfAll = loadGasFallbackRecords(localStorage).filter(r => r.state === "leg2-due" || r.state === "awaiting-credit");
     for (const r of msAll) syncPendingSwapHistory("milestone", r);
     for (const r of gfAll) syncPendingSwapHistory("gasfallback", r);
-    const due = (kind, r) => now - (pendingDriveLastTry.get(kind + ":" + r.id) || 0) >= PENDING_DRIVE_RETRY_MS && !swapRunsByRecord.has(kind + ":" + r.id);
+    const due = (kind, r) => now - (pendingDriveLastTry.get(kind + ":" + r.id) || 0) >= milestoneRetryDelayMs(pendingDriveFailures.get(kind + ":" + r.id) || 0) && !swapRunsByRecord.has(kind + ":" + r.id);
     const msDue = msAll.filter(r => milestoneNeedsAction(r) && due("milestone", r)
       && !(r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade"));
     const gfDue = gfAll.filter(r => gasFallbackNeedsAction(r) && due("gasfallback", r));
@@ -9584,7 +9623,6 @@ async function drivePendingSwaps() {
     try {
       for (const r of msDue) {
         if (!wallet) break;
-        pendingDriveLastTry.set("milestone:" + r.id, Date.now());
         holdSwapRun("milestone:" + r.id);
         homeMilestoneNotes.set(r.id, "Finishing your swap…");
         try {
@@ -9593,12 +9631,13 @@ async function drivePendingSwaps() {
           else if (out?.pending) homeMilestoneNotes.set(r.id, "Still finishing — it stays here until it lands.");
           else { homeMilestoneNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
         } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the driver */ } homeMilestoneNotes.set(r.id, humanizeTxError(e)); }
-        try { const fresh = loadMilestoneRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("milestone", fresh); } catch { /* as above */ }
+        let fresh = null;
+        try { fresh = loadMilestoneRecords(localStorage).find(x => x.id === r.id) || null; if (fresh) syncPendingSwapHistory("milestone", fresh); } catch { /* as above */ }
         releaseSwapRun("milestone:" + r.id);
+        settleDriveAttempt("milestone", r, fresh);
       }
       for (const r of gfDue) {
         if (!wallet) break;
-        pendingDriveLastTry.set("gasfallback:" + r.id, Date.now());
         holdSwapRun("gasfallback:" + r.id);
         homeGfbNotes.set(r.id, "Finishing your swap…");
         try {
@@ -9606,8 +9645,10 @@ async function drivePendingSwaps() {
           if (out?.holdsNative) homeGfbNotes.set(r.id, "Landed as gas money — nothing more to swap.");
           else { homeGfbNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
         } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the driver */ } homeGfbNotes.set(r.id, humanizeTxError(e)); }
-        try { const fresh = loadGasFallbackRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("gasfallback", fresh); } catch { /* as above */ }
+        let fresh = null;
+        try { fresh = loadGasFallbackRecords(localStorage).find(x => x.id === r.id) || null; if (fresh) syncPendingSwapHistory("gasfallback", fresh); } catch { /* as above */ }
         releaseSwapRun("gasfallback:" + r.id);
+        settleDriveAttempt("gasfallback", r, fresh);
       }
     } finally { homeMilestoneBusy = false; }
   } finally {
@@ -9621,8 +9662,16 @@ async function drivePendingSwaps() {
       // re-renders on scan renders only, so without this a
       // failed drive's in-progress row stays invisible
       // behind the tab's stale paint until the next scan
-      // (found in this build's acceptance walk).
-      try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }
+      // (found in this build's acceptance walk). The repaint
+      // is spent only when Activity is the visible tab
+      // (driver contention fix, 2026-11-14): rebuilding a
+      // hidden list at the end of every drive was pure
+      // contention, and the rows re-render on the next scan
+      // render regardless.
+      const actPane = $("tab-activity");
+      if (actPane && !actPane.classList.contains("hidden")) {
+        try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }
+      }
     }
   }
 }
