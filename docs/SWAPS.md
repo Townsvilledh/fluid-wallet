@@ -13,6 +13,16 @@ requirement (including the destination-gas delivery below, at the
 user's actual size) outranks one that cannot; among routes that can,
 the best net output wins. Brand order alone never decides.
 
+Above merit sits **executability** (2026-11-14, matrix-sweep Family
+A): a route Fluid cannot sign — judged by the same structural gate
+every executor re-runs — never outranks one it can, and the
+cheapest/fastest flags are assigned among executable routes only.
+A non-executable route still returns from the search, annotated
+with the gate's reason; it is listed for discovery, never badged
+as the best takeable route. (The sweep caught a non-executable
+destination-gas composite wearing the cheapest flag over an
+executable Relay route on $10 swaps into Tron.)
+
 The sources, per pair:
 
 - **Satora** — EVM stablecoins → Lightning, → Bitcoin mainnet and
@@ -86,6 +96,32 @@ in this order:
    stranded) and the swap sheet offers a one-tap "Complete the swap".
 3. **A plain warning** — only if neither mechanism works, the review
    says before you confirm that the funds will land without gas.
+
+**The all-to-native contract (resolved 2026-11-14).** Mechanism 2's
+composite is an ordinary executable route, gated by the same
+`swapRouteExecutable` as every other route: the sheet offers it —
+tappable, badgable, ranked in the executable tier — exactly when
+the composite is complete (a live gas plan for the destination,
+the destination address, the target token, the reserve) and its
+first leg is itself signable by a rail the executor can dispatch
+(Relay, Across, Mayan, Jupiter, Cetus, SunSwap). Execution is one
+confirmation: leg 1 broadcasts through that rail's own executor
+(its bounds checks re-run before signing) and lands the native
+token at your own address; a durable record persists at that
+moment; leg 2 is then re-quoted fresh from what actually arrived
+— never from the preview — and runs immediately, or, if the
+credit outlasts the in-flow wait or leg 2 cannot complete, waits
+as a one-tap "Complete the swap" in the sheet while you hold the
+native token. Nothing in the path takes custody. One honest
+limit, unchanged: no composite is built at all where leg 1 has
+no rail (a Sui destination today — no rail delivers native SUI
+cross-chain), and there the plain warning above is the answer.
+History, kept straight: from the feature's first release
+(2026-11-11) until 2026-11-14 the gate had no branch for this
+composite at all, so its rows rendered disabled and the executor
+was unreachable from the route list even though the machinery
+was complete; the resolution and its evidence are in
+`research_notes/fluid-gasfallback-resolution-20261114/`.
 
 The gas slice is part of your own swap, **not a fee** — Fluid's fee
 is computed and disclosed separately, under the same fee law as

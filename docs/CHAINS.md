@@ -37,11 +37,12 @@ A balance row is only ever a **real value**, a **true zero** (an
 endpoint answered and the balance is zero), or **"couldn't load"**
 (the read failed — the amount is unknown, shown as unknown in the
 row, in the send sheet, and in the header total, which is annotated
-"+ some balances couldn't load" whenever any family in view is in
-that state). No reader defaults to zero on failure; that rule was
-re-pinned across every family on 2026-11-14 after a post-release
-sweep caught five families displaying $0.00 while their endpoints
-were down.
+"+ some balances couldn't load" whenever any **row** in view is in
+that state — a single failed token row inside an otherwise loaded
+family counts, not just whole-family failures). No reader defaults
+to zero on failure; that rule was re-pinned across every family on
+2026-11-14 after a post-release sweep caught five families
+displaying $0.00 while their endpoints were down.
 
 - **Endpoint rotation.** Every family's reads rotate over keyless
   public endpoints with the EVM discipline (last-good first, a
@@ -62,6 +63,13 @@ were down.
   30 s (a hung endpoint can no longer eat the scan), and a read
   rescued within 120 s repaints its rows in the same scan instead
   of leaving "couldn't load" standing until a manual refresh.
+- **In-flight rows never show a placeholder amount.** While a
+  family's live read is still running, its rows show either the
+  skeleton (cold start) or the last-known cached values (a
+  re-open paints the cache instantly, with "Updating…" in the
+  header) — never a "0" standing in for an answer that has not
+  arrived. The zero-placeholder row shapes exist only as the
+  cold-start pre-read state the skeleton covers.
 
 ## Send & receive
 

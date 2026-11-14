@@ -800,8 +800,22 @@ async function renderMain() {
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
+  //
+  // In-flight placeholder rule (2026-11-14, re-sweep observation
+  // 2): the "0" placeholder rows below are a COLD-START shape
+  // only — familyRowsHtml renders skeletons until famLoaded, so
+  // they never paint. When the balance cache hydrated this
+  // family, famLoaded already contains it, and overwriting the
+  // cached rows with placeholders made every mid-scan repaint
+  // render "0" until the live read settled — the re-sweep
+  // watched a cached couldn't-load USDT·TON row regress to "0"
+  // for ~18 s of scan 5. So on a hydrated render the cached
+  // rows stand (they are settled last-known state; the header
+  // shows "Updating…") until the live read replaces them or the
+  // failure branch nulls them. Every row family below follows
+  // the same guard.
   tronAddr = tronAddressFromPhrase(w.mnemonic.phrase);
-  tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
+  if (!hydratedFams.has("tron")) tronBalances = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 },
                   ...TRON_TOKENS.map(t => ({ ...t, amount: "0" }))];
   tronLoadFailed = false;
   loadFamilyRows(() => getTronAllTokens(tronAddr), () => getTronBalances(tronAddr), "tron")
@@ -822,7 +836,7 @@ async function renderMain() {
   // Ed25519 branch of the same seed, its own rows, painted with zero
   // placeholders until the RPC answers.
   solAddr = solanaAddressFromPhrase(w.mnemonic.phrase);
-  solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
+  if (!hydratedFams.has("solana")) solBalances = [{ symbol: "SOL", amount: "0", address: null, decimals: 9 },
                  ...SOLANA_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana")
     .then(rows => {
@@ -842,7 +856,7 @@ async function renderMain() {
   // same seed — the same derivation family as Solana, Sui's own path.
   // Also the future home of the OGO ERA Companion NFT.
   suiAddr = suiAddressFromPhrase(w.mnemonic.phrase);
-  suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
+  if (!hydratedFams.has("sui")) suiBalances = [{ symbol: "SUI", amount: "0", address: null, decimals: 9 },
                  ...SUI_TOKENS.map(t => ({ ...t, amount: "0" }))];
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
     .then(rows => {
@@ -862,7 +876,7 @@ async function renderMain() {
   // yet activated" — painted honestly; a failed read keeps the
   // placeholder row plus a "couldn't load" note, never a fake zero.
   stellarAddr = stellarAddressFromPhrase(w.mnemonic.phrase);
-  stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
+  if (!hydratedFams.has("stellar")) stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
     .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; markLoaded("stellar"); paintAssets(); })
@@ -883,7 +897,7 @@ async function renderMain() {
   // discipline: placeholder rows, honest state notes on failure —
   // never a fake zero presented as a loaded balance.
   tonAddr = tonAddressFromPhrase(w.mnemonic.phrase);
-  tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
+  if (!hydratedFams.has("ton")) tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false; tonScanFailed = false;
   getTonAccount(tonAddr)
@@ -896,7 +910,7 @@ async function renderMain() {
       markLoaded("ton"); paintAssets();
     });
   nearAddr = nearAddressFromPhrase(w.mnemonic.phrase);
-  nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
+  if (!hydratedFams.has("near")) nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
@@ -909,7 +923,7 @@ async function renderMain() {
       markLoaded("near"); paintAssets();
     });
   algoAddr = algoAddressFromPhrase(w.mnemonic.phrase);
-  algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
+  if (!hydratedFams.has("algorand")) algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
@@ -923,7 +937,7 @@ async function renderMain() {
       markLoaded("algorand"); paintAssets();
     });
   xrpAddr = xrplAddressFromPhrase(w.mnemonic.phrase);
-  xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
+  if (!hydratedFams.has("xrpl")) xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
     .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; markLoaded("xrpl"); paintAssets(); })
@@ -936,7 +950,7 @@ async function renderMain() {
       markLoaded("xrpl"); paintAssets();
     });
   dotAddr = dotAddressFromPhrase(w.mnemonic.phrase);
-  dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
+  if (!hydratedFams.has("polkadot")) dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
   getDotAccount(dotAddr)
@@ -956,7 +970,7 @@ async function renderMain() {
   // created", not a fake zero — and a failed read keeps the
   // placeholder rows plus a note.
   aptosAddr = aptosAddressFromPhrase(w.mnemonic.phrase);
-  aptosBalances = [{ symbol: "APT", name: "Aptos", amount: "0", address: null, decimals: 8, verified: true },
+  if (!hydratedFams.has("aptos")) aptosBalances = [{ symbol: "APT", name: "Aptos", amount: "0", address: null, decimals: 8, verified: true },
                    ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
   getAptosAccount(aptosAddr)
@@ -972,7 +986,7 @@ async function renderMain() {
   // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
   // everything else unverified (⚠) with contract-read metadata.
   stacksAddr = stacksAddressFromPhrase(w.mnemonic.phrase);
-  stacksBalances = [{ symbol: "STX", name: "Stacks", amount: "0", decimals: 6, verified: true, contract: null },
+  if (!hydratedFams.has("stacks")) stacksBalances = [{ symbol: "STX", name: "Stacks", amount: "0", decimals: 6, verified: true, contract: null },
                     ...STACKS_TOKENS.map(t => ({ ...t, amount: "0", balanceRaw: "0", verified: true }))];
   stacksLoadFailed = false; stacksScanFailed = false;
   fetchStacksAccount(stacksAddr)
@@ -1257,32 +1271,48 @@ function viewAddress() {
  *  whole story (the sweep caught a bare "$0.00 · Across all
  *  networks" over 22 failed rows). Mirrors the unpriced-holdings
  *  annotation's view scoping. Cosmos rows start null before their
- *  first read settles, so the family only counts once loaded. */
+ *  first read settles, so the family only counts once loaded.
+ *  Partial-failure extension (2026-11-14, re-sweep defect 1):
+ *  the signal is per ROW, not only per family — a single token
+ *  row at amount null inside an otherwise loaded family (the
+ *  re-sweep's case: native TON loaded, the USDT jetton row
+ *  nulled on a 429, settled header unannotated) also counts, in
+ *  every row family's flag, its row array, and TON's scan flag:
+ *  the total silently excludes that row's unknown balance, so
+ *  the footnote owes the user the same warning. */
 function balancesUnloadedInView() {
   const rowNull = (rows) => Array.isArray(rows) && rows.some(b => b && b.amount == null);
   const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
   if (viewKey === "all") {
-    return evmLoadFailed || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed
-      || tronLoadFailed || stellarLoadFailed || tonLoadFailed || nearLoadFailed || algoLoadFailed
-      || xrpLoadFailed || dotLoadFailed || aptosLoadFailed || stacksLoadFailed || stacksScanFailed
+    return evmLoadFailed || rowNull(balances)
+      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed
+      || tronLoadFailed || rowNull(tronBalances)
+      || stellarLoadFailed || rowNull(stellarBalances)
+      || tonLoadFailed || tonScanFailed || rowNull(tonBalances)
+      || nearLoadFailed || rowNull(nearBalances)
+      || algoLoadFailed || rowNull(algoBalances)
+      || xrpLoadFailed || rowNull(xrpBalances)
+      || dotLoadFailed || rowNull(dotBalances)
+      || aptosLoadFailed || rowNull(aptosBalances)
+      || stacksLoadFailed || stacksScanFailed || rowNull(stacksBalances)
       || rowNull(solBalances) || rowNull(suiBalances)
       || (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null));
   }
   switch (viewKey) {
-    case "evm": return evmLoadFailed;
+    case "evm": return evmLoadFailed || rowNull(balances);
     case "bitcoin": return btcLoadFailed;
     case "litecoin": return ltcLoadFailed;
     case "dogecoin": return dogeLoadFailed;
     case "bitcoincash": return bchLoadFailed;
-    case "tron": return tronLoadFailed;
-    case "stellar": return stellarLoadFailed;
-    case "ton": return tonLoadFailed;
-    case "near": return nearLoadFailed;
-    case "algorand": return algoLoadFailed;
-    case "xrpl": return xrpLoadFailed;
-    case "polkadot": return dotLoadFailed;
-    case "aptos": return aptosLoadFailed;
-    case "stacks": return stacksLoadFailed || stacksScanFailed;
+    case "tron": return tronLoadFailed || rowNull(tronBalances);
+    case "stellar": return stellarLoadFailed || rowNull(stellarBalances);
+    case "ton": return tonLoadFailed || tonScanFailed || rowNull(tonBalances);
+    case "near": return nearLoadFailed || rowNull(nearBalances);
+    case "algorand": return algoLoadFailed || rowNull(algoBalances);
+    case "xrpl": return xrpLoadFailed || rowNull(xrpBalances);
+    case "polkadot": return dotLoadFailed || rowNull(dotBalances);
+    case "aptos": return aptosLoadFailed || rowNull(aptosBalances);
+    case "stacks": return stacksLoadFailed || stacksScanFailed || rowNull(stacksBalances);
     case "solana": return rowNull(solBalances);
     case "sui": return rowNull(suiBalances);
     default: return cosmosChainFailed(viewKey);
@@ -7877,8 +7907,11 @@ $("actSwap").onclick = () => {
       // non-executable route (no signable steps) never wears a
       // pill while a usable route sits unbadged below it (the
       // Milestone screenshot defect). When nothing listed is
-      // executable, core's flags stand — every row is disabled
-      // with its reason, so the pills claim nothing usable.
+      // executable, every row is disabled with its reason and no
+      // pills render at all: since the 2026-11-14 core ranking
+      // fix (matrix sweep Family A), rankSwapRoutes itself
+      // assigns cheapest/fastest among executable routes only,
+      // so core's flags are simply absent in that case.
       const execResults = ranked.map(r => swapRouteExecutable(r));
       const execFlags = execResults.map(e => e.ok);
       const anyExec = execFlags.some(Boolean);

@@ -17943,7 +17943,9 @@ export async function pollDestNativeCredit(chainKey, address, preRaw, minDeltaRa
 /** Execute one already-quoted route with the right family
  *  executor — the dispatch the swap sheet performs, shared by
  *  the gas fallback's two legs (leg routes are ordinary routes
- *  of their own providers). */
+ *  of their own providers). The provider set dispatched here
+ *  is mirrored by GAS_FALLBACK_LEG_PROVIDERS at the
+ *  executability gate — keep the two in step. */
 async function dispatchSwapExecution(wallet, route, progress, { onApprove = null, onApproveMayan = null } = {}) {
   if (route.provider === "relay") return Number(route.relay?.originChainId) === RELAY_TRON_CHAIN_ID
     ? executeRelayTronSwapRoute(wallet, route, progress, onApprove)
@@ -20040,8 +20042,11 @@ function swapRouteDurationSec(route) {
   return seen ? sum : Infinity;
 }
 /** Pure ranking: annotate each route with netUsd (what you receive in
- *  USD minus gas in USD), durationSec, and cheapest / fastest flags, and
- *  sort best-value first. Input routes are NOT mutated. */
+ *  USD minus gas in USD), durationSec, its executability under the
+ *  shared gate (executable / executableReason), and cheapest / fastest
+ *  flags, and sort best-value first — executable routes always above
+ *  non-executable ones, flags among executable routes only. Input
+ *  routes are NOT mutated. */
 /** The swap route-list cost label ($1-rule fix F5, 2026-11-09):
  *  the row prints the route's TOTAL cost — its own cost
  *  (routeFeeUsd) plus the Fluid fee the final quote discloses
@@ -20069,6 +20074,22 @@ export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
   // delivers the gas (route.gasDrop, either mechanism) outranks
   // one that cannot, and the delivered gas counts in its net:
   // it is value the user receives, not a cost.
+  //
+  // Executability tier (2026-11-14, any-to-any matrix sweep
+  // Family A): merit applies WITHIN the tier of routes Fluid
+  // can actually sign. The sweep caught a non-executable
+  // gasfallback composite ranked first — and flagged cheapest —
+  // over an executable Relay route, because its gas coverage
+  // dominated the merit comparator while its summed gas made
+  // its ranked net meaningless. A route swapRouteExecutable
+  // refuses can never outrank one it accepts, and the
+  // cheapest / fastest flags are assigned among executable
+  // routes only; when nothing in the set is executable, no
+  // flags are assigned at all — the routes still return,
+  // annotated executable:false with the gate's reason, so
+  // discovery never goes silent. Ordering among executable
+  // routes (and among non-executable ones) is the merit order
+  // unchanged.
   const gasNeed = opts.gasNeed ?? (routes || []).find(r => r?.destGas?.needed)?.destGas ?? null;
   const scored = (routes || []).map(r => {
     const gas = swapRouteGasUsd(r);
@@ -20092,6 +20113,16 @@ export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
     const dropUsd = gasNeed ? Number(r?.gasDrop?.usd) : NaN;
     const gasCovered = Number.isFinite(dropUsd) && dropUsd > 0;
     if (gasNeed && gasCovered) netUsd += dropUsd;
+    // The executability gate is the same structural check every
+    // executor re-runs before signing; a shape it cannot judge
+    // (a throw on malformed input) ranks as not executable —
+    // ranking stays total over arbitrary route-ish input.
+    let executable = false, executableReason = null;
+    try {
+      const gate = swapRouteExecutable(r);
+      executable = !!gate.ok;
+      if (!executable) executableReason = gate.reason || null;
+    } catch { executableReason = "This route needs steps Fluid can't sign yet — pick another route."; }
     return {
       ...r,
       gasCostUSD: gas,
@@ -20099,10 +20130,14 @@ export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
       gasCovered,
       usdMismatch,
       durationSec: swapRouteDurationSec(r),
+      executable,
+      executableReason,
       cheapest: false, fastest: false,
     };
   });
   const byMerit = (a, b) => {
+    const ex = Number(b.executable === true) - Number(a.executable === true);
+    if (ex) return ex;
     if (gasNeed) {
       const c = Number(b.gasCovered === true) - Number(a.gasCovered === true);
       if (c) return c;
@@ -20112,13 +20147,13 @@ export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
     return a.durationSec - b.durationSec;
   };
   if (scored.length) {
-    const honest = scored.filter(r => !r.usdMismatch);
+    const honest = scored.filter(r => !r.usdMismatch && r.executable);
     let best = honest[0] || null;
     for (const r of honest) if (!best || byMerit(r, best) < 0) best = r;
     if (best) best.cheapest = true;
-    let fast = scored[0];
-    for (const r of scored) if (r.durationSec < fast.durationSec || (r.durationSec === fast.durationSec && r.netUsd > fast.netUsd)) fast = r;
-    fast.fastest = true;
+    let fast = null;
+    for (const r of scored) if (r.executable && (!fast || r.durationSec < fast.durationSec || (r.durationSec === fast.durationSec && r.netUsd > fast.netUsd))) fast = r;
+    if (fast) fast.fastest = true;
   }
   return scored.sort(byMerit);
 }
@@ -20127,6 +20162,13 @@ const SWAP_ERC20 = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
 ];
+
+/** The leg-1 providers executeGasFallbackRoute's dispatch
+ *  (dispatchSwapExecution) can actually run. The gate's
+ *  gasfallback branch consults this set so it never blesses a
+ *  composite whose first leg the executor would refuse at
+ *  dispatch time. Keep the two in step. */
+const GAS_FALLBACK_LEG_PROVIDERS = new Set(["relay", "across", "mayan", "jupiter", "cetus", "sunswap"]);
 
 export function swapRouteExecutable(route) {
   // Satora routes (Bitcoin / Lightning destinations): executable
@@ -20206,6 +20248,46 @@ export function swapRouteExecutable(route) {
       return { ok: false, reason: "This composed route is incomplete — search again." };
     const inner = swapRouteExecutable(first);
     return inner.ok ? { ok: true, milestone: true } : { ok: false, reason: inner.reason };
+  }
+  // Gas-fallback composed routes (destination-gas mechanism 2,
+  // 2026-11-11): executable when the composite is complete AND
+  // its first leg is itself executable — the milestone branch's
+  // shape, for the same reason: leg 2 is re-quoted fresh at
+  // execution time from what actually arrived (the executor
+  // refuses there if leg 2 cannot be quoted, with the user's
+  // money — the destination's native token — in their own
+  // wallet, movable, and a persisted record offering the
+  // one-tap completion). The gate mirrors
+  // executeGasFallbackRoute's own preconditions (a live gas
+  // plan, the composite shape, a first leg) plus every field
+  // buildGasFallbackRoute guarantees and the executor consumes
+  // — the destination address, the target token, the reserve,
+  // a quoted leg-1 output to track the credit against — and
+  // requires leg 1 to be a provider the executor's dispatch
+  // can actually run: a leg this gate would accept on its own
+  // but the dispatch refuses (a milestone or Satora leg) must
+  // never read as executable here. This branch was missing
+  // from the gate from the feature's first release
+  // (2026-11-11) until 2026-11-14: every composite gated
+  // non-executable, its sheet row rendered disabled, and the
+  // executor sat unreachable from the route list.
+  if (route?.provider === "gasfallback") {
+    const incomplete = "This two-step route is incomplete — pick another route.";
+    const leg1 = route.legs?.leg1;
+    if (!route.destGas?.needed || route.destGas.chainKey !== route.toChainKey || !leg1)
+      return { ok: false, reason: incomplete };
+    if (!GAS_FALLBACK_LEG_PROVIDERS.has(leg1.provider))
+      return { ok: false, reason: "This two-step route's first leg is one Fluid can't execute — pick another route." };
+    if (!route.gasDestAddress || !route.targetTokenAddress)
+      return { ok: false, reason: incomplete };
+    let reserveOk = false;
+    try { reserveOk = BigInt(route.gasReserve?.raw) >= 0n; } catch { /* not an integer string */ }
+    if (!reserveOk) return { ok: false, reason: incomplete };
+    let leg1OutOk = false;
+    try { leg1OutOk = BigInt(leg1.toAmount) > 0n; } catch { /* no quoted leg-1 output */ }
+    if (!leg1OutOk) return { ok: false, reason: incomplete };
+    const inner = swapRouteExecutable(leg1);
+    return inner.ok ? { ok: true, gasfallback: true } : { ok: false, reason: inner.reason };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete

@@ -23,7 +23,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -938,7 +938,11 @@ ok("fee pot totals priced holdings", (() => { const r = feePotReport([{ amount: 
 ok("fee pot excludes unpriced, never guesses", (() => { const r = feePotReport([{ amount: 100, priceUsd: null }, { amount: 3, priceUsd: 0.5 }]); return r.totalUsd === 1.5 && r.unpriced === 1 && r.due === false; })());
 ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due === true && feePotReport([{ amount: 1.99, priceUsd: 1 }]).due === false && feePotReport([]).totalUsd === 0);
 
-// 23. Swap route ranking: cheapest = best net USD after gas, fastest = shortest duration
+// 23. Swap route ranking: net-USD merit order and duration maths.
+// The fixtures are provider-less shells (not executable shapes),
+// so this section pins ordering/arithmetic only — since the
+// 2026-11-14 Family A fix, flag assignment happens among
+// executable routes and is pinned in section 109.
 {
   const fake = [
     { id: "mid", toAmountUSD: "10.00", gasCostUSD: "0.50", executionDuration: 300, steps: [] },
@@ -948,8 +952,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ];
   const ranked = rankSwapRoutes(fake);
   ok("swap ranking sorts best net first", ranked.map(r => r.id).join(",") === "rich,mid,nogas,quick");
-  ok("swap cheapest is best net output", ranked.find(r => r.cheapest).id === "rich");
-  ok("swap fastest uses step durations", ranked.find(r => r.fastest).id === "quick" && ranked.find(r => r.id === "quick").durationSec === 60);
+  ok("swap ranking assigns no cheapest/fastest flags when nothing is executable",
+    ranked.every(r => r.cheapest === false && r.fastest === false && r.executable === false && typeof r.executableReason === "string"));
+  ok("swap fastest uses step durations", ranked.find(r => r.id === "quick").durationSec === 60);
   ok("swap gas falls back to step gasCosts", ranked.find(r => r.id === "nogas").gasCostUSD === 0.1 && ranked.find(r => r.id === "nogas").netUsd === 9.4);
   ok("swap ranking does not mutate inputs", fake[0].cheapest === undefined && fake[1].netUsd === undefined);
   ok("swap ranking of nothing is empty", Array.isArray(rankSwapRoutes([])) && rankSwapRoutes([]).length === 0 && rankSwapRoutes(null).length === 0);
@@ -3125,8 +3130,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // whose claimed USD disagrees with amount × price by >20% is ranked
 // by the corrected value, flagged, and cannot take the badge.
 {
-  const liar = { id: "liar", toAmount: "50000000", toToken: { decimals: 6 }, toAmountUSD: "1000.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
-  const honest = { id: "honest", toAmount: "99000000", toToken: { decimals: 6 }, toAmountUSD: "99.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
+  // Both fixtures wear an executable Jupiter shell so this pin
+  // isolates the mismatch rule: since the 2026-11-14 Family A
+  // ranking fix, cheapest/fastest are assigned among executable
+  // routes only (section 109) — a provider-less pair would test
+  // that tier instead of the lie.
+  const liar = { id: "liar", provider: "jupiter", jupiter: { instructions: { swapInstruction: {} } }, toAmount: "50000000", toToken: { decimals: 6 }, toAmountUSD: "1000.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
+  const honest = { id: "honest", provider: "jupiter", jupiter: { instructions: { swapInstruction: {} } }, toAmount: "99000000", toToken: { decimals: 6 }, toAmountUSD: "99.00", gasCostUSD: "1.00", executionDuration: 60, steps: [] };
   const ranked = rankSwapRoutes([liar, honest], 1);
   ok("rt-f08: the lying route is flagged as a USD mismatch", ranked.find(r => r.id === "liar").usdMismatch === true);
   ok("rt-f08: the lying route is ranked by its corrected value", ranked[0].id === "honest" && ranked.find(r => r.id === "liar").netUsd === 49);
@@ -10618,12 +10628,20 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // (iii) Merit ranking: capability first, net among the capable;
   // ties are provider-blind since the LI.FI removal (2026-11-13) —
   // net, then duration, then quote value, then list position.
+  // Since the 2026-11-14 Family A fix an executability tier sits
+  // ABOVE merit (a non-executable route can never outrank an
+  // executable one, flags among executable routes only); every
+  // fixture in this block is a non-executable provider shell, so
+  // they all share the lower tier and the merit assertions below
+  // are untouched — the tier itself is pinned in section 109.
   {
     const incapable = { id: "cheap-nodrop", provider: "relay", toAmountUSD: 10.0, gasCostUSD: 0.01, destGas: planSuiG, steps: [] };
     const capable = { id: "drop", provider: "mayan", toAmountUSD: 9.90, gasCostUSD: 0.01, destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 }, steps: [] };
     const ranked = rankSwapRoutes([incapable, capable], null);
     ok("merit: a gas-drop route beats a slightly-cheaper incapable route when gas is needed",
-      ranked[0].id === "drop" && ranked[0].cheapest === true && ranked[1].gasCovered === false && ranked[0].gasCovered === true);
+      ranked[0].id === "drop" && ranked[1].gasCovered === false && ranked[0].gasCovered === true);
+    ok("merit: non-executable shells carry no cheapest/fastest flags (2026-11-14 Family A)",
+      ranked.every(r => r.cheapest === false && r.fastest === false));
     const composite = { id: "composite", provider: "gasfallback", toAmountUSD: 9.97, gasCostUSD: 0.01, destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 }, gasMechanism: "reserve", steps: [] };
     ok("merit: drop vs all-to-native — the cheaper total outcome wins (fallback dearer in reverse)",
       rankSwapRoutes([capable, composite], null)[0].id === "composite"
@@ -10634,9 +10652,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const tieMayan = { id: "tie-mayan", provider: "mayan", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
     const rankedTie = rankSwapRoutes([tieRelay, tieMayan], null);
     ok("merit: a net tie between providers is decided by position, not provider",
-      rankedTie[0].id === "tie-relay" && rankSwapRoutes([tieMayan, tieRelay], null)[0].id === "tie-mayan"
-      && rankedTie.find(r => r.cheapest).id === "tie-relay");
-    ok("merit: provider-less shapes tie-break by position too (no demotion remains)",
+      rankedTie[0].id === "tie-relay" && rankSwapRoutes([tieMayan, tieRelay], null)[0].id === "tie-mayan");
+    ok("merit: provider-less shapes tie-break by position too (same tier — demotion applies only across the executability boundary)",
       rankSwapRoutes([{ id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }, tieRelay], null)[0].id === "tie-raw"
       && rankSwapRoutes([tieRelay, { id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }], null)[0].id === "tie-relay");
     ok("merit: the better net wins regardless of provider",
@@ -14225,7 +14242,12 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // refusal falls through to the composition before standing.
   {
     const directBtcCE = { provider: "satora", type: "satora", fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "28900", toAmountUSD: 21.51, satora: { destKey: "bitcoin", destInput: BTC_ADDR_CE }, platformFeeCollecting: true, steps: [] };
-    const viaCompCE = { provider: "milestone", type: "composite", fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "28921", toAmountUSD: 21.53, milestone: { label: "USDC → BTC on Arkade → BTC on Bitcoin", legs: [{ fromChainKey: "arbitrum", toChainKey: "arkade" }, { fromChainKey: "arkade", toChainKey: "bitcoin" }] }, milestoneLegRoutes: [] };
+    // The composition carries its leg routes, as production
+    // compositions always do — an empty milestoneLegRoutes is an
+    // incomplete (non-executable) route under the shared gate,
+    // and since the 2026-11-14 Family A ranking fix it could no
+    // longer outrank the executable direct answer below.
+    const viaCompCE = { provider: "milestone", type: "composite", fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "28921", toAmountUSD: 21.53, milestone: { label: "USDC → BTC on Arkade → BTC on Bitcoin", legs: [{ fromChainKey: "arbitrum", toChainKey: "arkade" }, { fromChainKey: "arkade", toChainKey: "bitcoin" }] }, milestoneLegRoutes: [{ provider: "satora", type: "satora", fromChainId: 42161, toChainId: SATORA_ARKADE_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "29180", satora: { destKey: "arkade", destInput: BTC_ADDR_CE }, steps: [] }] };
     const arbBtcArgsCE = { fromChainKey: "arbitrum", toChainKey: "bitcoin", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: BTC_ADDR_CE };
     const mergedCE = await getSwapRoutes(arbBtcArgsCE, { directSearch: async () => [directBtcCE], compositionSearch: async () => [viaCompCE] });
     ok("cheapest-entry: the dispatcher merges the via-Arkade composition into a direct Satora answer and ranks it first on true net",
@@ -15027,6 +15049,231 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     appSrcSZ.includes("EVM_LATE_ADOPT_MS") && appSrcSZ.includes("evmRead.then((late) => {"));
   ok("core honesty: a failed Polkadot per-asset read is unknown (null), never a fabricated zero",
     coreSrcSZ.includes("} catch { amount = null; /* one asset must not break the list */ }"));
+}
+
+// 109. Ranking + header-honesty follow-ups (2026-11-14) — three
+// defects carried out of the any-to-any matrix sweep (Family A)
+// and the silent-zero re-sweep (its defect 1 and observation 2):
+//   Job 1: rankSwapRoutes ranked a NON-EXECUTABLE gasfallback
+//     composite first — flagged cheapest — over an executable
+//     Relay route, because destination-gas coverage dominated
+//     the merit comparator lexicographically. Executability is
+//     now the top ranking tier; cheapest/fastest are assigned
+//     among executable routes only; an all-non-executable set
+//     still returns in full, each route annotated
+//     executable:false with the gate's reason.
+//   Job 2: the header's "+ some balances couldn't load" marker
+//     was gated on family-level failure flags, so a token-row
+//     failure inside a loaded family (USDT·TON nulled on a
+//     jetton 429, native TON fine) left the settled header
+//     unannotated. The signal is now per-row for every row
+//     family, plus TON's scan flag.
+//   Job 3: on a cache-hydrated render, renderMain overwrote the
+//     cached rows with "0" placeholders while famLoaded already
+//     held the family, so mid-scan repaints rendered "0" until
+//     the live read settled (a cached couldn't-load row visibly
+//     regressed to "0" for ~18 s). Placeholder rows are now
+//     assigned on cold starts only; hydrated rows stand until
+//     the live read replaces or nulls them.
+{
+  const appSrc109 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const jupShell = (fields) => ({ provider: "jupiter", jupiter: { instructions: { swapInstruction: {} } }, steps: [], ...fields });
+
+  // --- Job 1: the Family A shape, rebuilt from the sweep's
+  // numbers — a $10 swap into Tron: the composite's headline is
+  // its second leg's $4.28, its summed gas $6.88, and its gas
+  // coverage (which the old comparator let dominate) still
+  // leaves its ranked net at ~$2.08 against the executable
+  // route's $8.81.
+  const gasPlan109 = { needed: true, chainKey: "tron", symbol: "TRX", shortfallHuman: 15, shortfallUsd: 4.68 };
+  const gfComposite = { id: "gasfallback:leg1", provider: "gasfallback", type: "composite",
+    toAmountUSD: 4.28, gasCostUSD: 6.88, executionDuration: 5, steps: [],
+    destGas: gasPlan109, gasDrop: { symbol: "TRX", amountHuman: 15, usd: 4.68 }, gasMechanism: "reserve" };
+  const execRoute = jupShell({ id: "executable", toAmountUSD: 8.86, gasCostUSD: 0.05, executionDuration: 300 });
+  const famA = rankSwapRoutes([gfComposite, execRoute], null);
+  ok("family A: an executable route outranks the non-executable gasfallback composite",
+    famA[0].id === "executable" && famA[1].id === "gasfallback:leg1");
+  // The reason pin asserts the CURRENT gate contract: since
+  // the 2026-11-14 gasfallback resolution the gate HAS a
+  // gasfallback branch, and this fixture — which models only
+  // the composite's ranking surface and never carried its
+  // structural fields (legs, destination address, reserve) —
+  // is refused as an incomplete two-step route. The ordering
+  // and flag assertions are unchanged; the full gate contract
+  // for complete composites is pinned in section 110.
+  ok("family A: the composite is annotated non-executable with the gate's reason, never badged",
+    famA[1].executable === false && famA[1].executableReason === "This two-step route is incomplete — pick another route."
+    && famA[1].cheapest === false && famA[1].fastest === false);
+  ok("family A: cheapest/fastest land on the executable route (fastest too, though the composite is quicker)",
+    famA[0].executable === true && famA[0].cheapest === true && famA[0].fastest === true && famA[0].executableReason === null);
+  const gfRich = { ...gfComposite, id: "gasfallback:rich", gasDrop: { symbol: "TRX", amountHuman: 40, usd: 12 } };
+  const lowExec = jupShell({ id: "low-exec", toAmountUSD: 5.00, gasCostUSD: 0.05, executionDuration: 400 });
+  const mixed = rankSwapRoutes([gfRich, lowExec, execRoute], null);
+  ok("family A: a non-executable route ranks below EVERY executable route, even with the best merit",
+    mixed.map(r => r.id).join(",") === "executable,low-exec,gasfallback:rich" && mixed[2].cheapest === false);
+  // Merit INSIDE the executable tier is unchanged: with a gas
+  // need in force, an executable drop route's coverage still
+  // beats a slightly better raw net on another executable route.
+  const dropExec = { id: "drop-exec", provider: "satora",
+    satora: { destKey: "bitcoin" }, fromChainId: 56, fromAmount: "1000000",
+    fromToken: { address: "0x55d398326f99059fF775485246999027B3197955" },
+    toAmountUSD: 9.95, gasCostUSD: 0.01, executionDuration: 120, steps: [],
+    destGas: gasPlan109, gasDrop: { symbol: "TRX", amountHuman: 15, usd: 0.051 } };
+  const plainExec = jupShell({ id: "plain-exec", toAmountUSD: 9.99, gasCostUSD: 0.01, executionDuration: 120, destGas: gasPlan109 });
+  const meritExec = rankSwapRoutes([plainExec, dropExec], null);
+  ok("family A: merit inside the executable tier is unchanged — gas coverage still breaks a near-tie",
+    meritExec[0].id === "drop-exec" && meritExec[0].cheapest === true && meritExec[1].id === "plain-exec");
+  // Red-team F-08's rule at the tier where flags now live: a
+  // USD-mismatch route still cannot take cheapest.
+  const liarExec = jupShell({ id: "liar-exec", toAmount: "50000000", toToken: { decimals: 6 }, toAmountUSD: "1000.00", gasCostUSD: "1.00", executionDuration: 60 });
+  const honestExec = jupShell({ id: "honest-exec", toAmount: "99000000", toToken: { decimals: 6 }, toAmountUSD: "99.00", gasCostUSD: "1.00", executionDuration: 60 });
+  const f08 = rankSwapRoutes([liarExec, honestExec], 1);
+  ok("family A: among executable routes a USD-mismatch route still cannot take cheapest",
+    f08.find(r => r.id === "honest-exec").cheapest === true && f08.find(r => r.id === "liar-exec").cheapest === false
+    && f08.find(r => r.id === "liar-exec").executable === true && f08.find(r => r.id === "liar-exec").usdMismatch === true);
+  // All-non-executable sets: still returned in full (discovery
+  // never goes silent), merit order preserved inside the tier,
+  // reasons attached, no flags — and inputs never mutated.
+  const dead1 = { id: "dead-rich", toAmountUSD: "10.40", gasCostUSD: "0.20", executionDuration: 900, steps: [] };
+  const dead2 = { id: "dead-poor", toAmountUSD: "9.00", gasCostUSD: "0.10", executionDuration: 60, steps: [] };
+  const deadSet = rankSwapRoutes([dead2, dead1], null);
+  ok("family A: an all-non-executable set still returns every route, in merit order",
+    deadSet.length === 2 && deadSet[0].id === "dead-rich" && deadSet[1].id === "dead-poor");
+  ok("family A: an all-non-executable set carries reasons and no cheapest/fastest flags",
+    deadSet.every(r => r.executable === false && typeof r.executableReason === "string" && r.cheapest === false && r.fastest === false));
+  ok("family A: ranking annotates copies — input routes gain no fields",
+    dead1.executable === undefined && dead2.cheapest === undefined && gfComposite.executable === undefined);
+
+  // --- Job 2: header marker counts token-row failures ---
+  const buiv = appSrc109.slice(appSrc109.indexOf("function balancesUnloadedInView()"), appSrc109.indexOf("function paintHeader()"));
+  ok("header honesty: the couldn't-load signal reads TON's scan flag and jetton rows, not just the family flag",
+    buiv.includes("tonScanFailed") && buiv.includes("rowNull(tonBalances)"));
+  ok("header honesty: every row family's null rows feed the header signal",
+    ["rowNull(balances)", "rowNull(tronBalances)", "rowNull(stellarBalances)", "rowNull(nearBalances)",
+     "rowNull(algoBalances)", "rowNull(xrpBalances)", "rowNull(dotBalances)", "rowNull(aptosBalances)",
+     "rowNull(stacksBalances)", "rowNull(solBalances)", "rowNull(suiBalances)"].every(s => buiv.includes(s)));
+  ok("header honesty: the TON jetton alert chain reaches the home card header (icon button → sheet)",
+    appSrc109.includes("else if (tonScanFailed) m.ton = \"Full jetton scan unavailable")
+    && appSrc109.includes("data-famalert=\"${key}\"")
+    && appSrc109.includes("openFamilyAlert(b.dataset.famalert)"));
+
+  // --- Job 3: placeholders are cold-start only ---
+  const guardPins = [
+    ["tron", "tronBalances"], ["solana", "solBalances"], ["sui", "suiBalances"], ["stellar", "stellarBalances"],
+    ["ton", "tonBalances"], ["near", "nearBalances"], ["algorand", "algoBalances"], ["xrpl", "xrpBalances"],
+    ["polkadot", "dotBalances"], ["aptos", "aptosBalances"], ["stacks", "stacksBalances"],
+  ];
+  ok("in-flight honesty: every row family's \"0\" placeholders are cold-start only (hydrated rows stand)",
+    guardPins.every(([k, v]) => appSrc109.includes(`if (!hydratedFams.has("${k}")) ${v} = [`)));
+  ok("in-flight honesty: the cached-paint path itself is untouched — hydration still marks families loaded",
+    appSrc109.includes("famLoaded.add(key); hydratedFams.add(key);"));
+}
+
+// 110. Gas-fallback gate resolution (2026-11-14) — section 109's
+// "found but not fixed": swapRouteExecutable had NO gasfallback
+// branch, so every destination-gas mechanism-2 composite gated
+// non-executable and its sheet row rendered disabled, leaving
+// executeGasFallbackRoute unreachable from the route list
+// (pendingSwap is only ever set by tapping an enabled row).
+// Investigation (report:
+// fluid-gasfallback-resolution-20261114): the executor is
+// complete and safe by the shipped executors' standards — leg 1
+// runs through the family executors (each re-runs this gate and
+// its full bounds checks before signing) and delivers the
+// destination's native token to the user's own address; the
+// record persists at leg-1 broadcast; leg 2 is re-quoted fresh
+// from what actually arrived and gate-filtered
+// (firstExecutableRoute); a failed or late leg 2 leaves the
+// user holding the movable native token with a one-tap
+// "Complete the swap" retry — no intermediary custody anywhere.
+// The missing branch was an omission at birth: the whole
+// feature (builder, executor, records, sheet UI, confirm
+// branch) shipped in one release (88e5d503dc, 2026-11-11) with
+// the gate already lacking the branch, and no source records a
+// deliberate refusal. Resolution: ENABLE — the gate gained a
+// gasfallback branch mirroring the executor's own
+// preconditions plus every field buildGasFallbackRoute
+// guarantees and the executor consumes, including a leg-1
+// provider the executor's dispatch can actually run.
+{
+  const coreSrc110 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc110 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const TRON_USDT110 = TRON_TOKENS.find(t => t.symbol === "USDT").address;
+  const gfPlan110 = { needed: true, chainKey: "tron", chainName: "Tron", symbol: "TRX", decimals: 6,
+    enoughHuman: 15, balanceHuman: 0, shortfallRaw: "15000000", shortfallHuman: 15, nativePriceUsd: 0.31, shortfallUsd: 4.65 };
+  const gfLeg1Relay110 = { id: "leg1", provider: "relay", fromChainId: 56, toChainId: 728126428,
+    fromAmount: "10000000", toAmount: "45000000",
+    relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0xabc", chainId: 56, value: "0", data: "0x" } }] }] } };
+  // A composite in buildGasFallbackRoute's exact output shape:
+  // BSC USDC → native TRX on Tron (leg 1), then TRX → USDT
+  // keeping the 15 TRX reserve (leg 2 preview).
+  const gfBuilt110 = { id: "gasfallback:leg1", provider: "gasfallback", type: "composite",
+    fromChainKey: "bsc", toChainKey: "tron", fromAmount: "10000000",
+    fromToken: { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", decimals: 18 },
+    toToken: { address: TRON_USDT110, symbol: "USDT", decimals: 6 },
+    toAmount: "9400000", toAmountUSD: 9.9, gasCostUSD: 0.05, executionDuration: 200,
+    steps: gfLeg1Relay110.relay.steps,
+    destGas: gfPlan110, gasMechanism: "reserve",
+    gasDrop: { symbol: "TRX", amountHuman: 15, usd: 4.65 },
+    gasReserve: { symbol: "TRX", amountHuman: 15, raw: "15000000" },
+    gasDestAddress: "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf",
+    targetTokenAddress: TRON_USDT110,
+    legs: { leg1: gfLeg1Relay110, leg2Preview: { fromAmount: "30000000", toAmount: "9400000", toAmountMin: null, toAmountUSD: 9.4, provider: "sunswap" } } };
+
+  ok("gasfallback gate: a complete composite with a signable, dispatchable first leg is executable",
+    (() => { const g = swapRouteExecutable(gfBuilt110); return g.ok === true && g.gasfallback === true; })());
+  ok("gasfallback gate: an unsignable first leg refuses with the leg's own gate reason",
+    (() => { const dead = { ...gfBuilt110, legs: { leg1: { ...gfLeg1Relay110, relay: { originChainId: 56, steps: [] } } } };
+      const g = swapRouteExecutable(dead);
+      return g.ok === false && g.reason === "This Relay route's steps aren't signable by Fluid — pick another route."; })());
+  // The dispatch set is a real constraint, not a formality: a
+  // milestone or Satora leg passes the gate on its own, yet the
+  // executor's dispatch cannot run it — the composite must
+  // refuse, or the sheet would enable a route whose execution
+  // throws before anything moves.
+  const gfMilestoneLeg110 = { provider: "milestone", milestone: { legs: [{ provider: "relay" }] }, milestoneLegRoutes: [gfLeg1Relay110], toAmount: "45000000" };
+  const gfSatoraLeg110 = { provider: "satora", satora: { destKey: "bitcoin" }, fromChainId: 56, fromAmount: "1000000", fromToken: { address: "0x55d398326f99059fF775485246999027B3197955" }, toAmount: "45000000" };
+  ok("gasfallback gate: a gate-fine but dispatch-foreign first leg (milestone, Satora) refuses at the dispatch set",
+    swapRouteExecutable(gfMilestoneLeg110).ok === true && swapRouteExecutable(gfSatoraLeg110).ok === true
+    && swapRouteExecutable({ ...gfBuilt110, legs: { leg1: gfMilestoneLeg110 } }).ok === false
+    && swapRouteExecutable({ ...gfBuilt110, legs: { leg1: gfMilestoneLeg110 } }).reason === "This two-step route's first leg is one Fluid can't execute — pick another route."
+    && swapRouteExecutable({ ...gfBuilt110, legs: { leg1: gfSatoraLeg110 } }).ok === false);
+  ok("gasfallback gate: every missing structural field refuses as an incomplete two-step route",
+    [ { ...gfBuilt110, legs: undefined },
+      { ...gfBuilt110, destGas: { ...gfPlan110, chainKey: "sui" } },
+      { ...gfBuilt110, destGas: null },
+      { ...gfBuilt110, gasReserve: undefined },
+      { ...gfBuilt110, gasDestAddress: null },
+      { ...gfBuilt110, targetTokenAddress: null },
+      { ...gfBuilt110, legs: { leg1: { ...gfLeg1Relay110, toAmount: "0" } } },
+    ].every(r => { const g = swapRouteExecutable(r); return g.ok === false && g.reason === "This two-step route is incomplete — pick another route."; }));
+  // The mirror at the executor's end: it refuses the same
+  // shapes before any wallet or network use.
+  let gfExecRefusal1 = "", gfExecRefusal2 = "";
+  try { await executeGasFallbackRoute({}, { provider: "gasfallback" }, () => {}); } catch (e) { gfExecRefusal1 = e.message; }
+  try { await executeGasFallbackRoute({}, { provider: "relay", destGas: gfPlan110, legs: { leg1: gfLeg1Relay110 } }, () => {}); } catch (e) { gfExecRefusal2 = e.message; }
+  ok("gasfallback gate: the executor itself refuses the shapes the gate refuses (the mirror holds at both ends)",
+    gfExecRefusal1 === "That route is not a gas-fallback route." && gfExecRefusal2 === "That route is not a gas-fallback route.");
+  // Ranking: enabled composites compete in the executable tier
+  // like any route — the Family A demotion now applies only to
+  // composites that are genuinely incomplete or unsignable.
+  const gfJupPlain110 = { id: "jup-plain", provider: "jupiter", jupiter: { instructions: { swapInstruction: {} } }, steps: [], toAmountUSD: 9.5, gasCostUSD: 0.05, executionDuration: 100, destGas: gfPlan110 };
+  const gfRanked110 = rankSwapRoutes([gfJupPlain110, gfBuilt110], null);
+  ok("gasfallback gate: an enabled composite ranks in the executable tier and can take cheapest",
+    gfRanked110[0].id === "gasfallback:leg1" && gfRanked110[0].executable === true && gfRanked110[0].cheapest === true
+    && gfRanked110[1].executable === true);
+  // Wiring: the gate branch exists and keys on the dispatch
+  // set; the builder emits every field the gate requires; the
+  // confirm handler dispatches the provider the gate enables.
+  const gateBody110 = coreSrc110.slice(coreSrc110.indexOf("export function swapRouteExecutable"), coreSrc110.indexOf("export function firstExecutableRoute"));
+  const buildBody110 = coreSrc110.slice(coreSrc110.indexOf("export async function buildGasFallbackRoute"), coreSrc110.indexOf("export async function pollDestNativeCredit"));
+  ok("gasfallback gate: the gate carries the branch, keyed on the executor's dispatch set",
+    gateBody110.includes('route?.provider === "gasfallback"') && gateBody110.includes("GAS_FALLBACK_LEG_PROVIDERS.has(leg1.provider)"));
+  ok("gasfallback gate: the builder guarantees every field the gate requires",
+    buildBody110.includes("gasDestAddress: destAddress") && buildBody110.includes("targetTokenAddress: args.toTokenAddress")
+    && buildBody110.includes("gasReserve: {") && buildBody110.includes("legs: {"));
+  ok("gasfallback gate: the confirm path reaches the executor for a route the gate enables",
+    appSrc110.includes('route.provider === "gasfallback"') && appSrc110.includes("executeGasFallbackRoute(wallet, route"));
 }
 
 console.log(`\n${passed} checks passed`);
