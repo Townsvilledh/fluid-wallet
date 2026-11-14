@@ -63,6 +63,7 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
 import { withDeadline, dotApi } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
+import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
 import { SUNSWAP_V2_ROUTER, SUNSWAP_V2_FACTORY, SUNSWAP_WTRX, SUNSWAP_FEE_RECEIVER, SUNSWAP_SLIPPAGE_BPS, SUNSWAP_ROUTER_ABI, sunswapTokenOf, sunswapSupportsPair, sunswapCandidatePaths, parseSunswapAmountsOut, parseSunswapQuote, getSunswapSwapRoute, buildSunswapSwapCallData, checkSunswapSwapBounds, executeSunswapSwapRoute } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
@@ -861,15 +862,20 @@ ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmo
 // Jupiter fee account, Mayan in-quote). The collection master
 // switch stays on; per-rail gating lives at each builder.
 ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
-// The swap universe is exactly the EVM networks + tron/solana/sui + ton. Bitcoin (and every
-// other send-only family) is NOT swappable — pinned so adding a family to the swap
-// universe forces a fee-coverage review instead of silently shipping an unfeed route.
+// The swap universe is exactly the EVM networks + tron/solana/sui + ton + the six
+// 1Click families. Bitcoin (and every other send-only family) is NOT swappable —
+// pinned so adding a family to the swap universe forces a fee-coverage review
+// instead of silently shipping an unfeed route.
 // TON joined 2026-11-14 WITH that review done: its destination ceiling sits in the
 // fee law (platformFeeEcosystemOf("ton")) and its capture is proven in §116.
-ok("swap universe is evm + tron + solana + sui + ton only", (() => {
+// NEAR / XRPL / Litecoin / Dogecoin / Bitcoin Cash / Aptos joined 2026-11-14 WITH
+// the same review: their rail is 1Click (NEAR Intents), their destinations price
+// under the fee law's default ceiling, and their capture (the §6 inverse transform
+// + echo verification) is proven in §117.
+ok("swap universe is evm + tron + solana + sui + ton + the six 1Click families only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
-  const famOk = ["tron", "solana", "sui", "ton"].every(k => swapChainOf(k) !== null);
-  const notSwappable = ["bitcoin", "litecoin", "dogecoin", "cosmoshub", "near", "xrpl", "stellar", "algorand", "aptos"].every(k => swapChainOf(k) === null);
+  const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"].every(k => swapChainOf(k) !== null);
+  const notSwappable = ["bitcoin", "cosmoshub", "stellar", "algorand"].every(k => swapChainOf(k) === null);
   return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001
     && platformFeeEcosystemOf("ton") === "ton";
 })());
@@ -1981,7 +1987,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && NEAR_TOKENS[0].symbol === "USDC" && NEAR_TOKENS[0].verified === true);
   const nearIntent = formatNearSendIntent({ amount: "1", symbol: "NEAR", to: "someone.near", createsAccount: true });
   ok("near: intent discloses account creation", nearIntent.includes("Send 1 NEAR") && nearIntent.includes("creates the recipient's account"));
-  ok("near: no swap chain registered", swapChainOf("near") === null);
+  ok("near: swap chain registered to 1Click (2026-11-14 — NEAR swaps via NEAR Intents, §117)", swapChainOf("near")?.chainId === NEAR_SWAP_CHAIN_ID);
 
   // ----- Algorand (SLIP-0010 coin 283) -----
   const ABANDON_ALGO = "EP2D7TV7IAFANZHK3B6QLKB53N5UTD7RARVXZTWCPCRQQBKYVGM2XIMT2Q";
@@ -2047,7 +2053,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const xrpIntent = formatXrplSendIntent({ amount: "5", symbol: "XRP", to: ABANDON_XRP, feeXrp: "0.00001", destinationTag: 12345 });
   ok("xrpl: intent shows the destination tag", xrpIntent.includes("Send 5 XRP") && xrpIntent.includes("Destination tag: 12345")
     && xrpIntent.includes("Network fee 0.00001 XRP") && xrpIntent.includes("Confirm?"));
-  ok("xrpl: no swap chain registered", swapChainOf("xrpl") === null);
+  ok("xrpl: swap chain registered to 1Click (2026-11-14 — XRP swaps via NEAR Intents, §117)", swapChainOf("xrpl")?.chainId === XRPL_SWAP_CHAIN_ID);
 
   // ----- Polkadot Asset Hub (Sr25519, Substrate scheme) -----
   const ABANDON_DOT = "13KVd4f2a4S5pLp4gTTFezyXdPWx27vQ9vS6xBXJ9yWVd7xo";
@@ -2142,7 +2148,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const aptosIntent = formatAptosSendIntent({ amount: "2", symbol: "APT", to: RECIP, feeApt: "0.00000107" });
   ok("aptos: intent is human-readable", aptosIntent.includes("Send 2 APT") && aptosIntent.includes("on Aptos")
     && aptosIntent.includes("Network fee ≈ 0.00000107 APT") && aptosIntent.includes("Confirm?"));
-  ok("aptos: no swap chain registered", swapChainOf("aptos") === null);
+  ok("aptos: swap chain registered to 1Click (2026-11-14 — APT swaps via NEAR Intents, §117)", swapChainOf("aptos")?.chainId === APTOS_SWAP_CHAIN_ID);
 }
 
 // ---------- Receive selector: network metadata + alias search ----------
@@ -6454,7 +6460,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11422,7 +11428,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12863,7 +12869,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13210,7 +13216,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -16436,7 +16442,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec, { explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"gasfallback\", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec)")
-    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\")"));
+    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\" && route.provider !== \"oneclick\")"));
   ok("ac app: Activity consults the record stores — an unrepresented unfinished record is synthesised into the rendered list",
     appSrc114.includes("for (const r of loadMilestoneRecords(localStorage)) if (r.state !== \"done\") synthFor(\"milestone\", r);")
     && appSrc114.includes("for (const r of loadGasFallbackRecords(localStorage)) if (r.state === \"awaiting-credit\" || r.state === \"leg2-due\") synthFor(\"gasfallback\", r);"));
@@ -16738,6 +16744,325 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       ok("tonswap naming: getVerifiedPrice resolves the display symbol GRAM through the TON sources",
         (await getVerifiedPrice("GRAM")) === 1.06);
     } finally { globalThis.fetch = real; }
+  }
+}
+
+// 117. NEAR Intents 1Click (2026-11-14): the six live
+// families — NEAR, XRPL, LTC, DOGE, BCH, Aptos — join the
+// swap universe as source AND destination through 1Click's
+// keyless quote API. The user leg is a PLAIN TRANSFER of the
+// exact quoted amount to a unique per-quote deposit address;
+// Fluid's capture rides the quote's appFees under the live-
+// probed fee reality (requesting F bps charges max(F, 20)
+// total, split with 1Click keeping max(20, F/2)) via the §6
+// inverse transform, verified against the quote's own echo
+// after every charged quote. Fixtures are the LIVE probe
+// captures of 2026-11-14 (research_notes/fluid-1click-
+// integration-20261114). The SUCCESS / REFUNDED status bodies
+// below are the DOCUMENTED lifecycle shapes — their live
+// fixtures are captured at the first funded drill (gated on
+// Muse earnings) and are named as unproven in the
+// implementation report. Stellar and TON are NOT wired
+// through 1Click (catalogue-only / quotes fail — Relay stays
+// TON's rail), and the depositMemo guard refuses any quote
+// whose memo a plain transfer cannot carry.
+{
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture117 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const FEE_RECIPIENT_117 = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+  const USDC_BASE_117 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const EVM_117 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const jsonRes117 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const memStorage117 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+  const own117 = { evm: EVM_117, near: nearAddressFromPhrase(ABANDON), xrpl: xrplAddressFromPhrase(ABANDON), litecoin: litecoinAddress(ABANDON), dogecoin: dogecoinAddress(ABANDON), bitcoincash: bitcoinCashAddress(ABANDON), aptos: aptosAddressFromPhrase(ABANDON) };
+  const clone117 = (x) => JSON.parse(JSON.stringify(x));
+
+  // The §6 inverse transform, table-pinned (general class:
+  // total = max(F, 20), Fluid keeps F/2 at F >= 40 and grosses
+  // up below it; stable class: 1 bp floor, even split).
+  {
+    const g = (T) => oneClickFeeRequest(T);
+    const s = (T) => oneClickFeeRequest(T, { stablePair: true });
+    ok("oneclick fee: T=50 requests 50 and nets Fluid 25", g(50).requestBps === 50 && g(50).expectedTotalBps === 50 && g(50).expectedFluidBps === 25 && g(50).collecting === true);
+    ok("oneclick fee: T=30 grosses up — request 20, total 30, Fluid nets 10", g(30).requestBps === 20 && g(30).expectedTotalBps === 30 && g(30).expectedFluidBps === 10 && g(30).collecting === true);
+    ok("oneclick fee: T=25 grosses up — request 10, total 25, Fluid nets 5", g(25).requestBps === 10 && g(25).expectedTotalBps === 25 && g(25).expectedFluidBps === 5);
+    ok("oneclick fee: T=39 grosses up — request 38, total 39, Fluid nets 19", g(39).requestBps === 38 && g(39).expectedTotalBps === 39 && g(39).expectedFluidBps === 19);
+    ok("oneclick fee: T=20 and below never collect (a small request would charge MORE than the target)", g(20).collecting === false && g(20).requestBps === 0 && g(10).collecting === false && g(10).requestBps === 0);
+    ok("oneclick fee: T=480 splits evenly at the top", g(480).requestBps === 480 && g(480).expectedFluidBps === 240);
+    ok("oneclick fee: the stable class splits evenly down to 2 bps and never collects at 1", s(50).requestBps === 50 && s(50).expectedFluidBps === 25 && s(30).expectedFluidBps === 15 && s(2).collecting === true && s(1).collecting === false);
+  }
+
+  // Echo verification against the live captures.
+  {
+    const fee50 = fixture117("quote-near-out-fee50.json");
+    const v = verifyOneClickFeeEcho(fee50, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_117);
+    ok("oneclick echo: the live fee-50 quote verifies against the transform (50 total, 25 to Fluid)", v.ok === true && v.totalBps === 50 && v.fluidBps === 25);
+    const tampered = clone117(fee50); tampered.quoteRequest.appFees[0].fee = 30;
+    ok("oneclick echo: a tampered split fails verification", verifyOneClickFeeEcho(tampered, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_117).ok === false);
+    const swapped = clone117(fee50); swapped.quoteRequest.appFees[0].recipient = "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd";
+    ok("oneclick echo: a fee pointed away from Fluid's recipient fails verification", verifyOneClickFeeEcho(swapped, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_117).ok === false);
+    ok("oneclick echo: the live fee-free quote carries exactly 1Click's standing 20 bps and nothing for Fluid",
+      verifyOneClickFeeEcho(fixture117("quote-xrp-out-nofee.json"), { expectedTotalBps: 20, expectedFluidBps: 0 }, FEE_RECIPIENT_117).ok === true);
+  }
+
+  // Parse pins from the live captures.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
+    const rNear = parseOneClickQuote(fixture117("quote-near-out-fee50.json"), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
+    ok("oneclick parse: NEAR -> USDC carries the deposit address, the RETURNED deadline and the API estimate",
+      rNear.provider === "oneclick" && rNear.oneclick.depositAddress === "6be996b8c0e2369b42f24e9307a807c5df61efe9c3a1ae4f0797dfad998faf21"
+      && rNear.oneclick.deadline === "2026-11-17T21:02:03.453Z" && rNear.executionDuration === 22 && rNear.toAmount === "14834094" && rNear.oneclick.depositMemo === null);
+    const fxBch = fixture117("quote-bch-out-fee50.json");
+    const rBch = parseOneClickQuote(fxBch, { fromEntry: oneClickAssetFor("bitcoincash", "bch"), toEntry: usdcBase, amountRaw: "7250000", refundTo: own117.bitcoincash, recipient: EVM_117 }, {});
+    ok("oneclick parse: the BCH deposit address keeps its bitcoincash: prefix end to end",
+      rBch.oneclick.depositAddress === "bitcoincash:qp2uvd08xf67sqz3eqfymtxm93hqqhhxzqheslcz2l" && rBch.executionDuration === 109);
+    const rLtcIn = parseOneClickQuote(fixture117("quote-ltc-in-fee50.json"), { fromEntry: usdcBase, toEntry: oneClickAssetFor("litecoin", "ltc"), amountRaw: "15000000", refundTo: EVM_117, recipient: own117.litecoin }, {});
+    ok("oneclick parse: USDC -> LTC deposits to the wallet's EVM address and estimates 177 s (slow, disclosed — never badged fast)",
+      rLtcIn.oneclick.depositAddress === "0x534ADb104fB1A1DaD15e5d3e4F262083CB414731" && rLtcIn.executionDuration === 177 && rLtcIn.toAmount === "32779502");
+  }
+
+  // The two-pass capture through the real route search, at
+  // the parameter seam (the probe's method): pass 1 fee-free
+  // measures the route cost, the law's target runs through
+  // the transform, pass 2's echo is verified field-by-field.
+  {
+    const args117 = { fromChainKey: "near", toChainKey: "base", fromTokenAddress: "near", toTokenAddress: USDC_BASE_117, fromAmount: "4800000000000000000000000", fromAddress: own117.near, toAddress: EVM_117 };
+    const nofee = fixture117("quote-near-out-nofee.json"), fee50 = fixture117("quote-near-out-fee50.json");
+    const bodies = [];
+    const twoPass = async (url, opts) => { const b = JSON.parse(opts.body); bodies.push(b); return jsonRes117(Array.isArray(b.appFees) && b.appFees.length ? fee50 : nofee); };
+    const route = await getOneClickSwapRoute(args117, { feeRecipient: FEE_RECIPIENT_117, fetchImpl: twoPass });
+    ok("oneclick capture: two passes run and the charged pass requests F=50 to Fluid's recipient",
+      bodies.length === 2 && bodies[1].appFees?.[0]?.recipient === FEE_RECIPIENT_117 && bodies[1].appFees?.[0]?.fee === 50);
+    ok("oneclick capture: the verified route collects 25 bps with the echo verified",
+      route.platformFeeCollecting === true && route.platformFeeBps === 25 && route.oneclick.feeVerified === true && route.oneclick.requestedFeeBps === 50 && route.oneclick.totalFeeBps === 50);
+    const badEcho = async (url, opts) => { const b = JSON.parse(opts.body); if (Array.isArray(b.appFees) && b.appFees.length) { const t = clone117(fee50); t.quoteRequest.appFees[0].fee = 30; return jsonRes117(t); } return jsonRes117(nofee); };
+    const fell = await getOneClickSwapRoute(args117, { feeRecipient: FEE_RECIPIENT_117, fetchImpl: badEcho });
+    ok("oneclick capture: an echo mismatch falls back to the fee-free quote (collecting=false) — never an unverified charge",
+      fell.platformFeeCollecting === false && fell.oneclick.feeVerified === false && fell.provider === "oneclick");
+    let calls = 0;
+    const onePass = async () => { calls++; return jsonRes117(nofee); };
+    const free = await getOneClickSwapRoute(args117, { fetchImpl: onePass });
+    ok("oneclick capture: with no fee recipient configured the route ships fee-free in ONE pass (the shipped config state)",
+      free.platformFeeCollecting === false && calls === 1);
+    ok("oneclick config: the fee recipient ships unset and the JWT unset — keyless launch, both addable as config",
+      ONECLICK_FEE_RECIPIENT === "" && oneClickConfig().feeRecipient === null && oneClickConfig().jwt === null
+      && oneClickConfig({ feeRecipient: FEE_RECIPIENT_117 }).feeRecipient === FEE_RECIPIENT_117);
+  }
+
+  // The executor seam per family: a stubbed send captures
+  // exactly what would be signed — the quote's deposit
+  // address, the exact quoted amount, no memo/tag.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
+    const runExec = async (fxName, fromEntry, toEntry, amountRaw, refundTo) => {
+      const storage = memStorage117();
+      const seen = [];
+      let atSend = null;
+      const fx = fixture117(fxName);
+      const route = parseOneClickQuote(fx, { fromEntry, toEntry, amountRaw, refundTo, recipient: EVM_117 }, {});
+      const out = await executeOneClickSwapRoute({}, route, () => {}, {
+        storage,
+        sendImpl: async (w, p) => { seen.push(p); atSend = loadOneClickSwapRecords(storage)[0] || null; return { hash: "ab".repeat(32) }; },
+        submitImpl: async () => true,
+        onDeposit: (r) => { seen.push({ deposited: r }); },
+      });
+      return { fx, route, out, seen, atSend, storage };
+    };
+    const near = await runExec("quote-near-out-fee50.json", oneClickAssetFor("near", "near"), usdcBase, "4800000000000000000000000", own117.near);
+    ok("oneclick exec NEAR: the deposit is a plain transfer of exactly the quoted amount to the quote's deposit address",
+      near.seen[0].to === near.fx.quote.depositAddress && near.seen[0].amountRaw === near.fx.quote.amountIn && near.seen[0].amountHuman === near.fx.quote.amountInFormatted && near.seen[0].token == null && near.seen[0].destinationTag == null);
+    ok("oneclick exec: the record is saved BEFORE the send and afterwards carries the hash, the RETURNED deadline and refundTo",
+      !!near.atSend && near.atSend.depositTxHash == null && near.out.record.depositTxHash === near.out.hashes[0]
+      && near.out.record.deadline === near.fx.quote.deadline && near.out.record.refundTo === own117.near
+      && near.seen.some(s => s.deposited && s.deposited.id === near.out.record.id));
+    const ltcIn = await runExec("quote-ltc-in-fee50.json", usdcBase, oneClickAssetFor("litecoin", "ltc"), "15000000", EVM_117);
+    ok("oneclick exec USDC(Base): the deposit goes to the quote's EVM deposit address for exactly 15 USDC",
+      ltcIn.seen[0].to === "0x534ADb104fB1A1DaD15e5d3e4F262083CB414731" && ltcIn.seen[0].amountRaw === "15000000" && ltcIn.seen[0].token?.address === USDC_BASE_117);
+    const bch = await runExec("quote-bch-out-fee50.json", oneClickAssetFor("bitcoincash", "bch"), usdcBase, "7250000", own117.bitcoincash);
+    ok("oneclick exec BCH: the deposit address passes through with its bitcoincash: prefix unchanged",
+      bch.seen[0].to === "bitcoincash:qp2uvd08xf67sqz3eqfymtxm93hqqhhxzqheslcz2l" && bch.seen[0].amountRaw === "7250000");
+    const xrp = await runExec("quote-xrp-out-nofee.json", oneClickAssetFor("xrpl", "xrp"), usdcBase, "16000000", own117.xrpl);
+    ok("oneclick exec XRP: the deposit is a plain transfer to the quote's r-address with no destination tag",
+      xrp.seen[0].to === "rKrFkCby5a9JrQh8YfJi2SS3reFBQELkWo" && xrp.seen[0].amountRaw === "16000000" && xrp.seen[0].destinationTag == null && xrp.seen[0].token == null);
+  }
+
+  // The depositMemo guard (probe §4, P0): a memo a plain
+  // transfer cannot carry refuses BEFORE broadcast; a
+  // numeric XRPL memo rides as the destination tag.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
+    const xrpRoute = parseOneClickQuote(fixture117("quote-xrp-out-nofee.json"), { fromEntry: oneClickAssetFor("xrpl", "xrp"), toEntry: usdcBase, amountRaw: "16000000", refundTo: own117.xrpl, recipient: EVM_117 }, {});
+    let sent = 0;
+    const countingSend = async () => { sent++; return { hash: "cd".repeat(32) }; };
+    const tagRoute = clone117(xrpRoute); tagRoute.oneclick.depositMemo = "678";
+    const seenTag = [];
+    await executeOneClickSwapRoute({}, tagRoute, () => {}, { storage: memStorage117(), sendImpl: async (w, p) => { seenTag.push(p); return { hash: "cd".repeat(32) }; }, submitImpl: async () => true });
+    ok("oneclick memo: a numeric XRPL memo rides as the destination tag", seenTag.length === 1 && seenTag[0].destinationTag === 678);
+    const badTag = clone117(xrpRoute); badTag.oneclick.depositMemo = "not-a-number";
+    let threwTag = null;
+    try { await executeOneClickSwapRoute({}, badTag, () => {}, { storage: memStorage117(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwTag = e; }
+    ok("oneclick memo: a non-numeric XRPL memo refuses pre-broadcast with the reason named", !!threwTag && /can't carry one/.test(threwTag.message) && sent === 0);
+    const nearRoute = parseOneClickQuote(fixture117("quote-near-out-nofee.json"), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
+    const memoNear = clone117(nearRoute); memoNear.oneclick.depositMemo = "999";
+    let threwNear = null;
+    try { await executeOneClickSwapRoute({}, memoNear, () => {}, { storage: memStorage117(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwNear = e; }
+    ok("oneclick memo: a memo on a family whose send cannot carry one refuses pre-broadcast — nothing is sent", !!threwNear && /can't carry one/.test(threwNear.message) && sent === 0);
+  }
+
+  // The execution gate over 1Click routes.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
+    const route = parseOneClickQuote(fixture117("quote-near-out-fee50.json"), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
+    ok("oneclick gate: a well-formed fixture route is executable", swapRouteExecutable(route).ok === true && swapRouteExecutable(route).oneclick === true);
+    const expired = clone117(route); expired.oneclick.deadline = "2020-01-01T00:00:00.000Z";
+    const gExp = swapRouteExecutable(expired);
+    ok("oneclick gate: a quote past its RETURNED deadline refuses as expired", gExp.ok === false && /expired/.test(gExp.reason || ""));
+    const unver = clone117(route); unver.platformFeeCollecting = true;
+    ok("oneclick gate: a collecting route whose fee echo was never verified refuses", swapRouteExecutable(unver).ok === false);
+    const mism = clone117(route); mism.oneclick.amountIn = "1";
+    ok("oneclick gate: a deposit amount that drifts from the quote refuses", swapRouteExecutable(mism).ok === false);
+  }
+  // App-seam pins (the standing D1 lesson): (a) the
+  // destination address the app supplies for a 1Click
+  // destination is the wallet's OWN address on that family,
+  // resolved through the seam — never a fall-through to the
+  // EVM address; (b) a zero-balance search on the real call
+  // path forms the 1Click card for each family as source and
+  // as destination.
+  {
+    ok("oneclick seam: each family's destination resolves to the wallet's own address on that family",
+      ["near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"].every(k => swapOwnAddressFor(k, own117) === own117[k]));
+    ok("oneclick seam: an EVM-shaped value in a family slot resolves to null, never a fall-through",
+      swapOwnAddressFor("near", { ...own117, near: EVM_117 }) === null
+      && swapAddressBookEntry({ xrpl: EVM_117 }, "xrpl") === null
+      && swapAddressBookEntry(own117, "near") === own117.near
+      && swapAddressBookEntry(own117, "aptos") === own117.aptos);
+  }
+  {
+    const DEPOSIT_117 = { "nep141:wrap.near": "6be996b8c0e2369b42f24e9307a807c5df61efe9c3a1ae4f0797dfad998faf21", "nep141:xrp.omft.near": "rKrFkCby5a9JrQh8YfJi2SS3reFBQELkWo", "nep141:ltc.omft.near": "LKDyUEtTR1HXamkiEphisSiBJu6o3ZPE34", "nep141:doge.omft.near": "DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC", "nep141:bch.omft.near": "bitcoincash:qp2uvd08xf67sqz3eqfymtxm93hqqhhxzqheslcz2l", "nep141:aptos.omft.near": own117.aptos, "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near": "0x534ADb104fB1A1DaD15e5d3e4F262083CB414731" };
+    const DEC_117 = { "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near": 6, "nep141:wrap.near": 24, "nep141:xrp.omft.near": 6, "nep141:ltc.omft.near": 8, "nep141:doge.omft.near": 8, "nep141:bch.omft.near": 8, "nep141:aptos.omft.near": 8 };
+    const EST_117 = { "nep141:wrap.near": 22, "nep141:xrp.omft.near": 27, "nep141:ltc.omft.near": 129, "nep141:doge.omft.near": 129, "nep141:bch.omft.near": 109, "nep141:aptos.omft.near": 29 };
+    const quoteFor117 = (body) => {
+      const outRaw = BigInt(Math.round(14.9 * 10 ** DEC_117[body.destinationAsset])).toString();
+      const dl = new Date(Date.now() + 3 * 864e5).toISOString();
+      return { correlationId: "pin117", timestamp: new Date().toISOString(), signature: "sig117", quoteRequest: body,
+        quote: { depositAddress: DEPOSIT_117[body.originAsset], amountIn: body.amount, amountInFormatted: "1", amountInUsd: "15.00", minAmountIn: body.amount, amountOut: outRaw, amountOutFormatted: "14.9", amountOutUsd: "14.90", minAmountOut: outRaw, timeEstimate: EST_117[body.originAsset] || 60, refundFee: "0", withdrawFee: "2400", deadline: dl, timeWhenInactive: dl } };
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("1click.chaindefuser.com/v0/quote")) return jsonRes117(quoteFor117(JSON.parse(opts.body)));
+      return jsonRes117({}, false, 404);
+    };
+    try {
+      const FAMS_117 = [["near", "near", "4800000000000000000000000"], ["xrpl", "xrp", "16000000"], ["litecoin", "ltc", "20000000"], ["dogecoin", "doge", "10000000000"], ["bitcoincash", "bch", "7250000"], ["aptos", "apt", "150000000"]];
+      for (const [fam, sentinel, amt] of FAMS_117) {
+        const out = await getSwapRoutes({ fromChainKey: fam, toChainKey: "base", fromTokenAddress: sentinel, toTokenAddress: USDC_BASE_117, fromAmount: amt, fromAddress: own117[fam], toAddress: EVM_117 });
+        const oc = out.find(r => r.provider === "oneclick");
+        ok(`oneclick card: ${fam} native -> USDC(Base) forms an executable 1Click card at zero balance`, !!oc && swapRouteExecutable(oc).ok === true);
+        const into = await getSwapRoutes({ fromChainKey: "base", toChainKey: fam, fromTokenAddress: USDC_BASE_117, toTokenAddress: sentinel, fromAmount: "15000000", fromAddress: EVM_117, toAddress: own117[fam] });
+        const ocIn = into.find(r => r.provider === "oneclick");
+        ok(`oneclick card: USDC(Base) -> ${fam} native forms an executable 1Click card addressed to the wallet's own ${fam} address`, !!ocIn && swapRouteExecutable(ocIn).ok === true && ocIn.oneclick.recipient === own117[fam]);
+      }
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // The XRP bridge floor, read from the rail's own refusal.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("1click.chaindefuser.com/v0/quote")) return jsonRes117(fixture117("error-xrp-below-minimum.json"), false, 400);
+      return jsonRes117({}, false, 404);
+    };
+    let err = null;
+    try { await getSwapRoutes({ fromChainKey: "xrpl", toChainKey: "base", fromTokenAddress: "xrp", toTokenAddress: USDC_BASE_117, fromAmount: "1000000", fromAddress: own117.xrpl, toAddress: EVM_117 }); } catch (e) { err = e; }
+    finally { globalThis.fetch = realFetch; }
+    ok("oneclick floor: a 1 XRP search refuses on 1Click's own error, carrying the 2 XRP floor",
+      !!err && err.oneclickBelowFloor?.minRaw === "2000000" && /at least 2 XRP/.test(err.message));
+    const verdict = await diagnoseNoRouteSwap({ fromChainKey: "xrpl", toChainKey: "base", fromTokenAddress: "xrp", toTokenAddress: USDC_BASE_117, fromAmount: "1000000", fromAddress: own117.xrpl, toAddress: EVM_117 }, { fromDecimals: 6, fromPriceUsd: 2.4, searchError: err });
+    ok("oneclick floor: the no-route diagnosis names the floor — below-minimum at exactly 2 XRP",
+      verdict.kind === "below-minimum" && verdict.floor.amountHuman === 2 && verdict.floor.amountRaw === "2000000");
+  }
+
+  // The record store and the poll driver (Satora-store
+  // precedent): statuses advance the SAME record in place;
+  // REFUNDED is terminal and plain; an unfunded quote past
+  // its deadline retires as expired, a funded one never does.
+  {
+    const statusFx = fixture117("status-pending-deposit.json");
+    const depAddr = statusFx.quoteResponse.quote.depositAddress;
+    const seed117 = (over = {}) => ({ id: `oc:${depAddr}`, provider: "oneclick", status: "PENDING_DEPOSIT", depositAddress: depAddr, depositMemo: null, originChainKey: "solana", destChainKey: "base", originAsset: "nep141:sol.omft.near", destinationAsset: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", fromSymbol: "SOL", toSymbol: "USDC", fromDecimals: 9, toDecimals: 6, amountIn: "5000000000", amountOut: "14834094", refundTo: "refund117", recipient: EVM_117, refundFeeRaw: "0", deadline: new Date(Date.now() + 864e5).toISOString(), depositTxHash: "txhash117", createdAt: Date.now(), ...over });
+    const storage = memStorage117();
+    saveOneClickSwapRecord(storage, seed117());
+    const seq = [statusFx, { ...statusFx, status: "PROCESSING" }, { status: "SUCCESS", updatedAt: new Date().toISOString(), correlationId: statusFx.correlationId, swapDetails: { amountIn: "5000000000", amountOut: "14834094", destinationChainTxHashes: ["0xdest117"] }, quoteResponse: statusFx.quoteResponse }];
+    let i = 0;
+    const fetchSeq = async () => jsonRes117(seq[Math.min(i++, seq.length - 1)]);
+    await pollOneClickSwapStatuses(storage, { fetchImpl: fetchSeq });
+    ok("oneclick driver: a PENDING_DEPOSIT poll invents no progress", loadOneClickSwapRecords(storage)[0].status === "PENDING_DEPOSIT");
+    const lineBefore = oneClickSwapHistoryLine(loadOneClickSwapRecords(storage)[0]);
+    await pollOneClickSwapStatuses(storage, { fetchImpl: fetchSeq });
+    await pollOneClickSwapStatuses(storage, { fetchImpl: fetchSeq });
+    const doneRec = loadOneClickSwapRecords(storage)[0];
+    ok("oneclick driver: PROCESSING -> SUCCESS advances the same record in place and lands the destination hash",
+      doneRec.status === "SUCCESS" && doneRec.id === `oc:${depAddr}` && doneRec.destTxHash === "0xdest117" && doneRec.settledAmountOut === "14834094" && oneClickSwapHistoryLine(doneRec) !== lineBefore && oneClickSwapPhase(doneRec.status).terminal === true);
+    const storage2 = memStorage117();
+    saveOneClickSwapRecord(storage2, seed117({ id: "oc:refund117", depositAddress: "refund117addr", status: "PROCESSING", refundFeeRaw: "5000000" }));
+    await pollOneClickSwapStatuses(storage2, { fetchImpl: async () => jsonRes117({ status: "REFUNDED", updatedAt: new Date().toISOString(), correlationId: "r117", swapDetails: { refundedAmount: "4995000000", refundReason: "PARTIAL_DEPOSIT" }, quoteResponse: null }) });
+    const rr = loadOneClickSwapRecords(storage2)[0];
+    const rLine = oneClickSwapHistoryLine(rr);
+    ok("oneclick driver: REFUNDED is terminal and its line names the refunded amount and the up-front refund fee",
+      rr.status === "REFUNDED" && oneClickSwapPhase(rr.status).terminal === true && rLine.includes(`refunded ${swapRawToAmount("4995000000", 9)} SOL`) && rLine.includes(swapRawToAmount("5000000", 9)));
+    ok("oneclick history: a refunded Activity entry renders the refund plainly",
+      formatHistoryEntry({ amount: "5", symbol: "SOL→USDC", to: EVM_117, msState: "refunded" }).includes("· refunded"));
+    const storage3 = memStorage117();
+    saveOneClickSwapRecord(storage3, seed117({ id: "oc:exp117", depositAddress: "exp117addr", depositTxHash: null, deadline: new Date(Date.now() - 864e5).toISOString() }));
+    await pollOneClickSwapStatuses(storage3, { fetchImpl: async () => jsonRes117(statusFx) });
+    ok("oneclick driver: an unfunded quote still PENDING_DEPOSIT past its deadline retires as expired",
+      loadOneClickSwapRecords(storage3)[0].status === "expired" && oneClickSwapPhase("expired").terminal === true);
+    const storage4 = memStorage117();
+    saveOneClickSwapRecord(storage4, seed117({ id: "oc:funded117", depositAddress: "funded117addr", deadline: new Date(Date.now() - 864e5).toISOString() }));
+    await pollOneClickSwapStatuses(storage4, { fetchImpl: async () => jsonRes117(statusFx) });
+    ok("oneclick driver: a record WITH a deposit past its deadline is never retired — its refund is still owed",
+      loadOneClickSwapRecords(storage4)[0].status === "PENDING_DEPOSIT");
+    ok("oneclick store: the storage key is the versioned fluid_oneclick_swaps_v1", ONECLICK_SWAPS_STORAGE_KEY === "fluid_oneclick_swaps_v1");
+  }
+
+  // Planner coverage: the table, the hub grammar, and
+  // composition through the milestone search.
+  {
+    ok("oneclick planner: the table serves the six families both ways and refuses Stellar, TON and same-asset pairs",
+      !!oneClickSupportsPair({ fromChainKey: "near", toChainKey: "base", fromTokenAddress: "near", toTokenAddress: USDC_BASE_117 })
+      && !!oneClickSupportsPair({ fromChainKey: "base", toChainKey: "aptos", fromTokenAddress: USDC_BASE_117, toTokenAddress: "apt" })
+      && !oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: USDC_BASE_117 })
+      && !oneClickSupportsPair({ fromChainKey: "ton", toChainKey: "base", fromTokenAddress: "gram", toTokenAddress: USDC_BASE_117 })
+      && !oneClickSupportsPair({ fromChainKey: "near", toChainKey: "near", fromTokenAddress: "near", toTokenAddress: "wrap.near" }));
+    ok("oneclick planner: NEAR and Aptos join the hub grammar; XRPL, LTC, DOGE and BCH honestly have no hub token",
+      hubTokenForChain("near")?.symbol === "USDC" && hubTokenForChain("aptos")?.symbol === "USDC"
+      && hubTokenForChain("xrpl") === null && hubTokenForChain("litecoin") === null && hubTokenForChain("dogecoin") === null && hubTokenForChain("bitcoincash") === null);
+    ok("oneclick planner: token symbols resolve for the six natives and the NEAR / Aptos USDC rows",
+      tokenSymbolOn("near", "near") === "NEAR" && tokenSymbolOn("xrpl", "xrp") === "XRP" && tokenSymbolOn("litecoin", "ltc") === "LTC"
+      && tokenSymbolOn("dogecoin", "doge") === "DOGE" && tokenSymbolOn("bitcoincash", "bch") === "BCH" && tokenSymbolOn("aptos", "apt") === "APT");
+    const shapesNear = milestoneShapes({ fromChainKey: "bsc", toChainKey: "near", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", toTokenAddress: "near", fromAmount: "15000000000000000000", fromAddress: EVM_117, toAddress: own117.near });
+    ok("oneclick planner: a BSC -> NEAR composition exists whose final leg lands on NEAR (the 1Click crossing)",
+      shapesNear.length > 0 && shapesNear.some(s => s[s.length - 1].toChainKey === "near"));
+    const shapesLtc = milestoneShapes({ fromChainKey: "litecoin", toChainKey: "polkadot", fromTokenAddress: "ltc", toTokenAddress: "dot", fromAmount: "20000000", fromAddress: own117.litecoin, toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" });
+    ok("oneclick planner: LTC -> Polkadot composes with an LTC first leg (1Click is LTC's door out)",
+      shapesLtc.length > 0 && shapesLtc[0][0].fromChainKey === "litecoin");
+  }
+
+  // Source-text wiring pins (the §116 pattern).
+  {
+    const appSrc117 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("oneclick app: the sheet wires the swaps list, the painter, the confirm branch, the nets and the history sync",
+      appSrc117.includes('id="wOneClickSwaps"') && appSrc117.includes("function paintOneClickSwaps()")
+      && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
+      && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
+      && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]'));
+    const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
+      coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
   }
 }
 

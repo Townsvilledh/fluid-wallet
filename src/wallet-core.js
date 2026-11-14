@@ -6655,6 +6655,31 @@ export const POLKADOT_DOT_TOKEN = "dot";
 // its rail (Relay) quotes in the router's own id space and
 // parseRelayQuote requires the Fluid-space id to match it.
 export const TON_SWAP_CHAIN_ID = 224235520;
+// The 1Click families' ids in the same router chain-id space
+// (NEAR Intents 1Click, 2026-11-14): NEAR, XRPL, Litecoin,
+// Dogecoin, Bitcoin Cash and Aptos join swapChainOf because
+// their rail (1Click, below) quotes them as first-class swap
+// endpoints — the TON precedent, not the Polkadot one (DOT's
+// rail is a single-pair vault; 1Click is a general router for
+// these families, as source AND destination). The ids are
+// Fluid-space only (1Click names assets, not chain ids), in
+// the sentinel series the Satora/Polkadot ids opened.
+export const NEAR_SWAP_CHAIN_ID = 20000000000005;
+export const XRPL_SWAP_CHAIN_ID = 20000000000006;
+export const LITECOIN_SWAP_CHAIN_ID = 20000000000007;
+export const DOGECOIN_SWAP_CHAIN_ID = 20000000000008;
+export const BITCOINCASH_SWAP_CHAIN_ID = 20000000000009;
+export const APTOS_SWAP_CHAIN_ID = 20000000000010;
+/** The six 1Click families' native coins' "addresses" in the
+ *  swap universe (mirroring Bitcoin's "btc" / DOT's "dot"):
+ *  native coins have no contract, so routes name them by
+ *  these sentinels. */
+export const NEAR_SWAP_NATIVE_TOKEN = "near";
+export const XRPL_SWAP_NATIVE_TOKEN = "xrp";
+export const LITECOIN_SWAP_NATIVE_TOKEN = "ltc";
+export const DOGECOIN_SWAP_NATIVE_TOKEN = "doge";
+export const BITCOINCASH_SWAP_NATIVE_TOKEN = "bch";
+export const APTOS_SWAP_NATIVE_TOKEN = "apt";
 /** Native GRAM's "address" in the swap universe: Relay names
  *  TON's native coin by the friendly zero address (its sole
  *  TON currency, live-probed 2026-11-14). The coin displays
@@ -6668,6 +6693,12 @@ export function swapChainOf(chainKey) {
   if (chainKey === "solana") return { chainId: SOLANA_SWAP_CHAIN_ID, name: "Solana" };
   if (chainKey === "sui") return { chainId: SUI_SWAP_CHAIN_ID, name: "Sui" };
   if (chainKey === "ton") return { chainId: TON_SWAP_CHAIN_ID, name: "TON" };
+  if (chainKey === "near") return { chainId: NEAR_SWAP_CHAIN_ID, name: "NEAR" };
+  if (chainKey === "xrpl") return { chainId: XRPL_SWAP_CHAIN_ID, name: "XRP Ledger" };
+  if (chainKey === "litecoin") return { chainId: LITECOIN_SWAP_CHAIN_ID, name: "Litecoin" };
+  if (chainKey === "dogecoin") return { chainId: DOGECOIN_SWAP_CHAIN_ID, name: "Dogecoin" };
+  if (chainKey === "bitcoincash") return { chainId: BITCOINCASH_SWAP_CHAIN_ID, name: "Bitcoin Cash" };
+  if (chainKey === "aptos") return { chainId: APTOS_SWAP_CHAIN_ID, name: "Aptos" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -7109,6 +7140,716 @@ export async function getRelaySwapRoute(args) {
   }
   final.platformFeeBps = bps;
   return final;
+}
+
+/* ---------- NEAR Intents 1Click (NEAR / XRPL / LTC / DOGE / BCH / Aptos + hubs) ----------
+ * The swap rail for the six presence families Fluid holds but
+ * no other router serves (live-probed 2026-11-14:
+ * research_notes/fluid-1click-integration-20261114/probe-notes.md,
+ * whose findings override the older coverage audit wherever
+ * they differ). 1Click (NEAR Intents) is a deposit-address
+ * protocol: Fluid asks for a quote, the API returns a UNIQUE
+ * per-quote deposit address on the origin chain, the user
+ * sends exactly the quoted amount there with a PLAIN TRANSFER
+ * (no memo, no tag — in ~40 successful probe quotes across the
+ * six families not one returned a depositMemo), and the solver
+ * network delivers the destination asset to the recipient.
+ * After the deposit there is nothing for Fluid to sign: a
+ * poll-only record store (fluid_oneclick_swaps_v1, the Satora
+ * pattern) tracks PENDING_DEPOSIT -> KNOWN_DEPOSIT_TX ->
+ * PROCESSING -> SUCCESS, with REFUNDED / FAILED /
+ * INCOMPLETE_DEPOSIT the failure terminals — a refund goes to
+ * the quote-time refundTo (always the user's own origin-chain
+ * address) minus the refundFee the quote disclosed up front.
+ *
+ * KEYLESS is the launch posture (proven live: keyless quotes
+ * receive the documented fee treatment and sit inside the fee
+ * law's ceilings at $1-$25 across all six families). The
+ * partner JWT (partners.near-intents.org — a human signup, an
+ * operator item) is a later optimisation (ANY_INPUT
+ * aggregation, rate limits): when ONECLICK_JWT is set it rides
+ * as the X-API-Key header and nothing else changes.
+ *
+ * FEE REALITY (live probes override 1Click's docs): asking
+ * for F bps of app fee charges max(F, 20) bps TOTAL, split
+ * with 1Click keeping max(20, F/2) — so at the fee law's
+ * 50 bps target Fluid nets 25 bps, and asking for a small F
+ * hoping for a small charge backfires (F=10 charges 25 total).
+ * oneClickFeeRequest is the exact inverse transform of the
+ * law's target T (the TOTAL the user may be charged), with the
+ * T<40 gross-up, and every charged quote's echoed appFees are
+ * verified against the transform's prediction before the route
+ * is offered as collecting: a mismatch (or a charged total
+ * cost outside the destination ceiling) falls back to the
+ * fee-free quote with collecting=false — an unverified capture
+ * never ships (the TON collecting=false precedent). The
+ * stable/same-asset class (USDC->USDC, USDT->USDT) has a 1 bp
+ * floor instead of 20, with the same halving split.
+ * ONECLICK_FEE_RECIPIENT is build-time config — the implicit
+ * NEAR account (64-hex of a Fluid-controlled fee key; app fees
+ * on every chain settle there as NEAR intents). While it is
+ * unset, quotes run fee-free with collecting=false: the route
+ * is live, the fee is honestly zero, never assumed (the
+ * Chainflip broker precedent, CHAINFLIP_BROKER_ACCOUNT).
+ *
+ * NOT WIRED, by probe evidence: Stellar via 1Click (the
+ * catalogue lists XLM/USDC but every pair refuses quoting, and
+ * Stellar deposits would need MEMO-mode deposits Fluid's
+ * sendStellar cannot carry) and TON via 1Click (quotes fail;
+ * Relay remains TON's rail). If a quote for a wired family
+ * ever returns a depositMemo its send cannot carry, the
+ * executor refuses BEFORE broadcast with the reason named —
+ * the guard is built now, ahead of the case existing.
+ *
+ * FLOORS are read from the rail's own refusals (the FIX-B
+ * rule): XRP carries a hard 2 XRP bridge floor the API states
+ * in its error ("Amount is too low for bridge, try at least
+ * 2000000"), and the refusal surfaces with that floor named.
+ * SPEEDS are the API's own timeEstimates (NEAR ~22s; the UTXO
+ * families 109-177s plus their origin confirmation) — honest
+ * durations on the card, slow disclosure where slow. */
+export const ONECLICK_API = "https://1click.chaindefuser.com/v0";
+/** Build-time config: the implicit NEAR account (64-hex) of a
+ *  Fluid fee key — every 1Click app fee settles there. Empty
+ *  until the operator sets it (derive the fee wallet's NEAR
+ *  address — the implicit hex of its key — and put it here);
+ *  while empty, 1Click quotes run fee-free, collecting=false. */
+export const ONECLICK_FEE_RECIPIENT = "";
+/** Build-time config: the partner JWT from
+ *  partners.near-intents.org, when the operator has one.
+ *  Empty = keyless operation (the launch posture). */
+export const ONECLICK_JWT = "";
+/** Resolve the effective 1Click configuration (the seam the
+ *  fee pass reads through, chainflipBrokerConfig's pattern):
+ *  a 64-hex recipient collects; anything else runs fee-free
+ *  with collecting false. A non-empty JWT rides as X-API-Key. */
+export function oneClickConfig({ feeRecipient = ONECLICK_FEE_RECIPIENT, jwt = ONECLICK_JWT } = {}) {
+  const r = typeof feeRecipient === "string" ? feeRecipient.trim().toLowerCase() : "";
+  return {
+    feeRecipient: /^[0-9a-f]{64}$/.test(r) ? r : null,
+    jwt: typeof jwt === "string" && jwt.trim() ? jwt.trim() : null,
+  };
+}
+/** The 1Click asset table: swap-space (chainKey, token
+ *  address) -> the protocol's asset id, verified entry by
+ *  entry against the live catalogue snapshot of 2026-11-14
+ *  (fixtures/tokens-2026-11-14.json in the probe notes).
+ *  `native` marks the chain's own coin; `stable` marks the
+ *  USDC/USDT class the 1 bp fee floor applies to (same-symbol
+ *  pairs). Hub chains (EVM networks, Solana, Sui, Tron,
+ *  Bitcoin) are here because 1Click legs cross between them
+ *  and the six families — every entry is a valid DESTINATION;
+ *  an ORIGIN additionally needs a plain-transfer send, which
+ *  oneClickDepositSend carries for every chain listed. */
+const ONECLICK_ASSETS = [
+  // The six families.
+  { chainKey: "near", address: NEAR_SWAP_NATIVE_TOKEN, asset: "nep141:wrap.near", symbol: "NEAR", decimals: 24, native: true },
+  { chainKey: "near", address: "wrap.near", asset: "nep141:wrap.near", symbol: "wNEAR", decimals: 24 },
+  { chainKey: "near", address: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", asset: "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "near", address: "usdt.tether-token.near", asset: "nep141:usdt.tether-token.near", symbol: "USDT", decimals: 6, stable: true },
+  { chainKey: "xrpl", address: XRPL_SWAP_NATIVE_TOKEN, asset: "nep141:xrp.omft.near", symbol: "XRP", decimals: 6, native: true },
+  { chainKey: "litecoin", address: LITECOIN_SWAP_NATIVE_TOKEN, asset: "nep141:ltc.omft.near", symbol: "LTC", decimals: 8, native: true },
+  { chainKey: "dogecoin", address: DOGECOIN_SWAP_NATIVE_TOKEN, asset: "nep141:doge.omft.near", symbol: "DOGE", decimals: 8, native: true },
+  { chainKey: "bitcoincash", address: BITCOINCASH_SWAP_NATIVE_TOKEN, asset: "nep141:bch.omft.near", symbol: "BCH", decimals: 8, native: true },
+  { chainKey: "aptos", address: APTOS_SWAP_NATIVE_TOKEN, asset: "nep141:aptos.omft.near", symbol: "APT", decimals: 8, native: true },
+  { chainKey: "aptos", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", asset: "nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "aptos", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", asset: "nep141:aptos-88cb7619440a914fe6400149a12b443c3ac21d59.omft.near", symbol: "USDT", decimals: 6, stable: true },
+  // Bitcoin (a plain-transfer origin like the UTXO families).
+  { chainKey: "bitcoin", address: "btc", asset: "nep141:btc.omft.near", symbol: "BTC", decimals: 8, native: true },
+  // Solana.
+  { chainKey: "solana", address: SOLANA_SWAP_NATIVE_TOKEN, asset: "nep141:sol.omft.near", symbol: "SOL", decimals: 9, native: true },
+  { chainKey: "solana", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", asset: "nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "solana", address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", asset: "nep141:sol-c800a4bd850783ccb82c2b2c7e84175443606352.omft.near", symbol: "USDT", decimals: 6, stable: true },
+  // Sui.
+  { chainKey: "sui", address: SUI_SWAP_NATIVE_TOKEN, asset: "nep141:sui.omft.near", symbol: "SUI", decimals: 9, native: true },
+  { chainKey: "sui", address: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC", asset: "nep141:sui-c1b81ecaf27933252d31a963bc5e9458f13c18ce.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  // Tron.
+  { chainKey: "tron", address: TRON_SWAP_NATIVE_TOKEN, asset: "nep141:tron.omft.near", symbol: "TRX", decimals: 6, native: true },
+  { chainKey: "tron", address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", asset: "nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near", symbol: "USDT", decimals: 6, stable: true },
+  // EVM hubs (native = the swap universe's native sentinel).
+  { chainKey: "ethereum", address: NATIVE_TOKEN_ADDRESS, asset: "nep141:eth.omft.near", symbol: "ETH", decimals: 18, native: true },
+  { chainKey: "ethereum", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", asset: "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "ethereum", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", asset: "nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near", symbol: "USDT", decimals: 6, stable: true },
+  { chainKey: "base", address: NATIVE_TOKEN_ADDRESS, asset: "nep141:base.omft.near", symbol: "ETH", decimals: 18, native: true },
+  { chainKey: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", asset: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "arbitrum", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", asset: "nep141:arb-0xaf88d065e77c8cc2239327C5EDb3A432268e5831.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "arbitrum", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", asset: "nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near", symbol: "USDT", decimals: 6, stable: true },
+  { chainKey: "polygon", address: "0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359", asset: "nep141:pol-0x3c499c542cef5e3811e1192ce70d8cc03d5c3359.omdep.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "polygon", address: "0xc2132D05D31c914a87C6611C10748aEB04B58e8F", asset: "nep141:pol-0xc2132d05d31c914a87c6611c10748aeb04b58e8f.omdep.near", symbol: "USDT", decimals: 6, stable: true },
+  { chainKey: "bsc", address: NATIVE_TOKEN_ADDRESS, asset: "nep141:bnb.omdep.near", symbol: "BNB", decimals: 18, native: true },
+  { chainKey: "bsc", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", asset: "nep141:bnb-0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d.omdep.near", symbol: "USDC", decimals: 18, stable: true },
+  { chainKey: "bsc", address: "0x55d398326f99059fF775485246999027B3197955", asset: "nep141:bnb-0x55d398326f99059ff775485246999027B3197955.omdep.near", symbol: "USDT", decimals: 18, stable: true },
+  { chainKey: "avalanche", address: "0xB97EF9Ef8734C71904D8002f8b6Bc66Dd9C48a6E", asset: "nep141:avax-0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e.omdep.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "avalanche", address: "0x9702230A8Ea53601f5Cd2dC00fDbc13d4df4A8C7", asset: "nep141:avax-0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7.omdep.near", symbol: "USDT", decimals: 6, stable: true },
+  { chainKey: "gnosis", address: "0x2a22f9C3b484C3629090FeED35F17ff8f88F76f0", asset: "nep141:gnosis-0x2a22f9c3b484c3629090feed35f17ff8f88f76f0.omft.near", symbol: "USDC", decimals: 6, stable: true },
+  { chainKey: "gnosis", address: "0x4eCaba5870353805a9f068101a40e0F32Ed605C6", asset: "nep141:gnosis-0x4ecaba5870353805a9f068101a40e0f32ed605c6.omft.near", symbol: "USDT", decimals: 6, stable: true },
+];
+const ONECLICK_ASSET_BY_KEY = new Map(ONECLICK_ASSETS.map(e => [`${e.chainKey}|${String(e.address).toLowerCase()}`, e]));
+/** The 1Click table entry for a swap-space (chain, token), or
+ *  null when 1Click does not carry that asset. A null token
+ *  address names the chain's native coin. Pure. */
+export function oneClickAssetFor(chainKey, tokenAddress) {
+  if (!chainKey) return null;
+  let addr = tokenAddress;
+  if (addr == null) addr = chainKey === "bitcoin" ? "btc" : destNativeTokenAddress(chainKey);
+  if (addr == null) return null;
+  return ONECLICK_ASSET_BY_KEY.get(`${chainKey}|${String(addr).toLowerCase()}`) || null;
+}
+/** Whether 1Click serves a pair at all (both assets in the
+ *  table, and not the same asset on both sides — a NEAR ->
+ *  wNEAR "swap" is a wrap, not a swap, and the same asset on
+ *  two chains IS the stable bridge case). Returns the two
+ *  entries or null. Pure. */
+export function oneClickSupportsPair(args) {
+  if (!args) return null;
+  const from = oneClickAssetFor(args.fromChainKey, args.fromTokenAddress);
+  const to = oneClickAssetFor(args.toChainKey, args.toTokenAddress);
+  if (!from || !to) return null;
+  if (from.asset === to.asset) return null;
+  return { from, to };
+}
+/** The exact inverse of 1Click's measured fee split (probe
+ *  notes §6): given the fee law's target T — the TOTAL bps the
+ *  user may be charged — the app-fee bps to REQUEST so the
+ *  total lands exactly on T, and what Fluid then nets.
+ *  General class: total = max(F, 20), Fluid nets F/2 (F>=40),
+ *  T-20 (20<T<40, via the gross-up F = 2(T-20)), or nothing
+ *  (T<=20: request 0 — the rail's own 20 bps floor rides
+ *  inside the route cost either way, and requesting a small
+ *  F would charge MORE than T). Stable class (same-symbol
+ *  USDC/USDT pairs): the floor is 1 bp, so F = T nets T/2 for
+ *  T>=2. Pure; pinned against the probe's measured table. */
+export function oneClickFeeRequest(targetBps, { stablePair = false } = {}) {
+  const T = Math.max(0, Math.floor(Number(targetBps) || 0));
+  if (stablePair) {
+    if (T < 2) return { requestBps: 0, expectedTotalBps: 1, expectedFluidBps: 0, collecting: false };
+    return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.floor(T / 2), collecting: true };
+  }
+  if (T <= 20) return { requestBps: 0, expectedTotalBps: 20, expectedFluidBps: 0, collecting: false };
+  if (T < 40) return { requestBps: 2 * (T - 20), expectedTotalBps: T, expectedFluidBps: T - 20, collecting: true };
+  return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.floor(T / 2), collecting: true };
+}
+/** Verify a charged quote's echoed appFees against the
+ *  transform's prediction: the response's quoteRequest.appFees
+ *  must sum to the expected TOTAL, and the entries naming
+ *  Fluid's recipient must sum to Fluid's expected share. Any
+ *  drift — a missing echo, a different split, a fee pointed
+ *  elsewhere — fails verification and the route ships
+ *  collecting=false on the fee-free quote instead. Pure. */
+export function verifyOneClickFeeEcho(quoteJson, expected, recipient) {
+  const fees = quoteJson?.quoteRequest?.appFees;
+  if (!Array.isArray(fees) || !expected || !recipient) return { ok: false, totalBps: 0, fluidBps: 0 };
+  let total = 0, fluid = 0;
+  for (const f of fees) {
+    const bps = Number(f?.fee);
+    if (!Number.isFinite(bps)) return { ok: false, totalBps: 0, fluidBps: 0 };
+    total += bps;
+    if (String(f?.recipient || "").toLowerCase() === String(recipient).toLowerCase()) fluid += bps;
+  }
+  return { ok: total === expected.expectedTotalBps && fluid === expected.expectedFluidBps, totalBps: total, fluidBps: fluid };
+}
+/** The quote request body (probe notes §2): EXACT_INPUT,
+ *  SIMPLE deposit mode (every wired family's mode — XRPL is
+ *  SIMPLE by the API's own table, the UTXO families and NEAR
+ *  and Aptos default to it; Stellar's MEMO mode is exactly
+ *  why Stellar is not wired), refund and payout both on their
+ *  own chains, the deadline requested at +2h (the API returns
+ *  its own ~3-day window — the RETURNED deadline is what the
+ *  route and record carry, never the requested one). */
+export function buildOneClickQuoteBody({ fromEntry, toEntry, amountRaw, refundTo, recipient, feeRequest = null, feeRecipient = null, nowMs = Date.now() }) {
+  const body = {
+    dry: false,
+    depositMode: "SIMPLE",
+    swapType: "EXACT_INPUT",
+    slippageTolerance: 100,
+    originAsset: fromEntry.asset,
+    depositType: "ORIGIN_CHAIN",
+    destinationAsset: toEntry.asset,
+    amount: String(amountRaw),
+    refundTo,
+    refundType: "ORIGIN_CHAIN",
+    recipient,
+    recipientType: "DESTINATION_CHAIN",
+    deadline: new Date(nowMs + 2 * 3600 * 1000).toISOString(),
+  };
+  if (feeRequest && feeRecipient) body.appFees = [{ recipient: feeRecipient, fee: feeRequest.requestBps }];
+  return body;
+}
+/** One quote call. Returns the parsed response, or null when
+ *  the pair is not quotable (the API's own "not available" /
+ *  "failed to get quote" answers). A below-minimum refusal
+ *  throws the FIX-B floor error (the minimum parsed out of the
+ *  API's own message, in origin base units); transport and
+ *  other failures throw a sanitised error — raw API text is
+ *  never surfaced to the user. */
+async function fetchOneClickQuote(ctx, { feeRequest = null, feeRecipient = null, jwt = null, fetchImpl = null } = {}) {
+  const doFetch = fetchImpl || fetch;
+  const body = buildOneClickQuoteBody({ ...ctx, feeRequest, feeRecipient });
+  const res = await doFetch(`${ONECLICK_API}/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(jwt ? { "X-API-Key": jwt } : {}) },
+    signal: AbortSignal.timeout(20000),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = String(data?.message || "");
+    const floor = /try at least (\d+)/i.exec(message);
+    if (floor) {
+      const human = swapRawToAmount(floor[1], ctx.fromEntry.decimals).replace(/\.0$/, "");
+      const e = new Error(`No route at that size: 1Click's own minimum for ${ctx.fromEntry.symbol} -> ${ctx.toEntry.symbol} is ${human} ${ctx.fromEntry.symbol} — the floor is 1Click's, not Fluid's, and it is shown before you commit. Swap at least ${human} ${ctx.fromEntry.symbol}.`);
+      e.oneclickTerminal = true;
+      e.oneclickBelowFloor = { asset: ctx.fromEntry.symbol, minRaw: floor[1] };
+      throw e;
+    }
+    if (/quoting for this pair is not available|failed to get quote/i.test(message)) return null;
+    throw new Error(`1Click route search failed (HTTP ${res.status}).`);
+  }
+  const q = data?.quote;
+  if (!q || typeof q.depositAddress !== "string" || !q.depositAddress
+    || String(q.amountIn ?? "") !== String(ctx.amountRaw)
+    || !Number.isFinite(Date.parse(q.deadline || ""))) return null;
+  return data;
+}
+/** Parse a quote response into the common route shape. The
+ *  route cost is the quote's true economic loss (routeCostUsd
+ *  over the in/out USD values — the withdrawFee rides inside
+ *  the output shortfall, and is also passed as the explicit
+ *  fallback for a quote whose USD fields ever go missing).
+ *  `fee` carries the collection state decided by the two-pass
+ *  search: { collecting, fluidBps, totalBps, requestedBps,
+ *  feeVerified, platformFeeUsd }. */
+export function parseOneClickQuote(json, ctx, fee = {}) {
+  const q = json?.quote;
+  if (!q) return null;
+  const fromChain = swapChainOf(ctx.fromEntry.chainKey);
+  const toChain = swapChainOf(ctx.toEntry.chainKey);
+  if (!fromChain || !toChain) return null;
+  const amountInUsd = Number(q.amountInUsd);
+  const amountOutUsd = Number(q.amountOutUsd);
+  const amountOutRaw = BigInt(String(q.amountOut ?? "0"));
+  const withdrawFeeRaw = (() => { try { return BigInt(String(q.withdrawFee ?? "0")); } catch { return 0n; } })();
+  const withdrawFeeUsd = withdrawFeeRaw > 0n && amountOutRaw > 0n && Number.isFinite(amountOutUsd)
+    ? Number(withdrawFeeRaw) / Number(amountOutRaw) * amountOutUsd : 0;
+  const routeFeeUsd = routeCostUsd(withdrawFeeUsd, (Number.isFinite(amountInUsd) && Number.isFinite(amountOutUsd)) ? amountInUsd - amountOutUsd : NaN);
+  const collecting = !!fee.collecting;
+  const fluidBps = collecting ? Math.floor(Number(fee.fluidBps) || 0) : 0;
+  return {
+    provider: "oneclick",
+    id: `oneclick-${json.correlationId || q.depositAddress}`,
+    fromChainKey: ctx.fromEntry.chainKey,
+    toChainKey: ctx.toEntry.chainKey,
+    fromChainId: fromChain.chainId,
+    toChainId: toChain.chainId,
+    fromAmount: String(ctx.amountRaw),
+    fromToken: { address: ctx.fromEntry.address, symbol: ctx.fromEntry.symbol, name: ctx.fromEntry.symbol, decimals: ctx.fromEntry.decimals, chainId: fromChain.chainId },
+    toToken: { address: ctx.toEntry.address, symbol: ctx.toEntry.symbol, name: ctx.toEntry.symbol, decimals: ctx.toEntry.decimals, chainId: toChain.chainId },
+    toAmount: String(q.amountOut ?? ""),
+    toAmountMin: String(q.minAmountOut ?? q.amountOut ?? ""),
+    toAmountUSD: Number.isFinite(amountOutUsd) ? amountOutUsd : null,
+    fromAmountUSD: Number.isFinite(amountInUsd) ? amountInUsd : null,
+    gasCostUSD: 0,
+    routeFeeUsd,
+    executionDuration: Number(q.timeEstimate) || 0,
+    steps: [],
+    platformFeeRaw: collecting ? ((amountOutRaw * BigInt(fluidBps)) / 10000n).toString() : "0",
+    platformFeeUsd: collecting ? Number(fee.platformFeeUsd) || 0 : 0,
+    platformFeeBps: fluidBps,
+    platformFeeCollecting: collecting,
+    oneclick: {
+      depositAddress: q.depositAddress,
+      depositMemo: q.depositMemo ? String(q.depositMemo) : null,
+      deadline: q.deadline,
+      refundTo: ctx.refundTo,
+      recipient: ctx.recipient,
+      originAsset: ctx.fromEntry.asset,
+      destinationAsset: ctx.toEntry.asset,
+      amountIn: String(ctx.amountRaw),
+      refundFeeRaw: String(q.refundFee ?? "0"),
+      signature: json.signature || null,
+      correlationId: json.correlationId || null,
+      feeVerified: !!fee.feeVerified,
+      requestedFeeBps: collecting ? Math.floor(Number(fee.requestedBps) || 0) : 0,
+      totalFeeBps: collecting ? Math.floor(Number(fee.totalBps) || 0) : 0,
+      raw: json,
+    },
+  };
+}
+/** 1Click's route for a swap, priced under the fee law — the
+ *  Relay two-pass discipline: pass 1 quotes fee-free and reads
+ *  the route's own cost; the law's target T runs through the
+ *  inverse transform; pass 2 re-quotes with the requested fee
+ *  and its echo is verified field-by-field. Any failure of
+ *  pass 2 or of the verification falls back to pass 1's
+ *  executable fee-free quote with collecting=false. Returns
+ *  null when the pair is unsupported or unquotable; the
+ *  below-minimum error propagates (it names the rail's floor). */
+export async function getOneClickSwapRoute(args, { feeRecipient = undefined, jwt = undefined, fetchImpl = null } = {}) {
+  const sup = oneClickSupportsPair(args);
+  if (!sup) return null;
+  const refundTo = typeof args.fromAddress === "string" && args.fromAddress ? args.fromAddress : null;
+  const recipient = (typeof args.toAddress === "string" && args.toAddress) || refundTo;
+  if (!refundTo || !recipient) return null;
+  const cfg = oneClickConfig({ feeRecipient, jwt });
+  const ctx = { fromEntry: sup.from, toEntry: sup.to, amountRaw: String(args.fromAmount), refundTo, recipient };
+  const first = await fetchOneClickQuote(ctx, { jwt: cfg.jwt, fetchImpl });
+  if (!first) return null;
+  const firstRoute = parseOneClickQuote(first, ctx, { collecting: false });
+  if (!firstRoute) return null;
+  if (!PLATFORM_FEE_COLLECTION_ENABLED || !cfg.feeRecipient) return firstRoute;
+  const stablePair = !!sup.from.stable && !!sup.to.stable && sup.from.symbol === sup.to.symbol;
+  const target = platformFeeBpsForRoute(firstRoute.routeFeeUsd, firstRoute.fromAmountUSD, args.toChainKey);
+  const transform = oneClickFeeRequest(target, { stablePair });
+  if (!transform.collecting || !(transform.requestBps > 0)) return firstRoute;
+  let charged = null;
+  try { charged = await fetchOneClickQuote(ctx, { feeRequest: transform, feeRecipient: cfg.feeRecipient, jwt: cfg.jwt, fetchImpl }); }
+  catch { charged = null; }
+  if (!charged) return firstRoute;
+  const echo = verifyOneClickFeeEcho(charged, transform, cfg.feeRecipient);
+  if (!echo.ok) return firstRoute;
+  const chargedRoute = parseOneClickQuote(charged, ctx, { collecting: true });
+  if (!chargedRoute) return firstRoute;
+  // The charged quote's total cost must still sit inside the
+  // destination ceiling (probe notes §6) — a charge that busts
+  // it is not shipped; the fee-free quote stands instead.
+  if (!(chargedRoute.routeFeeUsd <= platformFeeCeilingFor(args.toChainKey) + 1e-9)) return firstRoute;
+  const finalRoute = parseOneClickQuote(charged, ctx, {
+    collecting: true, fluidBps: transform.expectedFluidBps, totalBps: transform.expectedTotalBps,
+    requestedBps: transform.requestBps, feeVerified: true,
+    platformFeeUsd: (Number(firstRoute.fromAmountUSD) || 0) * transform.expectedFluidBps / 10000,
+  });
+  // The disclosed route cost is the fee-free pass's measure
+  // (the fee law's own input — routeCostUsd's contract): the
+  // charged pass's shortfall contains Fluid's fee itself, and
+  // counting it in both fields would double-charge the user
+  // on paper.
+  if (finalRoute) finalRoute.routeFeeUsd = firstRoute.routeFeeUsd;
+  return finalRoute;
+}
+/** The 1Click record store (the Satora store pattern): after
+ *  the deposit there is nothing for Fluid to sign, so the
+ *  record's whole life is status polling by deposit address.
+ *  The record is created BEFORE the deposit broadcasts (so an
+ *  app killed mid-send still leaves a watchable record — the
+ *  status endpoint is keyed by the address, not the hash) and
+ *  carries the quote's RETURNED deadline, its refundTo, and
+ *  the whole quote response (signature included) as dispute
+ *  evidence. Housekeeping: a record still PENDING_DEPOSIT with
+ *  no deposit past its deadline retires as expired — nothing
+ *  was sent, nothing to refund; one WITH a deposit keeps
+ *  surfacing until the refund lands. */
+export const ONECLICK_SWAPS_STORAGE_KEY = "fluid_oneclick_swaps_v1";
+function validOneClickRecord(r) {
+  return !!r && typeof r.id === "string" && typeof r.status === "string" && typeof r.depositAddress === "string";
+}
+export function loadOneClickSwapRecords(storage) {
+  try {
+    const raw = storage?.getItem(ONECLICK_SWAPS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter(validOneClickRecord) : [];
+  } catch { return []; }
+}
+export function saveOneClickSwapRecord(storage, record) {
+  if (!storage || !validOneClickRecord(record)) return;
+  try {
+    const arr = loadOneClickSwapRecords(storage).filter(r => r.id !== record.id);
+    arr.unshift(record);
+    storage.setItem(ONECLICK_SWAPS_STORAGE_KEY, JSON.stringify(arr.slice(0, 50)));
+  } catch { /* storage unavailable/full — tracking degrades, the swap does not */ }
+}
+/** Plain-language phases for the 1Click status lifecycle
+ *  (probe notes §5: the documented status set — SUCCESS and
+ *  REFUNDED status fixtures do not exist yet; they are
+ *  captured at the first funded drill, and the handling here
+ *  is built and pinned against the documented shapes). */
+export function oneClickSwapPhase(status) {
+  switch (String(status || "")) {
+    case "PENDING_DEPOSIT": return { phase: "awaiting-deposit", label: "Waiting for 1Click to see your deposit", terminal: false };
+    case "KNOWN_DEPOSIT_TX": return { phase: "deposit-seen", label: "Deposit seen — waiting for confirmations", terminal: false };
+    case "PROCESSING": return { phase: "processing", label: "Processing — your payout is on its way", terminal: false };
+    case "SUCCESS": return { phase: "complete", label: "Complete — payout sent", terminal: true };
+    case "REFUNDED": return { phase: "refunded", label: "Refunded to your wallet", terminal: true };
+    case "FAILED": return { phase: "failed", label: "This swap failed", terminal: false };
+    case "INCOMPLETE_DEPOSIT": return { phase: "incomplete", label: "The deposit was incomplete", terminal: false };
+    case "expired": return { phase: "expired", label: "Expired before a deposit arrived — nothing was sent", terminal: true };
+    default: return { phase: "unknown", label: "Status: " + String(status || "unknown"), terminal: false };
+  }
+}
+/** One plain-text history line for a persisted 1Click swap,
+ *  with the refund truth stated wherever it applies: a refund
+ *  returns to the user's own origin-chain wallet minus the
+ *  refund fee the quote disclosed up front — the amount and
+ *  the fee are the record's own figures, never boilerplate.
+ *  Text only — the app renders it via textContent. */
+export function oneClickSwapHistoryLine(record) {
+  const ph = oneClickSwapPhase(record?.status);
+  const fromDec = record?.fromDecimals ?? 18;
+  const fromHuman = record?.amountIn != null && record?.fromSymbol
+    ? `${swapRawToAmount(record.amountIn, fromDec)} ${record.fromSymbol}` : "your funds";
+  const toHuman = record?.amountOut != null && record?.toSymbol
+    ? `about ${swapRawToAmount(record.amountOut, record.toDecimals ?? 18)} ${record.toSymbol}` : "your payout";
+  let line = `1Click swap: ${fromHuman} on ${destChainName(record?.originChainKey)} → ${toHuman} on ${destChainName(record?.destChainKey)} — ${ph.label}.`;
+  const feeHuman = record?.refundFeeRaw && String(record.refundFeeRaw) !== "0"
+    ? swapRawToAmount(record.refundFeeRaw, fromDec) : null;
+  const feeText = feeHuman ? `, minus the ${feeHuman} ${record.fromSymbol} refund fee 1Click quoted up front` : "";
+  const refundedHuman = record?.refundedAmount != null && String(record.refundedAmount) !== "0"
+    ? swapRawToAmount(record.refundedAmount, fromDec) : null;
+  if (record?.status === "REFUNDED") {
+    line += refundedHuman
+      ? ` 1Click refunded ${refundedHuman} ${record.fromSymbol} to your ${destChainName(record.originChainKey)} wallet${feeText}.`
+      : ` Your deposit went back to your ${destChainName(record.originChainKey)} wallet${feeText}.`;
+  } else if (record?.status === "FAILED" || record?.status === "INCOMPLETE_DEPOSIT") {
+    line += refundedHuman
+      ? ` 1Click refunded ${refundedHuman} ${record.fromSymbol} to your ${destChainName(record.originChainKey)} wallet${feeText}.`
+      : ` 1Click refunds your deposit to your ${destChainName(record.originChainKey)} wallet${feeText}.`;
+  } else if (!ph.terminal && record?.depositTxHash) {
+    line += ` If it can't complete, 1Click refunds your deposit to your ${destChainName(record.originChainKey)} wallet${feeText}.`;
+  }
+  return line;
+}
+/** One status read for a record (GET /v0/status by deposit
+ *  address — the memo rides along when the quote carried
+ *  one). Returns the parsed body, or null on any failure:
+ *  polling keeps the last known status, never invents one. */
+export async function fetchOneClickStatus(record, { fetchImpl = null, jwt = undefined } = {}) {
+  if (!record?.depositAddress) return null;
+  const cfg = oneClickConfig({ jwt });
+  const doFetch = fetchImpl || fetch;
+  const qs = new URLSearchParams({ depositAddress: record.depositAddress });
+  if (record.depositMemo) qs.set("depositMemo", String(record.depositMemo));
+  const res = await doFetch(`${ONECLICK_API}/status?${qs.toString()}`, {
+    headers: { ...(cfg.jwt ? { "X-API-Key": cfg.jwt } : {}) },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data && typeof data.status === "string" ? data : null;
+}
+/** Fold a status body into a record: the lifecycle status plus
+ *  the settlement facts the history line speaks (deposited and
+ *  settled amounts, the refunded amount and its reason, the
+ *  payout's transaction hash). Returns whether anything
+ *  changed. */
+function mergeOneClickStatus(record, st) {
+  if (!st || typeof st.status !== "string") return false;
+  let changed = false;
+  if (record.status !== st.status) { record.status = st.status; changed = true; }
+  const d = st.swapDetails || {};
+  const set = (k, v) => { if (v != null && record[k] !== v) { record[k] = v; changed = true; } };
+  set("depositedAmount", d.depositedAmount != null ? String(d.depositedAmount) : null);
+  set("settledAmountOut", d.amountOut != null ? String(d.amountOut) : null);
+  set("refundedAmount", d.refundedAmount != null ? String(d.refundedAmount) : null);
+  set("refundReason", d.refundReason ? String(d.refundReason) : null);
+  const destTx = Array.isArray(d.destinationChainTxHashes) ? d.destinationChainTxHashes[0] : null;
+  set("destTxHash", typeof destTx === "string" ? destTx : (destTx?.hash || destTx?.txHash || null));
+  if (st.updatedAt && record.statusUpdatedAt !== st.updatedAt) { record.statusUpdatedAt = st.updatedAt; changed = true; }
+  if (changed) record.updatedAt = Date.now();
+  return changed;
+}
+/** Advance every live 1Click record by one status poll.
+ *  Terminal records (SUCCESS / REFUNDED / expired) are not
+ *  re-polled; FAILED / INCOMPLETE_DEPOSIT keep polling — the
+ *  refund that follows them is exactly what the user is
+ *  watching for. Returns how many records changed. */
+export async function pollOneClickSwapStatuses(storage, { fetchImpl = null, jwt = undefined, nowMs = Date.now() } = {}) {
+  if (!storage) return 0;
+  let changed = 0;
+  for (const r of loadOneClickSwapRecords(storage)) {
+    if (r.status === "SUCCESS" || r.status === "REFUNDED" || r.status === "expired") continue;
+    const st = await fetchOneClickStatus(r, { fetchImpl, jwt }).catch(() => null);
+    if (st && mergeOneClickStatus(r, st)) { saveOneClickSwapRecord(storage, r); changed++; }
+    if (r.status === "PENDING_DEPOSIT" && !r.depositTxHash) {
+      const dl = Date.parse(r.deadline || "");
+      if (Number.isFinite(dl) && nowMs > dl) {
+        r.status = "expired"; r.updatedAt = nowMs;
+        saveOneClickSwapRecord(storage, r); changed++;
+      }
+    }
+  }
+  return changed;
+}
+/** The /deposit/submit hint: tells 1Click which transaction
+ *  is the deposit so it can match faster. A courtesy only —
+ *  status polling by deposit address is authoritative, and a
+ *  failed hint never fails the swap. */
+export async function submitOneClickDeposit(record, txHash, { fetchImpl = null, jwt = undefined } = {}) {
+  const cfg = oneClickConfig({ jwt });
+  const doFetch = fetchImpl || fetch;
+  const res = await doFetch(`${ONECLICK_API}/deposit/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(cfg.jwt ? { "X-API-Key": cfg.jwt } : {}) },
+    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify({ txHash, depositAddress: record.depositAddress, ...(record.depositMemo ? { depositMemo: record.depositMemo } : {}) }),
+  });
+  return !!res.ok;
+}
+/** The deposit address a quote returned must pass the origin
+ *  family's OWN address validation before anything is sent to
+ *  it (probe notes §2: the API's validation is uneven, so
+ *  Fluid pre-validates with its own shapes). */
+function oneClickDepositAddressOk(chainKey, address) {
+  if (typeof address !== "string" || !address) return false;
+  switch (chainKey) {
+    case "near": return isValidNearAddress(address);
+    case "xrpl": return isValidXrplAddress(address);
+    case "litecoin": return isValidLitecoinAddress(address);
+    case "dogecoin": return isValidDogeAddress(address);
+    case "bitcoincash": return isValidBchAddress(address);
+    case "aptos": return isValidAptosAddress(address);
+    case "bitcoin": return isValidBitcoinAddress(address);
+    case "solana": return isValidSolanaAddress(address);
+    case "tron": return isValidTronAddress(address);
+    case "sui": { try { return !!normalizeSuiAddress(address); } catch { return false; } }
+    default: return NETWORKS[chainKey] ? /^0x[0-9a-fA-F]{40}$/.test(address) : false;
+  }
+}
+/** The token argument the family's own send expects for a
+ *  deposit of this table entry (null for a native coin). */
+function oneClickDepositToken(entry) {
+  if (!entry || entry.native) return null;
+  const byAddress = (list) => list.find(t => String(t.address || t.mint || "").toLowerCase() === String(entry.address).toLowerCase());
+  if (entry.chainKey === "near") return byAddress(NEAR_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+  if (entry.chainKey === "aptos") return byAddress(APTOS_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+  if (entry.chainKey === "solana") { const t = byAddress(SOLANA_TOKENS); return t ? { address: entry.address, decimals: entry.decimals, symbol: entry.symbol, ...(t.program ? { program: t.program } : {}) } : { address: entry.address, decimals: entry.decimals, symbol: entry.symbol }; }
+  if (entry.chainKey === "sui") return byAddress(SUI_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+  if (entry.chainKey === "tron") return byAddress(TRON_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+  return { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+}
+/** The default deposit leg: a PLAIN TRANSFER of exactly the
+ *  quoted amount to the quote's deposit address, through the
+ *  origin family's own send — the same sends the send sheets
+ *  use, with the same local signing. NEAR's deposit is native
+ *  NEAR even though the quoted asset is wrap.near (the intents
+ *  side wraps it; a wNEAR pick instead sends the FT itself). */
+async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTag = null }) {
+  const phrase = wallet?.mnemonic?.phrase || (typeof wallet === "string" ? wallet : null);
+  const human = swapRawToAmount(String(amountRaw), entry.decimals);
+  const token = oneClickDepositToken(entry);
+  const hashOf = (r) => typeof r === "string" ? r : (r?.hash || r?.txid || null);
+  switch (entry.chainKey) {
+    case "near": return hashOf(await sendNear(phrase, { to, amount: human, token }));
+    case "xrpl": return hashOf(await sendXrpl(phrase, { to, amount: human, token: null, destinationTag }));
+    case "litecoin": return hashOf(await sendLitecoin(phrase, { to, amountLtc: Number(human) }));
+    case "dogecoin": return hashOf(await sendDogecoin(phrase, { to, amountDoge: Number(human) }));
+    case "bitcoincash": return hashOf(await sendBitcoinCash(phrase, { to, amountBch: Number(human) }));
+    case "aptos": return hashOf(await sendAptos(phrase, { to, amount: human, token }));
+    case "bitcoin": return hashOf(await sendBitcoin(phrase, { to, amountBtc: Number(human) }));
+    case "solana": return hashOf(await sendSolana(phrase, { to, amount: Number(human), token }));
+    case "sui": return hashOf(await sendSui(phrase, { to, amount: human, token }));
+    case "tron": return hashOf(await sendTron(wallet, { to, amount: Number(human), token }));
+    default: {
+      if (!NETWORKS[entry.chainKey]) throw new Error(`No deposit send exists for ${destChainName(entry.chainKey)} — nothing was sent.`);
+      if (typeof wallet?.connect !== "function") throw new Error("The wallet isn't unlocked for an EVM deposit — nothing was sent.");
+      const provider = providerFor(entry.chainKey);
+      const signer = wallet.connect(provider);
+      if (entry.native) {
+        const tx = await signer.sendTransaction({ to, value: BigInt(amountRaw) });
+        await settleBroadcastOrThrow(entry.chainKey, tx.hash);
+        return tx.hash;
+      }
+      const c = new ethers.Contract(entry.address, ["function transfer(address to, uint256 amount) returns (bool)"], signer);
+      try { await c.transfer.staticCall(to, BigInt(amountRaw)); }
+      catch (e) { throw new Error("The network says this deposit would fail: " + (e.shortMessage || e.message || "simulation failed")); }
+      const tx = await c.transfer(to, BigInt(amountRaw));
+      await settleBroadcastOrThrow(entry.chainKey, tx.hash);
+      return tx.hash;
+    }
+  }
+}
+/** Execute a 1Click route: verify-then-sign, exactly as every
+ *  Fluid executor — the gate re-runs, the route's asset must
+ *  still be the table's asset, the deposit address must pass
+ *  the family's own validation, the amount must round-trip
+ *  exactly through the family's decimals, and a depositMemo
+ *  the family's send cannot carry refuses BEFORE anything is
+ *  sent (an XRPL numeric memo is the one carriable case: it
+ *  rides as the destination tag, and is persisted on the
+ *  record for the status reads). The record is saved BEFORE
+ *  the send; the history hook fires at the deposit broadcast. */
+export async function executeOneClickSwapRoute(wallet, route, onProgress = () => {}, { storage = null, sendImpl = null, submitImpl = null, onDeposit = null } = {}) {
+  const gate = swapRouteExecutable(route);
+  if (!gate.ok) throw new Error(gate.reason || "That route can't be executed — search again and pick another route.");
+  const oc = route.oneclick;
+  const entry = oneClickAssetFor(route.fromChainKey, route.fromToken?.address);
+  if (!entry || entry.asset !== oc.originAsset)
+    throw new Error("That route's asset no longer matches 1Click's table — search again, nothing was sent.");
+  let destinationTag = null;
+  if (oc.depositMemo) {
+    if (route.fromChainKey === "xrpl" && /^\d+$/.test(String(oc.depositMemo)) && Number(oc.depositMemo) <= 4294967295) {
+      destinationTag = Number(oc.depositMemo);
+    } else {
+      throw new Error(`1Click quoted this swap with a deposit memo, and a plain ${destChainName(route.fromChainKey)} transfer can't carry one — Fluid refused before anything was sent. Nothing was sent; search again.`);
+    }
+  }
+  if (!oneClickDepositAddressOk(route.fromChainKey, oc.depositAddress))
+    throw new Error(`1Click's deposit address failed Fluid's own address check for ${destChainName(route.fromChainKey)} — nothing was sent. Search again.`);
+  const human = swapRawToAmount(String(route.fromAmount), entry.decimals);
+  if (swapAmountToRaw(human, entry.decimals) !== String(route.fromAmount))
+    throw new Error(`The quoted amount can't be expressed exactly in ${entry.symbol} — nothing was sent. Search again.`);
+  const record = {
+    id: `oc:${oc.depositAddress}`,
+    provider: "oneclick",
+    status: "PENDING_DEPOSIT",
+    depositAddress: oc.depositAddress,
+    depositMemo: oc.depositMemo || null,
+    originChainKey: route.fromChainKey,
+    destChainKey: route.toChainKey,
+    originAsset: oc.originAsset,
+    destinationAsset: oc.destinationAsset,
+    fromSymbol: route.fromToken?.symbol || entry.symbol,
+    toSymbol: route.toToken?.symbol || null,
+    fromDecimals: entry.decimals,
+    toDecimals: route.toToken?.decimals ?? null,
+    amountIn: String(route.fromAmount),
+    amountOut: route.toAmount != null ? String(route.toAmount) : null,
+    minAmountOut: route.toAmountMin != null ? String(route.toAmountMin) : null,
+    amountInUsd: route.fromAmountUSD ?? null,
+    refundTo: oc.refundTo,
+    recipient: oc.recipient,
+    refundFeeRaw: oc.refundFeeRaw != null ? String(oc.refundFeeRaw) : "0",
+    deadline: oc.deadline,
+    signature: oc.signature || null,
+    correlationId: oc.correlationId || null,
+    depositTxHash: null,
+    createdAt: Date.now(),
+    quoteResponse: oc.raw || null,
+  };
+  if (storage) saveOneClickSwapRecord(storage, record);
+  onProgress(`Sending exactly ${human} ${entry.symbol} to 1Click's deposit address…`);
+  const send = sendImpl || oneClickDepositSend;
+  const sent = await send(wallet, { entry, chainKey: route.fromChainKey, to: oc.depositAddress, amountRaw: String(route.fromAmount), amountHuman: human, token: oneClickDepositToken(entry), destinationTag });
+  const hash = typeof sent === "string" ? sent : (sent?.hash || sent?.txid || null);
+  if (!hash) throw new Error(`The deposit send returned no transaction hash — check your ${destChainName(route.fromChainKey)} wallet before retrying; the swap record keeps watching the deposit address.`);
+  record.depositTxHash = hash;
+  if (storage) saveOneClickSwapRecord(storage, record);
+  try { await (submitImpl || submitOneClickDeposit)(record, hash); } catch { /* the hint is a courtesy; polling by address is authoritative */ }
+  if (typeof onDeposit === "function") { try { onDeposit({ ...record }); } catch { /* history is a record, never a blocker */ } }
+  onProgress(`Deposit sent — 1Click settles to your ${destChainName(route.toChainKey)} wallet from here; Fluid keeps watching it.`);
+  return { hashes: [hash], record };
+}
+/** The milestone runner's in-flow wait for a 1Click leg: poll
+ *  the leg's own record until the protocol reaches a terminal
+ *  state or the bounded window expires. SUCCESS lets the
+ *  runner's ordinary credit confirmation proceed; a refund /
+ *  failure terminal is reported so the runner can park the
+ *  leg with the plain truth; a timeout returns null and the
+ *  record advancer carries it from there. */
+async function pollOneClickLegOutcome(storage, depositTxHash, { timeoutMs = 150000, intervalMs = 5000, fetchImpl = null } = {}) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const rec = loadOneClickSwapRecords(storage).find(r => r.depositTxHash === depositTxHash);
+    if (rec) {
+      const st = await fetchOneClickStatus(rec, { fetchImpl }).catch(() => null);
+      if (st) {
+        if (mergeOneClickStatus(rec, st)) saveOneClickSwapRecord(storage, rec);
+        if (rec.status === "SUCCESS") return { status: rec.status, bad: false, record: rec };
+        if (rec.status === "REFUNDED" || rec.status === "FAILED" || rec.status === "INCOMPLETE_DEPOSIT")
+          return { status: rec.status, bad: true, record: rec };
+      }
+    }
+    if (Date.now() >= end) return null;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
 }
 
 /* ---------- Relay from a Tron source ----------
@@ -17919,6 +18660,12 @@ export function destChainName(chainKey) {
   if (chainKey === "sui") return "Sui";
   if (chainKey === "polkadot") return "Polkadot Asset Hub";
   if (chainKey === "ton") return "TON";
+  if (chainKey === "near") return "NEAR";
+  if (chainKey === "xrpl") return "XRP Ledger";
+  if (chainKey === "litecoin") return "Litecoin";
+  if (chainKey === "dogecoin") return "Dogecoin";
+  if (chainKey === "bitcoincash") return "Bitcoin Cash";
+  if (chainKey === "aptos") return "Aptos";
   return NETWORKS[chainKey]?.name || String(chainKey || "");
 }
 /** Whether a token address IS the destination chain's native gas
@@ -17931,6 +18678,12 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "sui") return suiCoinTypeEq(a, SUI_COIN_TYPE) || suiCoinTypeEq(a, SUI_SWAP_NATIVE_TOKEN);
   if (chainKey === "polkadot") return a.toLowerCase() === POLKADOT_DOT_TOKEN;
   if (chainKey === "ton") return tonAddressEquals(a, TON_SWAP_NATIVE_TOKEN);
+  if (chainKey === "near") return a.toLowerCase() === NEAR_SWAP_NATIVE_TOKEN;
+  if (chainKey === "xrpl") return a.toLowerCase() === XRPL_SWAP_NATIVE_TOKEN;
+  if (chainKey === "litecoin") return a.toLowerCase() === LITECOIN_SWAP_NATIVE_TOKEN;
+  if (chainKey === "dogecoin") return a.toLowerCase() === DOGECOIN_SWAP_NATIVE_TOKEN;
+  if (chainKey === "bitcoincash") return a.toLowerCase() === BITCOINCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "aptos") return a.toLowerCase() === APTOS_SWAP_NATIVE_TOKEN;
   return a.toLowerCase() === NATIVE_TOKEN_ADDRESS;
 }
 /** The destination native token's address in the swap universe's
@@ -17941,6 +18694,12 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "sui") return SUI_SWAP_NATIVE_TOKEN;
   if (chainKey === "polkadot") return POLKADOT_DOT_TOKEN;
   if (chainKey === "ton") return TON_SWAP_NATIVE_TOKEN;
+  if (chainKey === "near") return NEAR_SWAP_NATIVE_TOKEN;
+  if (chainKey === "xrpl") return XRPL_SWAP_NATIVE_TOKEN;
+  if (chainKey === "litecoin") return LITECOIN_SWAP_NATIVE_TOKEN;
+  if (chainKey === "dogecoin") return DOGECOIN_SWAP_NATIVE_TOKEN;
+  if (chainKey === "bitcoincash") return BITCOINCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
   if (NETWORKS[chainKey]) return NATIVE_TOKEN_ADDRESS;
   return null;
 }
@@ -17980,6 +18739,26 @@ export async function readDestNativeRaw(chainKey, address) {
       const acct = data && Array.isArray(data.data) ? data.data[0] : null;
       return BigInt((acct && acct.balance) ?? 0);
     }
+    // The 1Click families (2026-11-14): the native row is
+    // balances[0] by construction in each family's account
+    // read (human string); the UTXO readers return human
+    // numbers, converted at their own 8 decimals with integer
+    // rounding — a failed read throws inside the reader and
+    // lands in this function's catch: null, never a zero.
+    if (chainKey === "near") {
+      const acct = await getNearAccount(address);
+      const row = acct?.balances?.[0];
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), 24) : null;
+    }
+    if (chainKey === "xrpl") {
+      const acct = await getXrplAccount(address);
+      const row = acct?.balances?.[0];
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), 6) : null;
+    }
+    if (chainKey === "litecoin") return BigInt(Math.round((await getLitecoinBalance(address)) * 1e8));
+    if (chainKey === "dogecoin") return BigInt(Math.round((await getDogecoinBalance(address)) * 1e8));
+    if (chainKey === "bitcoincash") return BigInt(Math.round((await getBitcoinCashBalance(address)) * 1e8));
+    if (chainKey === "aptos") return BigInt(await aptosAssetBalanceRaw(address, null));
     if (!NETWORKS[chainKey]) return null;
     // A plain JSON-RPC eth_getBalance over fetch (the Solana/Tron
     // pattern above), NOT the ethers provider: the read must fail
@@ -18224,7 +19003,7 @@ export async function pollDestNativeCredit(chainKey, address, preRaw, minDeltaRa
  *  of their own providers). The provider set dispatched here
  *  is mirrored by GAS_FALLBACK_LEG_PROVIDERS at the
  *  executability gate — keep the two in step. */
-async function dispatchSwapExecution(wallet, route, progress, { onApprove = null, onApproveMayan = null } = {}) {
+async function dispatchSwapExecution(wallet, route, progress, { onApprove = null, onApproveMayan = null, storage = null, onDeposit = null } = {}) {
   if (route.provider === "relay") {
     if (Number(route.relay?.originChainId) === RELAY_TRON_CHAIN_ID)
       return executeRelayTronSwapRoute(wallet, route, progress, onApprove);
@@ -18238,6 +19017,10 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
   if (route.provider === "cetus") return executeCetusSwapRoute(wallet, route, progress);
   if (route.provider === "sunswap") return executeSunswapSwapRoute(wallet, route, progress, onApprove);
   if (route.provider === "chainflip") return executeChainflipSwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "oneclick") {
+    const out = await executeOneClickSwapRoute(wallet, route, progress, { storage, onDeposit });
+    return out.hashes;
+  }
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** Run a gas-fallback record's second leg from what ACTUALLY
@@ -18426,6 +19209,16 @@ export function hubTokenForChain(chainKey) {
   if (chainKey === "sui") { const t = SUI_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
   if (chainKey === "solana") { const t = SOLANA_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address || t.mint, decimals: t.decimals } : null; }
   if (chainKey === "tron") { const t = TRON_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
+  // NEAR and Aptos carry native USDC (1Click, 2026-11-14):
+  // their hub makes the generic composition grammar reach
+  // them — a hub leg into the family's USDC, then the 1Click
+  // leg (or the family's own same-chain leg) finishes. XRPL /
+  // Litecoin / Dogecoin / Bitcoin Cash carry no stablecoin,
+  // so they honestly have no hub: their compositions ride
+  // the destination branches' explicit first legs and the
+  // direct 1Click routes.
+  if (chainKey === "near") { const t = NEAR_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
+  if (chainKey === "aptos") { const t = APTOS_TOKENS.find(x => x.symbol === "USDC"); return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null; }
   const t = (NETWORKS[chainKey]?.tokens || []).find(x => x.symbol === "USDC");
   return t ? { symbol: "USDC", address: t.address, decimals: t.decimals } : null;
 }
@@ -18442,7 +19235,7 @@ function isHubTokenOn(chainKey, tokenAddress) {
   const hub = hubTokenForChain(chainKey);
   return !!hub && tokenAddress != null && swapTokenEq(chainKey, tokenAddress, hub.address);
 }
-function tokenSymbolOn(chainKey, tokenAddress) {
+export function tokenSymbolOn(chainKey, tokenAddress) {
   if (chainKey === "bitcoin" || chainKey === "lightning" || chainKey === "arkade") return "BTC";
   if (chainKey === "polkadot") return "DOT";
   // TON addresses are case-sensitive friendly strings and are
@@ -18455,6 +19248,22 @@ function tokenSymbolOn(chainKey, tokenAddress) {
     if (tokenAddress == null || tonAddressEquals(tokenAddress, TON_SWAP_NATIVE_TOKEN)) return "GRAM";
     if (tonAddressEquals(tokenAddress, TON_USDT_MASTER)) return "USDT";
     return null;
+  }
+  // The 1Click families (2026-11-14): natives by sentinel,
+  // NEAR / Aptos tokens by their curated lists.
+  if (chainKey === "xrpl") return "XRP";
+  if (chainKey === "litecoin") return "LTC";
+  if (chainKey === "dogecoin") return "DOGE";
+  if (chainKey === "bitcoincash") return "BCH";
+  if (chainKey === "near") {
+    if (tokenAddress == null || String(tokenAddress).toLowerCase() === NEAR_SWAP_NATIVE_TOKEN) return "NEAR";
+    const t = NEAR_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
+    return t ? t.symbol : null;
+  }
+  if (chainKey === "aptos") {
+    if (tokenAddress == null || String(tokenAddress).toLowerCase() === APTOS_SWAP_NATIVE_TOKEN) return "APT";
+    const t = APTOS_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
+    return t ? t.symbol : null;
   }
   if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
   const hub = hubTokenForChain(chainKey);
@@ -18493,6 +19302,12 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "bitcoin") return isValidBitcoinAddress(a) ? a : null;
   if (chainKey === "polkadot") return isValidDotAddress(a) ? a : null;
   if (chainKey === "ton") return isValidTonAddress(a) ? a : null;
+  if (chainKey === "near") return !/^0x/i.test(a) && isValidNearAddress(a) ? a : null; // a 0x-prefixed value is an EVM address, never this wallet's NEAR one (the bare NEAR shape check accepts hex-looking named ids)
+  if (chainKey === "xrpl") return isValidXrplAddress(a) ? a : null;
+  if (chainKey === "litecoin") return isValidLitecoinAddress(a) ? a : null;
+  if (chainKey === "dogecoin") return isValidDogeAddress(a) ? a : null;
+  if (chainKey === "bitcoincash") return isValidBchAddress(a) ? a : null;
+  if (chainKey === "aptos") { try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
   return a;
 }
 /** The wallet's OWN address for one swap chain key, resolved
@@ -18528,6 +19343,12 @@ export function swapOwnAddressFor(chainKey, own) {
     case "bitcoin": return isValidBitcoinAddress(own.bitcoin || "") ? own.bitcoin : null;
     case "polkadot": return isValidDotAddress(own.polkadot || "") ? own.polkadot : null;
     case "ton": return isValidTonAddress(own.ton || "") ? own.ton : null;
+    case "near": return !/^0x/i.test(own.near || "") && isValidNearAddress(own.near || "") ? own.near : null; // 0x-prefixed = an EVM address in the wrong slot (see swapAddressBookEntry)
+    case "xrpl": return isValidXrplAddress(own.xrpl || "") ? own.xrpl : null;
+    case "litecoin": return isValidLitecoinAddress(own.litecoin || "") ? own.litecoin : null;
+    case "dogecoin": return isValidDogeAddress(own.dogecoin || "") ? own.dogecoin : null;
+    case "bitcoincash": return isValidBchAddress(own.bitcoincash || "") ? own.bitcoincash : null;
+    case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     default: return null;
   }
@@ -19062,6 +19883,8 @@ export function milestoneAltAnchorFor(chainKey) {
   const list = chainKey === "sui" ? SUI_TOKENS
     : chainKey === "solana" ? SOLANA_TOKENS
     : chainKey === "tron" ? TRON_TOKENS
+    : chainKey === "near" ? NEAR_TOKENS
+    : chainKey === "aptos" ? APTOS_TOKENS
     : (NETWORKS[chainKey]?.tokens || []);
   const t = list.find(x => x.symbol === "USDT");
   if (!t) return null;
@@ -19649,6 +20472,21 @@ export async function readSwapTokenRaw(chainKey, tokenAddress, address, decimals
       const human = await getSolanaTokenBalance(address, tokenAddress, decimals);
       return ethers.parseUnits(String(human || "0"), decimals);
     }
+    // 1Click family token reads (2026-11-14): NEAR FTs ride
+    // the account read's own rows (a row whose amount is null
+    // is a couldn't-load — null here too, never a zero);
+    // Aptos FAs read through the family's raw balance view.
+    // XRPL / Litecoin / Dogecoin / Bitcoin Cash carry no
+    // swap-space tokens — natives only, handled above.
+    if (chainKey === "near") {
+      const acct = await getNearAccount(address);
+      const row = (acct?.balances || []).find(b => b && String(b.address || "").toLowerCase() === String(tokenAddress).toLowerCase());
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), row.decimals ?? decimals) : null;
+    }
+    if (chainKey === "aptos") {
+      const t = APTOS_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
+      return BigInt(await aptosAssetBalanceRaw(address, t || { address: tokenAddress, standard: "fa" }));
+    }
     if (!NETWORKS[chainKey]) return null;
     const provider = providerFor(chainKey);
     const c = new ethers.Contract(tokenAddress, ["function balanceOf(address) view returns (uint256)"], provider);
@@ -19702,7 +20540,21 @@ function rescaleMilestoneLegExpectation(leg, newFromRaw) {
 function milestoneLegTokenDecimals(record, legIndex, side) {
   const leg = record.legs[legIndex];
   if (!leg) return 18;
+  // The 1Click families' decimals (2026-11-14): natives at
+  // their own scales (NEAR 24, XRP 6, the UTXO three 8, APT
+  // 8), family tokens from their curated lists.
+  const famDec = (chainKey, tokenAddress) => {
+    if (chainKey === "near") return tokenAddress == null || String(tokenAddress).toLowerCase() === NEAR_SWAP_NATIVE_TOKEN ? 24
+      : (NEAR_TOKENS.find(t => String(t.address).toLowerCase() === String(tokenAddress).toLowerCase())?.decimals ?? 6);
+    if (chainKey === "xrpl") return 6;
+    if (chainKey === "litecoin" || chainKey === "dogecoin" || chainKey === "bitcoincash") return 8;
+    if (chainKey === "aptos") return tokenAddress == null || String(tokenAddress).toLowerCase() === APTOS_SWAP_NATIVE_TOKEN ? 8
+      : (APTOS_TOKENS.find(t => String(t.address).toLowerCase() === String(tokenAddress).toLowerCase())?.decimals ?? 6);
+    return null;
+  };
   if (side === "to") {
+    const fd = famDec(leg.toChainKey, leg.toTokenAddress);
+    if (fd != null) return fd;
     if (leg.toChainKey === "sui") return isDestNativeToken("sui", leg.toTokenAddress) ? 9 : (SUI_TOKENS.find(t => suiCoinTypeEq(t.address, leg.toTokenAddress))?.decimals ?? 6);
     if (leg.toChainKey === "solana") return 6;
     if (leg.toChainKey === "polkadot") return 10;
@@ -19712,6 +20564,8 @@ function milestoneLegTokenDecimals(record, legIndex, side) {
     if (t) return t.decimals;
     return isDestNativeToken(leg.toChainKey, leg.toTokenAddress) ? 18 : 18;
   }
+  const fdFrom = famDec(leg.fromChainKey, leg.fromTokenAddress);
+  if (fdFrom != null) return fdFrom;
   if (leg.fromChainKey === "polkadot") return 10;
   if (leg.fromChainKey === "ton") return isDestNativeToken("ton", leg.fromTokenAddress) ? 9 : 6;
   return 18;
@@ -19986,7 +20840,7 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
         ? await executeArkadeOffboardRoute({ route, btcAddress: leg.toAddress, amountSats: leg.fromAmount, offboard: arkadeOffboard, onProgress: progress })
       : route.provider === "satora"
         ? await executeSatoraSwapRoute(wallet, route, progress, { storage, onApprove })
-        : await dispatchSwapExecution(wallet, route, progress, { onApprove, onApproveMayan });
+        : await dispatchSwapExecution(wallet, route, progress, { onApprove, onApproveMayan, storage });
     record.hashes = [...(record.hashes || []), ...hashes];
     if (!record.id) record.id = hashes[0];
     if (storage) saveMilestoneRecord(storage, record);
@@ -20000,6 +20854,34 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
     // the fallback if the app is closed or a leg outlasts its
     // in-flow wait.
     if (i + 1 < record.legs.length) stageNextLeg(i + 1);
+    // A 1Click leg (2026-11-14): the deposit is away, but the
+    // leg settles on the protocol's own clock. Its outcome is
+    // awaited in-flow on the leg's own record: SUCCESS falls
+    // through to the ordinary credit confirmation below (or,
+    // for the final leg, to done); a refund / failure terminal
+    // parks the record leg-due with the plain truth — the
+    // deposit went back to the wallet this leg was paid FROM
+    // (the leg's refundTo is that wallet), minus the refund
+    // fee the quote disclosed up front; a timeout leaves the
+    // record awaiting-credit for the advancer, whose own
+    // 1Click check resolves it the same way. A FINAL 1Click
+    // leg is never marked done at broadcast: until the
+    // protocol says SUCCESS the record stays awaiting-credit,
+    // so a refunded final leg can never read as a completed
+    // swap.
+    if (route.provider === "oneclick" && storage) {
+      const ocOutcome = await pollOneClickLegOutcome(storage, hashes[0]).catch(() => null);
+      if (ocOutcome?.bad) {
+        record.state = "leg-due";
+        record.pendingLeg = null;
+        if (storage) saveMilestoneRecord(storage, record);
+        const err = new Error(`Your ${leg.fromSymbol || "funds"} step through 1Click didn't complete — 1Click refunded it to your ${destChainName(leg.fromChainKey)} wallet, minus the refund fee its quote disclosed up front. Your money is back in your wallet — tap "Complete the swap" to try the step again.`);
+        err.milestoneLegDue = true;
+        err.recordId = record.id;
+        throw err;
+      }
+      if (!ocOutcome) return { hashes: record.hashes, record, pending: true };
+    }
     // A leg INTO Arkade that is not the destination
     // (cheapest-entry, 2026-11-14): its credit is not a
     // balance the generic poll can read — the Satora payout
@@ -20107,6 +20989,48 @@ export async function advanceMilestoneRecords(storage, { arkadeClaimPayout = nul
       saveMilestoneRecord(storage, r);
       changed++;
       continue;
+    }
+    // A pending 1Click leg (2026-11-14): its settlement is a
+    // protocol status, not only a balance. A REFUNDED /
+    // FAILED / INCOMPLETE_DEPOSIT terminal means the credit
+    // will never come — the deposit went back to the leg's own
+    // origin wallet — so the record parks leg-due for the
+    // retry instead of waiting on a balance forever; a SUCCESS
+    // advances the leg on the protocol's own settled amount
+    // when it reports one (the Arkade-claim precedent: the
+    // settlement system's own figure, not the quote's
+    // expectation). The leg's record is polled fresh here —
+    // the advancer never trusts a stale status for a money
+    // decision.
+    {
+      const ocRec = loadOneClickSwapRecords(storage).find(x => x.depositTxHash && (r.hashes || []).includes(x.depositTxHash));
+      if (ocRec) {
+        const st = await fetchOneClickStatus(ocRec).catch(() => null);
+        if (st && mergeOneClickStatus(ocRec, st)) saveOneClickSwapRecord(storage, ocRec);
+        if (ocRec.status === "REFUNDED" || ocRec.status === "FAILED" || ocRec.status === "INCOMPLETE_DEPOSIT") {
+          r.state = "leg-due";
+          r.pendingLeg = null;
+          saveMilestoneRecord(storage, r);
+          changed++;
+          continue;
+        }
+        if (ocRec.status === "SUCCESS") {
+          const settled = ocRec.settledAmountOut != null ? ocRec.settledAmountOut : r.pendingExpectedRaw;
+          if (settled != null) {
+            r.receivedRaw = String(settled);
+            if (r.pendingLeg === r.legs.length - 1) { r.state = "done"; }
+            else {
+              r.currentLeg = r.pendingLeg + 1;
+              if (r.legs[r.currentLeg]) rescaleMilestoneLegExpectation(r.legs[r.currentLeg], r.receivedRaw);
+              r.state = "leg-due";
+            }
+            r.pendingLeg = null;
+            saveMilestoneRecord(storage, r);
+            changed++;
+            continue;
+          }
+        }
+      }
     }
     const toDec = milestoneLegTokenDecimals(r, r.pendingLeg, "to");
     const bal = await readSwapTokenRaw(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec);
@@ -20863,6 +21787,17 @@ async function getSwapRoutesDirect(args) {
   if (mayanSupportsPair(planArgs) || mayanSupportsSuiGasDropPair(planArgs)) {
     try { const m = await getMayanSwapRoute(planArgs); if (m) routes.push(m); } catch { /* Mayan is a candidate, never a single point of failure */ }
   }
+  // 1Click (NEAR Intents, 2026-11-14): a candidate beside
+  // Mayan, never a single point of failure — except its
+  // below-minimum refusal, which is captured and rethrown
+  // when nothing else served the pair, so the sheet's
+  // diagnosis can name the rail's own floor (the FIX-B rule,
+  // exactly as Chainflip's floor rides the cascade error).
+  let oneclickFloorError = null;
+  if (oneClickSupportsPair(planArgs)) {
+    try { const oc = await getOneClickSwapRoute(planArgs); if (oc) routes.push(oc); }
+    catch (e) { if (e?.oneclickBelowFloor) oneclickFloorError = e; }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -20871,6 +21806,7 @@ async function getSwapRoutesDirect(args) {
   }
   if (!routes.length) {
     if (cascadeError) throw cascadeError;
+    if (oneclickFloorError) throw oneclickFloorError;
     return routes;
   }
   if (gasPlan) for (const r of routes) if (!r.destGas) r.destGas = gasPlan;
@@ -21131,7 +22067,8 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
   // A rail-confirmed floor rides in on the search's own
   // error (re-walk FIX-B, 2026-11-14): Chainflip refuses a
   // sub-minimum DOT swap BEFORE quoting, and its error
-  // carries the pair's minimum (chainflipBelowFloor) — a
+  // carries the pair's minimum (chainflipBelowFloor; 1Click's
+  // bridge floor rides the same channel as oneclickBelowFloor) — a
   // figure the rail itself enforces, parsed from its own
   // published minimum, not a guess. When the search died
   // on that refusal, the verdict is below-minimum with
@@ -21140,7 +22077,7 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
   // FROM token, and in the walked session its absence
   // degraded this exact refusal to "isn't connected yet"
   // — a connected pair mislabelled, its floor unnamed).
-  const cfFloor = searchError?.chainflipBelowFloor;
+  const cfFloor = searchError?.chainflipBelowFloor || searchError?.oneclickBelowFloor;
   if (cfFloor && /^\d+$/.test(String(cfFloor.minRaw || "")) && Number.isFinite(Number(fromDecimals))) {
     try {
       const human = Number(ethers.formatUnits(BigInt(String(cfFloor.minRaw)), Number(fromDecimals)));
@@ -21476,7 +22413,7 @@ const SWAP_ERC20 = [
  *  gasfallback branch consults this set so it never blesses a
  *  composite whose first leg the executor would refuse at
  *  dispatch time. Keep the two in step. */
-const GAS_FALLBACK_LEG_PROVIDERS = new Set(["relay", "across", "mayan", "jupiter", "cetus", "sunswap"]);
+const GAS_FALLBACK_LEG_PROVIDERS = new Set(["relay", "across", "mayan", "jupiter", "cetus", "sunswap", "oneclick"]);
 
 export function swapRouteExecutable(route) {
   // Satora routes (Bitcoin / Lightning destinations): executable
@@ -21620,6 +22557,28 @@ export function swapRouteExecutable(route) {
     if (!leg1OutOk) return { ok: false, reason: incomplete };
     const inner = swapRouteExecutable(leg1);
     return inner.ok ? { ok: true, gasfallback: true } : { ok: false, reason: inner.reason };
+  }
+  // 1Click routes (NEAR Intents, 2026-11-14): executable when
+  // the route carries its complete quote payload — a deposit
+  // address, the exact quoted input, a live (returned)
+  // deadline, and a fee state that is either honestly
+  // non-collecting or echo-verified at quote time. The
+  // executor re-verifies the deposit address against the
+  // family's own address shape, the asset against the table,
+  // and the amount's exact round-trip before the plain
+  // transfer is signed — the gate is structural, exactly like
+  // the lanes above.
+  if (route?.provider === "oneclick") {
+    const oc = route.oneclick;
+    const incomplete = "This 1Click route is incomplete — pick another route.";
+    if (!oc || typeof oc.depositAddress !== "string" || !oc.depositAddress) return { ok: false, reason: incomplete };
+    if (!route.fromAmount || String(oc.amountIn ?? "") !== String(route.fromAmount)) return { ok: false, reason: incomplete };
+    const dl = Date.parse(oc.deadline || "");
+    if (!Number.isFinite(dl) || dl <= Date.now()) return { ok: false, reason: "This 1Click quote has expired — search again for a fresh one." };
+    if (!oc.refundTo || !oc.recipient) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting && oc.feeVerified !== true)
+      return { ok: false, reason: "This 1Click route's fee could not be verified against its quote — pick another route." };
+    return { ok: true, oneclick: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
@@ -25320,7 +26279,10 @@ export function formatHistoryEntry(x) {
   // first-leg broadcast and updated as legs land, so an
   // unfinished composition reads as what it is — in
   // progress, at a named step — never as silence.
-  const state = x?.msState === "in-progress" ? ` · in progress${x?.msStep ? ` — ${escapeHtml(x.msStep)}` : ""}` : "";
+  const state = x?.msState === "in-progress" ? ` · in progress${x?.msStep ? ` — ${escapeHtml(x.msStep)}` : ""}`
+    : x?.msState === "refunded" ? " · refunded"
+    : x?.msState === "failed" ? " · failed"
+    : "";
   return `<div class="hist">Sent ${escapeHtml(x?.amount)} ${escapeHtml(x?.symbol)} → ${escapeHtml(String(x?.to ?? "").slice(0, 10))}…${state}${view}</div>`;
 }
 

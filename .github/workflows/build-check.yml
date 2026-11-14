@@ -3,6 +3,13 @@
 # build — so the bundle users are served always corresponds to the
 # published source. Tests run first; a red suite blocks nothing else
 # here but is reported on the same job.
+# One exclusion: dist/names.json is excluded from the compare because
+# the name-claims processor updates the registry between releases by
+# design — the registry is data the processor legitimately writes on
+# its own commits (its integrity guard is the processor's signature
+# verification, not this bundle check), so a names-only commit would
+# otherwise leave the committed dist one registry-step stale and trip
+# a false alarm (diagnosed live 2026-11-14, run 43629897435).
 name: build-check
 
 on:
@@ -24,7 +31,7 @@ jobs:
       - name: Rebuild from source and compare with committed dist/
         run: |
           npm run build
-          if ! git diff --exit-code -- dist/; then
+          if ! git diff --exit-code -- dist/ ':(exclude)dist/names.json'; then
             echo "::error::Committed dist/ does not match a fresh build from source. Run 'npm run build' locally and commit the result."
             exit 1
           fi

@@ -34,7 +34,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -6847,6 +6847,34 @@ function swapTokenList(netKey) {
     return [{ symbol: "GRAM", address: TON_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
             { symbol: "USDT", address: TON_USDT.address, decimals: 6, native: false }];
   }
+  if (netKey === "near") {
+    // NEAR (1Click, 2026-11-14): the native coin by its
+    // sentinel, plus the curated NEAR tokens — 1Click serves
+    // the native USDC / USDT and wNEAR; the bridged .e rows
+    // stay listed for their holders and diagnose honestly.
+    return [{ symbol: "NEAR", address: NEAR_SWAP_NATIVE_TOKEN, decimals: 24, native: true },
+            ...NEAR_TOKENS.map(t => ({ ...t, native: false }))];
+  }
+  if (netKey === "xrpl") {
+    // XRP Ledger (1Click): the native coin is the family's
+    // only swap-universe asset in this build.
+    return [{ symbol: "XRP", address: XRPL_SWAP_NATIVE_TOKEN, decimals: 6, native: true }];
+  }
+  if (netKey === "litecoin") {
+    return [{ symbol: "LTC", address: LITECOIN_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
+  }
+  if (netKey === "dogecoin") {
+    return [{ symbol: "DOGE", address: DOGECOIN_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
+  }
+  if (netKey === "bitcoincash") {
+    return [{ symbol: "BCH", address: BITCOINCASH_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
+  }
+  if (netKey === "aptos") {
+    // Aptos (1Click): the native coin by its sentinel, plus
+    // the curated FA stables.
+    return [{ symbol: "APT", address: APTOS_SWAP_NATIVE_TOKEN, decimals: 8, native: true },
+            ...APTOS_TOKENS.map(t => ({ ...t, native: false }))];
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: NATIVE_TOKEN_ADDRESS, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -6864,6 +6892,7 @@ function swapRouteName(route) {
   if (route && route.provider === "cetus") return "Cetus";
   if (route && route.provider === "sunswap") return "SunSwap";
   if (route && route.provider === "chainflip") return "Chainflip";
+  if (route && route.provider === "oneclick") return "1Click";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7047,6 +7076,41 @@ async function swapBalanceOf(chainKey, tok) {
       if (!row) return 0;
       return row.amount != null ? Number(row.amount) : null;
     }
+    if (chainKey === "near") {
+      // NEAR balance for the EXECUTION gate (1Click,
+      // 2026-11-14): the native row (balances[0] by
+      // construction in core's getNearAccount) or the picked
+      // token's row — same null discipline as TON's: a failed
+      // account read throws into the catch → null; a row whose
+      // amount is null is a failed token read → null; no row
+      // at all is a true zero.
+      const acct = await getNearAccount(nearAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
+    if (chainKey === "xrpl") {
+      // XRPL balance for the EXECUTION gate: the native XRP
+      // row of the account read; a failed read throws into
+      // the catch → null, never a silent pass.
+      const acct = await getXrplAccount(xrpAddr);
+      const row = acct?.balances?.[0];
+      return row && row.amount != null ? Number(row.amount) : null;
+    }
+    if (chainKey === "litecoin") return await getLitecoinBalance(ltcAddr);
+    if (chainKey === "dogecoin") return await getDogecoinBalance(dogeAddr);
+    if (chainKey === "bitcoincash") return await getBitcoinCashBalance(bchAddr);
+    if (chainKey === "aptos") {
+      // Aptos balance for the EXECUTION gate: the native APT
+      // row or the picked FA's row of the account read, with
+      // the same null discipline as NEAR's.
+      const acct = await getAptosAccount(aptosAddr);
+      if (tok.native) { const row = (acct?.balances || []).find(b => b && b.address == null && b.symbol === "APT"); return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
     return await getEvmTokenBalance(wallet, chainKey, tok);
   } catch { return null; }
 }
@@ -7071,7 +7135,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7088,12 +7152,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning and Bitcoin — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash and Aptos — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7143,6 +7207,7 @@ $("actSwap").onclick = () => {
     </div>
     <div id="wSatoraSwaps"></div>
     <div id="wMayanSwaps"></div>
+    <div id="wOneClickSwaps"></div>
     <div id="wGasFallback"></div>
     <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
@@ -7167,7 +7232,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -7753,6 +7818,20 @@ $("actSwap").onclick = () => {
   }
   paintMayanSwaps();
   pollMayanSwapStatuses(localStorage).then(() => paintMayanSwaps()).catch(() => {});
+  // 1Click swaps in flight / history, same conventions: the
+  // deposit address is the recovery key; statuses are polled
+  // from 1Click and rendered as text only. After the deposit
+  // there is nothing for the user to sign — the rows are
+  // informational, and a refunded swap says so plainly.
+  function paintOneClickSwaps() {
+    const host = $("wOneClickSwaps"); if (!host) return;
+    const records = loadOneClickSwapRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>1Click swaps</h4>` + records.map(r => `<p class="tag" data-oneclick-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-oneclick-line]").forEach((el, i) => { el.textContent = oneClickSwapHistoryLine(records[i]); });
+  }
+  paintOneClickSwaps();
+  pollOneClickSwapStatuses(localStorage).then(() => paintOneClickSwaps()).catch(() => {});
   // Gas-fallback two-step swaps, same conventions: the persisted
   // record is the recovery key; a record whose first leg landed
   // surfaces its line plus the one-tap "Complete the swap"
@@ -8011,7 +8090,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8133,7 +8212,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "milestone" && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total, above the 1–1.5 minute staged-swap standard. No faster composition was found for this pair.</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
@@ -8284,6 +8363,15 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "oneclick" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // 1Click states the fee it will take inside the
+          // charged quote itself (the echoed appFees), and core
+          // verified that echo field-by-field against the fee
+          // law before this route could be picked — disclose
+          // exactly that figure, like Across's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -8293,6 +8381,7 @@ $("actSwap").onclick = () => {
         }) + ((fromTok.verified === false || toTok.verified === false) ? " ⚠ " + UNVERIFIED_CAUTION : "");
         if (r.provider === "across") $("wIntentText").textContent += " If the bridge does not fill, your deposit is refunded automatically to this same wallet — refunds take several hours, never seconds.";
         if (r.provider === "mayan") $("wIntentText").textContent += formatMayanRefundNote(r);
+        if (r.provider === "oneclick") $("wIntentText").textContent += " You send the deposit yourself to 1Click's address for this quote — it is a plain transfer of the exact amount above. If 1Click cannot complete the swap, it refunds your deposit to this same wallet minus the refund fee the quote stated up front.";
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -8553,11 +8642,32 @@ $("actSwap").onclick = () => {
         if (fromKey === "solana") { srcExplorer = SOLANA_EXPLORER; srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`; }
         else if (fromKey === "sui") { srcExplorer = SUI_EXPLORER; srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`; }
         else srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "oneclick") {
+        // 1Click route (NEAR / XRPL / LTC / DOGE / BCH / Aptos
+        // and the hub families it serves): core re-verifies
+        // the deposit address, amount and asset against the
+        // quote, saves the tracking record, then makes the
+        // plain-transfer deposit with the family's own send.
+        // The record is keyed by the deposit address, so the
+        // status polls in the sheet and the home card track it
+        // from here; the Activity entry is written at deposit
+        // broadcast through the onDeposit hook.
+        const ocOut = await executeOneClickSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onDeposit: (rec) => syncPendingSwapHistory("oneclick", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) }) });
+        hashes = ocOut.hashes;
+        srcExplorer = swapSrcExplorerFor(fromKey);
+        if (fromKey === "near") srcLink = `${NEAR_EXPLORER}/txns/${hashes[0]}`;
+        else if (fromKey === "aptos") srcLink = `${APTOS_EXPLORER}/transaction/${hashes[0]}`;
+        else if (fromKey === "dogecoin") srcLink = `https://blockchair.com/dogecoin/transaction/${hashes[0]}`;
+        else if (fromKey === "bitcoincash") srcLink = `https://blockchair.com/bitcoin-cash/transaction/${hashes[0]}`;
+        else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+        else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+        try { paintOneClickSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
-        // jupiter, cetus, mayan, gasfallback). Anything else is a
-        // shape Fluid cannot sign — refuse plainly rather than guess.
+        // jupiter, cetus, mayan, gasfallback, oneclick). Anything
+        // else is a shape Fluid cannot sign — refuse plainly
+        // rather than guess.
         throw new Error("That route can't be executed — search again and pick another route.");
       }
       // The recorded/shown destination resolves through the
@@ -8571,8 +8681,11 @@ $("actSwap").onclick = () => {
       // executors' onLegBroadcast hook and updated in place
       // by syncPendingSwapHistory — the shared write below
       // would duplicate it (auto-continuation addendum,
-      // 2026-11-14). One-leg routes keep this write.
-      if (route.provider !== "milestone" && route.provider !== "gasfallback") {
+      // 2026-11-14). One-leg routes keep this write. 1Click
+      // routes keep one entry the same way: written at
+      // deposit broadcast through the executor's onDeposit
+      // hook and updated in place as the polls land.
+      if (route.provider !== "milestone" && route.provider !== "gasfallback" && route.provider !== "oneclick") {
         const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
         h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
         localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -8676,6 +8789,28 @@ function renderHistory() {
     };
     for (const r of loadMilestoneRecords(localStorage)) if (r.state !== "done") synthFor("milestone", r);
     for (const r of loadGasFallbackRecords(localStorage)) if (r.state === "awaiting-credit" || r.state === "leg2-due") synthFor("gasfallback", r);
+    // 1Click records (2026-11-14): a record whose deposit
+    // broadcast but whose Activity entry is missing (an entry
+    // evicted from the capped list, or a build that predates
+    // the write) still shows here — synthesised from the
+    // record store, with its protocol status carried the same
+    // way syncPendingSwapHistory writes it. A record with no
+    // deposit hash never moved money and gets no row.
+    for (const r of loadOneClickSwapRecords(localStorage)) {
+      if (!r?.id || !r.depositTxHash || represented.has("id:" + r.id) || represented.has("hash:" + r.depositTxHash)) continue;
+      const ocState = r.status === "REFUNDED" ? "refunded"
+        : (r.status === "FAILED" || r.status === "INCOMPLETE_DEPOSIT") ? "failed"
+        : r.status === "SUCCESS" ? "done" : "in-progress";
+      synth.push({
+        msId: r.id, msKind: "oneclick", msState: ocState,
+        msStep: ocState === "in-progress" ? pendingSwapStepText("oneclick", r) : "",
+        hash: r.depositTxHash,
+        amount: r.amountIn != null && r.fromDecimals != null ? swapRawToAmount(r.amountIn, r.fromDecimals) : null,
+        symbol: `${sanitizePersistedSymbol(r.fromSymbol || "")}→${sanitizePersistedSymbol(r.toSymbol || "")}`,
+        to: r.recipient || "",
+        at: r.createdAt || Date.now(),
+      });
+    }
     if (synth.length) h = [...synth, ...h].sort((a, b) => (Number(b?.at) || 0) - (Number(a?.at) || 0));
   } catch { /* Activity falls back to the stored list alone */ }
   const host = $("history");
@@ -9290,7 +9425,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "lightning" || k === "arkade" ? "" : (NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "lightning" || k === "arkade" ? "" : (NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a
@@ -9315,6 +9450,16 @@ function pendingSwapStepText(kind, record) {
   if (kind === "gasfallback") {
     if (record.state === "done") return "";
     return (record.state === "leg2-due" || record.receivedRaw != null) ? "step 2 of 2" : "step 1 of 2";
+  }
+  if (kind === "oneclick") {
+    // 1Click records carry the protocol's own status, not a
+    // leg index — the step text is the status in plain words.
+    switch (record.status) {
+      case "PENDING_DEPOSIT": return record.depositTxHash ? "deposit sent" : "sending deposit";
+      case "KNOWN_DEPOSIT_TX": return "deposit seen";
+      case "PROCESSING": return "processing";
+      default: return "";
+    }
   }
   const legs = record.legs || [];
   if (!legs.length || record.state === "done") return "";
@@ -9341,11 +9486,20 @@ function syncPendingSwapHistory(kind, record, seed = null) {
   if (!record?.id) return;
   try {
     const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-    const done = record.state === "done";
+    // 1Click records carry the protocol's status rather than
+    // a leg state: SUCCESS is the completed state, REFUNDED
+    // and FAILED / INCOMPLETE_DEPOSIT are terminal outcomes
+    // Activity must name plainly (never a silent "done").
+    const ocState = kind === "oneclick"
+      ? record.status === "REFUNDED" ? "refunded"
+        : (record.status === "FAILED" || record.status === "INCOMPLETE_DEPOSIT") ? "failed"
+        : null
+      : null;
+    const done = kind === "oneclick" ? record.status === "SUCCESS" : record.state === "done";
     const fields = {
       msId: record.id, msKind: kind,
-      msState: done ? "done" : "in-progress",
-      msStep: done ? "" : pendingSwapStepText(kind, record),
+      msState: ocState || (done ? "done" : "in-progress"),
+      msStep: (done || ocState) ? "" : pendingSwapStepText(kind, record),
     };
     const i = h.findIndex(x => x && x.msId === record.id);
     if (i >= 0) { h[i] = { ...h[i], ...fields }; }
@@ -9353,12 +9507,14 @@ function syncPendingSwapHistory(kind, record, seed = null) {
       const legs = record.legs || [];
       h.unshift({
         ...fields,
-        hash: (record.hashes && record.hashes[0]) || record.id,
-        amount: seed?.amount ?? (kind === "milestone" ? milestoneRecordFromAmountHuman(record) : null),
+        hash: (record.hashes && record.hashes[0]) || record.depositTxHash || record.id,
+        amount: seed?.amount ?? (kind === "milestone" ? milestoneRecordFromAmountHuman(record)
+          : kind === "oneclick" && record.amountIn != null && record.fromDecimals != null ? swapRawToAmount(record.amountIn, record.fromDecimals)
+          : null),
         symbol: `${sanitizePersistedSymbol(seed?.fromSymbol || record.fromSymbol || legs[0]?.fromSymbol || "")}→${sanitizePersistedSymbol(seed?.toSymbol || record.toSymbol || legs[legs.length - 1]?.toSymbol || "")}`,
-        to: seed?.to || legs[legs.length - 1]?.toAddress || record.destAddress || "",
+        to: seed?.to || legs[legs.length - 1]?.toAddress || record.destAddress || record.recipient || "",
         ...(seed?.explorer ? { explorer: seed.explorer } : {}),
-        at: Date.now(),
+        at: kind === "oneclick" && record.createdAt ? record.createdAt : Date.now(),
       });
     }
     localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -9399,6 +9555,19 @@ async function drivePendingSwaps() {
   try {
     try { await advanceMilestoneRecords(localStorage); } catch { /* advancing never blocks driving */ }
     try { await advanceGasFallbackRecords(localStorage); } catch { /* as above */ }
+    // 1Click swaps (2026-11-14): poll-only — after the deposit
+    // there is nothing to sign, so a pass just refreshes the
+    // protocol statuses and mirrors them into Activity in
+    // place. A status change counts as a drive for the repaint
+    // below, so a swap that settles or refunds while the app
+    // sits open updates on screen without a rescan.
+    try {
+      const ocChanged = await pollOneClickSwapStatuses(localStorage);
+      if (ocChanged > 0) {
+        droveAny = true;
+        for (const r of loadOneClickSwapRecords(localStorage)) syncPendingSwapHistory("oneclick", r);
+      }
+    } catch { /* polling never blocks driving */ }
     if (!wallet) return;
     const now = Date.now();
     const msAll = loadMilestoneRecords(localStorage).filter(r => r.state === "leg-due" || r.state === "awaiting-credit");
@@ -9524,13 +9693,18 @@ async function paintHomeMilestoneSwaps() {
   const gfRecords = loadGasFallbackRecords(localStorage).filter(r => r.state === "leg2-due" || r.state === "awaiting-credit");
   const satRecords = loadSatoraSwapRecords(localStorage).filter(r => !satoraSwapPhase(r.status).terminal);
   const mayRecords = loadMayanSwapRecords(localStorage).filter(r => !mayanSwapPhase(r.status).terminal);
-  if (!records.length && !gfRecords.length && !satRecords.length && !mayRecords.length) { host.innerHTML = ""; card.classList.add("hidden"); kickPendingSwapDriver(); return; }
+  // 1Click swaps in flight show their line and open the swap
+  // sheet on tap, like Satora's and Mayan's: after the deposit
+  // there is nothing to sign — the protocol settles or refunds.
+  const ocRecords = loadOneClickSwapRecords(localStorage).filter(r => !oneClickSwapPhase(r.status).terminal);
+  if (!records.length && !gfRecords.length && !satRecords.length && !mayRecords.length && !ocRecords.length) { host.innerHTML = ""; card.classList.add("hidden"); kickPendingSwapDriver(); return; }
   card.classList.remove("hidden");
   const row = (attr, id) => `<p class="tag" ${attr}="${esc(id || "")}" style="margin:6px 0 2px"></p>`;
   host.innerHTML = records.map(r => row("data-home-ms", r.id)).join("")
     + gfRecords.map(r => row("data-home-gfb", r.id)).join("")
     + satRecords.map(r => row("data-home-sat", r.id)).join("")
-    + mayRecords.map(r => row("data-home-may", r.id)).join("");
+    + mayRecords.map(r => row("data-home-may", r.id)).join("")
+    + ocRecords.map(r => row("data-home-oc", r.id)).join("");
   host.querySelectorAll("[data-home-ms]").forEach((el, i) => {
     const r = records[i];
     el.textContent = milestoneHistoryLine(r);
@@ -9606,6 +9780,12 @@ async function paintHomeMilestoneSwaps() {
   });
   host.querySelectorAll("[data-home-may]").forEach((el, i) => {
     el.textContent = mayanSwapHistoryLine(mayRecords[i]);
+    el.style.cursor = "pointer";
+    el.title = "Open in the swap sheet";
+    el.onclick = () => $("actSwap").click();
+  });
+  host.querySelectorAll("[data-home-oc]").forEach((el, i) => {
+    el.textContent = oneClickSwapHistoryLine(ocRecords[i]);
     el.style.cursor = "pointer";
     el.title = "Open in the swap sheet";
     el.onclick = () => $("actSwap").click();
