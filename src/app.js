@@ -34,14 +34,14 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
-  executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
+  executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
-  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction,
+  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -1911,12 +1911,15 @@ function paintAssets() {
     let cosmosBuf = [];
     const flushCosmos = () => {
       if (!cosmosBuf.length) return;
-      // The shared Cosmos card header follows TS-F2 too: when
-      // EVERY chain's read failed the total is unknown ("—");
-      // chains that did load still sum honestly.
-      const total = COSMOS_CHAINS.every(c => totals[c.key] == null)
-        ? null
-        : COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0);
+      // The shared Cosmos card header follows the D2 rule at
+      // chain granularity (re-walk FIX-A, 2026-11-14): the
+      // rollup is core's familyRollupTotalUsd — ANY chain
+      // whose read failed makes the family total unknown
+      // ("—"), never a bare figure summed over whichever
+      // chains loaded. (The every/loaded-sum split this
+      // replaces painted "$0.00" over couldn't-load chains
+      // in partially degraded windows.)
+      const total = familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]));
       // The seven chain rows inside the shared Cosmos card follow
       // the same within-family order as every other family.
       const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join("");
@@ -7746,12 +7749,16 @@ $("actSwap").onclick = () => {
         b.className = "btn";
         b.textContent = "Complete the swap";
         b.onclick = async () => {
+          if (swapRunsByRecord.has("gasfallback:" + r.id)) return;
           b.disabled = true;
+          holdSwapRun("gasfallback:" + r.id);
           try {
             await completeGasFallbackSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
             msg("wMsg", "Swap complete ✓");
             rescanAfterActivity();
           } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
+          try { const fresh = loadGasFallbackRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("gasfallback", fresh); } catch { /* history never blocks the sheet */ }
+          releaseSwapRun("gasfallback:" + r.id);
           paintGasFallbackSwaps();
         };
         el.appendChild(document.createTextNode(" "));
@@ -7780,7 +7787,9 @@ $("actSwap").onclick = () => {
         b.className = "btn";
         b.textContent = "Complete the swap";
         b.onclick = async () => {
+          if (swapRunsByRecord.has("milestone:" + r.id)) return;
           b.disabled = true;
+          holdSwapRun("milestone:" + r.id);
           try {
             // A record passing through Arkade (cheapest-entry,
             // 2026-11-14) resumes through the Arkade
@@ -7789,10 +7798,12 @@ $("actSwap").onclick = () => {
             // this tap is the user action that loads it.
             const touchesArkade = (r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
             if (touchesArkade) { try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ } }
-            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null });
+            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec) });
             msg("wMsg", "Swap complete ✓");
             rescanAfterActivity();
           } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
+          try { const fresh = loadMilestoneRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("milestone", fresh); } catch { /* history never blocks the sheet */ }
+          releaseSwapRun("milestone:" + r.id);
           paintMilestoneSwaps();
         };
         el.appendChild(document.createTextNode(" "));
@@ -7938,6 +7949,16 @@ $("actSwap").onclick = () => {
     const fromTok = pick.from, toTok = pick.to;
     const amount = $("wAmt").value.trim();
     show("wConfirm", false); pendingSwap = null;
+    // A fresh search replaces the previous search's results
+    // outright (re-walk FIX-B, 2026-11-14): the route list
+    // and its Arkade warning clear HERE, at search start,
+    // so no settle path — success, no-route, or error — can
+    // leave a stale executable card standing above the new
+    // search's own answer (the walked build left a $10
+    // "Swap now" card above the $5 no-route note in the
+    // same sheet). The success path rebuilds the list.
+    $("wList").innerHTML = "";
+    syncArkadeWarn([]);
     if (!fromTok || !toTok || !amount || Number(amount) <= 0) return msg("wMsg", "Pick both tokens and enter an amount to swap.");
     if (fromKey === toKey && fromTok.address.toLowerCase() === toTok.address.toLowerCase())
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
@@ -8030,9 +8051,15 @@ $("actSwap").onclick = () => {
             const verdict = await diagnoseNoRouteSwap(swapArgs, {
               fromDecimals: fromTok.decimals,
               fromPriceUsd: Number(prices[fromTok.symbol]) || fromTok.priceUSD || null,
+              // The search's own error rides in (FIX-B,
+              // 2026-11-14): a rail-confirmed floor it
+              // carries (Chainflip's sub-minimum refusal)
+              // is the refusal's floor — no probe or price
+              // needed to state what the rail itself said.
+              searchError: routeErr,
             });
             if (stale()) return;
-            const floorText = verdict.floor?.found ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol} (≈ $${Number(verdict.floor.usd).toFixed(0)})` : "";
+            const floorText = verdict.floor?.found ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol}${Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : ""}` : "";
             const nativeSymbol = (swapTokensFor(fromKey).find(t => t.native) || {}).symbol || "";
             return msg("wMsg", formatSwapNoRouteMessage({
               fromSymbol: fromTok.symbol, toSymbol: toTok.symbol,
@@ -8279,6 +8306,11 @@ $("actSwap").onclick = () => {
     }
     const btn = $("wDo"); setSendBusy(btn, true);
     try {
+      // Auto-continuation registry (2026-11-14): while a
+      // fresh swap runs from the sheet, the auto-driver
+      // stands down; the finally below releases the hold
+      // on every exit path.
+      holdSwapRun(null);
       let hashes, srcExplorer, srcLink;
       // Keep a device record of every approval Fluid makes, so the user
       // can review and revoke them later (More → Token approvals).
@@ -8297,12 +8329,13 @@ $("actSwap").onclick = () => {
         // error says exactly where the money is (the native
         // token, in the user's wallet, movable) and the sheet's
         // "Complete the swap" button finishes it later.
-        const out = await executeGasFallbackRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+        const out = await executeGasFallbackRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, onLegBroadcast: (rec) => syncPendingSwapHistory("gasfallback", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) }) });
         hashes = out.hashes;
         srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
         if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+        if (out.record) syncPendingSwapHistory("gasfallback", out.record, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) });
         try { paintGasFallbackSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else if (route.provider === "milestone") {
         // Milestone composed route (Stage 1, 2026-11-13):
@@ -8321,12 +8354,13 @@ $("actSwap").onclick = () => {
         if ((route.milestone?.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade")) {
           try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ }
         }
-        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null });
+        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec, { explorer: swapSrcExplorerFor(fromKey) }) });
         hashes = out.hashes;
         srcExplorer = fromKey === "lightning" ? "" : fromKey === "bitcoin" ? "https://mempool.space" : fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
         if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+        if (out.record) syncPendingSwapHistory("milestone", out.record, { explorer: swapSrcExplorerFor(fromKey) });
         try { paintMilestoneSwaps(); } catch { /* the list repaints on sheet open regardless */ }
         paintHomeMilestoneSwaps();
       } else if (route.provider === "satora") {
@@ -8497,9 +8531,17 @@ $("actSwap").onclick = () => {
       // for every other family, so a completed DOT swap would
       // have recorded the EVM address as its destination.
       const destAddr = route.provider === "satora" ? (route.satora.destInput || wallet.address) : (addrOf(toKey) || (route.chainflip && route.chainflip.destAddress) || (NETWORKS[toKey] ? wallet.address : ""));
-      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      // Composed routes (milestone, gas-fallback) keep ONE
+      // history entry, written at first-leg broadcast by the
+      // executors' onLegBroadcast hook and updated in place
+      // by syncPendingSwapHistory — the shared write below
+      // would duplicate it (auto-continuation addendum,
+      // 2026-11-14). One-leg routes keep this write.
+      if (route.provider !== "milestone" && route.provider !== "gasfallback") {
+        const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+        h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      }
       pendingSwap = null;
       showTxSuccess({ verb: "Swapped", amount, symbol: `${fromTok.symbol}→${toTok.symbol}`,
         logoHtml: `<span class="swaplogos">${tokenLogoHtml(fromTok, fromKey)}${tokenLogoHtml(toTok, toKey)}</span>`,
@@ -8520,6 +8562,8 @@ $("actSwap").onclick = () => {
         msg("wMsg", "Your swap was sent — the network hasn't confirmed it yet, so it isn't marked failed. Your balances are refreshing now; the result will show in your activity. Please don't send it again yet.");
         rescanAfterActivity();
       } else sendFailed(btn, "wMsg", e, "Swap failed: ");
+    } finally {
+      releaseSwapRun(null);
     }
   };
 };
@@ -8567,7 +8611,38 @@ function historyFamilyLabel(x) {
   return "";
 }
 function renderHistory() {
-  const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  let h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  // Record-store consistency (auto-continuation addendum,
+  // 2026-11-14): an unfinished composition whose history
+  // entry was never written (records from before the
+  // first-broadcast write, or an entry evicted from the
+  // capped list) still shows here — synthesised from the
+  // milestone / gas-fallback record stores, render-only,
+  // never persisted, and never duplicated alongside a real
+  // entry for the same record (matched by record id or by
+  // any of the record's hashes). Activity and the swap
+  // sheet can no longer tell different stories.
+  try {
+    const represented = new Set();
+    for (const x of h) { if (x?.msId) represented.add("id:" + x.msId); if (x?.hash) represented.add("hash:" + x.hash); }
+    const synth = [];
+    const synthFor = (kind, r) => {
+      if (!r?.id || represented.has("id:" + r.id)) return;
+      if ((r.hashes || []).some(hx => represented.has("hash:" + hx))) return;
+      synth.push({
+        msId: r.id, msKind: kind, msState: "in-progress",
+        msStep: pendingSwapStepText(kind, r),
+        hash: (r.hashes && r.hashes[0]) || r.id,
+        amount: kind === "milestone" ? milestoneRecordFromAmountHuman(r) : null,
+        symbol: `${sanitizePersistedSymbol(r.fromSymbol || r.legs?.[0]?.fromSymbol || "")}→${sanitizePersistedSymbol(r.toSymbol || r.legs?.[r.legs.length - 1]?.toSymbol || "")}`,
+        to: r.legs?.[r.legs.length - 1]?.toAddress || r.destAddress || "",
+        at: r.at || r.createdAt || Date.now(),
+      });
+    };
+    for (const r of loadMilestoneRecords(localStorage)) if (r.state !== "done") synthFor("milestone", r);
+    for (const r of loadGasFallbackRecords(localStorage)) if (r.state === "awaiting-credit" || r.state === "leg2-due") synthFor("gasfallback", r);
+    if (synth.length) h = [...synth, ...h].sort((a, b) => (Number(b?.at) || 0) - (Number(a?.at) || 0));
+  } catch { /* Activity falls back to the stored list alone */ }
   const host = $("history");
   if (!h.length) {
     host.innerHTML = `<div class="actempty">${icon("activity", "ic ic-xl")}<p class="t-title" style="margin:10px 0 4px">Nothing here yet</p><p class="tag">Sends, swaps and Lightning payments will show up here.</p><button class="btn" id="actFirstSend">Make your first send</button></div>`;
@@ -8991,6 +9066,11 @@ $("unlockBtn").onclick = async () => {
     // first leg becomes the sheet's "Complete the swap" action.
     advanceGasFallbackRecords(localStorage).catch(() => {});
     if (!gfbPollTimer) gfbPollTimer = setInterval(() => { if (wallet) advanceGasFallbackRecords(localStorage).catch(() => {}); }, 60000);
+    // One-move order (2026-11-14): unfinished compositions
+    // resume BY THEMSELVES on unlock — the auto-driver
+    // advances, verifies and signs their remaining legs
+    // with no further tap.
+    kickPendingSwapDriver();
   }
   catch (e) { msg("onboardMsg", e.message); }
 };
@@ -9173,6 +9253,185 @@ const recordEvmApprovalGfb = (rec) => {
   } catch { /* the approvals list is a nicety, never a blocker */ }
 };
 
+/** Explorer base for a swap's source family (the swap
+ *  sheet's own mapping, shared by the history writer). */
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "lightning" || k === "arkade" ? "" : (NETWORKS[k]?.explorer || "");
+
+/** Swap-run registry (auto-continuation, 2026-11-14): a
+ *  pending record is completed by exactly ONE runner at a
+ *  time — the swap sheet's button, the home card's button,
+ *  or the auto-driver — and the auto-driver never starts
+ *  while any swap run (including a fresh sheet execution)
+ *  is in flight on this wallet. User-initiated runs always
+ *  proceed; the registry's job is to keep the DRIVER from
+ *  racing them, and to keep two completions of the SAME
+ *  record from ever overlapping. */
+let swapRunsInFlight = 0;
+const swapRunsByRecord = new Set();
+function holdSwapRun(key) { swapRunsInFlight++; if (key) swapRunsByRecord.add(key); }
+function releaseSwapRun(key) { swapRunsInFlight = Math.max(0, swapRunsInFlight - 1); if (key) swapRunsByRecord.delete(key); }
+
+/** The live step label a pending record's Activity entry
+ *  carries ("step 2 of 3") — derived from the record alone,
+ *  so the sheet, the home card and Activity never disagree
+ *  about where a composition stands. */
+function pendingSwapStepText(kind, record) {
+  if (!record) return "";
+  if (kind === "gasfallback") {
+    if (record.state === "done") return "";
+    return (record.state === "leg2-due" || record.receivedRaw != null) ? "step 2 of 2" : "step 1 of 2";
+  }
+  const legs = record.legs || [];
+  if (!legs.length || record.state === "done") return "";
+  const idx = record.state === "awaiting-credit" && record.pendingLeg != null
+    ? record.pendingLeg + 1
+    : Math.min(record.currentLeg + 1, legs.length);
+  return `step ${idx} of ${legs.length}`;
+}
+
+/** Activity truth (auto-continuation addendum, 2026-11-14):
+ *  a composed swap's history entry is written at FIRST-LEG
+ *  BROADCAST (the executors' onLegBroadcast hook) in an
+ *  in-progress state and updated IN PLACE as legs land and
+ *  when the destination settles — keyed by the record id,
+ *  so it is never duplicated. Before this, the single write
+ *  sat after the executor returned: an unfinished
+ *  composition (a later leg refused, the tab closed) wrote
+ *  nothing, and money that had moved was invisible in
+ *  Activity. The seed supplies what only the sheet knows at
+ *  execution time (the confirmed human amount for a
+ *  gas-fallback record, the source explorer); updates after
+ *  creation touch only the state fields. */
+function syncPendingSwapHistory(kind, record, seed = null) {
+  if (!record?.id) return;
+  try {
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    const done = record.state === "done";
+    const fields = {
+      msId: record.id, msKind: kind,
+      msState: done ? "done" : "in-progress",
+      msStep: done ? "" : pendingSwapStepText(kind, record),
+    };
+    const i = h.findIndex(x => x && x.msId === record.id);
+    if (i >= 0) { h[i] = { ...h[i], ...fields }; }
+    else {
+      const legs = record.legs || [];
+      h.unshift({
+        ...fields,
+        hash: (record.hashes && record.hashes[0]) || record.id,
+        amount: seed?.amount ?? (kind === "milestone" ? milestoneRecordFromAmountHuman(record) : null),
+        symbol: `${sanitizePersistedSymbol(seed?.fromSymbol || record.fromSymbol || legs[0]?.fromSymbol || "")}→${sanitizePersistedSymbol(seed?.toSymbol || record.toSymbol || legs[legs.length - 1]?.toSymbol || "")}`,
+        to: seed?.to || legs[legs.length - 1]?.toAddress || record.destAddress || "",
+        ...(seed?.explorer ? { explorer: seed.explorer } : {}),
+        at: Date.now(),
+      });
+    }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+    markActivityDot();
+  } catch { /* history is a record, never a blocker */ }
+}
+
+/** The last auto-drive / home completion outcome per
+ *  gas-fallback record, rendered by every card repaint —
+ *  the gas-fallback twin of homeMilestoneNotes below. */
+const homeGfbNotes = new Map();
+
+/** THE AUTO-DRIVER (Ethuram's one-move order, 2026-11-14):
+ *  while the app is open and the wallet unlocked, unfinished
+ *  compositions drive THEMSELVES home. Each pass advances
+ *  landed credits, refreshes every pending record's
+ *  Activity entry, then completes every due record through
+ *  the same verified runner the manual button uses
+ *  (completeMilestoneSwap / completeGasFallbackSwap — fresh
+ *  quote from what actually arrived, plan verification,
+ *  sign, broadcast, next leg). A record that cannot proceed
+ *  keeps its plain reason on the home card and is retried
+ *  on the next pass — never a silent stop, never a dead
+ *  "processing". Records whose legs pass through Arkade are
+ *  NOT driven here: their injections live in the swap-sheet
+ *  closure, so resumeMilestoneRecord routes them to the
+ *  sheet (their card row says so). Tab close stays a safe
+ *  pause by design — nothing signs while the wallet is
+ *  locked or closed; reopening + unlocking resumes here. */
+let pendingDriveTimer = null;
+let pendingDriveBusy = false;
+const pendingDriveLastTry = new Map();
+const PENDING_DRIVE_RETRY_MS = 60000;
+async function drivePendingSwaps() {
+  if (!wallet || pendingDriveBusy || swapRunsInFlight > 0) return;
+  pendingDriveBusy = true;
+  let droveAny = false;
+  try {
+    try { await advanceMilestoneRecords(localStorage); } catch { /* advancing never blocks driving */ }
+    try { await advanceGasFallbackRecords(localStorage); } catch { /* as above */ }
+    if (!wallet) return;
+    const now = Date.now();
+    const msAll = loadMilestoneRecords(localStorage).filter(r => r.state === "leg-due" || r.state === "awaiting-credit");
+    const gfAll = loadGasFallbackRecords(localStorage).filter(r => r.state === "leg2-due" || r.state === "awaiting-credit");
+    for (const r of msAll) syncPendingSwapHistory("milestone", r);
+    for (const r of gfAll) syncPendingSwapHistory("gasfallback", r);
+    const due = (kind, r) => now - (pendingDriveLastTry.get(kind + ":" + r.id) || 0) >= PENDING_DRIVE_RETRY_MS && !swapRunsByRecord.has(kind + ":" + r.id);
+    const msDue = msAll.filter(r => milestoneNeedsAction(r) && due("milestone", r)
+      && !(r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade"));
+    const gfDue = gfAll.filter(r => gasFallbackNeedsAction(r) && due("gasfallback", r));
+    if (!msDue.length && !gfDue.length) return;
+    droveAny = true;
+    homeMilestoneBusy = true;
+    try {
+      for (const r of msDue) {
+        if (!wallet) break;
+        pendingDriveLastTry.set("milestone:" + r.id, Date.now());
+        holdSwapRun("milestone:" + r.id);
+        homeMilestoneNotes.set(r.id, "Finishing your swap…");
+        try {
+          const out = await resumeMilestoneRecord(r, () => {});
+          if (out?.viaSheet) homeMilestoneNotes.set(r.id, "Opened in the swap sheet — its Arkade step needs the sheet.");
+          else if (out?.pending) homeMilestoneNotes.set(r.id, "Still finishing — it stays here until it lands.");
+          else { homeMilestoneNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
+        } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the driver */ } homeMilestoneNotes.set(r.id, humanizeTxError(e)); }
+        try { const fresh = loadMilestoneRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("milestone", fresh); } catch { /* as above */ }
+        releaseSwapRun("milestone:" + r.id);
+      }
+      for (const r of gfDue) {
+        if (!wallet) break;
+        pendingDriveLastTry.set("gasfallback:" + r.id, Date.now());
+        holdSwapRun("gasfallback:" + r.id);
+        homeGfbNotes.set(r.id, "Finishing your swap…");
+        try {
+          const out = await completeGasFallbackSwap(wallet, r.id, () => {}, { storage: localStorage, onApprove: recordEvmApprovalGfb });
+          if (out?.holdsNative) homeGfbNotes.set(r.id, "Landed as gas money — nothing more to swap.");
+          else { homeGfbNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
+        } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the driver */ } homeGfbNotes.set(r.id, humanizeTxError(e)); }
+        try { const fresh = loadGasFallbackRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("gasfallback", fresh); } catch { /* as above */ }
+        releaseSwapRun("gasfallback:" + r.id);
+      }
+    } finally { homeMilestoneBusy = false; }
+  } finally {
+    pendingDriveBusy = false;
+    // Repaint only when a drive actually ran — the paint
+    // kicks the driver again, and a pass that drove nothing
+    // must not chain into another paint/kick cycle.
+    if (droveAny && wallet) {
+      paintHomeMilestoneSwaps();
+      // The drive wrote/updated history entries; Activity
+      // re-renders on scan renders only, so without this a
+      // failed drive's in-progress row stays invisible
+      // behind the tab's stale paint until the next scan
+      // (found in this build's acceptance walk).
+      try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }
+    }
+  }
+}
+/** Arm the auto-driver: an immediate pass plus the 60 s
+ *  tick (the other resume pollers' cadence). Called on
+ *  unlock and from the home card's paint, so a wallet that
+ *  opens unlocked (create/import) is covered too. */
+function kickPendingSwapDriver() {
+  if (!wallet) return;
+  if (!pendingDriveTimer) pendingDriveTimer = setInterval(() => { drivePendingSwaps().catch(() => {}); }, 60000);
+  drivePendingSwaps().catch(() => {});
+}
+
 /** THE milestone resume entry point (incident I1, 2026-11-14;
  *  built for the follow-on auto-continue build to drive):
  *  given a pending milestone record (a row of
@@ -9188,7 +9447,7 @@ const recordEvmApprovalGfb = (rec) => {
 async function resumeMilestoneRecord(record, status = () => {}) {
   const touchesArkade = (record.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
   if (touchesArkade) { $("actSwap").click(); return { viaSheet: true }; }
-  return completeMilestoneSwap(wallet, record.id, status, { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, arkadeAddress: arkSession?.address || null });
+  return completeMilestoneSwap(wallet, record.id, status, { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec) });
 }
 
 let homeMilestonePaintSeq = 0;
@@ -9198,12 +9457,21 @@ let homeMilestoneBusy = false;
  *  the repaint that follows the attempt, or a failed
  *  completion reads as silence (found in the I1 walk). */
 const homeMilestoneNotes = new Map();
-/** Home pending-swap surfacing (incident I1, 2026-11-14):
- *  after unlock, a wallet holding an unfinished composed
- *  swap sees it on the HOME screen — the arrived asset named
- *  (milestoneHistoryLine), with the one-tap "Complete the
- *  swap" for a landed step — never buried in the swap sheet.
- *  Called from renderMain, so reopen + unlock surfaces it. */
+/** Home pending-swap surfacing (incident I1, 2026-11-14;
+ *  extended to the whole pending class by the
+ *  auto-continuation build): after unlock, a wallet holding
+ *  ANY unfinished swap sees it on the HOME screen — never
+ *  buried in the swap sheet. Milestone and gas-fallback
+ *  records show their line with the one-tap completion (the
+ *  auto-driver also finishes them by itself while the app
+ *  is open — the button is the manual alternative, not the
+ *  only path); Satora and Mayan swaps in flight show their
+ *  line and open the swap sheet on tap, where their claims
+ *  and refunds live (their next steps are the operator's
+ *  settlement or a deliberate user claim/refund — nothing
+ *  for a driver to sign). Called from renderMain, so reopen
+ *  + unlock surfaces it; every paint also kicks the
+ *  auto-driver. */
 async function paintHomeMilestoneSwaps() {
   const card = $("homeMilestoneCard"); if (!card) return;
   if (!wallet) { card.classList.add("hidden"); return; }
@@ -9214,12 +9482,20 @@ async function paintHomeMilestoneSwaps() {
   if (homeMilestoneBusy) { card.classList.remove("hidden"); return; }
   const seq = ++homeMilestonePaintSeq;
   try { await advanceMilestoneRecords(localStorage); } catch { /* surfacing never fails on the advancer */ }
+  try { await advanceGasFallbackRecords(localStorage); } catch { /* as above */ }
   if (seq !== homeMilestonePaintSeq || !wallet) return;
   const host = $("homeMilestoneList"); if (!host) return;
   const records = loadMilestoneRecords(localStorage).filter(r => r.state === "leg-due" || r.state === "awaiting-credit");
-  if (!records.length) { host.innerHTML = ""; card.classList.add("hidden"); return; }
+  const gfRecords = loadGasFallbackRecords(localStorage).filter(r => r.state === "leg2-due" || r.state === "awaiting-credit");
+  const satRecords = loadSatoraSwapRecords(localStorage).filter(r => !satoraSwapPhase(r.status).terminal);
+  const mayRecords = loadMayanSwapRecords(localStorage).filter(r => !mayanSwapPhase(r.status).terminal);
+  if (!records.length && !gfRecords.length && !satRecords.length && !mayRecords.length) { host.innerHTML = ""; card.classList.add("hidden"); kickPendingSwapDriver(); return; }
   card.classList.remove("hidden");
-  host.innerHTML = records.map(r => `<p class="tag" data-home-ms="${esc(r.id || "")}" style="margin:6px 0 2px"></p>`).join("");
+  const row = (attr, id) => `<p class="tag" ${attr}="${esc(id || "")}" style="margin:6px 0 2px"></p>`;
+  host.innerHTML = records.map(r => row("data-home-ms", r.id)).join("")
+    + gfRecords.map(r => row("data-home-gfb", r.id)).join("")
+    + satRecords.map(r => row("data-home-sat", r.id)).join("")
+    + mayRecords.map(r => row("data-home-may", r.id)).join("");
   host.querySelectorAll("[data-home-ms]").forEach((el, i) => {
     const r = records[i];
     el.textContent = milestoneHistoryLine(r);
@@ -9233,7 +9509,9 @@ async function paintHomeMilestoneSwaps() {
       st.style.marginLeft = "8px";
       if (homeMilestoneNotes.has(r.id)) st.textContent = homeMilestoneNotes.get(r.id);
       b.onclick = async () => {
+        if (swapRunsByRecord.has("milestone:" + r.id)) return;
         b.disabled = true;
+        holdSwapRun("milestone:" + r.id);
         homeMilestoneBusy = true;
         st.textContent = "Finishing your swap…";
         try {
@@ -9242,6 +9520,8 @@ async function paintHomeMilestoneSwaps() {
           else if (out?.pending) { homeMilestoneNotes.set(r.id, "Still finishing — it stays here until it lands."); st.textContent = homeMilestoneNotes.get(r.id); }
           else { homeMilestoneNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
         } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the home screen */ } homeMilestoneNotes.set(r.id, humanizeTxError(e)); st.textContent = homeMilestoneNotes.get(r.id); }
+        try { const fresh = loadMilestoneRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("milestone", fresh); } catch { /* history never blocks the card */ }
+        releaseSwapRun("milestone:" + r.id);
         homeMilestoneBusy = false;
         paintHomeMilestoneSwaps();
       };
@@ -9250,6 +9530,52 @@ async function paintHomeMilestoneSwaps() {
       el.appendChild(st);
     }
   });
+  host.querySelectorAll("[data-home-gfb]").forEach((el, i) => {
+    const r = gfRecords[i];
+    el.textContent = gasFallbackHistoryLine(r);
+    if (gasFallbackNeedsAction(r)) {
+      const b = document.createElement("button");
+      b.className = "btn ghost";
+      b.textContent = "Complete the swap";
+      b.style.cssText = "width:auto;padding:8px 14px;margin:6px 0 4px";
+      const st = document.createElement("span");
+      st.className = "tag";
+      st.style.marginLeft = "8px";
+      if (homeGfbNotes.has(r.id)) st.textContent = homeGfbNotes.get(r.id);
+      b.onclick = async () => {
+        if (swapRunsByRecord.has("gasfallback:" + r.id)) return;
+        b.disabled = true;
+        holdSwapRun("gasfallback:" + r.id);
+        homeMilestoneBusy = true;
+        st.textContent = "Finishing your swap…";
+        try {
+          const out = await completeGasFallbackSwap(wallet, r.id, (t) => { st.textContent = t; }, { storage: localStorage, onApprove: recordEvmApprovalGfb });
+          if (out?.holdsNative) { homeGfbNotes.set(r.id, "Landed as gas money — nothing more to swap."); st.textContent = homeGfbNotes.get(r.id); }
+          else { homeGfbNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
+        } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the home screen */ } homeGfbNotes.set(r.id, humanizeTxError(e)); st.textContent = homeGfbNotes.get(r.id); }
+        try { const fresh = loadGasFallbackRecords(localStorage).find(x => x.id === r.id); if (fresh) syncPendingSwapHistory("gasfallback", fresh); } catch { /* as above */ }
+        releaseSwapRun("gasfallback:" + r.id);
+        homeMilestoneBusy = false;
+        paintHomeMilestoneSwaps();
+      };
+      el.appendChild(document.createElement("br"));
+      el.appendChild(b);
+      el.appendChild(st);
+    }
+  });
+  host.querySelectorAll("[data-home-sat]").forEach((el, i) => {
+    el.textContent = satoraSwapHistoryLine(satRecords[i]);
+    el.style.cursor = "pointer";
+    el.title = "Open in the swap sheet";
+    el.onclick = () => $("actSwap").click();
+  });
+  host.querySelectorAll("[data-home-may]").forEach((el, i) => {
+    el.textContent = mayanSwapHistoryLine(mayRecords[i]);
+    el.style.cursor = "pointer";
+    el.title = "Open in the swap sheet";
+    el.onclick = () => $("actSwap").click();
+  });
+  kickPendingSwapDriver();
 }
 
 function refreshHomeBackupCard() {

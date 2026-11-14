@@ -24,7 +24,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, familyRollupTotalUsd } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -9946,7 +9946,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("TS-F2: failed families report a null (—) header total, not $0.00",
     appSrcBatch.includes("m.tron = (tronLoadFailed || !famLoaded.has(\"tron\")) ? null :") && appSrcBatch.includes("m.xrpl = (xrpLoadFailed || !famLoaded.has(\"xrpl\")) ? null :")
     && appSrcBatch.includes("m.bitcoincash = (bchLoadFailed || !famLoaded.has(\"bitcoincash\")) ? null :") && appSrcBatch.includes("m.polkadot = (dotLoadFailed || !famLoaded.has(\"polkadot\")) ? null :")
-    && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("COSMOS_CHAINS.every(c => totals[c.key] == null)"));
+    && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]))"));
 
   // P1-16: transaction-id shapes route to a transaction lookup.
   ok("P1-16: a 0x transaction hash is detected as an EVM txid (not a Sui address)",
@@ -16233,6 +16233,263 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && !coreSrcP0.includes("tronHexToAddress(")
       && coreSrcP0.includes("tronAddressFromHex(spenderHex)"));
   }
+}
+
+// ---------- 114. auto-continuation: one-move composed swaps (2026-11-14) ----------
+{
+  const appSrc114 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const AC_PHRASE = "rookie vapor utility piano used pulp pistol devote area annual there garage";
+  const AC_EVM = ethers.Wallet.fromPhrase(AC_PHRASE).address;
+  const AC_TRON = tronAddressFromPhrase(AC_PHRASE);
+  const AC_BASE_USDC = NETWORKS.base.tokens.find(t => t.symbol === "USDC").address;
+  const AC_BSC_USDC = NETWORKS.bsc.tokens.find(t => t.symbol === "USDC").address;
+  const AC_TRON_USDT = TRON_TOKENS.find(t => t.symbol === "USDT").address;
+  const acStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  // The captured Relay Base→Tron quote (the two-crossing
+  // section's fixture, reused verbatim): 5,000,000 Base USDC
+  // in, 3,876,371 Tron USDT out, to the test wallet's Tron
+  // address.
+  const AC_RELAY_TRON_QUOTE = {"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","steps":[{"id":"approve","action":"Confirm transaction in your wallet","description":"Sign an approval for USDC","kind":"transaction","items":[{"status":"incomplete","data":{"from":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","to":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","data":"0x095ea7b30000000000000000000000004cd00e387622c35bddb9b4c962c136462338bc3100000000000000000000000000000000000000000000000000000000004c4b40","value":"0","chainId":8453,"gas":"73112","maxFeePerGas":"6855562","maxPriorityFeePerGas":"1355562"}}],"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0"},{"id":"deposit","action":"Confirm transaction in your wallet","description":"Depositing funds to the relayer to execute the swap for USDT","kind":"transaction","items":[{"status":"incomplete","data":{"from":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","to":"0x4cd00e387622c35bddb9b4c962c136462338bc31","data":"0xe8017952000000000000000000000000033cf7c2785500aa526194eeb1323cb2f3946ebb000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291300000000000000000000000000000000000000000000000000000000004c4b40cf1438f3812bc06b1196f2514411645d5ac2a797b559ad00d7c70dcd7736400c","value":"0","chainId":8453,"gas":"76161","maxFeePerGas":"6855562","maxPriorityFeePerGas":"1355562"},"check":{"endpoint":"/intents/status/v3?requestId=0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","method":"GET"}}],"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","depositAddress":""}],"fees":{"gas":{"currency":{"chainId":8453,"address":"0x0000000000000000000000000000000000000000","symbol":"ETH","name":"Ether","decimals":18,"metadata":{"logoURI":"https://assets.relay.link/icons/1/light.png","verified":true}},"amount":"523904584918","amountFormatted":"0.000000523904584918","amountUsd":"0.000994","minimumAmount":"523904584918"},"relayer":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"1126202","amountFormatted":"1.126202","amountUsd":"1.125933","minimumAmount":"1126202"},"relayerGas":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"1100202","amountFormatted":"1.100202","amountUsd":"1.099939","minimumAmount":"1100202"},"relayerService":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"26000","amountFormatted":"0.026","amountUsd":"0.025994","minimumAmount":"26000"},"app":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"0","amountFormatted":"0.0","amountUsd":"0","minimumAmount":"0"},"subsidized":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"0","amountFormatted":"0.0","amountUsd":"0","minimumAmount":"0"}},"details":{"operation":"swap","sender":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currencyIn":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"currencyOut":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"refundCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"totalImpact":{"usd":"-1.126555","percent":"-22.54"},"swapImpact":{"usd":"-0.000622","percent":"-0.01"},"expandedPriceImpact":{"swap":{"usd":"-0.006118"},"execution":{"usd":"-1.119938"},"relay":{"usd":"-0.000499"},"app":{"usd":"0"},"sponsored":{"usd":"0"}},"rate":"0.7752741999999999","slippageTolerance":{"total":"200","origin":{"usd":"0.000000","value":"0","percent":"0.00"},"destination":{"usd":"0.077058","value":"77527","percent":"1.99"}},"timeEstimate":3,"userBalance":"0","isFixedRate":false,"route":{"origin":{"inputCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"outputCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"router":"relay"},"destination":{"inputCurrency":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"outputCurrency":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"router":"relay"}}},"protocol":{"v2":{"orderId":"0xcf1438f3812bc06b1196f2514411645d5ac2a797b559ad00d7c70dcd7736400c","hubType":"onchain","orderData":{"version":"v1","solverChainId":"base","solver":"0xf70da97812cb96acdf810712aa562db8dfa3dbef","salt":"0x63e92ad7999f181422a43838fa06da69609c99b62984fcdf35dcb96ef5296028","inputs":[{"payment":{"chainId":"base","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"5000000","weight":"1"},"refunds":[{"chainId":"base","recipient":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","minimumAmount":"0","deadline":1795237130,"extraData":"0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"},{"chainId":"tron","recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currency":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","minimumAmount":"0","deadline":1795237130,"extraData":"0x"}]}],"output":{"chainId":"tron","payments":[{"recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currency":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","minimumAmount":"3798844","expectedAmount":"3876371"}],"calls":[],"deadline":1795237130,"extraData":"0x"},"fees":[]},"paymentDetails":{"chainId":"base","depository":"0x4cd00e387622c35bddb9b4c962c136462338bc31","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"5000000"}}}};
+
+  // --- the verification rules, unit level ---
+  const vLeg = { fromChainKey: "base", toChainKey: "tron", fromTokenAddress: AC_BASE_USDC, toTokenAddress: AC_TRON_USDT, fromAmount: "5000000", fromAddress: AC_EVM, toAddress: AC_TRON, fromSymbol: "USDC", toSymbol: "USDT", expectedToAmount: "4000000" };
+  const vRoute = (over = {}) => ({ provider: "relay", fromChainKey: "base", toChainKey: "tron", fromChainId: 8453, toChainId: 728126428, fromAmount: "5000000", fromToken: { address: AC_BASE_USDC, symbol: "USDC", decimals: 6 }, toToken: { address: AC_TRON_USDT, symbol: "USDT", decimals: 6 }, toAmount: "3876371", toAmountMin: "3798844", toAmountUSD: 3.87, fromAmountUSD: 5, gasCostUSD: 0.001, routeFeeUsd: 0.001, executionDuration: 20, steps: [], relay: { originChainId: 8453, steps: [{ kind: "transaction", items: [{ data: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0xe8017952" } }] }] }, ...over });
+  ok("ac: verification passes a route that matches the plan inside the band",
+    milestoneLegVerification(vLeg, vRoute()).ok === true);
+  ok("ac: the band is exact — a quote at exactly 90% of the plan passes, one at 89% halts as a band failure",
+    milestoneLegVerification({ ...vLeg, expectedToAmount: "4307078" }, vRoute()).ok === true
+    && milestoneLegVerification({ ...vLeg, expectedToAmount: "4354349" }, vRoute()).kind === "band");
+  ok("ac: identity halts — a route to a different chain or a different destination asset is not the plan",
+    milestoneLegVerification(vLeg, vRoute({ toChainKey: "solana" })).kind === "identity"
+    && milestoneLegVerification(vLeg, vRoute({ toToken: { address: "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj", symbol: "USDC", decimals: 6 } })).kind === "identity");
+  ok("ac: a route declaring a different destination than the user chose halts (provider-declared destinations are checked against the plan)",
+    milestoneLegVerification(vLeg, vRoute({ satora: { destInput: "0x000000000000000000000000000000000000dead" } })).kind === "destination"
+    && milestoneLegVerification(vLeg, vRoute({ chainflip: { destAddress: "0x000000000000000000000000000000000000dead" } })).kind === "destination");
+  ok("ac: a plan's native leg matches the route's native sentinel — and a token route against a native plan halts",
+    milestoneLegVerification({ ...vLeg, fromTokenAddress: null }, vRoute({ fromToken: { address: NATIVE_TOKEN_ADDRESS, symbol: "ETH", decimals: 18 } })).ok === true
+    && milestoneLegVerification({ ...vLeg, fromTokenAddress: null }, vRoute()).kind === "identity");
+  ok("ac: fields a route does not carry cannot convict it — a keyless route still verifies on chain ids, tokens and the band",
+    milestoneLegVerification(vLeg, vRoute({ fromChainKey: undefined, toChainKey: undefined })).ok === true);
+
+  // --- the expectation rescales with the arrived amount ---
+  {
+    const storage = acStore();
+    saveMilestoneRecord(storage, { id: "ac-rescale-1", label: "USDC → USDC on Base → USDT on Tron", state: "awaiting-credit", currentLeg: 0, pendingLeg: 0, pendingPreRaw: "0", pendingExpectedRaw: "5000000", receivedRaw: null, fromSymbol: "USDC", toSymbol: "USDT", fromDecimals: 6, hashes: ["0x" + "ab".repeat(32)], legs: [
+      { fromChainKey: "bsc", toChainKey: "base", fromTokenAddress: AC_BSC_USDC, toTokenAddress: AC_BASE_USDC, fromAmount: "5100000", fromAddress: AC_EVM, toAddress: AC_EVM, fromSymbol: "USDC", toSymbol: "USDC", expectedToAmount: "5000000", provider: "relay" },
+      { fromChainKey: "base", toChainKey: "tron", fromTokenAddress: AC_BASE_USDC, toTokenAddress: AC_TRON_USDT, fromAmount: "5000000", fromAddress: AC_EVM, toAddress: AC_TRON, fromSymbol: "USDC", toSymbol: "USDT", expectedToAmount: "3876371", provider: "relay" },
+    ], at: 1 });
+    const realFetchR = globalThis.fetch;
+    const prevGetUrlR = FetchRequest.createGetUrlFunc();
+    try {
+      globalThis.fetch = async () => { throw new Error("no fetch in the advancer pin"); };
+      FetchRequest.registerGetUrl(async (req) => {
+        const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+        const answer = (r) => {
+          const p = Array.isArray(r.params) ? r.params : [];
+          if (r.method === "eth_chainId") return "0x2105";
+          if (r.method === "net_version") return "8453";
+          if (r.method === "eth_call") {
+            const data = String((p[0] || {}).data || "");
+            if (data.startsWith("0x70a08231")) return "0x" + (4500000n).toString(16).padStart(64, "0");
+            return "0x" + "0".repeat(64);
+          }
+          if (r.method === "eth_blockNumber") return "0x100000";
+          return "0x" + "0".repeat(64);
+        };
+        const payload = Array.isArray(parsed) ? parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: answer(r) })) : { jsonrpc: "2.0", id: parsed.id, result: answer(parsed) };
+        return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+      });
+      await advanceMilestoneRecords(storage);
+    } finally { globalThis.fetch = realFetchR; FetchRequest.registerGetUrl(prevGetUrlR); }
+    const recR = loadMilestoneRecords(storage).find(r => r.id === "ac-rescale-1");
+    ok("ac: a landed credit restates the next leg's input AND rescales its planned expectation by the same ratio — the band judges the plan's rate, not a stale absolute",
+      !!recR && recR.state === "leg-due" && recR.legs[1].fromAmount === "4500000" && recR.legs[1].expectedToAmount === "3488733");
+  }
+
+  // --- the driver path itself: completeMilestoneSwap is the
+  // exact function the auto-driver and both Complete buttons
+  // call. Seeded leg-due record (leg 1 landed, leg 2 due) —
+  // the sensational shape — driven against the captured
+  // Relay quote behind the same fetch/RPC seams the
+  // two-crossing e2e uses. ---
+  const acDrive = async (expectedToAmount) => {
+    const storage = acStore();
+    saveMilestoneRecord(storage, { id: "ac-drive-1", label: "USDC → USDC on Base → USDT on Tron", state: "leg-due", currentLeg: 1, pendingLeg: null, receivedRaw: "5000000", fromSymbol: "USDC", toSymbol: "USDT", fromDecimals: 6, hashes: ["0x" + "ab".repeat(32)], legs: [
+      { fromChainKey: "bsc", toChainKey: "base", fromTokenAddress: AC_BSC_USDC, toTokenAddress: AC_BASE_USDC, fromAmount: "5100000", fromAddress: AC_EVM, toAddress: AC_EVM, fromSymbol: "USDC", toSymbol: "USDC", expectedToAmount: "5000000", provider: "relay" },
+      { fromChainKey: "base", toChainKey: "tron", fromTokenAddress: AC_BASE_USDC, toTokenAddress: AC_TRON_USDT, fromAmount: "5000000", fromAddress: AC_EVM, toAddress: AC_TRON, fromSymbol: "USDC", toSymbol: "USDT", expectedToAmount, provider: "relay" },
+    ], at: 1 });
+    const realFetch = globalThis.fetch;
+    const prevGetUrl = FetchRequest.createGetUrlFunc();
+    let sendCount = 0;
+    const broadcasts = [];
+    let outcome = null, thrown = null;
+    try {
+      globalThis.fetch = async (url, opts) => {
+        const u = String(url);
+        if (u.includes("api.relay.link")) {
+          const body = JSON.parse(opts.body);
+          if (body.destinationChainId === 728126428 && body.destinationCurrency === AC_TRON_USDT) return { ok: true, status: 200, json: async () => structuredClone(AC_RELAY_TRON_QUOTE) };
+          return { ok: false, status: 400, json: async () => ({ message: "no routes found" }) };
+        }
+        if (u.includes("api.trongrid.io")) {
+          if (u.includes("/v1/accounts/")) return { ok: true, status: 200, json: async () => ({ data: [{ balance: 100000000 }] }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        }
+        if (u.includes("publicnode.com")) {
+          const b = JSON.parse(opts.body);
+          if (b.method === "eth_getBalance") return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: b.id ?? 1, result: "0xde0b6b3a7640000" }) };
+          throw new Error("unexpected rpc fetch " + b.method);
+        }
+        throw new Error("unexpected url " + u);
+      };
+      FetchRequest.registerGetUrl(async (req) => {
+        const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+        const answer = (r) => {
+          const p = Array.isArray(r.params) ? r.params : [];
+          switch (r.method) {
+            case "eth_chainId": return "0x2105";
+            case "net_version": return "8453";
+            case "eth_call": {
+              const call = p[0] || {};
+              const data = String(call.data || "");
+              if (data.startsWith("0x70a08231")) return "0x" + (5000000n).toString(16).padStart(64, "0");
+              if (data.startsWith("0xdd62ed3e")) return "0x" + "f".repeat(64);
+              return "0x" + "0".repeat(64);
+            }
+            case "eth_sendRawTransaction": sendCount++; return ethers.keccak256(String(p[0]));
+            case "eth_getTransactionReceipt": return { transactionHash: String(p[0]), transactionIndex: "0x0", blockNumber: "0x100", blockHash: "0x" + "cd".repeat(32), status: "0x1", gasUsed: "0x5208", cumulativeGasUsed: "0x5208", effectiveGasPrice: "0x1", logs: [], logsBloom: "0x" + "00".repeat(256), contractAddress: null, from: AC_EVM, to: AC_BASE_USDC, type: "0x2" };
+            case "eth_getTransactionCount": return "0x0";
+            case "eth_gasPrice": return "0x3b9aca00";
+            case "eth_estimateGas": return "0x30000";
+            case "eth_blockNumber": return "0x100000";
+            case "eth_getCode": return "0x";
+            case "eth_getBlockByNumber": case "eth_getBlockByHash": return { number: "0x100000", hash: "0x" + "cd".repeat(32), parentHash: "0x" + "cd".repeat(32), timestamp: "0x65000000", transactions: [], difficulty: "0x0", gasLimit: "0x1c9c380", gasUsed: "0x0", miner: "0x0000000000000000000000000000000000000000", extraData: "0x", nonce: "0x0000000000000000", baseFeePerGas: "0x1", sha3Uncles: "0x" + "cd".repeat(32), receiptsRoot: "0x" + "cd".repeat(32), stateRoot: "0x" + "cd".repeat(32), transactionsRoot: "0x" + "cd".repeat(32), logsBloom: "0x" + "00".repeat(256), withdrawals: [], mixHash: "0x" + "cd".repeat(32), uncles: [] };
+            default: return "0x" + "0".repeat(64);
+          }
+        };
+        const payload = Array.isArray(parsed) ? parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: answer(r) })) : { jsonrpc: "2.0", id: parsed.id, result: answer(parsed) };
+        return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+      });
+      try {
+        outcome = await completeMilestoneSwap(ethers.Wallet.fromPhrase(AC_PHRASE), "ac-drive-1", () => {}, { storage, onLegBroadcast: (rec) => broadcasts.push(rec) });
+      } catch (e) { thrown = e; }
+    } finally { globalThis.fetch = realFetch; FetchRequest.registerGetUrl(prevGetUrl); }
+    return { storage, sendCount, broadcasts, outcome, thrown };
+  };
+  {
+    // The plan expected 5,000,000 out; the fresh quote is
+    // 3,876,371 (77.5%) — below the band. The driver must
+    // halt UNSIGNED, record parked leg-due, plain reason.
+    const d = await acDrive("5000000");
+    const rec = loadMilestoneRecords(d.storage).find(r => r.id === "ac-drive-1");
+    ok("ac e2e: a fresh quote below the 90% band halts the completion UNSIGNED — nothing broadcast, record parked leg-due with the figures named",
+      !!d.thrown && d.thrown.milestoneLegDue === true && d.thrown.milestoneBlock === "band"
+      && d.sendCount === 0 && !!rec && rec.state === "leg-due"
+      && /under 90% of the/.test(d.thrown.message) && d.thrown.message.includes("3.876371"));
+  }
+  {
+    // The plan expected exactly what the fresh quote returns
+    // — the completion drives to done, and the Activity hook
+    // fired at broadcast and again at done.
+    const d = await acDrive("3876371");
+    const rec = loadMilestoneRecords(d.storage).find(r => r.id === "ac-drive-1");
+    ok("ac e2e: an in-band completion drives itself to done through the real runner — and onLegBroadcast fired at the leg's broadcast and at done (the Activity entry's write/update points)",
+      !d.thrown && d.outcome?.done === true && d.sendCount >= 1
+      && !!rec && rec.state === "done"
+      && d.broadcasts.length >= 2 && d.broadcasts[d.broadcasts.length - 1].state === "done");
+  }
+
+  // --- Activity rendering of the in-progress state ---
+  ok("ac: an in-progress history entry renders its step; a settled or plain entry renders exactly as before; a hostile step label is escaped",
+    formatHistoryEntry({ amount: "5", symbol: "USDC→USDT", to: AC_TRON, hash: "0x" + "a".repeat(64), explorer: "https://tronscan.org", msState: "in-progress", msStep: "step 2 of 3" }).includes("in progress — step 2 of 3")
+    && !formatHistoryEntry({ amount: "5", symbol: "USDC→USDT", to: AC_TRON, hash: "0x" + "a".repeat(64), explorer: "https://tronscan.org", msState: "done", msStep: "" }).includes("in progress")
+    && !formatHistoryEntry({ amount: "5", symbol: "USDC→USDT", to: AC_TRON, msState: "in-progress", msStep: "<img src=x onerror=alert(1)>" }).includes("<img"));
+
+  // --- one-leg preference in ranking ---
+  {
+    const legShell = { provider: "relay", fromChainKey: "base", toChainKey: "tron", fromAmount: "5000000", fromToken: { address: AC_BASE_USDC, symbol: "USDC", decimals: 6 }, toToken: { address: AC_TRON_USDT, symbol: "USDT", decimals: 6 }, toAmount: "4900000", relay: { originChainId: 8453, steps: [{ kind: "transaction", items: [{ data: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0xe8017952" } }] }] } };
+    const directR = { ...legShell, id: "ac-direct", type: "direct", toAmountUSD: 4.9, gasCostUSD: 0.01, routeFeeUsd: 0, executionDuration: 30 };
+    const compR = { id: "ac-comp", provider: "milestone", type: "composite", fromChainKey: "base", toChainKey: "tron", fromAmount: "5000000", toAmount: "4990000", toAmountUSD: 4.99, gasCostUSD: 0.01, routeFeeUsd: 0, executionDuration: 60, milestone: { legs: [{}, {}] }, milestoneLegRoutes: [legShell] };
+    const ranked = rankSwapRoutes([compR, directR], null);
+    ok("ac: with no gas plan in force, an executable one-leg route ranks above a composition even when the composition nets more — compositions are the fallback, not the default",
+      ranked[0].id === "ac-direct" && ranked[0].executable === true && ranked[1].executable === true);
+  }
+
+  // --- copy: the one-move lines ---
+  ok("ac: the pending lines say Fluid finishes the swap itself while the app is open — the manual completion is the alternative, never the only path",
+    milestoneHistoryLine({ label: "L", state: "awaiting-credit", legs: [] }).includes("Fluid finishes the swap by itself while the app is open")
+    && gasFallbackHistoryLine({ state: "awaiting-credit", destChainKey: "sui", nativeSymbol: "SUI", toSymbol: "USDC", destAddress: "0xabc", gasReserveRaw: "60000000", fromDecimals: 9 }).includes("Fluid finishes the swap into USDC by itself while the app is open"));
+  ok("ac: a record's confirmed input amount reads back in human units (the Activity row for a record whose entry was never written)",
+    milestoneRecordFromAmountHuman({ fromDecimals: 6, legs: [{ fromChainKey: "bsc", fromTokenAddress: AC_BSC_USDC, fromAmount: "5100000" }] }) === "5.1");
+
+  // --- app wiring pins (the app seam) ---
+  ok("ac app: the auto-driver exists, is kicked on unlock and from the home card's paint, and drives non-Arkade milestone + gas-fallback records through the same completion functions the buttons call",
+    appSrc114.includes("async function drivePendingSwaps()")
+    && appSrc114.includes("function kickPendingSwapDriver()")
+    && (appSrc114.match(/kickPendingSwapDriver\(\);/g) || []).length >= 3
+    && appSrc114.includes("resumeMilestoneRecord(r, () => {})")
+    && appSrc114.includes("completeGasFallbackSwap(wallet, r.id, () => {}, { storage: localStorage, onApprove: recordEvmApprovalGfb })"));
+  ok("ac app: history is written at first-leg broadcast — both composed executors receive onLegBroadcast in the sheet, the resume entry point carries it, and the shared post-execution write skips composed providers (one entry, never duplicated)",
+    appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec, { explorer: swapSrcExplorerFor(fromKey) })")
+    && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"gasfallback\", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) })")
+    && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec)")
+    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\")"));
+  ok("ac app: Activity consults the record stores — an unrepresented unfinished record is synthesised into the rendered list",
+    appSrc114.includes("for (const r of loadMilestoneRecords(localStorage)) if (r.state !== \"done\") synthFor(\"milestone\", r);")
+    && appSrc114.includes("for (const r of loadGasFallbackRecords(localStorage)) if (r.state === \"awaiting-credit\" || r.state === \"leg2-due\") synthFor(\"gasfallback\", r);"));
+  ok("ac app: the home card surfaces all four pending families — milestone, gas-fallback (with its own completion), Satora and Mayan in-flight rows",
+    appSrc114.includes("data-home-gfb") && appSrc114.includes("data-home-sat") && appSrc114.includes("data-home-may")
+    && appSrc114.includes("satoraSwapHistoryLine(satRecords[i])") && appSrc114.includes("mayanSwapHistoryLine(mayRecords[i])"));
+  ok("ac app: a completed drive re-renders Activity itself — the entries it wrote are visible without waiting for the next scan render",
+    appSrc114.includes("try { renderHistory(); } catch { /* Activity repaints on the next scan regardless */ }"));
+}
+
+// ---------- 115. re-walk fixes: Cosmos rollup honesty (FIX-A) + DOT floor refusal & stale card (FIX-B) (2026-11-14) ----------
+{
+  const appSrc115 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+
+  // --- FIX-A: the rollup rule ---
+  ok("fixa: a fully-loaded rollup sums its sub-units",
+    familyRollupTotalUsd([0, 0, 0, 0, 0, 0, 0]) === 0
+    && familyRollupTotalUsd([1.5, 0, 2.25, 0, 0, 0, 0]) === 3.75);
+  ok("fixa: a PARTIALLY loaded rollup is unknown — one couldn't-load sub-unit nulls the family total, never a bare figure over the loaded rest",
+    familyRollupTotalUsd([0, null, 0, 0, 0, 0, 0]) === null
+    && familyRollupTotalUsd([12.5, 0, null, 0, 3, 0, 0]) === null);
+  ok("fixa: a fully-unloaded rollup is unknown, and so is an empty one",
+    familyRollupTotalUsd([null, null, null]) === null
+    && familyRollupTotalUsd([]) === null && familyRollupTotalUsd(null) === null);
+  ok("fixa app: the Cosmos card header total is the rollup over its per-chain totals — the loaded-sum split is gone",
+    appSrc115.includes("const total = familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]));")
+    && !appSrc115.includes("COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0)"));
+
+  // --- FIX-B: the rail-confirmed floor carries into the refusal ---
+  const cfErr = new Error("No route at that size: Chainflip's own minimum for USDT → DOT is 10 USDT");
+  cfErr.chainflipTerminal = true;
+  cfErr.chainflipBelowFloor = { asset: "USDT", minRaw: "10000000000000000000" };
+  let ladderCalls = 0;
+  const vCf = await diagnoseNoRouteSwap(
+    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: "0xC66626790039681d22B96302415896a0574C0F4e", toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" },
+    { fromDecimals: 18, fromPriceUsd: null, searchError: cfErr, search: async () => { ladderCalls++; return []; } });
+  ok("fixb: a search that died on Chainflip's own sub-minimum refusal diagnoses as below-minimum with the RAIL's floor — no price, no probe ladder needed",
+    vCf.kind === "below-minimum" && vCf.floor?.found === true && vCf.floor?.amountHuman === 10 && vCf.floor?.amountRaw === "10000000000000000000" && ladderCalls === 0);
+  ok("fixb: the refusal sentence names the pair's real minimum in the FROM token (and values it when a price exists)",
+    formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: vCf, floorText: "10 USDT" }).includes("below the minimum for this pair. The smallest swap that works right now is about 10 USDT.")
+    && formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: { ...vCf, floor: { ...vCf.floor, usd: 10 } }, floorText: "10 USDT (≈ $10)" }).includes("about 10 USDT (≈ $10)"));
+  ok("fixb: without the rail's floor on the error, the diagnosis is exactly as before (the ladder and its verdicts are untouched)",
+    (await diagnoseNoRouteSwap(
+      { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: "0xC66626790039681d22B96302415896a0574C0F4e", toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" },
+      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] })).kind === "no-route-yet");
+  ok("fixb app: the sheet passes the search's own error into the diagnosis and renders the floor with or without a USD value",
+    appSrc115.includes("searchError: routeErr,")
+    && appSrc115.includes("Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : \"\""));
+
+  // --- FIX-B: a fresh search replaces, never coexists with, a stale card ---
+  const searchStart115 = appSrc115.indexOf("const searchRoutes = async () => {");
+  const clearAt115 = appSrc115.indexOf('$("wList").innerHTML = "";', searchStart115);
+  const searchCallAt115 = appSrc115.indexOf("routes = await getSwapRoutes(swapArgs)", searchStart115);
+  ok("fixb app: every new search clears the previous route list (and its Arkade warning) BEFORE the search runs — no settle path can leave a stale executable card above the new answer",
+    searchStart115 > 0 && clearAt115 > searchStart115 && searchCallAt115 > clearAt115
+    && appSrc115.includes("syncArkadeWarn([]);"));
 }
 
 console.log(`\n${passed} checks passed`);
