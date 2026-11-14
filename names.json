@@ -78,5 +78,13 @@
     "sol": "D1XUd8fJkz8Tdm6gG2r4Dkv7W3SbGbyQStC8MkcQzL6B",
     "tron": "TVdkEZk3B62v32oKnajRYEXy3ek5upMy16",
     "sui": "0x45b4aacd9f5bf4a7072660cebd9eec929e6fa968d3a824f06a0c1990c849232e"
+  },
+  "verify687357": {
+    "evm": "0xB149c30FC88D6AC3e5d6E7432B97dB8710582f01",
+    "btc": "bc1qhgn90hwv497k326gjdm454pvpwa2cdxsfzucpr",
+    "algo": "RKBBSF4XKFZCY74IGJR64G5EYHYFEQFXJ35SFWFF742G6JR37K2RCLUNV4",
+    "sol": "GLjtRxh9R2SnQMcZexYYt57EPiK2ZqVNqFEYJxPPGWT9",
+    "tron": "TS8cy5p6xzox2rrarzJQddviSFymNVFj8j",
+    "sui": "0x4ae63116fa8dfdc9aaf4e487fe802b2b9e86ad510462885f001f574b4e83b8e5"
   }
 }
