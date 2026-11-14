@@ -31,6 +31,38 @@ same seed. Everything listed here **ships**: balance, receive and send.
   or hidden — a row shows a real value, a true zero, or an honest
   "couldn't load".
 
+## How balances are read (the honesty layer)
+
+A balance row is only ever a **real value**, a **true zero** (an
+endpoint answered and the balance is zero), or **"couldn't load"**
+(the read failed — the amount is unknown, shown as unknown in the
+row, in the send sheet, and in the header total, which is annotated
+"+ some balances couldn't load" whenever any family in view is in
+that state). No reader defaults to zero on failure; that rule was
+re-pinned across every family on 2026-11-14 after a post-release
+sweep caught five families displaying $0.00 while their endpoints
+were down.
+
+- **Endpoint rotation.** Every family's reads rotate over keyless
+  public endpoints with the EVM discipline (last-good first, a
+  failed endpoint demoted for 60 s): Stellar ×3 Horizons, NEAR ×5
+  RPCs, Algorand ×2 AlgoNode hosts, Aptos ×2 fullnodes, Stacks ×2
+  Hiro hosts. A definitive chain answer (an unfunded account's
+  404, NEAR's UNKNOWN_ACCOUNT) returns at once and never rotates.
+  TON is the exception: toncenter.com is the only keyless public
+  endpoint that answers, so TON's protection is the honesty rule
+  itself (its jetton index read rides the independent tonapi.io).
+- **Cosmos** reads the cosmos.directory LCD first, then per-chain
+  probed fallbacks (Polkachu for all seven; Osmosis' own LCD,
+  Noble's api.noble.xyz, Injective's LCD, Sei's rest.sei-apis.com
+  and dYdX's publicnode where probed) — one directory outage no
+  longer darks the family.
+- **EVM scans** race a 20 s settle for first paint, but the read
+  keeps rotating behind it: each endpoint attempt is capped at
+  30 s (a hung endpoint can no longer eat the scan), and a read
+  rescued within 120 s repaints its rows in the same scan instead
+  of leaving "couldn't load" standing until a manual refresh.
+
 ## Send & receive
 
 - **Send to a raw address or a Fluid username** — every send field

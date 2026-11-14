@@ -285,12 +285,23 @@ export async function evmRpcFetchJson(networkKey, body, { timeoutMs = 20000 } = 
   throw lastErr || new Error("Every RPC endpoint failed for " + networkKey + ".");
 }
 
+/** Per-attempt budget for one endpoint inside withEvmProvider
+ *  (2026-11-14 BSC fix): ethers' own fetch timeout is minutes
+ *  long, so a HUNG endpoint (the sweep's publicnode timeouts)
+ *  used to eat the caller's whole settle window on attempt #1 —
+ *  rotation never reached the healthy endpoints behind it, and
+ *  the family settled "couldn't load" while blastapi was already
+ *  answering. Each attempt now races this budget; a timeout is
+ *  just another rotation trigger. 30 s leaves room for the slow
+ *  but real ~25 s Multicall-class calls the sweep captured. */
+export const EVM_PROVIDER_ATTEMPT_TIMEOUT_MS = 30000;
 /** Run `fn` against an ethers provider built on the first of
  *  the network's read endpoints that serves it, rotating on
- *  any throw. `fn` must be a pure read: on rotation it is
- *  re-run from the start against the next endpoint. Throws the
- *  last error when every endpoint fails. */
-export async function withEvmProvider(networkKey, fn) {
+ *  any throw — including an attempt that outlives its budget.
+ *  `fn` must be a pure read: on rotation it is re-run from the
+ *  start against the next endpoint. Throws the last error when
+ *  every endpoint fails. */
+export async function withEvmProvider(networkKey, fn, { attemptTimeoutMs = EVM_PROVIDER_ATTEMPT_TIMEOUT_MS } = {}) {
   const net = NETWORKS[networkKey];
   if (!net) throw new Error("Unknown network: " + networkKey);
   const urls = evmRpcOrder(networkKey);
@@ -303,12 +314,88 @@ export async function withEvmProvider(networkKey, fn) {
       // (ethers retries it every second, forever) is a battery
       // and bandwidth leak on a phone — a refused endpoint must
       // fail its read fast and let rotation move on.
-      const out = await fn(new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true }));
+      const attempt = (async () => fn(new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true })))();
+      // A timed-out attempt keeps running in the background and
+      // may reject later; that rejection is expected, never a crash.
+      attempt.catch(() => {});
+      let timer = null;
+      const out = await Promise.race([
+        attempt,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("RPC read timed out on " + url)), attemptTimeoutMs);
+          if (timer && typeof timer.unref === "function") timer.unref();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
       evmRpcNoteSuccess(networkKey, url);
       return out;
     } catch (e) { lastErr = e; evmRpcNoteFailure(url); }
   }
   throw lastErr || new Error("Every RPC endpoint failed for " + networkKey + ".");
+}
+
+/* ---------- Family endpoint rotation (2026-11-14 silent-zero fix) ----------
+ * The EVM discipline above, generalised to the account families
+ * (Stellar, TON, NEAR, Algorand, Aptos, Stacks, Cosmos) whose reads
+ * used to ride ONE public endpoint each: when that endpoint hiccuped,
+ * the read died — and several families' failure paths then settled on
+ * a displayed ZERO instead of "couldn't load" (the 2026-11-08 pattern,
+ * caught again live in the 2026-11-14 first-screen sweep). Each family
+ * now carries a small list of keyless public endpoints, probed live
+ * from this build machine (evidence in each family's section), and
+ * its reads rotate: last-good first while fresh, a failed endpoint
+ * demoted for a short cooldown, rotation on ANY throw (transport
+ * error, refusal status, unreadable body). A DEFINITIVE chain answer
+ * — e.g. Horizon's 404 for an unfunded account — is a return value,
+ * never a throw, so it never triggers rotation. When every endpoint
+ * throws, the read throws: callers surface "couldn't load", never a
+ * fabricated zero. */
+export const FAMILY_RPC_COOLDOWN_MS = 60000;
+const _familyRpcCooldown = new Map(); // "key|url" -> ms timestamp until which the endpoint is demoted
+const _familyRpcGood = new Map(); // key -> { url, at }
+
+/** The order a family's endpoints are tried right now: the last
+ *  endpoint that answered (while fresh) first, then the rest in
+ *  configured order, endpoints inside their failure cooldown last —
+ *  still tried when nothing else is left, never silently dropped.
+ *  Pure given the health maps; `now` is injectable for tests. */
+export function familyRpcOrder(key, urls, now = Date.now()) {
+  const list = Array.isArray(urls) ? urls.filter(u => typeof u === "string" && u) : [];
+  const good = _familyRpcGood.get(key);
+  const fresh = good && now - good.at < FAMILY_RPC_COOLDOWN_MS ? good.url : null;
+  const cooling = (u) => (_familyRpcCooldown.get(key + "|" + u) || 0) > now;
+  const head = fresh && list.includes(fresh) && !cooling(fresh) ? [fresh] : [];
+  const mid = list.filter(u => !head.includes(u) && !cooling(u));
+  const tail = list.filter(u => !head.includes(u) && cooling(u));
+  return [...head, ...mid, ...tail];
+}
+/** Run `attempt(url)` against a family's endpoints in rotation
+ *  order until one returns; rethrows the last error when every
+ *  endpoint throws. An attempt error carrying `noRotate` is a
+ *  DEFINITIVE chain answer (e.g. NEAR's UNKNOWN_ACCOUNT): it is
+ *  rethrown at once — every other endpoint would say the same. */
+export async function withFamilyEndpoints(key, urls, attempt) {
+  const order = familyRpcOrder(key, urls);
+  if (!order.length) throw new Error("No endpoint is configured for " + key + ".");
+  let lastErr = null;
+  for (const url of order) {
+    try {
+      const out = await attempt(url);
+      _familyRpcGood.set(key, { url, at: Date.now() });
+      _familyRpcCooldown.delete(key + "|" + url);
+      return out;
+    } catch (e) {
+      if (e && e.noRotate) throw e;
+      lastErr = e;
+      _familyRpcCooldown.set(key + "|" + url, Date.now() + FAMILY_RPC_COOLDOWN_MS);
+    }
+  }
+  throw lastErr || new Error("Every endpoint failed for " + key + ".");
+}
+/** Forget all family endpoint health state (exported for tests). */
+export function resetFamilyRpcHealth() {
+  _familyRpcCooldown.clear();
+  _familyRpcGood.clear();
 }
 
 /** Register runtime-discovered networks (see the discovery section at the
@@ -1996,7 +2083,11 @@ export async function getTronBalances(address) {
   const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
   const data = await res.json().catch(() => null);
-  const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+  // A 200 with an unreadable body is a FAILED read, not an empty
+  // account: throw, never settle on a fabricated zero (2026-11-14
+  // silent-zero fix). An answered { data: [] } IS an empty account.
+  if (!data || !Array.isArray(data.data)) throw new Error("Tron returned an unreadable balance reply.");
+  const acct = data.data[0] || null;
   out[0].amount = tronSunToTrx((acct && acct.balance) ?? 0); // no account on-chain yet = 0
   for (const t of TRON_TOKENS) {
     // A failed token read marks the row unknown (amount null — the
@@ -2694,7 +2785,19 @@ export async function sendSui(phrase, { to, amount, token = null }) {
 // Reads and submission ride plain fetch against Horizon (house style);
 // the SDK is used for what it must be used for — account/transaction
 // construction and local signing.
-const STELLAR_HORIZON = "https://horizon.stellar.org";
+// Horizon endpoints, rotated by the family layer (2026-11-14
+// silent-zero fix): the wallet used to read through
+// horizon.stellar.org ALONE, and the post-release sweep caught it
+// failing every read all session while the rows showed $0.00.
+// Probed live from this build machine 2026-11-14, two tries each,
+// real account reads: horizon.stellar.org 200 ×2,
+// horizon.stellar.lobstr.co 200 ×2, horizon.stellarx.com 200 ×2.
+export const STELLAR_HORIZONS = [
+  "https://horizon.stellar.org",
+  "https://horizon.stellar.lobstr.co",
+  "https://horizon.stellarx.com",
+];
+const STELLAR_HORIZON = STELLAR_HORIZONS[0];
 export const STELLAR_EXPLORER = "https://stellar.expert/explorer/public";
 // Circle's USDC issuer on Stellar — verified live 2026-11-06 against
 // horizon.stellar.org/assets?asset_code=USDC&asset_issuer=<this>:
@@ -2768,10 +2871,28 @@ export function stellarMinBalanceXlm(subentryCount) {
   return stroopsToXlm(stellarMinBalanceStroops(subentryCount));
 }
 
+/** One Horizon read across the rotated endpoints: transport
+ *  failures and 5xx answers rotate; a definitive answer (200, and
+ *  404 for an unfunded account) returns at once. When every
+ *  endpoint 5xxs, the last answer is returned so callers keep
+ *  their status-based contract; when none answers at all, the
+ *  transport error throws — a failed read, never a quiet zero. */
 async function horizonJson(path) {
-  const res = await fetch(STELLAR_HORIZON + path, { signal: AbortSignal.timeout(20000) });
-  const data = await res.json().catch(() => null);
-  return { status: res.status, data };
+  try {
+    return await withFamilyEndpoints("stellar", STELLAR_HORIZONS, async (base) => {
+      const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) });
+      const data = await res.json().catch(() => null);
+      if (res.status >= 500) {
+        const err = new Error("Stellar request failed (HTTP " + res.status + ").");
+        err.horizonResult = { status: res.status, data };
+        throw err;
+      }
+      return { status: res.status, data };
+    });
+  } catch (e) {
+    if (e && e.horizonResult) return e.horizonResult;
+    throw e;
+  }
 }
 /** The Horizon account record, or null when Horizon says 404 — the
  *  account simply doesn't exist yet (unfunded). Other failures throw.
@@ -3009,27 +3130,59 @@ export async function sendStellar(phrase, { to, amount, token = null }) {
 // swap into an opaque wasm memo inside an IBC transfer — a blob, not a sentence
 // a user can approve — so Cosmos-source swap execution is NOT wired;
 // the chain sheets say so plainly.
+// restFallbacks (2026-11-14 Cosmos-darkness fix): every chain read
+// through rest.cosmos.directory ALONE, and the post-release sweep
+// caught the directory aborting every attempt in every scan — all
+// seven chains dark at once. Each chain now carries keyless public
+// LCD fallbacks, probed live from this build machine 2026-11-14
+// with real balance reads (amounts agreed with the directory
+// wherever both answered): cosmoshub → cosmos-api.polkachu.com
+// (api.cosmos.network answered 526; the Notional endpoint did not
+// connect); osmosis → lcd.osmosis.zone + osmosis-api.polkachu.com;
+// noble → noble-api.polkachu.com + api.noble.xyz; celestia →
+// celestia-api.polkachu.com (api.celestia.network and
+// api-celestia.pops.one did not connect); injective →
+// injective-api.polkachu.com + lcd.injective.network; sei →
+// rest.sei-apis.com + sei-api.polkachu.com; dydx →
+// dydx-api.polkachu.com + dydx-rest.publicnode.com. Reads rotate
+// directory-first through the family endpoint layer.
 export const COSMOS_CHAINS = [
   { key: "cosmoshub", name: "Cosmos Hub", chainId: "cosmoshub-4", prefix: "cosmos", denom: "uatom", symbol: "ATOM", decimals: 6, gasPrice: "0.025uatom",
-    rest: "https://rest.cosmos.directory/cosmoshub", rpc: "https://rpc.cosmos.directory/cosmoshub", explorer: "https://www.mintscan.io/cosmos" },
+    rest: "https://rest.cosmos.directory/cosmoshub", restFallbacks: ["https://cosmos-api.polkachu.com"], rpc: "https://rpc.cosmos.directory/cosmoshub", explorer: "https://www.mintscan.io/cosmos" },
   { key: "osmosis", name: "Osmosis", chainId: "osmosis-1", prefix: "osmo", denom: "uosmo", symbol: "OSMO", decimals: 6, gasPrice: "0.1uosmo",
-    rest: "https://rest.cosmos.directory/osmosis", rpc: "https://rpc.cosmos.directory/osmosis", explorer: "https://www.mintscan.io/osmosis" },
+    rest: "https://rest.cosmos.directory/osmosis", restFallbacks: ["https://lcd.osmosis.zone", "https://osmosis-api.polkachu.com"], rpc: "https://rpc.cosmos.directory/osmosis", explorer: "https://www.mintscan.io/osmosis" },
   // Noble is the Cosmos home of native USDC: its fee token IS uusdc
   // (chain registry fee_tokens, verified live), so the family's asset
   // on Noble is USDC itself and fees are paid in it too.
   { key: "noble", name: "Noble", chainId: "noble-1", prefix: "noble", denom: "uusdc", symbol: "USDC", decimals: 6, gasPrice: "0.1uusdc",
-    rest: "https://rest.cosmos.directory/noble", rpc: "https://rpc.cosmos.directory/noble", explorer: "https://www.mintscan.io/noble" },
+    rest: "https://rest.cosmos.directory/noble", restFallbacks: ["https://noble-api.polkachu.com", "https://api.noble.xyz"], rpc: "https://rpc.cosmos.directory/noble", explorer: "https://www.mintscan.io/noble" },
   { key: "celestia", name: "Celestia", chainId: "celestia", prefix: "celestia", denom: "utia", symbol: "TIA", decimals: 6, gasPrice: "0.02utia",
-    rest: "https://rest.cosmos.directory/celestia", rpc: "https://rpc.cosmos.directory/celestia", explorer: "https://www.mintscan.io/celestia" },
+    rest: "https://rest.cosmos.directory/celestia", restFallbacks: ["https://celestia-api.polkachu.com"], rpc: "https://rpc.cosmos.directory/celestia", explorer: "https://www.mintscan.io/celestia" },
   // coinType 60: the Keplr/Leap Injective path (see the family note
   // above) — every other chain in this table derives at the default 118.
   { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", coinType: 60,
-    rest: "https://rest.cosmos.directory/injective", rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
+    rest: "https://rest.cosmos.directory/injective", restFallbacks: ["https://injective-api.polkachu.com", "https://lcd.injective.network"], rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
   { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei",
-    rest: "https://rest.cosmos.directory/sei", rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
+    rest: "https://rest.cosmos.directory/sei", restFallbacks: ["https://rest.sei-apis.com", "https://sei-api.polkachu.com"], rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
   { key: "dydx", name: "dYdX", chainId: "dydx-mainnet-1", prefix: "dydx", denom: "adydx", symbol: "DYDX", decimals: 18, gasPrice: "12500000000adydx",
-    rest: "https://rest.cosmos.directory/dydx", rpc: "https://rpc.cosmos.directory/dydx", explorer: "https://www.mintscan.io/dydx" },
+    rest: "https://rest.cosmos.directory/dydx", restFallbacks: ["https://dydx-api.polkachu.com", "https://dydx-rest.publicnode.com"], rpc: "https://rpc.cosmos.directory/dydx", explorer: "https://www.mintscan.io/dydx" },
 ];
+/** Every LCD base a Cosmos chain may be read through: the
+ *  directory first, then its probed fallbacks. */
+export function cosmosRestUrls(chain) {
+  return [chain.rest, ...(Array.isArray(chain.restFallbacks) ? chain.restFallbacks : [])];
+}
+/** One LCD GET across a chain's rotated endpoints: any throw
+ *  (transport, refusal status, unreadable body) rotates. */
+async function cosmosRestJson(chain, path) {
+  return withFamilyEndpoints("cosmos:" + chain.key, cosmosRestUrls(chain), async (base) => {
+    const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`${chain.name} request failed (HTTP ${res.status}).`);
+    const data = await res.json().catch(() => null);
+    if (!data) throw new Error(`${chain.name} returned an unreadable reply.`);
+    return data;
+  });
+}
 export function cosmosChain(chainKey) {
   return COSMOS_CHAINS.find(c => c.key === chainKey) || null;
 }
@@ -3208,10 +3361,8 @@ export function isValidCosmosAddress(address, chainKey) {
 export async function getCosmosBalance(chainKey, address) {
   const chain = cosmosChain(chainKey);
   if (!chain) throw new Error("Unknown Cosmos chain: " + chainKey);
-  const res = await fetch(`${chain.rest}/cosmos/bank/v1beta1/balances/${address}`, { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`${chain.name} balance lookup failed (HTTP ${res.status}).`);
-  const data = await res.json().catch(() => null);
-  if (!data || !Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
+  const data = await cosmosRestJson(chain, `/cosmos/bank/v1beta1/balances/${address}`);
+  if (!Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
   const hit = data.balances.find(b => b.denom === chain.denom);
   return ethers.formatUnits(BigInt(hit ? hit.amount : "0"), chain.decimals);
 }
@@ -21293,7 +21444,10 @@ export async function getTronAllTokens(address) {
   const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
   const data = await res.json().catch(() => null);
-  const acct = data && Array.isArray(data.data) ? data.data[0] : null;
+  // As in getTronBalances: an unreadable 200 body is a failed
+  // read, never an empty account (2026-11-14 silent-zero fix).
+  if (!data || !Array.isArray(data.data)) throw new Error("Tron returned an unreadable balance reply.");
+  const acct = data.data[0] || null;
   const rows = [{ symbol: "TRX", name: "Tron", amount: tronSunToTrx((acct && acct.balance) ?? 0), address: null, decimals: 6, verified: true }];
   const held = new Map(); // contract -> raw BigInt
   for (const entry of (acct && acct.trc20) || []) {
@@ -21411,10 +21565,8 @@ export async function getCosmosAllBalances(phrase) {
   return Promise.all(COSMOS_CHAINS.map(async (chain) => {
     let amount = null, tokens = null;
     try {
-      const res = await fetch(`${chain.rest}/cosmos/bank/v1beta1/balances/${addrs[chain.key]}`, { signal: AbortSignal.timeout(20000) });
-      if (!res.ok) throw new Error(`${chain.name} balance lookup failed (HTTP ${res.status}).`);
-      const data = await res.json().catch(() => null);
-      if (!data || !Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
+      const data = await cosmosRestJson(chain, `/cosmos/bank/v1beta1/balances/${addrs[chain.key]}`);
+      if (!Array.isArray(data.balances)) throw new Error(`${chain.name} returned an unreadable balance reply.`);
       const registry = await fetchCosmosDenomRegistry(chain.key);
       tokens = data.balances.map(b => {
         const disp = cosmosDenomDisplay(chain, b.denom, registry ? registry.get(b.denom) : null);
@@ -21648,6 +21800,15 @@ export async function readEvmTokenMeta(networkKey, address, ownerAddress) {
 // by hand and checking @ton/ton's signature under noble Ed25519.
 // Reads and broadcast ride toncenter (keyless; ~1 req/s courtesy
 // rate, respected by keeping reads sequential and few).
+// TON reads ride toncenter.com — the ONLY keyless public
+// toncenter-shaped endpoint that answered from this build
+// machine (2026-11-14 probe: api.toncenter.com returned an empty
+// reply on every try; ton.drpc.org's REST path 404s; the jetton
+// read goes to tonapi.io, an independent host). Unlike the other
+// families there is no second endpoint to rotate to, so TON's
+// protection is the honesty rule itself: tonV2/tonV3 throw on any
+// failure and the app renders "couldn't load", never a zero
+// (2026-11-14 silent-zero fix).
 const TONCENTER_V2 = "https://toncenter.com/api/v2/jsonRPC";
 const TONCENTER_V3 = "https://toncenter.com/api/v3";
 export const TON_EXPLORER = "https://tonviewer.io";
@@ -21774,7 +21935,14 @@ export async function getTonAccount(address) {
       });
     }
     if (!usdtSeen) balances.push({ ...TON_USDT, amount: "0" });
-  } catch { jettonsFailed = true; balances.push({ ...TON_USDT, amount: "0" }); }
+  } catch {
+    // The jetton read failed: the USDT balance is UNKNOWN (amount
+    // null — the row renders "couldn't load"), never a fabricated
+    // zero (2026-11-14 silent-zero fix). The native row above still
+    // stands on its own successful read; jettonsFailed tells the UI
+    // to flag the family.
+    jettonsFailed = true; balances.push({ ...TON_USDT, amount: null });
+  }
   return { state, balances, jettonsFailed };
 }
 /** TON balances shaped like the other families' row lists. */
@@ -21904,7 +22072,23 @@ export async function sendTon(phrase, { to, amount, token = null }) {
 // implicit account: 182 bytes × 10^19 yocto = 0.00182 NEAR), and a
 // transfer to a not-yet-existing implicit account must carry at
 // least that much or the network refuses to create it.
-const NEAR_RPC = "https://rpc.mainnet.near.org";
+// NEAR RPC endpoints, rotated by the family layer (2026-11-14
+// silent-zero fix — reads used to ride rpc.mainnet.near.org
+// alone). Probed live 2026-11-14, two tries each, real
+// view_account reads with identical results: rpc.mainnet.near.org
+// 200 ×2, rpc.fastnear.com 200 ×2, free.rpc.fastnear.com 200 ×2,
+// near.drpc.org 200 ×2, archival-rpc.mainnet.near.org 200 ×2.
+// Dropped: rpc.ankr.com/near (demands an API key),
+// 1rpc.io/near (no `query` method / usage-limited),
+// near.lava.build (410, discontinued).
+export const NEAR_RPCS = [
+  "https://rpc.mainnet.near.org",
+  "https://rpc.fastnear.com",
+  "https://free.rpc.fastnear.com",
+  "https://near.drpc.org",
+  "https://archival-rpc.mainnet.near.org",
+];
+const NEAR_RPC = NEAR_RPCS[0];
 export const NEAR_EXPLORER = "https://nearblocks.io";
 // NEP-141 contracts verified live 2026-11-06 via ft_metadata on the
 // public RPC: Circle's native USDC (the hex-named contract Circle
@@ -21952,19 +22136,28 @@ export function nearYoctoToNear(yocto) { return ethers.formatUnits(BigInt(yocto)
 export function nearNearToYocto(amount) { return ethers.parseUnits(String(amount), 24); }
 
 async function nearRpc(method, params) {
-  const res = await fetch(NEAR_RPC, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "fluid", method, params }),
-    signal: AbortSignal.timeout(20000),
+  return withFamilyEndpoints("near", NEAR_RPCS, async (url) => {
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "fluid", method, params }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data) throw new Error("NEAR network error (HTTP " + res.status + ").");
+    if (data.error) {
+      // -32601 (method not served) is an ENDPOINT gap — rotate.
+      // Any other error payload is the chain's definitive answer
+      // (UNKNOWN_ACCOUNT and friends): every endpoint would say
+      // the same, so it must not rotate (noRotate) and callers
+      // keep reading err.nearCause exactly as before.
+      if (data.error.code === -32601) throw new Error("NEAR endpoint does not serve " + method + ".");
+      const err = new Error(data.error.data?.message || data.error.cause?.name || data.error.message || "NEAR RPC error");
+      err.nearCause = data.error.data?.name || data.error.cause?.name || "";
+      err.noRotate = true;
+      throw err;
+    }
+    return data.result;
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data) throw new Error("NEAR network error (HTTP " + res.status + ").");
-  if (data.error) {
-    const err = new Error(data.error.data?.message || data.error.cause?.name || data.error.message || "NEAR RPC error");
-    err.nearCause = data.error.data?.name || data.error.cause?.name || "";
-    throw err;
-  }
-  return data.result;
 }
 async function nearQuery(requestType, args) {
   return nearRpc("query", { request_type: requestType, finality: "final", ...args });
@@ -22013,11 +22206,15 @@ export async function getNearAccount(address) {
   if (!rec) return { exists: false, storageUsage: 0, balances: [nearNativeRow("0"), ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))] };
   const balances = [nearNativeRow(nearYoctoToNear(rec.amount))];
   for (const t of NEAR_TOKENS) {
+    // A token whose read fails is UNKNOWN (amount null — the row
+    // renders "couldn't load"), never a fabricated zero; a contract
+    // that ANSWERS (including JSON null / "0" for an unregistered
+    // account) is a true zero (2026-11-14 silent-zero fix).
     let amount = "0";
     try {
       const raw = await nearCallView(t.address, "ft_balance_of", { account_id: address });
       amount = ethers.formatUnits(BigInt(raw ?? "0"), t.decimals);
-    } catch { /* one bad contract must not break the list */ }
+    } catch { amount = null; /* one bad contract must not break the list */ }
     balances.push({ ...t, amount });
   }
   return { exists: true, storageUsage: rec.storage_usage || 0, balances };
@@ -22200,7 +22397,17 @@ export async function sendNear(phrase, { to, amount, token = null }) {
 // signing). Algorand's rules are enforced in code: every account
 // must keep its min-balance (0.1 ALGO + 0.1 per ASA/app), and an ASA
 // can only be sent to an account that has opted into it.
-const ALGOD = "https://mainnet-api.algonode.cloud";
+// Algod endpoints, rotated by the family layer (2026-11-14
+// silent-zero fix — reads used to ride one AlgoNode host alone).
+// Probed live 2026-11-14, two tries each, real account reads:
+// mainnet-api.algonode.cloud 200 ×2, xna-mainnet-api.algonode.cloud
+// 200 ×2. Dropped: mainnet-api.4160.nodely.io (403 "invalid
+// token" — an API key is required).
+export const ALGOD_BASES = [
+  "https://mainnet-api.algonode.cloud",
+  "https://xna-mainnet-api.algonode.cloud",
+];
+const ALGOD = ALGOD_BASES[0];
 export const ALGO_EXPLORER = "https://explorer.perawallet.app";
 // Circle's USDC on Algorand — verified live 2026-11-06 against
 // Algonode /v2/assets/31566704 (creator is Circle's address,
@@ -22248,10 +22455,27 @@ export function isValidAlgorandAddress(address) { return algoAddressDecode(addre
 export function algoMicroToAlgo(micro) { return ethers.formatUnits(BigInt(micro), 6); }
 export function algoAlgoToMicro(amount) { return ethers.parseUnits(String(amount), 6); }
 
+/** One algod read across the rotated endpoints: transport
+ *  failures and 5xx answers rotate; definitive answers (200, and
+ *  404 for an unfunded account) return at once; when every
+ *  endpoint 5xxs the last answer is returned so callers keep
+ *  their status contract; when none answers, the error throws. */
 async function algodJson(path) {
-  const res = await fetch(ALGOD + path, { signal: AbortSignal.timeout(20000) });
-  const data = await res.json().catch(() => null);
-  return { status: res.status, data };
+  try {
+    return await withFamilyEndpoints("algorand", ALGOD_BASES, async (base) => {
+      const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) });
+      const data = await res.json().catch(() => null);
+      if (res.status >= 500) {
+        const err = new Error("Algorand request failed (HTTP " + res.status + ").");
+        err.algodResult = { status: res.status, data };
+        throw err;
+      }
+      return { status: res.status, data };
+    });
+  } catch (e) {
+    if (e && e.algodResult) return e.algodResult;
+    throw e;
+  }
 }
 /** One ASA's parameters (unit name, name, decimals). Best-effort:
  *  null when the node doesn't answer — the row still surfaces. */
@@ -22781,11 +23005,14 @@ async function readDotAccount(api, address) {
   const exists = Number(acct.providers?.toString?.() ?? 0) > 0 || !acct.data.free.isZero();
   const balances = [dotNativeRow(dotPlanckToDot(free))];
   for (const t of DOT_TOKENS) {
+    // A failed asset read is UNKNOWN (amount null), never a
+    // fabricated zero; an answered empty entry is a true zero
+    // (2026-11-14 silent-zero fix).
     let amount = "0";
     try {
       const entry = await api.query.assets.account(Number(t.address), address);
       if (entry.isSome) amount = ethers.formatUnits(BigInt(entry.unwrap().balance.toString()), t.decimals);
-    } catch { /* one asset must not break the list */ }
+    } catch { amount = null; /* one asset must not break the list */ }
     balances.push({ ...t, amount });
   }
   return { exists, balances, existentialDepositDot: dotPlanckToDot(api.consts.balances.existentialDeposit.toString()) };
@@ -22926,7 +23153,18 @@ export async function sendDot(phrase, { to, amount, token = null }) {
 // precedent), pinned by a test.
 export const APTOS_EXPLORER = "https://aptoscan.com";
 export const APTOS_COIN_TYPE = "0x1::aptos_coin::AptosCoin";
-const APTOS_NODE = "https://fullnode.mainnet.aptoslabs.com/v1";
+// Aptos fullnode endpoints, rotated by the family layer
+// (2026-11-14 silent-zero fix — reads used to ride the one
+// fullnode host alone). Probed live 2026-11-14, two tries each,
+// real account reads: fullnode.mainnet.aptoslabs.com 200 ×2,
+// api.mainnet.aptoslabs.com 200 ×2. Dropped:
+// aptos-mainnet.public.blastapi.io (service discontinued),
+// aptos.drpc.org (paid plan only), aptos.lava.build (410).
+export const APTOS_NODES = [
+  "https://fullnode.mainnet.aptoslabs.com/v1",
+  "https://api.mainnet.aptoslabs.com/v1",
+];
+const APTOS_NODE = APTOS_NODES[0];
 const APTOS_INDEXER = "https://api.mainnet.aptoslabs.com/v1/graphql";
 const APTOS_CHAIN_ID = 1;
 export const APTOS_TOKENS = [
@@ -22985,15 +23223,36 @@ export function aptosAptToOctas(amount) { return ethers.parseUnits(String(amount
  *  decimal math via ethers — never float multiplication). */
 export function aptosAmountToRaw(amount, decimals = 8) { return ethers.parseUnits(String(amount), decimals); }
 
+/** One fullnode REST call across the rotated endpoints:
+ *  transport failures and 5xx answers rotate; definitive answers
+ *  (200, and 404 for a missing account/resource) return at once;
+ *  when every endpoint 5xxs the last answer is returned so
+ *  callers keep their { status, ok, data } contract; when none
+ *  answers at all, the transport error throws. (Before this, ANY
+ *  non-OK status — including a fullnode 500 — came back as data
+ *  null and several readers read that as "account doesn't
+ *  exist": a quiet zero by another door.) */
 async function aptosRest(path, { method = "GET", body = null } = {}) {
-  const res = await fetch(APTOS_NODE + path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20000),
-  });
-  const data = await res.json().catch(() => null);
-  return { status: res.status, ok: res.ok, data };
+  try {
+    return await withFamilyEndpoints("aptos", APTOS_NODES, async (base) => {
+      const res = await fetch(base + path, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(20000),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.status >= 500) {
+        const err = new Error("Aptos request failed (HTTP " + res.status + ").");
+        err.aptosResult = { status: res.status, ok: res.ok, data };
+        throw err;
+      }
+      return { status: res.status, ok: res.ok, data };
+    });
+  } catch (e) {
+    if (e && e.aptosResult) return e.aptosResult;
+    throw e;
+  }
 }
 /** One fullnode view call; returns the result array. Throws on any
  *  non-200 (a missing account/resource is a chain answer, and the
@@ -23084,10 +23343,12 @@ export async function getAptosAccount(address) {
     let raw = hit ? String(hit.amount ?? "0") : null;
     if (raw === null && discovered === null) {
       // Indexer down: read the curated balance from the fullnode so
-      // the row is real, not a placeholder zero.
-      try { raw = await aptosAssetBalanceRaw(owner, t); } catch { raw = "0"; }
+      // the row is real. If the fullnode read ALSO fails, the row
+      // stays unknown (amount null — "couldn't load"), never a
+      // fabricated zero (2026-11-14 silent-zero fix).
+      try { raw = await aptosAssetBalanceRaw(owner, t); } catch { raw = null; }
     }
-    rows.push({ ...t, amount: ethers.formatUnits(BigInt(raw ?? "0"), t.decimals), verified: true });
+    rows.push({ ...t, amount: raw === null ? null : ethers.formatUnits(BigInt(raw), t.decimals), verified: true });
     heldByType.delete(t.address.toLowerCase());
   }
   heldByType.delete(APTOS_COIN_TYPE.toLowerCase());
@@ -23755,16 +24016,24 @@ export const STACKS_TOKENS = [
 ];
 
 /* ---------- reads (Hiro) ---------- */
+// Hiro API endpoints for mainnet, rotated by the family layer
+// (2026-11-14 silent-zero fix — reads used to ride api.hiro.so
+// alone). Probed live 2026-11-14, two tries each, real balance
+// reads: api.hiro.so 200 ×2, api.mainnet.hiro.so 200 ×2.
+export const STACKS_APIS = ["https://api.hiro.so", "https://api.mainnet.hiro.so"];
 async function stacksCallRead(api, contract, fn, sender) {
   const [addr, name] = contract.split(".");
-  const r = await fetch(`${api}/v2/contracts/call-read/${addr}/${name}/${fn}`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sender, arguments: [] }),
+  const apis = [...new Set([api, ...(STACKS_APIS.includes(api) ? STACKS_APIS : [])])];
+  return withFamilyEndpoints("stacks", apis, async (base) => {
+    const r = await fetch(`${base}/v2/contracts/call-read/${addr}/${name}/${fn}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sender, arguments: [] }),
+    });
+    if (!r.ok) throw new Error(`call-read ${fn} HTTP ${r.status}`);
+    const j = await r.json();
+    if (!j || j.okay !== true || typeof j.result !== "string") throw new Error(`call-read ${fn} failed`);
+    return hexToBytesB(j.result.replace(/^0x/, ""));
   });
-  if (!r.ok) throw new Error(`call-read ${fn} HTTP ${r.status}`);
-  const j = await r.json();
-  if (!j || j.okay !== true || typeof j.result !== "string") throw new Error(`call-read ${fn} failed`);
-  return hexToBytesB(j.result.replace(/^0x/, ""));
 }
 /** Parse a Clarity (ok <string-ascii|utf8>) or (ok <uint>) call-read result. Hostile-input safe: returns null on anything unexpected. */
 export function parseStacksCallReadValue(bytes) {
@@ -23796,15 +24065,22 @@ function stacksCleanMeta(s, max) {
 /** STX balance + nonce + every SIP-010 balance (metadata read from the contracts for unpinned tokens). */
 export async function fetchStacksAccount(address, network = "mainnet") {
   const net = stacksNetwork(network);
-  let balances, account;
+  let balances, account, servedApi = net.api;
   try {
-    const [br, ar] = await Promise.all([
-      fetch(`${net.api}/extended/v1/address/${address}/balances`),
-      fetch(`${net.api}/v2/accounts/${address}`),
-    ]);
-    if (!br.ok) throw new Error(`Hiro balances HTTP ${br.status}`);
-    if (!ar.ok) throw new Error(`Hiro account HTTP ${ar.status}`);
-    balances = await br.json(); account = await ar.json();
+    // Mainnet rotates over both Hiro hosts; the pair of reads must
+    // come from ONE host per attempt (a balances page from a host
+    // that then refuses the account read is a failed attempt).
+    const apis = network === "testnet" ? [net.api] : STACKS_APIS;
+    const got = await withFamilyEndpoints("stacks", apis, async (api) => {
+      const [br, ar] = await Promise.all([
+        fetch(`${api}/extended/v1/address/${address}/balances`),
+        fetch(`${api}/v2/accounts/${address}`),
+      ]);
+      if (!br.ok) throw new Error(`Hiro balances HTTP ${br.status}`);
+      if (!ar.ok) throw new Error(`Hiro account HTTP ${ar.status}`);
+      return { balances: await br.json(), account: await ar.json(), api };
+    });
+    balances = got.balances; account = got.account; servedApi = got.api;
   } catch (e) {
     return { address, exists: false, nonce: 0, stxUstx: "0", tokens: [], scanFailed: true, error: String(e.message || e) };
   }
@@ -23822,9 +24098,9 @@ export async function fetchStacksAccount(address, network = "mainnet") {
     const row = { contract, assetName, symbol: assetName, name: assetName, decimals: 0, balanceRaw: String(v.balance ?? "0"), verified: false };
     try {
       const [nm, sy, de] = await Promise.all([
-        stacksCallRead(net.api, contract, "get-name", address),
-        stacksCallRead(net.api, contract, "get-symbol", address),
-        stacksCallRead(net.api, contract, "get-decimals", address),
+        stacksCallRead(servedApi, contract, "get-name", address),
+        stacksCallRead(servedApi, contract, "get-symbol", address),
+        stacksCallRead(servedApi, contract, "get-decimals", address),
       ]);
       const nameV = parseStacksCallReadValue(nm), symV = parseStacksCallReadValue(sy), decV = parseStacksCallReadValue(de);
       if (nameV?.kind === "string") row.name = stacksCleanMeta(nameV.value, 64) || assetName;

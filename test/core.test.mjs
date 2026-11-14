@@ -14709,4 +14709,324 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 }
 
+// 108. Silent-zero repair (2026-11-14) — the post-release
+// first-screen sweep caught Stellar, TON, NEAR, Algorand and
+// Aptos displaying plain "0 / $0.00" while their single endpoints
+// failed every read all session (the 2026-11-08 pattern), Stacks
+// doing the same in one scan, Cosmos dark through one directory,
+// and BSC settling "couldn't load" before its own rotation
+// rescued it. The pins: every family reader distinguishes
+// "endpoint answered, balance is truly zero" from "read failed";
+// failure throws / nulls rows, never fabricates a zero; the
+// single-endpoint families rotate over probed keyless endpoints;
+// a definitive chain answer (404, UNKNOWN_ACCOUNT) never rotates.
+{
+  const {
+    getStellarAccount, getTonAccount, getNearAccount, getAlgorandAccount, getAptosAccount,
+    fetchStacksAccount, getCosmosBalance, getCosmosAllBalances, getTronBalances, getTronAllTokens,
+    withFamilyEndpoints, familyRpcOrder, resetFamilyRpcHealth,
+    STELLAR_HORIZONS, NEAR_RPCS, ALGOD_BASES, APTOS_NODES, STACKS_APIS, cosmosRestUrls,
+    EVM_PROVIDER_ATTEMPT_TIMEOUT_MS,
+  } = await import("../src/wallet-core.js");
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const realFetch = globalThis.fetch;
+  const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const XLM_ADDR = stellarAddressFromPhrase(ABANDON);
+  const TON_ADDR = tonAddressFromPhrase(ABANDON);
+  const NEAR_ADDR = nearAddressFromPhrase(ABANDON);
+  const ALGO_ADDR = algoAddressFromPhrase(ABANDON);
+  const APTOS_ADDR = aptosAddressFromPhrase(ABANDON);
+  const STX_ADDR = stacksAddressFromPhrase(ABANDON);
+  const TRON_ADDR = tronAddressFromPhrase(ABANDON);
+
+  ok("silent-zero: every formerly single-endpoint family now carries probed alternates",
+    STELLAR_HORIZONS.length >= 3 && new Set(STELLAR_HORIZONS.map(u => new URL(u).hostname)).size >= 3
+    && NEAR_RPCS.length >= 4 && ALGOD_BASES.length >= 2 && APTOS_NODES.length >= 2 && STACKS_APIS.length >= 2
+    && COSMOS_CHAINS.every(c => cosmosRestUrls(c).length >= 2));
+
+  // --- the family rotation layer itself ---
+  try {
+    resetFamilyRpcHealth();
+    const seen = [];
+    const out = await withFamilyEndpoints("testfam", ["https://a.invalid", "https://b.invalid"], async (u) => {
+      seen.push(u);
+      if (u.includes("a.invalid")) throw new Error("refused");
+      return "via-b";
+    });
+    ok("family rotation: a refusing first endpoint rotates to the second",
+      out === "via-b" && seen.length === 2);
+    ok("family rotation: the failed endpoint is demoted behind the last-good one",
+      familyRpcOrder("testfam", ["https://a.invalid", "https://b.invalid"])[0] === "https://b.invalid");
+    let bCalls = 0;
+    const definitive = new Error("UNKNOWN_ACCOUNT");
+    definitive.noRotate = true;
+    await assert.rejects(() => withFamilyEndpoints("testfam2", ["https://a.invalid", "https://b.invalid"], async (u) => {
+      if (u.includes("b.invalid")) { bCalls++; return "via-b"; }
+      throw definitive;
+    }));
+    ok("family rotation: a definitive chain answer never rotates", bCalls === 0);
+    await assert.rejects(() => withFamilyEndpoints("testfam3", ["https://a.invalid"], async () => { throw new Error("dead"); }));
+    ok("family rotation: total failure throws — never a fabricated result", true);
+  } finally { resetFamilyRpcHealth(); }
+
+  try {
+    // --- Stellar ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getStellarAccount(XLM_ADDR));
+    ok("stellar: every Horizon down throws — no fake zero balance", true);
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("horizon.stellar.org")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("horizon.stellar.lobstr.co")) return { status: 200, json: async () => ({ balances: [{ asset_type: "native", balance: "12.5" }], subentry_count: 0 }) };
+      throw new Error("unexpected url " + url);
+    };
+    const stRot = await getStellarAccount(XLM_ADDR);
+    ok("stellar: a dead primary Horizon rotates to the next and reads the real balance",
+      stRot.funded === true && stRot.balances[0].amount === "12.5");
+    let stellarCalls = 0;
+    globalThis.fetch = async () => { stellarCalls++; return { status: 404, json: async () => ({}) }; };
+    const stZero = await getStellarAccount(XLM_ADDR);
+    ok("stellar: a 404 is a definitive unfunded answer — true zero rows, no rotation",
+      stZero.funded === false && stZero.balances[0].amount === "0" && stellarCalls === 1);
+
+    // --- TON ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getTonAccount(TON_ADDR));
+    ok("ton: toncenter down throws — no fake zero balance", true);
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.includes("/api/v2/jsonRPC")) {
+        const body = JSON.parse(opts.body || "{}");
+        if (body.method === "getAddressBalance") return jsonRes({ ok: true, result: "2000000000" });
+        if (body.method === "getAddressState") return jsonRes({ ok: true, result: "active" });
+        throw new Error("unexpected ton method " + body.method);
+      }
+      if (u.includes("/api/v3/jetton/wallets")) throw new TypeError("Failed to fetch");
+      throw new Error("unexpected url " + u);
+    };
+    const tonPartial = await getTonAccount(TON_ADDR);
+    ok("ton: a failed jetton read leaves the USDT row UNKNOWN (null), never a fabricated zero",
+      tonPartial.balances[0].amount === "2" && tonPartial.balances[1].amount === null && tonPartial.jettonsFailed === true);
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.includes("/api/v2/jsonRPC")) {
+        const body = JSON.parse(opts.body || "{}");
+        if (body.method === "getAddressBalance") return jsonRes({ ok: true, result: "0" });
+        if (body.method === "getAddressState") return jsonRes({ ok: true, result: "uninit" });
+        throw new Error("unexpected ton method " + body.method);
+      }
+      if (u.includes("/api/v3/jetton/wallets")) return jsonRes({ jetton_wallets: [] });
+      throw new Error("unexpected url " + u);
+    };
+    const tonZero = await getTonAccount(TON_ADDR);
+    ok("ton: answered-empty reads are true zeros",
+      tonZero.balances[0].amount === "0" && tonZero.balances[1].amount === "0" && tonZero.jettonsFailed === false);
+
+    // --- NEAR ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getNearAccount(NEAR_ADDR));
+    ok("near: every RPC down throws — no fake zero balance", true);
+    const nearAnswer = (u, opts) => {
+      const body = JSON.parse(opts.body || "{}");
+      const p = body.params || {};
+      if (p.request_type === "view_account") return jsonRes({ jsonrpc: "2.0", id: "fluid", result: { amount: "3000000000000000000000000", storage_usage: 182 } });
+      if (p.request_type === "call_function") return jsonRes({ jsonrpc: "2.0", id: "fluid", result: { result: [...new TextEncoder().encode("\"0\"")], logs: [] } });
+      throw new Error("unexpected near request " + p.request_type);
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+      if (String(url).includes("rpc.mainnet.near.org")) throw new TypeError("Failed to fetch");
+      return nearAnswer(String(url), opts);
+    };
+    const nearRot = await getNearAccount(NEAR_ADDR);
+    ok("near: a dead primary RPC rotates and reads the real balance",
+      nearRot.exists === true && nearRot.balances[0].amount === "3.0" && nearRot.balances.slice(1).every(b => b.amount === "0.0"));
+    let nearCalls = 0;
+    globalThis.fetch = async () => {
+      nearCalls++;
+      return jsonRes({ jsonrpc: "2.0", id: "fluid", error: { code: -32000, message: "account does not exist", cause: { name: "UNKNOWN_ACCOUNT" } } });
+    };
+    const nearNew = await getNearAccount(NEAR_ADDR);
+    ok("near: UNKNOWN_ACCOUNT is definitive — unfunded true-zero rows, exactly one endpoint asked",
+      nearNew.exists === false && nearNew.balances.every(b => b.amount === "0") && nearCalls === 1);
+    globalThis.fetch = async (url, opts = {}) => {
+      const body = JSON.parse(opts.body || "{}");
+      const p = body.params || {};
+      if (p.request_type === "view_account") return jsonRes({ jsonrpc: "2.0", id: "fluid", result: { amount: "1000000000000000000000000", storage_usage: 182 } });
+      throw new TypeError("Failed to fetch"); // every ft_balance_of read dies
+    };
+    const nearTokFail = await getNearAccount(NEAR_ADDR);
+    ok("near: a failed per-token read is UNKNOWN (null), never a fabricated zero",
+      nearTokFail.balances[0].amount === "1.0" && nearTokFail.balances.slice(1).every(b => b.amount === null));
+
+    // --- Algorand ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getAlgorandAccount(ALGO_ADDR));
+    ok("algorand: every algod down throws — no fake zero balance", true);
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("://mainnet-api.algonode.cloud")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("://xna-mainnet-api.algonode.cloud")) return jsonRes({ amount: 2500000, "min-balance": 100000, assets: [] });
+      throw new Error("unexpected url " + url);
+    };
+    const algoRot = await getAlgorandAccount(ALGO_ADDR);
+    ok("algorand: a dead primary algod rotates to the second node and reads the real balance",
+      algoRot.funded === true && algoRot.balances[0].amount === "2.5");
+    globalThis.fetch = async () => ({ status: 404, ok: false, json: async () => ({}) });
+    const algoZero = await getAlgorandAccount(ALGO_ADDR);
+    ok("algorand: a 404 is an unfunded account — true zero, not a failure",
+      algoZero.funded === false && algoZero.balances[0].amount === "0");
+
+    // --- Aptos ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getAptosAccount(APTOS_ADDR));
+    ok("aptos: every fullnode down throws — no fake zero balance", true);
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("fullnode.mainnet.aptoslabs.com")) throw new TypeError("Failed to fetch");
+      if (String(url).includes("api.mainnet.aptoslabs.com/v1/accounts/")) return jsonRes([]);
+      throw new Error("unexpected url " + url);
+    };
+    const aptZero = await getAptosAccount(APTOS_ADDR);
+    ok("aptos: rotation reaches the second fullnode; its empty resources answer is an unfunded true zero",
+      aptZero.exists === false && aptZero.balances.every(b => b.amount === "0"));
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.includes("/v1/accounts/")) return jsonRes([{ type: "0x1::account::Account", data: {} }]);
+      if (u.includes("/v1/graphql")) throw new TypeError("indexer down");
+      if (u.includes("/v1/view")) {
+        const body = JSON.parse(opts.body || "{}");
+        if (JSON.stringify(body.type_arguments || []).includes("AptosCoin")) return jsonRes(["500000000"]);
+        throw new TypeError("Failed to fetch"); // curated-token fullnode reads die too
+      }
+      throw new Error("unexpected url " + u);
+    };
+    const aptPartial = await getAptosAccount(APTOS_ADDR);
+    ok("aptos: indexer down + fullnode token read down leaves curated rows UNKNOWN (null), never zero",
+      aptPartial.balances[0].amount === "5.0" && aptPartial.balances.slice(1).every(b => b.amount === null));
+
+    // --- Stacks ---
+    resetFamilyRpcHealth();
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    const stxFail = await fetchStacksAccount(STX_ADDR);
+    ok("stacks: every Hiro host down reports scanFailed — the app renders unknown, not zero",
+      stxFail.scanFailed === true);
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.hiro.so")) throw new TypeError("Failed to fetch");
+      if (u.includes("api.mainnet.hiro.so/extended/v1/address/")) return jsonRes({ stx: { balance: "3000000" }, fungible_tokens: {} });
+      if (u.includes("api.mainnet.hiro.so/v2/accounts/")) return jsonRes({ nonce: 1 });
+      throw new Error("unexpected url " + u);
+    };
+    const stxRot = await fetchStacksAccount(STX_ADDR);
+    ok("stacks: a dead primary Hiro host rotates to the second and reads the real balance",
+      stxRot.scanFailed === false && stxRot.stxUstx === "3000000");
+
+    // --- Cosmos ---
+    resetFamilyRpcHealth();
+    const COSMOS_ADDR = cosmosAddress(ABANDON, "cosmoshub");
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("rest.cosmos.directory")) throw new TypeError("Failed to fetch");
+      if (u.includes("cosmos-api.polkachu.com")) return jsonRes({ balances: [{ denom: "uatom", amount: "3000000" }] });
+      throw new Error("unexpected url " + u);
+    };
+    ok("cosmos: a dead directory rotates to the chain's fallback LCD and reads the real balance",
+      (await getCosmosBalance("cosmoshub", COSMOS_ADDR)) === "3.0");
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getCosmosBalance("cosmoshub", COSMOS_ADDR));
+    ok("cosmos: every LCD down throws — the family nulls the chain, never a fake zero", true);
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("rest.cosmos.directory")) throw new TypeError("Failed to fetch");
+      if (u.includes("/cosmos/bank/v1beta1/balances/")) return jsonRes({ balances: [] });
+      return jsonRes({});
+    };
+    const cosmosAll = await getCosmosAllBalances(ABANDON);
+    ok("cosmos: with the directory dead, probed fallbacks keep all seven chains readable (true zeros)",
+      cosmosAll.length === 7 && cosmosAll.every(c => c.amount === "0"));
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    const cosmosDark = await getCosmosAllBalances(ABANDON);
+    ok("cosmos: with every LCD down, all seven chains report unknown (null), never zero",
+      cosmosDark.length === 7 && cosmosDark.every(c => c.amount === null));
+
+    // --- Tron garbled-body hardening ---
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => null });
+    await assert.rejects(() => getTronBalances(TRON_ADDR));
+    await assert.rejects(() => getTronAllTokens(TRON_ADDR));
+    ok("tron: an unreadable 200 body is a failed read in both readers — never an empty account", true);
+    globalThis.fetch = async () => jsonRes({ data: [] });
+    const tronZero = await getTronBalances(TRON_ADDR);
+    ok("tron: an answered empty account list is a true zero",
+      tronZero[0].amount === "0.0");
+  } finally { globalThis.fetch = realFetch; resetFamilyRpcHealth(); }
+
+  // --- Fix 4 core: a hung EVM endpoint rotates inside one call ---
+  ok("bsc fix: the per-attempt budget exists and is bounded",
+    EVM_PROVIDER_ATTEMPT_TIMEOUT_MS > 0 && EVM_PROVIDER_ATTEMPT_TIMEOUT_MS <= 60000);
+  registerNetworks({ c31338: { name: "StubHang", chainId: 31338, symbol: "SHB", priceSym: null,
+    rpc: "https://hang-one.invalid", rpcs: ["https://hang-one.invalid", "https://good-two.invalid"],
+    explorer: "https://stub.invalid", tokens: [] } });
+  registerNetworks({ c31339: { name: "StubHangAll", chainId: 31339, symbol: "SHA", priceSym: null,
+    rpc: "https://hang-a.invalid", rpcs: ["https://hang-a.invalid", "https://hang-b.invalid"],
+    explorer: "https://stub.invalid", tokens: [] } });
+  const prevGetUrlHang = FetchRequest.createGetUrlFunc();
+  // The per-attempt timer is unref'd (a library must not hold a
+  // host process open); a live app always has other work pending,
+  // so the test keeps one handle alive explicitly.
+  const keepAlive = setInterval(() => {}, 50);
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      if (req.url.includes("hang-")) await new Promise(() => {}); // never answers
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (q) => ({ jsonrpc: "2.0", id: q.id, result: q.method === "eth_getBalance" ? "0xde0b6b3a7640000" : "0x0" });
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    resetEvmRpcHealth();
+    const t0 = Date.now();
+    const bal = await withEvmProvider("c31338", (p) => p.getBalance("0x0000000000000000000000000000000000000001"), { attemptTimeoutMs: 300 });
+    ok("bsc fix: a hung first endpoint times out per-attempt and the read succeeds on the second, inside one call",
+      bal === 1000000000000000000n && Date.now() - t0 < 10000);
+    resetEvmRpcHealth();
+    const t1 = Date.now();
+    await assert.rejects(() => withEvmProvider("c31339", (p) => p.getBalance("0x0000000000000000000000000000000000000001"), { attemptTimeoutMs: 200 }));
+    ok("bsc fix: with every endpoint hung, the read still settles (throws) inside the bounded budget",
+      Date.now() - t1 < 10000);
+  } finally {
+    clearInterval(keepAlive);
+    FetchRequest.registerGetUrl(prevGetUrlHang); resetEvmRpcHealth();
+    delete NETWORKS.c31338; delete NETWORKS.c31339;
+  }
+
+  // --- App-side pins (source-level, the suite's convention) ---
+  const appSrcSZ = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const coreSrcSZ = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("app honesty: failed family reads substitute couldn't-load (null) rows for all five swept families",
+    appSrcSZ.includes("stellarBalances = [{ symbol: \"XLM\", name: \"Stellar Lumens\", amount: null")
+    && appSrcSZ.includes("tonBalances = [{ symbol: \"TON\", name: \"Toncoin\", amount: null")
+    && appSrcSZ.includes("nearBalances = [{ symbol: \"NEAR\", name: \"NEAR\", amount: null")
+    && appSrcSZ.includes("algoBalances = [{ symbol: \"ALGO\", name: \"Algorand\", amount: null")
+    && appSrcSZ.includes("aptosBalances = [{ symbol: \"APT\", name: \"Aptos\", amount: null")
+    && appSrcSZ.includes("symbol: \"STX\", name: \"Stacks\", amount: null"));
+  ok("app honesty: Solana/Sui total read failure nulls the rows on a cold start too",
+    !appSrcSZ.includes("else if (hydratedFams.has(\"solana\"))")
+    && !appSrcSZ.includes("else if (hydratedFams.has(\"sui\"))")
+    && appSrcSZ.includes("solBalances = [{ symbol: \"SOL\", amount: null")
+    && appSrcSZ.includes("suiBalances = [{ symbol: \"SUI\", amount: null"));
+  ok("app honesty: every row-based send sheet gates an unknown balance before printing an amount",
+    appSrcSZ.includes("function balanceUnknownGate(tok, chainLabel)")
+    && (appSrcSZ.match(/if \(balanceUnknownGate\(tok, /g) || []).length >= 11);
+  ok("app honesty: a failed TON jetton scan raises the family alert",
+    appSrcSZ.includes("Full jetton scan unavailable"));
+  ok("app honesty: the header annotates a partial total when any viewed family couldn't load",
+    appSrcSZ.includes("function balancesUnloadedInView()")
+    && appSrcSZ.includes("+ some balances couldn't load"));
+  ok("app honesty: a late-rescued EVM read is adopted inside its scan's bounded budget",
+    appSrcSZ.includes("EVM_LATE_ADOPT_MS") && appSrcSZ.includes("evmRead.then((late) => {"));
+  ok("core honesty: a failed Polkadot per-asset read is unknown (null), never a fabricated zero",
+    coreSrcSZ.includes("} catch { amount = null; /* one asset must not break the list */ }"));
+}
+
 console.log(`\n${passed} checks passed`);

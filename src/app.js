@@ -127,7 +127,7 @@ let tronAddr = null, tronBalances = [], tronLoadFailed = false;
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
 let stellarAddr = null, stellarBalances = [], stellarFunded = null, stellarLoadFailed = false;
-let tonAddr = null, tonBalances = [], tonState = null, tonLoadFailed = false;
+let tonAddr = null, tonBalances = [], tonState = null, tonLoadFailed = false, tonScanFailed = false;
 let nearAddr = null, nearBalances = [], nearExists = null, nearLoadFailed = false;
 let algoAddr = null, algoBalances = [], algoFunded = null, algoLoadFailed = false;
 let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
@@ -148,6 +148,8 @@ const UNVERIFIED_CAUTION = "This token isn't on a verified list — check the co
 const expandedOther = new Set();  // family keys whose "Other tokens" group is expanded
 let familyScanFailed = {};        // tron/solana/sui -> true when the all-token read fell back to curated rows
 let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|failed, for the ACTIVE chain
+let renderSeq = 0; // increments per renderMain run — stale renders must not adopt late reads
+const EVM_LATE_ADOPT_MS = 120000; // bounded window in which a rescued EVM read may still repaint its scan
 let evmLoadFailed = false; // the curated EVM balance load failed — rows are UNKNOWN, never zero (DOGE precedent)
 // Bitcoin has TWO balance reads (SegWit + Taproot) feeding one row:
 // each account tracks its own failure, and the family flag is the
@@ -825,10 +827,12 @@ async function renderMain() {
   loadFamilyRows(() => getSolanaAllTokens(solAddr), () => getSolanaBalances(solAddr), "solana")
     .then(rows => {
       if (rows) solBalances = rows;
-      else if (hydratedFams.has("solana")) {
-        // The live read failed over a cache paint: the cached rows
-        // must not stand as final — replace them with couldn't-load
-        // rows (the EVM failure shape) until a read succeeds.
+      else {
+        // BOTH reads failed: the balances are unknown — couldn't-
+        // load rows (the EVM failure shape), on a cold start too.
+        // This used to null the rows only over a cache paint, so a
+        // first-ever open on a bad network showed the "0"
+        // placeholders as fact (2026-11-14 silent-zero fix).
         solBalances = [{ symbol: "SOL", amount: null, address: null, decimals: 9 },
                        ...SOLANA_TOKENS.map(t => ({ ...t, amount: null }))];
       }
@@ -843,9 +847,10 @@ async function renderMain() {
   loadFamilyRows(() => getSuiAllBalances(suiAddr), () => getSuiBalances(suiAddr), "sui")
     .then(rows => {
       if (rows) suiBalances = rows;
-      else if (hydratedFams.has("sui")) {
-        // Same cache-honesty rule as Solana: a failed live read
-        // replaces the cached paint with couldn't-load rows.
+      else {
+        // Same rule as Solana: a total read failure is unknown,
+        // cold start included — never standing "0" placeholders
+        // (2026-11-14 silent-zero fix).
         suiBalances = [{ symbol: "SUI", amount: null, address: null, decimals: 9 },
                        ...SUI_TOKENS.map(t => ({ ...t, amount: null }))];
       }
@@ -861,7 +866,16 @@ async function renderMain() {
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
     .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; markLoaded("stellar"); paintAssets(); })
-    .catch(() => { stellarLoadFailed = true; markLoaded("stellar"); paintAssets(); });
+    .catch(() => {
+      // A failed read is UNKNOWN, not zero (the XRPL/DOT pattern):
+      // the row carries amount null and renders "couldn't load" —
+      // never a $0.00 presented as a loaded balance (2026-11-14
+      // silent-zero fix: this catch used to leave the "0"
+      // placeholder standing as fact).
+      stellarLoadFailed = true;
+      stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: null, address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
+      markLoaded("stellar"); paintAssets();
+    });
   // Phase 4 — payments-grade families: TON (SLIP-0010 coin 607,
   // Wallet V4R2), NEAR (coin 397, implicit account), Algorand (coin
   // 283), XRP Ledger (BIP44 secp256k1 coin 144), Polkadot Asset Hub
@@ -871,24 +885,43 @@ async function renderMain() {
   tonAddr = tonAddressFromPhrase(w.mnemonic.phrase);
   tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
                  { ...TON_USDT, amount: "0" }];
-  tonState = null; tonLoadFailed = false;
+  tonState = null; tonLoadFailed = false; tonScanFailed = false;
   getTonAccount(tonAddr)
-    .then(acct => { tonBalances = acct.balances; tonState = acct.state; markLoaded("ton"); paintAssets(); })
-    .catch(() => { tonLoadFailed = true; markLoaded("ton"); paintAssets(); });
+    .then(acct => { tonBalances = acct.balances; tonState = acct.state; tonScanFailed = !!acct.jettonsFailed; markLoaded("ton"); paintAssets(); })
+    .catch(() => {
+      // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
+      tonLoadFailed = true;
+      tonBalances = [{ symbol: "TON", name: "Toncoin", amount: null, address: null, decimals: 9, verified: true },
+                     { ...TON_USDT, amount: null }];
+      markLoaded("ton"); paintAssets();
+    });
   nearAddr = nearAddressFromPhrase(w.mnemonic.phrase);
   nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: "0", address: null, decimals: 24, verified: true },
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
     .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; markLoaded("near"); paintAssets(); })
-    .catch(() => { nearLoadFailed = true; markLoaded("near"); paintAssets(); });
+    .catch(() => {
+      // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
+      nearLoadFailed = true;
+      nearBalances = [{ symbol: "NEAR", name: "NEAR", amount: null, address: null, decimals: 24, verified: true },
+                      ...NEAR_TOKENS.map(t => ({ ...t, amount: null }))];
+      markLoaded("near"); paintAssets();
+    });
   algoAddr = algoAddressFromPhrase(w.mnemonic.phrase);
   algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: "0", address: null, decimals: 6, verified: true },
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
     .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; markLoaded("algorand"); paintAssets(); })
-    .catch(() => { algoLoadFailed = true; markLoaded("algorand"); paintAssets(); });
+    .catch(() => {
+      // Failed read = unknown, not zero (2026-11-14 silent-zero fix:
+      // the send sheet used to present this placeholder as "0 ALGO").
+      algoLoadFailed = true;
+      algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: null, address: null, decimals: 6, verified: true },
+                      { ...ALGO_USDC, amount: null }];
+      markLoaded("algorand"); paintAssets();
+    });
   xrpAddr = xrplAddressFromPhrase(w.mnemonic.phrase);
   xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
@@ -928,7 +961,13 @@ async function renderMain() {
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
   getAptosAccount(aptosAddr)
     .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; markLoaded("aptos"); paintAssets(); })
-    .catch(() => { aptosLoadFailed = true; markLoaded("aptos"); paintAssets(); });
+    .catch(() => {
+      // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
+      aptosLoadFailed = true;
+      aptosBalances = [{ symbol: "APT", name: "Aptos", amount: null, address: null, decimals: 8, verified: true },
+                       ...APTOS_TOKENS.map(t => ({ ...t, amount: null, verified: true }))];
+      markLoaded("aptos"); paintAssets();
+    });
   // Stacks (Bitcoin L2): BIP44 coin-5757 branch of the same seed. STX +
   // every SIP-010 balance via Hiro; pinned tokens (sBTC, USDA) verified,
   // everything else unverified (⚠) with contract-read metadata.
@@ -939,12 +978,26 @@ async function renderMain() {
   fetchStacksAccount(stacksAddr)
     .then(acct => {
       markLoaded("stacks");
-      if (acct.scanFailed) { stacksScanFailed = true; paintAssets(); return; }
+      if (acct.scanFailed) {
+        // Hiro never answered: the balances are UNKNOWN (amount
+        // null rows), never the "0" placeholders dressed as fact
+        // (2026-11-14 silent-zero fix — this branch used to leave
+        // the placeholders standing).
+        stacksScanFailed = true;
+        stacksBalances = [{ symbol: "STX", name: "Stacks", amount: null, decimals: 6, verified: true, contract: null },
+                          ...STACKS_TOKENS.map(t => ({ ...t, amount: null, balanceRaw: "0", verified: true }))];
+        paintAssets(); return;
+      }
       stacksBalances = [{ symbol: "STX", name: "Stacks", amount: stxMicroToStx(acct.stxUstx), decimals: 6, verified: true, contract: null },
                         ...acct.tokens.map(t => ({ ...t, amount: stacksRawToAmount(t.balanceRaw, t.decimals) }))];
       paintAssets();
     })
-    .catch(() => { stacksLoadFailed = true; markLoaded("stacks"); paintAssets(); });
+    .catch(() => {
+      stacksLoadFailed = true;
+      stacksBalances = [{ symbol: "STX", name: "Stacks", amount: null, decimals: 6, verified: true, contract: null },
+                        ...STACKS_TOKENS.map(t => ({ ...t, amount: null, balanceRaw: "0", verified: true }))];
+      markLoaded("stacks"); paintAssets();
+    });
   // Bitcoin-family altcoins (Phase 2a): same seed, own branches —
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
@@ -982,9 +1035,15 @@ async function renderMain() {
   // painted stand until the live reads fired above replace them
   // family by family.
   evmLoadFailed = false;
+  const myRenderSeq = ++renderSeq;
+  const evmKey = networkKey;
+  const evmRead = getBalances(w, evmKey);
+  // The read's rotation may outlive the settle race below and
+  // reject after it — expected, and never an unhandled rejection.
+  evmRead.catch(() => {});
   try {
     balances = await Promise.race([
-      getBalances(w, networkKey),
+      evmRead,
       new Promise((_, reject) => setTimeout(() => reject(new Error("balance load timed out")), 20000)),
     ]);
   } catch {
@@ -995,6 +1054,27 @@ async function renderMain() {
     // how the silent $0.00 shipped. The message now lives in the
     // alert, where rendering can't clobber it.)
     evmLoadFailed = true; balances = [];
+    // Late adoption (2026-11-14 BSC fix): this settle used to
+    // DISCARD the still-running read — in the post-release sweep
+    // the BSC rotation reached a healthy endpoint (blastapi,
+    // 200 ×4) seconds after the rows had settled "couldn't load",
+    // and nothing ever repainted them within the scan. The read
+    // keeps rotating in the background; if it lands inside this
+    // scan's bounded budget (EVM_LATE_ADOPT_MS) while this render
+    // is still current, its rows replace the failure state and
+    // the token scan starts. Past the budget the scan is honestly
+    // over — a Refresh re-reads.
+    const settleAt = Date.now();
+    evmRead.then((late) => {
+      if (!evmLoadFailed) return;
+      if (wallet !== w || networkKey !== evmKey || renderSeq !== myRenderSeq) return;
+      if (Date.now() - settleAt > EVM_LATE_ADOPT_MS) return;
+      balances = late;
+      evmLoadFailed = false;
+      markLoaded("evm");
+      paintAssets();
+      hydrateEvmTokens();
+    }).catch(() => {});
   }
   markLoaded("evm");
   paintAssets();
@@ -1098,7 +1178,7 @@ function familyUsdTotals() {
   m.xrpl = xrpLoadFailed ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
   m.polkadot = dotLoadFailed ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
   m.aptos = aptosLoadFailed ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
-  m.stacks = stacksLoadFailed ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
+  m.stacks = (stacksLoadFailed || stacksScanFailed) ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
   m.lightning = lnSession ? (Number(lnSession.balance().spendableMsat || 0) / 1e11) * (prices.BTC || 0) : null;
   for (const r of cosmosRows) m[r.key] = r.amount == null ? null : Number(r.amount) * (prices[r.symbol] || 0);
   return m;
@@ -1170,6 +1250,45 @@ function viewAddress() {
   const a = isCosmosView() ? cosmosAddrs[viewKey] : byKey[viewKey];
   return a ? { text: short(a), copy: a } : { text: "", copy: null };
 }
+/** Couldn't-load signal for the hero (2026-11-14 header-honesty
+ *  fix): true when any family IN THE CURRENT VIEW sits in its
+ *  couldn't-load state, so the header total — which can only sum
+ *  the rows that loaded — is annotated instead of posing as the
+ *  whole story (the sweep caught a bare "$0.00 · Across all
+ *  networks" over 22 failed rows). Mirrors the unpriced-holdings
+ *  annotation's view scoping. Cosmos rows start null before their
+ *  first read settles, so the family only counts once loaded. */
+function balancesUnloadedInView() {
+  const rowNull = (rows) => Array.isArray(rows) && rows.some(b => b && b.amount == null);
+  const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
+  if (viewKey === "all") {
+    return evmLoadFailed || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed
+      || tronLoadFailed || stellarLoadFailed || tonLoadFailed || nearLoadFailed || algoLoadFailed
+      || xrpLoadFailed || dotLoadFailed || aptosLoadFailed || stacksLoadFailed || stacksScanFailed
+      || rowNull(solBalances) || rowNull(suiBalances)
+      || (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null));
+  }
+  switch (viewKey) {
+    case "evm": return evmLoadFailed;
+    case "bitcoin": return btcLoadFailed;
+    case "litecoin": return ltcLoadFailed;
+    case "dogecoin": return dogeLoadFailed;
+    case "bitcoincash": return bchLoadFailed;
+    case "tron": return tronLoadFailed;
+    case "stellar": return stellarLoadFailed;
+    case "ton": return tonLoadFailed;
+    case "near": return nearLoadFailed;
+    case "algorand": return algoLoadFailed;
+    case "xrpl": return xrpLoadFailed;
+    case "polkadot": return dotLoadFailed;
+    case "aptos": return aptosLoadFailed;
+    case "stacks": return stacksLoadFailed || stacksScanFailed;
+    case "solana": return rowNull(solBalances);
+    case "sui": return rowNull(suiBalances);
+    default: return cosmosChainFailed(viewKey);
+  }
+}
+
 /** Header (§4.1) + hero (§4.3) + pill (§4.2) for the current view. */
 function paintHeader() {
   if (!wallet) return;
@@ -1190,6 +1309,7 @@ function paintHeader() {
     const updating = cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k));
     sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`)
       + (hasUnpricedHoldings() ? " + holdings with no live price" : "")
+      + (balancesUnloadedInView() ? " + some balances couldn't load" : "")
       + (updating ? " · Updating…" : "");
   }
   const va = viewAddress();
@@ -1294,6 +1414,7 @@ function familyAlertMap() {
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
   if (stellarLoadFailed) m.stellar = "Stellar balances couldn't be loaded right now.";
   if (tonLoadFailed) m.ton = "TON balances couldn't be loaded right now.";
+  else if (tonScanFailed) m.ton = "Full jetton scan unavailable — showing the native TON balance only; jetton balances couldn't load.";
   if (nearLoadFailed) m.near = "NEAR balances couldn't be loaded right now.";
   if (algoLoadFailed) m.algorand = "Algorand balances couldn't be loaded right now.";
   if (xrpLoadFailed) m.xrpl = "XRP Ledger balances couldn't be loaded right now.";
@@ -1635,7 +1756,7 @@ function paintAssets() {
     dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, tron: tronLoadFailed,
     stellar: stellarLoadFailed, ton: tonLoadFailed, near: nearLoadFailed,
     algorand: algoLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
-    aptos: aptosLoadFailed, stacks: stacksLoadFailed,
+    aptos: aptosLoadFailed, stacks: stacksLoadFailed || stacksScanFailed,
     cosmos: famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),
   };
   const titleOf = (key) => key === "evm" ? net.name : key === "bitcoin" ? "Bitcoin" : key === "cosmos" ? "Cosmos"
@@ -1893,8 +2014,11 @@ async function hydrateEvmTokens() {
   // 1) Custom tokens: few, read directly, merged immediately.
   const customRows = [];
   for (const ct of loadCustomTokens(chainId)) {
-    let amount = "0";
-    try { amount = await getEvmTokenBalance(wallet, myKey, ct); } catch { /* row stays at 0 */ }
+    // A failed custom-token read is unknown (amount null — the
+    // row renders "couldn't load"), never a fabricated zero
+    // (2026-11-14 silent-zero fix).
+    let amount = null;
+    try { amount = await getEvmTokenBalance(wallet, myKey, ct); } catch { /* stays null — unknown, not zero */ }
     customRows.push({ symbol: ct.symbol, name: ct.name, amount, address: ct.address, decimals: ct.decimals, custom: true, verified: false, priceUsd: null });
   }
   if (!alive()) return;
@@ -3102,7 +3226,20 @@ function openBtcSheet() {
 // ---------- Tron sheet ----------
 // Mirrors the EVM send sheet: review → human-readable sentence → confirm.
 // The transaction is built by TronGrid but signed locally by sendTron.
+/** Send-sheet honesty gate (2026-11-14 silent-zero fix): a row
+ *  whose balance read failed carries amount null — its send sheet
+ *  must say the balance is unknown and offer no send form, never
+ *  print a spendable-looking 0 at the top (the sweep caught the
+ *  Algorand sheet presenting an unproven zero as "0 ALGO").
+ *  Returns true when the gate fired; sheet openers return at once. */
+function balanceUnknownGate(tok, chainLabel) {
+  if (!tok || tok.amount != null) return false;
+  openSheet(`<h3>${esc(chainLabel)}</h3>
+    <p class="tag">This balance couldn't load right now — check your connection and try again. Receiving still works at your address.</p>`);
+  return true;
+}
 function openTronSheet(tok) {
+  if (balanceUnknownGate(tok, "Tron")) return;
   let pendingTron = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Tron</h3>
     <div id="tRampOrder"></div>
@@ -3229,6 +3366,7 @@ function openTronSheet(tok) {
 // Transactions are built and signed locally by sendSolana; only the
 // finished bytes touch the network.
 function openSolanaSheet(tok) {
+  if (balanceUnknownGate(tok, "Solana")) return;
   let pendingSol = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Solana</h3>
     <div id="oRampOrder"></div>
@@ -3402,6 +3540,7 @@ function openSolanaSheet(tok) {
 // (intent signing with the wallet's derived Ed25519 key); only the
 // signed transaction touches the network.
 function openSuiSheet(tok) {
+  if (balanceUnknownGate(tok, "Sui")) return;
   let pendingSui = null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Sui</h3>
     <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · from <span class="mono">${suiAddr}</span></p>
@@ -3464,6 +3603,7 @@ function openSuiSheet(tok) {
 // trustline) via stellarSendPlan so the sentence can say what will
 // happen; sendStellar re-enforces every rule in code before signing.
 function openStellarSheet(tok) {
+  if (balanceUnknownGate(tok, "Stellar")) return;
   if (tok.lpShare) {
     openSheet(`<h3>Stellar liquidity pool shares</h3>
       <p><b>${fmt(tok.amount)} shares</b> · from <span class="mono">${stellarAddr}</span></p>
@@ -3545,6 +3685,7 @@ function openStellarSheet(tok) {
 // is not a tonviewer transaction id — the history link points at
 // the wallet's own page, where the transfer appears.
 function openTonSheet(tok) {
+  if (balanceUnknownGate(tok, "TON")) return;
   let pendingTon = null;
   const tokenArg = tok.address ? tok : null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on TON</h3>
@@ -3599,6 +3740,7 @@ function openTonSheet(tok) {
 // recipient's account or pays their token registration; sendNear
 // re-enforces every rule (storage minimums) in code before signing.
 function openNearSheet(tok) {
+  if (balanceUnknownGate(tok, "NEAR")) return;
   if (nearExists === false) {
     openSheet(`<h3>NEAR</h3>
       <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${nearAddr}</span></p>
@@ -3667,6 +3809,7 @@ function openNearSheet(tok) {
 // Review pre-flights ASA opt-in via algoSendPlan; sendAlgorand
 // re-enforces min-balance and opt-in in code before signing.
 function openAlgoSheet(tok) {
+  if (balanceUnknownGate(tok, "Algorand")) return;
   if (algoFunded === false) {
     openSheet(`<h3>Algorand</h3>
       <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${algoAddr}</span></p>
@@ -3757,6 +3900,7 @@ function openAlgoSheet(tok) {
 // pre-flights funding + the live reserve via xrplSendPlan;
 // sendXrpl re-enforces the reserve rules in code before signing.
 function openXrplSheet(tok) {
+  if (balanceUnknownGate(tok, "XRP Ledger")) return;
   if (xrpFunded === false) {
     openSheet(`<h3>XRP Ledger</h3>
       <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${xrpAddr}</span></p>
@@ -3829,6 +3973,7 @@ function openXrplSheet(tok) {
 // network's own fee estimate; sendDot re-enforces the existential
 // deposit in code (and transferKeepAlive at the protocol level).
 function openDotSheet(tok) {
+  if (balanceUnknownGate(tok, "Polkadot Asset Hub")) return;
   let pendingDot = null;
   const tokenArg = tok.address ? tok : null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Polkadot Asset Hub</h3>
@@ -3884,6 +4029,7 @@ function openDotSheet(tok) {
 // estimate; sendAptos re-plans fresh and re-enforces balances in
 // code before signing locally.
 function openAptosSheet(tok) {
+  if (balanceUnknownGate(tok, "Aptos")) return;
   if (aptosExists === false) {
     openSheet(`<h3>Aptos</h3>
       <p><b>${fmt(tok.amount)} ${esc(tok.symbol)}</b> · <span class="mono">${aptosAddr}</span></p>
@@ -3948,6 +4094,7 @@ function openAptosSheet(tok) {
 // in code before signing locally. SIP-010 sends carry an exact-amount
 // post-condition.
 function openStacksSheet(tok) {
+  if (balanceUnknownGate(tok, "Stacks")) return;
   let pendingStacks = null;
   const tokenArg = tok.contract ? tok : null;
   openSheet(`<h3>Send ${esc(tok.symbol)} on Stacks</h3>
