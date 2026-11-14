@@ -8,10 +8,12 @@ import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import * as btc from "@scure/btc-signer";
 import { base58, base58check, base58xrp, base64, base32, bech32, bech32m, hex } from "@scure/base";
-import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
-import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
+import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess, defaultRegistryTypes } from "@cosmjs/stargate";
+import { DirectSecp256k1Wallet, Registry } from "@cosmjs/proto-signing";
 import { TxBody as CosmosTxBody, TxRaw as CosmosTxRaw, AuthInfo as CosmosAuthInfo, SignDoc as CosmosSignDoc, SignerInfo as CosmosSignerInfo, ModeInfo as CosmosModeInfo } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import { MsgSend as CosmosBankMsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { MsgTransfer as IbcMsgTransfer } from "cosmjs-types/ibc/applications/transfer/v1/tx";
+import { MsgExecuteContract as WasmMsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
 import { Any as ProtobufAny } from "cosmjs-types/google/protobuf/any";
 import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
 import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
@@ -3426,10 +3428,10 @@ function cosmosMsgSend(chain, from, to, rawAmount, denom = chain.denom) {
   return { typeUrl: "/cosmos.bank.v1beta1.MsgSend",
            value: { fromAddress: from, toAddress: to, amount: [{ denom, amount: rawAmount }] } };
 }
-async function cosmosSignerClient(phrase, chain) {
+async function cosmosSignerClient(phrase, chain, { registry = null } = {}) {
   const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
   const signer = await DirectSecp256k1Wallet.fromKey(child.privateKey, chain.prefix);
-  return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice) });
+  return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice), ...(registry ? { registry } : {}) });
 }
 
 // ---------- Injective signer (EthAccount — see the family note) ----------
@@ -3453,7 +3455,15 @@ export function buildInjectiveSignedTx({ privateKey, publicKey, fromAddress, toA
       amount: [CosmosCoin.fromPartial({ denom, amount: String(amountBase) })],
     })).finish(),
   });
-  const bodyBytes = CosmosTxBody.encode(CosmosTxBody.fromPartial({ messages: [msgAny], memo: "" })).finish();
+  return assembleInjectiveSignedTx({ privateKey, publicKey, msgAnys: [msgAny], feeAmountBase, gasLimit, accountNumber, sequence, chainId });
+}
+/** The shared Injective assembly: TxBody over caller-supplied
+ *  message Anys + AuthInfo (ethsecp256k1 pubkey, SIGN_MODE_DIRECT)
+ *  + the keccak256(SignDoc) signature. buildInjectiveSignedTx is
+ *  the MsgSend special case of this — byte-identical by
+ *  construction, and pinned so in the suite. */
+export function assembleInjectiveSignedTx({ privateKey, publicKey, msgAnys, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1" }) {
+  const bodyBytes = CosmosTxBody.encode(CosmosTxBody.fromPartial({ messages: msgAnys, memo: "" })).finish();
   const pubKeyAny = ProtobufAny.fromPartial({
     typeUrl: INJECTIVE_PUBKEY_TYPE,
     value: CosmosSecp256k1PubKey.encode(CosmosSecp256k1PubKey.fromPartial({ key: publicKey })).finish(),
@@ -3567,6 +3577,53 @@ async function sendInjective(phrase, chain, { to, amount, fee = null, denom = nu
   if (!res.ok || !txr) throw new Error((data?.message || `Injective broadcast failed (HTTP ${res.status}).`).trim());
   if (Number(txr.code) !== 0) throw new Error(`Injective rejected the transaction: ${(txr.raw_log || "code " + txr.code).trim().slice(0, 240)}`);
   return { hash: txr.txhash };
+}
+/** PURE builder: an Injective transaction over ARBITRARY
+ *  EncodeObjects (Skip rail, 2026-11-15 — MsgTransfer first).
+ *  Each message is encoded through the caller's registry into an
+ *  Any, then the shared assembly signs it — the same bytes the
+ *  MsgSend builder produces for a MsgSend input (pinned). */
+export function buildInjectiveSignedTxForMsgs({ privateKey, publicKey, msgs, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1", registry }) {
+  if (!registry) throw new Error("buildInjectiveSignedTxForMsgs needs a registry to encode its messages.");
+  const msgAnys = (msgs || []).map(m => ProtobufAny.fromPartial({ typeUrl: m.typeUrl, value: registry.encode(m) }));
+  if (!msgAnys.length) throw new Error("No messages to sign.");
+  return assembleInjectiveSignedTx({ privateKey, publicKey, msgAnys, feeAmountBase, gasLimit, accountNumber, sequence, chainId });
+}
+/** Broadcast signed Injective tx bytes through the chain's LCD
+ *  (BROADCAST_MODE_SYNC). Returns { hash }. */
+async function broadcastInjectiveTx(chain, txBytes) {
+  const res = await fetch(`${chain.rest}/cosmos/tx/v1beta1/txs`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tx_bytes: base64.encode(txBytes), mode: "BROADCAST_MODE_SYNC" }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  const txr = data?.tx_response;
+  if (!res.ok || !txr) throw new Error((data?.message || `Injective broadcast failed (HTTP ${res.status}).`).trim());
+  if (Number(txr.code) !== 0) throw new Error(`Injective rejected the transaction: ${(txr.raw_log || "code " + txr.code).trim().slice(0, 240)}`);
+  return { hash: txr.txhash };
+}
+/** Injective send of arbitrary EncodeObjects (Skip rail): the
+ *  estimateInjectiveFee discipline — sign a provisional-fee tx,
+ *  let the chain SIMULATE it (the ante handler runs, so an
+ *  account that cannot pay fails with the chain's own message),
+ *  rebuild at simulated gas × 1.4, broadcast. Returns { hash }. */
+export async function sendInjectiveMsgs(phrase, chain, msgs, { registry } = {}) {
+  const from = cosmosAddress(phrase, chain.key);
+  const acct = await injectiveAccount(chain, from);
+  if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
+  const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
+  const price = injectiveGasPricePerGas(chain);
+  const build = (feeAmountBase, gasLimit) => buildInjectiveSignedTxForMsgs({
+    privateKey: child.privateKey, publicKey: child.publicKey, msgs,
+    feeAmountBase, gasLimit, accountNumber: acct.accountNumber, sequence: acct.sequence, chainId: chain.chainId, registry,
+  });
+  const provisionalGas = 400000;
+  const provisional = build((price * BigInt(provisionalGas)).toString(), provisionalGas);
+  const gasInfo = await injectiveSimulate(chain, provisional.txBytes);
+  const gasWanted = Math.ceil(Number(gasInfo.gas_used) * 1.4);
+  const built = build((price * BigInt(gasWanted)).toString(), gasWanted);
+  return broadcastInjectiveTx(chain, built.txBytes);
 }
 /** Simulate a MsgSend and price the fee at the chain's registry
  *  average gas price (CosmJS "auto" math: simulated gas × 1.4).
@@ -6670,6 +6727,20 @@ export const LITECOIN_SWAP_CHAIN_ID = 20000000000007;
 export const DOGECOIN_SWAP_CHAIN_ID = 20000000000008;
 export const BITCOINCASH_SWAP_CHAIN_ID = 20000000000009;
 export const APTOS_SWAP_CHAIN_ID = 20000000000010;
+/** The Cosmos slice-1 chains' ids in the same router chain-id
+ *  space (Skip rail, audit gap #2, 2026-11-15): Cosmos Hub,
+ *  Osmosis, Noble, Celestia, Injective and dYdX join
+ *  swapChainOf because Skip quotes them as first-class swap
+ *  endpoints, as source AND destination. A Cosmos token's
+ *  "address" in the swap universe is its denom itself
+ *  ("uatom", "uosmo", "uusdc", "utia", "inj", "adydx", or an
+ *  ibc/… voucher denom) — denoms ARE Cosmos asset ids. */
+export const COSMOSHUB_SWAP_CHAIN_ID = 20000000000011;
+export const OSMOSIS_SWAP_CHAIN_ID = 20000000000012;
+export const NOBLE_SWAP_CHAIN_ID = 20000000000013;
+export const CELESTIA_SWAP_CHAIN_ID = 20000000000014;
+export const INJECTIVE_SWAP_CHAIN_ID = 20000000000015;
+export const DYDX_SWAP_CHAIN_ID = 20000000000016;
 /** The six 1Click families' native coins' "addresses" in the
  *  swap universe (mirroring Bitcoin's "btc" / DOT's "dot"):
  *  native coins have no contract, so routes name them by
@@ -6699,6 +6770,12 @@ export function swapChainOf(chainKey) {
   if (chainKey === "dogecoin") return { chainId: DOGECOIN_SWAP_CHAIN_ID, name: "Dogecoin" };
   if (chainKey === "bitcoincash") return { chainId: BITCOINCASH_SWAP_CHAIN_ID, name: "Bitcoin Cash" };
   if (chainKey === "aptos") return { chainId: APTOS_SWAP_CHAIN_ID, name: "Aptos" };
+  if (chainKey === "cosmoshub") return { chainId: COSMOSHUB_SWAP_CHAIN_ID, name: "Cosmos Hub" };
+  if (chainKey === "osmosis") return { chainId: OSMOSIS_SWAP_CHAIN_ID, name: "Osmosis" };
+  if (chainKey === "noble") return { chainId: NOBLE_SWAP_CHAIN_ID, name: "Noble" };
+  if (chainKey === "celestia") return { chainId: CELESTIA_SWAP_CHAIN_ID, name: "Celestia" };
+  if (chainKey === "injective") return { chainId: INJECTIVE_SWAP_CHAIN_ID, name: "Injective" };
+  if (chainKey === "dydx") return { chainId: DYDX_SWAP_CHAIN_ID, name: "dYdX" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -7850,6 +7927,860 @@ async function pollOneClickLegOutcome(storage, depositTxHash, { timeoutMs = 1500
     if (Date.now() >= end) return null;
     await new Promise(r => setTimeout(r, intervalMs));
   }
+}
+
+/* ---------- Skip (Cosmos interchain router) — audit gap #2, slice 1 (2026-11-15) ----------
+ * Skip (api.skip.build, keyless) is the Cosmos programme's
+ * general router: one POST /v2/fungible/route prices a path,
+ * POST /v2/fungible/msgs returns the exact transaction(s) for
+ * it, GET /v2/tx/status tracks settlement. Every route in
+ * this slice is ONE user signature on the SOURCE chain — an
+ * IBC MsgTransfer whose memo carries the swap_and_action hook
+ * (the swap executes on the settlement chain as the packet
+ * lands), a MsgExecuteContract on Osmosis when the swap sits
+ * on the source chain itself, a plain MsgTransfer when no
+ * swap is needed, or — for the Noble exit — one Noble tx
+ * pairing a CCTP MsgDepositForBurnWithCaller with the bank
+ * MsgSend that pays Skip's smart-relay fee.
+ *
+ * Slice 1 covers six chains as sources AND destinations:
+ * Cosmos Hub, Osmosis, Noble, Celestia, Injective (Cosmos
+ * side) and dYdX — plus Noble USDC's CCTP exit to EVM USDC.
+ * EVM → Cosmos via Skip is NOT wired: keyless route requests
+ * for EVM sources failed verification from this build's
+ * environment ("Source token not found" for Base USDC), so
+ * those pairs keep the routes they already had and this rail
+ * makes no claim on them. Kujira is not added (legacy
+ * remnant; Rujira is a THORChain app layer now).
+ *
+ * FEE ADAPTER (probe-measured 2026-11-14/15, fixtures in
+ * research_notes/fluid-cosmos-slice1-20261115/): requesting
+ * F bps of affiliate fee returns a hook memo whose affiliates
+ * split it as [F − floor(F/4) to Fluid, floor(F/4) to Skip]
+ * — Skip keeps a quarter (50 → 38/12, 100 → 75/25, 67 →
+ * 51/16, 66 → 50/16). skipFeeRequest inverts the transform
+ * for the fee law's target, and the returned memo is
+ * ECHO-VERIFIED before anything is signed (split, recipient,
+ * min_asset floor, post-swap recipient) — the 1Click pattern:
+ * a mismatch refuses the charge and the route falls back to
+ * its fee-free pass with collecting=false, never proceeds.
+ *
+ * Osmosis SQS is a QUOTE-ONLY cross-check here: its affiliate
+ * parameters are silently ignored by the public endpoint
+ * (measured), so SQS must never be an execution path — Skip
+ * executes Osmosis-internal swaps through its own messages,
+ * where capture is proven, and SQS only vetoes a Skip quote
+ * that lands under 90% of SQS's own price for the same pair.
+ *
+ * The CCTP relay fee is Skip/Circle's, not Fluid's: it is
+ * quoted per route (1,848 uusdc to Base vs 527,968 to
+ * Ethereum at the same $10 — destination-dependent), verified
+ * against the quote before signing, and DISCLOSED on the
+ * route card per quote (route.skip.relayFee), never buried.
+ *
+ * IBC TIMEOUTS are this family's REFUNDED: a packet that
+ * outlives its timeout can never be relayed, and the chain
+ * refunds the sender's address automatically. Milestone legs
+ * on this rail therefore carry a `timed-out` TERMINAL state
+ * (see skipLegTimeoutVerdict) — terminal-with-refund, named
+ * in plain language in Activity. */
+export const SKIP_API = "https://api.skip.build/v2";
+/** Build-time affiliate configuration: Skip chain id → the
+ *  bech32 affiliate address Fluid collects on, ON THAT CHAIN
+ *  (Skip places the affiliate on the route's SETTLEMENT
+ *  chain, so one address per chain is needed — the research
+ *  fixtures pin the shape with the test wallet's addresses).
+ *  Empty today — an operator item, exactly the
+ *  ONECLICK_FEE_RECIPIENT / CHAINFLIP_BROKER_ACCOUNT
+ *  precedent: while no address is configured, Skip quotes
+ *  run fee-free with collecting=false and the whole capture
+ *  mechanism (transform + echo-verify) stands implemented
+ *  and test-pinned behind the config. */
+export const SKIP_AFFILIATE_ADDRESSES = {};
+export function skipAffiliateAddress(chainId, table = SKIP_AFFILIATE_ADDRESSES) {
+  const a = table ? table[String(chainId)] : null;
+  return typeof a === "string" && a ? a : null;
+}
+const SKIP_CHAIN_IDS = { cosmoshub: "cosmoshub-4", osmosis: "osmosis-1", noble: "noble-1", celestia: "celestia", injective: "injective-1", dydx: "dydx-mainnet-1" };
+/** The COSMOS_CHAINS entry for a slice-1 chain key, carrying
+ *  its Skip chain id — null for anything outside the slice
+ *  (Sei included: present in the wallet, not on this rail). */
+export function skipChainOf(chainKey) {
+  const chain = COSMOS_CHAINS.find(c => c.key === chainKey);
+  if (!chain || !SKIP_CHAIN_IDS[chainKey]) return null;
+  return { ...chain, skipChainId: SKIP_CHAIN_IDS[chainKey] };
+}
+export const SKIP_ATOM_ON_OSMOSIS_DENOM = "ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2";
+/** The slice's asset table: a Cosmos token's swap-universe
+ *  "address" is its denom. Natives on the six chains plus
+ *  ATOM's Osmosis voucher (the one cross-chain asset the
+ *  slice trades — it is what an Osmosis-side ATOM balance
+ *  actually is). */
+export const SKIP_ASSETS = [
+  { chainKey: "cosmoshub", denom: "uatom", symbol: "ATOM", decimals: 6 },
+  { chainKey: "osmosis", denom: "uosmo", symbol: "OSMO", decimals: 6 },
+  { chainKey: "osmosis", denom: SKIP_ATOM_ON_OSMOSIS_DENOM, symbol: "ATOM", decimals: 6 },
+  { chainKey: "noble", denom: "uusdc", symbol: "USDC", decimals: 6 },
+  { chainKey: "celestia", denom: "utia", symbol: "TIA", decimals: 6 },
+  { chainKey: "injective", denom: "inj", symbol: "INJ", decimals: 18 },
+  { chainKey: "dydx", denom: "adydx", symbol: "DYDX", decimals: 18 },
+];
+export function skipAsset(chainKey, denom) {
+  return SKIP_ASSETS.find(a => a.chainKey === chainKey && a.denom === String(denom)) || null;
+}
+/** CCTP destination domains for the EVM chains the Noble
+ *  exit can target (Circle's domain table; Base = 6 measured
+ *  live 2026-11-15, the rest are Circle's published ids).
+ *  An EVM chain absent here is not offered a CCTP exit. */
+export const SKIP_CCTP_DOMAINS = { ethereum: 0, avalanche: 1, optimism: 2, arbitrum: 3, base: 6, polygon: 7 };
+/** Skip's CCTP smart-relay fee collector on Noble — a
+ *  protocol constant, identical across every independent
+ *  quote probed (research fixture + two live probes,
+ *  2026-11-14/15). The CCTP verifier pins the fee MsgSend's
+ *  recipient to it: a quote paying the relay fee anywhere
+ *  else is refused, never signed. */
+export const SKIP_CCTP_FEE_PAYMENT_ADDRESS = "noble1dyw0geqa2cy0ppdjcxfpzusjpwmq85r5a35hqe";
+/** The measured affiliate split for a requested fee:
+ *  Skip keeps floor(request/4); Fluid nets the rest.
+ *  Pinned at 50 → 38/12, 100 → 75/25, 67 → 51/16. */
+export function skipSplitFor(requestBps) {
+  const r = Math.max(0, Math.floor(Number(requestBps) || 0));
+  const skip = Math.floor(r / 4);
+  return { request: r, fluid: r - skip, skip };
+}
+/** The inverse transform: the smallest request whose NET
+ *  (after Skip's quarter) equals the fee law's target —
+ *  target 50 → request 66 (net 50, Skip 16). */
+export function skipFeeRequest(targetBps) {
+  const t = Math.max(0, Math.floor(Number(targetBps) || 0));
+  if (t <= 0) return 0;
+  let r = t;
+  while (skipSplitFor(r).fluid < t) r++;
+  return r;
+}
+async function skipFetchJson(path, { method = "GET", body = null, fetchImpl = null, timeoutMs = 30000 } = {}) {
+  const impl = fetchImpl || fetch;
+  const res = await impl(`${SKIP_API}${path}`, {
+    method, headers: { "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(`Skip ${path} failed (HTTP ${res.status})${data?.message ? ": " + String(data.message).slice(0, 160) : ""}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+export async function skipRouteRequest(body, { fetchImpl = null } = {}) {
+  return skipFetchJson("/fungible/route", { method: "POST", body, fetchImpl });
+}
+export async function skipMsgsRequest(body, { fetchImpl = null } = {}) {
+  return skipFetchJson("/fungible/msgs", { method: "POST", body, fetchImpl });
+}
+/** Skip's chain list → a chain_id → bech32_prefix map, for
+ *  naming the user's own address on INTERMEDIATE chains a
+ *  route crosses (the DYDX → Noble path forwards through
+ *  Persistence, core-1). Cached on success only; the
+ *  measured core-1 fallback rides underneath either way. */
+let skipChainPrefixCache = null;
+export async function skipChainPrefixes({ fetchImpl = null } = {}) {
+  if (skipChainPrefixCache) return skipChainPrefixCache;
+  const map = { "core-1": "persistence" };
+  try {
+    const data = await skipFetchJson("/info/chains", { fetchImpl });
+    for (const c of data?.chains || []) if (c?.chain_id && c?.bech32_prefix) map[c.chain_id] = c.bech32_prefix;
+    skipChainPrefixCache = map;
+  } catch { /* the fallback table alone; not cached, so a later search retries the fetch */ }
+  return map;
+}
+/** The account bytes inside any bech32 address (the Cosmos
+ *  families share one account across coin-type-118 chains,
+ *  so an intermediate chain's address is the same bytes
+ *  re-encoded under that chain's prefix). */
+export function skipAccountBytesOfAddress(address) {
+  try {
+    const d = bech32.decode(String(address));
+    const bytes = new Uint8Array(bech32.fromWords(d.words));
+    return bytes.length === 20 ? bytes : null;
+  } catch { return null; }
+}
+export function skipDeriveAddressForChain(accountBytes, prefix) {
+  return bech32.encode(prefix, bech32.toWords(accountBytes));
+}
+/** Build the msgs address_list for a route: one address per
+ *  required_chain_addresses entry, in order — the source
+ *  address for the source chain, the destination address for
+ *  the destination (or the user's EVM address for a CCTP
+ *  exit), and a derived own-address for every intermediate
+ *  Cosmos chain. Derivation is only sound from a
+ *  coin-type-118 source (every slice chain except Injective;
+ *  no Injective route crosses an intermediate). Returns null
+ *  when any required address cannot be named — the route is
+ *  then not offered, never guessed. */
+export function skipAddressList({ fromAddress, toAddress, fromChain, destChainId, requiredChainIds, prefixes = {} }) {
+  const list = [];
+  let accountBytes = null;
+  for (const id of requiredChainIds || []) {
+    if (id === fromChain.skipChainId) { list.push(fromAddress); continue; }
+    if (String(id) === String(destChainId)) { list.push(toAddress); continue; }
+    const prefix = prefixes[id];
+    if (!prefix || cosmosCoinType(fromChain) !== 118) return null;
+    if (!accountBytes) accountBytes = skipAccountBytesOfAddress(fromAddress);
+    if (!accountBytes) return null;
+    list.push(skipDeriveAddressForChain(accountBytes, prefix));
+  }
+  return list.length ? list : null;
+}
+function skipParseJson(s) {
+  try { const v = JSON.parse(s); return v && typeof v === "object" ? v : null; } catch { return null; }
+}
+/** Find the swap_and_action hook inside a parsed memo tree:
+ *  directly ({ wasm: { msg } }), inside a MsgExecuteContract
+ *  body, or nested down a packet-forward memo chain
+ *  ({ forward: { next: "<memo json>" } } — the DYDX shape). */
+function findSwapAndAction(node, depth = 0) {
+  if (!node || typeof node !== "object" || depth > 6) return null;
+  if (node.swap_and_action && typeof node.swap_and_action === "object") return node.swap_and_action;
+  if (node.wasm && typeof node.wasm === "object") {
+    const r = findSwapAndAction(node.wasm.msg, depth + 1);
+    if (r) return r;
+  }
+  if (node.forward && typeof node.forward === "object") {
+    const next = typeof node.forward.next === "string" ? skipParseJson(node.forward.next) : node.forward.next;
+    const r = findSwapAndAction(next, depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+/** The swap_and_action hook of a msgs response's first (and
+ *  only) transaction, wherever in its messages it rides —
+ *  null when the route carries no hook (plain transfers and
+ *  CCTP exits have none). */
+export function skipFindSwapAndAction(msgsData) {
+  const tx = msgsData?.txs?.[0]?.cosmos_tx;
+  if (!tx || !Array.isArray(tx.msgs)) return null;
+  for (const m of tx.msgs) {
+    const j = skipParseJson(m.msg);
+    if (!j) continue;
+    if (m.msg_type_url === "/cosmwasm.wasm.v1.MsgExecuteContract") {
+      const inner = typeof j.msg === "string" ? skipParseJson(j.msg) : j.msg;
+      const r = findSwapAndAction(inner, 0);
+      if (r) return r;
+    }
+    if (typeof j.memo === "string" && j.memo) {
+      const r = findSwapAndAction(skipParseJson(j.memo), 0);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+/** ECHO-VERIFY a charged msgs response against the fee the
+ *  transform promised (the 1Click pattern — any mismatch
+ *  refuses the charge): the affiliates must total the
+ *  request, Fluid's entry must be exactly the expected net
+ *  at the configured settlement-chain address, the only
+ *  other entry must be Skip's expected quarter, min_asset
+ *  must floor the swap's output at the requested slippage
+ *  (denom pinned when the settlement chain IS the
+ *  destination chain), and the post-swap action must pay
+ *  one of the user's own addresses from the address list. */
+export function verifySkipFeeEcho(msgsData, expect = {}) {
+  const fail = (reason) => ({ ok: false, reason });
+  const hook = skipFindSwapAndAction(msgsData);
+  if (!hook) return fail("no-hook");
+  const affs = Array.isArray(hook.affiliates) ? hook.affiliates : [];
+  if (affs.length !== 2) return fail("affiliates-shape");
+  const total = affs.reduce((s, a) => s + (Number(a?.basis_points_fee) || 0), 0);
+  if (total !== Number(expect.requestedBps)) return fail("affiliates-total");
+  const ours = affs.find(a => a && a.address === expect.affiliateAddress);
+  if (!ours || Number(ours.basis_points_fee) !== Number(expect.fluidBps)) return fail("affiliates-recipient");
+  const other = affs.find(a => a && a.address !== expect.affiliateAddress);
+  if (!other || Number(other.basis_points_fee) !== Number(expect.skipBps)) return fail("affiliates-split");
+  const min = hook.min_asset?.native;
+  if (!min || (expect.swapOutDenom != null && min.denom !== expect.swapOutDenom)) return fail("min-asset-denom");
+  let minOk = false;
+  try {
+    const keep = 100n - BigInt(Math.round(Number(expect.slippagePercent ?? 1)));
+    minOk = BigInt(min.amount) * 100n >= BigInt(expect.swapOutRaw) * keep;
+  } catch { minOk = false; }
+  if (!minOk) return fail("min-asset-amount");
+  const psa = hook.post_swap_action || {};
+  const recip = psa?.transfer?.to_address || psa?.ibc_transfer?.ibc_info?.receiver || null;
+  if (!recip || !(expect.addressSet || []).includes(recip)) return fail("post-swap-recipient");
+  return { ok: true };
+}
+/** The packet timeout of a msgs response, as a millisecond
+ *  epoch — the earliest timeout among the first tx's
+ *  transfers and its hook. Skip serialises timeout_timestamp
+ *  as a JSON number (int64 as a double; the sub-microsecond
+ *  rounding is semantically irrelevant), so the raw digits
+ *  are read from the message string and converted with
+ *  BigInt. Null when the tx carries no IBC timeout (the
+ *  CCTP exit: a burn has no packet to time out). */
+export function skipTimeoutAtFromMsgs(msgsData) {
+  const tx = msgsData?.txs?.[0]?.cosmos_tx;
+  if (!tx || !Array.isArray(tx.msgs)) return null;
+  let best = null;
+  const consider = (digits) => {
+    try {
+      const ms = Number(BigInt(String(digits)) / 1000000n);
+      if (ms > 0 && (best == null || ms < best)) best = ms;
+    } catch { /* not a number — ignore */ }
+  };
+  for (const m of tx.msgs) {
+    const raw = /"timeout_timestamp"\s*:\s*"?(\d{10,})"?/.exec(m.msg || "");
+    if (raw) consider(raw[1]);
+    const j = skipParseJson(m.msg);
+    if (!j) continue;
+    const hook = m.msg_type_url === "/cosmwasm.wasm.v1.MsgExecuteContract"
+      ? findSwapAndAction(typeof j.msg === "string" ? skipParseJson(j.msg) : j.msg, 0)
+      : (typeof j.memo === "string" ? findSwapAndAction(skipParseJson(j.memo), 0) : null);
+    if (hook?.timeout_timestamp != null) consider(hook.timeout_timestamp);
+  }
+  return best;
+}
+
+/* ----- Noble CCTP: the hand-encoded message -----
+ * cosmjs-types ships no circle/ types, so
+ * MsgDepositForBurnWithCaller is encoded by hand against
+ * Noble's circle/cctp/v1/tx.proto (field layout pinned by
+ * the research fixture): from=1 (string), amount=2 (string),
+ * destination_domain=3 (uint32), mint_recipient=4 (bytes),
+ * burn_token=5 (string), destination_caller=6 (bytes). The
+ * protobuf primitives are the Tron section's (pbBytesField /
+ * pbVarintField / pbFields — module-level, hoisted). */
+const skipTextEncoder = new TextEncoder();
+const skipTextDecoder = new TextDecoder();
+export function encodeMsgDepositForBurnWithCaller(v) {
+  const parts = [];
+  if (v.from) parts.push(pbBytesField(1, skipTextEncoder.encode(String(v.from))));
+  if (v.amount != null && String(v.amount) !== "0") parts.push(pbBytesField(2, skipTextEncoder.encode(String(v.amount))));
+  if (v.destinationDomain) parts.push(pbVarintField(3, v.destinationDomain));
+  if (v.mintRecipient && v.mintRecipient.length) parts.push(pbBytesField(4, v.mintRecipient));
+  if (v.burnToken) parts.push(pbBytesField(5, skipTextEncoder.encode(String(v.burnToken))));
+  if (v.destinationCaller && v.destinationCaller.length) parts.push(pbBytesField(6, v.destinationCaller));
+  return new Uint8Array(parts.flat());
+}
+export function decodeMsgDepositForBurnWithCaller(bytes) {
+  const out = { from: "", amount: "0", destinationDomain: 0, mintRecipient: new Uint8Array(0), burnToken: "", destinationCaller: new Uint8Array(0) };
+  for (const f of pbFields(bytes)) {
+    if (f.num === 1) out.from = skipTextDecoder.decode(f.value);
+    else if (f.num === 2) out.amount = skipTextDecoder.decode(f.value);
+    else if (f.num === 3) out.destinationDomain = Number(f.value);
+    else if (f.num === 4) out.mintRecipient = f.value;
+    else if (f.num === 5) out.burnToken = skipTextDecoder.decode(f.value);
+    else if (f.num === 6) out.destinationCaller = f.value;
+  }
+  return out;
+}
+/** The Registry-facing codec for the CCTP message (the
+ *  ts-proto shape @cosmjs/proto-signing's Registry consumes:
+ *  fromPartial + encode().finish() + decode). */
+export const MsgDepositForBurnWithCallerType = {
+  create: (v = {}) => ({ from: "", amount: "0", destinationDomain: 0, mintRecipient: new Uint8Array(0), burnToken: "", destinationCaller: new Uint8Array(0), ...v }),
+  fromPartial: (v = {}) => ({
+    from: v.from ?? "", amount: v.amount != null ? String(v.amount) : "0",
+    destinationDomain: v.destinationDomain ?? 0,
+    mintRecipient: v.mintRecipient ?? new Uint8Array(0),
+    burnToken: v.burnToken ?? "",
+    destinationCaller: v.destinationCaller ?? new Uint8Array(0),
+  }),
+  encode: (msg) => { const bytes = encodeMsgDepositForBurnWithCaller(msg); return { finish: () => bytes }; },
+  decode: (bytes) => decodeMsgDepositForBurnWithCaller(bytes),
+};
+/** VERIFY a Noble CCTP msgs response before it is signed —
+ *  at quote time and again inside the executor, on the exact
+ *  messages about to be signed: exactly the burn + the fee
+ *  MsgSend on noble-1; the mint recipient decodes to the
+ *  user's own EVM address (32-byte left-padded); the domain
+ *  matches the destination chain; the fee MsgSend pays the
+ *  quoted relay fee to Skip's pinned fee address; and burn +
+ *  fee conserve the input exactly. */
+export function verifySkipCctpMsgs(msgsData, expect = {}) {
+  const fail = (reason) => ({ ok: false, reason });
+  const tx = msgsData?.txs?.[0]?.cosmos_tx;
+  if (!tx || tx.chain_id !== "noble-1" || !Array.isArray(tx.msgs) || tx.msgs.length !== 2) return fail("shape");
+  let burn = null, feeSend = null;
+  for (const m of tx.msgs) {
+    const j = skipParseJson(m.msg);
+    if (!j) return fail("msg-json");
+    if (m.msg_type_url === "/circle.cctp.v1.MsgDepositForBurnWithCaller") burn = j;
+    else if (m.msg_type_url === "/cosmos.bank.v1beta1.MsgSend") feeSend = j;
+    else return fail("unexpected-msg");
+  }
+  if (!burn || !feeSend) return fail("shape");
+  let mint = null;
+  try { mint = base64.decode(burn.mint_recipient || ""); } catch { return fail("mint-recipient"); }
+  const evm = String(expect.userEvmAddress || "").toLowerCase().replace(/^0x/, "");
+  if (mint.length !== 32 || hex.encode(mint) !== "0".repeat(24) + evm) return fail("mint-recipient");
+  if (Number(burn.destination_domain) !== Number(expect.destinationDomain)) return fail("domain");
+  if (burn.burn_token !== "uusdc") return fail("burn-token");
+  const feeCoin = (feeSend.amount || []).find(c => c.denom === "uusdc");
+  if (!feeCoin) return fail("fee-send");
+  if (feeSend.to_address !== SKIP_CCTP_FEE_PAYMENT_ADDRESS) return fail("fee-recipient");
+  if (expect.feePaymentAddress && feeSend.to_address !== expect.feePaymentAddress) return fail("fee-recipient");
+  if (String(feeCoin.amount) !== String(expect.relayFeeRaw)) return fail("fee-amount");
+  let sumOk = false;
+  try { sumOk = BigInt(burn.amount) + BigInt(feeCoin.amount) === BigInt(expect.amountInRaw); } catch { sumOk = false; }
+  if (!sumOk) return fail("amount-conservation");
+  if (burn.from !== feeSend.from_address) return fail("sender");
+  return { ok: true };
+}
+/** Convert ONE of Skip's messages into a CosmJS EncodeObject
+ *  — EXPLICITLY, field by field. cosmjs-types' fromJSON /
+ *  fromPartial on Skip's snake_case JSON silently DROPS
+ *  source_port, source_channel and timeout_timestamp
+ *  (measured 2026-11-15: a transfer would sign with an empty
+ *  channel and no timeout), so Skip JSON never passes
+ *  through them. An unlisted type URL refuses — Fluid never
+ *  signs a message shape it has not inspected. */
+export function skipMsgToEncodeObject(msgJson) {
+  const typeUrl = msgJson?.msg_type_url;
+  const j = skipParseJson(msgJson?.msg);
+  if (!j) throw new Error("Skip returned a message Fluid could not read — nothing was signed.");
+  if (typeUrl === "/ibc.applications.transfer.v1.MsgTransfer") {
+    return {
+      typeUrl,
+      value: {
+        sourcePort: j.source_port || "",
+        sourceChannel: j.source_channel || "",
+        token: { denom: j.token?.denom || "", amount: String(j.token?.amount || "0") },
+        sender: j.sender || "",
+        receiver: j.receiver || "",
+        timeoutHeight: {
+          revisionNumber: BigInt(j.timeout_height?.revision_number || 0),
+          revisionHeight: BigInt(j.timeout_height?.revision_height || 0),
+        },
+        timeoutTimestamp: BigInt(String(j.timeout_timestamp ?? "0")),
+        memo: j.memo || "",
+      },
+    };
+  }
+  if (typeUrl === "/cosmos.bank.v1beta1.MsgSend") {
+    return {
+      typeUrl,
+      value: {
+        fromAddress: j.from_address || "",
+        toAddress: j.to_address || "",
+        amount: (j.amount || []).map(c => ({ denom: c.denom, amount: String(c.amount) })),
+      },
+    };
+  }
+  if (typeUrl === "/cosmwasm.wasm.v1.MsgExecuteContract") {
+    return {
+      typeUrl,
+      value: {
+        sender: j.sender || "",
+        contract: j.contract || "",
+        msg: skipTextEncoder.encode(typeof j.msg === "string" ? j.msg : JSON.stringify(j.msg ?? {})),
+        funds: (j.funds || []).map(c => ({ denom: c.denom, amount: String(c.amount) })),
+      },
+    };
+  }
+  if (typeUrl === "/circle.cctp.v1.MsgDepositForBurnWithCaller") {
+    return {
+      typeUrl,
+      value: {
+        from: j.from || "",
+        amount: String(j.amount || "0"),
+        destinationDomain: Number(j.destination_domain || 0),
+        mintRecipient: base64.decode(j.mint_recipient || ""),
+        burnToken: j.burn_token || "",
+        destinationCaller: base64.decode(j.destination_caller || ""),
+      },
+    };
+  }
+  throw new Error(`Skip returned a message type Fluid does not sign (${typeUrl || "unknown"}) — nothing was signed.`);
+}
+/** The registry every Skip signing uses: the CosmJS defaults
+ *  (MsgTransfer and MsgSend ride there) plus the wasm
+ *  execute type and Fluid's hand-built CCTP codec. */
+export function skipCosmosRegistry() {
+  return new Registry([
+    ...defaultRegistryTypes,
+    ["/cosmwasm.wasm.v1.MsgExecuteContract", WasmMsgExecuteContract],
+    ["/circle.cctp.v1.MsgDepositForBurnWithCaller", MsgDepositForBurnWithCallerType],
+  ]);
+}
+/** One denom's raw balance on a Cosmos chain (the full bank
+ *  list read the wallet's own Cosmos rows use; an absent
+ *  denom is a true zero, a failed read is null — unknown is
+ *  never treated as zero). */
+export async function readCosmosDenomRaw(chainKey, address, denom) {
+  const chain = cosmosChain(chainKey);
+  if (!chain || !address || !denom) return null;
+  try {
+    const data = await cosmosRestJson(chain, `/cosmos/bank/v1beta1/balances/${address}`);
+    if (!Array.isArray(data?.balances)) return null;
+    const row = data.balances.find(b => b.denom === denom);
+    return BigInt(row?.amount ?? "0");
+  } catch { return null; }
+}
+/** Skip's settlement status for one source transaction.
+ *  A 404 is "not indexed yet", normalised to STATE_UNKNOWN —
+ *  the caller keeps waiting; it is never an error verdict. */
+export async function fetchSkipTxStatus({ chainId, txHash }, { fetchImpl = null } = {}) {
+  try {
+    const data = await skipFetchJson(`/tx/status?chain_id=${encodeURIComponent(chainId)}&tx_hash=${encodeURIComponent(txHash)}`, { fetchImpl });
+    return { state: String(data?.state || "STATE_UNKNOWN"), raw: data || null };
+  } catch (e) {
+    if (e && e.status === 404) return { state: "STATE_UNKNOWN", raw: null };
+    throw e;
+  }
+}
+/** The timed-out verdict for a Skip milestone leg — PURE,
+ *  shared by the in-flow runner and the record advancer:
+ *  "done" when Skip reports success or the destination
+ *  credit is read on-chain; "timed-out" (TERMINAL — the
+ *  packet can never land now, and its refund is
+ *  protocol-native) once the leg is past its timeout AND
+ *  the refund is visible on the source chain or Skip
+ *  reports the transfer errored/abandoned; "wait"
+ *  otherwise. */
+export function skipLegTimeoutVerdict({ nowMs = Date.now(), timeoutAt = null, statusState = null, destCredited = false, refundDetected = false } = {}) {
+  if (destCredited || statusState === "STATE_COMPLETED_SUCCESS") return "done";
+  const past = timeoutAt != null && nowMs > timeoutAt;
+  if (past && (refundDetected || statusState === "STATE_COMPLETED_ERROR" || statusState === "STATE_ABANDONED")) return "timed-out";
+  return "wait";
+}
+/** Poll a Skip leg's outcome in-flow (the milestone runner's
+ *  bounded wait): status first, the caller's destination
+ *  credit check as corroboration, the caller's refund check
+ *  once the leg is past its timeout. Resolves with the
+ *  verdict; "wait" means the bounded window expired with the
+ *  leg still in flight — the record advancer carries it. */
+export async function pollSkipLegOutcome({ chainId, txHash, timeoutAt = null, destCheck = null, refundCheck = null }, { timeoutMs = 600000, intervalMs = 15000, fetchImpl = null, sleep = null } = {}) {
+  const doSleep = sleep || ((ms) => new Promise(r => setTimeout(r, ms)));
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const st = await fetchSkipTxStatus({ chainId, txHash }, { fetchImpl }).catch(() => null);
+    const destCredited = typeof destCheck === "function" ? !!(await destCheck().catch(() => false)) : false;
+    const pastTimeout = timeoutAt != null && Date.now() > timeoutAt;
+    const refundDetected = pastTimeout && typeof refundCheck === "function" ? !!(await refundCheck().catch(() => false)) : false;
+    const verdict = skipLegTimeoutVerdict({ timeoutAt, statusState: st?.state, destCredited, refundDetected });
+    if (verdict !== "wait") return { verdict, state: st?.state || null };
+    if (Date.now() >= deadline) return { verdict: "wait", state: st?.state || null };
+    await doSleep(intervalMs);
+  }
+}
+/** Osmosis SQS — QUOTE-ONLY (see the section header: its
+ *  affiliate parameters are silently ignored, so it never
+ *  executes anything; it only cross-checks Skip's price). */
+export const SQS_API = "https://sqs.osmosis.zone";
+export async function getSqsQuote({ fromDenom, toDenom, amountInRaw }, { fetchImpl = null } = {}) {
+  const impl = fetchImpl || fetch;
+  const res = await impl(`${SQS_API}/router/quote?tokenIn=${encodeURIComponent(String(amountInRaw) + String(fromDenom))}&tokenOutDenom=${encodeURIComponent(String(toDenom))}`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`Osmosis SQS quote failed (HTTP ${res.status}).`);
+  const data = await res.json().catch(() => null);
+  if (!data?.amount_out) throw new Error("Osmosis SQS returned an unreadable quote.");
+  return { amountOutRaw: String(data.amount_out), raw: data };
+}
+
+/** Whether Skip serves a pair at all (the search's cheap
+ *  gate, mirroring oneClickSupportsPair): a slice-1 Cosmos
+ *  source, and either a slice-1 Cosmos destination in the
+ *  asset table or — from Noble only — an EVM USDC destination
+ *  on a CCTP-domain chain. */
+export function skipSupportsPair(args) {
+  const from = skipChainOf(args?.fromChainKey);
+  if (!from) return null;
+  const fromDenom = args.fromTokenAddress || from.denom;
+  const fromAsset = skipAsset(args.fromChainKey, fromDenom);
+  if (!fromAsset) return null;
+  const toSkip = skipChainOf(args.toChainKey);
+  if (toSkip) {
+    const toDenom = args.toTokenAddress || toSkip.denom;
+    const toAsset = skipAsset(args.toChainKey, toDenom);
+    if (!toAsset) return null;
+    return { from, to: toSkip, fromAsset, toAsset, cctp: false };
+  }
+  if (args.fromChainKey === "noble" && NETWORKS[args.toChainKey] && SKIP_CCTP_DOMAINS[args.toChainKey] != null) {
+    const usdc = (NETWORKS[args.toChainKey].tokens || []).find(t => t.symbol === "USDC");
+    if (usdc && String(args.toTokenAddress || "").toLowerCase() === String(usdc.address).toLowerCase()) {
+      return { from, to: null, fromAsset, toAsset: { chainKey: args.toChainKey, denom: usdc.address, symbol: "USDC", decimals: usdc.decimals ?? 6 }, cctp: true };
+    }
+  }
+  return null;
+}
+function skipMsgsBody({ route, amountInRaw, addressList, affiliates = null, timeoutSeconds }) {
+  return {
+    source_asset_denom: route.source_asset_denom,
+    source_asset_chain_id: route.source_asset_chain_id,
+    dest_asset_denom: route.dest_asset_denom,
+    dest_asset_chain_id: route.dest_asset_chain_id,
+    amount_in: String(amountInRaw),
+    amount_out: String(route.amount_out),
+    operations: route.operations,
+    address_list: addressList,
+    ...(affiliates ? { affiliates } : {}),
+    slippage_tolerance_percent: "1",
+    timeout_seconds: String(timeoutSeconds),
+  };
+}
+/** Skip's route for a swap, priced under the fee law — the
+ *  1Click two-pass discipline: pass 1 builds the messages
+ *  fee-free; the law's target runs through the inverse
+ *  transform (skipFeeRequest); pass 2 rebuilds the messages
+ *  with the affiliate request and the returned hook memo is
+ *  ECHO-VERIFIED field by field. Any failure of pass 2 or of
+ *  the verification falls back to pass 1's fee-free messages
+ *  with collecting=false. Returns null when the pair is
+ *  unsupported or unquotable. `args.fromAmount` is RAW units
+ *  (the direct-search convention). */
+export async function getSkipSwapRoute(args, { fetchImpl = null, affiliateAddresses = undefined } = {}) {
+  const sup = skipSupportsPair(args);
+  if (!sup) return null;
+  // The quote path is phrase-free by design: every address it
+  // needs comes from the search's address book (the source
+  // and destination addresses) or is derived from the source
+  // address's own account bytes (intermediate chains).
+  const fromAddress = typeof args.fromAddress === "string" && args.fromAddress ? args.fromAddress : null;
+  const toAddress = typeof args.toAddress === "string" && args.toAddress ? args.toAddress : null;
+  if (!fromAddress || !toAddress) return null;
+  if (!isValidCosmosAddress(fromAddress, args.fromChainKey)) return null;
+  const amountInRaw = String(args.fromAmount || "");
+  if (!/^\d+$/.test(amountInRaw) || BigInt(amountInRaw) <= 0n) return null;
+  const destChainId = sup.cctp ? String(NETWORKS[args.toChainKey].chainId) : sup.to.skipChainId;
+  const route = await skipRouteRequest({
+    amount_in: amountInRaw,
+    source_asset_chain_id: sup.from.skipChainId,
+    source_asset_denom: sup.fromAsset.denom,
+    dest_asset_chain_id: destChainId,
+    dest_asset_denom: sup.toAsset.denom,
+  }, { fetchImpl }).catch(() => null);
+  if (!route || !route.amount_out || route.txs_required !== 1 || !Array.isArray(route.operations) || !route.operations.length) return null;
+  const prefixes = await skipChainPrefixes({ fetchImpl });
+  const addressList = skipAddressList({
+    fromAddress, toAddress, fromChain: sup.from, destChainId,
+    requiredChainIds: route.required_chain_addresses || [sup.from.skipChainId, destChainId],
+    prefixes,
+  });
+  if (!addressList) return null;
+  const timeoutSeconds = sup.cctp ? 3600 : 600;
+  const msgsFree = await skipMsgsRequest(skipMsgsBody({ route, amountInRaw, addressList, timeoutSeconds }), { fetchImpl }).catch(() => null);
+  const freeTx = msgsFree?.txs?.[0]?.cosmos_tx;
+  if (!freeTx || !Array.isArray(freeTx.msgs) || !freeTx.msgs.length || freeTx.chain_id !== sup.from.skipChainId) return null;
+  const usdIn = Number(route.usd_amount_in);
+  const usdOut = Number(route.usd_amount_out);
+  const estimatedFeesUsd = (route.estimated_fees || []).reduce((s, f) => s + (Number(f?.usd_amount) || 0), 0);
+  const routeFeeUsd = routeCostUsd(estimatedFeesUsd, (Number.isFinite(usdIn) && Number.isFinite(usdOut)) ? usdIn - usdOut : NaN);
+  const fromChain = swapChainOf(args.fromChainKey);
+  const toChain = swapChainOf(args.toChainKey);
+  const base = {
+    provider: "skip",
+    id: `skip:${sup.from.skipChainId}:${destChainId}:${amountInRaw}`,
+    fromChainKey: args.fromChainKey,
+    toChainKey: args.toChainKey,
+    fromChainId: fromChain?.chainId ?? null,
+    toChainId: toChain?.chainId ?? null,
+    fromAmount: amountInRaw,
+    fromToken: { address: sup.fromAsset.denom, symbol: sup.fromAsset.symbol, name: sup.fromAsset.symbol, decimals: sup.fromAsset.decimals, chainId: fromChain?.chainId ?? null },
+    toToken: { address: sup.toAsset.denom, symbol: sup.toAsset.symbol, name: sup.toAsset.symbol, decimals: sup.toAsset.decimals, chainId: toChain?.chainId ?? null },
+    toAmount: String(route.amount_out),
+    toAmountMin: String(route.amount_out),
+    toAmountUSD: Number.isFinite(usdOut) ? usdOut : null,
+    fromAmountUSD: Number.isFinite(usdIn) ? usdIn : null,
+    gasCostUSD: 0,
+    routeFeeUsd,
+    executionDuration: Number(route.estimated_route_duration_seconds) || 0,
+    steps: [],
+    estimated: true,
+  };
+  if (sup.cctp) {
+    // The Noble CCTP exit: no affiliate mechanism exists on
+    // this leg — the only skim is the smart-relay fee, which
+    // is Skip/Circle's. The messages are verified against
+    // the quote (relay fee from the route's estimated_fees)
+    // before the route is offered at all; the fee rides on
+    // the route for the card's per-quote disclosure.
+    const relay = (route.estimated_fees || []).find(f => f?.fee_type === "SMART_RELAY");
+    if (!relay || relay.amount == null) return null;
+    const v = verifySkipCctpMsgs(msgsFree, {
+      userEvmAddress: toAddress,
+      destinationDomain: SKIP_CCTP_DOMAINS[args.toChainKey],
+      amountInRaw,
+      relayFeeRaw: String(relay.amount),
+    });
+    if (!v.ok) return null;
+    return {
+      ...base,
+      platformFeeRaw: "0", platformFeeUsd: 0, platformFeeBps: 0, platformFeeCollecting: false,
+      skip: {
+        rail: "cctp-noble", msgs: msgsFree, operations: route.operations,
+        requiredChainAddresses: route.required_chain_addresses || [],
+        settlementChainId: null,
+        sourceChainId: sup.from.skipChainId, destChainId,
+        expectedDenom: String(route.dest_asset_denom),
+        timeoutAt: null,
+        relayFee: { raw: String(relay.amount), denom: "uusdc", usd: Number(relay.usd_amount) || 0, address: SKIP_CCTP_FEE_PAYMENT_ADDRESS },
+        feeEcho: null, crossCheck: null, addressList,
+      },
+    };
+  }
+  // The swap step (when the route swaps): its venue chain is
+  // the settlement chain the affiliate must sit on, and its
+  // output is what the hook's min_asset floors.
+  const swapOp = route.operations.find(o => o && o.swap);
+  const swapInner = swapOp ? (swapOp.swap.swap_in || swapOp.swap.swap_out || null) : null;
+  const settlementChainId = swapInner?.swap_venue?.chain_id || null;
+  const swapOutRaw = swapOp ? String(swapOp.amount_out) : null;
+  const swapOps = swapInner?.swap_operations || [];
+  const swapOutDenom = swapOps.length ? swapOps[swapOps.length - 1].denom_out : null;
+  // Osmosis-internal swaps carry the SQS cross-check: a Skip
+  // quote landing under 90% of SQS's own price for the same
+  // pair is refused outright (SQS never executes — see the
+  // section header).
+  let crossCheck = null;
+  if (args.fromChainKey === "osmosis" && args.toChainKey === "osmosis" && route.does_swap) {
+    const sqs = await getSqsQuote({ fromDenom: sup.fromAsset.denom, toDenom: sup.toAsset.denom, amountInRaw }, { fetchImpl }).catch(() => null);
+    if (sqs) {
+      let okBand = false;
+      try { okBand = BigInt(route.amount_out) * 100n >= BigInt(sqs.amountOutRaw) * 90n; } catch { okBand = false; }
+      if (!okBand) return null;
+      crossCheck = { sqsAmountOutRaw: sqs.amountOutRaw };
+    }
+  }
+  let msgs = msgsFree, collecting = false, fluidBps = 0, feeEcho = null;
+  const affiliateAddress = settlementChainId ? skipAffiliateAddress(settlementChainId, affiliateAddresses) : null;
+  if (PLATFORM_FEE_COLLECTION_ENABLED && affiliateAddress && swapOp) {
+    const target = platformFeeBpsForRoute(routeFeeUsd, usdIn, args.toChainKey);
+    const request = skipFeeRequest(target);
+    if (request > 0) {
+      const split = skipSplitFor(request);
+      const charged = await skipMsgsRequest(skipMsgsBody({
+        route, amountInRaw, addressList, timeoutSeconds,
+        affiliates: [{ basis_points_fee: String(request), address: affiliateAddress }],
+      }), { fetchImpl }).catch(() => null);
+      const chargedTx = charged?.txs?.[0]?.cosmos_tx;
+      if (chargedTx && Array.isArray(chargedTx.msgs) && chargedTx.msgs.length && chargedTx.chain_id === sup.from.skipChainId) {
+        const echo = verifySkipFeeEcho(charged, {
+          requestedBps: request, fluidBps: split.fluid, skipBps: split.skip,
+          affiliateAddress, swapOutRaw, swapOutDenom, slippagePercent: 1, addressSet: addressList,
+        });
+        if (echo.ok) {
+          msgs = charged;
+          collecting = true;
+          fluidBps = split.fluid;
+          feeEcho = { requestedBps: request, fluidBps: split.fluid, skipBps: split.skip, swapOutRaw, swapOutDenom };
+        }
+      }
+    }
+  }
+  let amountOutRaw = 0n;
+  try { amountOutRaw = BigInt(String(route.amount_out)); } catch { amountOutRaw = 0n; }
+  return {
+    ...base,
+    platformFeeRaw: collecting ? ((amountOutRaw * BigInt(fluidBps)) / 10000n).toString() : "0",
+    platformFeeUsd: collecting ? (Number.isFinite(usdIn) ? usdIn : 0) * fluidBps / 10000 : 0,
+    platformFeeBps: collecting ? fluidBps : 0,
+    platformFeeCollecting: collecting,
+    skip: {
+      rail: route.does_swap ? "skip-hook" : "skip-transfer",
+      msgs, operations: route.operations,
+      requiredChainAddresses: route.required_chain_addresses || [],
+      settlementChainId,
+      sourceChainId: sup.from.skipChainId, destChainId,
+      expectedDenom: String(route.dest_asset_denom),
+      timeoutAt: skipTimeoutAtFromMsgs(msgs),
+      relayFee: null, feeEcho, crossCheck, addressList,
+    },
+  };
+}
+/** Execute a Skip route: ONE signature on the source chain.
+ *  The exact messages about to be signed are RE-VERIFIED
+ *  first (the CCTP shape, or the fee echo when the route
+ *  collects) — quote-time verification alone is never
+ *  trusted at signing time. CosmJS chains sign through the
+ *  registry-extended client; Injective signs through the
+ *  hand-rolled generic-Any signer (simulate, then
+ *  broadcast). With storage, a single-leg milestone record
+ *  is written at broadcast (the app's direct path — the
+ *  milestone runner executes WITHOUT storage so legs never
+ *  nest records). */
+export async function executeSkipSwapRoute(wallet, route, onProgress = () => {}, opts = {}) {
+  if (!route || route.provider !== "skip" || !route.skip?.msgs) throw new Error("That Skip route is not executable — search again.");
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("Wallet is locked.");
+  const msgsData = route.skip.msgs;
+  if (route.skip.rail === "cctp-noble") {
+    const v = verifySkipCctpMsgs(msgsData, {
+      userEvmAddress: wallet.address,
+      destinationDomain: SKIP_CCTP_DOMAINS[route.toChainKey],
+      amountInRaw: route.fromAmount,
+      relayFeeRaw: route.skip.relayFee?.raw,
+      feePaymentAddress: route.skip.relayFee?.address || null,
+    });
+    if (!v.ok) throw new Error(`Fluid re-checked the CCTP messages and they no longer match the quote (${v.reason}) — nothing was signed. Search again.`);
+  } else if (route.platformFeeCollecting) {
+    const echo = verifySkipFeeEcho(msgsData, {
+      requestedBps: route.skip.feeEcho?.requestedBps, fluidBps: route.skip.feeEcho?.fluidBps, skipBps: route.skip.feeEcho?.skipBps,
+      affiliateAddress: skipAffiliateAddress(route.skip.settlementChainId),
+      swapOutRaw: route.skip.feeEcho?.swapOutRaw, swapOutDenom: route.skip.feeEcho?.swapOutDenom,
+      slippagePercent: 1, addressSet: route.skip.addressList,
+    });
+    if (!echo.ok) throw new Error(`Fluid re-checked the fee in Skip's messages and it no longer matches the quote (${echo.reason}) — nothing was signed. Search again.`);
+  }
+  const tx = msgsData.txs?.[0]?.cosmos_tx;
+  if (!tx || !Array.isArray(tx.msgs) || !tx.msgs.length) throw new Error("Skip returned no signable transaction — nothing was sent.");
+  const encodeObjects = tx.msgs.map(skipMsgToEncodeObject);
+  const chain = cosmosChain(route.fromChainKey);
+  if (!chain) throw new Error("Unknown Cosmos chain: " + route.fromChainKey);
+  const from = cosmosAddress(phrase, chain.key);
+  let hash = null;
+  if (chain.key === "injective") {
+    ({ hash } = await sendInjectiveMsgs(phrase, chain, encodeObjects, { registry: skipCosmosRegistry() }));
+  } else {
+    const client = await cosmosSignerClient(phrase, chain, { registry: skipCosmosRegistry() });
+    try {
+      const res = await client.signAndBroadcast(from, encodeObjects, "auto", "");
+      assertIsDeliverTxSuccess(res);
+      hash = res.transactionHash;
+    } finally { client.disconnect(); }
+  }
+  if (!hash) throw new Error("The Skip transaction returned no hash — check your wallet before retrying.");
+  onProgress(`Sent on ${destChainName(route.fromChainKey)} — Skip settles to your ${destChainName(route.toChainKey)} wallet from here; Fluid keeps watching it.`);
+  let record = null;
+  if (opts.storage) {
+    const destAddress = skipChainOf(route.toChainKey) ? cosmosAddress(phrase, route.toChainKey) : wallet.address;
+    const toDec = route.toToken?.decimals ?? 6;
+    const destPreRaw = await readSwapTokenRaw(route.toChainKey, route.toTokenAddress ?? route.toToken?.address, destAddress, toDec).catch(() => null);
+    const postBal = await readCosmosDenomRaw(route.fromChainKey, from, route.fromTokenAddress ?? route.fromToken?.address).catch(() => null);
+    let refundPreRaw = null;
+    try { refundPreRaw = postBal != null ? (postBal + BigInt(route.fromAmount)).toString() : null; } catch { refundPreRaw = null; }
+    if (opts.sourcePreRaw != null) refundPreRaw = String(opts.sourcePreRaw);
+    const leg = {
+      fromChainKey: route.fromChainKey, toChainKey: route.toChainKey,
+      fromTokenAddress: route.fromToken?.address ?? null, toTokenAddress: route.toToken?.address ?? null,
+      fromAmount: route.fromAmount, toAmount: route.toAmount,
+      fromDecimals: route.fromToken?.decimals ?? null, toDecimals: toDec,
+      fromAddress: from, toAddress: destAddress,
+      fromSymbol: route.fromToken?.symbol || null, toSymbol: route.toToken?.symbol || null,
+      provider: "skip", rail: route.skip.rail || null,
+      expectedDenom: route.skip.expectedDenom || null,
+      timeoutAt: route.skip.timeoutAt || null,
+      sourceTxHash: hash,
+      skipTxTracking: { chainId: route.skip.sourceChainId, txHash: hash },
+      relayFee: route.skip.relayFee || null,
+      refundWatch: { chainKey: route.fromChainKey, denom: route.fromToken?.address ?? null, address: from, preRaw: refundPreRaw },
+    };
+    record = newMilestoneRecord({
+      id: hash,
+      label: milestoneLabelFor(route.fromToken?.symbol || null, [leg]),
+      legs: [leg],
+      fromSymbol: route.fromToken?.symbol || null, toSymbol: route.toToken?.symbol || null,
+      fromDecimals: route.fromToken?.decimals ?? null,
+      hashes: [hash],
+    });
+    record.state = "awaiting-credit";
+    record.pendingLeg = 0;
+    record.pendingPreRaw = destPreRaw != null ? destPreRaw.toString() : null;
+    record.pendingExpectedRaw = route.toAmount != null ? String(route.toAmount) : null;
+    saveMilestoneRecord(opts.storage, record);
+    if (typeof opts.onBroadcast === "function") { try { opts.onBroadcast(record); } catch { /* the record stands */ } }
+  }
+  return { hash, record };
 }
 
 /* ---------- Relay from a Tron source ----------
@@ -18666,6 +19597,12 @@ export function destChainName(chainKey) {
   if (chainKey === "dogecoin") return "Dogecoin";
   if (chainKey === "bitcoincash") return "Bitcoin Cash";
   if (chainKey === "aptos") return "Aptos";
+  if (chainKey === "cosmoshub") return "Cosmos Hub";
+  if (chainKey === "osmosis") return "Osmosis";
+  if (chainKey === "noble") return "Noble";
+  if (chainKey === "celestia") return "Celestia";
+  if (chainKey === "injective") return "Injective";
+  if (chainKey === "dydx") return "dYdX";
   return NETWORKS[chainKey]?.name || String(chainKey || "");
 }
 /** Whether a token address IS the destination chain's native gas
@@ -18684,6 +19621,8 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "dogecoin") return a.toLowerCase() === DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return a.toLowerCase() === BITCOINCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return a.toLowerCase() === APTOS_SWAP_NATIVE_TOKEN;
+  const skipC = skipChainOf(chainKey);
+  if (skipC) return a === skipC.denom;
   return a.toLowerCase() === NATIVE_TOKEN_ADDRESS;
 }
 /** The destination native token's address in the swap universe's
@@ -18700,6 +19639,8 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "dogecoin") return DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return BITCOINCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
+  const skipC2 = skipChainOf(chainKey);
+  if (skipC2) return skipC2.denom;
   if (NETWORKS[chainKey]) return NATIVE_TOKEN_ADDRESS;
   return null;
 }
@@ -18759,6 +19700,10 @@ export async function readDestNativeRaw(chainKey, address) {
     if (chainKey === "dogecoin") return BigInt(Math.round((await getDogecoinBalance(address)) * 1e8));
     if (chainKey === "bitcoincash") return BigInt(Math.round((await getBitcoinCashBalance(address)) * 1e8));
     if (chainKey === "aptos") return BigInt(await aptosAssetBalanceRaw(address, null));
+    // Cosmos slice-1 natives (Skip rail, 2026-11-15): the
+    // chain's own bank read by its native denom.
+    const skipNative = skipChainOf(chainKey);
+    if (skipNative) return readCosmosDenomRaw(chainKey, address, skipNative.denom);
     if (!NETWORKS[chainKey]) return null;
     // A plain JSON-RPC eth_getBalance over fetch (the Solana/Tron
     // pattern above), NOT the ethers provider: the read must fail
@@ -19021,6 +19966,14 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     const out = await executeOneClickSwapRoute(wallet, route, progress, { storage, onDeposit });
     return out.hashes;
   }
+  // Skip legs (Cosmos programme, 2026-11-15): executed
+  // WITHOUT storage — the milestone record is the runner's,
+  // and a leg must never nest a record of its own. The
+  // executor re-verifies the messages before signing.
+  if (route.provider === "skip") {
+    const out = await executeSkipSwapRoute(wallet, route, progress, {});
+    return [out.hash];
+  }
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** Run a gas-fallback record's second leg from what ACTUALLY
@@ -19265,6 +20218,15 @@ export function tokenSymbolOn(chainKey, tokenAddress) {
     const t = APTOS_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
     return t ? t.symbol : null;
   }
+  // The Cosmos slice-1 chains (Skip rail, 2026-11-15): a token
+  // is named by its denom — the chain's native, or the one
+  // cross-chain asset in the slice (ATOM's Osmosis voucher).
+  const skipC3 = skipChainOf(chainKey);
+  if (skipC3) {
+    if (tokenAddress == null || String(tokenAddress) === skipC3.denom) return skipC3.symbol;
+    const t = SKIP_ASSETS.find(x => x.chainKey === chainKey && x.denom === String(tokenAddress));
+    return t ? t.symbol : null;
+  }
   if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
   const hub = hubTokenForChain(chainKey);
   if (hub && swapTokenEq(chainKey, tokenAddress, hub.address)) return "USDC";
@@ -19308,6 +20270,7 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "dogecoin") return isValidDogeAddress(a) ? a : null;
   if (chainKey === "bitcoincash") return isValidBchAddress(a) ? a : null;
   if (chainKey === "aptos") { try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
+  if (skipChainOf(chainKey)) return isValidCosmosAddress(a, chainKey) ? a : null;
   return a;
 }
 /** The wallet's OWN address for one swap chain key, resolved
@@ -19350,6 +20313,12 @@ export function swapOwnAddressFor(chainKey, own) {
     case "bitcoincash": return isValidBchAddress(own.bitcoincash || "") ? own.bitcoincash : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
+    // The Cosmos slice-1 chains (Skip rail, 2026-11-15): the
+    // app's own-address set carries one entry per chain key,
+    // validated against that chain's bech32 prefix like every
+    // other family — never another chain's address.
+    case "cosmoshub": case "osmosis": case "noble": case "celestia": case "injective": case "dydx":
+      return isValidCosmosAddress(own[chainKey] || "", chainKey) ? own[chainKey] : null;
     default: return null;
   }
 }
@@ -19494,7 +20463,7 @@ export function milestoneShapes(args) {
   // milestone executor drives Satora legs through the EVM
   // executor, which an Arkade-source leg is not.
   if (args.fromChainKey === "arkade") return shapes;
-  if (args.fromTokenAddress == null && args.fromChainKey !== "sui" && args.fromChainKey !== "solana" && args.fromChainKey !== "tron" && !NETWORKS[args.fromChainKey]) return shapes;
+  if (args.fromTokenAddress == null && args.fromChainKey !== "sui" && args.fromChainKey !== "solana" && args.fromChainKey !== "tron" && !NETWORKS[args.fromChainKey] && !skipChainOf(args.fromChainKey)) return shapes;
   const fromSym = tokenSymbolOn(args.fromChainKey, args.fromTokenAddress);
   const toSym = tokenSymbolOn(args.toChainKey, args.toTokenAddress);
   const leg = (fromChainKey, toChainKey, fromTokenAddress, toTokenAddress) => ({
@@ -19654,6 +20623,24 @@ export function milestoneShapes(args) {
         leg(m, "ton", mHub.address, TON_SWAP_NATIVE_TOKEN),
       ]);
     }
+    return shapes;
+  }
+  // Cosmos programme (Skip rail, 2026-11-15): the slice's one
+  // composed shape — any Cosmos source into USDC on Noble,
+  // then the Noble CCTP exit leg to the destination's EVM
+  // USDC. Cosmos↔Cosmos pairs are DIRECT on Skip (one
+  // signature), never composed; a Noble source takes the
+  // CCTP leg directly (also direct, no shape needed); an EVM
+  // destination that is not USDC, or a chain with no CCTP
+  // domain, gets no shape here — those pairs keep whatever
+  // the generic grammar below can genuinely serve.
+  if (skipChainOf(args.fromChainKey) && args.fromChainKey !== "noble"
+    && NETWORKS[args.toChainKey] && SKIP_CCTP_DOMAINS[args.toChainKey] != null
+    && tokenSymbolOn(args.toChainKey, args.toTokenAddress) === "USDC") {
+    pushShape([
+      leg(args.fromChainKey, "noble", args.fromTokenAddress, "uusdc"),
+      leg("noble", args.toChainKey, "uusdc", args.toTokenAddress),
+    ]);
     return shapes;
   }
   // Generic hub composition: origin hub leg (when the FROM
@@ -20233,7 +21220,15 @@ export async function searchMilestoneCompositions(args, { searchLeg = null, pric
         return null;
       }
       legRoutes.push(picked);
-      legDescs.push({ ...d, fromAmount: amount, fromAddress, toAddress, expectedToAmount: picked.toAmount != null ? String(picked.toAmount) : null, provider: picked.provider || null, estimated: picked.estimated === true });
+      legDescs.push({ ...d, fromAmount: amount, fromAddress, toAddress, expectedToAmount: picked.toAmount != null ? String(picked.toAmount) : null, provider: picked.provider || null, estimated: picked.estimated === true,
+        // A Skip leg's rail facts ride the descriptor into the
+        // record (2026-11-15): the rail kind, the destination
+        // denom the credit watch must read (copied from Skip's
+        // own route output), the packet timeout the timed-out
+        // state judges by, and the CCTP relay fee the card
+        // disclosed. The runner re-stamps the tracking fields
+        // at broadcast.
+        ...(picked.provider === "skip" ? { rail: picked.skip?.rail || null, expectedDenom: picked.skip?.expectedDenom || null, timeoutAt: picked.skip?.timeoutAt || null, relayFee: picked.skip?.relayFee || null } : {}) });
       if (picked.toAmount == null) return null;
       amount = String(picked.toAmount);
     }
@@ -20477,6 +21472,18 @@ export function milestoneHistoryLine(record) {
       return `${label}: the last step landed in your wallet. Fluid will finish this swap by itself while the app is open — or tap Complete the swap to continue.`;
     }
     case "done": return `${label}: complete.`;
+    // Timed-out (Skip/Cosmos legs, 2026-11-15): TERMINAL —
+    // the step's IBC transfer outlived its timeout, so it can
+    // never land; the chain refunds the sender automatically
+    // (this family's REFUNDED). The line names the refund and
+    // where it lands: back in the wallet the step was paid
+    // from, no action needed from the user.
+    case "timed-out": {
+      const leg = record.legs?.[record.pendingLeg ?? record.currentLeg ?? 0] || record.legs?.[0];
+      const fromName = leg ? destChainName(leg.fromChainKey) : "the chain it started from";
+      const sym = leg?.fromSymbol || "funds";
+      return `${label}: this step timed out, so it never landed — IBC transfers refund automatically, and your ${sym} is on its way back to your wallet on ${fromName}. Nothing is lost and there's nothing to claim; search again whenever you're ready.`;
+    }
     default: return `${label}.`;
   }
 }
@@ -20494,9 +21501,13 @@ function milestoneFromTokenDecimals(chainKey, tokenAddress) {
       case "solana": return 9;
       case "tron": return 6;
       case "ton": return 9;
+      case "cosmoshub": case "osmosis": case "noble": case "celestia": return 6;
+      case "injective": case "dydx": return 18;
       default: return 18;
     }
   }
+  const skipFromAsset = skipChainOf(chainKey) ? skipAsset(chainKey, tokenAddress) : null;
+  if (skipFromAsset) return skipFromAsset.decimals;
   if (chainKey === "sui") return SUI_TOKENS.find(t => suiCoinTypeEq(t.address, tokenAddress))?.decimals ?? 6;
   if (chainKey === "solana") return 6;
   if (chainKey === "polkadot") return 10;
@@ -20545,6 +21556,13 @@ export async function readSwapTokenRaw(chainKey, tokenAddress, address, decimals
       const t = APTOS_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
       return BigInt(await aptosAssetBalanceRaw(address, t || { address: tokenAddress, standard: "fa" }));
     }
+    // Cosmos slice-1 tokens (Skip rail, 2026-11-15): the
+    // token address IS the denom — one bank read serves
+    // natives and vouchers alike (natives arrive here only
+    // when called with an explicit denom; the null/native
+    // case is readDestNativeRaw's, which delegates to the
+    // same read).
+    if (skipChainOf(chainKey)) return readCosmosDenomRaw(chainKey, address, tokenAddress);
     if (!NETWORKS[chainKey]) return null;
     const provider = providerFor(chainKey);
     const c = new ethers.Contract(tokenAddress, ["function balanceOf(address) view returns (uint256)"], provider);
@@ -20608,6 +21626,8 @@ function milestoneLegTokenDecimals(record, legIndex, side) {
     if (chainKey === "litecoin" || chainKey === "dogecoin" || chainKey === "bitcoincash") return 8;
     if (chainKey === "aptos") return tokenAddress == null || String(tokenAddress).toLowerCase() === APTOS_SWAP_NATIVE_TOKEN ? 8
       : (APTOS_TOKENS.find(t => String(t.address).toLowerCase() === String(tokenAddress).toLowerCase())?.decimals ?? 6);
+    const skc = skipChainOf(chainKey);
+    if (skc) { const a = tokenAddress != null ? skipAsset(chainKey, tokenAddress) : null; return a ? a.decimals : skc.decimals; }
     return null;
   };
   if (side === "to") {
@@ -20940,6 +21960,70 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
       }
       if (!ocOutcome) return { hashes: record.hashes, record, pending: true };
     }
+    // A Skip leg (Cosmos programme, 2026-11-15): the source
+    // transaction is away, but the leg settles on IBC's clock.
+    // The leg's rail facts are stamped from the executed
+    // route (the record's copy came from the plan; the
+    // route's are the quote that actually signed), the refund
+    // watch is armed (the post-broadcast source balance plus
+    // the sent amount approximates the pre-send balance — the
+    // gas is dust next to any swap), and the outcome is
+    // awaited in-flow on Skip's own status: SUCCESS (or a
+    // read credit) falls through to the ordinary credit
+    // confirmation below; a proven timeout closes the record
+    // in the TERMINAL timed-out state — the packet can never
+    // land and its refund is already on its way back to the
+    // wallet this leg was paid from; a leg still in flight
+    // when the window closes stays awaiting-credit for the
+    // advancer, whose own Skip check resolves it the same
+    // way. A FINAL Skip leg is never marked done at
+    // broadcast: only the poll's "done" verdict reaches the
+    // completion below.
+    if (route.provider === "skip" && storage) {
+      leg.rail = route.skip?.rail || leg.rail || null;
+      leg.expectedDenom = route.skip?.expectedDenom || leg.expectedDenom || null;
+      leg.timeoutAt = route.skip?.timeoutAt || leg.timeoutAt || null;
+      leg.sourceTxHash = hashes[0] || null;
+      leg.skipTxTracking = { chainId: route.skip?.sourceChainId || null, txHash: hashes[0] || null };
+      if (route.skip?.relayFee) leg.relayFee = route.skip.relayFee;
+      const fromDec = milestoneLegTokenDecimals(record, i, "from");
+      const postBal = await readSwapTokenRaw(leg.fromChainKey, leg.fromTokenAddress, leg.fromAddress, fromDec).catch(() => null);
+      let refundPreRaw = null;
+      try { refundPreRaw = postBal != null ? (postBal + ethers.parseUnits(String(leg.fromAmount || "0"), fromDec)).toString() : null; } catch { refundPreRaw = null; }
+      leg.refundWatch = { chainKey: leg.fromChainKey, denom: leg.fromTokenAddress, address: leg.fromAddress, preRaw: refundPreRaw };
+      if (storage) saveMilestoneRecord(storage, record);
+      let expectedRaw = 0n;
+      try { expectedRaw = ethers.parseUnits(String(leg.toAmount || "0"), toDec); } catch { expectedRaw = 0n; }
+      const pollBudgetMs = leg.timeoutAt != null
+        ? Math.max(60000, Math.min(660000, leg.timeoutAt - Date.now() + 30000))
+        : 300000;
+      const out = await pollSkipLegOutcome({
+        chainId: leg.skipTxTracking.chainId, txHash: hashes[0], timeoutAt: leg.timeoutAt,
+        destCheck: async () => {
+          if (record.pendingPreRaw == null) return false;
+          const b = await readSwapTokenRaw(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec);
+          if (b == null) return false;
+          const delta = b - BigInt(record.pendingPreRaw);
+          return expectedRaw > 0n ? delta * 10n >= expectedRaw * 9n : delta > 0n;
+        },
+        refundCheck: async () => {
+          if (!leg.refundWatch?.preRaw) return false;
+          const b = await readCosmosDenomRaw(leg.fromChainKey, leg.fromAddress, leg.fromTokenAddress);
+          return b != null && b * 2n >= BigInt(leg.refundWatch.preRaw);
+        },
+      }, { timeoutMs: pollBudgetMs }).catch(() => null);
+      if (out?.verdict === "timed-out") {
+        leg.state = "timed-out";
+        record.state = "timed-out";
+        record.pendingLeg = null;
+        if (storage) saveMilestoneRecord(storage, record);
+        const err = new Error(`The ${leg.fromSymbol || "asset"} → ${leg.toSymbol || "asset"} step timed out — IBC transfers refund automatically, so your ${leg.fromSymbol || "money"} is on its way back to your wallet on ${destChainName(leg.fromChainKey)}. Nothing is lost; search again whenever you're ready.`);
+        err.recordId = record.id;
+        err.milestoneTimedOut = true;
+        throw err;
+      }
+      if (!out || out.verdict !== "done") return { hashes: record.hashes, record, pending: true };
+    }
     // A leg INTO Arkade that is not the destination
     // (cheapest-entry, 2026-11-14): its credit is not a
     // balance the generic poll can read — the Satora payout
@@ -21048,6 +22132,72 @@ export async function advanceMilestoneRecords(storage, { arkadeClaimPayout = nul
       changed++;
       continue;
     }
+    // A pending Skip leg (Cosmos programme, 2026-11-15): its
+    // settlement is Skip's status plus the destination
+    // balance, judged by the shared verdict. A proven
+    // timeout closes the record in the TERMINAL timed-out
+    // state (the packet can never land; the refund is
+    // protocol-native to the wallet the leg was paid from);
+    // a hard error that is not a timeout parks the record
+    // leg-due for a retry on fresh quotes (the 1Click
+    // REFUNDED precedent); a success falls through to the
+    // generic balance-delta confirmation below — or advances
+    // on the quote's expectation when no pre-balance was
+    // captured. A leg still in flight is left exactly as it
+    // was: the generic tail cannot judge a Skip leg, whose
+    // credit may ride a denom the tail's read already covers
+    // but whose TIMEOUT only this branch can see.
+    if (leg.provider === "skip" && leg.skipTxTracking?.txHash) {
+      const st = await fetchSkipTxStatus({ chainId: leg.skipTxTracking.chainId, txHash: leg.skipTxTracking.txHash }).catch(() => null);
+      const toDec = milestoneLegTokenDecimals(r, r.pendingLeg, "to");
+      const bal = await readSwapTokenRaw(leg.toChainKey, leg.toTokenAddress, leg.toAddress, toDec);
+      let credited = false;
+      if (bal != null && r.pendingPreRaw != null) {
+        let expected = 0n;
+        try { expected = ethers.parseUnits(String(leg.toAmount || "0"), toDec); } catch { expected = 0n; }
+        const delta = bal - BigInt(r.pendingPreRaw);
+        credited = expected > 0n ? delta * 10n >= expected * 9n : delta > 0n;
+      }
+      let refundDetected = false;
+      if (leg.refundWatch?.preRaw && leg.timeoutAt != null && Date.now() > leg.timeoutAt) {
+        const sb = await readCosmosDenomRaw(leg.refundWatch.chainKey, leg.refundWatch.address, leg.refundWatch.denom);
+        refundDetected = sb != null && sb * 2n >= BigInt(leg.refundWatch.preRaw);
+      }
+      const verdict = skipLegTimeoutVerdict({ timeoutAt: leg.timeoutAt, statusState: st?.state, destCredited: credited, refundDetected });
+      if (verdict === "timed-out") {
+        leg.state = "timed-out";
+        r.state = "timed-out";
+        r.pendingLeg = null;
+        saveMilestoneRecord(storage, r);
+        changed++;
+        continue;
+      }
+      if (verdict === "done" && r.pendingPreRaw == null) {
+        r.receivedRaw = r.pendingExpectedRaw != null ? String(r.pendingExpectedRaw) : null;
+        if (r.pendingLeg === r.legs.length - 1) { r.state = "done"; }
+        else {
+          r.currentLeg = r.pendingLeg + 1;
+          if (r.legs[r.currentLeg]) rescaleMilestoneLegExpectation(r.legs[r.currentLeg], r.receivedRaw);
+          r.state = "leg-due";
+        }
+        r.pendingLeg = null;
+        saveMilestoneRecord(storage, r);
+        changed++;
+        continue;
+      }
+      if (verdict === "wait") {
+        if (st && st.state === "STATE_COMPLETED_ERROR") {
+          r.state = "leg-due";
+          r.pendingLeg = null;
+          saveMilestoneRecord(storage, r);
+          changed++;
+        }
+        continue;
+      }
+      // verdict "done" with a captured pre-balance: fall
+      // through to the generic balance-delta confirmation
+      // below, which computes what actually arrived.
+    }
     // A pending 1Click leg (2026-11-14): its settlement is a
     // protocol status, not only a balance. A REFUNDED /
     // FAILED / INCOMPLETE_DEPOSIT terminal means the credit
@@ -21119,6 +22269,10 @@ export async function completeMilestoneSwap(wallet, recordId, progress = () => {
   const record = loadMilestoneRecords(storage).find(r => r.id === recordId);
   if (!record) throw new Error("That swap record is gone.");
   if (record.state === "done") return { record, done: true };
+  // Timed-out is TERMINAL (Skip/Cosmos legs, 2026-11-15):
+  // the step can never land and its refund is already on
+  // its way back — the record never runs forward again.
+  if (record.state === "timed-out") return { record, done: false, timedOut: true };
   if (record.state === "awaiting-credit") {
     await advanceMilestoneRecords(storage, { arkadeClaimPayout });
     const fresh = loadMilestoneRecords(storage).find(r => r.id === recordId);
@@ -21855,6 +23009,12 @@ async function getSwapRoutesDirect(args) {
   if (oneClickSupportsPair(planArgs)) {
     try { const oc = await getOneClickSwapRoute(planArgs); if (oc) routes.push(oc); }
     catch (e) { if (e?.oneclickBelowFloor) oneclickFloorError = e; }
+  }
+  // Skip (Cosmos programme, 2026-11-15): a candidate beside
+  // 1Click, never a single point of failure — a Skip outage
+  // or refusal simply leaves the pair to its other routes.
+  if (skipSupportsPair(planArgs)) {
+    try { const sk = await getSkipSwapRoute(planArgs); if (sk) routes.push(sk); } catch { /* Skip is a candidate, never a single point of failure */ }
   }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
@@ -22661,6 +23821,28 @@ export function swapRouteExecutable(route) {
     if (route.platformFeeCollecting && oc.feeVerified !== true)
       return { ok: false, reason: "This 1Click route's fee could not be verified against its quote — pick another route." };
     return { ok: true, oneclick: true };
+  }
+  // Skip routes (Cosmos programme, 2026-11-15): executable
+  // when the route carries its full Skip plan — one signable
+  // Cosmos transaction on a slice-1 source chain, its
+  // expected destination denom copied from Skip's own route
+  // output, and (when the route collects) the fee echo the
+  // executor re-verifies against the exact messages before
+  // signing. The gate is structural, exactly like the 1Click
+  // lane above.
+  if (route?.provider === "skip") {
+    const sk = route.skip;
+    const incomplete = "This Skip route is incomplete — pick another route.";
+    if (!sk || !sk.msgs || !Array.isArray(sk.msgs.txs) || sk.msgs.txs.length !== 1) return { ok: false, reason: incomplete };
+    const tx = sk.msgs.txs[0]?.cosmos_tx;
+    if (!tx || !Array.isArray(tx.msgs) || !tx.msgs.length) return { ok: false, reason: incomplete };
+    if (!skipChainOf(route.fromChainKey)) return { ok: false, reason: incomplete };
+    if (!sk.expectedDenom) return { ok: false, reason: incomplete };
+    if (!route.fromAmount || !route.toAmount) return { ok: false, reason: incomplete };
+    if (sk.rail === "cctp-noble" && !sk.relayFee) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting && !sk.feeEcho)
+      return { ok: false, reason: "This Skip route's fee could not be verified against its quote — pick another route." };
+    return { ok: true, skip: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete

@@ -1058,3 +1058,70 @@ What this changes in the planner and the search:
   planner behaviour that found Tron anchoring on USDT in the
   two-crossing build. No new rails, no new providers: the
   doors are the existing leg set, re-ranked honestly.
+
+## Cosmos via Skip — slice 1 (2026-11-15)
+
+Six Cosmos chains join the swap universe as sources AND
+destinations through Skip's keyless API (api.skip.build):
+Cosmos Hub, Osmosis, Noble, Celestia, Injective (its Cosmos
+side) and dYdX. Every route is ONE user signature — Skip
+returns the exact messages and Fluid signs them as-is
+through the wallet's own signers (CosmJS for the standard
+chains; the hand-rolled Injective signer, extended to
+generic Any messages with MsgTransfer first).
+
+- **Route shapes.** Cosmos-to-Cosmos is one signed
+  transaction: a hook-memo IBC transfer (the swap happens in
+  the Osmosis entry-point contract on arrival), an Osmosis
+  MsgExecuteContract for Osmosis-intra swaps, or a plain
+  transfer when no swap is needed. Multi-hop routes (dYdX to
+  Noble crosses Persistence) derive every intermediate
+  address from the user's own account bytes — the same
+  account on every chain — so no hop ever custodies funds.
+  Noble is the CCTP door: USDC on Noble exits to any
+  supported EVM chain's USDC in one Noble transaction (the
+  hand-encoded MsgDepositForBurnWithCaller plus the relay's
+  fee payment), with the mint recipient always the user's
+  own EVM address. Any other Cosmos source to EVM USDC
+  composes through the milestone planner: source to
+  USDC@Noble, then the CCTP leg — each leg settling to the
+  user's own address under the standing staged-swap rules.
+- **Capture, echo-verified.** Skip's affiliate split favours
+  Skip 75/25 (measured at three fee levels), so the client
+  requests ~4/3 of the 50 bps law target (66 bps) to net 50.
+  Before anything is signed, the returned memo is verified
+  field by field — the affiliate total, Fluid's share and
+  recipient, Skip's share, and the slippage floor
+  (min_asset) — and ANY mismatch refuses the route outright,
+  the same discipline as the NEAR Intents rail. When no
+  affiliate address is configured the rail quotes fee-free
+  and the route card says so (collecting=false).
+- **Osmosis SQS is a price check, never a path.** SQS
+  silently ignores affiliate parameters, so it can never
+  carry Fluid's fee; Osmosis-intra routes execute through
+  Skip's messages and are only cross-checked against SQS —
+  a Skip quote more than 10% worse than SQS is refused.
+- **The CCTP relay fee is disclosed per quote.** Skip's
+  smart relay charges a fee paid from the Noble transaction
+  itself (about 5.3% of a $10 exit, shrinking with size).
+  The exact fee from the live quote is printed on the route
+  card and in the confirmation text before signing — never
+  buried, never estimated. The burn is verified before
+  signing: mint recipient, destination domain, fee recipient
+  and fee amount must all match the quote.
+- **Timeouts end as refunds, in plain language.** Every
+  Skip leg carries its IBC timeout. A leg that passes its
+  timeout with the funds visibly back on the source chain
+  (or an errored tracking status) closes as **timed-out**:
+  IBC timeout refunds are protocol-native to the sender's
+  own address — the Cosmos analogue of the NEAR rail's
+  REFUNDED state — and the Activity line names the timeout
+  and the automatic refund instead of a generic failure.
+- **Honest edges.** EVM-to-Cosmos via Skip is NOT wired:
+  the keyless API would not quote Base USDC from this
+  network ("Source token not found"), so those pairs keep
+  the routes they already had and make no new claim. Kujira
+  is not added (a legacy THORChain remnant). Sei and the
+  other Cosmos chains Fluid already holds join in a later
+  slice. Funded settlement on this rail is unproven until
+  the first funded drill, like every rail before it.

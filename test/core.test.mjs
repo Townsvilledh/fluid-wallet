@@ -34,7 +34,8 @@ import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAd
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction as SuiTx105 } from "@mysten/sui/transactions";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent, buildInjectiveSignedTx, INJECTIVE_PUBKEY_TYPE, injectiveAddressBytes } from "../src/wallet-core.js";
+import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent, buildInjectiveSignedTx, buildInjectiveSignedTxForMsgs, INJECTIVE_PUBKEY_TYPE, injectiveAddressBytes } from "../src/wallet-core.js";
+import { SKIP_API, SKIP_AFFILIATE_ADDRESSES, SKIP_ATOM_ON_OSMOSIS_DENOM, SKIP_ASSETS, SKIP_CCTP_DOMAINS, SKIP_CCTP_FEE_PAYMENT_ADDRESS, COSMOSHUB_SWAP_CHAIN_ID, OSMOSIS_SWAP_CHAIN_ID, NOBLE_SWAP_CHAIN_ID, CELESTIA_SWAP_CHAIN_ID, INJECTIVE_SWAP_CHAIN_ID, DYDX_SWAP_CHAIN_ID, skipChainOf, skipAsset, skipAffiliateAddress, skipSplitFor, skipFeeRequest, skipRouteRequest, skipMsgsRequest, skipChainPrefixes, skipAccountBytesOfAddress, skipDeriveAddressForChain, skipAddressList, skipFindSwapAndAction, verifySkipFeeEcho, skipTimeoutAtFromMsgs, encodeMsgDepositForBurnWithCaller, decodeMsgDepositForBurnWithCaller, MsgDepositForBurnWithCallerType, verifySkipCctpMsgs, skipMsgToEncodeObject, skipCosmosRegistry, readCosmosDenomRaw, fetchSkipTxStatus, skipLegTimeoutVerdict, pollSkipLegOutcome, getSqsQuote, skipSupportsPair, getSkipSwapRoute, executeSkipSwapRoute } from "../src/wallet-core.js";
 import * as btcSigner from "@scure/btc-signer";
 import { ethers } from "ethers";
 import { keccak_256 } from "@noble/hashes/sha3.js";
@@ -872,10 +873,16 @@ ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
 // the same review: their rail is 1Click (NEAR Intents), their destinations price
 // under the fee law's default ceiling, and their capture (the §6 inverse transform
 // + echo verification) is proven in §117.
-ok("swap universe is evm + tron + solana + sui + ton + the six 1Click families only", (() => {
+// The six Cosmos slice-1 chains joined 2026-11-15 WITH the same review: their
+// rail is Skip, their destinations price under the fee law's default ceiling, and
+// their capture (Skip's measured 75/25 affiliate split, inverted by skipFeeRequest
+// and echo-verified before signing) is proven in §119. The Noble CCTP exit carries
+// no Fluid fee — its only skim is the per-quote disclosed relay fee.
+ok("swap universe is evm + tron + solana + sui + ton + the six 1Click families + the six Cosmos slice-1 chains only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
-  const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"].every(k => swapChainOf(k) !== null);
-  const notSwappable = ["bitcoin", "cosmoshub", "stellar", "algorand"].every(k => swapChainOf(k) === null);
+  const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos",
+    "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"].every(k => swapChainOf(k) !== null);
+  const notSwappable = ["bitcoin", "stellar", "algorand", "sei"].every(k => swapChainOf(k) === null);
   return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001
     && platformFeeEcosystemOf("ton") === "ton";
 })());
@@ -1556,9 +1563,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const ci = formatCosmosSendIntent({ amount: "1.5", symbol: "ATOM", to: VECTORS.cosmoshub, chainName: "Cosmos Hub", feeAmount: "0.0035", feeSymbol: "ATOM" });
   ok("cosmos: intent is human-readable", ci.includes("Send 1.5 ATOM") && ci.includes("on Cosmos Hub") && ci.includes("fee about 0.0035 ATOM") && ci.includes("Confirm?"));
 
-  // Cosmos is honestly ABSENT from the LI.FI swap universe (LI.FI has
-  // no Cosmos-SDK chains) — no dead swap options are offered.
-  ok("cosmos: not a LI.FI swap chain", swapChainOf("cosmoshub") === null && swapChainOf("osmosis") === null);
+  // Cosmos was honestly ABSENT from the swap universe until the Skip
+  // rail (2026-11-15, §118): the six slice-1 chains are swap chains
+  // now; Sei — in the wallet, not in the slice — still is not.
+  ok("cosmos: slice-1 chains are swap chains via Skip, Sei is not", swapChainOf("cosmoshub")?.chainId === COSMOSHUB_SWAP_CHAIN_ID && swapChainOf("osmosis")?.chainId === OSMOSIS_SWAP_CHAIN_ID && swapChainOf("sei") === null);
 }
 
 // 23. Universal token support (discovery helpers, pure logic)
@@ -6460,7 +6468,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11428,7 +11436,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12869,7 +12877,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13216,7 +13224,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -16442,7 +16450,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec, { explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"gasfallback\", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec)")
-    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\" && route.provider !== \"oneclick\")"));
+    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\" && route.provider !== \"oneclick\" && route.provider !== \"skip\")"));
   ok("ac app: Activity consults the record stores — an unrepresented unfinished record is synthesised into the rendered list",
     appSrc114.includes("for (const r of loadMilestoneRecords(localStorage)) if (r.state !== \"done\") synthFor(\"milestone\", r);")
     && appSrc114.includes("for (const r of loadGasFallbackRecords(localStorage)) if (r.state === \"awaiting-credit\" || r.state === \"leg2-due\") synthFor(\"gasfallback\", r);"));
@@ -17060,7 +17068,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17168,5 +17176,360 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("repair118 app: the sheet never re-renders a composed-leg floor in the swap's FROM token",
     appSrc118.includes("verdict.floor?.found && !verdict.composedLeg"));
 }
+
+// 119. Cosmos programme slice 1 — the Skip rail (2026-11-15):
+// the six slice-1 chains (Cosmos Hub, Osmosis, Noble,
+// Celestia, Injective-Cosmos, dYdX) join the swap universe as
+// sources AND destinations through Skip's keyless API, every
+// route ONE user signature (a hook-memo MsgTransfer, an
+// Osmosis MsgExecuteContract, a plain transfer, or the Noble
+// CCTP exit pair). Capture is Skip's measured affiliate
+// split — Skip keeps floor(request/4) (50 → 38/12, 100 →
+// 75/25, 67 → 51/16) — inverted by skipFeeRequest and
+// ECHO-VERIFIED against the returned hook memo before
+// anything signs; Osmosis SQS is a quote-only cross-check
+// (its affiliate params are silently ignored — it never
+// executes); the CCTP relay fee is verified against the
+// quote and disclosed per quote, never Fluid's. IBC timeouts
+// gain the TERMINAL timed-out record state (this family's
+// REFUNDED). Fixtures are the LIVE probe captures of
+// 2026-11-14/15 (research_notes/fluid-cosmos-slice1-
+// 20261115); the Injective MsgTransfer pin's live simulate
+// is documented at its pin. EVM → Cosmos via Skip is NOT
+// wired (unverified keyless) and Sei stays out of the slice.
+{
+  const ABANDON119 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture119 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const appSrc119 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const clone119 = (x) => JSON.parse(JSON.stringify(x));
+  const jsonRes119 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const memStorage119 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+  const addrs119 = cosmosAddresses(ABANDON119);
+  const SKIP_OSMO_AFFIL = "osmo14gf6xslwe9phn2z965t4dcu7vchhthfgv2lhyy"; // Skip's own Osmosis affiliate, from the live captures
+
+  // --- the measured split + its inverse ---
+  ok("skip fee: the measured splits (50 -> 38/12, 100 -> 75/25, 67 -> 51/16, 66 -> 50/16)",
+    skipSplitFor(50).fluid === 38 && skipSplitFor(50).skip === 12
+    && skipSplitFor(100).fluid === 75 && skipSplitFor(100).skip === 25
+    && skipSplitFor(67).fluid === 51 && skipSplitFor(67).skip === 16
+    && skipSplitFor(66).fluid === 50 && skipSplitFor(66).skip === 16);
+  ok("skip fee: the inverse transform nets the law's target exactly (50 -> request 66)",
+    skipFeeRequest(50) === 66 && skipFeeRequest(38) === 50 && skipFeeRequest(0) === 0
+    && Array.from({ length: 100 }, (_, i) => i + 1).every(t => skipSplitFor(skipFeeRequest(t)).fluid === t));
+  ok("skip config: the affiliate table ships empty — quotes run fee-free until the operator sets an address (the 1Click recipient precedent)",
+    Object.keys(SKIP_AFFILIATE_ADDRESSES).length === 0 && skipAffiliateAddress("osmosis-1") === null
+    && skipAffiliateAddress("osmosis-1", { "osmosis-1": addrs119.osmosis }) === addrs119.osmosis);
+
+  // --- echo verification against the live captures ---
+  const editHook119 = (msgsData, fn) => {
+    const c = clone119(msgsData);
+    const m = c.txs[0].cosmos_tx.msgs[0];
+    const j = JSON.parse(m.msg);
+    const memo = JSON.parse(j.memo);
+    fn(memo.wasm.msg.swap_and_action);
+    j.memo = JSON.stringify(memo);
+    m.msg = JSON.stringify(j);
+    return c;
+  };
+  const echoExpect119 = { requestedBps: 50, fluidBps: 38, skipBps: 12, affiliateAddress: "osmo1x82rzhccdgnqj66p9kefwmexln6ff6r7v6nprk", swapOutRaw: "408235428", swapOutDenom: "uosmo", slippagePercent: 1, addressSet: ["osmo1x82rzhccdgnqj66p9kefwmexln6ff6r7v6nprk"] };
+  {
+    const fx50 = fixture119("skip-msgs-atom-osmo-affiliate.json");
+    ok("skip echo: the live 50 bps capture verifies (38 to Fluid, 12 to Skip, min_asset at the 1% floor, post-swap to the user)",
+      verifySkipFeeEcho(fx50, echoExpect119).ok === true);
+    ok("skip echo: the live 100 bps capture verifies at 75/25",
+      verifySkipFeeEcho(fixture119("skip-msgs-100bps.json"), { ...echoExpect119, requestedBps: 100, fluidBps: 75, skipBps: 25 }).ok === true);
+    ok("skip echo: a tampered affiliate total refuses", verifySkipFeeEcho(editHook119(fx50, h => { h.affiliates[0].basis_points_fee = "30"; }), echoExpect119).reason === "affiliates-total");
+    ok("skip echo: a fee pointed away from Fluid's address refuses", verifySkipFeeEcho(editHook119(fx50, h => { h.affiliates[0].address = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3ek"; }), echoExpect119).reason === "affiliates-recipient");
+    ok("skip echo: a lowered min_asset refuses", verifySkipFeeEcho(editHook119(fx50, h => { h.min_asset.native.amount = "1000"; }), echoExpect119).reason === "min-asset-amount");
+    ok("skip echo: a wrong min_asset denom refuses", verifySkipFeeEcho(editHook119(fx50, h => { h.min_asset.native.denom = "uatom"; }), echoExpect119).reason === "min-asset-denom");
+    ok("skip echo: a post-swap paying someone else refuses", verifySkipFeeEcho(editHook119(fx50, h => { h.post_swap_action.transfer.to_address = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3ek"; }), echoExpect119).reason === "post-swap-recipient");
+    ok("skip: the hook is found inside the transfer memo, and the packet timeout reads as the earlier of transfer and hook",
+      !!skipFindSwapAndAction(fx50) && skipTimeoutAtFromMsgs(fx50) === 1794697083859);
+  }
+
+  // --- the hand-encoded CCTP message + its verification ---
+  {
+    const fx = fixture119("skip-msgs-noble-cctp.json");
+    const burnJson = JSON.parse(fx.txs[0].cosmos_tx.msgs[0].msg);
+    const burnVal = { from: burnJson.from, amount: burnJson.amount, destinationDomain: burnJson.destination_domain, mintRecipient: Uint8Array.from(Buffer.from(burnJson.mint_recipient, "base64")), burnToken: burnJson.burn_token, destinationCaller: Uint8Array.from(Buffer.from(burnJson.destination_caller, "base64")) };
+    const bytes = encodeMsgDepositForBurnWithCaller(burnVal);
+    ok("skip cctp: the hand encoding matches the pinned wire bytes (Noble circle/cctp/v1 layout, domain 0 omitted as proto3 zero)",
+      Buffer.from(bytes).toString("hex") === "0a2c6e6f626c65317a78727a797037653878306a706868727332336c79703233657478357466736575787333376e120739343732303332222000000000000000000000000011111111111111111111111111111111111111112a0575757364633220000000000000000000000000fc05ad74c6fe2e7046e091d6ad4f660d2a159762");
+    const dec = decodeMsgDepositForBurnWithCaller(bytes);
+    ok("skip cctp: the encoding round-trips through the hand decoder",
+      dec.from === burnVal.from && dec.amount === "9472032" && dec.destinationDomain === 0 && dec.burnToken === "uusdc"
+      && Buffer.from(dec.mintRecipient).toString("hex") === "0000000000000000000000001111111111111111111111111111111111111111");
+    const eo = skipMsgToEncodeObject(fx.txs[0].cosmos_tx.msgs[0]);
+    ok("skip cctp: the registry encodes the converted message to the same bytes",
+      Buffer.from(skipCosmosRegistry().encode(eo)).toString("hex") === Buffer.from(bytes).toString("hex"));
+    const cctpExpect = { userEvmAddress: "0x1111111111111111111111111111111111111111", destinationDomain: 0, amountInRaw: "10000000", relayFeeRaw: "527968" };
+    ok("skip cctp: the live Noble capture verifies (mint to the user's own EVM address, fee to Skip's pinned collector, burn + fee conserves the input)",
+      verifySkipCctpMsgs(fx, cctpExpect).ok === true);
+    const tamperMint = clone119(fx); { const j = JSON.parse(tamperMint.txs[0].cosmos_tx.msgs[0].msg); j.mint_recipient = Buffer.from("0000000000000000000000002222222222222222222222222222222222222222", "hex").toString("base64"); tamperMint.txs[0].cosmos_tx.msgs[0].msg = JSON.stringify(j); }
+    ok("skip cctp: a mint pointed at someone else's address refuses", verifySkipCctpMsgs(tamperMint, cctpExpect).reason === "mint-recipient");
+    const tamperFee = clone119(fx); { const j = JSON.parse(tamperFee.txs[0].cosmos_tx.msgs[1].msg); j.amount[0].amount = "1"; tamperFee.txs[0].cosmos_tx.msgs[1].msg = JSON.stringify(j); }
+    ok("skip cctp: a relay fee that drifts from the quote refuses", verifySkipCctpMsgs(tamperFee, cctpExpect).reason === "fee-amount");
+    ok("skip cctp: a wrong destination domain refuses", verifySkipCctpMsgs(fx, { ...cctpExpect, destinationDomain: 6 }).reason === "domain");
+    const tamperRecip = clone119(fx); { const j = JSON.parse(tamperRecip.txs[0].cosmos_tx.msgs[1].msg); j.to_address = "noble1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3ek"; tamperRecip.txs[0].cosmos_tx.msgs[1].msg = JSON.stringify(j); }
+    ok("skip cctp: a relay fee paid anywhere but Skip's pinned collector refuses", verifySkipCctpMsgs(tamperRecip, cctpExpect).reason === "fee-recipient");
+  }
+
+  // --- the explicit message converters (never fromJSON) ---
+  {
+    const fx50 = fixture119("skip-msgs-atom-osmo-affiliate.json");
+    const eo = skipMsgToEncodeObject(fx50.txs[0].cosmos_tx.msgs[0]);
+    ok("skip convert: MsgTransfer maps snake_case explicitly — channel and timeout survive (fromJSON would drop both)",
+      eo.value.sourcePort === "transfer" && eo.value.sourceChannel === "channel-141"
+      && eo.value.timeoutTimestamp === 1794697083859034000n && eo.value.token.amount === "10000000"
+      && eo.value.memo.includes("swap_and_action"));
+    const reg = skipCosmosRegistry();
+    const dec = reg.decode({ typeUrl: eo.typeUrl, value: reg.encode(eo) });
+    ok("skip convert: the converted transfer round-trips through the signing registry intact",
+      dec.sourceChannel === "channel-141" && dec.timeoutTimestamp === 1794697083859034000n && dec.token.denom === "uatom");
+    const sendEo = skipMsgToEncodeObject(fixture119("skip-msgs-noble-cctp.json").txs[0].cosmos_tx.msgs[1]);
+    ok("skip convert: the CCTP fee MsgSend converts with its recipient and amount",
+      sendEo.value.toAddress === SKIP_CCTP_FEE_PAYMENT_ADDRESS && sendEo.value.amount[0].amount === "527968");
+    const execEo = skipMsgToEncodeObject({ msg_type_url: "/cosmwasm.wasm.v1.MsgExecuteContract", msg: JSON.stringify({ sender: addrs119.osmosis, contract: "osmo10a3k4hvk37cc4hnxctw4p95fhscd2z6h2rmx0aukc6rm8u9qqx9smfsh7u", msg: { swap_and_action: { probe: 1 } }, funds: [{ denom: "uosmo", amount: "5" }] }) });
+    ok("skip convert: a MsgExecuteContract carries its contract JSON as bytes and its funds",
+      execEo.value.sender === addrs119.osmosis && JSON.parse(new TextDecoder().decode(execEo.value.msg)).swap_and_action.probe === 1 && execEo.value.funds[0].amount === "5");
+    let refused = false;
+    try { skipMsgToEncodeObject({ msg_type_url: "/cosmos.staking.v1beta1.MsgDelegate", msg: "{}" }); } catch { refused = true; }
+    ok("skip convert: an unlisted message type refuses — Fluid never signs an uninspected shape", refused);
+  }
+
+  // --- the Injective generic-Any signer ---
+  {
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON119));
+    const child60 = root.derive("m/44'/60'/0'/0/0");
+    const reg = skipCosmosRegistry();
+    const sendEo = { typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: { fromAddress: "inj1npvwllfr9dqr8erajqqr6s0vxnk2ak55re90dz", toAddress: "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv", amount: [{ denom: "inj", amount: "1000" }] } };
+    const viaGeneric = buildInjectiveSignedTxForMsgs({ privateKey: child60.privateKey, publicKey: child60.publicKey, msgs: [sendEo], feeAmountBase: "16000000000000", gasLimit: 100000, accountNumber: "1680321", sequence: "2", registry: reg });
+    const viaSend = buildInjectiveSignedTx({ privateKey: child60.privateKey, publicKey: child60.publicKey, fromAddress: "inj1npvwllfr9dqr8erajqqr6s0vxnk2ak55re90dz", toAddress: "inj1gsvdpdxec8hsu57lhxg5xem7refr233zkczfgv", denom: "inj", amountBase: "1000", feeAmountBase: "16000000000000", gasLimit: 100000, accountNumber: "1680321", sequence: "2" });
+    ok("injective generic: a MsgSend through the generic builder is byte-identical to the dedicated builder (the sdk-ts-pinned bytes)",
+      Buffer.from(viaGeneric.txBytes).toString("hex") === Buffer.from(viaSend.txBytes).toString("hex"));
+    // The MsgTransfer pin: built from a Skip-shaped message
+    // and SIMULATED LIVE on injective-1 on 2026-11-15 — the
+    // chain verified the signature and executed the message
+    // into its IBC keeper, refusing only because the pin's
+    // timeout (copied from the research capture) had elapsed
+    // by simulate time; a fee-bearing run metered gas_used
+    // 16057 before the dust account's fee deduction refused.
+    const transferJson = {
+      msg_type_url: "/ibc.applications.transfer.v1.MsgTransfer",
+      msg: JSON.stringify({
+        source_port: "transfer", source_channel: "channel-8",
+        token: { denom: "inj", amount: "1000000000000000000" },
+        sender: "inj1npvwllfr9dqr8erajqqr6s0vxnk2ak55re90dz", receiver: "osmo10a3k4hvk37cc4hnxctw4p95fhscd2z6h2rmx0aukc6rm8u9qqx9smfsh7u",
+        timeout_height: { revision_number: "0", revision_height: "0" },
+        timeout_timestamp: 1794697083859034068,
+        memo: JSON.stringify({ wasm: { contract: "osmo10a3k4hvk37cc4hnxctw4p95fhscd2z6h2rmx0aukc6rm8u9qqx9smfsh7u", msg: { swap_and_action: { user_swap: { swap_exact_asset_in: { swap_venue_name: "osmosis-poolmanager", operations: [{ pool: "1836", denom_in: "ibc/111111", denom_out: "uosmo" }] } }, min_asset: { native: { denom: "uosmo", amount: "200000000" } }, timeout_timestamp: "1794697083859054708", post_swap_action: { transfer: { to_address: "osmo19rl4cm2hmr8afy4kldpxz3fka4jguq0a5rc48m" } }, affiliates: [] } } } }),
+      }),
+    };
+    const built = buildInjectiveSignedTxForMsgs({ privateKey: child60.privateKey, publicKey: child60.publicKey, msgs: [skipMsgToEncodeObject(transferJson)], feeAmountBase: "16000000000000", gasLimit: 400000, accountNumber: "1680321", sequence: "2", registry: reg });
+    ok("injective generic: the MsgTransfer transaction is byte-pinned (the live-simulated build)",
+      Buffer.from(built.txBytes).toString("hex") === "0abf050abc050a292f6962632e6170706c69636174696f6e732e7472616e736665722e76312e4d73675472616e73666572128e050a087472616e7366657212096368616e6e656c2d381a1a0a03696e6a121331303030303030303030303030303030303030222a696e6a316e7076776c6c667239647172386572616a71717236733076786e6b32616b353572653930647a2a3f6f736d6f313061336b3468766b3337636334686e78637477347039356668736364327a366832726d783061756b6336726d38753971717839736d667368377532003890bfe396d3ef82f41842e1037b227761736d223a7b22636f6e7472616374223a226f736d6f313061336b3468766b3337636334686e78637477347039356668736364327a366832726d783061756b6336726d38753971717839736d6673683775222c226d7367223a7b22737761705f616e645f616374696f6e223a7b22757365725f73776170223a7b22737761705f65786163745f61737365745f696e223a7b22737761705f76656e75655f6e616d65223a226f736d6f7369732d706f6f6c6d616e61676572222c226f7065726174696f6e73223a5b7b22706f6f6c223a2231383336222c2264656e6f6d5f696e223a226962632f313131313131222c2264656e6f6d5f6f7574223a22756f736d6f227d5d7d7d2c226d696e5f6173736574223a7b226e6174697665223a7b2264656e6f6d223a22756f736d6f222c22616d6f756e74223a22323030303030303030227d7d2c2274696d656f75745f74696d657374616d70223a2231373934363937303833383539303534373038222c22706f73745f737761705f616374696f6e223a7b227472616e73666572223a7b22746f5f61646472657373223a226f736d6f3139726c34636d32686d7238616679346b6c6470787a33666b61346a677571306135726334386d227d7d2c22616666696c6961746573223a5b5d7d7d7d7d127d0a5e0a540a2d2f696e6a6563746976652e63727970746f2e763162657461312e657468736563703235366b312e5075624b657912230a210237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f29912040a0208011802121b0a150a03696e6a120e31363030303030303030303030301080b5181a40126556cfe6ef2de2891dea17315785ebafc3940232ee5a8dd8885b569f884b25100f3fc7b2901db57f19ad1276eafa3c14048d70dd8cb6140baaf0b780f394c7");
+  }
+
+  // --- pair support: the honest edges ---
+  ok("skip pairs: Cosmos <-> Cosmos and Noble -> EVM USDC serve; EVM -> Cosmos, Sei and non-USDC EVM destinations do not",
+    !!skipSupportsPair({ fromChainKey: "cosmoshub", toChainKey: "dydx", fromTokenAddress: "uatom", toTokenAddress: "adydx" })
+    && !!skipSupportsPair({ fromChainKey: "noble", toChainKey: "base", fromTokenAddress: "uusdc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" })
+    && skipSupportsPair({ fromChainKey: "base", toChainKey: "cosmoshub", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toTokenAddress: "uatom" }) === null
+    && skipSupportsPair({ fromChainKey: "sei", toChainKey: "osmosis", fromTokenAddress: "usei", toTokenAddress: "uosmo" }) === null
+    && skipSupportsPair({ fromChainKey: "noble", toChainKey: "base", fromTokenAddress: "uusdc", toTokenAddress: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2" }) === null);
+
+  // --- the two-pass route search, stubbed at the fetch seam ---
+  const routeFx119 = fixture119("skip-route-atom-osmo.json");
+  const mkMsgs119 = (affiliates) => {
+    const c = fixture119("skip-msgs-atom-osmo-affiliate.json");
+    const tx = c.txs[0].cosmos_tx;
+    const j = JSON.parse(tx.msgs[0].msg);
+    j.sender = addrs119.cosmoshub;
+    const memo = JSON.parse(j.memo);
+    memo.wasm.msg.swap_and_action.post_swap_action = { transfer: { to_address: addrs119.osmosis } };
+    memo.wasm.msg.swap_and_action.affiliates = affiliates;
+    j.memo = JSON.stringify(memo);
+    tx.msgs[0].msg = JSON.stringify(j);
+    return c;
+  };
+  const args119 = { fromChainKey: "cosmoshub", toChainKey: "osmosis", fromTokenAddress: "uatom", toTokenAddress: "uosmo", fromAmount: "10000000", fromAddress: addrs119.cosmoshub, toAddress: addrs119.osmosis };
+  {
+    let msgsCalls = 0;
+    const stub = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("/fungible/route")) return jsonRes119(routeFx119);
+      if (u.includes("/info/chains")) return jsonRes119({ chains: [] });
+      if (u.includes("/fungible/msgs")) {
+        msgsCalls++;
+        const b = JSON.parse(opts.body);
+        return jsonRes119(Array.isArray(b.affiliates) && b.affiliates.length
+          ? mkMsgs119([{ basis_points_fee: "50", address: addrs119.osmosis }, { basis_points_fee: "16", address: SKIP_OSMO_AFFIL }])
+          : mkMsgs119([]));
+      }
+      throw new Error("unexpected fetch in skip route pin: " + u);
+    };
+    const charged = await getSkipSwapRoute(args119, { fetchImpl: stub, affiliateAddresses: { "osmosis-1": addrs119.osmosis } });
+    ok("skip route: the charged route collects the law's 50 bps net — requested 66 through the inverse transform, echo-verified",
+      charged.provider === "skip" && charged.skip.rail === "skip-hook" && charged.platformFeeCollecting === true && charged.platformFeeBps === 50
+      && charged.skip.feeEcho.requestedBps === 66 && charged.skip.feeEcho.fluidBps === 50 && charged.skip.feeEcho.skipBps === 16
+      && charged.skip.expectedDenom === "uosmo" && charged.skip.timeoutAt === 1794697083859 && charged.toAmount === "408235428" && msgsCalls === 2);
+    ok("skip route: the collecting route passes the executable gate; the same route with its echo stripped does not",
+      swapRouteExecutable(charged).ok === true
+      && swapRouteExecutable({ ...charged, skip: { ...charged.skip, feeEcho: null } }).ok === false);
+    msgsCalls = 0;
+    const free = await getSkipSwapRoute(args119, { fetchImpl: stub });
+    ok("skip route: with no affiliate configured the route ships fee-free in ONE msgs pass (the shipped config state)",
+      free.platformFeeCollecting === false && free.platformFeeBps === 0 && msgsCalls === 1);
+    const badStub = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("/fungible/route")) return jsonRes119(routeFx119);
+      if (u.includes("/info/chains")) return jsonRes119({ chains: [] });
+      if (u.includes("/fungible/msgs")) {
+        const b = JSON.parse(opts.body);
+        return jsonRes119(Array.isArray(b.affiliates) && b.affiliates.length
+          ? mkMsgs119([{ basis_points_fee: "40", address: addrs119.osmosis }, { basis_points_fee: "26", address: SKIP_OSMO_AFFIL }])
+          : mkMsgs119([]));
+      }
+      throw new Error("unexpected fetch in skip route pin: " + u);
+    };
+    const fell = await getSkipSwapRoute(args119, { fetchImpl: badStub, affiliateAddresses: { "osmosis-1": addrs119.osmosis } });
+    ok("skip route: an echo mismatch falls back to the fee-free messages (collecting=false) — never an unverified charge",
+      fell.platformFeeCollecting === false && fell.skip.feeEcho === null);
+  }
+
+  // --- DYDX: the intermediate-chain address is the user's own, derived ---
+  {
+    let seenBody = null;
+    const stub = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("/fungible/route")) return jsonRes119(fixture119("skip-route-DYDX-USDCnoble.json"));
+      if (u.includes("/info/chains")) return jsonRes119({ chains: [] });
+      if (u.includes("/fungible/msgs")) {
+        seenBody = JSON.parse(opts.body);
+        return jsonRes119({ txs: [{ cosmos_tx: { chain_id: "dydx-mainnet-1", msgs: [{ msg_type_url: "/ibc.applications.transfer.v1.MsgTransfer", msg: JSON.stringify({ source_port: "transfer", source_channel: "channel-0", token: { denom: "adydx", amount: "1000000000000000000" }, sender: addrs119.dydx, receiver: "persistence1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3ek", timeout_height: { revision_number: "0", revision_height: "0" }, timeout_timestamp: 1794697083859034068, memo: "" }) }] } }] });
+      }
+      throw new Error("unexpected fetch in skip dydx pin: " + u);
+    };
+    const r = await getSkipSwapRoute({ fromChainKey: "dydx", toChainKey: "noble", fromTokenAddress: "adydx", toTokenAddress: "uusdc", fromAmount: "1000000000000000000", fromAddress: addrs119.dydx, toAddress: addrs119.noble }, { fetchImpl: stub });
+    const expectPers = skipDeriveAddressForChain(skipAccountBytesOfAddress(addrs119.dydx), "persistence");
+    ok("skip route: a DYDX path names the user's own Persistence address (derived from their account bytes) between source and destination",
+      !!r && seenBody.address_list.length === 3 && seenBody.address_list[0] === addrs119.dydx
+      && seenBody.address_list[1] === expectPers && seenBody.address_list[1].startsWith("persistence1")
+      && seenBody.address_list[2] === addrs119.noble && r.platformFeeCollecting === false);
+  }
+
+  // --- the Noble CCTP exit through the search ---
+  {
+    const routeFx = fixture119("skip-route-noble-usdc-eth.json");
+    const stub = async (url) => {
+      const u = String(url);
+      if (u.includes("/fungible/route")) return jsonRes119(routeFx);
+      if (u.includes("/info/chains")) return jsonRes119({ chains: [] });
+      if (u.includes("/fungible/msgs")) return jsonRes119(fixture119("skip-msgs-noble-cctp.json"));
+      throw new Error("unexpected fetch in skip cctp pin: " + u);
+    };
+    const r = await getSkipSwapRoute({ fromChainKey: "noble", toChainKey: "ethereum", fromTokenAddress: "uusdc", toTokenAddress: routeFx.dest_asset_denom, fromAmount: "10000000", fromAddress: "noble1zxrzyp7e8x0jphhrs23lyp23etx5tfseuxs37n", toAddress: "0x1111111111111111111111111111111111111111" }, { fetchImpl: stub });
+    ok("skip route: the Noble CCTP exit carries the per-quote relay fee for disclosure and no Fluid fee",
+      !!r && r.skip.rail === "cctp-noble" && r.skip.relayFee.raw === "527968" && Math.abs(r.skip.relayFee.usd - 0.5278) < 0.001
+      && r.skip.relayFee.address === SKIP_CCTP_FEE_PAYMENT_ADDRESS && r.platformFeeCollecting === false
+      && r.skip.timeoutAt === null && r.skip.expectedDenom === routeFx.dest_asset_denom && swapRouteExecutable(r).ok === true);
+  }
+
+  // --- Osmosis intra: SQS cross-checks, never executes ---
+  {
+    const intraRoute = { source_asset_denom: "uosmo", source_asset_chain_id: "osmosis-1", dest_asset_denom: SKIP_ATOM_ON_OSMOSIS_DENOM, dest_asset_chain_id: "osmosis-1", amount_in: "10000000", amount_out: "244138", operations: [{ swap: { swap_in: { swap_venue: { name: "osmosis-poolmanager", chain_id: "osmosis-1" }, swap_operations: [{ pool: "1", denom_in: "uosmo", denom_out: SKIP_ATOM_ON_OSMOSIS_DENOM }] } }, tx_index: 0, amount_in: "10000000", amount_out: "244138" }], chain_ids: ["osmosis-1"], does_swap: true, txs_required: 1, usd_amount_in: "8.4", usd_amount_out: "8.38", estimated_fees: [], required_chain_addresses: ["osmosis-1"], estimated_route_duration_seconds: 30 };
+    const intraMsgs = { txs: [{ cosmos_tx: { chain_id: "osmosis-1", msgs: [{ msg_type_url: "/cosmwasm.wasm.v1.MsgExecuteContract", msg: JSON.stringify({ sender: addrs119.osmosis, contract: "osmo10a3k4hvk37cc4hnxctw4p95fhscd2z6h2rmx0aukc6rm8u9qqx9smfsh7u", msg: { swap_and_action: { user_swap: {}, min_asset: { native: { denom: SKIP_ATOM_ON_OSMOSIS_DENOM, amount: "241000" } }, timeout_timestamp: "1794697083859054708", post_swap_action: { transfer: { to_address: addrs119.osmosis } }, affiliates: [] } }, funds: [{ denom: "uosmo", amount: "10000000" }] }) }] } }] };
+    const mkStub = (routeOut) => async (url) => {
+      const u = String(url);
+      if (u.includes("/fungible/route")) return jsonRes119({ ...intraRoute, amount_out: routeOut });
+      if (u.includes("/info/chains")) return jsonRes119({ chains: [] });
+      if (u.includes("sqs.osmosis.zone")) return jsonRes119(fixture119("sqs-quote-osmo-atom.json"));
+      if (u.includes("/fungible/msgs")) return jsonRes119(intraMsgs);
+      throw new Error("unexpected fetch in skip sqs pin: " + u);
+    };
+    const argsIntra = { fromChainKey: "osmosis", toChainKey: "osmosis", fromTokenAddress: "uosmo", toTokenAddress: SKIP_ATOM_ON_OSMOSIS_DENOM, fromAmount: "10000000", fromAddress: addrs119.osmosis, toAddress: addrs119.osmosis };
+    const passed = await getSkipSwapRoute(argsIntra, { fetchImpl: mkStub("244138") });
+    ok("skip sqs: an Osmosis-internal quote inside the 90% band of SQS's own price stands, with the cross-check recorded",
+      !!passed && passed.skip.crossCheck?.sqsAmountOutRaw === "241925" && passed.skip.rail === "skip-hook");
+    const refused = await getSkipSwapRoute(argsIntra, { fetchImpl: mkStub("200000") });
+    ok("skip sqs: a quote under 90% of SQS's price is refused outright (SQS vetoes; it never executes)",
+      refused === null);
+  }
+
+  // --- the planner: Cosmos -> EVM-USDC composes through Noble ---
+  const shapes119 = milestoneShapes({ fromChainKey: "cosmoshub", toChainKey: "base", fromTokenAddress: "uatom", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
+  ok("planner: a Cosmos source to EVM USDC composes via USDC@Noble then the CCTP leg",
+    shapes119.length === 1 && shapes119[0].length === 2
+    && shapes119[0][0].toChainKey === "noble" && shapes119[0][0].toTokenAddress === "uusdc"
+    && shapes119[0][1].fromChainKey === "noble" && shapes119[0][1].toChainKey === "base");
+  ok("planner: Noble itself and Cosmos-to-Cosmos pairs stay direct (no composed shape)",
+    milestoneShapes({ fromChainKey: "noble", toChainKey: "base", fromTokenAddress: "uusdc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }).length === 0
+    && milestoneShapes({ fromChainKey: "cosmoshub", toChainKey: "osmosis", fromTokenAddress: "uatom", toTokenAddress: "uosmo" }).length === 0);
+
+  // --- the timed-out verdict + records ---
+  ok("skip verdict: success and read credits are done; past-timeout with a visible refund or an errored status is timed-out; everything else waits",
+    skipLegTimeoutVerdict({ statusState: "STATE_COMPLETED_SUCCESS" }) === "done"
+    && skipLegTimeoutVerdict({ destCredited: true, statusState: "STATE_PENDING" }) === "done"
+    && skipLegTimeoutVerdict({ nowMs: 2000, timeoutAt: 1000, statusState: "STATE_PENDING", refundDetected: true }) === "timed-out"
+    && skipLegTimeoutVerdict({ nowMs: 2000, timeoutAt: 1000, statusState: "STATE_COMPLETED_ERROR" }) === "timed-out"
+    && skipLegTimeoutVerdict({ nowMs: 2000, timeoutAt: 1000, statusState: "STATE_PENDING" }) === "wait"
+    && skipLegTimeoutVerdict({ nowMs: 500, timeoutAt: 1000, statusState: "STATE_COMPLETED_ERROR" }) === "wait"
+    && skipLegTimeoutVerdict({ nowMs: 2000, timeoutAt: null, statusState: "STATE_COMPLETED_ERROR" }) === "wait");
+  {
+    const line = milestoneHistoryLine({ label: "ATOM → OSMO", state: "timed-out", currentLeg: 0, legs: [{ fromChainKey: "cosmoshub", fromSymbol: "ATOM" }] });
+    ok("skip records: the timed-out history line names the timeout, the automatic refund and the wallet it returns to",
+      line.includes("timed out") && line.includes("refund automatically") && line.includes("Cosmos Hub") && line.includes("Nothing is lost"));
+    const store = memStorage119();
+    const rec = newMilestoneRecord({ id: "skip-to-1", label: "ATOM → OSMO", legs: [{ fromChainKey: "cosmoshub", toChainKey: "osmosis", fromTokenAddress: "uatom", toTokenAddress: "uosmo", provider: "skip" }], hashes: [] });
+    rec.state = "timed-out";
+    saveMilestoneRecord(store, rec);
+    const out = await completeMilestoneSwap({}, "skip-to-1", () => {}, { storage: store });
+    ok("skip records: a timed-out record is terminal — completion returns it untouched, never runs it forward",
+      out.timedOut === true && out.done === false && loadMilestoneRecords(store)[0].state === "timed-out");
+  }
+  {
+    // The advancer closes a past-timeout Skip leg whose
+    // refund is visible — Skip status and both chains' bank
+    // reads stubbed at the global fetch seam (the CoinGecko
+    // pin's pattern).
+    const store = memStorage119();
+    const rec = newMilestoneRecord({
+      id: "skip-adv-1", label: "ATOM → OSMO", fromSymbol: "ATOM", toSymbol: "OSMO", fromDecimals: 6, hashes: ["DEADBEEF"],
+      legs: [{ fromChainKey: "cosmoshub", toChainKey: "osmosis", fromTokenAddress: "uatom", toTokenAddress: "uosmo", fromAmount: "10000000", toAmount: "408235428", fromDecimals: 6, toDecimals: 6, fromAddress: addrs119.cosmoshub, toAddress: addrs119.osmosis, fromSymbol: "ATOM", toSymbol: "OSMO", provider: "skip", rail: "skip-hook", expectedDenom: "uosmo", timeoutAt: Date.now() - 1000, skipTxTracking: { chainId: "cosmoshub-4", txHash: "DEADBEEF" }, refundWatch: { chainKey: "cosmoshub", denom: "uatom", address: addrs119.cosmoshub, preRaw: "5000000" } }],
+    });
+    rec.state = "awaiting-credit"; rec.pendingLeg = 0; rec.pendingPreRaw = "1000000"; rec.pendingExpectedRaw = "408235428";
+    saveMilestoneRecord(store, rec);
+    const realFetch119 = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.skip.build/tx/status")) return jsonRes119({ state: "STATE_COMPLETED_ERROR" });
+      if (u.includes("/cosmos/bank/v1beta1/balances/" + addrs119.cosmoshub)) return jsonRes119({ balances: [{ denom: "uatom", amount: "4900000" }] });
+      if (u.includes("/cosmos/bank/v1beta1/balances/" + addrs119.osmosis)) return jsonRes119({ balances: [] });
+      throw new Error("unexpected fetch in skip advancer pin: " + u);
+    };
+    try {
+      const changed = await advanceMilestoneRecords(store);
+      const after = loadMilestoneRecords(store).find(r => r.id === "skip-adv-1");
+      ok("skip advancer: a past-timeout leg with an errored status and its refund visible closes as timed-out (terminal)",
+        changed >= 1 && after.state === "timed-out" && after.legs[0].state === "timed-out" && after.pendingLeg === null);
+    } finally { globalThis.fetch = realFetch119; }
+  }
+
+  // --- swap-universe helpers + app wiring ---
+  ok("skip helpers: denoms name tokens, natives resolve, and the address book validates per chain",
+    tokenSymbolOn("osmosis", SKIP_ATOM_ON_OSMOSIS_DENOM) === "ATOM" && tokenSymbolOn("noble", "uusdc") === "USDC" && tokenSymbolOn("dydx", "adydx") === "DYDX"
+    && destNativeTokenAddress("dydx") === "adydx" && isDestNativeToken("injective", "inj") === true && isDestNativeToken("osmosis", SKIP_ATOM_ON_OSMOSIS_DENOM) === false
+    && swapOwnAddressFor("noble", { noble: addrs119.noble }) === addrs119.noble && swapOwnAddressFor("noble", { noble: addrs119.osmosis }) === null
+    && swapAddressBookEntry({ cosmoshub: addrs119.cosmoshub }, "cosmoshub") === addrs119.cosmoshub && swapAddressBookEntry({ cosmoshub: addrs119.osmosis }, "cosmoshub") === null);
+  ok("skip app: the sheet lists the six chains, names the rail, discloses the relay fee on the card and in the intent, and executes through the core executor",
+    appSrc119.includes('"cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"')
+    && appSrc119.includes('if (route && route.provider === "skip") return "Skip";')
+    && appSrc119.includes("CCTP relay fee for this quote")
+    && appSrc119.includes("The relay fee for this quote is")
+    && appSrc119.includes('} else if (route.provider === "skip") {')
+    && appSrc119.includes("cosmoshub: cosmosAddrs.cosmoshub")
+    && appSrc119.includes("skipChainOf(netKey)"));
+}
+
 
 console.log(`\n${passed} checks passed`);

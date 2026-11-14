@@ -27,6 +27,7 @@ import {
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
+  SKIP_ASSETS, skipChainOf, executeSkipSwapRoute,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, rankPickerTokens, pickerListState, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
@@ -6875,6 +6876,14 @@ function swapTokenList(netKey) {
     return [{ symbol: "APT", address: APTOS_SWAP_NATIVE_TOKEN, decimals: 8, native: true },
             ...APTOS_TOKENS.map(t => ({ ...t, native: false }))];
   }
+  if (skipChainOf(netKey)) {
+    // The Cosmos slice-1 chains (Skip rail, 2026-11-15): a
+    // token is addressed by its denom — the chain's native
+    // plus the slice's cross-chain assets (ATOM's Osmosis
+    // voucher on Osmosis) from core's asset table.
+    return SKIP_ASSETS.filter(t => t.chainKey === netKey)
+      .map(t => ({ symbol: t.symbol, address: t.denom, decimals: t.decimals, native: t.denom === skipChainOf(netKey).denom }));
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: NATIVE_TOKEN_ADDRESS, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -6893,6 +6902,7 @@ function swapRouteName(route) {
   if (route && route.provider === "sunswap") return "SunSwap";
   if (route && route.provider === "chainflip") return "Chainflip";
   if (route && route.provider === "oneclick") return "1Click";
+  if (route && route.provider === "skip") return "Skip";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7111,6 +7121,20 @@ async function swapBalanceOf(chainKey, tok) {
       if (!row) return 0;
       return row.amount != null ? Number(row.amount) : null;
     }
+    if (skipChainOf(chainKey)) {
+      // Cosmos balance for the EXECUTION gate (Skip rail,
+      // 2026-11-15): the picked denom's row of a FRESH
+      // all-chains read — same null discipline as NEAR's: a
+      // chain whose read failed yields null (the gate's
+      // unreadable verdict, never a silent pass); a denom
+      // absent from a settled read is a true zero.
+      const rows = await getCosmosAllBalances(wallet.mnemonic.phrase);
+      const row = (rows || []).find(r => r && r.key === chainKey);
+      if (!row || row.amount == null || !Array.isArray(row.tokens)) return null;
+      const t = row.tokens.find(x => x && x.denom === tok.address);
+      if (!t) return 0;
+      return t.amount != null ? Number(t.amount) : null;
+    }
     return await getEvmTokenBalance(wallet, chainKey, tok);
   } catch { return null; }
 }
@@ -7135,7 +7159,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7232,7 +7256,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -8090,7 +8114,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8215,7 +8239,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
@@ -8375,6 +8399,16 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "skip" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Skip states the fee it will take inside the swap
+          // hook's affiliate memo (its measured 75/25 split,
+          // inverted by core's transform), and core
+          // echo-verified that memo field-by-field against
+          // the fee law before this route could be picked —
+          // disclose exactly that figure, like 1Click's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -8385,6 +8419,8 @@ $("actSwap").onclick = () => {
         if (r.provider === "across") $("wIntentText").textContent += " If the bridge does not fill, your deposit is refunded automatically to this same wallet — refunds take several hours, never seconds.";
         if (r.provider === "mayan") $("wIntentText").textContent += formatMayanRefundNote(r);
         if (r.provider === "oneclick") $("wIntentText").textContent += " You send the deposit yourself to 1Click's address for this quote — it is a plain transfer of the exact amount above. If 1Click cannot complete the swap, it refunds your deposit to this same wallet minus the refund fee the quote stated up front.";
+        if (r.provider === "skip" && r.skip?.rail === "cctp-noble") $("wIntentText").textContent += ` This exit burns your Noble USDC and mints it on ${swapChainName(toKey)} through Circle's CCTP. The relay fee for this quote is ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid, and already inside the amount you receive above. The minted USDC lands at your own ${swapChainName(toKey)} address.`;
+        if (r.provider === "skip" && r.skip?.rail !== "cctp-noble") $("wIntentText").textContent += " One signature on the chain you're sending from runs the whole swap. If the transfer ever times out, the network refunds it automatically to this same wallet — there is nothing to claim.";
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -8665,6 +8701,21 @@ $("actSwap").onclick = () => {
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
         try { paintOneClickSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "skip") {
+        // Skip route (Cosmos programme, 2026-11-15): ONE
+        // signature on the source chain — core re-verifies
+        // the exact messages (the fee echo, or the CCTP
+        // shape) before signing, and writes the milestone
+        // record at broadcast, so the sheet and the home card
+        // track the settlement (or the timed-out refund) from
+        // here; the Activity entry is written at broadcast
+        // through the onBroadcast hook, like the composed
+        // routes'.
+        const skOut = await executeSkipSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, sourcePreRaw: gate1.have != null ? swapAmountToRaw(gate1.have, fromTok.decimals) : null, onBroadcast: (rec) => syncPendingSwapHistory("milestone", rec, { explorer: swapSrcExplorerFor(fromKey) }) });
+        hashes = [skOut.hash];
+        srcExplorer = swapSrcExplorerFor(fromKey);
+        srcLink = `${srcExplorer}/tx/${hashes[0]}`;
+        try { paintMilestoneSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
@@ -8688,7 +8739,7 @@ $("actSwap").onclick = () => {
       // routes keep one entry the same way: written at
       // deposit broadcast through the executor's onDeposit
       // hook and updated in place as the polls land.
-      if (route.provider !== "milestone" && route.provider !== "gasfallback" && route.provider !== "oneclick") {
+      if (route.provider !== "milestone" && route.provider !== "gasfallback" && route.provider !== "oneclick" && route.provider !== "skip") {
         const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
         h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
         localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -9428,7 +9479,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "lightning" || k === "arkade" ? "" : (NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a
