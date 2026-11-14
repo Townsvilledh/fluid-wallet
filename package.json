@@ -1,7 +1,7 @@
 {
   "name": "fluid-wallet",
   "version": "2.0.0",
-  "description": "Fluid — a simple, seamless, open-source non-custodial Web3 wallet. Your money, only you control.",
+  "description": "Fluid \u2014 a simple, seamless, open-source non-custodial Web3 wallet. Your money, only you control.",
   "directories": {
     "test": "test"
   },
@@ -45,10 +45,16 @@
     "qrcode": "^1.5.4",
     "ripple-address-codec": "^5.0.1",
     "ripple-binary-codec": "^2.11.0",
-    "ripple-keypairs": "^3.1.0"
+    "ripple-keypairs": "^3.1.0",
+    "@cetusprotocol/aggregator-sdk": "^1.7.5"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "@cetusprotocol/aggregator-sdk": {
+      "@mysten/sui": "$@mysten/sui"
+    }
+  }
 }

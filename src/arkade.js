@@ -295,6 +295,40 @@ export async function bridgeVhtlcFundedSats(record, hashLock) {
   return vtxos.reduce((acc, v) => acc + Number(v.value || 0), 0);
 }
 
+/** Fund a Satora Arkade-source swap: spend the wallet's own
+ *  VTXOs to the swap's VHTLC address (universal composability
+ *  §7.2, 2026-11-14). THE GATE IS THE RECOMPUTE: the address is
+ *  rebuilt locally from the bounds-checked creation record's
+ *  own lock parameters (sender / receiver / server keys, the
+ *  hash lock, the refund locktime, the exit delays) through
+ *  the very same bridgeVhtlc construction the claim path
+ *  uses, and the send happens only when the recomputed
+ *  address equals the creation's address byte-for-byte — a
+ *  server that named one lock and described another cannot be
+ *  funded by mistake. `record` is the FLAT VHTLC shape
+ *  ({vhtlcAddress, senderPk, receiverPk, serverPk,
+ *  refundLocktime, unilateralClaimDelay, unilateralRefundDelay,
+ *  unilateralRefundWithoutReceiverDelay}); the caller flattens
+ *  the persisted swap record into it. The send itself is the
+ *  SDK wallet's plain VTXO send — the user's own coins to the
+ *  verified lock address, change back to the user's wallet. */
+export async function fundArkadeVhtlc({ session, record, hashLock, amountSats }) {
+  const sats = Math.floor(Number(amountSats) || 0);
+  if (!(sats > 0)) throw new Error("The Arkade funding amount must be a positive number of sats.");
+  if (!record || !record.vhtlcAddress) throw new Error("The swap carries no Arkade lock address to fund.");
+  const local = bridgeVhtlc({ record, hashLock });
+  if (local.address !== record.vhtlcAddress)
+    throw new Error(`Fluid computed a different VHTLC address (${local.address}) than the swap's (${record.vhtlcAddress}) — refusing to send.`);
+  if (!session || !session.wallet || typeof session.wallet.send !== "function")
+    throw new Error("The Arkade wallet session isn't available.");
+  const balance = Number(await session.balanceSats());
+  if (!Number.isFinite(balance) || balance < sats)
+    throw new Error(`Not enough sats in your Arkade wallet (you have ${Number.isFinite(balance) ? balance.toLocaleString() : "an unreadable balance"}).`);
+  const txid = await session.wallet.send({ recipients: [{ address: record.vhtlcAddress, amount: sats }] });
+  if (typeof txid !== "string" || !txid) throw new Error("The Arkade send returned no transaction id.");
+  return { txid, amountSats: sats };
+}
+
 // ---------------------------------------------------------------------------
 // Operator probe + wallet session
 // ---------------------------------------------------------------------------

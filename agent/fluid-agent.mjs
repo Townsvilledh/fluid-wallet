@@ -141,8 +141,8 @@ export async function openAgent({ dir, password } = {}) {
     // (feePotReport in the wallet core): unpriced or unreachable
     // chains are excluded and counted, never guessed. `due` in the
     // report is the $2 settlement trigger. (ERC-20 fee balances —
-    // LI.FI pays the fee in the swap's from-token — slot into the
-    // same report as extra priced holdings once collection is live.)
+    // some rails pay the fee in the swap's from-token — slot into
+    // the same report as extra priced holdings once collection is live.)
     async feePot() {
       const holdings = [];
       for (const [key, net] of Object.entries(NETWORKS)) {

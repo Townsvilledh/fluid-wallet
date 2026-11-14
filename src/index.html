@@ -178,6 +178,17 @@
   .netitem{ display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left; background:none; color:var(--txt);
         padding:14px 4px; border-bottom:1px solid var(--hairline); font-size:16px; font-weight:600; min-height:56px; }
   .netitem.sel{ background:var(--surface-3); border-radius:12px; }
+  /* swap route cards (2026-11-13 affordance repair): an EXECUTABLE
+     route is the next tap of the swap flow, so it must read as a
+     button, not as written text — card surface, border, shadow and
+     an orange "Swap now" pill inside the same tap target. Only
+     executable routes get this class; a route Fluid cannot sign
+     keeps the flat list row and its disabled dimming, never the
+     invitation. */
+  .routecard{ background:var(--surface-2); border:1px solid var(--hairline-strong); border-radius:14px; padding:14px 12px; margin:8px 0; box-shadow:0 2px 10px rgba(0,0,0,.35); }
+  .routecard:active{ transform:scale(.99); }
+  .swapcta{ display:inline-block; margin-top:8px; background:var(--grad-brand); color:var(--on-brand); box-shadow:var(--sh-brand);
+        border-radius:999px; padding:7px 13px; font-size:13px; font-weight:800; letter-spacing:.02em; white-space:nowrap; }
   .rampitem{ flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:4px; }
   .rampname{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .rampnote{ color:var(--dim); font-size:13px; font-weight:400; line-height:1.45; }

@@ -91,31 +91,36 @@ the weekly follower drip and the OGO ERA player pools; see
    shows the gas slice and Fluid's fee as separate lines. Ranking
    is merit-based (a route that fulfils the full requirement,
    gas included, outranks one that cannot; best net wins among
-   those that can; LI.FI is demoted for cause and loses ties) —
+   those that can) —
    the law itself, its multipliers and ceilings, is unchanged. Collection rides each router's native
-   mechanism into the DripBot agent wallet — Relay App Fees, LI.FI's
-   integrator fee, Satora's developer markup, Jupiter/Mayan fee
-   accounts. LI.FI pays
-   integrator fees only to a wallet configured in its Partner Portal.
-   That registration was completed on 2026-11-07 (integrator
-   `fluid-wallet`, DripBot agent wallet as Default EVM fee wallet) and
-   collection is ON (`PLATFORM_FEE_COLLECTION_ENABLED = true`). The
-   per-family audit (`SWAP_FEE_COVERAGE` in the wallet core, pinned
-   by tests) records the remaining gaps: EVM-sourced swaps collect
-   live; Solana-sourced swaps collect too (the portal's Default SVM
-   fee wallet was set to the DripBot agent wallet's Solana address on
-   2026-11-07); Tron- and Sui-sourced swaps execute since their LI.FI
-   step signers landed on 2026-11-07 and collect too: the agent
-   wallet's Tron and Sui addresses (derived from its keystore and
-   recorded as the coverage rows' destinations) were registered as
-   the portal's Default Tron / Sui fee wallets on 2026-11-07, and the
-   two coverage rows were flipped to collecting in the same build.
-   Before that registration the fee could not be attached to Tron/Sui
-   requests at all: LI.FI rejects fee-bearing requests on chains with
-   no configured fee wallet (HTTP 400, code 1011 — verified live on
-   2026-11-07), so those swaps executed fee-free rather than failing.
-   The request builders gate the fee per source chain
-   (`swapFeeCollectingChain`).
+   mechanism into the DripBot agent wallet — Relay App Fees, Across's
+   app fee, Satora's developer markup, Jupiter/Mayan fee
+   accounts — and collection is ON
+   (`PLATFORM_FEE_COLLECTION_ENABLED = true`). Per source family:
+   EVM-sourced swaps collect live (Relay/Across/Mayan/Satora);
+   Solana-sourced swaps collect live (Jupiter platform fee, Mayan
+   referrer); Tron-sourced swaps collect through Relay App Fees
+   (live-probed 2026-11-13: a 50 bps fee on a Tron-origin quote came
+   back as fees.app in TRX, steps unchanged). Sui same-chain swaps
+   collect through the Cetus aggregator's overlay fee, paid in the
+   output coin to the DripBot Sui wallet inside the same atomic
+   PTB (port landed 2026-11-13 — see `docs/SWAPS.md`); Sui-source
+   cross-chain swaps collect through Mayan's referrer mechanism
+   in the minted USDC on the destination chain, paid to the
+   destination family's collection wallet (bridge-origin port
+   landed 2026-11-14 — 26 bps measured live on Sui → Base USDC
+   at $10, the 50 bps cap on Sui → Base ETH; where the fee law
+   itself prices a route at 0 bps — the expensive Solana redeem
+   lane at $10 — the route states collecting: false, exactly as
+   on every other rail). Tron same-chain swaps collect through
+   an output-side skim (SunSwap has no integrator-fee
+   parameter): after the swap settles, the executor transfers
+   the law's bps of what actually arrived to the DripBot Tron
+   wallet inside the same flow, measured off the receipt's own
+   amounts (port landed 2026-11-14 — see `docs/SWAPS.md`).
+   Each route object states
+   on itself whether it collects and how much, and the confirmation
+   discloses exactly that figure.
    Every other chain family (Bitcoin, Litecoin, Dogecoin, Bitcoin
    Cash, Cosmos, TON, NEAR, XRP, Stellar, Algorand, Polkadot, Aptos,
    Stacks, Lightning) has no swap route at all — sends/receives only.

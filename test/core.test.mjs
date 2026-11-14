@@ -2,24 +2,36 @@
 import assert from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, LIFI_INTEGRATOR, buildLifiRoutesRequest, buildLifiQuoteParams, swapFeeCollectingChain, BITCOIN_LIFI_CHAIN_ID, SWAP_FEE_COVERAGE, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, LIFI_NATIVE_TOKEN, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_LIFI_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_LIFI_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, solanaSwapSteps, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, getLifiSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, lifiRouteFeeUsd, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, LIFI_API_NATIVE_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
+import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
+import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
+import { SATORA_ARKADE_CHAIN_ID, SATORA_ARKADE_HTLC_VERSION, SATORA_LIGHTNING_CHAIN_ID, satoraArkadeSourceSupportsPair, parseSatoraArkadeSourceQuote, getSatoraArkadeSourceRoute, buildSatoraArkadeCreateRequest, buildSatoraArkadeToEvmCreateRequest, buildSatoraArkadeToLnCreateRequest, checkSatoraArkadeToEvmCreateResponse, checkSatoraArkadeToLnCreateResponse, createSatoraArkadeSourceSwap, checkSatoraRedeemCalldata, buildSatoraRedeemDigest, SATORA_REDEEM_TYPEHASH, SATORA_REDEEM_TYPE_STRING, claimSatoraArkadeEvmSwap, executeSatoraArkadeSourceRoute, formatSatoraArkadeSourceIntent } from "../src/wallet-core.js";
+import { SATORA_BITCOIN_CHAIN_ID, satoraLnSourceSupportsPair, parseSatoraLnSourceQuote, getSatoraLnSourceRoute, buildSatoraLnToEvmCreateRequest, buildSatoraLnToBtcCreateRequest, checkSatoraLnCreateResponse, createSatoraLnSourceSwap, satoraBtcHtlcLeafScripts, satoraBtcHtlcAddress, buildSatoraBtcHtlcClaimTx, SATORA_BTC_CLAIM_TX_VBYTES, claimSatoraLnEvmSwap, executeSatoraLnSourceRoute, formatSatoraLnSourceIntent } from "../src/wallet-core.js";
+import { satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceSupportsPair, parseSatoraBtcSourceQuote, getSatoraBtcSourceRoute, buildSatoraBtcToEvmCreateRequest, buildSatoraBtcToLnCreateRequest, checkSatoraBtcSourceCreateResponse, createSatoraBtcSourceSwap, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, SATORA_BTC_REFUND_TX_VBYTES, formatSatoraBtcSourceIntent } from "../src/wallet-core.js";
+import { fetchSatoraCollabRefundParams, checkSatoraCollabRefundParams, buildSatoraCollabRefundDigest, SATORA_COLLAB_REFUND_TYPE_STRING, SATORA_COLLAB_REFUND_TYPEHASH, SATORA_EMPTY_CALLS_HASH, fetchSatoraCollabRefundSignature, checkSatoraCollabRefundSignature, buildSatoraRefundBySigCall, SATORA_HTLC_ERC20_REFUND_BY_SIG_SELECTOR, submitSatoraCollabRefund, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraEvmRefundChain } from "../src/wallet-core.js";
+import { ripemd160 as nobleRipemd160 } from "@noble/hashes/legacy.js";
+import { schnorr as nobleSchnorr } from "@noble/curves/secp256k1.js";
+import { hex as scureHex } from "@scure/base";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
+import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
-import { humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
+import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
-import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, lifiGasFromRaw, lifiGasDropEvidence, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, estimateMilestoneFinalLeg, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain } from "../src/wallet-core.js";
+import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
+import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { Keypair as SolKeypair, PublicKey as SolPublicKey } from "@solana/web3.js";
-import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_LIFI_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
+import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_SWAP_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { Transaction as SuiTx105 } from "@mysten/sui/transactions";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent, buildInjectiveSignedTx, INJECTIVE_PUBKEY_TYPE, injectiveAddressBytes } from "../src/wallet-core.js";
 import * as btcSigner from "@scure/btc-signer";
@@ -27,7 +39,7 @@ import { ethers } from "ethers";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { stellarAddressFromPhrase, stellarAddressFromSeed, stellarSeedFromSeed, isValidStellarAddress, strKeyDecodeEd25519, crc16Xmodem, xlmToStroops, stroopsToXlm, stellarMinBalanceXlm, stellarMinBalanceStroops, formatStellarSendIntent, STELLAR_USDC, STELLAR_USDC_ISSUER } from "../src/wallet-core.js";
 import { Keypair as StellarKeypair, StrKey as StellarStrKey } from "@stellar/stellar-sdk/base";
-import { chunkArray, parseDexScreenerPairs, lifiTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
+import { chunkArray, parseDexScreenerPairs, chainTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
   shortAddrLabel, tronDecodeAbiString, formatTokenAmount, dexChainIdForEvmChain, SOLANA_TOKEN2022_PROGRAM,
   MULTICALL3_ADDRESS } from "../src/wallet-core.js";
 import { rampRouteCostUsd, rampTier1Eligible, rampFeeQuote, formatRampSellIntent,
@@ -49,7 +61,8 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { withDeadline, dotApi } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
-import { sortHomeFamilies, sortHomeRows } from "../src/wallet-core.js";
+import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
+import { SUNSWAP_V2_ROUTER, SUNSWAP_V2_FACTORY, SUNSWAP_WTRX, SUNSWAP_FEE_RECEIVER, SUNSWAP_SLIPPAGE_BPS, SUNSWAP_ROUTER_ABI, sunswapTokenOf, sunswapSupportsPair, sunswapCandidatePaths, parseSunswapAmountsOut, parseSunswapQuote, getSunswapSwapRoute, buildSunswapSwapCallData, checkSunswapSwapBounds, executeSunswapSwapRoute } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
@@ -841,57 +854,12 @@ ok("swap intent discloses fluid fee from quote numbers", (() => {
   return feeDisp === "0.42" && s.includes("Fluid fee: $0.42 (0.5%)");
 })());
 ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmount: "1", fromSymbol: "BNB", fromNetKey: "bsc", toAmount: "100", toSymbol: "USDC", toNetKey: "bsc", toolName: "X", feeUsd: 0.1, durationSec: 30 }).includes("Fluid fee"));
-// LI.FI request construction: integrator always; fee param gated on collection being enabled
-// (collection enabled 2026-11-07, after the "fluid-wallet" portal registration designated
-// the DripBot agent wallet as the Default EVM fee wallet)
-ok("lifi collection enabled after portal registration", PLATFORM_FEE_COLLECTION_ENABLED === true);
-ok("lifi routes request carries integrator and 0.005 fee by default", (() => {
-  const r = buildLifiRoutesRequest({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: 1000n, fromAddress: "0xc", toAddress: "0xc" });
-  return r.options.integrator === LIFI_INTEGRATOR && LIFI_INTEGRATOR === "fluid-wallet" && r.options.fee === PLATFORM_FEE_FRACTION && PLATFORM_FEE_FRACTION === 0.005 && r.fromAmount === "1000";
-})());
-ok("lifi routes request with collection explicitly off omits fee", !("fee" in buildLifiRoutesRequest({ fromChainId: 56, toChainId: 1, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false }).options));
-ok("lifi routes request with collection on carries 0.005", buildLifiRoutesRequest({ fromChainId: 56, toChainId: 1, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true }).options.fee === 0.005);
-ok("lifi quote params mirror the gating", (() => {
-  const dflt = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
-  const off = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
-  const on = buildLifiQuoteParams({ fromChainId: 56, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
-  return dflt.get("integrator") === "fluid-wallet" && dflt.get("fee") === "0.005" && off.get("integrator") === "fluid-wallet" && off.get("fee") === null && on.get("fee") === "0.005";
-})());
-// Per-route fee audit (2026-11-07): LI.FI is the only swap engine. The
-// integrator is attached for every chain type, but the 0.005 fee is
-// attached BY DEFAULT only where the source chain's portal fee wallet
-// is registered (swapFeeCollectingChain): LI.FI rejects fee-bearing
-// requests on unconfigured chains outright (HTTP 400, code 1011 —
-// verified live 2026-11-07 for the Tron and Sui chain ids before their
-// portal fee wallets were registered later that day), so attaching it
-// there would break the swap, not just skip the fee. Bitcoin has no
-// swap route at all, so it never collects.
-ok("lifi fee attached by default only on collecting chains", (() => {
-  const matrix = [[56, true], [SOLANA_LIFI_CHAIN_ID, true], [TRON_LIFI_CHAIN_ID, true], [SUI_LIFI_CHAIN_ID, true], [BITCOIN_LIFI_CHAIN_ID, false]];
-  return matrix.every(([id, collecting]) => {
-    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
-    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" });
-    return swapFeeCollectingChain(id) === collecting
-      && r.options.integrator === "fluid-wallet" && (collecting ? r.options.fee === 0.005 : !("fee" in r.options))
-      && q.get("integrator") === "fluid-wallet" && (collecting ? q.get("fee") === "0.005" : q.get("fee") === null);
-  });
-})());
-ok("lifi fee explicit include still attaches on any chain type", (() => {
-  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
-  return ids.every(id => {
-    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
-    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true });
-    return r.options.fee === 0.005 && q.get("fee") === "0.005";
-  });
-})());
-ok("lifi fee opt-out holds for every chain type", (() => {
-  const ids = [56, SOLANA_LIFI_CHAIN_ID, TRON_LIFI_CHAIN_ID, SUI_LIFI_CHAIN_ID, BITCOIN_LIFI_CHAIN_ID];
-  return ids.every(id => {
-    const r = buildLifiRoutesRequest({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
-    const q = buildLifiQuoteParams({ fromChainId: id, toChainId: 56, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: false });
-    return !("fee" in r.options) && r.options.integrator === "fluid-wallet" && q.get("fee") === null && q.get("integrator") === "fluid-wallet";
-  });
-})());
+// Fee collection after the LI.FI removal (2026-11-13): no single
+// integrator fee exists any more — each rail collects in its
+// own shape (Relay/Across app fees in-quote, Satora in-flow,
+// Jupiter fee account, Mayan in-quote). The collection master
+// switch stays on; per-rail gating lives at each builder.
+ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
 // The swap universe is exactly the EVM networks + tron/solana/sui. Bitcoin (and every
 // other send-only family) is NOT swappable — pinned so adding a family to the swap
 // universe forces a fee-coverage review instead of silently shipping an unfeed route.
@@ -899,44 +867,47 @@ ok("swap universe is evm + tron + solana + sui only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
   const famOk = ["tron", "solana", "sui"].every(k => swapChainOf(k) !== null);
   const notSwappable = ["bitcoin", "litecoin", "dogecoin", "cosmoshub", "ton", "near", "xrpl", "stellar", "algorand", "aptos"].every(k => swapChainOf(k) === null);
-  return evmOk && famOk && notSwappable && BITCOIN_LIFI_CHAIN_ID === 20000000000001;
+  return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001;
 })());
-// SWAP_FEE_COVERAGE is the audited per-family state: it names exactly the non-EVM swap
-// families plus the evm row, and feeWired mirrors collecting on every row — the request
-// builders attach the fee exactly where a portal fee wallet is configured to receive
-// it (LI.FI rejects fee-bearing requests elsewhere, code 1011). Its executable flags
-// agree with swapRouteExecutable's real behaviour on synthetic routes.
-ok("swap fee coverage names every swap family", (() => {
-  const fams = SWAP_FEE_COVERAGE.map(r => r.family).sort();
-  return JSON.stringify(fams) === JSON.stringify(["evm", "solana", "sui", "tron"])
-    && SWAP_FEE_COVERAGE.every(r => r.provider === "LI.FI" && r.feeSupported === true && r.feeWired === r.collecting);
+// Relay-Tron executor pins (LI.FI removal, 2026-11-13): Relay is
+// the Tron-source rail. Its deposit step carries a
+// TriggerSmartContract parameter object; Fluid rebuilds the
+// transaction locally and bounds-checks the rebuilt bytes
+// against Relay's parameters before signing.
+ok("relay supports tron sources (not tron-to-tron)", relaySupportsPair("tron", "bsc") === true && relaySupportsPair("tron", "tron") === false && relaySupportsPair("tron", "sui") === false);
+ok("relay tron steps keep only complete trigger items", (() => {
+  const prm = { owner_address: "417fe638235fad0fdfbbcc759640d881e0fa62135b", contract_address: "41f0623e1012177482912fb057e44e1a9769b1f588", call_value: 100000000, data: "49290c1c" + "00".repeat(64) };
+  const route = { provider: "relay", relay: { originChainId: 728126428, steps: [
+    { id: "deposit", kind: "transaction", items: [{ status: "complete", data: { type: "TriggerSmartContract", parameter: prm } }] },
+    { id: "broken", kind: "transaction", items: [{ status: "complete", data: {} }] },
+    { id: "notx", kind: "other", items: [{ status: "complete", data: { type: "TriggerSmartContract", parameter: prm } }] },
+  ] } };
+  const steps = relayTronExecutableSteps(route);
+  return steps.length === 1 && steps[0].id === "deposit";
 })());
-ok("swap fee coverage: evm collecting into the dripbot agent wallet", (() => {
-  const evm = SWAP_FEE_COVERAGE.find(r => r.family === "evm");
-  return evm.executable === true && evm.collecting === true && evm.destination === FEE_SPLIT.dripbot.agentWallet.evm && evm.blocker === null;
+ok("tron trigger builder round-trips through the decoder", (() => {
+  const hex = buildTronTriggerRawData({ ownerHex: "417fe638235fad0fdfbbcc759640d881e0fa62135b", contractHex: "41f0623e1012177482912fb057e44e1a9769b1f588", callValue: 100000000n, dataHex: "49290c1c" + "00".repeat(64), refBlockBytesHex: "c3d4", refBlockHashHex: "e5f60718293a4b5c", timestampMs: 1700000000000, expirationMs: 1700000600000 });
+  const dec = decodeTronRawData("0x" + hex);
+  const t = dec.contracts[0].trigger;
+  return t.ownerAddress === "417fe638235fad0fdfbbcc759640d881e0fa62135b" && t.contractAddress === "41f0623e1012177482912fb057e44e1a9769b1f588" && t.callValue === 100000000n && t.data === "49290c1c" + "00".repeat(64);
 })());
-ok("swap fee coverage agrees with route executability", (() => {
-  const evmRoute = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56, data: "0x", value: "0" } }] };
-  const solRoute = { fromChainId: SOLANA_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
-  const trxRoute = { fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "TXYZ", data: "0xabcd", customData: { contractType: "TriggerSmartContract", tronTransaction: { raw_data_hex: "abcd", txID: "ef01" } } } }] };
-  const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }] };
-  const byFam = Object.fromEntries(SWAP_FEE_COVERAGE.map(r => [r.family, r.executable]));
-  return swapRouteExecutable(evmRoute).ok === byFam.evm && swapRouteExecutable(solRoute).ok === byFam.solana
-    && swapRouteExecutable(trxRoute).ok === byFam.tron && swapRouteExecutable(suiRoute).ok === byFam.sui;
+ok("relay tron bounds accept the honest build and refuse tampering", (() => {
+  const now = Date.now();
+  const prm = { owner_address: "417fe638235fad0fdfbbcc759640d881e0fa62135b", contract_address: "41f0623e1012177482912fb057e44e1a9769b1f588", call_value: 100000000, data: "49290c1c" + "00".repeat(64) };
+  const build = (contractHex) => buildTronTriggerRawData({ ownerHex: prm.owner_address, contractHex, callValue: 100000000n, dataHex: prm.data, refBlockBytesHex: "c3d4", refBlockHashHex: "e5f60718293a4b5c", timestampMs: now, expirationMs: now + 600000 });
+  const route = { provider: "relay", fromAmount: "100000000", fromToken: { address: TRON_SWAP_NATIVE_TOKEN } };
+  const step = { id: "deposit" };
+  const item = { data: { type: "TriggerSmartContract", parameter: prm } };
+  const owner = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  if (!checkRelayTronStepBounds(route, step, item, build(prm.contract_address), owner).ok) return false;
+  return checkRelayTronStepBounds(route, step, item, build("41" + "11".repeat(20)), owner).ok === false;
 })());
-ok("swap fee coverage: solana collecting into the dripbot agent wallet", (() => {
-  const sol = SWAP_FEE_COVERAGE.find(r => r.family === "solana");
-  return sol.executable === true && sol.collecting === true && sol.destination === FEE_SPLIT.dripbot.agentWallet.solana && sol.blocker === null;
-})());
-ok("swap fee coverage: tron collecting into the dripbot agent wallet", (() => {
-  const t = SWAP_FEE_COVERAGE.find(r => r.family === "tron");
-  return t.executable === true && t.collecting === true && t.destination === FEE_SPLIT.dripbot.agentWallet.tron
-    && isValidTronAddress(t.destination) && t.blocker === null;
-})());
-ok("swap fee coverage: sui collecting into the dripbot agent wallet", (() => {
-  const s = SWAP_FEE_COVERAGE.find(r => r.family === "sui");
-  return s.executable === true && s.collecting === true && s.destination === FEE_SPLIT.dripbot.agentWallet.sui
-    && isValidSuiAddress(s.destination) && s.blocker === null;
+// Milestone compositions may only pick executable legs
+// (Stage-1 repair): a provider-less quote shape is never a leg.
+ok("firstExecutableRoute skips provider-less shapes", (() => {
+  const dead = { provider: undefined, fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
+  const live = { provider: "relay", fromChainId: 56, relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0xabc", chainId: 56, value: "0", data: "0x" } }] }] } };
+  return firstExecutableRoute([dead, live]) === live && firstExecutableRoute([dead]) === null && firstExecutableRoute([]) === null;
 })());
 // Disclosure is family-agnostic too: a Solana-sourced quote's confirm sentence carries
 // the same Fluid fee clause as an EVM one.
@@ -967,7 +938,7 @@ ok("fee pot totals priced holdings", (() => { const r = feePotReport([{ amount: 
 ok("fee pot excludes unpriced, never guesses", (() => { const r = feePotReport([{ amount: 100, priceUsd: null }, { amount: 3, priceUsd: 0.5 }]); return r.totalUsd === 1.5 && r.unpriced === 1 && r.due === false; })());
 ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due === true && feePotReport([{ amount: 1.99, priceUsd: 1 }]).due === false && feePotReport([]).totalUsd === 0);
 
-// 23. Swap route ranking (LI.FI): cheapest = best net USD after gas, fastest = shortest duration
+// 23. Swap route ranking: cheapest = best net USD after gas, fastest = shortest duration
 {
   const fake = [
     { id: "mid", toAmountUSD: "10.00", gasCostUSD: "0.50", executionDuration: 300, steps: [] },
@@ -986,14 +957,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
 // 24. Swap executability + amount conversion + intent sentence
 {
-  const good = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }, { note: "bridge wait, no tx" }] };
-  const wrongChain = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 1 } }] };
-  const bare = { fromChainId: 56, steps: [{ tool: "relay" }] };
-  ok("swap executable picks signable source steps", swapRouteExecutable(good).ok === true && swapRouteExecutable(good).steps.length === 1);
-  ok("swap executable refuses foreign-chain steps", swapRouteExecutable(wrongChain).ok === false && /can't sign/.test(swapRouteExecutable(wrongChain).reason));
-  ok("swap executable refuses tx-less routes", swapRouteExecutable(bare).ok === false);
+  // Provider-less route objects (the removed aggregator's shape)
+  // are refused plainly since 2026-11-13: every live route carries
+  // a provider whose own section pins its executability.
+  const bare = { fromChainId: 56, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
+  const txless = { fromChainId: 56, steps: [{ tool: "relay" }] };
+  ok("swap executable refuses provider-less routes", swapRouteExecutable(bare).ok === false && /can't sign/.test(swapRouteExecutable(bare).reason));
+  ok("swap executable refuses tx-less routes", swapRouteExecutable(txless).ok === false);
   ok("swap raw amount round-trip", swapAmountToRaw("0.01", 18) === "10000000000000000" && swapRawToAmount("6878572", 6) === "6.878572");
-  ok("swap native token is zero address", LIFI_NATIVE_TOKEN === "0x0000000000000000000000000000000000000000");
+  ok("swap native token is zero address", NATIVE_TOKEN_ADDRESS === "0x0000000000000000000000000000000000000000");
   const si = formatSwapIntent({ fromAmount: "0.01", fromSymbol: "BNB", fromNetKey: "bsc", toAmount: "6.878572", toSymbol: "USDC", toNetKey: "base", toolName: "Relay", feeUsd: 0.0046, durationSec: 45 });
   ok("swap intent is human-readable", si.includes("Swap 0.01 BNB on BNB Chain") && si.includes("USDC") && si.includes("Base") && si.includes("Confirm?"));
 }
@@ -1008,88 +980,80 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("plain intent keeps raw address only", plain.includes("to 0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B on BNB Chain") && !plain.includes("dripbot"));
 }
 
-// 27. Chain discovery gate: LI.FI + chainid.network + DefiLlama merged,
-// admitted only when active, untainted by reused ids, not a testnet, and
-// either LI.FI-listed or carrying real TVL.
+// 27. Chain discovery gate: chainid.network registry + DefiLlama TVL
+// (two sources since the LI.FI removal, 2026-11-13 — the aggregator's
+// chain list was the third). Admitted only when active, untainted by
+// reused ids, not a testnet, and carrying real TVL: display at $10M+,
+// discoverable at $1M+. Registry metadata is used as-is — no source
+// overrides it any more.
 {
-  const lifi = (id, extra = {}) => ({ chainType: "EVM", id, name: "Lifi " + id, mainnet: true, coin: "LX",
-    nativeToken: { symbol: "LX", decimals: 18 },
-    metamask: { chainId: "0x" + id.toString(16), rpcUrls: ["https://lifi-rpc-" + id + ".example"], blockExplorerUrls: ["https://lifi-scan-" + id + ".example"] },
-    ...extra });
   const reg = (chainId, extra = {}) => ({ chainId, name: "Chain " + chainId, rpc: ["https://reg-rpc-" + chainId + ".example"],
     nativeCurrency: { symbol: "RX", decimals: 18 },
     explorers: [{ url: "https://reg-scan-" + chainId + ".example", standard: "EIP3091" }], ...extra });
   const gate = (sources) => gateChains(sources);
   const byId = (list, id) => list.find(c => c.chainId === id);
 
-  // LI.FI-listed with negligible TVL → display, LI.FI RPC wins
+  // Registry alone never admits: negligible TVL stays out entirely
   {
-    const out = gate({ lifiChains: [lifi(9001)], registry: [], tvl: [{ chainId: 9001, tvl: 100 }] });
-    const c = byId(out, 9001);
-    ok("gate: LI.FI-listed low-TVL chain is display tier", !!c && c.tier === "display" && c.lifi === true && c.key === "c9001");
-    ok("gate: LI.FI RPC and explorer preferred", c.rpc === "https://lifi-rpc-9001.example" && c.explorer === "https://lifi-scan-9001.example");
+    const out = gate({ registry: [reg(9001)], tvl: [{ chainId: 9001, tvl: 100 }] });
+    ok("gate: registry-only low-TVL chain is excluded", byId(out, 9001) === undefined);
   }
-  // $50M TVL, not LI.FI-listed → display
+  // $50M TVL → display, registry RPC/explorer/symbol used as-is
   {
-    const out = gate({ lifiChains: [], registry: [reg(9002)], tvl: [{ chainId: 9002, tvl: 50_000_000 }] });
+    const out = gate({ registry: [reg(9002)], tvl: [{ chainId: 9002, tvl: 50_000_000 }] });
     const c = byId(out, 9002);
-    ok("gate: $50M TVL non-LI.FI chain is display tier", !!c && c.tier === "display" && c.lifi === false && c.tvl === 50_000_000);
+    ok("gate: $50M TVL chain is display tier", !!c && c.tier === "display" && c.tvl === 50_000_000 && c.key === "c9002");
+    ok("gate: registry RPC and explorer used", c.rpc === "https://reg-rpc-9002.example" && c.explorer === "https://reg-scan-9002.example" && c.symbol === "RX");
   }
-  // $2M TVL, not LI.FI-listed → discoverable only
+  // $2M TVL → discoverable only
   {
-    const out = gate({ lifiChains: [], registry: [reg(9003)], tvl: [{ chainId: 9003, tvl: 2_000_000 }] });
-    ok("gate: $2M TVL non-LI.FI chain is discoverable only", byId(out, 9003)?.tier === "discoverable");
+    const out = gate({ registry: [reg(9003)], tvl: [{ chainId: 9003, tvl: 2_000_000 }] });
+    ok("gate: $2M TVL chain is discoverable only", byId(out, 9003)?.tier === "discoverable");
   }
-  // $500k TVL, not LI.FI-listed → excluded entirely
+  // $500k TVL → excluded entirely
   {
-    const out = gate({ lifiChains: [], registry: [reg(9004)], tvl: [{ chainId: 9004, tvl: 500_000 }] });
-    ok("gate: $500k TVL non-LI.FI chain is excluded", byId(out, 9004) === undefined);
+    const out = gate({ registry: [reg(9004)], tvl: [{ chainId: 9004, tvl: 500_000 }] });
+    ok("gate: $500k TVL chain is excluded", byId(out, 9004) === undefined);
   }
-  // Graveyard chains stay out even when LI.FI lists them
+  // Graveyard chains stay out even with registry entries
   {
-    const out = gate({ lifiChains: [lifi(1101), lifi(81457), lifi(1666600000)], registry: [reg(1101), reg(81457), reg(1666600000)], tvl: [] });
-    ok("gate: graveyard excluded even when LI.FI-listed", out.length === 0);
+    const out = gate({ registry: [reg(1101), reg(81457), reg(1666600000)], tvl: [] });
+    ok("gate: graveyard excluded", out.length === 0);
   }
   // Testnet names stay out even with huge TVL
   {
-    const out = gate({ lifiChains: [], tvl: [{ chainId: 9005, tvl: 50_000_000 }, { chainId: 9006, tvl: 50_000_000 }],
+    const out = gate({ tvl: [{ chainId: 9005, tvl: 50_000_000 }, { chainId: 9006, tvl: 50_000_000 }],
       registry: [reg(9005, { name: "Foo Testnet" }), reg(9006, { name: "Bar Sepolia" })] });
     ok("gate: testnet-named chains excluded", out.length === 0);
   }
-  // reusedChainId red flag stays out — even when LI.FI-listed and rich
+  // reusedChainId red flag stays out — even when rich
   {
-    const out = gate({ lifiChains: [lifi(9007)], registry: [reg(9007, { redFlags: ["reusedChainId"] })], tvl: [{ chainId: 9007, tvl: 50_000_000 }] });
+    const out = gate({ registry: [reg(9007, { redFlags: ["reusedChainId"] })], tvl: [{ chainId: 9007, tvl: 50_000_000 }] });
     ok("gate: reusedChainId red flag excluded", out.length === 0);
   }
   // Non-active registry status stays out (deprecated, incubating)
   {
-    const out = gate({ lifiChains: [], tvl: [{ chainId: 9008, tvl: 50_000_000 }, { chainId: 9009, tvl: 50_000_000 }],
+    const out = gate({ tvl: [{ chainId: 9008, tvl: 50_000_000 }, { chainId: 9009, tvl: 50_000_000 }],
       registry: [reg(9008, { status: "deprecated" }), reg(9009, { status: "incubating" })] });
     ok("gate: deprecated and incubating statuses excluded", out.length === 0);
   }
   // API-key-templated RPCs are skipped for the next clean one
   {
-    const out = gate({ lifiChains: [], tvl: [{ chainId: 9010, tvl: 50_000_000 }],
+    const out = gate({ tvl: [{ chainId: 9010, tvl: 50_000_000 }],
       registry: [reg(9010, { rpc: ["https://rpc.example/v1/${API_KEY}", "wss://socket.example", "https://clean.example"] })] });
     ok("gate: templated and wss RPCs skipped for a clean https one", byId(out, 9010)?.rpc === "https://clean.example");
   }
-  // LI.FI mainnet overrides a stale testnet registry entry (the 999 pattern)
+  // The 999 pattern, post-removal: a stale testnet-named registry
+  // entry for a reused id is excluded outright — no third source
+  // corrects it now (the HyperEVM discovery narrowing, documented
+  // in docs/SWAPS.md "Known gaps").
   {
-    const out = gate({ lifiChains: [lifi(9012, { name: "HyperEVM", nativeToken: { symbol: "HYPE", decimals: 18 } })],
-      registry: [reg(9012, { name: "Wanchain Testnet", nativeCurrency: { symbol: "WAN", decimals: 18 } })], tvl: [] });
-    const c = byId(out, 9012);
-    ok("gate: LI.FI mainnet beats stale testnet registry entry", !!c && c.name === "HyperEVM" && c.symbol === "HYPE" && c.tier === "display");
-  }
-  // LI.FI pseudo-entries (wallet metadata pointing at another chain) drop out
-  {
-    const bad = lifi(9013, { name: "Hyperliquid" });
-    bad.metamask.chainId = "0x1"; // metadata disagrees with the id — not a plain EVM network
-    const out = gate({ lifiChains: [bad], registry: [], tvl: [] });
-    ok("gate: self-inconsistent LI.FI entry dropped", out.length === 0);
+    const out = gate({ registry: [reg(9012, { name: "Wanchain Testnet", nativeCurrency: { symbol: "WAN", decimals: 18 } })], tvl: [{ chainId: 9012, tvl: 50_000_000 }] });
+    ok("gate: stale testnet registry entry excluded (999 pattern)", out.length === 0);
   }
   // Duplicate DefiLlama rows keep the max TVL; null-chainId rows attach by name
   {
-    const out = gate({ lifiChains: [], registry: [reg(9014, { name: "Dup Chain" }), reg(9015, { name: "Namely Mainnet" })],
+    const out = gate({ registry: [reg(9014, { name: "Dup Chain" }), reg(9015, { name: "Namely Mainnet" })],
       tvl: [{ chainId: 9014, tvl: 0 }, { chainId: 9014, tvl: 5_000_000 }, { chainId: null, name: "Namely", tvl: 30_000_000 }] });
     ok("gate: duplicate TVL rows keep the max", byId(out, 9014)?.tvl === 5_000_000 && byId(out, 9014)?.tier === "discoverable");
     ok("gate: null-chainId TVL attaches by normalized name", byId(out, 9015)?.tvl === 30_000_000 && byId(out, 9015)?.tier === "display");
@@ -1097,20 +1061,21 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // Brand alias: DefiLlama "BSquared" must attach to registry "B2 Mainnet"
   // (the live B² Network case — $2.5M TVL, chainId null on DefiLlama)
   {
-    const out = gate({ lifiChains: [], registry: [reg(223, { name: "B2 Mainnet", nativeCurrency: { symbol: "BTC", decimals: 18 } })],
+    const out = gate({ registry: [reg(223, { name: "B2 Mainnet", nativeCurrency: { symbol: "BTC", decimals: 18 } })],
       tvl: [{ chainId: null, name: "BSquared", tvl: 2_500_000 }] });
     const c = byId(out, 223);
     ok("gate: BSquared alias attaches TVL to B2 (223)", !!c && c.tvl === 2_500_000 && c.tier === "discoverable");
   }
   // Non-EVM registry squatters (Tron, Algorand) never auto-admit
   {
-    const out = gate({ lifiChains: [], tvl: [{ chainId: 728126428, tvl: 5_000_000_000 }, { chainId: 4160, tvl: 30_000_000 }],
+    const out = gate({ tvl: [{ chainId: 728126428, tvl: 5_000_000_000 }, { chainId: 4160, tvl: 30_000_000 }],
       registry: [reg(728126428, { name: "Tron Mainnet" }), reg(4160, { name: "Algorand" })] });
     ok("gate: non-EVM squatters excluded", out.length === 0);
   }
   // Empty or missing sources gate to nothing — never throw
   ok("gate: empty sources give an empty list", gateChains().length === 0 && gateChains({}).length === 0);
 }
+
 
 // 28. registerNetworks: discovered chains join the live registry core
 // reads; built-ins are never overwritten.
@@ -1143,15 +1108,18 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const ti = formatTronSendIntent({ amount: "2.5", symbol: "USDT", to: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" });
   ok("tron: intent is human-readable", ti.includes("Send 2.5 USDT") && ti.includes("on Tron") && ti.includes("Confirm?"));
   ok("tron: token constants are the canonical contracts", TRON_TOKENS[0].address === "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" && TRON_TOKENS[1].address === "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8" && TRON_TOKENS.every(t => t.decimals === 6));
-  ok("tron: LI.FI chain id and native token", TRON_LIFI_CHAIN_ID === 728126428 && TRON_SWAP_NATIVE_TOKEN === "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"
+  ok("tron: swap chain id and native token", TRON_SWAP_CHAIN_ID === 728126428 && TRON_SWAP_NATIVE_TOKEN === "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"
     && swapChainOf("tron").chainId === 728126428 && swapChainOf("bsc").chainId === 56 && swapChainOf("nope") === null);
-  const tronRoute = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", data: "0xabcd", customData: { contractType: "TriggerSmartContract", tronTransaction: { raw_data_hex: "abcd", txID: "ef01" } } } }] };
-  ok("tron: swap routes sourced from Tron are executable (TVM signer)", (() => {
+  // Tron-source swaps are Relay routes since the LI.FI removal
+  // (2026-11-13): executable exactly when the Relay Tron steps
+  // verify (full pins in the fee section above).
+  const tronRoute = { provider: "relay", fromChainId: 728126428, relay: { originChainId: 728126428, steps: [{ id: "deposit", kind: "transaction", items: [{ status: "complete", data: { type: "TriggerSmartContract", parameter: { owner_address: "417fe638235fad0fdfbbcc759640d881e0fa62135b", contract_address: "41f0623e1012177482912fb057e44e1a9769b1f588", call_value: 100000000, data: "49290c1c" + "00".repeat(64) } } }] }] } };
+  ok("tron: relay-sourced swap routes are executable (TVM signer)", (() => {
     const r = swapRouteExecutable(tronRoute);
     return r.ok === true && r.tvm === true && r.steps.length === 1;
   })());
-  const tronBare = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", data: "0x" } }] };
-  ok("tron: swap route without the verified payload shape is refused", swapRouteExecutable(tronBare).ok === false && /no signable transaction/.test(swapRouteExecutable(tronBare).reason));
+  const tronBare = { fromChainId: 728126428, steps: [{ transactionRequest: { to: "TXYZ", data: "0xabcd", customData: { contractType: "TriggerSmartContract", tronTransaction: { raw_data_hex: "abcd", txID: "ef01" } } } }] };
+  ok("tron: legacy aggregator-shaped route is refused", swapRouteExecutable(tronBare).ok === false && /can't sign/.test(swapRouteExecutable(tronBare).reason));
 }
 
 // 26. Address-poisoning lookalike detection: same first 4 + last 4 hex
@@ -1231,13 +1199,16 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("solana: intent discloses ATA creation + rent", withAta.includes("creates the recipient's USDC account") && withAta.includes("0.00203928 SOL"));
 
   // Swap wiring: chain id + native token + SVM step extraction/gating
-  ok("solana: LI.FI chain id and native token", SOLANA_LIFI_CHAIN_ID === 1151111081099710 && SOLANA_SWAP_NATIVE_TOKEN === "11111111111111111111111111111111"
+  ok("solana: swap chain id and native token", SOLANA_SWAP_CHAIN_ID === 1151111081099710 && SOLANA_SWAP_NATIVE_TOKEN === "11111111111111111111111111111111"
     && swapChainOf("solana").chainId === 1151111081099710 && swapChainOf("solana").name === "Solana");
   ok("solana: token constants are the canonical mints", SOLANA_TOKENS[0].address === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" && SOLANA_TOKENS[1].address === "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" && SOLANA_TOKENS.every(t => t.decimals === 6));
-  const svmRoute = { fromChainId: SOLANA_LIFI_CHAIN_ID, steps: [{ tool: "mayan", transactionRequest: { data: "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==", svmTransactionVersion: 0 } }] };
-  ok("solana: SVM route is executable", swapRouteExecutable(svmRoute).ok === true && swapRouteExecutable(svmRoute).svm === true && solanaSwapSteps(svmRoute).length === 1);
-  const svmBare = { fromChainId: SOLANA_LIFI_CHAIN_ID, steps: [{ tool: "mayan" }] };
-  ok("solana: SVM route without a transaction is refused", swapRouteExecutable(svmBare).ok === false && solanaSwapSteps(svmBare).length === 0);
+  // Solana routes carry a provider now (Jupiter same-chain, Mayan
+  // cross-chain — each pinned in its own section). The legacy
+  // provider-less SVM shape is refused since the LI.FI removal.
+  const svmRoute = { fromChainId: SOLANA_SWAP_CHAIN_ID, steps: [{ tool: "mayan", transactionRequest: { data: "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==", svmTransactionVersion: 0 } }] };
+  ok("solana: legacy provider-less SVM shape is refused", swapRouteExecutable(svmRoute).ok === false);
+  const svmBare = { fromChainId: SOLANA_SWAP_CHAIN_ID, steps: [{ tool: "mayan" }] };
+  ok("solana: SVM route without a transaction is refused", swapRouteExecutable(svmBare).ok === false);
 }
 
 // 27. Phase 2a — Litecoin (BIP84 coin 2) + Dogecoin (BIP44 coin 3).
@@ -1417,18 +1388,22 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const suiIntent = formatSuiSendIntent({ amount: "2.5", symbol: "SUI", to: ABANDON_SUI });
   ok("sui: intent is human-readable", suiIntent.includes("Send 2.5 SUI") && suiIntent.includes("on Sui") && suiIntent.includes("Confirm?"));
 
-  // Swap wiring: LI.FI chain id (MVM) + native token + direction gating
-  ok("sui: LI.FI chain id and native token", SUI_LIFI_CHAIN_ID === 9270000000000000
+  // Swap wiring: chain id (MVM) + native token
+  ok("sui: swap chain id and native token", SUI_SWAP_CHAIN_ID === 9270000000000000
     && SUI_SWAP_NATIVE_TOKEN === "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
     && swapChainOf("sui").chainId === 9270000000000000 && swapChainOf("sui").name === "Sui");
-  const suiRoute = { fromChainId: SUI_LIFI_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus", transactionRequest: { data: "AAAA" } }] };
-  ok("sui: swap routes sourced from Sui are executable (MVM signer)",
-    swapRouteExecutable(suiRoute).ok === true && swapRouteExecutable(suiRoute).mvm === true && swapRouteExecutable(suiRoute).steps.length === 1);
-  const suiBare = { fromChainId: SUI_LIFI_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus" }] };
-  ok("sui: swap route without a transaction payload is refused",
-    swapRouteExecutable(suiBare).ok === false && /no signable transaction/.test(swapRouteExecutable(suiBare).reason));
-  const intoSui = { fromChainId: 56, toChainId: SUI_LIFI_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
-  ok("sui: routes INTO Sui from an EVM chain stay executable", swapRouteExecutable(intoSui).ok === true && swapRouteExecutable(intoSui).steps.length === 1);
+  // Sui same-chain swaps returned with the direct Cetus
+  // aggregator port (2026-11-13, LI.FI-removal gap (a)): only a
+  // route carrying provider "cetus" and its pinned aggregator
+  // payload is executable (pinned in the Cetus section at the
+  // end of this suite). Sui-SOURCE cross-chain still has no
+  // rail (gap (b)). The legacy aggregator-shaped and
+  // provider-less shapes refuse plainly.
+  const suiRoute = { fromChainId: SUI_SWAP_CHAIN_ID, toChainId: 56, steps: [{ tool: "cetus", transactionRequest: { data: "AAAA" } }] };
+  ok("sui: legacy aggregator-shaped route is refused (no provider payload)",
+    swapRouteExecutable(suiRoute).ok === false && /can't sign/.test(swapRouteExecutable(suiRoute).reason));
+  const intoSui = { fromChainId: 56, toChainId: SUI_SWAP_CHAIN_ID, steps: [{ transactionRequest: { to: "0xabc", chainId: 56 } }] };
+  ok("sui: provider-less routes INTO Sui are refused", swapRouteExecutable(intoSui).ok === false);
 }
 
 // 32. Phase 3a — Cosmos (one secp256k1 account, coin type 118,
@@ -1599,11 +1574,40 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const noDex = parseDexScreenerPairs(dex, "bsc", [MINT]);
   ok("dexscreener: other chains ignored", noDex.size === 0);
 
-  // LI.FI verification status: "flagged" is the one explicit distrust.
-  ok("lifi verified: normal token", lifiTokenVerified({ verificationStatus: "verified" }) === true);
-  ok("lifi verified: no status still listed", lifiTokenVerified({}) === true);
-  ok("lifi verified: flagged is unverified", lifiTokenVerified({ verificationStatus: "flagged" }) === false);
-  ok("lifi verified: null token is unverified", lifiTokenVerified(null) === false);
+  // Token verification status: "flagged" is the one explicit distrust.
+  ok("token verified: normal token", chainTokenVerified({ verificationStatus: "verified" }) === true);
+  ok("token verified: no status still listed", chainTokenVerified({}) === true);
+  ok("token verified: flagged is unverified", chainTokenVerified({ verificationStatus: "flagged" }) === false);
+  ok("token verified: null token is unverified", chainTokenVerified(null) === false);
+
+  // CoinGecko token lists (the LI.FI replacement, 2026-11-13):
+  // the slug map covers the shipped EVM chains, and the BSC list
+  // shape carries BTCB at 18 decimals (live list: 4,554 tokens,
+  // probed 2026-11-13 — broader than the removed source's 3,009).
+  ok("coingecko lists: slug map covers the core chains",
+    COINGECKO_TOKEN_LIST_SLUGS[56] === "binance-smart-chain" && COINGECKO_TOKEN_LIST_SLUGS[8453] === "base"
+    && COINGECKO_TOKEN_LIST_SLUGS[1] === "ethereum" && COINGECKO_TOKEN_LIST_SLUGS[42161] === "arbitrum-one"
+    && COINGECKO_TOKEN_LIST_SLUGS[5042] === undefined);
+  {
+    const realFetchCg = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("tokens.coingecko.com/binance-smart-chain/")) {
+        return { ok: true, status: 200, json: async () => ({ tokens: [
+          { name: "Binance-Peg BTCB Token", symbol: "BTCB", address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", decimals: 18 },
+          { name: "USD Coin", symbol: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
+        ] }) };
+      }
+      throw new Error("unexpected fetch in coingecko pin: " + url);
+    };
+    try {
+      const bscList = await fetchChainTokenList(56);
+      const btcb = bscList.find(t => t.symbol === "BTCB");
+      ok("coingecko lists: the BSC list carries BTCB at its contract, 18 decimals, verified by list membership",
+        !!btcb && btcb.address === "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c" && btcb.decimals === 18 && chainTokenVerified(btcb) === true);
+      ok("coingecko lists: a chain with no list returns empty, never throws",
+        Array.isArray(await fetchChainTokenList(5042)) && (await fetchChainTokenList(5042)).length === 0);
+    } finally { globalThis.fetch = realFetchCg; }
+  }
 
   // Cosmos denom display: native / registry / IBC / factory / u-prefix.
   const hub = cosmosChain("cosmoshub");
@@ -2505,45 +2509,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 }
 
 // ---------- swap step bounds (security audit M1) ----------
-// A route's step transactions are network data: their value and
-// gasLimit are bounded against the quote the user confirmed, and a
-// breach refuses the route before any approval or signature.
-{
-  const { checkSwapStepBounds, executeSwapRoute } = await import("../src/wallet-core.js");
-  const ETH = (n) => BigInt(Math.round(n * 1e18)).toString();
-  const nativeStep = (value, gasLimit, gasEst) => ({
-    action: { fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 }, fromAmount: ETH(1) },
-    estimate: { gasCosts: gasEst != null ? [{ amount: ETH(0.003), estimate: String(gasEst) }] : [] },
-    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
-  });
-  const route = { fromChainId: 56, fromAmount: ETH(1) };
-  ok("m1: native step at the quoted value passes", checkSwapStepBounds(route, nativeStep(ETH(1), "21000", 200000)).ok);
-  ok("m1: native step within 2% tolerance passes", checkSwapStepBounds(route, nativeStep(ETH(1.01), "21000", 200000)).ok);
-  const overValue = checkSwapStepBounds(route, nativeStep(ETH(1.5), "21000", 200000));
-  ok("m1: native step 50% over the quote is refused", !overValue.ok && /more value than the amount you agreed/.test(overValue.reason));
-  const tokenStep = (value, gasLimit) => ({
-    action: { fromToken: { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", decimals: 18 }, fromAmount: "100000000" },
-    estimate: { gasCosts: [{ amount: ETH(0.003), estimate: "150000" }] },
-    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value, gasLimit, chainId: 56 },
-  });
-  ok("m1: token step with zero value passes", checkSwapStepBounds(route, tokenStep("0", "200000")).ok);
-  ok("m1: token step value within its declared gas costs passes", checkSwapStepBounds(route, tokenStep(ETH(0.002), "200000")).ok);
-  ok("m1: token step carrying real value is refused", !checkSwapStepBounds(route, tokenStep(ETH(0.5), "200000")).ok);
-  ok("m1: gasLimit within 3× the estimate passes", checkSwapStepBounds(route, nativeStep(ETH(1), "500000", 200000)).ok);
-  const overGas = checkSwapStepBounds(route, nativeStep(ETH(1), "700000", 200000));
-  ok("m1: gasLimit beyond 3× the estimate is refused", !overGas.ok && /gas limit far above/.test(overGas.reason));
-  ok("m1: no estimate → fallback cap applies", checkSwapStepBounds(route, nativeStep(ETH(1), "1900000", null)).ok
-    && !checkSwapStepBounds(route, nativeStep(ETH(1), "2100000", null)).ok);
-  ok("m1: a hostile huge estimate cannot lift the absolute cap",
-    !checkSwapStepBounds(route, nativeStep(ETH(1), "20000000", 10000000)).ok);
-  // End-to-end: the executor itself refuses the hostile route before
-  // touching the network (bounds run ahead of allowance/signing).
-  const hostileRoute = { fromChainId: 56, fromAmount: ETH(1), steps: [nativeStep(ETH(2), "21000", 200000)] };
-  await assert.rejects(
-    () => executeSwapRoute(ethers.Wallet.createRandom(), hostileRoute),
-    /Fluid refused this route/);
-  ok("m1: executeSwapRoute refuses a hostile step before signing", true);
-}
+// The generic aggregator-step bounds checker was removed with
+// LI.FI (2026-11-13): every surviving rail bounds-checks its own
+// steps before signing, pinned in its own section — Relay
+// (checkRelayStepBounds), Across, Jupiter, Mayan, Satora, and
+// Relay-Tron (checkRelayTronStepBounds, fee section above).
+
 
 // ---------- registry/agent label escaping (security audit M3) ----------
 // Discovered-chain names/symbols are community-submitted registry data:
@@ -2578,8 +2549,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 // stubbed JSON-RPC endpoint (offline): Multicall3 answers allowance()
 // for a fixture grid; only positive allowances come back.
 {
-  const { scanOnChainAllowances, LIFI_DIAMOND } = await import("../src/wallet-core.js");
-  ok("m5: LI.FI diamond spender is the canonical one", LIFI_DIAMOND === "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE");
+  const { scanOnChainAllowances, LEGACY_ROUTER_DIAMOND } = await import("../src/wallet-core.js");
+  ok("m5: LI.FI diamond spender is the canonical one", LEGACY_ROUTER_DIAMOND === "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE");
   ok("m5: empty token/spender sets scan to nothing, no network",
     (await scanOnChainAllowances("bsc", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", [], [])).length === 0);
   await assert.rejects(() => scanOnChainAllowances("nope", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", [], []), /Unknown network/);
@@ -2590,8 +2561,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const OTHER = "0x1111111111111111111111111111111111111111";
   const MAX = (1n << 256n) - 1n;
   const grid = new Map([
-    [`${TOK_A.toLowerCase()}|${LIFI_DIAMOND.toLowerCase()}`, 5000000n],
-    [`${TOK_B.toLowerCase()}|${LIFI_DIAMOND.toLowerCase()}`, MAX],
+    [`${TOK_A.toLowerCase()}|${LEGACY_ROUTER_DIAMOND.toLowerCase()}`, 5000000n],
+    [`${TOK_B.toLowerCase()}|${LEGACY_ROUTER_DIAMOND.toLowerCase()}`, MAX],
   ]);
   const mcIface = new ethers.Interface(["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])"]);
   const ercIface = new ethers.Interface(["function allowance(address owner, address spender) view returns (uint256)"]);
@@ -2635,10 +2606,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     const found = await scanOnChainAllowances("xapprov", OWNER,
       [{ address: TOK_A, symbol: "USDC", decimals: 18 }, { address: TOK_B, symbol: "USDT", decimals: 18 },
        { address: "0x0000000000000000000000000000000000000000", symbol: "NATIVE", decimals: 18 }],
-      [LIFI_DIAMOND, OTHER]);
+      [LEGACY_ROUTER_DIAMOND, OTHER]);
     ok("m5: scan returns exactly the positive allowances", found.length === 2);
     const a = found.find(r => r.token === TOK_A), b = found.find(r => r.token === TOK_B);
-    ok("m5: finite allowance reported verbatim", !!a && a.allowance === "5000000" && a.unlimited === false && a.spender === LIFI_DIAMOND);
+    ok("m5: finite allowance reported verbatim", !!a && a.allowance === "5000000" && a.unlimited === false && a.spender === LEGACY_ROUTER_DIAMOND);
     ok("m5: max allowance flagged unlimited", !!b && b.unlimited === true);
   } finally { server.close(); }
   const appSrc = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
@@ -2711,71 +2682,19 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 }
 
 // ---------- red-team F-01: swap step payload inspection ----------
-// Value/gas bounds alone do not make a step safe: its calldata, its
-// target and the approval spender are network data too. A step whose
-// calldata is a raw ERC-20 transfer/approve, a step aimed at the sold
-// token's own contract, or an approval addressed to a third-party
-// spender all refuse before signing; honest router shapes still pass.
-{
-  const { checkSwapStepBounds } = await import("../src/wallet-core.js");
-  const ETH = (n) => BigInt(Math.round(n * 1e18)).toString();
-  const DIAMOND = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
-  const USDC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
-  const ATTACKER = "0x00000000000000000000000000000000deadbeef";
-  const route = { fromChainId: 56, fromAmount: ETH(1) };
-  const gas = [{ amount: ETH(0.003), estimate: "150000" }];
-  const tokenStep = (over) => ({
-    action: { fromToken: { address: USDC, symbol: "USDC", decimals: 18 }, fromAmount: "100000000" },
-    estimate: { gasCosts: gas },
-    transactionRequest: { to: DIAMOND, data: "0x", value: "0", gasLimit: "200000", chainId: 56 },
-    ...over,
-  });
-  const rA = checkSwapStepBounds(route, tokenStep({ estimate: { gasCosts: gas, approvalAddress: ATTACKER } }));
-  ok("rt-f01: approval addressed to a third-party spender is refused", !rA.ok && /unexpected spender/.test(rA.reason));
-  const stepB = tokenStep({ transactionRequest: { to: USDC, data: "0xa9059cbb" + "0".repeat(64), value: "0", gasLimit: "200000", chainId: 56 } });
-  ok("rt-f01: raw ERC-20 transfer calldata in a step is refused", !checkSwapStepBounds(route, stepB).ok);
-  const stepC = {
-    action: { fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "BNB", decimals: 18 }, fromAmount: ETH(1) },
-    estimate: { gasCosts: [{ amount: ETH(0.003), estimate: "200000" }] },
-    transactionRequest: { to: DIAMOND, data: "0x095ea7b3" + "f".repeat(64), value: ETH(1), gasLimit: "200000", chainId: 56 },
-  };
-  ok("rt-f01: native step carrying approve calldata is refused", !checkSwapStepBounds(route, stepC).ok);
-  ok("rt-f01: approval addressed to the LI.FI diamond passes",
-    checkSwapStepBounds(route, tokenStep({ estimate: { gasCosts: gas, approvalAddress: DIAMOND } })).ok);
-  const ROUTER = "0x1111111111111111111111111111111111111111";
-  const stepR = tokenStep({
-    transactionRequest: { to: ROUTER, data: "0x", value: "0", gasLimit: "200000", chainId: 56 },
-    estimate: { gasCosts: gas, approvalAddress: ROUTER },
-  });
-  ok("rt-f01: approval addressed to the step's own router passes", checkSwapStepBounds(route, stepR).ok);
-}
+// The LI.FI-shape step inspection was removed with LI.FI
+// (2026-11-13). Its cases live on per rail: Relay's bounds
+// checker refuses foreign spenders, wrong targets and inexact
+// amounts (Relay section); the same discipline is pinned for
+// Across, Jupiter, Mayan, Satora and Relay-Tron.
+
 
 // ---------- red-team F-02: Solana step instruction inspection ----------
-// The fee-payer check authenticates the victim, not the payload: a
-// "swap" transaction whose payer is the user can still carry top-level
-// instructions that drain the user. Those shapes refuse before signing;
-// account creation (WSOL/ATA plumbing) and ordinary program calls pass.
-{
-  const { assertSolanaStepSafe } = await import("../src/wallet-core.js");
-  const SYS = "11111111111111111111111111111111";
-  const TOK = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-  const TOK22 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-  const u32 = (n) => { const b = new Uint8Array(12); new DataView(b.buffer).setUint32(0, n, true); return b; };
-  assert.throws(() => assertSolanaStepSafe([{ program: SYS, data: u32(2) }]), /send SOL directly/);
-  ok("rt-f02: SystemProgram transfer in a swap step is refused", true);
-  assert.throws(() => assertSolanaStepSafe([{ program: TOK, data: new Uint8Array([3, 1, 0, 0, 0, 0, 0, 0, 0]) }]), /move, approve, burn or close/);
-  ok("rt-f02: SPL token transfer in a swap step is refused", true);
-  assert.throws(() => assertSolanaStepSafe([{ program: TOK22, data: new Uint8Array([16, 1]) }]), /move, approve, burn or close/);
-  ok("rt-f02: Token-2022 approveChecked in a swap step is refused", true);
-  assertSolanaStepSafe([{ program: SYS, data: u32(0) }]); // CreateAccount
-  ok("rt-f02: SystemProgram CreateAccount (WSOL/ATA plumbing) passes", true);
-  assertSolanaStepSafe([{ program: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", data: new Uint8Array([104, 105]) }]);
-  ok("rt-f02: benign memo instruction passes", true);
-  const coreSrc = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
-  ok("rt-f02: inspection runs before signing on both tx shapes",
-    coreSrc.indexOf("assertSolanaStepSafe(vtx.message.compiledInstructions") < coreSrc.indexOf("vtx.sign([kp])")
-    && coreSrc.indexOf("assertSolanaStepSafe(tx.instructions") < coreSrc.indexOf("tx.partialSign(kp)"));
-}
+// The LI.FI-Solana instruction inspector was removed with the
+// LI.FI Solana executor (2026-11-13). Solana payload safety now
+// lives in the Jupiter bounds checker (program + fee-account
+// pins, Jupiter section) and Mayan's Solana step checks.
+
 
 // ---------- red-team F-04: Tron swap step payload inspection ----------
 // A TVM step signs sha256(raw_data): the inspection decodes the
@@ -2800,185 +2719,23 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && dec.contracts[0].trigger.callValue === 0n && dec.feeLimit === 100000000n
     && dec.contracts[0].trigger.data.startsWith("a9059cbb"));
   ok("rt-f04: fixture txID is sha256 of the raw bytes", ethers.sha256("0x" + FIXTURE_HEX).slice(2) === FIXTURE_TXID);
-  const fixtureStep = {
-    action: { fromToken: { address: USDT, symbol: "USDT", decimals: 6 }, fromAmount: "1000000" },
-    estimate: { gasCosts: [{ amount: "20000000" }] },
-    transactionRequest: { to: USDT, value: "0x0", gasLimit: "0x5f5e100", data: "0x" + FIXTURE_HEX,
-      customData: { contractType: "TriggerSmartContract", tronTransaction: { txID: FIXTURE_TXID, raw_data_hex: FIXTURE_HEX } } },
-  };
-  ok("rt-f04: tron steps are picked by the verified payload shape", tronSwapSteps({ fromChainId: TRON_LIFI_CHAIN_ID, steps: [fixtureStep] }).length === 1
-    && tronSwapSteps({ fromChainId: TRON_LIFI_CHAIN_ID, steps: [{ transactionRequest: { data: "0x" } }] }).length === 0);
-  ok("rt-f04: a plain TRC-20 transfer dressed as a step is refused",
-    !checkTronSwapStepBounds({ fromChainId: TRON_LIFI_CHAIN_ID }, fixtureStep, OWNER).ok
-    && /token being sold/.test(checkTronSwapStepBounds({ fromChainId: TRON_LIFI_CHAIN_ID }, fixtureStep, OWNER).reason));
-  // Synthetic honest payloads, assembled with a minimal protobuf writer
-  // (the decoder's inverse).
-  const pv = (n) => { const out = []; let v = BigInt(n); do { let b = Number(v & 0x7fn); v >>= 7n; if (v) b |= 0x80; out.push(b); } while (v); return out; };
-  const pfV = (f, n) => [...pv(f * 8), ...pv(n)];
-  const pfB = (f, bytes) => [...pv(f * 8 + 2), ...pv(bytes.length), ...bytes];
-  const hb = (h) => [...Buffer.from(h, "hex")];
-  const buildRaw = ({ ownerHex, contractHex, callValue = 0n, dataHex = "38ed1739" + "00".repeat(32), feeLimit = 100_000_000n }) => {
-    const tsc = [...pfB(1, hb(ownerHex)), ...pfB(2, hb(contractHex)), ...(callValue > 0n ? pfV(3, callValue) : []), ...pfB(4, hb(dataHex))];
-    const any = [...pfB(1, [...Buffer.from("type.googleapis.com/protocol.TriggerSmartContract")]), ...pfB(2, tsc)];
-    const contract = [...pfV(1, 31), ...pfB(2, any)];
-    const now = Date.now();
-    return Buffer.from([...pfB(11, contract), ...pfV(14, now), ...pfV(8, now + 600_000), ...pfV(18, feeLimit)]).toString("hex");
-  };
-  const ROUTER = tronAddressFromHex("41" + "22".repeat(20));
-  const ownerHex = tronAddressToHex(OWNER), routerHex = tronAddressToHex(ROUTER);
-  const mkStep = (rawHex, over = {}) => ({
-    action: { fromToken: { address: USDT, symbol: "USDT", decimals: 6 }, fromAmount: "1000000" },
-    estimate: { gasCosts: [{ amount: "20000000" }], approvalAddress: ROUTER },
-    transactionRequest: { to: ROUTER, value: "0x0", gasLimit: "0x5f5e100", data: "0x" + rawHex,
-      customData: { contractType: "TriggerSmartContract", tronTransaction: { txID: ethers.sha256("0x" + rawHex).slice(2), raw_data_hex: rawHex } } },
-    ...over,
-  });
-  const routeT = { fromChainId: TRON_LIFI_CHAIN_ID };
-  const goodRaw = buildRaw({ ownerHex, contractHex: routerHex });
-  ok("rt-f04: an honest router step passes inspection", checkTronSwapStepBounds(routeT, mkStep(goodRaw), OWNER).ok);
-  const badId = mkStep(goodRaw); badId.transactionRequest.customData.tronTransaction.txID = "00".repeat(32);
-  ok("rt-f04: a txID that does not hash to the bytes is refused", !checkTronSwapStepBounds(routeT, badId, OWNER).ok
-    && /does not match its contents/.test(checkTronSwapStepBounds(routeT, badId, OWNER).reason));
-  const badData = mkStep(goodRaw); badData.transactionRequest.data = "0xdeadbeef";
-  ok("rt-f04: two disagreeing transaction forms are refused", !checkTronSwapStepBounds(routeT, badData, OWNER).ok);
-  ok("rt-f04: a step spending from another account is refused",
-    !checkTronSwapStepBounds(routeT, mkStep(buildRaw({ ownerHex: "41" + "33".repeat(20), contractHex: routerHex })), OWNER).ok);
-  const bigFeeRaw = buildRaw({ ownerHex, contractHex: routerHex, feeLimit: 900_000_000n });
-  const bigFee = mkStep(bigFeeRaw); bigFee.transactionRequest.gasLimit = "0x35a4e900";
-  ok("rt-f04: a fee_limit far above the step's own estimate is refused", !checkTronSwapStepBounds(routeT, bigFee, OWNER).ok
-    && /fee limit/.test(checkTronSwapStepBounds(routeT, bigFee, OWNER).reason));
-  const nativeOver = mkStep(buildRaw({ ownerHex, contractHex: routerHex, callValue: 60_000_000n }), {
-    action: { fromToken: { address: TRON_SWAP_NATIVE_TOKEN, symbol: "TRX", decimals: 6 }, fromAmount: "50000000" },
-  });
-  nativeOver.transactionRequest.value = "0x3938700";
-  ok("rt-f04: a native step above the quoted amount is refused", !checkTronSwapStepBounds(routeT, nativeOver, OWNER).ok);
-  const nativeOk = mkStep(buildRaw({ ownerHex, contractHex: routerHex, callValue: 50_000_000n }), {
-    action: { fromToken: { address: TRON_SWAP_NATIVE_TOKEN, symbol: "TRX", decimals: 6 }, fromAmount: "50000000" },
-    estimate: { gasCosts: [{ amount: "20000000" }] },
-  });
-  nativeOk.transactionRequest.value = "0x2faf080";
-  ok("rt-f04: an honest native step passes inspection", checkTronSwapStepBounds(routeT, nativeOk, OWNER).ok);
-  const badApproval = mkStep(goodRaw); badApproval.estimate.approvalAddress = USDT;
-  ok("rt-f04: an approval addressed to the token contract is refused", !checkTronSwapStepBounds(routeT, badApproval, OWNER).ok);
-  const thirdParty = mkStep(goodRaw); thirdParty.estimate.approvalAddress = tronAddressFromHex("41" + "44".repeat(20));
-  ok("rt-f04: an approval addressed to a third-party spender is refused", !checkTronSwapStepBounds(routeT, thirdParty, OWNER).ok
-    && /unexpected spender/.test(checkTronSwapStepBounds(routeT, thirdParty, OWNER).reason));
-  const coreSrc2 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
-  ok("rt-f04: bounds inspection runs before approval and signing",
-    coreSrc2.indexOf("checkTronSwapStepBounds(route, step, owner)") < coreSrc2.indexOf("signTronTxId(wallet, tt.txID)")
-    && coreSrc2.indexOf("checkTronSwapStepBounds(route, step, owner)") < coreSrc2.indexOf("tronTriggerAndBroadcast(wallet, {\n          contractAddress: fromToken.address"));
+  // The LI.FI-shape step picker and bounds checker were removed
+  // with LI.FI (2026-11-13). Tron swaps are Relay routes now:
+  // Fluid BUILDS the transaction locally (buildTronTriggerRawData
+  // — the decoder's inverse, round-trip pinned in the fee section)
+  // and bounds-checks the built bytes against Relay's quoted
+  // parameters (checkRelayTronStepBounds, also fee section).
 }
 
+
 // ---------- red-team F-05: Sui swap step payload inspection ----------
-// An MVM step is inspected in its BUILT form — the exact bytes the
-// wallet signs — with every owned-object input resolved on-chain.
-// Refused: a foreign sender or gas owner, a gas budget beyond the
-// bound, Publish/Upgrade commands, FundsWithdrawal inputs, transfers
-// to anyone but the sender, spending a second asset, or spending more
-// of the sold coin than the quote.
-{
-  const { checkSuiSwapStepSafety, SUI_STEP_GAS_ABSOLUTE_CAP } = await import("../src/wallet-core.js");
-  const ME = "0x2695f469826971eadfea28e0f8719137482502c44140aead682d41231d60ba92"; // test-vector Sui address
-  const OTHER = "0x" + "99".repeat(32);
-  const b64 = (bytes) => Buffer.from(bytes).toString("base64");
-  const addrPure = (a) => ({ $kind: "Pure", Pure: { bytes: b64(Buffer.from(a.slice(2), "hex")) } });
-  const u64Pure = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return { $kind: "Pure", Pure: { bytes: b64(b) } }; };
-  const baseData = (over = {}) => ({
-    version: 2, sender: ME, gasData: { budget: "5000000", price: "1000", owner: null, payment: [] },
-    inputs: [], commands: [], ...over,
-  });
-  const moveCall = { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [] } };
-  const SUI_SHORT = "0x2::sui::SUI";
-  const suiSale = (splitMist, fromAmount) => baseData({
-    inputs: [u64Pure(splitMist)],
-    commands: [{ $kind: "SplitCoins", SplitCoins: { coin: { $kind: "GasCoin" }, amounts: [{ $kind: "Input", Input: 0 }] } }, moveCall],
-  });
-  ok("rt-f05: an honest SUI sale split passes", checkSuiSwapStepSafety(suiSale(1_000_000_000n, 0), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
-  ok("rt-f05: a gas-coin split above the quoted amount is refused",
-    !checkSuiSwapStepSafety(suiSale(2_000_000_000n, 0), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
-  ok("rt-f05: a transaction built for a different sender is refused",
-    !checkSuiSwapStepSafety(baseData({ sender: OTHER }), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
-  ok("rt-f05: a gas budget beyond the absolute cap is refused",
-    !checkSuiSwapStepSafety(baseData({ gasData: { budget: String(SUI_STEP_GAS_ABSOLUTE_CAP + 1n), price: "1000", owner: null, payment: [] } }),
-      { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
-  const xferTo = (addr) => baseData({ inputs: [addrPure(addr)], commands: [{ $kind: "TransferObjects", TransferObjects: { objects: [], address: { $kind: "Input", Input: 0 } } }] });
-  ok("rt-f05: a transfer to a third party is refused", !checkSuiSwapStepSafety(xferTo(OTHER), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
-  ok("rt-f05: a transfer back to the sender passes", checkSuiSwapStepSafety(xferTo(ME), { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
-  ok("rt-f05: a package publish inside a swap step is refused",
-    !checkSuiSwapStepSafety(baseData({ commands: [{ $kind: "Publish", Publish: { modules: [], dependencies: [] } }] }),
-      { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1" }).ok);
-  const coinInput = (objectId) => ({ $kind: "Object", Object: { ImmOrOwnedObject: { objectId, version: "1", digest: "x" } } });
-  const USDC_TYPE = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
-  const usdcInfo = (balance) => new Map([[0, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance }]]);
-  const callWithInput = { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }] } };
-  const usdcIn = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [moveCall] });
-  ok("rt-f05: an honest token sale input passes", checkSuiSwapStepSafety(usdcIn,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: usdcInfo(1000000n) }).ok);
-  // The aggregator pattern: the wallet's coin is merged/split INSIDE the
-  // PTB and only the quoted amount leaves it — a coin balance above the
-  // quote is not an overspend.
-  const splitFromInput = (splitAmt, balance) => ({
-    data: baseData({ inputs: [coinInput("0x" + "aa".repeat(32)), u64Pure(splitAmt)], commands: [
-      { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "Input", Input: 0 }, amounts: [{ $kind: "Input", Input: 1 }] } },
-      { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Result", Result: 0 }] } },
-    ] }),
-    info: usdcInfo(balance),
-  });
-  const honestSplit = splitFromInput(1000000n, 5000000n);
-  ok("rt-f05: a split of the quoted amount off a larger coin passes", checkSuiSwapStepSafety(honestSplit.data,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: honestSplit.info }).ok);
-  const greedySplit = splitFromInput(2000000n, 5000000n);
-  ok("rt-f05: a split above the quoted amount is refused", !checkSuiSwapStepSafety(greedySplit.data,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: greedySplit.info }).ok);
-  const mergeThen = (lastCmd) => ({
-    data: baseData({ inputs: [coinInput("0x" + "aa".repeat(32)), coinInput("0x" + "bb".repeat(32)), u64Pure(1000000n)], commands: [
-      { $kind: "MergeCoins", MergeCoins: { destination: { $kind: "Input", Input: 0 }, sources: [{ $kind: "Input", Input: 1 }] } },
-      { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "Input", Input: 0 }, amounts: [{ $kind: "Input", Input: 2 }] } },
-      lastCmd,
-    ] }),
-    info: new Map([[0, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 3000000n }], [1, { owner: ME, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 2000000n }]]),
-  });
-  const mergedSplit = mergeThen({ $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Result", Result: 1 }] } });
-  ok("rt-f05: merge-then-split of the quoted amount passes", checkSuiSwapStepSafety(mergedSplit.data,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: mergedSplit.info }).ok);
-  const mergedWhole = mergeThen({ $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }] } });
-  ok("rt-f05: a merged pool taken whole above the quote is refused", !checkSuiSwapStepSafety(mergedWhole.data,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: mergedWhole.info }).ok);
-  const usdcByValue = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [callWithInput] });
-  ok("rt-f05: a sold coin taken whole by a call above the quote is refused", !checkSuiSwapStepSafety(usdcByValue,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: usdcInfo(2000000n) }).ok);
-  ok("rt-f05: spending a second asset inside the step is refused", !checkSuiSwapStepSafety(usdcByValue,
-    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000", inputObjects: usdcInfo(1n) }).ok);
-  const usdcByRef = baseData({ inputs: [coinInput("0x" + "aa".repeat(32))], commands: [
-    { $kind: "MoveCall", MoveCall: { package: "0x2", module: "coin", function: "value", typeArguments: [], arguments: [{ $kind: "Input", Input: 0 }], _argumentTypes: [{ reference: "immutable", body: {} }] } },
-  ] });
-  ok("rt-f05: a by-reference read of a coin exposes nothing", checkSuiSwapStepSafety(usdcByRef,
-    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000", inputObjects: usdcInfo(5000000n) }).ok);
-  const gasByValue = baseData({ commands: [
-    { $kind: "MoveCall", MoveCall: { package: "0xabc", module: "router", function: "swap", typeArguments: [], arguments: [{ $kind: "GasCoin" }] } },
-  ] });
-  ok("rt-f05: the gas coin passed by value to a call is refused", !checkSuiSwapStepSafety(gasByValue,
-    { ownerAddress: ME, fromCoinType: SUI_SHORT, fromAmount: "1000000000" }).ok);
-  // A SUI-denominated fee split alongside a token sale is bounded by the
-  // step's declared fees; beyond them it refuses.
-  const feeSplit = (feeAmt) => baseData({ inputs: [u64Pure(feeAmt)], commands: [
-    { $kind: "SplitCoins", SplitCoins: { coin: { $kind: "GasCoin" }, amounts: [{ $kind: "Input", Input: 0 }] } }, moveCall,
-  ] });
-  ok("rt-f05: a gas-coin fee split within the declared fees passes", checkSuiSwapStepSafety(feeSplit(3000000n),
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", suiFeeAllowanceMist: 5000000n }).ok);
-  ok("rt-f05: a gas-coin split beyond the declared fees is refused", !checkSuiSwapStepSafety(feeSplit(9000000n),
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", suiFeeAllowanceMist: 5000000n }).ok);
-  ok("rt-f05: an unverifiable input object is refused", !checkSuiSwapStepSafety(usdcIn,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000" }).ok);
-  ok("rt-f05: a non-coin object of the wallet's is refused", !checkSuiSwapStepSafety(usdcIn,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: new Map([[0, { owner: ME, type: "0x2::kiosk::Kiosk", balance: null }]]) }).ok);
-  ok("rt-f05: an object owned by someone else is refused", !checkSuiSwapStepSafety(usdcIn,
-    { ownerAddress: ME, fromCoinType: USDC_TYPE, fromAmount: "1000000", inputObjects: new Map([[0, { owner: OTHER, type: `0x2::coin::Coin<${USDC_TYPE}>`, balance: 1000000n }]]) }).ok);
-  const coreSrc3 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
-  ok("rt-f05: built-bytes inspection runs before signing",
-    coreSrc3.indexOf("checkSuiSwapStepSafety(data, {") > -1
-    && coreSrc3.indexOf("checkSuiSwapStepSafety(data, {") < coreSrc3.indexOf("kp.signTransaction(bytes)"));
-}
+// Removed with LI.FI (2026-11-13): the inspector existed for the
+// aggregator-built Sui payloads, and no Sui swap execution exists
+// today (named blocker — the Cetus aggregator port must rebuild
+// this inspection for locally composed PTBs before Sui swaps
+// return; see docs/SWAPS.md "Known gaps"). Sui SENDS build their
+// own transactions locally and never sign network payloads.
+
 
 // ---------- red-team F-03: agent reservation release ----------
 // M6 reserved spend on disk before broadcast but released it on ANY
@@ -5114,6 +4871,145 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 20000)'));
 }
 
+// 61b. EVM RPC endpoint resilience (2026-11-14): BSC's shipped
+// pair was not enough — bsc-rpc.publicnode.com 429s under load
+// and bsc-dataseed.binance.org 403s on roughly half of calls, and
+// a token scan makes many rounds, so refusals multiplied into a
+// failed balance load. Reads now rotate across the network's
+// endpoint list on HTTP refusals (403/429/5xx) and JSON-RPC
+// errors, with a cooldown so a refusing endpoint is skipped by
+// later rounds; total failure still throws (section 61's honesty
+// contract), never a zero.
+{
+  const BSC_URLS = evmRpcUrls("bsc");
+  ok("bsc rpc set: at least four endpoints across at least three operators, primary + fallback first",
+    BSC_URLS.length >= 4
+    && new Set(BSC_URLS.map(u => new URL(u).hostname)).size >= 4
+    && BSC_URLS[0] === NETWORKS.bsc.rpc && BSC_URLS[1] === NETWORKS.bsc.rpcFallback);
+
+  const realFetchRpc = globalThis.fetch;
+  const counts = new Map();
+  const counting = (handler) => async (url, opts) => {
+    const u = String(url);
+    counts.set(u, (counts.get(u) || 0) + 1);
+    return handler(u, opts);
+  };
+  const okReply = (result) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result }) });
+  const refuse = (status) => ({ ok: false, status, json: async () => ({}) });
+  const blockReq = { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] };
+  try {
+    // HTTP 403 on the first endpoint: rotate, succeed on the
+    // second, exactly one call to each.
+    resetEvmRpcHealth(); counts.clear();
+    globalThis.fetch = counting(async (u) => u === BSC_URLS[0] ? refuse(403) : okReply("0x2a"));
+    const r403 = await evmRpcFetchJson("bsc", blockReq);
+    ok("evm rpc rotation: HTTP 403 rotates to the next endpoint and succeeds",
+      r403.result === "0x2a" && counts.get(BSC_URLS[0]) === 1 && counts.get(BSC_URLS[1]) === 1 && counts.size === 2);
+    // Cooldown: the next read skips the refused endpoint
+    // entirely instead of paying its refusal again.
+    const rNext = await evmRpcFetchJson("bsc", blockReq);
+    ok("evm rpc cooldown: a refused endpoint is not retried on the next read",
+      rNext.result === "0x2a" && counts.get(BSC_URLS[0]) === 1 && EVM_RPC_COOLDOWN_MS > 0);
+    // HTTP 429 likewise.
+    resetEvmRpcHealth(); counts.clear();
+    globalThis.fetch = counting(async (u) => u === BSC_URLS[0] ? refuse(429) : okReply("0x2b"));
+    const r429 = await evmRpcFetchJson("bsc", blockReq);
+    ok("evm rpc rotation: HTTP 429 rotates to the next endpoint and succeeds",
+      r429.result === "0x2b" && counts.get(BSC_URLS[0]) === 1 && counts.get(BSC_URLS[1]) === 1);
+    // A JSON-RPC error reply on HTTP 200 also rotates.
+    resetEvmRpcHealth(); counts.clear();
+    globalThis.fetch = counting(async (u) => u === BSC_URLS[0]
+      ? { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "rate limited" } }) }
+      : okReply("0x2c"));
+    const rErr = await evmRpcFetchJson("bsc", blockReq);
+    ok("evm rpc rotation: a JSON-RPC error reply rotates to the next endpoint",
+      rErr.result === "0x2c" && counts.get(BSC_URLS[0]) === 1 && counts.get(BSC_URLS[1]) === 1);
+    // Healthy first endpoint: exactly one call, no rotation.
+    resetEvmRpcHealth(); counts.clear();
+    globalThis.fetch = counting(async () => okReply("0x2d"));
+    const rOk = await evmRpcFetchJson("bsc", blockReq);
+    ok("evm rpc: a healthy first endpoint is the only call made",
+      rOk.result === "0x2d" && counts.size === 1 && counts.get(BSC_URLS[0]) === 1);
+    // Every endpoint refuses: the read throws — the caller
+    // shows "couldn't load", never a fabricated result.
+    resetEvmRpcHealth(); counts.clear();
+    globalThis.fetch = counting(async () => refuse(503));
+    await assert.rejects(() => evmRpcFetchJson("bsc", blockReq));
+    ok("evm rpc: total refusal throws instead of fabricating a result",
+      counts.size === BSC_URLS.length);
+  } finally { globalThis.fetch = realFetchRpc; resetEvmRpcHealth(); }
+
+  // getBalances itself rotates past a refusing primary (ethers
+  // surfaces an HTTP refusal as a throw at its getUrl seam —
+  // the stub answers 403 for the primary, real reads elsewhere).
+  const prevGetUrlRpc = FetchRequest.createGetUrlFunc();
+  const seenRpc = [];
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      seenRpc.push(req.url);
+      if (req.url === BSC_URLS[0]) return new FetchResponse(403, "Forbidden", { "content-type": "text/plain" }, new TextEncoder().encode("forbidden"));
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (q) => {
+        let result;
+        if (q.method === "eth_chainId") result = "0x38";
+        else if (q.method === "net_version") result = "56";
+        else if (q.method === "eth_getBalance") result = "0xde0b6b3a7640000";
+        else if (q.method === "eth_call") result = "0x" + "0".repeat(64);
+        else throw new Error("unexpected rpc method " + q.method);
+        return { jsonrpc: "2.0", id: q.id, result };
+      };
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    resetEvmRpcHealth();
+    const rowsRpc = await getBalances({ address: "0x0000000000000000000000000000000000000001" }, "bsc");
+    ok("evm balances: an HTTP-403 primary rotates and the load succeeds",
+      rowsRpc.length === 3 && rowsRpc[0].amount === "1.0"
+      && seenRpc[0] === BSC_URLS[0] && seenRpc.some(u => u === BSC_URLS[1]));
+  } finally { FetchRequest.registerGetUrl(prevGetUrlRpc); resetEvmRpcHealth(); }
+
+  // The token scan's batch rounds rotate too — the incident
+  // path (a 403ing primary used to fail the whole BSC scan).
+  // A throwaway registered chain keeps the test isolated; the
+  // registry entry is removed again afterwards.
+  registerNetworks({ c31337: { name: "StubRot", chainId: 31337, symbol: "SRB", priceSym: null,
+    rpc: "https://stub-one.invalid", rpcs: ["https://stub-one.invalid", "https://stub-two.invalid"],
+    explorer: "https://stub.invalid", tokens: [] } });
+  const prevGetUrlScan = FetchRequest.createGetUrlFunc();
+  const realFetchScan = globalThis.fetch;
+  const scanCalls = [];
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (q) => ({ jsonrpc: "2.0", id: q.id, result: q.method === "eth_chainId" ? "0x7a69" : q.method === "net_version" ? "31337" : "0x" });
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      scanCalls.push(u);
+      if (u.includes("stub-one")) return { ok: false, status: 403, json: async () => ({}) };
+      const parsed = JSON.parse(opts.body);
+      const payload = parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: "0x" + (1000n).toString(16).padStart(64, "0") }));
+      return { ok: true, status: 200, json: async () => payload };
+    };
+    resetEvmRpcHealth();
+    const toksScan = [
+      { symbol: "S1", decimals: 18, address: "0x0000000000000000000000000000000000000011" },
+      { symbol: "S2", decimals: 18, address: "0x0000000000000000000000000000000000000022" },
+    ];
+    const scanRot = await scanEvmTokenBalances("c31337", "0x00000000000000000000000000000000000000ff", toksScan);
+    ok("evm scan: a 403 on the first endpoint rotates the batch round and finds balances",
+      scanRot.method === "batch" && scanRot.balances.size === 2
+      && scanCalls[0].includes("stub-one") && scanCalls.some(u => u.includes("stub-two")));
+  } finally {
+    FetchRequest.registerGetUrl(prevGetUrlScan);
+    globalThis.fetch = realFetchScan;
+    resetEvmRpcHealth();
+    delete NETWORKS.c31337;
+  }
+}
+
 // 62. Bitcoin silent-zero fix (EVM re-walk, 2026-11-08): the same
 // defect class as the EVM bug — getBitcoinBalance was mempool.space
 // only, and during the walk both mempool reads timed out while the
@@ -5400,14 +5296,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && relayChainOf("tron").chainId === RELAY_TRON_CHAIN_ID && RELAY_TRON_CHAIN_ID === 728126428
     && relayChainOf("sui") === null && relayChainOf("fuse") === null && relayChainOf("b2") === null && relayChainOf("sepolia") === null);
   // Router selection: Relay serves EVM-sourced pairs to any chain it
-  // covers (destinations don't sign); Sui pairs and non-EVM sources
-  // stay on LI.FI, whose step payloads Fluid has audited.
+  // covers (destinations don't sign), and — since the LI.FI removal
+  // (2026-11-13) — Tron-sourced pairs too (the locally built,
+  // bounds-checked TVM executor). Sui pairs stay unserved by Relay,
+  // and Solana sources are not served (Mayan/Jupiter cover them).
   ok("relay: selection — relay-supported pairs go to relay",
     relaySupportsPair("base", "arbitrum") === true && relaySupportsPair("base", "base") === true
-    && relaySupportsPair("base", "solana") === true && relaySupportsPair("bsc", "tron") === true);
-  ok("relay: selection — sui pairs and non-evm sources stay on lifi",
+    && relaySupportsPair("base", "solana") === true && relaySupportsPair("bsc", "tron") === true
+    && relaySupportsPair("tron", "base") === true && relaySupportsPair("tron", "tron") === false);
+  ok("relay: selection — sui pairs and solana sources are not served",
     relaySupportsPair("base", "sui") === false && relaySupportsPair("sui", "base") === false
-    && relaySupportsPair("solana", "base") === false && relaySupportsPair("tron", "base") === false
+    && relaySupportsPair("solana", "base") === false
     && relaySupportsPair("fuse", "base") === false);
 
   // Request construction: App Fees carry Fluid's exact 0.5% (50 bps)
@@ -5520,19 +5419,18 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcRelay = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("relay: app names relay routes, gates fee disclosure on the quote, executes via the relay executor",
     appSrcRelay.includes('if (route && route.provider === "relay") return "Relay";')
-    && appSrcRelay.includes('r.provider === "relay" ? r.platformFeeCollecting === true : swapFeeCollectingChain(r.fromChainId)')
-    && appSrcRelay.includes('if (route.provider === "relay")')
+    && appSrcRelay.includes('r.provider === "relay" && r.platformFeeCollecting === true')
+    && appSrcRelay.includes("executeRelayTronSwapRoute(wallet, route")
     && appSrcRelay.includes("executeRelaySwapRoute(wallet, route"));
 
   // Router selection end-to-end, fetch stubbed per host: a Relay-
-  // supported pair is answered by Relay alone; a Relay failure falls
-  // back to LI.FI; a Sui pair never asks Relay at all.
+  // supported pair is answered by Relay alone; a Relay failure with
+  // no other rail answering returns an honest empty (NO aggregator
+  // fallback exists since the LI.FI removal, 2026-11-13 — any call
+  // to the removed host fails the test); a Sui pair never asks
+  // Relay at all and finds no route today.
   const realFetch = globalThis.fetch;
   const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
-  const lifiStep = (fromChainId, toChainId) => ({ id: "lifi-quote", type: "swap",
-    action: { fromChainId, toChainId, fromAmount: "1000000", fromToken: { address: "0xa", symbol: "A", decimals: 6 }, toToken: { address: "0xb", symbol: "B", decimals: 6 } },
-    estimate: { toAmount: "999000", toAmountMin: "990000", toAmountUSD: "1.0", fromAmountUSD: "1.0", gasCosts: [], executionDuration: 30 },
-    transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: fromChainId } });
   try {
     let relayCalls = 0, lifiCalls = 0;
     const relayBodies = [];
@@ -5570,25 +5468,23 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     globalThis.fetch = async (url, opts) => {
       const u = String(url);
       if (u.includes("api.relay.link")) { relayCalls++; return jsonRes({ message: "No route found for this pair" }, false, 400); }
-      if (u.includes("li.quest/v1/routes")) { lifiCalls++; return jsonRes({ routes: [] }); }
-      if (u.includes("li.quest/v1/quote")) { lifiCalls++; return jsonRes(lifiStep(8453, 42161)); }
+      if (u.includes("li.quest")) { lifiCalls++; throw new Error("lifi must not be called"); }
       throw new Error("unexpected url " + u);
     };
     const viaFallback = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC, toTokenAddress: ARB_USDC, fromAmount: "5000000", fromAddress: RUSER, toAddress: RUSER });
-    ok("relay: a relay failure falls back to lifi rather than failing the swap",
-      relayCalls === 1 && lifiCalls >= 1 && viaFallback.length === 1 && viaFallback[0].provider !== "relay" && viaFallback[0].steps.length === 1);
+    ok("relay: a relay failure with no other rail answering is an honest empty (no lifi fallback)",
+      relayCalls >= 1 && lifiCalls === 0 && viaFallback.length === 0);
 
     relayCalls = 0; lifiCalls = 0;
     globalThis.fetch = async (url, opts) => {
       const u = String(url);
       if (u.includes("api.relay.link")) { relayCalls++; throw new Error("relay must not be called for sui"); }
-      if (u.includes("li.quest/v1/routes")) { lifiCalls++; return jsonRes({ routes: [] }); }
-      if (u.includes("li.quest/v1/quote")) { lifiCalls++; return jsonRes(lifiStep(9270000000000000, 56)); }
+      if (u.includes("li.quest")) { lifiCalls++; throw new Error("lifi must not be called"); }
       throw new Error("unexpected url " + u);
     };
     const viaSui = await getSwapRoutes({ fromChainKey: "sui", toChainKey: "bsc", fromTokenAddress: "0x2::sui::SUI", toTokenAddress: "0x55d398326f99059fF775485246999027B3197955", fromAmount: "1000000", fromAddress: "0xsuiaddr", toAddress: RUSER });
-    ok("relay: a sui pair goes straight to lifi",
-      relayCalls === 0 && lifiCalls >= 1 && viaSui.length === 1 && viaSui[0].provider !== "relay");
+    ok("relay: a sui pair never asks relay and finds no route today",
+      relayCalls === 0 && lifiCalls === 0 && viaSui.length === 0);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -5741,9 +5637,6 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("fee model: relay request builder carries an explicit bps and defaults to the cap",
     buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "5", fromAddress: FUSER, toAddress: FUSER }, { includeFee: true, feeBps: 17 }).appFees[0].fee === "17"
     && buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "5", fromAddress: FUSER, toAddress: FUSER }).appFees[0].fee === "50");
-  ok("fee model: lifi builders carry an explicit fraction and default to the cap fraction",
-    buildLifiRoutesRequest({ fromChainId: 8453, toChainId: 42161, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true, feeFraction: 0.0017 }).options.fee === 0.0017
-    && buildLifiQuoteParams({ fromChainId: 8453, toChainId: 42161, fromTokenAddress: "0xa", toTokenAddress: "0xb", fromAmount: "5", fromAddress: "0xc", toAddress: "0xc" }, { includeFee: true, feeFraction: 0.0017 }).get("fee") === "0.0017");
 
   // The review sentence: below the cap the user sees the actual USD
   // fee AND its effective percentage — the edge is the point. At the
@@ -5754,14 +5647,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("fee model: intent at the cap shows 0.5%",
     formatSwapIntent({ fromAmount: "100", fromSymbol: "USDC", fromNetKey: "base", toAmount: "99", toSymbol: "USDC", toNetKey: "arbitrum", toolName: "Relay", feeUsd: 0.035, durationSec: 1, platformFeeUsd: 0.5, platformFeePct: 0.5 }).includes("Fluid fee: $0.50 (0.5%)"));
   // App wiring (source pins): the sheet copy names the model, and
-  // the disclosure is priced from the final quote (Relay's stated
-  // USD fee, or the bps the LI.FI search attached) — the old
-  // flat-rate computation from fromAmount is gone.
+  // the disclosure is priced from the final quote's own stated fee
+  // (each rail carries platformFeeUsd + platformFeeCollecting) —
+  // the old flat-rate computation from fromAmount is gone.
   const appSrcFee = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("fee model: app discloses the final quote's fee and names the model in the sheet copy",
     appSrcFee.includes("Fluid's fee is a small multiple of the route's cost, never more than 0.5%")
     && appSrcFee.includes("Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.")
-    && appSrcFee.includes("Number(r.platformFeeBps) > 0")
+    && appSrcFee.includes("r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0")
     && appSrcFee.includes("...(platformFeeUsd != null ? { platformFeeUsd, platformFeePct } : {})")
     && !appSrcFee.includes("collects ? platformFeeOn(r.fromAmount) : 0n"));
 
@@ -5812,60 +5705,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     globalThis.fetch = realFetchFee;
   }
 
-  // The same model on the LI.FI path: a route's own cost is its
-  // steps' fee costs plus gas costs, read on the fee-free pass.
-  const lifiRoute = () => ({ id: "r1", fromChainId: 8453, toChainId: 42161, fromAmount: "100000000", toAmount: "99000000", toAmountUSD: "99.0", fromAmountUSD: "100.0",
-    fromToken: { address: USDC_B, symbol: "USDC", decimals: 6 }, toToken: { address: USDC_A, symbol: "USDC", decimals: 6 },
-    steps: [{ id: "s1", type: "swap", estimate: { feeCosts: [{ name: "bridgeFee", amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], toAmountUSD: "99.0", fromAmountUSD: "100.0", executionDuration: 30 } }] });
-  // The same explicit costs ($0.02 bridge fee + $0.015 gas) on a
-  // route whose rate is tight: $99.99 arrives on $100, a $0.01
-  // shortfall.
-  const lifiRouteTight = () => ({ ...lifiRoute(), toAmount: "99990000", toAmountUSD: "99.99",
-    steps: [{ id: "s1", type: "swap", estimate: { feeCosts: [{ name: "bridgeFee", amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], toAmountUSD: "99.99", fromAmountUSD: "100.0", executionDuration: 30 } }] });
-  // The F2 route-cost definition (2026-11-10): the cost IS the
-  // all-in shortfall — lifiRoute's $1.00 shortfall prices the fee;
-  // the tight route's $0.01 shortfall prices it too, even though
-  // its declared components total $0.035 (declared components are
-  // estimates, not losses — the old larger-of combiner is what
-  // audit F2 removed). The explicit sum survives only as the
-  // fallback for an unreadable shortfall.
-  ok("fee model: a lifi route's cost is its all-in shortfall, explicit costs only as fallback",
-    Math.abs(lifiRouteFeeUsd(lifiRoute()) - 1.0) < 1e-9 && Math.abs(lifiRouteFeeUsd(lifiRouteTight()) - 0.01) < 1e-9
-    && lifiRouteFeeUsd({}) === 0 && lifiRouteFeeUsd({ steps: [{}] }) === 0);
-  try {
-    const bodies = [];
-    globalThis.fetch = async (url, opts) => {
-      const u = String(url);
-      if (u.includes("li.quest/v1/routes")) { bodies.push(JSON.parse(opts.body)); return jsonResFee({ routes: [lifiRouteTight()] }); }
-      throw new Error("unexpected url " + u);
-    };
-    const rs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
-    // Route cost $0.01 on a $100 input (the tight fixture's all-in
-    // shortfall under the F2 definition) into an EVM destination
-    // → 4× binds → 4 bps → fraction 0.0004, attached on pass 2
-    // only; the executed routes carry the bps.
-    ok("fee model: lifi two-pass reads the cost fee-free, then charges the computed fraction",
-      bodies.length === 2 && !("fee" in bodies[0].options) && bodies[0].options.integrator === "fluid-wallet"
-      && Math.abs(bodies[1].options.fee - 0.0004) < 1e-12 && rs.length === 1 && rs[0].platformFeeBps === 4);
-
-    const quoteUrls = [];
-    const lifiQuoteStep = () => ({ id: "q1", type: "swap",
-      action: { fromChainId: 8453, toChainId: 42161, fromAmount: "100000000", fromToken: { address: USDC_B, symbol: "USDC", decimals: 6 }, toToken: { address: USDC_A, symbol: "USDC", decimals: 6 } },
-      estimate: { toAmount: "99990000", toAmountMin: "99980000", toAmountUSD: "99.99", fromAmountUSD: "100.0", feeCosts: [{ amountUSD: "0.02" }], gasCosts: [{ amountUSD: "0.015" }], executionDuration: 30 },
-      transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: 8453 } });
-    globalThis.fetch = async (url, opts) => {
-      const u = String(url);
-      if (u.includes("li.quest/v1/routes")) return jsonResFee({ routes: [] });
-      if (u.includes("li.quest/v1/quote")) { quoteUrls.push(u); return jsonResFee(lifiQuoteStep()); }
-      throw new Error("unexpected url " + u);
-    };
-    const qs = await getLifiSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: USDC_B, toTokenAddress: USDC_A, fromAmount: "100000000", fromAddress: FUSER, toAddress: FUSER });
-    ok("fee model: lifi quote path runs its own two passes with the computed fee",
-      quoteUrls.length === 2 && !quoteUrls[0].includes("fee=") && quoteUrls[1].includes("fee=0.0004")
-      && qs.length === 1 && qs[0].platformFeeBps === 4 && qs[0].steps.length === 1);
-  } finally {
-    globalThis.fetch = realFetchFee;
-  }
+  // The LI.FI-path fee pins were removed with LI.FI (2026-11-13):
+  // the fee law itself is rail-agnostic and stays pinned above
+  // (pure pricing functions + the Relay two-pass wire pins).
 }
 
 // 66. Across as PRIMARY for same-asset EVM majors (2026-11-08, under
@@ -5956,7 +5798,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // Eligibility matrix.
   const planUsdc = acrossSupportsPair(ARGS100_A2);
   ok("across: Base USDC → Arbitrum USDC is eligible", !!planUsdc && planUsdc.asset === "USDC" && planUsdc.inputToken === BASE_USDC_A2 && planUsdc.outputToken === ARB_USDC_A2 && planUsdc.nativeInput === false);
-  const planWeth = acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN });
+  const planWeth = acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS });
   ok("across: Base native → Arbitrum native maps to the WETH hub", !!planWeth && planWeth.asset === "WETH" && planWeth.nativeInput === true && planWeth.inputToken.toLowerCase() === "0x4200000000000000000000000000000000000006" && planWeth.outputToken.toLowerCase() === "0x82af49447d8a07e3bd95bd0d56f35241523fbab1");
   const planBsc = acrossSupportsPair({ fromChainKey: "bsc", toChainKey: "base", fromTokenAddress: BSC_USDC_A2, toTokenAddress: BASE_USDC_A2, fromAmount: "100000000000000000000", fromAddress: AUSER, toAddress: AUSER });
   ok("across: BSC Binance-Peg USDC → Base USDC is eligible (peg pin)", !!planBsc && planBsc.inputToken === BSC_USDC_A2);
@@ -5964,8 +5806,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("across: different assets (USDC → USDT) are ineligible", acrossSupportsPair({ ...ARGS100_A2, toTokenAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" }) === null);
   ok("across: same chain is ineligible (Across is cross-chain only)", acrossSupportsPair({ ...ARGS100_A2, toChainKey: "base", toTokenAddress: BASE_USDC_A2 }) === null);
   ok("across: non-EVM source (Sui) is ineligible", acrossSupportsPair({ ...ARGS100_A2, fromChainKey: "sui" }) === null);
-  ok("across: WETH → Avalanche is ineligible (no WETH hub there)", acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toChainKey: "avalanche" }) === null);
-  ok("across: Polygon native (POL) is not an ETH-hub source", acrossSupportsPair({ fromChainKey: "polygon", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "1", fromAddress: AUSER, toAddress: AUSER }) === null);
+  ok("across: WETH → Avalanche is ineligible (no WETH hub there)", acrossSupportsPair({ ...ARGS100_A2, fromTokenAddress: NATIVE_TOKEN_ADDRESS, toChainKey: "avalanche" }) === null);
+  ok("across: Polygon native (POL) is not an ETH-hub source", acrossSupportsPair({ fromChainKey: "polygon", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "1", fromAddress: AUSER, toAddress: AUSER }) === null);
 
   // Quote request shape: appFee is a decimal fraction, only when set.
   const paramsFree = buildAcrossQuoteParams(ARGS100_A2, planUsdc);
@@ -6000,7 +5842,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // Native WETH lane: route cost priced off the bridge fee.
   const wethQuote = acrossQuoteA2({ inTok: "0x4200000000000000000000000000000000000006", outTok: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", inSym: "WETH", outSym: "WETH", inDec: 18, outDec: 18, inAmt: "50000000000000000", bridgeOut: "49967973172748906", bridgeRaw: "32026827251094", bridgeUsd: "0.106" });
-  const wethRoute = parseAcrossQuote(wethQuote, { ...ARGS100_A2, fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "50000000000000000" }, planWeth);
+  const wethRoute = parseAcrossQuote(wethQuote, { ...ARGS100_A2, fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "50000000000000000" }, planWeth);
   ok("across: native WETH lane parses with nativeInput + priced cost", !!wethRoute && wethRoute.across.nativeInput === true && Math.abs(wethRoute.routeFeeUsd - 0.106) < 0.002);
 
   // BSC 18-decimal peg → Base 6-decimal USDC: same-asset identity pricing.
@@ -6286,8 +6128,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const r = routes[0];
       ok("satora: dispatcher returns the Satora route for Polygon USDC -> Bitcoin", routes.length === 1 && r.provider === "satora" && r.toAmount === "132496");
       ok("satora: fee stack priced from the final quote (protocol + network + Fluid's 669 sats)", Math.abs(r.gasCostUSD - 1497 * BTC_USD_S7 / 1e8) < 1e-9 && r.platformFeeBps === 50 && r.platformFeeCollecting === true && Math.abs(r.platformFeeUsd - 669 * BTC_USD_S7 / 1e8) < 1e-9);
+      // Cheapest-entry (2026-11-14): a Bitcoin-family direct
+      // answer now also prices the family's other doors
+      // (the composition search runs after the direct search
+      // completes), so the stub sees more quotes in total —
+      // the two-pass discipline pinned here is the direct
+      // search's own, and its passes still come first.
       const q1 = new URL(seen.quotes[0]), q2 = new URL(seen.quotes[1]);
-      ok("satora: two-pass quoting — pass 1 at extra_fees=0, the law's 50 bps on pass 2, both under the live referral", seen.quotes.length === 2 && q1.searchParams.get("extra_fees") === "0" && q2.searchParams.get("extra_fees") === "50" && q1.searchParams.get("target_chain") === "Bitcoin" && q1.searchParams.get("ref") === SATORA_DEVELOPER_KEY && q2.searchParams.get("ref") === SATORA_DEVELOPER_KEY);
+      ok("satora: two-pass quoting — pass 1 at extra_fees=0, the law's 50 bps on pass 2, both under the live referral", seen.quotes.length >= 2 && q1.searchParams.get("extra_fees") === "0" && q2.searchParams.get("extra_fees") === "50" && q1.searchParams.get("target_chain") === "Bitcoin" && q1.searchParams.get("ref") === SATORA_DEVELOPER_KEY && q2.searchParams.get("ref") === SATORA_DEVELOPER_KEY);
       const ranked = rankSwapRoutes(routes, BTC_USD_S7);
       ok("satora: route ranks cheapest-first by net value", ranked[0].provider === "satora" && ranked[0].cheapest === true && Math.abs(ranked[0].netUsd - (ranked[0].toAmountUSD - ranked[0].gasCostUSD)) < 1e-9);
     } finally { globalThis.fetch = realFetch; }
@@ -6589,8 +6437,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // App wiring (source pins, as in sections 61/62/66).
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("satora: app offers Bitcoin/Lightning as destinations only, gates, reviews and polls",
-    appSrcSatora.includes('const swapDestNets = [...swapNets, "bitcoin", "lightning"]')
+  ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
+    appSrcSatora.includes('const swapDestNets = [...swapNets];')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -7072,7 +6921,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // Fee-free parse: honest pricing, executable shape.
   const freeRouteJ8 = parseJupiterBuild(buildRespJ8(), ARGS_J8, { prices: PRICES_J8 });
-  ok("jupiter: fee-free build parses to a route", !!freeRouteJ8 && freeRouteJ8.provider === "jupiter" && freeRouteJ8.fromChainId === SOLANA_LIFI_CHAIN_ID && freeRouteJ8.toChainId === SOLANA_LIFI_CHAIN_ID && freeRouteJ8.toAmount === "20000000" && freeRouteJ8.toAmountMin === "19900000");
+  ok("jupiter: fee-free build parses to a route", !!freeRouteJ8 && freeRouteJ8.provider === "jupiter" && freeRouteJ8.fromChainId === SOLANA_SWAP_CHAIN_ID && freeRouteJ8.toChainId === SOLANA_SWAP_CHAIN_ID && freeRouteJ8.toAmount === "20000000" && freeRouteJ8.toAmountMin === "19900000");
   ok("jupiter: route cost is the all-in shortfall against the gross output", !!freeRouteJ8 && Math.abs(freeRouteJ8.routeFeeUsd - 0.02) < 1e-6 && Math.abs(freeRouteJ8.fromAmountUSD - 20.02) < 1e-9 && Math.abs(freeRouteJ8.toAmountUSD - 20) < 1e-9);
   ok("jupiter: fee-free route is not collecting and passes its bounds check", !!freeRouteJ8 && freeRouteJ8.platformFeeCollecting === false && freeRouteJ8.platformFeeRaw === "0" && checkJupiterSwapBounds(freeRouteJ8, USER_J8).ok === true);
   ok("jupiter: parsed route is executable-shaped (jupiter gate, not the LI.FI SVM gate)", !!freeRouteJ8 && swapRouteExecutable(freeRouteJ8).ok === true && swapRouteExecutable(freeRouteJ8).jupiter === true);
@@ -7169,7 +7018,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     } finally { globalThis.fetch = realFetch; }
   }
 
-  // 429 on the lite bucket -> LI.FI serves the pair, unchanged.
+  // 429 on the lite bucket -> NO route: since the LI.FI removal
+  // (2026-11-13) no second rail serves Solana same-chain, so the
+  // honest answer is an empty search, never a phantom fallback.
   {
     const realFetch = globalThis.fetch;
     let jupBuilds = 0;
@@ -7177,14 +7028,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const u = String(url);
       if (u.includes("lite-api.jup.ag/price")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 }, [USDC_J8]: { usdPrice: 1, decimals: 6 } });
       if (u.includes("lite-api.jup.ag/swap/v2/build")) { jupBuilds++; return jsonResJ8({ code: 429, message: "Too many requests" }, false, 429); }
-      if (u.includes("li.quest/v1/routes")) return jsonResJ8({ routes: [lifiRouteJ8()] });
       throw new Error("unexpected fetch in jupiter 429 stub: " + u);
     };
     try {
       const routes = await getSwapRoutes(ARGS_J8);
-      ok("jupiter: a 429 from the lite bucket falls back to LI.FI", jupBuilds >= 1 && routes.length === 1 && routes[0].id === "lifi-sol-fixture" && routes[0].provider !== "jupiter");
+      ok("jupiter: a 429 from the lite bucket is an honest empty (no lifi fallback exists)",
+        jupBuilds >= 1 && routes.length === 0);
     } finally { globalThis.fetch = realFetch; }
   }
+
 
   // Isolation: non-Solana pairs and Solana cross-chain never touch
   // the Jupiter API at all.
@@ -7203,14 +7055,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       if (u.includes("lite-api.jup.ag")) return jsonResJ8({ [WSOL_J8]: { usdPrice: 88, decimals: 9 } });
       if (u.includes("app.across.to")) return jsonResJ8({ message: "Too Many Requests" }, false, 429);
       if (u.includes("api.relay.link/quote")) return jsonResJ8(relayQuoteMinJ8());
-      if (u.includes("li.quest/v1/routes")) return jsonResJ8({ routes: [lifiRouteJ8()] });
       throw new Error("unexpected fetch in jupiter isolation stub: " + u);
     };
     try {
       const evm = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "100000000", fromAddress: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", toAddress: "0x0EBf5563F905E3B9D58718E28E08143511DC763b" });
       ok("jupiter: EVM pairs never touch Jupiter and keep the existing order", evm.length === 1 && evm[0].provider === "relay" && jupCalls === 0);
       const xchain = await getSwapRoutes({ ...ARGS_J8, toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
-      ok("jupiter: Solana cross-chain stays on LI.FI (Jupiter is Solana-internal)", xchain.length === 1 && xchain[0].id === "lifi-sol-fixture" && jupCalls === 0);
+      ok("jupiter: Solana cross-chain never touches Jupiter (Mayan's lane; unanswered here = honest empty)", xchain.length === 0 && jupCalls === 0);
     } finally { globalThis.fetch = realFetch; }
   }
 
@@ -7253,12 +7104,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const intentJ8 = formatSwapIntent({ fromAmount: "0.2275", fromSymbol: "SOL", fromNetKey: "solana", toAmount: "19.902", toSymbol: "USDC", toNetKey: "solana", toolName: "Jupiter", feeUsd: 0.0006, durationSec: null, platformFeeUsd: 0.098, platformFeePct: 0.49 });
   ok("jupiter: intent sentence names Jupiter + the fee", intentJ8.includes("via Jupiter") && intentJ8.includes("Fluid fee: $0.10 (0.49%)"));
   const appSrcJ8 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("jupiter: app names the router, discloses its fee from the quote, and executes it before the LI.FI Solana branch",
+  ok("jupiter: app names the router, discloses its fee from the quote, and executes it via the jupiter executor",
     appSrcJ8.includes('if (route && route.provider === "jupiter") return "Jupiter";')
     && appSrcJ8.includes('r.provider === "jupiter" && r.platformFeeCollecting === true')
     && appSrcJ8.includes("executeJupiterSwapRoute(wallet.mnemonic.phrase, route")
-    && appSrcJ8.indexOf('route.provider === "jupiter"') > appSrcJ8.indexOf('route.provider === "across"')
-    && appSrcJ8.indexOf("executeJupiterSwapRoute(wallet.mnemonic.phrase, route") < appSrcJ8.indexOf('hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route'));
+    && !appSrcJ8.includes("executeSolanaSwapRoute"));
   const coreSrcJ8 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("jupiter: core pins the lite base, the aggregator program, and bounds-checks before signing",
     coreSrcJ8.includes("https://lite-api.jup.ag")
@@ -7384,21 +7234,25 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("mayan: EVM -> Solana is OUT (verified tie, owner's rule)", mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "solana", toTokenAddress: USDC_SOL_M, toAddress: SOL_USER_M }) === false);
   ok("mayan: same-chain pairs are out", mayanSupportsPair({ ...argsSolM, toChainKey: "solana", toTokenAddress: USDC_SOL_M }) === false
     && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "base", toTokenAddress: USDC_BASE_M }) === false);
-  ok("mayan: Sui is out on both sides in v1 (construction probe — see report)", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "sui" }) === false
+  ok("mayan: Sui as a DESTINATION is out of this gate (gas-drop lift only), and a Sui source with a non-Sui token is out", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "sui" }) === false
     && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "sui" }) === false && mayanSupportsPair({ ...argsSolM, toChainKey: "sui" }) === false);
   ok("mayan: chains outside the catalog are out", mayanSupportsPair({ ...argsEvmDirectM, fromChainKey: "fuse" }) === false
     && mayanSupportsPair({ ...argsEvmDirectM, toChainKey: "bitcoin" }) === false && mayanSupportsPair({ ...argsSolM, fromChainKey: "tron" }) === false);
   ok("mayan: chain/token mapping", mayanChainNameOf("base") === "base" && mayanChainNameOf("solana") === "solana" && mayanChainNameOf("tron") === null
-    && mayanTokenOf("base", LIFI_NATIVE_TOKEN) === "0x0000000000000000000000000000000000000000"
+    && mayanTokenOf("base", NATIVE_TOKEN_ADDRESS) === "0x0000000000000000000000000000000000000000"
     && mayanTokenOf("solana", SOLANA_SWAP_NATIVE_TOKEN) === WSOL_M && mayanTokenOf("solana", "not-an-address") === null);
   // 2026-11-11 (destination-gas build): Sui became NAMEABLE so the
-  // gas-drop lift can quote Fast MCTP into it — the contest gate
-  // pinned above still excludes every Sui pair, and exactly one
-  // Sui token (USDC, the CCTP asset) resolves there.
-  ok("mayan: Sui is nameable for the gas lift but only USDC resolves there",
+  // gas-drop lift can quote Fast MCTP into it. 2026-11-14
+  // (server-swap port): native SUI and USDT now resolve too —
+  // as Sui-SOURCE inputs riding the pinned server slices; the
+  // gas lift's own gate still restricts Sui DESTINATIONS to
+  // USDC. Anything else on Sui stays unnameable.
+  ok("mayan: Sui names USDC, native SUI and USDT — nothing else",
     mayanChainNameOf("sui") === "sui"
     && mayanTokenOf("sui", SUI_TOKENS.find(t => t.symbol === "USDC").address) === SUI_TOKENS.find(t => t.symbol === "USDC").address
-    && mayanTokenOf("sui", SUI_COIN_TYPE) === null && mayanTokenOf("sui", "0x123") === null);
+    && mayanTokenOf("sui", SUI_COIN_TYPE) === SUI_COIN_TYPE
+    && mayanTokenOf("sui", SUI_TOKENS.find(t => t.symbol === "USDT").address) === SUI_TOKENS.find(t => t.symbol === "USDT").address
+    && mayanTokenOf("sui", "0x123") === null);
 
   // Quote-request wire shape: the API's traps are all disarmed.
   {
@@ -7660,18 +7514,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // the pre-2026-11-11 form ("Mayan offered only when it ranks
   // first, else dropped and the incumbent returned untouched")
   // was superseded by the owner's merit-ranking direction.
-  const lifiRouteM = (toUsd) => ({ id: "lifi-mayan-fixture", fromAmountUSD: "100.10", toAmountUSD: String(toUsd), fromAmount: "100000000", toAmount: String(Math.round(toUsd * 1e6)),
-    steps: [{ estimate: { feeCosts: [{ amountUSD: "0.20" }], gasCosts: [{ amountUSD: "0.01" }], toAmountUSD: String(toUsd), fromAmountUSD: "100.10" } }] });
   const relayQuoteM = (outUsd) => ({ requestId: "0x68", steps: [{ id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: EVM_USER_M, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678", value: "0", chainId: 8453 } }] }],
     fees: { gas: { amountUsd: "0.001" }, app: { amount: "0", amountUsd: "0" } },
     details: { sender: EVM_USER_M, recipient: EVM_USER_M, currencyIn: { currency: { chainId: 8453, address: USDC_BASE_M, symbol: "USDC", decimals: 6 }, amount: "100000000", amountUsd: "100.0" }, currencyOut: { currency: { chainId: 42161, address: USDC_ARB_M, symbol: "USDC", decimals: 6 }, amount: String(Math.round(outUsd * 1e6)), amountUsd: String(outUsd), minimumAmount: "99000000" }, timeEstimate: 1 } });
-  const stubRankingM = ({ mayanQuoteFor, lifiToUsd = null, relayOutUsd = null }) => {
+  const stubRankingM = ({ mayanQuoteFor, relayOutUsd = null }) => {
     const realFetch = globalThis.fetch; const mayanCalls = { n: 0 };
     globalThis.fetch = async (url, opts) => {
       const u = String(url);
       if (u.includes("lite-api.jup.ag/price")) return jsonResM({ [WSOL_M]: { usdPrice: 10, decimals: 9 } });
       if (u.includes("price-api.mayan.finance")) { mayanCalls.n++; const b = JSON.parse(opts.body); return jsonResM({ quotes: [mayanQuoteFor(b)] }); }
-      if (u.includes("li.quest")) return jsonResM({ routes: [lifiRouteM(lifiToUsd)] });
       if (u.includes("app.across.to")) return jsonResM({ message: "Too Many Requests" }, false, 429);
       if (u.includes("api.relay.link")) return jsonResM(relayQuoteM(relayOutUsd));
       throw new Error("unexpected fetch in mayan ranking stub: " + u);
@@ -7679,19 +7530,19 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     return { mayanCalls, restore: () => { globalThis.fetch = realFetch; } };
   };
   {
-    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM(), lifiToUsd: 99.55 });
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM() });
     try {
       const routes = await getSwapRoutes(argsSolM);
-      ok("mayan: RANKED — a cheaper Mayan quote leads the list, the incumbent ranked behind it",
-        routes.length === 2 && routes[0].provider === "mayan" && routes[1].id === "lifi-mayan-fixture" && stub.mayanCalls.n >= 2);
+      ok("mayan: Solana-source is Mayan's lane alone since the LI.FI removal",
+        routes.length === 1 && routes[0].provider === "mayan" && stub.mayanCalls.n >= 2);
     } finally { stub.restore(); }
   }
   {
-    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM(), lifiToUsd: 99.95 });
+    const stub = stubRankingM({ mayanQuoteFor: (b) => b.referrerBps ? withFeeM(swiftSolQuoteM(), b.referrerBps, 99.934069 - (b.referrerBps / 100) / 0.99976019) : swiftSolQuoteM() });
     try {
       const routes = await getSwapRoutes(argsSolM);
-      ok("mayan: RANKED — a pricier Mayan quote ranks behind the incumbent (merit list, never dropped, never leading)",
-        routes.length === 2 && routes[0].id === "lifi-mayan-fixture" && routes[1].provider === "mayan");
+      ok("mayan: a pricier Mayan quote still serves Solana-source (sole rail, merit list of one)",
+        routes.length === 1 && routes[0].provider === "mayan");
     } finally { stub.restore(); }
   }
   {
@@ -7722,12 +7573,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     } finally { stub.restore(); }
   }
   {
-    // A Mayan outage removes the candidate, never the swap.
-    const stub = stubRankingM({ mayanQuoteFor: () => { throw new Error("mayan down"); }, lifiToUsd: 99.55 });
+    // A Mayan outage on a Solana-source pair is an honest empty
+    // since the LI.FI removal (2026-11-13): Mayan is the sole rail
+    // for that lane, so its failure removes the swap, not just the
+    // candidate — never a phantom route.
+    const stub = stubRankingM({ mayanQuoteFor: () => { throw new Error("mayan down"); } });
     try {
       const routes = await getSwapRoutes(argsSolM);
-      ok("mayan: a Mayan failure falls back to the incumbent untouched",
-        routes.length === 1 && routes[0].id === "lifi-mayan-fixture");
+      ok("mayan: a Mayan failure on its sole-rail lane is an honest empty",
+        routes.length === 0);
     } finally { stub.restore(); }
   }
 
@@ -8492,6 +8346,403 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Mercuryo")));
 }
 
+// ---------- Mayan Fast MCTP from Sui (2026-11-14 bridge-origin port) ----------
+// Closes LI.FI-removal gap (b): Sui-SOURCE cross-chain swaps.
+// Fixtures are shaped on the live quotes probed 2026-11-14
+// (Sui USDC -> Base USDC bridge, Sui USDC -> Base ETH auction,
+// fee-bearing at 50 bps) and the pinned ids are the ones
+// @mayanfinance/swap-sdk@15.3.0 ships, cross-checked on chain
+// (the Fast MCTP state's latest_package_id was the package the
+// live quotes named; the currency object's type is
+// 0x2::coin_registry::Currency<USDC>).
+{
+  const MS_USER = "0x" + "ab".repeat(32);
+  const MS_STRANGER = "0x" + "ee".repeat(32);
+  const MS_EVM = "0x2222222222222222222222222222222222222222";
+  const MS_EVM2 = "0x3333333333333333333333333333333333333333";
+  const MS_USDC = SUI_TOKENS[0].address, MS_USDT = SUI_TOKENS[1].address;
+  const MS_BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const MS_SOL_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const MS_PKG = "0x1d2e4a268caf2c9a6cca996f9dfb5590b02628e8da5d5c92de89b386a3770af1";
+  const futureDlMS = () => String(Math.floor(Date.now() / 1000) + 86400);
+  const bridgeQuoteMS = (over = {}) => ({
+    type: "FAST_MCTP", hasAuction: false, gasless: false, fromChain: "sui", toChain: "base",
+    effectiveAmountIn64: "10000000", effectiveAmountIn: 10, expectedAmountOut: 9.993457, expectedAmountOutBaseUnits: "9993457",
+    minReceivedBaseUnits: "9893557", minAmountOut: 9.893557, price: 0.9993, toTokenPrice: 1, protocolFeeUsd: 0.003,
+    referrerBps: 0, referrerFeeUsd: 0, deadline64: futureDlMS(), etaSeconds: 5, rentCost: "4668200", slippageBps: 100,
+    redeemRelayerFee: 0.003544, redeemRelayerFee64: "3544", circleMaxFee64: "0", fastMctpMinFinality: 2000, gasDrop: 0,
+    fastMctpMayanContract: MS_PKG, fastMctpInputContract: MS_USDC, fastMctpInputCurrencyId: MAYAN_SUI_USDC_CURRENCY_ID,
+    fromToken: { contract: MS_USDC, symbol: "USDC", decimals: 6, currencyId: MAYAN_SUI_USDC_CURRENCY_ID },
+    toToken: { contract: MS_BASE_USDC, symbol: "USDC", decimals: 6 },
+    ...over,
+  });
+  const auctionQuoteMS = (over = {}) => bridgeQuoteMS({
+    hasAuction: true, expectedAmountOut: 0.00520339632122404, expectedAmountOutBaseUnits: "5203396321224040",
+    minReceivedBaseUnits: "5151362358011800", minAmountOut: 0.0051513623580118, price: 0.0005206420708657334, toTokenPrice: 1918.52,
+    redeemRelayerFee: 0.011352, redeemRelayerFee64: "11352", refundRelayerFee64: "3277", minMiddleAmount: 10,
+    toToken: { contract: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18 },
+    ...over,
+  });
+  const argsBridgeMS = { fromChainKey: "sui", toChainKey: "base", fromTokenAddress: MS_USDC, toTokenAddress: MS_BASE_USDC, fromAmount: "10000000", fromAddress: MS_USER, toAddress: MS_EVM };
+  const argsAuctionMS = { ...argsBridgeMS, toTokenAddress: "0x0000000000000000000000000000000000000000" };
+  const ctxMS = (feeBps = 0) => ({ feeBps, symbolPricesUsd: { USDC: 1, SUI: 0.8, ETH: 1918.52 } });
+
+  ok("mayan-sui: the pinned ids are the SDK 15.3.0 shipped constants (cross-checked on chain 2026-11-14)",
+    MAYAN_SUI_FAST_MCTP_STATE === "0x8231922f490a56cec07921b9c8113577e7e54aef5cb93a156d71f83ced7095e5"
+    && MAYAN_SUI_USDC_CURRENCY_ID === "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a"
+    && MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE === "0xeb14978abfe93a37c5d5bf86a0623b923553a5f0e794daac7724f1e2fdbfb830"
+    && MAYAN_SUI_CCTP_V2_TOKEN_STATE === "0x06fb166941cd7bc095edc019d054a753ec3f1e4c25f28f2ecc4a6cfa0a9b1167"
+    && MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE === "0x185ed207c4d64fc594882ab927f9f3c6ff957aad03df8a731ba64378faeeb2bf"
+    && MAYAN_SUI_CCTP_V2_HANDLER_STATE === "0xa32de8a6dd0178fb05f662929d55cddb69a25c26bde4b83f89e36d17ead94c41"
+    && MAYAN_SUI_CCTP_V2_CORE_STATE === "0x0c067f7d325e5b60e3179712e7783534ba1556cbb3d359d8161497e37689230c"
+    && MAYAN_SUI_USDC_TREASURY === "0x57d6725e7a8b49a7b2a612f6bd66ab5f39fc95332ca48be421c3229d514a6de7"
+    && MAYAN_SUI_DENY_LIST === "0x403" && mayanSuiUsdcCoinType() === MS_USDC);
+
+  // Supports matrix: the served set, and only the served set.
+  ok("mayan-sui: USDC out of Sui is eligible to every CCTP-domain destination family",
+    mayanSupportsPair(argsBridgeMS) === true
+    && mayanSupportsPair({ ...argsBridgeMS, toChainKey: "ethereum", toTokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" }) === true
+    && mayanSupportsPair({ ...argsBridgeMS, toChainKey: "solana", toTokenAddress: MS_SOL_USDC, toAddress: MAYAN_REFERRER_SOLANA }) === true
+    && mayanSupportsPair(argsAuctionMS) === true);
+  // 2026-11-14 (server-swap port): native SUI and USDT inputs
+  // are now eligible too — they convert through Mayan's pinned
+  // server slices at execution (§105 pins the grammar).
+  ok("mayan-sui: SUI and USDT inputs are eligible since the server-swap port",
+    mayanSupportsPair({ ...argsBridgeMS, fromTokenAddress: MS_USDT }) === true
+    && mayanSupportsPair({ ...argsBridgeMS, fromTokenAddress: SUI_SWAP_NATIVE_TOKEN }) === true
+    && mayanSupportsPair({ ...argsBridgeMS, fromTokenAddress: MS_USDC }) === true);
+  ok("mayan-sui: non-CCTP destinations, Sui destinations and bad senders stay out",
+    mayanSupportsPair({ ...argsBridgeMS, toChainKey: "bsc", toTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }) === false
+    && mayanSupportsPair({ ...argsBridgeMS, toChainKey: "sui", toTokenAddress: MS_USDT }) === false
+    && mayanSupportsPair({ ...argsBridgeMS, toChainKey: "tron", toTokenAddress: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" }) === false
+    && mayanSupportsPair({ ...argsBridgeMS, fromAddress: MAYAN_REFERRER_SOLANA }) === false
+    && mayanSupportsPair({ ...argsBridgeMS, fromAddress: "not-an-address" }) === false
+    && mayanSupportsPair({ ...argsBridgeMS, fromAddress: null }) === false);
+
+  ok("mayan-sui: the quote body names Sui and its USDC like any other Mayan ask",
+    (() => { const b = buildMayanQuoteBody(argsBridgeMS); return b.fromChain === "sui" && b.toChain === "base" && b.fromToken === MS_USDC && b.amountIn64 === "10000000"; })());
+
+  // Parse: accept the proven shapes.
+  const routeBridgeMS = parseMayanQuote(bridgeQuoteMS(), argsBridgeMS, ctxMS(0));
+  ok("mayan-sui parse: a bridge quote parses, executable, with the MIST rent line priced in SUI",
+    !!routeBridgeMS && routeBridgeMS.provider === "mayan" && routeBridgeMS.toAmount === "9993457"
+    && Math.abs(routeBridgeMS.gasCostUSD - (4668200 / 1e9) * 0.8) < 1e-12
+    && swapRouteExecutable(routeBridgeMS).ok === true);
+  const routeAuctionMS = parseMayanQuote(auctionQuoteMS(), argsAuctionMS, ctxMS(0));
+  ok("mayan-sui parse: an auction quote parses (the create-order shape)",
+    !!routeAuctionMS && routeAuctionMS.mayan.hasAuction === true && swapRouteExecutable(routeAuctionMS).ok === true);
+  const routeFeeMS = parseMayanQuote(bridgeQuoteMS({ referrerBps: 50, referrerFeeUsd: 0.04998229, expectedAmountOut: 9.943477, expectedAmountOutBaseUnits: "9943477", minReceivedBaseUnits: "9845030", minAmountOut: 9.845030 }), argsBridgeMS, ctxMS(50));
+  ok("mayan-sui parse: a fee-bearing quote collects under the fee law (destination-family referrer)",
+    !!routeFeeMS && routeFeeMS.platformFeeCollecting === true && Math.abs(routeFeeMS.platformFeeUsd - 0.04998229) < 1e-9
+    && mayanReferrerFor(routeFeeMS.mayan.quote) === MAYAN_REFERRER_EVM);
+
+  // Parse: refuse everything outside the ported grammar.
+  ok("mayan-sui parse: Swift-from-Sui, server-swap inputs and forged ids are refused",
+    parseMayanQuote(bridgeQuoteMS({ type: "SWIFT", swiftVersion: "V2", swiftMayanContract: MS_PKG, swiftInputContract: MS_USDC, cancelRelayerFee64: "1" }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(bridgeQuoteMS({ fastMctpInputContract: MS_USDT }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(bridgeQuoteMS({ fastMctpInputCurrencyId: MS_STRANGER }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(bridgeQuoteMS({ fromToken: { contract: MS_USDC, symbol: "USDC", decimals: 6, currencyId: MS_STRANGER } }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(bridgeQuoteMS({ fastMctpMayanContract: "not-an-address" }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(bridgeQuoteMS({ referrerBps: 50, referrerFeeUsd: 0.05 }), argsBridgeMS, ctxMS(0)) === null
+    && parseMayanQuote(auctionQuoteMS({ deadline64: "1" }), argsAuctionMS, ctxMS(0)) === null);
+  ok("mayan-sui: the executability gate refuses stripped or re-shaped Sui routes",
+    swapRouteExecutable({ ...routeBridgeMS, mayan: { ...routeBridgeMS.mayan, quote: undefined } }).ok === false
+    && swapRouteExecutable({ ...routeBridgeMS, mayan: { ...routeBridgeMS.mayan, routeType: "SWIFT" } }).ok === false
+    && swapRouteExecutable({ ...routeBridgeMS, mayan: { ...routeBridgeMS.mayan, quote: { ...routeBridgeMS.mayan.quote, fastMctpInputCurrencyId: MS_STRANGER } } }).ok === false);
+
+  // Two-pass fee discipline through the real search entry.
+  {
+    const realFetch = globalThis.fetch; const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("price-api.mayan.finance/v3/quote")) {
+        const b = JSON.parse(opts.body); bodies.push(b);
+        const bps = Number(b.referrerBps) || 0;
+        return { ok: true, status: 200, json: async () => ({ quotes: [bps > 0
+          ? bridgeQuoteMS({ referrerBps: bps, referrerFeeUsd: bps * 0.001, expectedAmountOut: 9.943477, expectedAmountOutBaseUnits: "9943477", minReceivedBaseUnits: "9845030", minAmountOut: 9.845030 })
+          : bridgeQuoteMS()] }) };
+      }
+      if (u.includes("lite-api.jup.ag/price")) return { ok: true, json: async () => ({}) };
+      if (u.includes("api.binance.com")) return { ok: true, json: async () => [{ symbol: "SUIUSDT", price: "0.8" }, { symbol: "USDCUSDT", price: "1" }] };
+      if (u.includes("api.coingecko.com")) return { ok: true, json: async () => ({ sui: { usd: 0.8 }, "usd-coin": { usd: 1 } }) };
+      if (u.includes("api.dexscreener.com")) return { ok: true, json: async () => ({ pairs: [] }) };
+      throw new Error("unexpected fetch in mayan-sui stub: " + u);
+    };
+    try {
+      resetPricesCache();
+      const r = await getMayanSwapRoute(argsBridgeMS);
+      ok("mayan-sui: the two-pass search returns a fee-collecting route and builds NO EVM payload for a Sui source",
+        !!r && r.provider === "mayan" && r.platformFeeCollecting === true && r.platformFeeBps > 0 && r.platformFeeBps <= 50
+        && r.mayan.tx == null && bodies.length >= 2 && !("referrerBps" in bodies[0]) && Number(bodies[1].referrerBps) === r.platformFeeBps
+        && swapRouteExecutable(r).ok === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Compose + inspect: the grammar, and its refusals.
+  const coinsMS = [{ objectId: "0x" + "11".repeat(32), balance: "4000000" }, { objectId: "0x" + "22".repeat(32), balance: "9000000" }];
+  const coinIdsMS = coinsMS.map(c => c.objectId);
+  const txBridgeMS = composeMayanSuiFastMctpTx(routeBridgeMS, MS_USER, { coins: coinsMS, fastMctpPackageId: MS_PKG });
+  const dataBridgeMS = txBridgeMS.getData();
+  ok("mayan-sui compose: the bridge PTB is Fluid's coin prefix + the six pinned calls, and it inspects clean",
+    JSON.stringify(dataBridgeMS.commands.map(c => c.$kind === "MoveCall" ? `${c.MoveCall.module}::${c.MoveCall.function}` : c.$kind))
+      === JSON.stringify(["MergeCoins", "SplitCoins", "bridge::prepare_bridge", "bridge::bridge", "deposit_for_burn::deposit_for_burn_with_package_auth", "handler::burn", "deposit_for_burn::complete_burn", "bridge::log_initialize_fast_mctp"])
+    && checkMayanSuiPtbSafety(dataBridgeMS, routeBridgeMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === true);
+  const txAuctionMS = composeMayanSuiFastMctpTx(routeAuctionMS, MS_USER, { coins: coinsMS, fastMctpPackageId: MS_PKG });
+  const dataAuctionMS = txAuctionMS.getData();
+  ok("mayan-sui compose: the auction PTB swaps the prepare pair for create_order and inspects clean",
+    JSON.stringify(dataAuctionMS.commands.map(c => c.$kind === "MoveCall" ? `${c.MoveCall.module}::${c.MoveCall.function}` : c.$kind))
+      === JSON.stringify(["MergeCoins", "SplitCoins", "create_order::prepare_create_order", "create_order::create_order", "deposit_for_burn::deposit_for_burn_with_package_auth", "handler::burn", "deposit_for_burn::complete_burn", "bridge::log_initialize_fast_mctp"])
+    && checkMayanSuiPtbSafety(dataAuctionMS, routeAuctionMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === true);
+  ok("mayan-sui compose: a single coin needs no merge; an underfunded coin set throws instead of composing",
+    (() => { const one = [{ objectId: coinIdsMS[1], balance: "10000000" }];
+      const d = composeMayanSuiFastMctpTx(routeBridgeMS, MS_USER, { coins: one, fastMctpPackageId: MS_PKG }).getData();
+      return d.commands[0].$kind === "SplitCoins" && checkMayanSuiPtbSafety(d, routeBridgeMS, MS_USER, { inputCoinIds: [coinIdsMS[1]], fastMctpPackageId: MS_PKG }).ok === true; })()
+    && (() => { try { composeMayanSuiFastMctpTx(routeBridgeMS, MS_USER, { coins: [{ objectId: coinIdsMS[0], balance: "5" }], fastMctpPackageId: MS_PKG }); return false; } catch { return true; } })());
+
+  // Tamper refusals: the inspected PTB must be the reviewed route.
+  const routeOtherDestMS = parseMayanQuote(bridgeQuoteMS(), { ...argsBridgeMS, toAddress: MS_EVM2 }, ctxMS(0));
+  const routeBiggerMS = parseMayanQuote(bridgeQuoteMS({ effectiveAmountIn64: "20000000", effectiveAmountIn: 20 }), { ...argsBridgeMS, fromAmount: "20000000" }, ctxMS(0));
+  ok("mayan-sui safety: a PTB checked against a different destination or amount is refused",
+    checkMayanSuiPtbSafety(dataBridgeMS, routeOtherDestMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false
+    && checkMayanSuiPtbSafety(dataBridgeMS, routeBiggerMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false
+    && checkMayanSuiPtbSafety(dataBridgeMS, routeAuctionMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false);
+  ok("mayan-sui safety: package drift, a foreign sender, a foreign coin and extra commands are refused",
+    checkMayanSuiPtbSafety(dataBridgeMS, routeBridgeMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_STRANGER }).ok === false
+    && checkMayanSuiPtbSafety(dataBridgeMS, routeBridgeMS, MS_STRANGER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false
+    && checkMayanSuiPtbSafety(dataBridgeMS, routeBridgeMS, MS_USER, { inputCoinIds: [coinIdsMS[0]], fastMctpPackageId: MS_PKG }).ok === false
+    && (() => { const d = JSON.parse(JSON.stringify(dataBridgeMS)); d.commands.push({ $kind: "TransferObjects", TransferObjects: { objects: [], address: null } }); return checkMayanSuiPtbSafety(d, routeBridgeMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false; })()
+    && (() => { const d = JSON.parse(JSON.stringify(dataBridgeMS)); const t = d.commands[2]; d.commands[2] = d.commands[3]; d.commands[3] = t; return checkMayanSuiPtbSafety(d, routeBridgeMS, MS_USER, { inputCoinIds: coinIdsMS, fastMctpPackageId: MS_PKG }).ok === false; })());
+
+  // Composition: a Sui-source Mayan route is a valid first leg.
+  {
+    const legRouteMS = parseMayanQuote(bridgeQuoteMS({ toChain: "solana", toToken: { contract: MS_SOL_USDC, symbol: "USDC", decimals: 6 }, price: 0.9642, expectedAmountOut: 9.642071, expectedAmountOutBaseUnits: "9642071", minReceivedBaseUnits: "9549073", minAmountOut: 9.549073 }),
+      { ...argsBridgeMS, toChainKey: "solana", toTokenAddress: MS_SOL_USDC, toAddress: MAYAN_REFERRER_SOLANA }, ctxMS(0));
+    const composed = await searchMilestoneCompositions(
+      { fromChainKey: "sui", toChainKey: "solana", fromTokenAddress: MS_USDC, toTokenAddress: MS_SOL_USDC, fromAmount: "10000000", fromAddress: MS_USER, toAddress: MAYAN_REFERRER_SOLANA },
+      { searchLeg: async () => [legRouteMS], pricesUsd: { USDC: 1 } });
+    ok("mayan-sui: the route serves as a milestone composition's source leg and the composition is executable",
+      composed.length === 1 && composed[0].milestoneLegRoutes[0].provider === "mayan"
+      && composed[0].milestone.legs[0].fromChainKey === "sui" && swapRouteExecutable(composed[0]).ok === true);
+  }
+}
+
+// §105 Mayan Sui SERVER-SWAP inputs (2026-11-14): native SUI and
+// USDT out of Sui convert through Mayan's server-built slices
+// (POST get-swap/sui) before Fluid's own bridge section. The
+// fixtures are LIVE captures (quote + slice, 2026-11-14 —
+// research_notes/fluid-mayan-sui-server-swap-20261114/): the
+// endpoint answers in exactly two grammars — (A) Fluid's own
+// Cetus aggregator (USDT inputs) and (B) a wrapper aggregator
+// (native SUI) — and the pins below hold both, plus the
+// tamper refusals. The slices carry NO referrer carve-out:
+// the fee rides the bridge ticket, as the fee50 capture proved
+// (its slice is structurally identical to the fee-free one).
+{
+  const F105 = (n) => JSON.parse(readFileSync(`test/fixtures/${n}.json`, "utf8"));
+  const single105 = F105("mayan-sui-slice-router-single");   // 50 SUI → Base USDC, grammar B, 1 path
+  const multi105 = F105("mayan-sui-slice-router-multi");     // 5 SUI → Base USDC, grammar B, 3 paths
+  const auction105 = F105("mayan-sui-slice-router-auction"); // 50 SUI → Base ETH (auction), grammar B
+  const usdt105 = F105("mayan-sui-slice-cetus-usdt");        // 10 USDT → Base USDC, grammar A
+  const sol105 = F105("mayan-sui-slice-router-sol");         // 5 SUI → Solana USDC, grammar B
+  const PKG105 = "0x1d2e4a268caf2c9a6cca996f9dfb5590b02628e8da5d5c92de89b386a3770af1";
+  const DEST105 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const STRANGER105 = "0x" + "99".repeat(32);
+  const ctx105 = (feeBps = 0) => ({ feeBps, symbolPricesUsd: { USDC: 1, USDT: 1, SUI: 0.78, ETH: 3000 } });
+  const args105 = (f, toTokenAddress, toChainKey = "base", toAddress = DEST105) => ({
+    fromChainKey: "sui", toChainKey, fromTokenAddress: f.quote.fromToken.contract, toTokenAddress,
+    fromAmount: String(f.quote.effectiveAmountIn64), fromAddress: f.user, toAddress });
+  const route105 = (f, to, feeBps = 0, toChainKey, toAddress) => parseMayanQuote(structuredClone(f.quote), args105(f, to, toChainKey, toAddress), ctx105(feeBps));
+  const dataOf105 = (f, sender = f.user) => { const tx = SuiTx105.from(f.sliceTx); tx.setSender(sender); return tx.getData(); };
+  const coinIdsOf105 = (data) => {
+    const ids = [];
+    for (const c of data.commands) {
+      if (c.$kind !== "MergeCoins" && c.$kind !== "SplitCoins") continue;
+      const args = c.$kind === "MergeCoins" ? [c.MergeCoins.destination, ...(c.MergeCoins.sources || [])] : [c.SplitCoins.coin];
+      for (const a of args) if (a.$kind === "Input") {
+        const inp = data.inputs[a.Input];
+        const id = inp?.UnresolvedObject?.objectId || inp?.Object?.ImmOrOwnedObject?.objectId || inp?.Object?.SharedObject?.objectId;
+        if (id && !ids.includes(id)) ids.push(id);
+      }
+    }
+    return ids;
+  };
+  const routeSingle105 = route105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+  const routeMulti105 = route105(multi105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+  const routeAuction105 = route105(auction105, "0x0000000000000000000000000000000000000000");
+  const routeUsdt105 = route105(usdt105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+
+  ok("mayan-sui-server: the pinned grammar constants are the captured live values",
+    MAYAN_SUI_SERVER_ROUTER_PACKAGE === "0x7de5de8d75a8f4e42cdd3c018f788bc9b9ebf2d3d61dcfe9d2136f17f077afd5"
+    && MAYAN_SUI_SERVER_ROUTER_DATA_TYPE === "0x3f0871fc4320e2399734c44eae3a7599c57900a66af6ba6fe0f6e50d2d8bed8a::router::RouterDataV1"
+    && MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT === "0x72fbc93a45192357c87557fe73ea62fe5968efb5482834e9243f850377251534"
+    && MAYAN_SUI_SERVER_TREASURY_OBJECT === "0x7d84c29a96d66a95a5df71e59e585913aef0bf5872221600dd876d9d60b996ce"
+    && MAYAN_SUI_SERVER_ROUTER_FIXED_U64 === 10000000000000000n
+    && Object.keys(MAYAN_SUI_SERVER_CETUS_VENUES).includes("0x4e7c4ba436f8fd5b3c6bb514880ccd11c5109c83c45b5e037394b94204dbbb80")
+    && Object.keys(MAYAN_SUI_SERVER_WRAPPER_VENUES).length === 3);
+
+  ok("mayan-sui-server parse: SUI and USDT server-swap quotes now parse as needsSwap routes and pass the executability gate",
+    !!routeSingle105 && routeSingle105.mayan.needsSwap === true && routeSingle105.fromAmount === "50000000000"
+    && !!routeMulti105 && routeMulti105.mayan.needsSwap === true
+    && !!routeUsdt105 && routeUsdt105.mayan.needsSwap === true && routeUsdt105.fromAmount === "10000000"
+    && !!routeAuction105 && routeAuction105.mayan.hasAuction === true && routeAuction105.mayan.needsSwap === true
+    && swapRouteExecutable(routeSingle105).ok === true && swapRouteExecutable(routeUsdt105).ok === true);
+
+  ok("mayan-sui-server parse: a swap quote without its middle-amount floor, without the input currency id, or with a forged middle asset is refused",
+    (() => { const q = structuredClone(single105.quote); delete q.minMiddleAmount; return parseMayanQuote(q, args105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), ctx105(0)); })() === null
+    && (() => { const q = structuredClone(single105.quote); q.minMiddleAmount = 0; return parseMayanQuote(q, args105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), ctx105(0)); })() === null
+    && (() => { const q = structuredClone(single105.quote); delete q.fromToken.currencyId; return parseMayanQuote(q, args105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), ctx105(0)); })() === null
+    && (() => { const q = structuredClone(single105.quote); q.fastMctpInputContract = q.fromToken.contract; return parseMayanQuote(q, args105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), ctx105(0)); })() === null
+    && (() => { const q = structuredClone(usdt105.quote); q.fastMctpInputCurrencyId = STRANGER105; return parseMayanQuote(q, args105(usdt105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), ctx105(0)); })() === null);
+
+  // Slice grammar accepts — every captured matrix cell.
+  const dataSingle105 = dataOf105(single105), dataMulti105 = dataOf105(multi105),
+    dataAuction105 = dataOf105(auction105), dataUsdt105 = dataOf105(usdt105);
+  const usdtCoins105 = coinIdsOf105(dataUsdt105);
+  const chkSingle105 = checkMayanSuiServerPtbSafety(dataSingle105, routeSingle105, single105.user, { outCoin: single105.outCoin });
+  const chkMulti105 = checkMayanSuiServerPtbSafety(dataMulti105, routeMulti105, multi105.user, { outCoin: multi105.outCoin });
+  const chkAuction105 = checkMayanSuiServerPtbSafety(dataAuction105, routeAuction105, auction105.user, { outCoin: auction105.outCoin });
+  const chkUsdt105 = checkMayanSuiServerPtbSafety(dataUsdt105, routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: usdtCoins105 });
+  ok("mayan-sui-server slice: the wrapper grammar accepts the captured single-path, multi-path and auction slices",
+    chkSingle105.ok === true && chkSingle105.commands === 6 && chkSingle105.outCoinRef === "R5"
+    && chkMulti105.ok === true && chkMulti105.commands === 15 && chkMulti105.outCoinRef === "R14"
+    && chkAuction105.ok === true && chkAuction105.commands === 6);
+  ok("mayan-sui-server slice: the Cetus grammar accepts the captured USDT slice against the owner's own coins",
+    chkUsdt105.ok === true && chkUsdt105.commands === 5 && chkUsdt105.outCoinRef === "R4" && usdtCoins105.length === 2);
+
+  // Full composition: slice + Fluid's bridge section, both checkers.
+  const fullSingle105 = composeMayanSuiServerSwapTx(routeSingle105, single105.user, { sliceTx: single105.sliceTx, outCoin: single105.outCoin, fastMctpPackageId: PKG105 }).getData();
+  const fullAuction105 = composeMayanSuiServerSwapTx(routeAuction105, auction105.user, { sliceTx: auction105.sliceTx, outCoin: auction105.outCoin, fastMctpPackageId: PKG105 }).getData();
+  const fullUsdt105 = composeMayanSuiServerSwapTx(routeUsdt105, usdt105.user, { sliceTx: usdt105.sliceTx, outCoin: usdt105.outCoin, fastMctpPackageId: PKG105 }).getData();
+  const fullOk105 = (data, route, user, slice) => checkMayanSuiServerPtbSafety(data, route, user, { outCoin: slice.outCoin, inputCoinIds: coinIdsOf105(data) }).ok === true
+    && checkMayanSuiPtbSafety(data, route, user, { fastMctpPackageId: PKG105, serverSlice: checkMayanSuiServerPtbSafety(data, route, user, { outCoin: slice.outCoin, inputCoinIds: coinIdsOf105(data) }) }).ok === true;
+  ok("mayan-sui-server compose: the full PTB (slice + Fluid's bridge section) inspects clean under BOTH checkers, bridge and auction forms",
+    fullOk105(fullSingle105, routeSingle105, single105.user, single105)
+    && fullOk105(fullAuction105, routeAuction105, auction105.user, auction105)
+    && fullOk105(fullUsdt105, routeUsdt105, usdt105.user, usdt105)
+    && fullSingle105.commands.length === 12 && fullSingle105.commands[6].MoveCall.function === "prepare_bridge"
+    && fullAuction105.commands[6].MoveCall.function === "prepare_create_order");
+  ok("mayan-sui-server compose: the bridge ticket is fed by the slice's output coin and floored at the quote's middle-amount floor — not the input amount",
+    (() => { const prep = fullSingle105.commands[6].MoveCall;
+      const coinArg = prep.arguments[1];
+      const floorArg = prep.arguments[2];
+      const inp = fullSingle105.inputs[floorArg.Input];
+      const bytes = Buffer.from(inp.Pure.bytes, "base64");
+      return coinArg.$kind === "Result" && coinArg.Result === 5 && bytes.readBigUInt64LE(0) === mayanFractionalAmount(single105.quote.minMiddleAmount, 6)
+        && bytes.readBigUInt64LE(0) === 38546444n; })());
+
+  // Tamper refusals.
+  const clone105 = (d) => JSON.parse(JSON.stringify(d));
+  const setPure105 = (data, inputIdx, buf) => { data.inputs[inputIdx].Pure.bytes = Buffer.from(buf).toString("base64"); };
+  const u64le105 = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
+  ok("mayan-sui-server tamper: a foreign venue package and an unknown move call are refused",
+    (() => { const d = clone105(dataMulti105); d.commands[3].MoveCall.package = STRANGER105;
+      return checkMayanSuiServerPtbSafety(d, routeMulti105, multi105.user, { outCoin: multi105.outCoin }).ok === false; })()
+    && (() => { const d = clone105(dataMulti105); d.commands.splice(3, 0, { $kind: "MoveCall", MoveCall: { package: MAYAN_SUI_SERVER_ROUTER_PACKAGE, module: "router", function: "skim", typeArguments: [], arguments: [] } });
+      return checkMayanSuiServerPtbSafety(d, routeMulti105, multi105.user, { outCoin: multi105.outCoin }).ok === false; })());
+  ok("mayan-sui-server tamper: an extra transfer — inside the slice or appended to the full PTB — is refused",
+    (() => { const d = clone105(dataUsdt105); d.commands.splice(4, 0, { $kind: "TransferObjects", TransferObjects: { objects: [{ $kind: "Result", Result: 3 }], address: { $kind: "Input", Input: 0 } } });
+      return checkMayanSuiServerPtbSafety(d, routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: usdtCoins105 }).ok === false; })()
+    && (() => { const d = clone105(fullSingle105); d.commands.push({ $kind: "TransferObjects", TransferObjects: { objects: [{ $kind: "Result", Result: 5 }], address: { $kind: "Input", Input: 0 } } });
+      const sc = checkMayanSuiServerPtbSafety(d, routeSingle105, single105.user, { outCoin: single105.outCoin });
+      return sc.ok === true && checkMayanSuiPtbSafety(d, routeSingle105, single105.user, { fastMctpPackageId: PKG105, serverSlice: sc }).ok === false; })());
+  ok("mayan-sui-server tamper: an amount over the quote and a stated output below the quote's floor are refused",
+    (() => { const d = clone105(dataSingle105); setPure105(d, d.commands[0].SplitCoins.amounts[0].Input, u64le105(50000000001n));
+      return checkMayanSuiServerPtbSafety(d, routeSingle105, single105.user, { outCoin: single105.outCoin }).ok === false; })()
+    && (() => { const d = clone105(dataSingle105); const floor = mayanFractionalAmount(single105.quote.minMiddleAmount, 6);
+      setPure105(d, d.commands[1].MoveCall.arguments[2].Input, u64le105(floor - 5000n));
+      return checkMayanSuiServerPtbSafety(d, routeSingle105, single105.user, { outCoin: single105.outCoin }).ok === false; })());
+  ok("mayan-sui-server tamper: a swapped protocol-fee config object is refused",
+    (() => { const d = clone105(dataSingle105); const idx = d.commands[1].MoveCall.arguments[4].Input;
+      d.inputs[idx].Object.SharedObject.objectId = STRANGER105;
+      return checkMayanSuiServerPtbSafety(d, routeSingle105, single105.user, { outCoin: single105.outCoin }).ok === false; })());
+  ok("mayan-sui-server tamper: an aggregator fee or an inconsistent minimum in the Cetus grammar is refused",
+    (() => { const d = clone105(dataUsdt105); const idx = d.commands[2].MoveCall.arguments[4].Input;
+      const b = Buffer.alloc(4); b.writeUInt32LE(5); setPure105(d, idx, b);
+      return checkMayanSuiServerPtbSafety(d, routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: usdtCoins105 }).ok === false; })()
+    && (() => { const d = clone105(dataUsdt105); const idx = d.commands[2].MoveCall.arguments[2].Input;
+      const cur = Buffer.from(d.inputs[idx].Pure.bytes, "base64").readBigUInt64LE(0); setPure105(d, idx, u64le105(cur - 1n));
+      return checkMayanSuiServerPtbSafety(d, routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: usdtCoins105 }).ok === false; })());
+  ok("mayan-sui-server tamper: the output coin redirected, a foreign sender, or foreign prefix coins are refused",
+    checkMayanSuiServerPtbSafety(dataSingle105, routeSingle105, single105.user, { outCoin: { Result: 0 } }).ok === false
+    && checkMayanSuiServerPtbSafety(dataUsdt105, routeUsdt105, usdt105.user, { outCoin: { $kind: "Result", Result: 3 }, inputCoinIds: usdtCoins105 }).ok === false
+    && checkMayanSuiServerPtbSafety(dataOf105(usdt105, STRANGER105), routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: usdtCoins105 }).ok === false
+    && checkMayanSuiServerPtbSafety(dataUsdt105, routeUsdt105, usdt105.user, { outCoin: usdt105.outCoin, inputCoinIds: [] }).ok === false);
+  ok("mayan-sui-server tamper: a swapped referrer in the bridge section is refused by the bridge checker",
+    (() => { const d = clone105(fullSingle105); const idx = d.commands[6].MoveCall.arguments[7].Input;
+      setPure105(d, idx, Buffer.from("33".repeat(32), "hex"));
+      const sc = checkMayanSuiServerPtbSafety(d, routeSingle105, single105.user, { outCoin: single105.outCoin });
+      return sc.ok === true && checkMayanSuiPtbSafety(d, routeSingle105, single105.user, { fastMctpPackageId: PKG105, serverSlice: sc }).ok === false; })());
+
+  ok("mayan-sui-server: the outCoin reference normalizes both server dialects and nothing else",
+    mayanSuiOutCoinArgument({ Result: 5 })?.$kind === "Result" && mayanSuiOutCoinArgument({ $kind: "Result", Result: 4 })?.Result === 4
+    && mayanSuiOutCoinArgument({ NestedResult: [2, 1] })?.NestedResult?.[0] === 2
+    && mayanSuiOutCoinArgument({}) === null && mayanSuiOutCoinArgument("R5") === null && mayanSuiOutCoinArgument(null) === null);
+
+  // The slice fetch: exactly the SDK's parameter set, and the
+  // server's own refusal surfaces.
+  {
+    const realFetch = globalThis.fetch; let seen = null;
+    globalThis.fetch = async (url, opts) => { seen = { url: String(url), body: JSON.parse(opts.body) };
+      return { ok: true, status: 200, json: async () => ({ tx: single105.sliceTx, outCoin: single105.outCoin }) }; };
+    try {
+      const s = await fetchMayanSuiSwapSlice(routeSingle105, single105.user);
+      ok("mayan-sui-server fetch: get-swap/sui is called with the SDK's exact parameters and returns the slice",
+        s.tx === single105.sliceTx && seen.url.endsWith("/get-swap/sui")
+        && seen.body.amountIn64 === "50000000000" && seen.body.inputCoinType === "0x2::sui::SUI"
+        && seen.body.middleCoinType === mayanSuiUsdcCoinType() && seen.body.userWallet === single105.user
+        && seen.body.withWhFee === false && seen.body.referrerAddress === MAYAN_REFERRER_EVM
+        && seen.body.slippageBps === 100 && seen.body.chainName === "sui" && seen.body.sdkVersion === MAYAN_SDK_VERSION);
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = async () => ({ ok: false, status: 400, json: async () => ({ code: "NO_COINS", msg: "No sui coins found to pay" }) });
+    try {
+      let threw = false;
+      try { await fetchMayanSuiSwapSlice(routeSingle105, single105.user); } catch (e) { threw = /No sui coins found to pay/.test(e.message); }
+      ok("mayan-sui-server fetch: a server refusal surfaces its own message and sends nothing", threw);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Two-pass fee discipline through the real search entry: a
+  // SUI-input route collects like the USDC lane (the fee rides
+  // the bridge ticket — the slice itself carries none).
+  {
+    const realFetch = globalThis.fetch; const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("price-api.mayan.finance/v3/quote")) {
+        const b = JSON.parse(opts.body); bodies.push(b);
+        const bps = Number(b.referrerBps) || 0;
+        const q = structuredClone(single105.quote);
+        if (bps > 0) { q.referrerBps = bps; q.referrerFeeUsd = bps * 0.0039; }
+        return { ok: true, status: 200, json: async () => ({ quotes: [q] }) };
+      }
+      if (u.includes("lite-api.jup.ag/price")) return { ok: true, json: async () => ({}) };
+      if (u.includes("api.binance.com")) return { ok: true, json: async () => [{ symbol: "SUIUSDT", price: "0.78" }, { symbol: "USDCUSDT", price: "1" }] };
+      if (u.includes("api.coingecko.com")) return { ok: true, json: async () => ({ sui: { usd: 0.78 }, "usd-coin": { usd: 1 } }) };
+      if (u.includes("api.dexscreener.com")) return { ok: true, json: async () => ({ pairs: [] }) };
+      throw new Error("unexpected fetch in mayan-sui-server stub: " + u);
+    };
+    try {
+      resetPricesCache();
+      const r = await getMayanSwapRoute(args105(single105, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"));
+      ok("mayan-sui-server: the two-pass search returns a fee-collecting SUI-input route with no EVM payload",
+        !!r && r.provider === "mayan" && r.mayan.needsSwap === true && r.platformFeeCollecting === true
+        && r.platformFeeBps > 0 && r.platformFeeBps <= 50 && r.mayan.tx == null && bodies.length >= 2
+        && swapRouteExecutable(r).ok === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // A server-swap route is a valid milestone source leg.
+  {
+    const legSol105 = route105(sol105, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 0, "solana", MAYAN_REFERRER_SOLANA);
+    const composed = await searchMilestoneCompositions(
+      { fromChainKey: "sui", toChainKey: "solana", fromTokenAddress: "0x2::sui::SUI", toTokenAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", fromAmount: "5000000000", fromAddress: sol105.user, toAddress: MAYAN_REFERRER_SOLANA },
+      { searchLeg: async () => [legSol105], pricesUsd: { USDC: 1 } });
+    ok("mayan-sui-server: the route serves as a milestone composition's source leg and the composition is executable",
+      !!legSol105 && composed.length === 1 && composed[0].milestoneLegRoutes[0].provider === "mayan"
+      && composed[0].milestone.legs[0].fromChainKey === "sui" && swapRouteExecutable(composed[0]).ok === true);
+  }
+}
+
 // ---------- Black + Bitcoin-orange retheme (2026-11-09 spec) ----------
 {
   const idxSrc = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
@@ -8743,11 +8994,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // GAP-1a — the stable-token list drops the mirror entry.
   const realFetch77 = globalThis.fetch;
   try {
+    // Post-LI.FI (2026-11-13): stable rows come from the chain's
+    // CoinGecko token list. Arc (5042) has no CoinGecko list, so
+    // its stable list is empty — and the predeploy guard in
+    // fetchStableTokens still drops the mirror entry on any chain
+    // whose list carries one.
     globalThis.fetch = async (url) => {
-      const body = String(url).includes("chains=5042")
-        ? { tokens: { "5042": [{ symbol: "USDC", coinKey: "USDC", address: ARC_PRE, decimals: 6 }] } }
-        : { tokens: { "8453": [{ symbol: "USDC", coinKey: "USDC", address: BASE_USDC_77, decimals: 6 },
-                               { symbol: "USDT", coinKey: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 }] } };
+      const body = String(url).includes("tokens.coingecko.com/base/")
+        ? { tokens: [{ symbol: "USDC", address: BASE_USDC_77, decimals: 6, name: "USD Coin" },
+                     { symbol: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6, name: "Tether" },
+                     { symbol: "WETH", address: "0x4200000000000000000000000000000000000006", decimals: 18, name: "Wrapped Ether" }] }
+        : { tokens: [] };
       return { ok: true, status: 200, json: async () => body };
     };
     const arcToks = await fetchStableTokens(5042);
@@ -8800,21 +9057,21 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && scaleRawAmount("5000000", 6, 18) === "5000000000000000000"
     && scaleRawAmount("1999999999999999999", 18, 6) === "1999999"
     && scaleRawAmount("42", 6, 6) === "42");
-  const rqArcOut = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  const rqArcOut = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_SENTINEL, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: Relay Arc→Base names the predeploy for a LI.FI-sentinel pick, amount re-denominated",
     !!rqArcOut && rqArcOut.originCurrency === ARC_PRE && rqArcOut.destinationCurrency === BASE_USDC_77 && rqArcOut.amount === "5000000");
-  const rqArcZero = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  const rqArcZero = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: Relay Arc→Base names the predeploy for the native (zero-marker) pick, amount re-denominated",
     !!rqArcZero && rqArcZero.originCurrency === ARC_PRE && rqArcZero.amount === "5000000");
   const rqArcTok = buildRelayQuoteRequest({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: ARC_PRE, toTokenAddress: BASE_USDC_77, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: a direct predeploy pick passes through at its own scale, unscaled",
     !!rqArcTok && rqArcTok.originCurrency === ARC_PRE && rqArcTok.amount === "5000000");
-  const rqArcIn = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_API_NATIVE_SENTINEL, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  const rqArcIn = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: NATIVE_TOKEN_SENTINEL, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: Relay Base→Arc names the predeploy on the destination side",
     !!rqArcIn && rqArcIn.destinationCurrency === ARC_PRE && rqArcIn.amount === "5000000");
-  const rqBaseNat = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: LIFI_API_NATIVE_SENTINEL, toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
+  const rqBaseNat = buildRelayQuoteRequest({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: NATIVE_TOKEN_SENTINEL, toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 }, { includeFee: false });
   ok("GAP-3: the sentinel maps to the zero marker where no predeploy exists, amount untouched",
-    !!rqBaseNat && rqBaseNat.originCurrency === LIFI_NATIVE_TOKEN && rqBaseNat.amount === "5000000");
+    !!rqBaseNat && rqBaseNat.originCurrency === NATIVE_TOKEN_ADDRESS && rqBaseNat.amount === "5000000");
   ok("GAP-3: token addresses pass through Relay translation untouched",
     relayCurrencyFor(5042, BASE_USDC_77) === BASE_USDC_77 && relayCurrencyFor(5042, ARC_PRE) === ARC_PRE);
 
@@ -8824,11 +9081,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("GAP-4: Across covers 5042 with the live-probed pins",
     ACROSS_CHAIN_IDS.has(5042) && ACROSS_HANDLERS[5042] === ARC_HANDLER
     && ACROSS_MESSAGE_ADAPTERS[5042] === ARC_ADAPTER && ACROSS_SPOKE_POOLS[5042] === ARC_POOL);
-  const planArcOut = acrossSupportsPair({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77 });
+  const planArcOut = acrossSupportsPair({ fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: BASE_USDC_77 });
   ok("GAP-4: an Arc native pick resolves to the predeploy USDC lane (ERC-20 pull, not deposit value)",
     !!planArcOut && planArcOut.asset === "USDC" && planArcOut.inputToken === ARC_PRE
     && planArcOut.outputToken === BASE_USDC_77 && planArcOut.nativeInput === false);
-  const planArcIn = acrossSupportsPair({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_NATIVE_TOKEN });
+  const planArcIn = acrossSupportsPair({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: NATIVE_TOKEN_ADDRESS });
   ok("GAP-4: Base USDC → Arc native pick is eligible, delivering the predeploy",
     !!planArcIn && planArcIn.outputToken === ARC_PRE && planArcIn.nativeOutput === false);
   const planArcTok = acrossSupportsPair({ fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: ARC_PRE });
@@ -8873,7 +9130,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       swapTx: { to: BASE_POOL_77, data, gas: 0, chainId: 8453 }, quoteExpiryTimestamp: 1994180911,
     };
   };
-  const argsArc77 = { fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: LIFI_NATIVE_TOKEN, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 };
+  const argsArc77 = { fromChainKey: "base", toChainKey: "c5042", fromTokenAddress: BASE_USDC_77, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "5000000", fromAddress: USER77, toAddress: USER77 };
   const routeArc77 = parseAcrossQuote(arcQuote77(), argsArc77, planArcIn);
   ok("GAP-4: a live-shaped fee-bearing Base→Arc quote parses and passes its bounds check",
     !!routeArc77 && routeArc77.provider === "across" && routeArc77.platformFeeCollecting === true
@@ -8886,10 +9143,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // the same re-denomination as the Relay builder, and a live-
   // shaped fee-free Arc→Base quote (the 2026-11-09 probe's own
   // output figure) parses against the scaled args.
-  const argsArcOrigin77 = { fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: LIFI_NATIVE_TOKEN, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 };
+  const argsArcOrigin77 = { fromChainKey: "c5042", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: BASE_USDC_77, fromAmount: "5000000000000000000", fromAddress: USER77, toAddress: USER77 };
   const qargsArc77 = acrossQuoteArgs(argsArcOrigin77, planArcOut);
   ok("GAP-4: Across args re-denominate an Arc native pick to the predeploy scale",
-    qargsArc77.fromAmount === "5000000" && qargsArc77.fromTokenAddress === LIFI_NATIVE_TOKEN);
+    qargsArc77.fromAmount === "5000000" && qargsArc77.fromTokenAddress === NATIVE_TOKEN_ADDRESS);
   ok("GAP-4: Across args leave token picks (incl. the predeploy itself) at their own scale",
     acrossQuoteArgs({ ...argsArcOrigin77, fromTokenAddress: ARC_PRE, fromAmount: "5000000" }, planArcOut).fromAmount === "5000000"
     && acrossQuoteArgs(argsArc77, planArcIn) === argsArc77);
@@ -10289,7 +10546,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     isDestNativeToken("sui", SUI_COIN_TYPE) === true && isDestNativeToken("sui", SUI_SWAP_NATIVE_TOKEN) === true && isDestNativeToken("sui", SUI_USDC_G) === false
     && isDestNativeToken("solana", SOLANA_SWAP_NATIVE_TOKEN) === true && isDestNativeToken("solana", SOL_USDC_G) === false
     && isDestNativeToken("tron", TRON_SWAP_NATIVE_TOKEN) === true
-    && isDestNativeToken("base", LIFI_NATIVE_TOKEN) === true && isDestNativeToken("base", USDC_BASE_G) === false && isDestNativeToken("base", null) === true);
+    && isDestNativeToken("base", NATIVE_TOKEN_ADDRESS) === true && isDestNativeToken("base", USDC_BASE_G) === false && isDestNativeToken("base", null) === true);
   {
     const realFetch = globalThis.fetch;
     let fetchCalls = 0;
@@ -10313,6 +10570,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       throw new Error("unexpected fetch in destgas stub: " + u);
     };
     try {
+      resetPricesCache(); // the price table is TTL-cached across sections; start clean
       globalThis.fetch = stubSui("0");
       const p = await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G });
       ok("destgas: a zero SUI balance plans the full 0.06 top-up, priced from the feed",
@@ -10327,6 +10585,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       globalThis.fetch = async () => { throw new Error("down"); };
       ok("destgas: an unreadable SUI balance plans nothing",
         (await planDestGas({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAddress: EVM_G, toAddress: SUI_G })) === null);
+      resetPricesCache();
       globalThis.fetch = async (url, opts) => {
         const u = String(url);
         if (opts?.body && String(opts.body).includes("\"getBalance\"")) return jsonResG({ result: { value: 0 } });
@@ -10356,8 +10615,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("destgas line: an unpriced drop falls back to the native figure",
     formatDestGasLine({ destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: null } }).includes("(0.06 SUI)"));
 
-  // (iii) Merit ranking: capability first, net among the capable,
-  // LI.FI demoted on ties.
+  // (iii) Merit ranking: capability first, net among the capable;
+  // ties are provider-blind since the LI.FI removal (2026-11-13) —
+  // net, then duration, then quote value, then list position.
   {
     const incapable = { id: "cheap-nodrop", provider: "relay", toAmountUSD: 10.0, gasCostUSD: 0.01, destGas: planSuiG, steps: [] };
     const capable = { id: "drop", provider: "mayan", toAmountUSD: 9.90, gasCostUSD: 0.01, destGas: planSuiG, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.051 }, steps: [] };
@@ -10370,15 +10630,17 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && rankSwapRoutes([{ ...composite, id: "composite2", toAmountUSD: 9.80 }, capable], null)[0].id === "drop");
     ok("merit: without a gas need the drop confers nothing — best net wins",
       rankSwapRoutes([{ ...incapable, destGas: null }, { ...capable, destGas: null }], null)[0].id === "cheap-nodrop");
-    const tieLifi = { id: "tie-lifi", provider: "lifi", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
     const tieRelay = { id: "tie-relay", provider: "relay", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
-    const rankedTie = rankSwapRoutes([tieLifi, tieRelay], null);
-    ok("merit: LI.FI loses a net tie it used to win by position",
-      rankedTie[0].id === "tie-relay" && rankedTie.find(r => r.cheapest).id === "tie-relay");
-    ok("merit: provider-less routes (LI.FI's real shape) are demoted on ties too",
-      rankSwapRoutes([{ id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }, tieRelay], null)[0].id === "tie-relay");
-    ok("merit: LI.FI still wins when demonstrably better on net (sole-best is its lane)",
-      rankSwapRoutes([{ ...tieLifi, id: "lifi-better", toAmountUSD: 10.5 }, tieRelay], null)[0].id === "lifi-better");
+    const tieMayan = { id: "tie-mayan", provider: "mayan", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] };
+    const rankedTie = rankSwapRoutes([tieRelay, tieMayan], null);
+    ok("merit: a net tie between providers is decided by position, not provider",
+      rankedTie[0].id === "tie-relay" && rankSwapRoutes([tieMayan, tieRelay], null)[0].id === "tie-mayan"
+      && rankedTie.find(r => r.cheapest).id === "tie-relay");
+    ok("merit: provider-less shapes tie-break by position too (no demotion remains)",
+      rankSwapRoutes([{ id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }, tieRelay], null)[0].id === "tie-raw"
+      && rankSwapRoutes([tieRelay, { id: "tie-raw", toAmountUSD: 10, gasCostUSD: 0.1, steps: [] }], null)[0].id === "tie-relay");
+    ok("merit: the better net wins regardless of provider",
+      rankSwapRoutes([{ ...tieMayan, id: "mayan-better", toAmountUSD: 10.5 }, tieRelay], null)[0].id === "mayan-better");
   }
 }
 
@@ -10413,7 +10675,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       details: { sender: EVM_G,
         currencyIn: { currency: { chainId: 8453, address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, amount: "5000000", amountUsd: "5.0" },
         currencyOut: { currency: { chainId: 42161, address: USDC_ARB_G, symbol: "USDC", decimals: 6 }, amount: "4990000", amountUsd: "4.99", minimumAmount: "4980000" },
-        currencyGasTopup: { currency: { chainId: 42161, address: LIFI_NATIVE_TOKEN, symbol: "ETH", decimals: 18, metadata: { isNative: true } }, amount: "100000000000000", amountFormatted: "0.0001", amountUsd: "0.21" },
+        currencyGasTopup: { currency: { chainId: 42161, address: NATIVE_TOKEN_ADDRESS, symbol: "ETH", decimals: 18, metadata: { isNative: true } }, amount: "100000000000000", amountFormatted: "0.0001", amountUsd: "0.21" },
         timeEstimate: 2 },
     };
     const ctx = { fromChainKey: "base", toChainKey: "arbitrum", fromAmount: "5000000", fromAddress: EVM_G };
@@ -10425,28 +10687,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && (() => { const q2 = structuredClone(quoteTopup); delete q2.details.currencyGasTopup; return parseRelayQuote(q2, { ...ctx, gasDrop: planArbG }).gasDrop === undefined; })());
   }
 
-  // LI.FI: the gas-fronting parameter + the strict evidence rule.
-  ok("lifi: fromAmountForGas rides both builders only when given",
-    (() => { const a = { fromChainId: 8453, toChainId: 42161, fromTokenAddress: USDC_BASE_G, toTokenAddress: USDC_ARB_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: EVM_G };
-      const body = buildLifiRoutesRequest(a, { includeFee: false, fromAmountForGas: "51000" });
-      const plain = buildLifiRoutesRequest(a, { includeFee: false });
-      const params = buildLifiQuoteParams(a, { includeFee: false, fromAmountForGas: "51000" });
-      return body.fromAmountForGas === "51000" && !("fromAmountForGas" in plain) && params.get("fromAmountForGas") === "51000"; })());
-  ok("lifi: gas sizing mirrors the top-up rule (valuation conversion + 25% cap)",
-    lifiGasFromRaw(planArbG, { fromAmount: "5000000", fromAmountUSD: 5 }) === "206000"
-    && lifiGasFromRaw(planSuiG, { fromAmount: "1000000", fromAmountUSD: 0.1 }) === null);
-  {
-    const gasRoute = { steps: [{ action: { toChainId: 8453, toToken: { address: USDC_BASE_G } },
-      includedSteps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_SWAP_NATIVE_TOKEN } }, estimate: { toAmount: "60000000", toAmountUSD: "0.051" } }] }] };
-    ok("lifi evidence: a final-step native delivery is a gas drop, at its own figures",
-      (() => { const ev = lifiGasDropEvidence(gasRoute, planSuiG); return !!ev && ev.amountHuman === 0.06 && ev.usd === 0.051 && ev.symbol === "SUI"; })());
-    ok("lifi evidence: an intermediate native hop is NOT a gas drop",
-      lifiGasDropEvidence({ steps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_SWAP_NATIVE_TOKEN } }, estimate: { toAmount: "60000000" } },
-        { action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_USDC_G } }, estimate: { toAmount: "4900000" } }] }, planSuiG) === null);
-    ok("lifi evidence: a final step delivering the target asset is NOT a gas drop; no plan — no evidence",
-      lifiGasDropEvidence({ steps: [{ action: { toChainId: SUI_LIFI_CHAIN_ID, toToken: { address: SUI_USDC_G } }, estimate: { toAmount: "4900000" } }] }, planSuiG) === null
-      && lifiGasDropEvidence(gasRoute, null) === null);
-  }
+  // The LI.FI dest-gas pins (fromAmountForGas builders + the
+  // gas-drop evidence reader) were removed with LI.FI
+  // (2026-11-13); destination gas is served by Relay top-ups
+  // and the Mayan gas drop, pinned above and below.
 
   // Mayan: the quote-body field, the parse-side verification, the lift gate.
   ok("mayan: gasDrop rides the quote body only when requested, in human units",
@@ -10480,19 +10724,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && parseMayanQuote(mayanSuiQuoteG(), mayanArgsG, { feeBps: 0, symbolPricesUsd: { SUI: 0.85, USDC: 1 } }).gasDrop === undefined);
 
   // Fallback selection, end to end (fetch stubbed per host):
-  // Base USDC → Sui USDC with an empty SUI balance. Without a
-  // Mayan drop, the composite is built and leads; with one, the
-  // drop route wins and no composite exists.
+  // Base USDC → Sui USDC with an empty SUI balance. With a Mayan
+  // drop, the drop route wins and no composite exists; without
+  // one, no composite CAN exist for Sui today (see below).
   {
     const realFetch = globalThis.fetch;
-    const lifiRouteG = ({ toAmount, toAmountUSD, toToken }) => ({
-      id: "lifi-g", fromAmountUSD: "5.0", toAmountUSD: String(toAmountUSD), fromAmount: "5000000", toAmount: String(toAmount),
-      fromToken: { address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, toToken,
-      steps: [{ id: "lifi-step-g", type: "cross",
-        action: { fromChainId: 8453, toChainId: SUI_LIFI_CHAIN_ID, fromAmount: "5000000", fromToken: { address: USDC_BASE_G, symbol: "USDC", decimals: 6 }, toToken },
-        estimate: { toAmount: String(toAmount), toAmountMin: String(toAmount), toAmountUSD: String(toAmountUSD), fromAmountUSD: "5.0", gasCosts: [{ amountUSD: "0.01" }], feeCosts: [], executionDuration: 60 },
-        transactionRequest: { to: "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE", data: "0x", value: "0", chainId: 8453 } }],
-    });
     const stubSelection = (mayanDrop) => {
       globalThis.fetch = async (url, opts) => {
         const u = String(url);
@@ -10504,23 +10740,25 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
           const b = JSON.parse(opts.body);
           return jsonResG({ quotes: [mayanSuiQuoteG({ referrerBps: b.referrerBps || 0, referrerFeeUsd: b.referrerBps ? 0.025 : 0, gasDrop: mayanDrop && b.gasDrop ? 0.06 : 0 })] });
         }
-        if (u.includes("li.quest")) {
-          const b = JSON.parse(opts.body);
-          if (b.fromChainId === b.toChainId) return jsonResG({ routes: [lifiRouteG({ toAmount: 800000, toAmountUSD: 0.8, toToken: { address: SUI_USDC_G, symbol: "USDC", decimals: 6 } })] });
-          if (b.toTokenAddress === SUI_SWAP_NATIVE_TOKEN) return jsonResG({ routes: [lifiRouteG({ toAmount: 1000000000, toAmountUSD: 0.85, toToken: { address: SUI_SWAP_NATIVE_TOKEN, symbol: "SUI", decimals: 9 } })] });
-          return jsonResG({ routes: [lifiRouteG({ toAmount: 4900000, toAmountUSD: 4.9, toToken: { address: SUI_USDC_G, symbol: "USDC", decimals: 6 } })] });
-        }
         throw new Error("unexpected fetch in destgas selection stub: " + u);
       };
     };
     try {
+      resetPricesCache();
       stubSelection(false);
       const routes = await getSwapRoutes({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G });
-      const comp = routes.find(r => r.provider === "gasfallback");
-      ok("destgas selection: no route can carry a drop → the all-to-native fallback is built and leads",
-        !!comp && routes[0].provider === "gasfallback" && comp.gasReserve.amountHuman === 0.06 && comp.legs.leg2Preview.fromAmount === "940000000");
-      ok("destgas selection: the fallback's review line is the two-leg sentence",
-        formatDestGasLine(comp) === "This route can't bring gas alongside, so your swap lands as SUI first, then swaps to USDC on Sui, keeping about 0.06 SUI for gas.");
+      // The destination-gas fallback for a Sui destination
+      // still cannot be built: leg 1 (a cross-chain leg
+      // delivering NATIVE SUI into the user's wallet) has no
+      // rail — Mayan delivers Sui USDC, Relay does not serve
+      // Sui. Leg 2 (Sui same-chain) regained its rail with the
+      // Cetus port, but a fallback needs BOTH legs. The plain
+      // Mayan route leads and its review line is the honest
+      // warning.
+      ok("destgas selection: no Sui fallback (leg 1 into native SUI has no rail) — the plain route leads, no composite synthesized",
+        !routes.some(r => r.provider === "gasfallback") && routes[0].provider === "mayan" && routes[0].gasDrop === undefined);
+      ok("destgas selection: the review line is the plain no-gas warning, never silent stranding",
+        formatDestGasLine(routes[0]) === "These funds will land without gas on Sui; you'll need SUI before you can move them.");
       stubSelection(true);
       const routes2 = await getSwapRoutes({ fromChainKey: "base", toChainKey: "sui", fromTokenAddress: USDC_BASE_G, toTokenAddress: SUI_USDC_G, fromAmount: "5000000", fromAddress: EVM_G, toAddress: SUI_G });
       ok("destgas selection: a route WITH a drop wins outright and no fallback is synthesized",
@@ -10610,8 +10848,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const core = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("repair: sendFailed humanizes — the raw shortMessage passthrough is gone from it",
     app.includes("showSheetError(prefix + humanizeTxError(e))") && !app.includes("showSheetError(prefix + ((e && (e.shortMessage"));
-  ok("repair: both EVM executors simulate before broadcasting",
-    (core.match(/simulateEvmStepOrThrow\(fromKey, provider, txReq, wallet\.address\)/g) || []).length === 2);
+  ok("repair: the EVM executor simulates before broadcasting (Relay; the second call site was the removed LI.FI executor)",
+    (core.match(/simulateEvmStepOrThrow\(fromKey, provider, txReq, wallet\.address\)/g) || []).length === 1
+    && core.indexOf("simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address)") > core.indexOf("export async function executeRelaySwapRoute"));
   ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist)",
     app.includes("rows: balances.filter(b => !b.scanned && !b.custom)"));
   ok("repair: a failed scan or missing token list reconciles scanned rows DOWN",
@@ -10624,8 +10863,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     app.includes("amountVsBalance(amount, balStr, b.address ? b.decimals : 18)") && app.includes("your exact balance is ${balStr} ${b.symbol}"));
   ok("repair: the swap sheet has the USD line under the amount, repainted on input and pick",
     app.includes('id="wAmtUsd"') && app.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd)') && app.includes("pendingSwap = null; paintSwapAmtUsd(); }"));
-  ok("repair: the swap balance check is wei-exact",
-    app.includes("amountExceedsBalance(amount, have, fromTok.decimals) === true"));
+  ok("repair: the swap balance check is wei-exact (moved to the execution gate — route-preview decision, §99)",
+    app.includes("swapBalanceGate(amount, have, fromTok.decimals)")
+    && core.includes("export function swapBalanceGate"));
   ok("repair: raw 'Could not estimate' passthroughs in the send sheets are humanized",
     !app.includes('"Could not estimate: " + (e.shortMessage || e.message)') && !app.includes('"Could not estimate: " + e.message') && !app.includes('"Could not estimate the fee: " + e.message'));
 
@@ -10753,7 +10993,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // round BEFORE the full token list is fetched, and its landed
   // rows survive a later full-scan/list failure.
   const quickIdx = app.indexOf("scanEvmTokenBalances(myKey, wallet.address, quickTokens");
-  const listIdx = app.indexOf("const list = await lifiTokensForChain(chainId)");
+  const listIdx = app.indexOf("const list = await cgTokensForChain(chainId)");
   ok("E: quick read runs before the token-list fetch, capped small",
     quickIdx > -1 && listIdx > quickIdx && app.includes("slice(0, 60)") && app.includes("quickRowsFromBalances"));
   ok("E: quick-read rows are retained when the full scan fails",
@@ -10902,7 +11142,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     milestoneShapes({ fromChainKey: "sui", toChainKey: "sui", fromTokenAddress: SUI_TOKENS[0].address, toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "1", fromAddress: "0xa", toAddress: "0xa" }).length === 0
     && milestoneLabelFor("BNB", suiShape) === "BNB → USDC on Base → USDC on Sui → SUI");
   // Fake leg routes, keyed by the leg's chain pair: Relay leg 1,
-  // Mayan leg 2 carrying the 0.06 SUI gas drop, Cetus leg 3.
+  // Mayan leg 2 carrying the 0.06 SUI gas drop. Leg 3 (Sui
+  // same-chain into SUI) has NO rail since the LI.FI removal
+  // (2026-11-13) — its fake below is the old provider shape,
+  // which the executability gate now refuses, so compositions
+  // into SUI itself no longer form (blocker (a), docs/SWAPS.md).
   const fakeLeg = (id, provider, toAmount, toAmountUSD, extra = {}) => ({
     provider, id, type: "x", fromChainId: 56, toChainId: 8453,
     fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 18 },
@@ -10911,38 +11155,55 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 30,
     platformFeeUsd: 0.001, platformFeeCollecting: true, platformFeeBps: 45, steps: [], ...extra,
   });
+  // The fake legs carry genuinely signable shapes (2026-11-13
+  // executability repair): a Relay leg with transaction steps, a
+  // Mayan leg with quote + built tx — the composition's leg pick
+  // requires exactly what the executors require.
+  const RELAY_EXEC = { relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
   const legSearchMs = async (a) => {
-    if (a.fromChainKey === "bsc" && a.toChainKey === "base") return [fakeLeg("l1", "relay", "198148", 0.198, { fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
-    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fakeLeg("l2", "mayan", "129236", 0.129, { gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.048 }, gasMechanism: "drop", toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
-    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [fakeLeg("l3", "lifi", "161321818", 0.129, { toToken: { address: a.toTokenAddress, symbol: "SUI", decimals: 9 } })];
+    if (a.fromChainKey === "bsc" && a.toChainKey === "base") return [fakeLeg("l1", "relay", "198148", 0.198, { ...RELAY_EXEC, fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fakeLeg("l2", "mayan", "129236", 0.129, { mayan: { quote: { id: "mq1" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" }, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.048 }, gasMechanism: "drop", toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [fakeLeg("l3", "lifi", "161321818", 0.129, { fromChainId: SUI_SWAP_CHAIN_ID, steps: [{ transactionRequest: { data: "AAAA" } }], toToken: { address: a.toTokenAddress, symbol: "SUI", decimals: 9 } })];
     throw new Error("No available quotes for the requested transfer");
   };
   const composedMs = await searchMilestoneCompositions(MS_BNB_ARGS, { searchLeg: legSearchMs, pricesUsd: { SUI: 0.8 } });
-  ok("ms: the composition is FOUND for BNB→SUI and presented as one route with the milestone label",
-    composedMs.length === 1 && composedMs[0].provider === "milestone"
-    && composedMs[0].milestone.label === "BNB → USDC on Base → USDC on Sui → SUI"
-    && composedMs[0].toAmount === "161321818" && composedMs[0].milestone.legs.length === 3
-    && composedMs[0].milestone.legs[1].fromAmount === "198148");
+  ok("ms: NO composition into SUI itself forms today — the final Sui leg has no rail (blocker (a))",
+    composedMs.length === 0);
+  // The same composition into Sui USDC (the deliverable asset
+  // Mayan lands) forms with two legs and full fee capture.
+  const MS_USDC_ARGS = { ...MS_BNB_ARGS, toTokenAddress: SUI_TOKENS[0].address };
+  const legSearchUsdc = async (a) => {
+    if (a.fromChainKey === "bsc" && a.toChainKey === "base") return [fakeLeg("l1", "relay", "198148", 0.198, { ...RELAY_EXEC, fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fakeLeg("l2", "mayan", "129236", 0.129, { mayan: { quote: { id: "mq1" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" }, gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.048 }, gasMechanism: "drop", toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedUsdc = await searchMilestoneCompositions(MS_USDC_ARGS, { searchLeg: legSearchUsdc, pricesUsd: { SUI: 0.8 } });
+  ok("ms: the composition is FOUND for BNB→USDC on Sui and presented as one route with the milestone label",
+    composedUsdc.length === 1 && composedUsdc[0].provider === "milestone"
+    && composedUsdc[0].milestone.label === "BNB → USDC on Base → USDC on Sui"
+    && composedUsdc[0].toAmount === "129236" && composedUsdc[0].milestone.legs.length === 2
+    && composedUsdc[0].milestone.legs[1].fromAmount === "198148");
   ok("ms: fee capture is the sum of the legs' own rail fees — no invented charge on top",
-    composedMs[0].platformFeeCollecting === true && Math.abs(composedMs[0].platformFeeUsd - 0.003) < 1e-9
-    && Math.abs(composedMs[0].routeFeeUsd - 0.006) < 1e-9);
+    composedUsdc[0].platformFeeCollecting === true && Math.abs(composedUsdc[0].platformFeeUsd - 0.002) < 1e-9
+    && Math.abs(composedUsdc[0].routeFeeUsd - 0.004) < 1e-9);
   ok("ms: destination gas rides the entering leg — the composed route carries the SUI drop and the review line names SUI",
-    composedMs[0].gasDrop?.symbol === "SUI" && composedMs[0].gasDrop?.amountHuman === 0.06
-    && formatDestGasLine({ ...composedMs[0], destGas: destGasPlanFromBalance("sui", 0n, 0.8) }).includes("will arrive as SUI for gas"));
-  ok("ms: a composed route is executable through its first leg",
-    swapRouteExecutable({ ...composedMs[0], milestoneLegRoutes: [{ provider: "relay", relay: composedMs[0].milestoneLegRoutes?.[0]?.relay, steps: [] , ...(composedMs[0].milestoneLegRoutes?.[0] || {}) }] }).ok === true
-    || swapRouteExecutable(composedMs[0]).ok === false); // structural: fake leg 1 carries no signable Relay steps — the gate must not wave it through on shape alone
+    composedUsdc[0].gasDrop?.symbol === "SUI" && composedUsdc[0].gasDrop?.amountHuman === 0.06
+    && formatDestGasLine({ ...composedUsdc[0], destGas: destGasPlanFromBalance("sui", 0n, 0.8) }).includes("will arrive as SUI for gas"));
+  ok("ms: a composed route is executable through its legs — the gate passes on each leg's real signable shape",
+    swapRouteExecutable(composedUsdc[0]).ok === true
+    && swapRouteExecutable(composedUsdc[0].milestoneLegRoutes[1]).ok === true);
+
   // Composition triggers ONLY on direct failure.
   let composeCalls = 0, directCalls = 0;
   const directOk = async () => { directCalls++; return [{ id: "direct", provider: "relay", toAmountUSD: 5, gasCostUSD: 0 }]; };
-  const wrappedOk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: directOk, compositionSearch: async () => { composeCalls++; return composedMs; } });
+  const wrappedOk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: directOk, compositionSearch: async () => { composeCalls++; return composedUsdc; } });
   ok("ms: a direct answer returns untouched and composition is never searched",
     wrappedOk.length === 1 && wrappedOk[0].id === "direct" && composeCalls === 0 && directCalls === 1);
-  const wrappedFail = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("No available quotes for the requested transfer"); }, compositionSearch: async () => { composeCalls++; return composedMs; } });
+  const wrappedFail = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("No available quotes for the requested transfer"); }, compositionSearch: async () => { composeCalls++; return composedUsdc; } });
   ok("ms: on a no-quote direct failure the composition is searched and ranked in",
     wrappedFail.length === 1 && wrappedFail[0].provider === "milestone" && composeCalls === 1);
   let composeCalls429 = 0, threw429 = false;
-  try { await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Route search failed: Rate limit exceeded, retry in 1 hour"); }, compositionSearch: async () => { composeCalls429++; return composedMs; } }); }
+  try { await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Route search failed: Rate limit exceeded, retry in 1 hour"); }, compositionSearch: async () => { composeCalls429++; return composedUsdc; } }); }
   catch (e) { threw429 = /Rate limit/i.test(e.message || ""); }
   ok("ms: a transport failure is never composed over or re-labelled — it propagates as itself",
     threw429 === true && composeCalls429 === 0);
@@ -10952,7 +11213,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // Before this pin the bare word "network" classified it as
   // transport and the sheet path stranded on the throw.
   let composeCallsUnk = 0;
-  const wrappedUnk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Unknown network in swap."); }, compositionSearch: async () => { composeCallsUnk++; return composedMs; } });
+  const wrappedUnk = await getSwapRoutes(MS_BNB_ARGS, { directSearch: async () => { throw new Error("Unknown network in swap."); }, compositionSearch: async () => { composeCallsUnk++; return composedUsdc; } });
   ok("ms: a direct 'unknown network' throw falls through to composition instead of stranding the search",
     wrappedUnk.length === 1 && wrappedUnk[0].provider === "milestone" && composeCallsUnk === 1);
   let unkThrew = false;
@@ -10965,13 +11226,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const vMsNone = await diagnoseNoRouteSwap(MS_BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { throw new Error("No available quotes"); } });
   ok("ms: composition finding nothing leaves the empty answer, and the Stage-0 diagnosis remains the fallback",
     Array.isArray(wrappedNone) && wrappedNone.length === 0 && vMsNone.kind === "no-route-yet");
-  // The final-leg estimate: priced at the recorded pool-fee
-  // estimate from fair prices, marked estimated, never invented
-  // without prices.
-  const estMs = estimateMilestoneFinalLeg(suiShape[2], "129236", { fromPriceUsd: 1, toPriceUsd: 0.8, fromDecimals: 6, toDecimals: 9 });
-  ok("ms: the final-leg estimate prices USDC→SUI at the pool-fee estimate and is marked estimated",
-    !!estMs && estMs.estimated === true && Math.abs(estMs.toAmountUSD - 0.1289) < 0.001
-    && estimateMilestoneFinalLeg(suiShape[2], "129236", { fromPriceUsd: null, toPriceUsd: 0.8, fromDecimals: 6, toDecimals: 9 }) === null);
+  // The final-leg estimate preview was removed with LI.FI
+  // (2026-11-13): a leg is offered only when it genuinely quotes
+  // and executes — no estimated legs remain anywhere.
   // Records: persistence + the one-tap action state.
   const storeMs = { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
   const recMs = newMilestoneRecord({ id: "0xhash", label: "BNB → USDC on Base → USDC on Sui → SUI", legs: suiShape, state: "leg-due", currentLeg: 2 });
@@ -10982,21 +11239,26 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && milestoneHistoryLine(recMs).includes("Complete the swap"));
   // Cross-family generality (scope clarification, 2026-11-13):
   // the planner is not Sui-shaped — Bitcoin/Lightning
-  // destinations compose through a Satora source chain, and a
-  // Bitcoin SOURCE composes nothing (no signable leg exists).
+  // destinations compose through a Satora source chain; a
+  // Bitcoin SOURCE composes through the Satora hub leg since
+  // Part B (2026-11-14) gave it a signable first leg.
   const BTC_ARGS = { fromChainKey: "bsc", toChainKey: "bitcoin", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "btc", fromAmount: "32000000000000000", fromAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", toAddress: "bc1pqa" };
   const btcShapes = milestoneShapes(BTC_ARGS);
   ok("ms: BNB→BTC composes through Arbitrum USDC into the Satora leg, labelled plainly",
-    btcShapes.length === 3 && btcShapes[0].length === 2
+    // Cheapest-entry (2026-11-14): the three direct-door
+    // shapes are joined by the three via-Arkade door shapes;
+    // the direct Arbitrum shape still leads.
+    btcShapes.length === 6 && btcShapes[0].length === 2
     && btcShapes[0][0].toChainKey === "arbitrum" && btcShapes[0][0].toSymbol === "USDC"
     && btcShapes[0][1].fromChainKey === "arbitrum" && btcShapes[0][1].toChainKey === "bitcoin" && btcShapes[0][1].toSymbol === "BTC"
     && milestoneLabelFor("BNB", btcShapes[0]) === "BNB → USDC on Arbitrum → BTC on Bitcoin"
     && milestoneShapes({ ...BTC_ARGS, toChainKey: "lightning" })[0][1].toChainKey === "lightning");
-  ok("ms: a Bitcoin or Lightning SOURCE gets no composition shapes — no signable leg exists to compose from",
-    milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "base", fromTokenAddress: "btc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", fromAmount: "100000", fromAddress: "bc1pqa", toAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34" }).length === 0);
+  ok("ms: a Bitcoin SOURCE composes through the Satora hub leg since Part B (the direct BTC -> hub leg, then the ordinary tail)",
+    (() => { const sh = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "base", fromTokenAddress: "btc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", fromAmount: "100000", fromAddress: "bc1pqa", toAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34" });
+      return sh.length >= 1 && sh[0][0].fromChainKey === "bitcoin" && sh[0][0].toChainKey === "arbitrum"; })());
   const btcLegSearch = async (a) => {
-    if (a.toChainKey === "arbitrum") return [fakeLeg("b1", "relay", "20000000", 20, { fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
-    if (a.toChainKey === "bitcoin") return [fakeLeg("b2", "satora", "21000", 19.9, { toToken: { address: "btc", symbol: "BTC", decimals: 8 } })];
+    if (a.toChainKey === "arbitrum") return [fakeLeg("b1", "relay", "20000000", 20, { ...RELAY_EXEC, fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.toChainKey === "bitcoin") return [fakeLeg("b2", "satora", "21000", 19.9, { satora: { destKey: "bitcoin" }, toToken: { address: "btc", symbol: "BTC", decimals: 8 } })];
     throw new Error("No available quotes for the requested transfer");
   };
   const composedBtc = await searchMilestoneCompositions(BTC_ARGS, { searchLeg: btcLegSearch, pricesUsd: { BTC: 95000 } });
@@ -11009,5 +11271,3442 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && appMs.includes("completeMilestoneSwap(wallet, r.id") && appMs.includes("Milestone route: "));
 }
 
+
+
+// ---------- address-book lift (2026-11-14, universal-composability §7.1) ----------
+// milestoneAddressFor used to resolve an intermediate chain
+// ONLY from the swap's own endpoints, so every composition
+// with two non-EVM endpoints died on addressing — the class
+// (solana|tron|sui → EVM milestone → sui|bitcoin|lightning) —
+// even though every leg individually quotes (audit §5,
+// probe-verified). The lift: the app supplies an address book
+// (args.addresses) built ONLY from the wallet's own
+// seed-derived addresses, and intermediates resolve from it.
+// Endpoints always resolve from the swap's own args first —
+// the book never overrides the destination the user chose.
+{
+  const AB_EVM = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const AB_SOL = "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn";
+  const AB_TRON = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  const AB_SUI = "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831";
+  const AB_SUI_OTHER = "0x" + "11".repeat(32);
+  const AB_BTC = "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn";
+  const AB_BOOK = { base: AB_EVM, arbitrum: AB_EVM, ethereum: AB_EVM, solana: AB_SOL, tron: AB_TRON, sui: AB_SUI, bitcoin: AB_BTC };
+  const AB_SOL_USDC = hubTokenForChain("solana").address;
+  const AB_SUI_USDC = SUI_TOKENS[0].address;
+  const AB_TRON_USDC = hubTokenForChain("tron").address;
+  const solSuiArgs = { fromChainKey: "solana", toChainKey: "sui", fromTokenAddress: AB_SOL_USDC, toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "10000000", fromAddress: AB_SOL, toAddress: AB_SUI };
+
+  ok("book: without a book the endpoint behaviour is byte-identical — an EVM milestone between two non-EVM endpoints resolves null",
+    milestoneAddressFor(solSuiArgs, "base") === null
+    && milestoneAddressFor(solSuiArgs, "solana") === AB_SOL
+    && milestoneAddressFor(solSuiArgs, "sui") === AB_SUI
+    && milestoneAddressFor({ fromChainKey: "bsc", toChainKey: "sui", fromAddress: AB_EVM, toAddress: AB_SUI }, "base") === AB_EVM);
+  ok("book: with a book the intermediate resolves to the user's own address on that chain — EVM milestones and non-EVM third chains alike",
+    milestoneAddressFor({ ...solSuiArgs, addresses: AB_BOOK }, "base") === AB_EVM
+    && milestoneAddressFor({ ...solSuiArgs, addresses: AB_BOOK }, "arbitrum") === AB_EVM
+    && milestoneAddressFor({ ...solSuiArgs, addresses: AB_BOOK }, "tron") === AB_TRON);
+  ok("book: endpoints resolve from the swap's own args FIRST — the book never overrides the destination the user chose",
+    milestoneAddressFor({ ...solSuiArgs, addresses: { ...AB_BOOK, sui: AB_SUI_OTHER } }, "sui") === AB_SUI
+    && milestoneAddressFor({ ...solSuiArgs, addresses: { ...AB_BOOK, solana: AB_SUI_OTHER } }, "solana") === AB_SOL);
+  ok("book: a malformed entry is refused and resolution falls back to the endpoint rules",
+    milestoneAddressFor({ ...solSuiArgs, addresses: { ...AB_BOOK, base: "not-an-address" } }, "base") === null
+    && milestoneAddressFor({ fromChainKey: "bsc", toChainKey: "sui", fromAddress: AB_EVM, toAddress: AB_SUI, addresses: { base: "0x123" } }, "base") === AB_EVM
+    && swapAddressBookEntry({ base: AB_SOL }, "base") === null
+    && swapAddressBookEntry({ solana: AB_EVM }, "solana") === null
+    && swapAddressBookEntry({ sui: "0xCB53" }, "sui") === "0x" + "0".repeat(60) + "cb53"
+    && swapAddressBookEntry(null, "base") === null && swapAddressBookEntry(AB_BOOK, "") === null);
+  ok("book: the LN/BTC-source forward case is covered by construction — an invoice-shaped fromAddress is never mistaken for a milestone address",
+    milestoneAddressFor({ fromChainKey: "lightning", toChainKey: "sui", fromAddress: "lnbc1pvjluezpp5qqqsyqcyq5rqwzqfpg9scrgwpugp34xsejvtdghgqn0h9ynqp4sfl997", toAddress: AB_SUI, addresses: AB_BOOK }, "base") === AB_EVM
+    && milestoneAddressFor({ fromChainKey: "lightning", toChainKey: "sui", fromAddress: "lnbc1x", toAddress: AB_SUI }, "base") === null);
+  let seenAddresses = null;
+  await getSwapRoutes({ ...solSuiArgs, addresses: AB_BOOK }, { directSearch: async () => [], compositionSearch: async (a) => { seenAddresses = a.addresses; return []; } });
+  ok("book: getSwapRoutes threads args.addresses into the composition search untouched",
+    seenAddresses === AB_BOOK);
+
+  const abFakeLeg = (id, provider, toAmount, toAmountUSD, extra = {}) => ({
+    provider, id, type: "x", fromAmount: "0",
+    fromToken: { address: "0x0", symbol: "X", decimals: 6 }, toToken: { address: "0x1", symbol: "Y", decimals: 6 },
+    toAmount, toAmountMin: toAmount, toAmountUSD, fromAmountUSD: toAmountUSD,
+    gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 10,
+    platformFeeUsd: 0.001, platformFeeCollecting: true, platformFeeBps: 45, steps: [], ...extra,
+  });
+  const AB_CETUS_EXTRA = { cetus: { routerData: { quoteID: "ab1" }, paths: [{ provider: "CETUS", id: "p1" }], aggregatorPackage: CETUS_AGGREGATOR_PACKAGE, quoteID: "ab1" }, fromChainId: SUI_SWAP_CHAIN_ID, toChainId: SUI_SWAP_CHAIN_ID };
+  const solSuiLegSearch = async (a) => {
+    if (a.fromChainKey === "solana" && a.toChainKey === "base") return [abFakeLeg("ab1", "mayan", "9900000", 9.9, { mayan: { quote: { id: "abq1" }, fromChainName: "solana" }, fromChainId: SOLANA_SWAP_CHAIN_ID, toChainId: 8453, fromToken: { address: a.fromTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [abFakeLeg("ab2", "mayan", "9850000", 9.85, { mayan: { quote: { id: "abq2" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" }, fromChainId: 8453, toChainId: SUI_SWAP_CHAIN_ID })];
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [abFakeLeg("ab3", "cetus", "12000000000", 9.6, AB_CETUS_EXTRA)];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedSolSui = await searchMilestoneCompositions({ ...solSuiArgs, addresses: AB_BOOK }, { searchLeg: solSuiLegSearch, pricesUsd: { SUI: 0.8 } });
+  ok("book: solana→SUI composes through the Base milestone once the book names it — every leg addressed to the user's own accounts",
+    composedSolSui.length === 1 && composedSolSui[0].milestone.legs.length === 3
+    && composedSolSui[0].milestone.legs[0].toAddress === AB_EVM && composedSolSui[0].milestone.legs[1].fromAddress === AB_EVM
+    && composedSolSui[0].milestone.legs[1].toAddress === AB_SUI && composedSolSui[0].milestone.legs[2].fromAddress === AB_SUI
+    && composedSolSui[0].milestone.label === "USDC → USDC on Base → USDC on Sui → SUI"
+    && swapRouteExecutable(composedSolSui[0]).ok === true);
+  ok("book: the same solana→SUI search WITHOUT the book still dies on addressing (the audit's failing probe, unchanged)",
+    (await searchMilestoneCompositions(solSuiArgs, { searchLeg: solSuiLegSearch, pricesUsd: { SUI: 0.8 } })).length === 0);
+  const solSuiBadLegSearch = async (a) => {
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [abFakeLeg("abx", "lifi", "9850000", 9.85, { steps: [{ id: "s1", type: "cross", action: { fromChainId: 8453, toChainId: 9270000000000000 }, estimate: { toAmount: "9850000" } }] })];
+    return solSuiLegSearch(a);
+  };
+  ok("book: the all-legs executability gate is unchanged under the lift — a non-executable leg still kills the shape",
+    (await searchMilestoneCompositions({ ...solSuiArgs, addresses: AB_BOOK }, { searchLeg: solSuiBadLegSearch, pricesUsd: { SUI: 0.8 } })).length === 0);
+
+  const AB_RELAY_TRON_EXTRA = { relay: { originChainId: RELAY_TRON_CHAIN_ID, steps: [{ kind: "transaction", items: [{ data: { parameter: { owner_address: "41" + "00".repeat(20), contract_address: "41" + "11".repeat(20), data: "a9059cbb000000000000000000000000" } } }] }] }, fromChainId: TRON_SWAP_CHAIN_ID, toChainId: 42161 };
+  const tronBtcArgs = { fromChainKey: "tron", toChainKey: "bitcoin", fromTokenAddress: TRON_SWAP_NATIVE_TOKEN, toTokenAddress: "btc", fromAmount: "300000000", fromAddress: AB_TRON, toAddress: AB_BTC };
+  const tronBtcLegSearch = async (a) => {
+    if (a.fromChainKey === "tron" && a.toChainKey === "arbitrum") return [abFakeLeg("ab4", "relay", "20000000", 20, AB_RELAY_TRON_EXTRA)];
+    if (a.fromChainKey === "arbitrum" && a.toChainKey === "bitcoin") return [abFakeLeg("ab5", "satora", "21000", 19.9, { satora: { destKey: "bitcoin" }, fromChainId: 42161, toChainId: BITCOIN_SWAP_CHAIN_ID, fromToken: { address: "0xaf88d065e77c8cC2239327C5ED3cbA3D1e5831", symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedTronBtc = await searchMilestoneCompositions({ ...tronBtcArgs, addresses: AB_BOOK }, { searchLeg: tronBtcLegSearch, pricesUsd: { BTC: 95000 } });
+  ok("book: tron→Bitcoin composes through the Arbitrum milestone the book names (Relay-Tron leg, then the Satora leg)",
+    composedTronBtc.length === 1 && composedTronBtc[0].milestone.legs.length === 2
+    && composedTronBtc[0].milestone.legs[0].toAddress === AB_EVM && composedTronBtc[0].milestone.legs[1].fromAddress === AB_EVM
+    && composedTronBtc[0].milestone.legs[1].toAddress === AB_BTC
+    && swapRouteExecutable(composedTronBtc[0]).ok === true);
+  ok("book: tron→Bitcoin without the book still dies on addressing (the audit's failing probe, unchanged)",
+    (await searchMilestoneCompositions(tronBtcArgs, { searchLeg: tronBtcLegSearch, pricesUsd: { BTC: 95000 } })).length === 0);
+
+  // Sui→Tron was the two-crossing boundary (§7.5): the
+  // one-crossing grammar still proposes only the direct
+  // crossing (which no rail serves) — but since the
+  // two-crossing planner (2026-11-14) the search falls through
+  // to the hub shapes, and with the book naming the Base
+  // intermediate the pair composes end to end.
+  const suiTronArgs = { fromChainKey: "sui", toChainKey: "tron", fromTokenAddress: AB_SUI_USDC, toTokenAddress: AB_TRON_USDC, fromAmount: "10000000", fromAddress: AB_SUI, toAddress: AB_TRON, addresses: AB_BOOK };
+  const suiTronShapes = milestoneShapes(suiTronArgs);
+  const hubAsked = [];
+  const hubLegSearch = async (a) => {
+    hubAsked.push(a.fromChainKey + ">" + a.toChainKey);
+    if (a.fromChainKey === "sui" && a.toChainKey === "base") return [abFakeLeg("ab6", "mayan", "9900000", 9.9, { mayan: { quote: { id: "abq6", fastMctpMayanContract: "0x1d2e4a268caf2c9a6cca996f9dfb5590b02628e8da5d5c92de89b386a3770af1", fastMctpInputContract: AB_SUI_USDC, fastMctpInputCurrencyId: MAYAN_SUI_USDC_CURRENCY_ID }, routeType: "FAST_MCTP", fromChainName: "sui", fromAddress: AB_SUI, destinationAddress: AB_EVM }, fromChainId: SUI_SWAP_CHAIN_ID, toChainId: 8453, fromToken: { address: AB_SUI_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "tron") return [abFakeLeg("ab7", "relay", "9800000", 9.8, { relay: { originChainId: 8453, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] }, fromChainId: 8453, toChainId: TRON_SWAP_CHAIN_ID })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedSuiTron = await searchMilestoneCompositions(suiTronArgs, { searchLeg: hubLegSearch, pricesUsd: {} });
+  ok("book: Sui→Tron now composes through the Base hub the book names (two-crossing planner, §7.5) — the one-crossing grammar still proposes only the direct crossing",
+    suiTronShapes.length === 1 && suiTronShapes[0].length === 1
+    && suiTronShapes[0][0].fromChainKey === "sui" && suiTronShapes[0][0].toChainKey === "tron"
+    && composedSuiTron.length === 1 && composedSuiTron[0].milestone.legs.length === 2
+    && composedSuiTron[0].milestone.legs[0].toChainKey === "base" && composedSuiTron[0].milestone.legs[0].toAddress === AB_EVM
+    && composedSuiTron[0].milestone.legs[1].fromAddress === AB_EVM && composedSuiTron[0].milestone.legs[1].toAddress === AB_TRON
+    && composedSuiTron[0].milestone.label === "USDC → USDC on Base → USDC on Tron"
+    && hubAsked.includes("sui>base") && hubAsked.includes("base>tron")
+    && swapRouteExecutable(composedSuiTron[0]).ok === true);
+
+  {
+    const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
+      appBook.includes("addresses: addressBook")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr }")
+      && appBook.includes("addressBook[k] = wallet.address")
+      && appBook.includes("addressBook.bitcoin = btcTrAddr")
+      && appBook.includes("addressBook.arkade = arkSession.address"));
+  }
+}
+
+
+// ---------- global repair 2026-11-13: executability-first composition + performance ----------
+// The screenshot defect, pinned end to end: a composed route
+// whose first leg was a raw LI.FI /routes route (steps carry no
+// transactionRequest — only /quote-shaped LI.FI routes and the
+// Relay/Across/Mayan/Jupiter/Satora shapes arrive signable) was
+// badged CHEAPEST/FASTEST and then refused by the sheet's own
+// gate. The fix is generic: every composed-context pick goes
+// through firstExecutableRoute.
+{
+  const RELAY_LEG = { provider: "relay", id: "relay-leg", fromChainId: 56, toChainId: 8453,
+    fromAmount: "8000000000000", fromToken: { address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", symbol: "BTCB", decimals: 18 },
+    toToken: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
+    toAmount: "522987", toAmountUSD: 0.52, gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 30, steps: [],
+    relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
+  const RAW_LIFI_LEG = { id: "raw-lifi", fromChainId: 56, toChainId: 8453,
+    fromAmount: "8000000000000", fromToken: { address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", symbol: "BTCB", decimals: 18 },
+    toToken: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
+    toAmount: "530000", toAmountUSD: 0.53, gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 20,
+    steps: [{ id: "s1", type: "cross", action: { fromChainId: 56, toChainId: 8453 }, estimate: { toAmount: "530000" } }] };
+  ok("repair: a raw LI.FI /routes route is NOT executable (no transactionRequest), the Relay shape is",
+    swapRouteExecutable(RAW_LIFI_LEG).ok === false && swapRouteExecutable(RELAY_LEG).ok === true);
+  ok("repair: firstExecutableRoute skips non-executable and composite/preview shapes, in order",
+    firstExecutableRoute([RAW_LIFI_LEG, RELAY_LEG]) === RELAY_LEG
+    && firstExecutableRoute([RAW_LIFI_LEG]) === null
+    && firstExecutableRoute([{ provider: "estimated", steps: [] }, { provider: "milestone", milestone: { legs: [{}] }, milestoneLegRoutes: [RELAY_LEG] }, RELAY_LEG]) === RELAY_LEG
+    && firstExecutableRoute([]) === null && firstExecutableRoute(null) === null);
+  const BTCB_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "8000000000000", fromAddress: "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34", toAddress: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831" };
+  const MAYAN_LEG = { provider: "mayan", id: "mayan-leg", fromChainId: 8453, toChainId: 9270000000000000,
+    fromToken: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
+    toToken: { address: "0x2::sui::SUI", symbol: "USDC", decimals: 6 },
+    toAmount: "520000", toAmountUSD: 0.52, gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 60, steps: [],
+    mayan: { quote: { id: "mq" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" },
+    gasDrop: { symbol: "SUI", amountHuman: 0.06, usd: 0.048 } };
+  // The final leg into SUI itself rides the Cetus port since
+  // 2026-11-13 (gap (a) closed): a cetus-shaped leg carrying
+  // the pinned aggregator payload.
+  const SUI_LEG = { provider: "cetus", id: "sui-leg", fromChainId: SUI_SWAP_CHAIN_ID, toChainId: SUI_SWAP_CHAIN_ID,
+    fromToken: { address: SUI_TOKENS[0].address, symbol: "USDC", decimals: 6 }, toToken: { address: SUI_SWAP_NATIVE_TOKEN, symbol: "SUI", decimals: 9 },
+    fromAmount: "520000", toAmount: "373767000", toAmountUSD: 0.30, gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 30,
+    cetus: { routerData: { quoteID: "q1" }, paths: [{ provider: "CETUS", id: "p1" }], aggregatorPackage: CETUS_AGGREGATOR_PACKAGE, quoteID: "q1" } };
+  const legSearchRepair = (leg1Routes) => async (a) => {
+    if (a.fromChainKey === "bsc" && a.toChainKey === "base") return leg1Routes;
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [{ ...MAYAN_LEG, toToken: { address: SUI_TOKENS[0].address, symbol: "USDC", decimals: 6 } }];
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [SUI_LEG];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  // The raw LI.FI candidate out-ranks Relay on merit (more out,
+  // faster) — merit alone picked it before the repair. The
+  // first composition target is Sui USDC (two legs); the
+  // screenshot pair itself (into SUI) is pinned right after.
+  const BTCB_USDC_ARGS = { ...BTCB_ARGS, toTokenAddress: SUI_TOKENS[0].address };
+  const composedRepair = await searchMilestoneCompositions(BTCB_USDC_ARGS, { searchLeg: legSearchRepair([RAW_LIFI_LEG, RELAY_LEG]), pricesUsd: { SUI: 0.8 } });
+  ok("repair: the BTCB→USDC-on-Sui composition picks the EXECUTABLE Relay leg, not the higher-merit raw LI.FI route",
+    composedRepair.length === 1 && composedRepair[0].milestoneLegRoutes[0].provider === "relay"
+    && composedRepair[0].milestone.label === "BTCB → USDC on Base → USDC on Sui");
+  ok("repair: the composed route the sheet would badge now passes the sheet's own executability gate",
+    swapRouteExecutable(composedRepair[0]).ok === true);
+  const composedNone = await searchMilestoneCompositions(BTCB_USDC_ARGS, { searchLeg: legSearchRepair([RAW_LIFI_LEG]), pricesUsd: { SUI: 0.8 } });
+  ok("repair: when NO leg-1 candidate is executable, no composed route is offered at all",
+    composedNone.length === 0);
+  const composedSuiNative = await searchMilestoneCompositions(BTCB_ARGS, { searchLeg: legSearchRepair([RELAY_LEG]), pricesUsd: { SUI: 0.8 } });
+  ok("repair: the screenshot pair itself (BTCB→SUI) composes again — the Cetus final leg restored it",
+    composedSuiNative.length === 1
+    && composedSuiNative[0].milestone.label === "BTCB → USDC on Base → USDC on Sui → SUI"
+    && composedSuiNative[0].milestoneLegRoutes[2].provider === "cetus"
+    && swapRouteExecutable(composedSuiNative[0]).ok === true);
+}
+// ---------- two-crossing planner 2026-11-14 (audit §7.5) ----------
+{
+  // Captured live 2026-11-14 (Relay + Across quote APIs,
+  // $5 USDC, the test-only wallet below — Relay blocks the
+  // famous Hardhat test account, so this phrase is a unique
+  // fixed-entropy wallet that never holds funds).
+  const TWOX_PHRASE = "rookie vapor utility piano used pulp pistol devote area annual there garage";
+  // Fixture repair (2026-11-14, server-swap build): the
+  // captured quote's REAL quoteExpiryTimestamp (1794635663,
+  // a ~56-minute live window) lapsed mid-session and the
+  // production search — correctly — stopped quoting the leg.
+  // The field is freshness metadata only; it is pinned to a
+  // far-future value so the fixture is deterministic. Amounts
+  // and calldata are byte-identical to the capture.
+  const TWOX_ACROSS_QUOTE = {"crossSwapType":"bridgeableToBridgeable","amountType":"exactInput","checks":{"allowance":{"token":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","spender":"0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A","actual":"0","expected":"5000000"},"balance":{"token":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","actual":"0","expected":"5000000"}},"approvalTxns":[{"chainId":42161,"to":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","data":"0x095ea7b3000000000000000000000000e35e9842fceaca96570b734083f4a58e8f7c5f2affffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}],"steps":{"bridge":{"inputAmount":"5000000","outputAmount":"4996236","tokenIn":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"tokenOut":{"decimals":6,"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","name":"USD Coin","chainId":8453},"fees":{"amount":"3764","pct":"752800000000000","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"details":{"type":"across","relayerCapital":{"amount":"500","pct":"100000000000000","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161}},"destinationGas":{"amount":"3264","pct":"652800000000000","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161}},"lp":{"amount":"0","pct":"0","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161}}}},"provider":"across"}},"inputToken":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"outputToken":{"decimals":6,"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","name":"USD Coin","chainId":8453},"refundToken":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"fees":{"total":{"amount":"3801","amountUsd":"0.0038","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"760338350566002","details":{"type":"total-breakdown","swapImpact":{"amount":"37","amountUsd":"0.00003767498","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"7538350566002"},"app":{"amount":"0","amountUsd":"0.0","token":{"decimals":6,"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","name":"USD Coin","chainId":8453},"pct":"0"},"bridge":{"amount":"3764","amountUsd":"0.00376232502","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"752800000000000","details":{"type":"across","lp":{"amount":"0","amountUsd":"0.0","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"0"},"relayerCapital":{"amount":"500","amountUsd":"0.0004997775","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"100000000000000"},"destinationGas":{"amount":"1720734760182","amountUsd":"0.00326254752","token":{"chainId":8453,"address":"0x0000000000000000000000000000000000000000","decimals":18,"symbol":"ETH"},"pct":"652800000000000"}}}}},"totalMax":{"amount":"3801","amountUsd":"0.0038","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"760338350566002","details":{"type":"max-total-breakdown","maxSwapImpact":{"amount":"37","amountUsd":"0.00003767498","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"7538350566002"},"app":{"amount":"0","amountUsd":"0.0","token":{"decimals":6,"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","name":"USD Coin","chainId":8453},"pct":"0"},"bridge":{"amount":"3764","amountUsd":"0.00376232502","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"752800000000000","details":{"type":"across","lp":{"amount":"0","amountUsd":"0.0","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"0"},"relayerCapital":{"amount":"500","amountUsd":"0.0004997775","token":{"decimals":6,"symbol":"USDC","address":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","name":"USD Coin","chainId":42161},"pct":"100000000000000"},"destinationGas":{"amount":"1720734760182","amountUsd":"0.00326254752","token":{"chainId":8453,"address":"0x0000000000000000000000000000000000000000","decimals":18,"symbol":"ETH"},"pct":"652800000000000"}}}}},"originGas":{"amount":"0","amountUsd":"0.0","token":{"chainId":42161,"address":"0x0000000000000000000000000000000000000000","decimals":18,"symbol":"ETH"}},"submission":null},"inputAmount":"5000000","maxInputAmount":"5000000","expectedOutputAmount":"4996236","minOutputAmount":"4996236","expectedFillTime":2,"swapTx":{"ecosystem":"evm","simulationSuccess":false,"chainId":42161,"to":"0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A","data":"0xad5425c6000000000000000000000000033cf7c2785500aa526194eeb1323cb2f3946ebb000000000000000000000000033cf7c2785500aa526194eeb1323cb2f3946ebb000000000000000000000000af88d065e77c8cc2239327c5edb3a432268e5831000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291300000000000000000000000000000000000000000000000000000000004c4b4000000000000000000000000000000000000000000000000000000000004c3c8c0000000000000000000000000000000000000000000000000000000000002105000000000000000000000000ef1ec136931ab5728b0783fd87d109c9d15d31f1000000000000000000000000000000000000000000000000000000006af7e97f000000000000000000000000000000000000000000000000000000006af8059f00000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000000073c0de","gas":"0"},"quoteExpiryTimestamp":1999999999,"id":"rzzx6-1794632321958-44f3d74c7421"};
+  const TWOX_RELAY_TRON_QUOTE = {"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","steps":[{"id":"approve","action":"Confirm transaction in your wallet","description":"Sign an approval for USDC","kind":"transaction","items":[{"status":"incomplete","data":{"from":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","to":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","data":"0x095ea7b30000000000000000000000004cd00e387622c35bddb9b4c962c136462338bc3100000000000000000000000000000000000000000000000000000000004c4b40","value":"0","chainId":8453,"gas":"73112","maxFeePerGas":"6855562","maxPriorityFeePerGas":"1355562"}}],"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0"},{"id":"deposit","action":"Confirm transaction in your wallet","description":"Depositing funds to the relayer to execute the swap for USDT","kind":"transaction","items":[{"status":"incomplete","data":{"from":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","to":"0x4cd00e387622c35bddb9b4c962c136462338bc31","data":"0xe8017952000000000000000000000000033cf7c2785500aa526194eeb1323cb2f3946ebb000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291300000000000000000000000000000000000000000000000000000000004c4b40cf1438f3812bc06b1196f2514411645d5ac2a797b559ad00d7c70dcd7736400c","value":"0","chainId":8453,"gas":"76161","maxFeePerGas":"6855562","maxPriorityFeePerGas":"1355562"},"check":{"endpoint":"/intents/status/v3?requestId=0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","method":"GET"}}],"requestId":"0x17946323302e573a43d071ac489dd49fb25e6ad56d1d00244c3e1421cb7d9ec0","depositAddress":""}],"fees":{"gas":{"currency":{"chainId":8453,"address":"0x0000000000000000000000000000000000000000","symbol":"ETH","name":"Ether","decimals":18,"metadata":{"logoURI":"https://assets.relay.link/icons/1/light.png","verified":true}},"amount":"523904584918","amountFormatted":"0.000000523904584918","amountUsd":"0.000994","minimumAmount":"523904584918"},"relayer":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"1126202","amountFormatted":"1.126202","amountUsd":"1.125933","minimumAmount":"1126202"},"relayerGas":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"1100202","amountFormatted":"1.100202","amountUsd":"1.099939","minimumAmount":"1100202"},"relayerService":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"26000","amountFormatted":"0.026","amountUsd":"0.025994","minimumAmount":"26000"},"app":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"0","amountFormatted":"0.0","amountUsd":"0","minimumAmount":"0"},"subsidized":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"0","amountFormatted":"0.0","amountUsd":"0","minimumAmount":"0"}},"details":{"operation":"swap","sender":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currencyIn":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"currencyOut":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"refundCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"totalImpact":{"usd":"-1.126555","percent":"-22.54"},"swapImpact":{"usd":"-0.000622","percent":"-0.01"},"expandedPriceImpact":{"swap":{"usd":"-0.006118"},"execution":{"usd":"-1.119938"},"relay":{"usd":"-0.000499"},"app":{"usd":"0"},"sponsored":{"usd":"0"}},"rate":"0.7752741999999999","slippageTolerance":{"total":"200","origin":{"usd":"0.000000","value":"0","percent":"0.00"},"destination":{"usd":"0.077058","value":"77527","percent":"1.99"}},"timeEstimate":3,"userBalance":"0","isFixedRate":false,"route":{"origin":{"inputCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"outputCurrency":{"currency":{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","symbol":"USDC","name":"USD Coin","decimals":6,"metadata":{"logoURI":"https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694","verified":true}},"amount":"5000000","amountFormatted":"5.0","amountUsd":"4.998805","minimumAmount":"5000000"},"router":"relay"},"destination":{"inputCurrency":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"outputCurrency":{"currency":{"chainId":728126428,"address":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","symbol":"USDT","name":"Tether USD","decimals":6,"metadata":{"logoURI":"https://static.tronscan.org/production/logo/usdtlogo.png","verified":true}},"amount":"3876371","amountFormatted":"3.876371","amountUsd":"3.872250","minimumAmount":"3798844"},"router":"relay"}}},"protocol":{"v2":{"orderId":"0xcf1438f3812bc06b1196f2514411645d5ac2a797b559ad00d7c70dcd7736400c","hubType":"onchain","orderData":{"version":"v1","solverChainId":"base","solver":"0xf70da97812cb96acdf810712aa562db8dfa3dbef","salt":"0x63e92ad7999f181422a43838fa06da69609c99b62984fcdf35dcb96ef5296028","inputs":[{"payment":{"chainId":"base","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"5000000","weight":"1"},"refunds":[{"chainId":"base","recipient":"0x033cf7C2785500aa526194EEB1323cb2F3946EbB","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","minimumAmount":"0","deadline":1795237130,"extraData":"0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"},{"chainId":"tron","recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currency":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","minimumAmount":"0","deadline":1795237130,"extraData":"0x"}]}],"output":{"chainId":"tron","payments":[{"recipient":"TAGL4katwVWtrSNahxa2JAzYdbLmczGmcU","currency":"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t","minimumAmount":"3798844","expectedAmount":"3876371"}],"calls":[],"deadline":1795237130,"extraData":"0x"},"fees":[]},"paymentDetails":{"chainId":"base","depository":"0x4cd00e387622c35bddb9b4c962c136462338bc31","currency":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"5000000"}}}};
+  // The two-crossing planner (universal-composability audit
+  // §7.5): shape generation over the CCTP hub set, alternate
+  // stable anchors (Relay serves Tron's USDT but not its
+  // USDC — probe-verified live 2026-11-14), the hard leg-quote
+  // cap, phase ordering (a one-crossing pair never pays for
+  // this phase), the all-legs executability gate, and a
+  // stubbed end-to-end execution through runMilestoneForward.
+  const X_EVM = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const X_SOL = "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn";
+  const X_TRON = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  const X_SUI = "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831";
+  const X_BOOK = { ethereum: X_EVM, bsc: X_EVM, base: X_EVM, arbitrum: X_EVM, polygon: X_EVM, optimism: X_EVM, avalanche: X_EVM, linea: X_EVM, solana: X_SOL, tron: X_TRON, sui: X_SUI };
+  const X_SUI_USDC = SUI_TOKENS[0].address;
+  const X_SUI_USDT = SUI_TOKENS.find(t => t.symbol === "USDT").address;
+  const X_TRON_USDC = TRON_TOKENS.find(t => t.symbol === "USDC").address;
+  const X_TRON_USDT = TRON_TOKENS.find(t => t.symbol === "USDT").address;
+  const X_BSC_USDC = NETWORKS.bsc.tokens.find(t => t.symbol === "USDC").address;
+  const X_BASE_USDC = NETWORKS.base.tokens.find(t => t.symbol === "USDC").address;
+  const X_ARB_USDC = NETWORKS.arbitrum.tokens.find(t => t.symbol === "USDC").address;
+  const X_SYM = { [X_SUI_USDC]: "USDC", [X_SUI_USDT]: "USDT", [X_TRON_USDC]: "USDC", [X_TRON_USDT]: "USDT", [X_BSC_USDC]: "USDC", [X_BASE_USDC]: "USDC", [X_ARB_USDC]: "USDC" };
+  const twoxLeg = (a, out, dur = 20) => ({
+    provider: "relay", id: "twox-" + a.fromChainKey + "-" + a.toChainKey,
+    fromChainKey: a.fromChainKey, toChainKey: a.toChainKey, fromChainId: 1, toChainId: 2,
+    fromAmount: String(a.fromAmount),
+    fromToken: { address: a.fromTokenAddress, symbol: X_SYM[a.fromTokenAddress] || "USDC", decimals: 6 },
+    toToken: { address: a.toTokenAddress, symbol: X_SYM[a.toTokenAddress] || "USDC", decimals: 6 },
+    toAmount: String(out), toAmountMin: String(out), toAmountUSD: Number(out) / 1e6, fromAmountUSD: Number(a.fromAmount) / 1e6,
+    gasCostUSD: 0.001, routeFeeUsd: 0.001, executionDuration: dur, steps: [],
+    relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] },
+  });
+  const twoxRawLeg = (a, out, dur = 20) => ({ ...twoxLeg(a, out, dur), relay: undefined, steps: [{ id: "s1", type: "cross" }] });
+  const K2 = (f, t, ft, tt) => [f, t, ft, tt].join("|");
+  const twoxSearch = (table, calls) => async (a) => {
+    const k = K2(a.fromChainKey, a.toChainKey, a.fromTokenAddress, a.toTokenAddress);
+    if (calls) calls.push(k);
+    const spec = table[k];
+    if (!spec) return [];
+    return [spec.raw ? twoxRawLeg(a, spec.out, spec.dur) : twoxLeg(a, spec.out, spec.dur)];
+  };
+  const SUI_TRON_USDC_ARGS = { fromChainKey: "sui", toChainKey: "tron", fromTokenAddress: X_SUI_USDC, toTokenAddress: X_TRON_USDC, fromAmount: "10000000", fromAddress: X_SUI, toAddress: X_TRON, addresses: X_BOOK };
+  const crossingsOf = (s) => s.filter(l => l.fromChainKey !== l.toChainKey).length;
+
+  const shapesST = milestoneTwoCrossingShapes(SUI_TRON_USDC_ARGS);
+  ok("twox: shapes generate for the audit's blocked pair, Base first, ≤4 legs, exactly two crossings each",
+    shapesST.length > 0
+    && shapesST.every(s => s.length <= 4 && crossingsOf(s) === 2)
+    && shapesST[0].length === 2 && shapesST[0][0].fromChainKey === "sui" && shapesST[0][0].toChainKey === "base"
+    && shapesST[0][1].fromChainKey === "base" && shapesST[0][1].toChainKey === "tron");
+  ok("twox: waypoints are the CCTP hub set only — never Solana (no rail crosses out of it toward Tron/Sui), never the origin/destination chain",
+    MILESTONE_TWO_CROSSING_HUBS.includes("base") && MILESTONE_TWO_CROSSING_HUBS.includes("arbitrum")
+    && !MILESTONE_TWO_CROSSING_HUBS.includes("solana") && !MILESTONE_TWO_CROSSING_HUBS.includes("tron") && !MILESTONE_TWO_CROSSING_HUBS.includes("sui")
+    && shapesST.every(s => { const cs = s.filter(l => l.fromChainKey !== l.toChainKey); return MILESTONE_TWO_CROSSING_HUBS.includes(cs[0].toChainKey) && cs[1].fromChainKey === cs[0].toChainKey; }));
+  ok("twox: branch-grammar pairs are NOT extended (Sui destinations and BTC/LN/Arkade sources/destinations keep their own shape grammar)",
+    milestoneTwoCrossingShapes({ fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: X_BSC_USDC, toTokenAddress: X_SUI_USDC }).length === 0
+    && milestoneTwoCrossingShapes({ fromChainKey: "bitcoin", toChainKey: "tron", fromTokenAddress: null, toTokenAddress: X_TRON_USDC }).length === 0
+    && milestoneTwoCrossingShapes({ ...SUI_TRON_USDC_ARGS, toChainKey: "lightning", toTokenAddress: null }).length === 0
+    && milestoneTwoCrossingShapes({ fromChainKey: "arkade", toChainKey: "tron", fromTokenAddress: null, toTokenAddress: X_TRON_USDC }).length === 0);
+  ok("twox: the alternate anchor is the chain's USDT where listed (Tron's USDC crosses nowhere on Relay; its USDT does)",
+    milestoneAltAnchorFor("tron")?.address === X_TRON_USDT
+    && milestoneAltAnchorFor("sui")?.address === X_SUI_USDT
+    && milestoneAltAnchorFor("base")?.symbol === "USDT" && milestoneAltAnchorFor("base")?.address !== X_BASE_USDC);
+  ok("twox: the anchor-rescue shape exists — crossing 2 delivers Tron's USDT and Tron's own same-chain leg finishes into USDC",
+    shapesST.some(s => s.length === 3
+      && s[1].toChainKey === "tron" && s[1].toTokenAddress === X_TRON_USDT
+      && s[2].fromChainKey === "tron" && s[2].toChainKey === "tron" && s[2].fromTokenAddress === X_TRON_USDT && s[2].toTokenAddress === X_TRON_USDC));
+
+  const tableD = {
+    [K2("sui", "base", X_SUI_USDC, X_BASE_USDC)]: { out: "9900000", dur: 20 },
+    [K2("base", "tron", X_BASE_USDC, X_TRON_USDC)]: { out: "9850000", dur: 20 },
+    [K2("base", "tron", X_BASE_USDC, X_TRON_USDT)]: { out: "9800000", dur: 20 },
+  };
+  const composedD = await searchMilestoneCompositions({ ...SUI_TRON_USDC_ARGS, toTokenAddress: X_TRON_USDT }, { searchLeg: twoxSearch(tableD), pricesUsd: {} });
+  ok("twox: Sui USDC → Tron USDT composes through Base (crossing 2 delivers the target itself), amounts chained, book addressing on both legs",
+    composedD.length === 1 && composedD[0].milestone.legs.length === 2
+    && composedD[0].milestone.label === "USDC → USDC on Base → USDT on Tron"
+    && composedD[0].milestone.legs[0].toAddress === X_EVM && composedD[0].milestone.legs[1].fromAddress === X_EVM
+    && composedD[0].milestone.legs[1].fromAmount === "9900000" && composedD[0].milestone.legs[1].toAddress === X_TRON
+    && composedD[0].executionDuration === 70
+    && swapRouteExecutable(composedD[0]).ok === true);
+
+  const tableX = {
+    [K2("sui", "base", X_SUI_USDC, X_BASE_USDC)]: { out: "9900000", dur: 20 },
+    [K2("base", "tron", X_BASE_USDC, X_TRON_USDT)]: { out: "9800000", dur: 20 },
+    [K2("tron", "tron", X_TRON_USDT, X_TRON_USDC)]: { out: "9750000", dur: 10 },
+  };
+  const composedX = await searchMilestoneCompositions(SUI_TRON_USDC_ARGS, { searchLeg: twoxSearch(tableX), pricesUsd: {} });
+  ok("twox: Sui USDC → Tron USDC composes via the USDT anchor + Tron same-chain finish; its honest summed duration exceeds the 90s fast standard (slow disclosure, never a fast badge)",
+    composedX.length === 1 && composedX[0].milestone.legs.length === 3
+    && composedX[0].milestone.label === "USDC → USDC on Base → USDT on Tron → USDC"
+    && composedX[0].executionDuration === 95 && composedX[0].executionDuration > MILESTONE_FAST_TOTAL_SEC
+    && swapRouteExecutable(composedX[0]).ok === true);
+
+  const callsP1 = [];
+  const tableP1 = {
+    [K2("bsc", "tron", X_BSC_USDC, X_TRON_USDC)]: { out: "9900000", dur: 20 },
+    [K2("tron", "tron", X_TRON_USDC, X_TRON_USDT)]: { out: "9850000", dur: 10 },
+  };
+  const composedP1 = await searchMilestoneCompositions({ fromChainKey: "bsc", toChainKey: "tron", fromTokenAddress: X_BSC_USDC, toTokenAddress: X_TRON_USDT, fromAmount: "10000000", fromAddress: X_EVM, toAddress: X_TRON, addresses: X_BOOK }, { searchLeg: twoxSearch(tableP1, callsP1), pricesUsd: {} });
+  ok("twox: a pair the one-crossing grammar already serves returns there — the two-crossing phase never quotes a leg (ordinary searches pay nothing for its existence)",
+    composedP1.length === 1 && composedP1[0].milestone.legs.length === 2
+    && callsP1.length === 2 && callsP1.every(k => k.split("|")[1] === "tron"));
+
+  const callsCap = [];
+  const tableCap = {};
+  for (const h of ["base", "arbitrum", "ethereum", "polygon", "optimism", "avalanche", "linea"]) {
+    const hubAddr = hubTokenForChain(h).address;
+    tableCap[K2("sui", h, X_SUI_USDC, hubAddr)] = { out: "9900000", dur: 20 };
+    tableCap[K2("sui", h, X_SUI_USDT, hubAddr)] = { out: "9850000", dur: 20 };
+  }
+  tableCap[K2("sui", "sui", X_SUI_USDC, X_SUI_USDT)] = { out: "9950000", dur: 5 };
+  const composedCap = await searchMilestoneCompositions(SUI_TRON_USDC_ARGS, { searchLeg: twoxSearch(tableCap, callsCap), pricesUsd: {} });
+  const phase2Quotes = callsCap.length - 1; // minus phase 1's single direct-crossing quote
+  ok("twox: when every crossing 2 refuses, the search stops at the hard leg-quote cap instead of grinding the whole hub × anchor grid",
+    composedCap.length === 0 && MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES === 30
+    && phase2Quotes <= MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES && phase2Quotes >= 25);
+
+  const tableGate = {
+    [K2("sui", "base", X_SUI_USDC, X_BASE_USDC)]: { out: "9900000", dur: 20 },
+    [K2("base", "tron", X_BASE_USDC, X_TRON_USDT)]: { out: "9800000", dur: 20, raw: true },
+    [K2("sui", "arbitrum", X_SUI_USDC, X_ARB_USDC)]: { out: "9900000", dur: 20 },
+    [K2("arbitrum", "tron", X_ARB_USDC, X_TRON_USDT)]: { out: "9750000", dur: 20 },
+  };
+  const composedGate = await searchMilestoneCompositions({ ...SUI_TRON_USDC_ARGS, toTokenAddress: X_TRON_USDT }, { searchLeg: twoxSearch(tableGate), pricesUsd: {} });
+  ok("twox: a non-executable middle leg kills its shape, not the search — the composition reroutes through the next hub",
+    composedGate.length === 1 && composedGate[0].milestone.legs[0].toChainKey === "arbitrum"
+    && composedGate[0].milestone.label === "USDC → USDC on Arbitrum → USDT on Tron");
+  const composedGateNone = await searchMilestoneCompositions({ ...SUI_TRON_USDC_ARGS, toTokenAddress: X_TRON_USDT }, { searchLeg: twoxSearch({ [K2("sui", "base", X_SUI_USDC, X_BASE_USDC)]: { out: "9900000", dur: 20 }, [K2("base", "tron", X_BASE_USDC, X_TRON_USDT)]: { out: "9800000", dur: 20, raw: true } }), pricesUsd: {} });
+  ok("twox: when the only quoting middle leg is not signable, no composition is offered at all (the all-legs executability gate)",
+    composedGateNone.length === 0);
+
+  const callsNoBook = [];
+  const composedNoBook = await searchMilestoneCompositions({ fromChainKey: "sui", toChainKey: "tron", fromTokenAddress: X_SUI_USDC, toTokenAddress: X_TRON_USDT, fromAmount: "10000000", fromAddress: X_SUI, toAddress: X_TRON }, { searchLeg: twoxSearch(tableD, callsNoBook), pricesUsd: {} });
+  ok("twox: without the address book the two-crossing phase dies on addressing — no crossing leg is ever quoted blind",
+    composedNoBook.length === 0 && callsNoBook.length <= 2
+    && callsNoBook.every(k => { const t = k.split("|")[1]; return t === "tron" || t === "sui"; }));
+
+  // Stubbed end-to-end execution: a REAL two-crossing
+  // composition (production search over captured live quotes)
+  // driven through executeMilestoneRoute / runMilestoneForward
+  // unchanged — Across carries Arbitrum→Base, Relay carries
+  // Base→Tron(USDT); credit on Base is a balance flip behind
+  // the RPC seam, and the final leg needs no credit wait.
+  {
+    const evm = ethers.Wallet.fromPhrase(TWOX_PHRASE).address;
+    const tronAddr = tronAddressFromPhrase(TWOX_PHRASE);
+    const book = { arbitrum: evm, base: evm, tron: tronAddr };
+    const args = { fromChainKey: "arbitrum", toChainKey: "tron", fromTokenAddress: X_ARB_USDC, toTokenAddress: X_TRON_USDT, fromAmount: "5000000", fromAddress: evm, toAddress: tronAddr, addresses: book };
+    const realFetch2 = globalThis.fetch;
+    const prevGetUrl = FetchRequest.createGetUrlFunc();
+    let creditRaw = 0n, flipRaw = null, sendCount = 0, flipped = false;
+    try {
+      globalThis.fetch = async (url, opts) => {
+        const u = String(url);
+        if (u.includes("api.relay.link")) {
+          const body = JSON.parse(opts.body);
+          if (body.destinationChainId === 728126428 && body.destinationCurrency === X_TRON_USDT) return { ok: true, status: 200, json: async () => structuredClone(TWOX_RELAY_TRON_QUOTE) };
+          return { ok: false, status: 400, json: async () => ({ message: "no routes found" }) };
+        }
+        if (u.includes("app.across.to")) {
+          // The Across leg is pinned to land EXACTLY the Relay
+          // fixture's input amount: parseRelayQuote demands the
+          // next leg's quote name the amount that actually
+          // arrives, so the stub quotes a clean fill at
+          // 5,000,000 (the deposit calldata — the amount being
+          // swapped and every bounds check — is untouched).
+          const q = structuredClone(TWOX_ACROSS_QUOTE);
+          q.expectedOutputAmount = "5000000"; q.minOutputAmount = "4990000";
+          return { ok: true, status: 200, json: async () => q };
+        }
+        if (u.includes("api.trongrid.io")) {
+          if (u.includes("/v1/accounts/")) return { ok: true, status: 200, json: async () => ({ data: [{ balance: 100000000 }] }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        }
+        if (u.includes("publicnode.com")) {
+          const b = JSON.parse(opts.body);
+          if (b.method === "eth_getBalance") return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: b.id ?? 1, result: "0xde0b6b3a7640000" }) };
+          throw new Error("unexpected rpc fetch " + b.method);
+        }
+        throw new Error("unexpected url " + u);
+      };
+      FetchRequest.registerGetUrl(async (req) => {
+        const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+        const host = String(req.url);
+        const isArb = host.includes("arbitrum");
+        const answer = (r) => {
+          const p = Array.isArray(r.params) ? r.params : [];
+          switch (r.method) {
+            case "eth_chainId": return isArb ? "0xa4b1" : "0x2105";
+            case "net_version": return isArb ? "42161" : "8453";
+            case "eth_call": {
+              const call = p[0] || {};
+              const data = String(call.data || "");
+              if (data.startsWith("0x70a08231")) {
+                if (String(call.to || "").toLowerCase() === X_BASE_USDC.toLowerCase()) return "0x" + creditRaw.toString(16).padStart(64, "0");
+                return "0x" + (100000000n).toString(16).padStart(64, "0");
+              }
+              if (data.startsWith("0xdd62ed3e")) return "0x" + "f".repeat(64);
+              return "0x" + "0".repeat(64);
+            }
+            case "eth_sendRawTransaction": {
+              sendCount++;
+              if (isArb && !flipped && flipRaw != null) { flipped = true; creditRaw = flipRaw; }
+              // ethers verifies the returned hash against the
+              // signed payload — answer the payload's real hash.
+              return ethers.keccak256(String(p[0]));
+            }
+            case "eth_getTransactionReceipt": return { transactionHash: String(p[0]), transactionIndex: "0x0", blockNumber: "0x100", blockHash: "0x" + "cd".repeat(32), status: "0x1", gasUsed: "0x5208", cumulativeGasUsed: "0x5208", effectiveGasPrice: "0x1", logs: [], logsBloom: "0x" + "00".repeat(256), contractAddress: null, from: evm, to: X_BASE_USDC, type: "0x2" };
+            case "eth_getTransactionCount": return "0x0";
+            case "eth_gasPrice": return "0x3b9aca00";
+            case "eth_estimateGas": return "0x30000";
+            case "eth_blockNumber": return "0x100000";
+            case "eth_getCode": return "0x";
+            case "eth_getBlockByNumber": case "eth_getBlockByHash": return { number: "0x100000", hash: "0x" + "cd".repeat(32), parentHash: "0x" + "cd".repeat(32), timestamp: "0x65000000", transactions: [], difficulty: "0x0", gasLimit: "0x1c9c380", gasUsed: "0x0", miner: "0x0000000000000000000000000000000000000000", extraData: "0x", nonce: "0x0000000000000000", baseFeePerGas: "0x1", sha3Uncles: "0x" + "cd".repeat(32), receiptsRoot: "0x" + "cd".repeat(32), stateRoot: "0x" + "cd".repeat(32), transactionsRoot: "0x" + "cd".repeat(32), logsBloom: "0x" + "00".repeat(256), withdrawals: [], mixHash: "0x" + "cd".repeat(32), uncles: [] };
+            default: return "0x" + "0".repeat(64);
+          }
+        };
+        const payload = Array.isArray(parsed) ? parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: answer(r) })) : { jsonrpc: "2.0", id: parsed.id, result: answer(parsed) };
+        return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+      });
+      const composed = await searchMilestoneCompositions(args, { pricesUsd: {} });
+      ok("twox e2e: Arbitrum USDC → Tron USDT composes through Base under the production search (Across in, Relay out to Tron)",
+        composed.length === 1 && composed[0].milestone.legs.length === 2
+        && composed[0].milestoneLegRoutes[0].provider === "across" && composed[0].milestoneLegRoutes[1].provider === "relay"
+        && composed[0].milestone.label === "USDC → USDC on Base → USDT on Tron");
+      flipRaw = BigInt(composed[0].milestoneLegRoutes[0].toAmount);
+      const store = new Map();
+      const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+      const out = await executeMilestoneRoute(ethers.Wallet.fromPhrase(TWOX_PHRASE), composed[0], () => {}, { storage });
+      const saved = loadMilestoneRecords(storage);
+      ok("twox e2e: the two-crossing composition executes through runMilestoneForward unchanged — legs settle in order under the one confirmation, the arrived amount stamps leg 2, and the persisted record lands done",
+        out.done === true && out.hashes.length >= 2 && sendCount >= 2
+        && saved.length === 1 && saved[0].state === "done" && saved[0].legs.length === 2
+        && saved[0].legs[1].fromAmount === String(flipRaw));
+    } finally {
+      globalThis.fetch = realFetch2;
+      FetchRequest.registerGetUrl(prevGetUrl);
+    }
+  }
+}
+// Performance pins: price-table TTL/dedupe, parallel scan
+// chunks, and the app wiring (cache paint, per-chain list
+// cache, stale-search guard, executable-only badges + CTA).
+{
+  const realFetchP = globalThis.fetch;
+  let binanceCalls = 0;
+  resetPricesCache();
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) { binanceCalls++; return { ok: true, json: async () => [] }; }
+    if (u.includes("api.coingecko.com")) {
+      const ids = (new URL(u).searchParams.get("ids") || "").split(",").filter(Boolean);
+      const out = {}; for (const id of ids) out[id] = { usd: 2 };
+      return { ok: true, json: async () => out };
+    }
+    throw new Error("unexpected url " + u);
+  };
+  try {
+    const before = binanceCalls;
+    const [pa, pb] = await Promise.all([getPrices(), getPrices()]);
+    const pc = await getPrices();
+    ok("perf: getPrices dedupes concurrent loads and serves the TTL from one table",
+      pa === pb && pb === pc && binanceCalls - before <= 1 && PRICES_TTL_MS === 30000 && pa.BTC === 2);
+  } finally { globalThis.fetch = realFetchP; }
+
+  // The scan runs on a built-in chain key (bsc) whose provider
+  // already exists — a freshly registered fake chain's provider
+  // would retry network detection forever and hang the suite.
+  // Both transports are stubbed: FetchRequest (provider reads +
+  // the Multicall3 probe, answered "no code" so the batch path
+  // is taken) and fetch (the batch POSTs themselves).
+  const prevGetUrl2 = FetchRequest.createGetUrlFunc();
+  let inflight = 0, maxInflight = 0, scanEmissions = 0;
+  try {
+    FetchRequest.registerGetUrl(async (req) => {
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (r) => ({ jsonrpc: "2.0", id: r.id, result: r.method === "eth_chainId" ? "0x38" : r.method === "net_version" ? "56" : r.method === "eth_getCode" ? "0x" : "0x" + "0".repeat(64) });
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("bsc-rpc.publicnode.com")) {
+        inflight++;
+        maxInflight = Math.max(maxInflight, inflight);
+        await new Promise(r => setTimeout(r, 25));
+        inflight--;
+        const parsed = JSON.parse(opts.body);
+        const payload = parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: "0x" + "0".repeat(64) }));
+        return { ok: true, status: 200, json: async () => payload };
+      }
+      return realFetchP(url, opts);
+    };
+    const toks150 = Array.from({ length: 150 }, (_, i) => ({
+      symbol: "P" + i, decimals: 18, address: "0x" + String(i + 1).padStart(40, "0"),
+    }));
+    const scanP = await scanEvmTokenBalances("bsc", "0x00000000000000000000000000000000000000ff", toks150, {
+      onChunk: async () => { scanEmissions++; },
+    });
+    ok("perf: scan chunk rounds run with bounded parallelism and still emit per round",
+      scanP.method === "batch" && maxInflight >= 2 && maxInflight <= 3 && scanEmissions === 3);
+  } finally {
+    FetchRequest.registerGetUrl(prevGetUrl2);
+    globalThis.fetch = realFetchP;
+  }
+
+
+  const appR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const htmlR = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("perf: the cached snapshot is never wiped by the loading line",
+    appR.includes('if (!cachePaint) $("assetList").innerHTML = "Loading assets…";'));
+  ok("perf: the CoinGecko token-list cache is per-chain with a chain cap",
+    appR.includes("CG_CACHE_MAX_CHAINS") && appR.includes("byChain") && appR.includes("cgCacheReadAll"));
+  ok("perf: stale route searches cannot paint over a newer search",
+    appR.includes("routeSearchSeq") && appR.includes("const stale = () => mySearch !== routeSearchSeq;")
+    && appR.includes("if (stale()) return; // a newer search owns the sheet now"));
+  ok("repair: badges are computed over executable rows only when any route is executable",
+    appR.includes("cheapestExec") && appR.includes("fastestExec") && appR.includes("anyExec"));
+  ok("affordance: executable route cards carry the card treatment + Swap now CTA; non-executable keep the flat row",
+    appR.includes('ex.ok ? "netitem routecard" : "netitem"') && appR.includes('<span class="swapcta">Swap now ›</span>')
+    && htmlR.includes(".routecard") && htmlR.includes(".swapcta") && htmlR.includes("var(--grad-brand)"));
+}
+
+// ---- Staged-swap speed standard (Ethuram, 2026-11-13) ----
+// Per leg ~10–20s landed-and-detected on fast rails; the whole
+// composed swap ≤ ~90s; later legs auto-fire under the one
+// upfront confirmation (pre-staged quotes + ~1s-start credit
+// polling); a slow composition is disclosed, never badged fast.
+{
+  ok("speed: the staged-swap fast standard is 90 seconds", MILESTONE_FAST_TOTAL_SEC === 90);
+
+  // Credit detection: the balance lands on the 3rd read. Reads
+  // fire at ~0s, ~1s, ~2.6s on the new backoff grid, so
+  // detection lands in ~2.6s; the old flat 5s grid could not
+  // detect before ~10s.
+  const realFetchS = globalThis.fetch;
+  let gqlCalls = 0;
+  globalThis.fetch = async (url) => {
+    const u = String((url && url.url) || url);
+    if (u.includes("graphql")) {
+      gqlCalls++;
+      const totalBalance = gqlCalls >= 3 ? "500000000" : "0";
+      return { ok: true, status: 200, json: async () => ({ data: { address: { balance: { totalBalance } } } }) };
+    }
+    throw new Error("unexpected fetch in poll test: " + u);
+  };
+  try {
+    const t0 = Date.now();
+    const delta = await pollSwapTokenCredit("sui", "0x2::sui::SUI", "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831", 9, "0", "400000000", { timeoutMs: 30000 });
+    const elapsed = Date.now() - t0;
+    ok("speed: a landed credit is detected on the ~1s-start poll grid (old grid: ~10s)",
+      delta === "500000000" && elapsed < 5000);
+    ok("speed: the poll still requires the full balance delta before firing",
+      delta === "500000000" && gqlCalls === 3);
+  } finally { globalThis.fetch = realFetchS; }
+
+  // Duration-aware composition selection: when the first
+  // shape's composition is slow (600s legs), the search keeps
+  // looking and returns the fast (10s legs) composition; when
+  // every composition is slow, the fastest slow one is still
+  // returned — with its real duration for plain disclosure.
+  const legRouteS = (id, provider, toAmount, dur, extra = {}) => ({
+    provider, id, type: "x", fromChainId: 56, toChainId: 8453,
+    fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 18 },
+    toToken: { address: "0x1", symbol: "Y", decimals: 6 },
+    toAmount, toAmountMin: toAmount, toAmountUSD: 0.2, fromAmountUSD: 0.22,
+    gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: dur,
+    platformFeeUsd: null, platformFeeCollecting: false, platformFeeBps: null, steps: [], ...extra,
+  });
+  const RELAY_SHAPE_S = { relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
+  const MAYAN_SHAPE_S = { mayan: { quote: { id: "mq" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" } };
+  const speedLegSearch = (durByHub) => async (a) => {
+    if (a.fromChainKey === "bsc" && (a.toChainKey === "base" || a.toChainKey === "arbitrum")) {
+      return [legRouteS("s1-" + a.toChainKey, "relay", "500000", durByHub[a.toChainKey], { ...RELAY_SHAPE_S, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    }
+    if ((a.fromChainKey === "base" || a.fromChainKey === "arbitrum") && a.toChainKey === "sui") {
+      return [legRouteS("s2-" + a.fromChainKey, "mayan", "490000", durByHub[a.fromChainKey], { ...MAYAN_SHAPE_S, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    }
+    throw new Error("No available quotes for the requested transfer");
+  };
+  // Target is Sui USDC here on purpose: these pins isolate hub
+  // timing with two legs; the three-leg SUI-native composition
+  // is pinned in the repair section above.
+  const SPEED_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", toTokenAddress: SUI_TOKENS[0].address, fromAmount: "8000000000000", fromAddress: "0x0EBf5563F905E3B9D58718E28E08143511DC763b", toAddress: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831" };
+  const fastPick = await searchMilestoneCompositions(SPEED_ARGS, { searchLeg: speedLegSearch({ base: 600, arbitrum: 5 }), pricesUsd: { SUI: 0.8 } });
+  ok("speed: a slow first composition does not end the search — the fast composition wins",
+    fastPick.length === 1 && fastPick[0].milestone.label.includes("Arbitrum") && fastPick[0].executionDuration <= 90);
+  const slowOnly = await searchMilestoneCompositions(SPEED_ARGS, { searchLeg: speedLegSearch({ base: 600, arbitrum: 600 }), pricesUsd: { SUI: 0.8 } });
+  ok("speed: when only slow compositions exist, one is still offered with its real duration",
+    slowOnly.length === 1 && slowOnly[0].executionDuration > 90);
+
+  const coreS = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appS = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("speed: the next leg's quote is pre-staged while the current leg is in flight",
+    coreS.includes("stageNextLeg(i + 1)") && coreS.includes("(arrived - planned) * 200n <= planned"));
+  ok("speed: FASTEST is gated to ≤90s executable routes and slow milestone routes disclose their time",
+    appS.includes("(Number(ranked[i].durationSec) || Infinity) <= 90") && appS.includes("Slow route — about"));
+}
+
+// ============================================================
+// Cetus aggregator port (2026-11-13): Sui same-chain swaps via
+// the direct Cetus aggregator SDK — quote parsing/validation,
+// the fee-law two-pass discipline, PTB composition, and the
+// inspect-before-sign grammar checks. Closes LI.FI-removal gap
+// (a): Sui same-chain swaps + the milestone final leg into
+// non-USDC Sui tokens. Gap (b) (Sui-SOURCE cross-chain via
+// Mayan) stays open — different machinery (bridge-origin CCTP
+// Move calls, not an aggregator swap context).
+{
+  const CT_USER = "0x" + "ab".repeat(32);
+  const CT_STRANGER = "0x" + "ee".repeat(32);
+  const CT_USDC_TYPE = SUI_TOKENS[0].address;
+  const CT_SUI_TYPE = SUI_SWAP_NATIVE_TOKEN;
+  const CT_USDB_TYPE = "0x" + "99".repeat(32) + "::usdb::USDB";
+  const CT_POOL = "0x6dc4048ae8eb73f24b6bc2381c0e6de9e7b06b01d96cee1eac2decd2400ffa46";
+  const CT_CETUS_PKG = "0x87b17d7f0b448b83ab934a13eb64b05b60e17d0a371e2a721c241bcf3f5ec9e7";
+  const CT_ARGS = { fromChainKey: "sui", toChainKey: "sui", fromTokenAddress: CT_USDC_TYPE, toTokenAddress: CT_SUI_TYPE, fromAmount: "10000000", fromAddress: CT_USER, toAddress: CT_USER };
+  const CT_CTX = (feeBps) => ({ feeBps, fromDecimals: 6, toDecimals: 9, fromSymbol: "USDC", toSymbol: "SUI", fromPriceUsd: 1, toPriceUsd: 0.8, suiPriceUsd: 0.8 });
+  const bnLike = (n) => ({ toString: () => String(n) });
+  const cetusSdkData = ({ net = "10000000000", fee = 0, pathOut = null, pkg = CETUS_AGGREGATOR_PACKAGE } = {}) => ({
+    amountIn: bnLike("10000000"), amountOut: bnLike(net), byAmountIn: true,
+    paths: [{ id: CT_POOL, direction: true, provider: "CETUS", from: CT_USDC_TYPE, target: CT_SUI_TYPE,
+      feeRate: "0.0005", amountIn: "10000000", amountOut: pathOut ?? String(BigInt(net) + BigInt(fee)),
+      version: "3", publishedAt: CT_CETUS_PKG,
+      extendedDetails: { afterSqrtPrice: "652859552156749583033", auxSharedVersions: { [CT_POOL]: 376543995 } } }],
+    quoteID: "test-quote-1", packages: new Map([["aggregator_v3", pkg]]),
+    deviationRatio: 0, overlayFee: fee, insufficientLiquidity: false, error: undefined,
+  });
+
+  ok("cetus: the pinned aggregator package IS the SDK's own Mainnet pin",
+    CETUS_AGGREGATOR_PACKAGE.toLowerCase() === CETUS_SDK_CONFIG.DEFAULT_PUBLISHED_AT.Mainnet.toLowerCase());
+  ok("cetus: the fee receiver is the DripBot Sui wallet from the standing split",
+    CETUS_FEE_RECEIVER.toLowerCase() === FEE_SPLIT.dripbot.agentWallet.sui.toLowerCase());
+
+  ok("cetus: coin types normalize (native short form, canonical long forms, junk refused)",
+    cetusCoinTypeOf(CT_SUI_TYPE) === "0x2::sui::SUI" && cetusCoinTypeOf(CT_USDC_TYPE) === CT_USDC_TYPE
+    && cetusCoinTypeOf("0xDEAD::x::Y") === "0x" + "0".repeat(60) + "dead::x::Y"
+    && cetusCoinTypeOf("not-a-type") === null && cetusCoinTypeOf("0xZZ::x::Y") === null && cetusCoinTypeOf("") === null);
+
+  ok("cetus: supports only Sui→Sui, distinct tokens, recipient == the user's own Sui address",
+    cetusSupportsPair(CT_ARGS) === true
+    && cetusSupportsPair({ ...CT_ARGS, toAddress: CT_STRANGER }) === false
+    && cetusSupportsPair({ ...CT_ARGS, toChainKey: "base" }) === false
+    && cetusSupportsPair({ ...CT_ARGS, toTokenAddress: CT_USDC_TYPE }) === false
+    && cetusSupportsPair({ ...CT_ARGS, fromAmount: "0" }) === false);
+
+  const parsed0 = parseCetusRoute(cetusSdkData({}), CT_ARGS, CT_CTX(0));
+  ok("cetus parse: a clean quote parses — net == gross at zero fee, floor = 99% of net",
+    !!parsed0 && parsed0.provider === "cetus" && parsed0.toAmount === "10000000000"
+    && parsed0.platformFeeRaw === "0" && parsed0.toAmountMin === "9900000000"
+    && parsed0.cetus.aggregatorPackage === CETUS_AGGREGATOR_PACKAGE && parsed0.cetus.paths.length === 1
+    && parsed0.executionDuration === 5);
+  const parsed50 = parseCetusRoute(cetusSdkData({ net: "9950000000", fee: 50000000 }), CT_ARGS, CT_CTX(50));
+  ok("cetus parse: the overlay fee is deducted exactly (floor of gross × ppm) and recorded",
+    !!parsed50 && parsed50.toAmount === "9950000000" && parsed50.platformFeeRaw === "50000000"
+    && parsed50.platformFeeCollecting === true && parsed50.cetus.feeBps === 50);
+  ok("cetus parse: a fee that does not match the SDK's own arithmetic refuses the quote",
+    parseCetusRoute(cetusSdkData({ net: "9950000000", fee: 12345 }), CT_ARGS, CT_CTX(50)) === null);
+  ok("cetus parse: a foreign aggregator package refuses the quote",
+    parseCetusRoute(cetusSdkData({ pkg: CT_STRANGER }), CT_ARGS, CT_CTX(0)) === null);
+  ok("cetus parse: amount mismatch / API error / illiquidity / byAmountOut all refuse",
+    parseCetusRoute(cetusSdkData({}), { ...CT_ARGS, fromAmount: "999" }, CT_CTX(0)) === null
+    && parseCetusRoute({ ...cetusSdkData({}), error: { code: 2000 } }, CT_ARGS, CT_CTX(0)) === null
+    && parseCetusRoute({ ...cetusSdkData({}), insufficientLiquidity: true }, CT_ARGS, CT_CTX(0)) === null
+    && parseCetusRoute({ ...cetusSdkData({}), byAmountIn: false }, CT_ARGS, CT_CTX(0)) === null);
+  ok("cetus parse: a path flow that does not end exactly at the gross output refuses",
+    parseCetusRoute(cetusSdkData({ pathOut: "9000000000" }), CT_ARGS, CT_CTX(0)) === null);
+  {
+    const splitData = cetusSdkData({});
+    splitData.paths = [
+      { id: "p1", direction: true, provider: "CETUS", from: CT_USDC_TYPE, target: CT_SUI_TYPE, feeRate: "0.0005", amountIn: "6000000", amountOut: "6000000000", version: "3", publishedAt: CT_CETUS_PKG, extendedDetails: {} },
+      { id: "p2", direction: true, provider: "CETUS", from: CT_USDC_TYPE, target: CT_USDB_TYPE, feeRate: "0.0001", amountIn: "4000000", amountOut: "4000000", version: "3", publishedAt: CT_CETUS_PKG, extendedDetails: {} },
+      { id: "p3", direction: true, provider: "CETUS", from: CT_USDB_TYPE, target: CT_SUI_TYPE, feeRate: "0.0005", amountIn: "4000000", amountOut: "4000000000", version: "3", publishedAt: CT_CETUS_PKG, extendedDetails: {} },
+    ];
+    ok("cetus parse: a split flow whose branches close exactly at the gross output parses",
+      !!parseCetusRoute(splitData, CT_ARGS, CT_CTX(0)));
+    splitData.paths[2] = { ...splitData.paths[2], amountIn: "3000000" };
+    ok("cetus parse: a split flow stranding an intermediate balance refuses",
+      parseCetusRoute(splitData, CT_ARGS, CT_CTX(0)) === null);
+  }
+
+  ok("cetus: the structural executability gate accepts the parsed shape and refuses stripped/forged ones",
+    swapRouteExecutable(parsed0).ok === true
+    && swapRouteExecutable({ ...parsed0, cetus: undefined }).ok === false
+    && swapRouteExecutable({ ...parsed0, cetus: { ...parsed0.cetus, aggregatorPackage: CT_STRANGER } }).ok === false
+    && swapRouteExecutable({ ...parsed0, cetus: { ...parsed0.cetus, paths: [] } }).ok === false
+    && swapRouteExecutable({ ...parsed0, fromChainId: 56 }).ok === false);
+
+  // Fee disclosure (2026-11-14): the review sheet's cetus
+  // branch — the disclosed figure is the route's own
+  // platformFeeUsd, i.e. the final quote's overlayFee valued
+  // at the quote's own output price, admitted only when the
+  // route actually collects; a zero-fee route discloses none.
+  ok("cetus disclosure: a fee-bearing cetus route's review discloses its fee — the quote's own overlay fee in USD",
+    parsed50.platformFeeCollecting === true
+    && Math.abs(parsed50.platformFeeUsd - (50000000 / 1e9) * 0.8) < 1e-12
+    && formatSwapIntent({ fromAmount: "10", fromSymbol: "USDC", fromNetKey: "sui", toAmount: "9.950", toSymbol: "SUI", toNetKey: "sui", toolName: "Cetus", feeUsd: parsed50.gasCostUSD, durationSec: parsed50.executionDuration, platformFeeUsd: parsed50.platformFeeUsd, platformFeePct: (parsed50.platformFeeUsd / parsed50.fromAmountUSD) * 100 }).includes("Fluid fee: $0.04 (0.4%)"));
+  ok("cetus disclosure: a zero-fee cetus route collects nothing and its review discloses no fee",
+    parsed0.platformFeeCollecting === false && parsed0.platformFeeUsd === 0
+    && !formatSwapIntent({ fromAmount: "10", fromSymbol: "USDC", fromNetKey: "sui", toAmount: "12.400", toSymbol: "SUI", toNetKey: "sui", toolName: "Cetus", feeUsd: parsed0.gasCostUSD, durationSec: parsed0.executionDuration }).includes("Fluid fee:"));
+  {
+    const appFd = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("cetus disclosure: the app's review sheet has the cetus branch, gated on collecting + a positive fee, like SunSwap/Jupiter",
+      appFd.includes('r.provider === "cetus" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0')
+      && appFd.indexOf('r.provider === "cetus" && r.platformFeeCollecting === true') > appFd.indexOf('r.provider === "sunswap" && r.platformFeeCollecting === true'));
+  }
+
+  // End-to-end quote + compose + inspect under a stubbed fetch:
+  // the SDK parses the raw find_routes JSON itself, so the
+  // RouterData under composition is the genuine article.
+  {
+    const realFetchC = globalThis.fetch;
+    let findRoutesCalls = 0;
+    // A realistic quote: 10 USDC → 12.4 SUI at $0.80 = $9.92
+    // out (0.8% true cost — inside the fee law's ceiling, so
+    // the 50 bps cap binds and the SDK fee is
+    // floor(12.4e9 × 5000 / 1e6) = 62,000,000 raw).
+    const rawQuote = { code: 200, msg: "Success", data: {
+      request_id: "stub-quote-1", amount_in: 10000000, amount_out: 12400000000, deviation_ratio: "0",
+      paths: [{ id: CT_POOL, provider: "CETUS", from: CT_USDC_TYPE, target: CT_SUI_TYPE, direction: true,
+        fee_rate: "0.0005", amount_in: 10000000, amount_out: 12400000000, published_at: CT_CETUS_PKG,
+        extended_details: { after_sqrt_price: "652859552156749583033", aux_shared_versions: { [CT_POOL]: 376543995 } } }],
+      packages: { aggregator_v3: CETUS_AGGREGATOR_PACKAGE } } };
+    const stubQuote = (mode) => {
+      resetPricesCache();
+      globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.includes("api-sui.cetus.zone")) {
+          findRoutesCalls++;
+          if (mode === "429") return { ok: false, status: 429, text: async () => JSON.stringify({ code: 1001, msg: "RateLimitExceeded" }) };
+          return { ok: true, status: 200, text: async () => JSON.stringify(rawQuote) };
+        }
+        if (u.includes("api.binance.com")) return { ok: true, json: async () => [{ symbol: "SUIUSDT", price: "0.8" }, { symbol: "USDCUSDT", price: "1" }] };
+        if (u.includes("api.coingecko.com")) {
+          const ids = (new URL(u).searchParams.get("ids") || "").split(",").filter(Boolean);
+          return { ok: true, json: async () => Object.fromEntries(ids.map(id => [id, { usd: id === "sui" ? 0.8 : 1 }])) };
+        }
+        if (u.includes("api.dexscreener.com")) return { ok: true, json: async () => ({ pairs: [] }) };
+        throw new Error("unexpected fetch in cetus stub: " + u);
+      };
+    };
+    try {
+      stubQuote("ok");
+      const route = await getCetusSwapRoute(CT_ARGS);
+      ok("cetus e2e: the two-pass quote carries the fee law's maximum lawful fee here (50 bps cap binds)",
+        !!route && route.provider === "cetus" && route.platformFeeRaw === "62000000"
+        && route.toAmount === "12338000000" && findRoutesCalls === 2 && route.platformFeeCollecting === true);
+      const viaSearch = await getSwapRoutes(CT_ARGS);
+      ok("cetus e2e: the top-level search offers the Cetus route for a Sui→Sui pair",
+        viaSearch.length >= 1 && viaSearch[0].provider === "cetus" && swapRouteExecutable(viaSearch[0]).ok === true);
+
+      const fakeCoin = { objectId: "0x" + "cd".repeat(32), balance: "10000000", version: "1", digest: "stub" };
+      const tx = await composeCetusSwapTx({ routerData: route.cetus.routerData, owner: CT_USER, fromCoinType: route.cetus.fromCoinType, amountRaw: route.fromAmount, coins: [fakeCoin], feeBps: route.cetus.feeBps });
+      const verdict = checkCetusPtbSafety(tx.getData(), route, CT_USER, { inputCoinIds: [fakeCoin.objectId] });
+      ok("cetus compose: a genuinely composed PTB passes the inspect-before-sign grammar",
+        verdict.ok === true);
+      const data = tx.getData();
+      const ctxIdx = data.commands.findIndex(c => c.$kind === "MoveCall" && c.MoveCall.function === "new_swap_context_v3");
+      const pureInput = (cmdArg) => data.inputs[cmdArg.Input];
+      const setPure = (cmdArg, bytes) => { pureInput(cmdArg).Pure.bytes = Buffer.from(bytes).toString("base64"); };
+      const addrBytes = (a) => Buffer.from(a.slice(2), "hex");
+      const u32le = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+      const u64le = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
+      const mutated = (fn) => { const d = JSON.parse(JSON.stringify(data)); fn(d); return checkCetusPtbSafety(d, route, CT_USER, { inputCoinIds: [fakeCoin.objectId] }); };
+      ok("cetus inspect: a swapped fee receiver is refused",
+        mutated(d => { const c = d.commands[ctxIdx]; d.inputs[c.MoveCall.arguments[7].Input].Pure.bytes = addrBytes(CT_STRANGER).toString("base64"); }).ok === false);
+      ok("cetus inspect: an inflated fee rate is refused",
+        mutated(d => { const c = d.commands[ctxIdx]; d.inputs[c.MoveCall.arguments[6].Input].Pure.bytes = u32le(999999).toString("base64"); }).ok === false);
+      ok("cetus inspect: a reduced context input amount is refused",
+        mutated(d => { const c = d.commands[ctxIdx]; d.inputs[c.MoveCall.arguments[2].Input].Pure.bytes = u64le(1).toString("base64"); }).ok === false);
+      ok("cetus inspect: a foreign package on a swap hop is refused",
+        mutated(d => { d.commands[ctxIdx + 1].MoveCall.package = CT_STRANGER; }).ok === false);
+      ok("cetus inspect: an extra MoveCall inside the aggregator slice is refused",
+        mutated(d => { d.commands.splice(ctxIdx + 1, 0, JSON.parse(JSON.stringify(d.commands[ctxIdx + 1]))); }).ok === false);
+      ok("cetus inspect: a final transfer to a stranger is refused",
+        mutated(d => { const t = d.commands[d.commands.length - 1]; d.inputs[t.TransferObjects.address.Input].Pure.bytes = addrBytes(CT_STRANGER).toString("base64"); }).ok === false);
+      void setPure; void pureInput;
+
+      stubQuote("429");
+      let rateErr = null;
+      try { await getCetusSwapRoute(CT_ARGS); } catch (e) { rateErr = e; }
+      ok("cetus e2e: a transport 429 surfaces as a rate limit, never as a pair verdict",
+        !!rateErr && /rate limit/.test(rateErr.message));
+      const honestEmpty = await getSwapRoutes(CT_ARGS);
+      ok("cetus e2e: under a 429 the top-level search answers honestly empty",
+        Array.isArray(honestEmpty) && honestEmpty.length === 0);
+    } finally { globalThis.fetch = realFetchC; }
+  }
+
+  const coreC = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appC = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("cetus wiring: the cascade consults Cetus and the app has its executor branch",
+    coreC.includes("await getCetusSwapRoute(args)") && coreC.includes('route.provider === "cetus"')
+    && appC.includes('route.provider === "cetus"') && appC.includes("executeCetusSwapRoute"));
+}
+
+// 98. Swap token picker — first-user walk defects D1 + D2-minor
+// (2026-11-13). D1: with the picker already open, the chain's full
+// token list landing in cache never repainted the picker (it sat
+// on "still loading" until the user typed again), and a FAILED
+// list load showed as perpetual loading with no retry. D2-minor:
+// searching "BTCB" listed BTCBAM (BitcoinBam) above BTCB (Binance
+// Bitcoin). The ranking and the picker-state decision are pure
+// core functions, pinned behaviourally here; the app wiring
+// (settle → notify → repaint, retry affordance, paint-only
+// discipline) is pinned on source.
+{
+  const BTCB = { symbol: "BTCB", name: "Binance Bitcoin", address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", decimals: 18, verified: true };
+  const BTCBAM = { symbol: "BTCBAM", name: "BitcoinBam", address: "0xcf0990170a60da34ffcffa14ead4a3de27d0f4ce", decimals: 18, verified: false };
+
+  // --- D2-minor: relevance ranking ---
+  ok("picker ranking: searching BTCB returns the real BTCB first, not BTCBAM",
+    rankPickerTokens([BTCBAM, BTCB], "BTCB")[0].address === BTCB.address);
+  ok("picker ranking: the exact match is case-insensitive",
+    rankPickerTokens([BTCBAM, BTCB], "btcb")[0].address === BTCB.address
+    && rankPickerTokens([BTCBAM, BTCB], "BtcB")[0].address === BTCB.address);
+  const ladder = [
+    { symbol: "ZZZ", name: "BTC fan token", address: "0x4444444444444444444444444444444444444444", verified: true },
+    { symbol: "WBTC", name: "Wrapped BTC", address: "0x3333333333333333333333333333333333333333", verified: true },
+    { symbol: "BTCX", name: "BTC X", address: "0x2222222222222222222222222222222222222222", verified: true },
+    { symbol: "BTC", name: "Bitcoin", address: "0x1111111111111111111111111111111111111111", verified: true },
+  ];
+  ok("picker ranking: exact > prefix > symbol-substring > name-only",
+    JSON.stringify(rankPickerTokens(ladder, "btc").map(t => t.symbol)) === JSON.stringify(["BTC", "BTCX", "WBTC", "ZZZ"]));
+  ok("picker ranking: verified beats unverified WITHIN a match class",
+    JSON.stringify(rankPickerTokens([
+      { symbol: "BTQ", name: "BT Q", address: "0x5555555555555555555555555555555555555555", verified: false },
+      { symbol: "BTA", name: "BT A", address: "0x6666666666666666666666666666666666666666", verified: true },
+    ], "bt").map(t => t.symbol)) === JSON.stringify(["BTA", "BTQ"]));
+  ok("picker ranking: match class dominates the verified boost (exact unverified still wins)",
+    rankPickerTokens([
+      { symbol: "BTCX", name: "BTC X", address: "0x2222222222222222222222222222222222222222", verified: true },
+      { symbol: "BTC", name: "Bitcoin", address: "0x1111111111111111111111111111111111111111", verified: false },
+    ], "BTC")[0].symbol === "BTC");
+  ok("picker ranking: same class + same verified state keeps list order",
+    JSON.stringify(rankPickerTokens([
+      { symbol: "BTCB", name: "Binance Bitcoin", address: BTCB.address, verified: true },
+      { symbol: "BTCA", name: "BTC A", address: "0x7777777777777777777777777777777777777777", verified: true },
+    ], "btc").map(t => t.symbol)) === JSON.stringify(["BTCB", "BTCA"]));
+  ok("picker ranking: a pasted full address finds exactly that token",
+    (() => { const r = rankPickerTokens([BTCBAM, BTCB], "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c");
+      return r.length === 1 && r[0].address === BTCB.address; })());
+  ok("picker ranking: name search still finds tokens (BitcoinBam by name)",
+    rankPickerTokens([BTCB, BTCBAM], "bitcoinbam").some(t => t.symbol === "BTCBAM")
+    && rankPickerTokens([BTCBAM, BTCB], "binance")[0].symbol === "BTCB");
+  ok("picker ranking: non-matches are filtered out",
+    rankPickerTokens([BTCB, BTCBAM], "doge").length === 0);
+  ok("picker ranking: blank query returns the list untouched, in order, without mutating the input",
+    (() => { const input = [BTCBAM, BTCB]; const out = rankPickerTokens(input, "  ");
+      return out.length === 2 && out[0] === BTCBAM && input[0] === BTCBAM && input[1] === BTCB; })());
+
+  // --- D1: the picker-state decision ---
+  ok("picker state: no entry + no rows = still loading (the walk's open-picker state)",
+    pickerListState(null, 0) === "loading" && pickerListState({ full: false, failed: false }, 0) === "loading");
+  ok("picker state: a failed load with no rows is the FAILURE state, never perpetual loading",
+    pickerListState({ full: false, failed: true }, 0) === "failed");
+  ok("picker state: a settled full list with no rows is a plain no-match",
+    pickerListState({ full: true, failed: false }, 0) === "nomatch");
+  ok("picker state: rows beat every note; rows over a failed full list carry the stale-list note",
+    pickerListState({ full: true, failed: false }, 5) === "rows"
+    && pickerListState({ full: false, failed: true }, 5) === "rows-stale");
+
+  // --- D1 regression: the walk's exact sequence, at the level
+  // the suite can execute it. Open picker, query "BTCB", only the
+  // curated base list present → no match, loading state. The full
+  // list then lands (BTCBAM listed before BTCB in raw list order,
+  // as the walk found): a repaint with the SAME query — no further
+  // input — must surface rows with the real BTCB first. The
+  // settle→repaint link itself is pinned on source below. ---
+  const baseBsc = [
+    { symbol: "BNB", name: "BNB", address: "0xEeeeeEeeeEaEeeEEeEeeEEEeEeeeEeeEEeEEEeeeE", decimals: 18, verified: true, native: true },
+    { symbol: "USDC", name: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18, verified: true },
+  ];
+  ok("walk D1 sequence, before arrival: BTCB unmatched against the base list, picker in loading state",
+    rankPickerTokens(baseBsc, "BTCB").length === 0 && pickerListState(null, 0) === "loading");
+  const landedBsc = [...baseBsc, BTCBAM, BTCB];
+  const afterArrival = rankPickerTokens(landedBsc, "BTCB");
+  ok("walk D1 sequence, after arrival: same query repaints to rows, real BTCB first, no further input",
+    afterArrival.length === 2 && afterArrival[0].address === BTCB.address
+    && pickerListState({ full: true, failed: false }, afterArrival.length) === "rows");
+  ok("walk D1 sequence, failure arm: a failed load lands the picker in the failure state, not loading",
+    pickerListState({ full: false, failed: true }, rankPickerTokens(baseBsc, "BTCB").length) === "failed");
+
+  // --- D1 app wiring, pinned on source ---
+  const appW = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("picker wiring: every list settle (no-chain / failure / success) goes through the notifying settle",
+    (appW.match(/settleSwapList\(netKey,/g) || []).length >= 3 && appW.includes("for (const fn of [...swapListListeners])"));
+  ok("picker wiring: a failed list load settles as failed:true, distinct from loading",
+    appW.includes("{ tokens: base, full: false, failed: true }"));
+  const listenerBlock = appW.slice(appW.indexOf("const offSwapListSettled"), appW.indexOf("sheetCloseHook = () => { offSwapListSettled()"));
+  ok("picker wiring: the settle listener repaints an OPEN picker for the settled chain",
+    listenerBlock.includes("renderPickList(side)") && listenerBlock.includes('classList.contains("hidden")')
+    && listenerBlock.includes("netSel[side] !== key"));
+  ok("picker wiring: repaint is display-only — the settle/notify path never merges or assigns balances",
+    !listenerBlock.includes("mergeEvmRows") && !listenerBlock.includes("balances =")
+    && !appW.slice(appW.indexOf("function settleSwapList"), appW.indexOf("function swapBaseTokens")).includes("mergeEvmRows"));
+  ok("picker wiring: failure states carry a retry affordance wired to a fresh list load",
+    appW.includes('data-retry-list="${side}"') && appW.includes("The full token list couldn't load")
+    && appW.includes("Retry the full list"));
+  ok("picker wiring: renderPickList ranks via core and decides its state via core",
+    appW.includes("rankPickerTokens(toks, q)") && appW.includes("pickerListState(entry, list.length)"));
+  ok("picker wiring: the old suffix logic that froze 'still loading' on screen is gone",
+    !appW.includes('? "" : " — the full token list is still loading"'));
+}
+
+// 99. Route preview with zero balance — Ethuram's decision
+// (2026-11-14, walk defect D2): route search/discovery runs with
+// ANY balance, zero included — the same routes, cards, badges and
+// prices a funded wallet sees; balance is enforced only at
+// execution. The decision is core's pure swapBalanceGate, pinned
+// behaviourally on both sides; the app wiring is pinned on source:
+// (a) no balance read stands in front of getSwapRoutes in the
+// search handler; (b) the review step arms Confirm only after the
+// gate passes; (c) the Confirm handler re-runs the gate BEFORE any
+// executor call — the hard stop that keeps a preview-only route
+// un-signable.
+{
+  // --- the gate decision, both sides ---
+  ok("preview gate: zero balance refuses execution as insufficient (the walk's BTCB case)",
+    (() => { const v = swapBalanceGate("0.000008", "0", 18); return v.ok === false && v.kind === "insufficient"; })());
+  ok("preview gate: a known balance below the amount refuses, wei-exact (1 wei short counts)",
+    swapBalanceGate("0.00001", "0.000009999999999999", 18).kind === "insufficient"
+    && swapBalanceGate("1.000001", "1.0", 6).kind === "insufficient");
+  ok("preview gate: exact balance and above are covered — the funded flow is unchanged",
+    swapBalanceGate("0.00001", "0.00001", 18).ok === true
+    && swapBalanceGate("0.5", "1.25", 18).ok === true
+    && swapBalanceGate("1.0", "1.0", 6).ok === true);
+  ok("preview gate: an unreadable balance never passes silently (null / empty / unparseable)",
+    swapBalanceGate("1", null, 18).kind === "unreadable"
+    && swapBalanceGate("1", "", 18).kind === "unreadable"
+    && swapBalanceGate("1", "not-a-number", 18).ok === false);
+  ok("preview gate: number-typed reads (the native SOL/TRX shape) judge the same",
+    swapBalanceGate("0.5", 0, 9).kind === "insufficient" && swapBalanceGate("0.5", 2, 9).ok === true);
+
+  // --- app wiring, pinned on source ---
+  const appP = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const searchBlock = appP.slice(appP.indexOf("const searchRoutes = async () => {"), appP.indexOf("const ranked = rankSwapRoutes"));
+  ok("preview wiring: the search handler performs NO balance read before quoting routes",
+    searchBlock.length > 0 && !searchBlock.includes("swapBalanceOf(") && !searchBlock.includes("swapExecutionGate(")
+    && !searchBlock.includes("Checking your balance")
+    && searchBlock.indexOf("getSwapRoutes(swapArgs)") > searchBlock.indexOf("Searching routes across chains"));
+  ok("preview wiring: the search no longer answers the not-enough line — it renders routes instead",
+    !searchBlock.includes("Not enough") && !searchBlock.includes("const have = await swapBalanceOf"));
+  const tapStart = appP.indexOf('document.querySelectorAll("[data-route]")');
+  const tapBlock = appP.slice(tapStart, appP.indexOf('if (r.provider === "satora")', tapStart));
+  ok("preview wiring: the review step runs the execution gate and disarms Confirm on refusal",
+    tapBlock.includes("await swapExecutionGate(fromKey, fromTok, amount)")
+    && tapBlock.includes('$("wDo").disabled = true') && tapBlock.includes('$("wIntentText").textContent = gate0.line'));
+  const doStart = appP.indexOf('$("wDo").onclick');
+  const doBlock = appP.slice(doStart, appP.indexOf("showTxSuccess", doStart));
+  ok("preview wiring: the Confirm handler re-runs the gate BEFORE any executor call (hard stop)",
+    doBlock.includes("await swapExecutionGate(fromKey, fromTok, amount)")
+    && doBlock.indexOf("swapExecutionGate") < doBlock.search(/execute[A-Z]/)
+    && doBlock.includes('$("wDo").disabled = true'));
+  ok("preview wiring: the gate's refusal lines keep the plain not-enough wording class",
+    appP.includes("Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${fmt(have)}).")
+    && appP.includes("Couldn't check your ${fromTok.symbol} balance"));
+}
+
+// ============================================================
+// §100 SunSwap port (2026-11-14): Tron SAME-CHAIN swaps via the
+// direct SunSwap V2 router — pins cross-checked on-chain
+// 2026-11-14 (router TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR is
+// UniswapV2Router02; WETH() = WTRX TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR;
+// factory TKWJdrQkqHisa1X8HUdHEfREvTzw4pMAaY), contract-computed
+// quotes (getAmountsOut), local Relay-Tron-style composition,
+// decoded-call bounds, and the fee law's output-side skim
+// (SunSwap has no integrator-fee parameter). Live quote anchors
+// from the pin run: 100 TRX → 31.188064 USDT; 100 USDT →
+// 318.713637 TRX; getEnergyFee = 100 sun.
+{
+  const SS_WTRX_HEX = "891cdb91d149f23b1a45d9c5ca78a88d0cb44c18";
+  const SS_USDT_HEX = "a614f803b6fd780986a42c78ec9c7f77e6ded13c";
+  const SS_USDC_HEX = "3487b63d30b5b2c87fb7ffa8bcfade38eaac1abe";
+  const SS_OWNER = tronAddressFromPhrase("legal winner thank year wave sausage worth useful legal winner thank yellow");
+  const SS_STRANGER = tronAddressFromPhrase("letter advice cage absurd amount doctor acoustic avoid letter advice cage above");
+  const SS_USDT = TRON_TOKENS[0].address, SS_USDC = TRON_TOKENS[1].address;
+  const ssArgs = (over = {}) => ({ fromChainKey: "tron", toChainKey: "tron", fromTokenAddress: TRON_SWAP_NATIVE_TOKEN, toTokenAddress: SS_USDT, fromAmount: "100000000", fromAddress: SS_OWNER, toAddress: SS_OWNER, ...over });
+  // Price ctx built from the live pair ratio (100 TRX ⇄ 31.188064
+  // USDT), so the pair looks exactly fairly priced.
+  const SS_CTX = (feeBps, over = {}) => ({ feeBps, fromDecimals: 6, toDecimals: 6, fromSymbol: "TRX", toSymbol: "USDT", fromPriceUsd: 0.31188064, toPriceUsd: 1, trxPriceUsd: 0.31188064, energyFeeSun: 100, ...over });
+  const ssRoute = (feeBps = 50) => parseSunswapQuote({ amounts: ["100000000", "31188064"], pathHex: [SS_WTRX_HEX, SS_USDT_HEX] }, ssArgs(), SS_CTX(feeBps));
+  const ssRawFor = (route, owner, callData, { callValue = 0n, contractHex = null, feeLimitSun = null, expirationMs = null } = {}) => buildTronTriggerRawData({
+    ownerHex: tronAddressToHex(owner), contractHex: contractHex ?? tronAddressToHex(SUNSWAP_V2_ROUTER), callValue,
+    dataHex: callData.dataHex ?? callData, refBlockBytesHex: "a1b2", refBlockHashHex: "00112233445566778899aabbccddeeff",
+    timestampMs: Date.now(), expirationMs: expirationMs ?? Date.now() + 600000, ...(feeLimitSun != null ? { feeLimitSun } : {}),
+  });
+
+  ok("sunswap: the pins ARE the on-chain-verified router, factory and WTRX",
+    SUNSWAP_V2_ROUTER === "TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR"
+    && tronAddressToHex(SUNSWAP_V2_ROUTER) === "41e95812d8d5b5412d2b9f3a4d5a87ca15c5c51f33"
+    && SUNSWAP_V2_FACTORY === "TKWJdrQkqHisa1X8HUdHEfREvTzw4pMAaY"
+    && SUNSWAP_WTRX === "TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR"
+    && sunswapTokenOf(null)?.hex === SS_WTRX_HEX && SUNSWAP_SLIPPAGE_BPS === 100);
+  ok("sunswap: the fee receiver is the DripBot Tron wallet from the standing split",
+    SUNSWAP_FEE_RECEIVER === FEE_SPLIT.dripbot.agentWallet.tron);
+  {
+    const iface = new ethers.Interface(SUNSWAP_ROUTER_ABI);
+    ok("sunswap: the pinned ABI keeps the canonical Uniswap V2 selectors",
+      iface.getFunction("getAmountsOut").selector === "0xd06ca61f"
+      && iface.getFunction("swapExactTokensForTokens").selector === "0x38ed1739"
+      && iface.getFunction("swapExactETHForTokens").selector === "0x7ff36ab5"
+      && iface.getFunction("swapExactTokensForETH").selector === "0x18cbafe5");
+  }
+  ok("sunswap: token resolution (native forms → WTRX; TRC20s pass; junk refused)",
+    sunswapTokenOf(TRON_SWAP_NATIVE_TOKEN)?.native === true
+    && sunswapTokenOf(SS_USDT)?.hex === SS_USDT_HEX && sunswapTokenOf(SS_USDT)?.native === false
+    && sunswapTokenOf("TInvalidAddress123") === null && sunswapTokenOf("0x" + "ab".repeat(20)) === null);
+  ok("sunswap: supports only Tron→Tron, distinct tokens, recipient == the user's own Tron address",
+    sunswapSupportsPair(ssArgs()) === true
+    && sunswapSupportsPair(ssArgs({ toAddress: SS_STRANGER })) === false
+    && sunswapSupportsPair(ssArgs({ toChainKey: "bsc" })) === false
+    && sunswapSupportsPair(ssArgs({ fromTokenAddress: SS_USDT, toTokenAddress: SS_USDC })) === true
+    && sunswapSupportsPair(ssArgs({ toTokenAddress: TRON_SWAP_NATIVE_TOKEN })) === false // TRX→WTRX is a wrap, not a swap
+    && sunswapSupportsPair(ssArgs({ fromTokenAddress: SS_USDT, toTokenAddress: SS_USDT })) === false
+    && sunswapSupportsPair(ssArgs({ fromAmount: "0" })) === false && sunswapSupportsPair(ssArgs({ fromAmount: "x" })) === false);
+  ok("sunswap: candidate paths are direct-first with WTRX/USDT hubs, never duplicated",
+    JSON.stringify(sunswapCandidatePaths(SS_USDT_HEX, SS_USDC_HEX)) === JSON.stringify([[SS_USDT_HEX, SS_USDC_HEX], [SS_USDT_HEX, SS_WTRX_HEX, SS_USDC_HEX]])
+    && JSON.stringify(sunswapCandidatePaths(SS_WTRX_HEX, SS_USDT_HEX)) === JSON.stringify([[SS_WTRX_HEX, SS_USDT_HEX]])
+    && JSON.stringify(sunswapCandidatePaths(SS_WTRX_HEX, SS_USDC_HEX)) === JSON.stringify([[SS_WTRX_HEX, SS_USDC_HEX], [SS_WTRX_HEX, SS_USDT_HEX, SS_USDC_HEX]]));
+  ok("sunswap: amounts decode round-trips the live probe numbers; junk refused",
+    JSON.stringify(parseSunswapAmountsOut(ethers.AbiCoder.defaultAbiCoder().encode(["uint256[]"], [[100000000n, 31188064n]]).slice(2))) === JSON.stringify(["100000000", "31188064"])
+    && parseSunswapAmountsOut("00") === null && parseSunswapAmountsOut("") === null && parseSunswapAmountsOut(null) === null);
+  {
+    const free = ssRoute(0);
+    ok("sunswap: a fee-free parse is exact (quote in = quote out, minimum = 1% slippage floor)",
+      free.provider === "sunswap" && free.toAmount === "31188064" && free.platformFeeRaw === "0" && free.platformFeeCollecting === false
+      && free.sunswap.minGrossOut === "30876183" && free.toAmountMin === "30876183" && free.sunswap.path[0] === SUNSWAP_WTRX);
+    const fee = ssRoute(50);
+    ok("sunswap: the fee-bearing parse is exact skim arithmetic (fee = platformFeeOn of the GROSS output)",
+      fee.platformFeeRaw === String(platformFeeOn(31188064n, 50)) && fee.platformFeeRaw === "155940"
+      && fee.toAmount === "31032124" && fee.platformFeeCollecting === true
+      && fee.toAmountMin === String(BigInt(fee.sunswap.minGrossOut) - platformFeeOn(BigInt(fee.sunswap.minGrossOut), 50))
+      && fee.sunswap.feeRawExpected === fee.platformFeeRaw && fee.sunswap.router === SUNSWAP_V2_ROUTER);
+    ok("sunswap: the energy estimate is the real unstaked burn class (never presented as free)",
+      Math.abs(free.gasCostUSD - (((150000 + 0) * 100 + 2000) / 1e6) * 0.31188064) < 0.02 // fee 0 → no skim leg
+      && Math.abs(fee.gasCostUSD - (((150000 + 70000) * 100 + 2000) / 1e6) * 0.31188064) < 0.02 // fee-bearing token-out adds the skim leg
+      && free.gasCostUSD > 4); // ~15 TRX of energy at the live 100-sun price — a real cost, stated
+  }
+  ok("sunswap: parse refuses drifted, reverted or unpriceable quotes",
+    parseSunswapQuote({ amounts: ["99999999", "31188064"], pathHex: [SS_WTRX_HEX, SS_USDT_HEX] }, ssArgs(), SS_CTX(0)) === null // amounts[0] ≠ the user's amount
+    && parseSunswapQuote({ amounts: ["100000000", "0"], pathHex: [SS_WTRX_HEX, SS_USDT_HEX] }, ssArgs(), SS_CTX(0)) === null // a hop returned 0
+    && parseSunswapQuote({ amounts: ["100000000", "31188064"], pathHex: [SS_WTRX_HEX, SS_USDC_HEX] }, ssArgs(), SS_CTX(0)) === null // path ends ≠ the pair
+    && parseSunswapQuote({ amounts: ["100000000", "31188064", "1", "2"], pathHex: [SS_WTRX_HEX, SS_USDT_HEX, SS_USDC_HEX, SS_WTRX_HEX] }, ssArgs(), SS_CTX(0)) === null // >1 hub hop unsupported
+    && parseSunswapQuote({ amounts: ["100000000", "31188064"], pathHex: [SS_WTRX_HEX, SS_USDT_HEX] }, ssArgs(), { ...SS_CTX(0), fromPriceUsd: 0, toPriceUsd: 0 }) === null); // unpriceable
+  {
+    const route = ssRoute();
+    ok("sunswap: swapRouteExecutable accepts the verified quote and refuses a stripped or re-pinned one",
+      swapRouteExecutable(route).sunswap === true
+      && swapRouteExecutable({ ...route, sunswap: null }).ok === false
+      && swapRouteExecutable({ ...route, sunswap: { ...route.sunswap, router: SS_STRANGER } }).ok === false
+      && swapRouteExecutable({ ...route, fromChainId: 56 }).ok === false);
+    const dl = Math.floor(Date.now() / 1000) + 1200;
+    const honestN = buildSunswapSwapCallData(route, SS_OWNER, dl); // TRX in → swapExactETHForTokens
+    ok("sunswap: the honest native-in build passes the full bounds check",
+      honestN.functionName === "swapExactETHForTokens" && honestN.callValue === 100000000n
+      && checkSunswapSwapBounds(route, ssRawFor(route, SS_OWNER, honestN, { callValue: honestN.callValue }), SS_OWNER).ok === true);
+    const strangerCall = buildSunswapSwapCallData(route, SS_STRANGER, dl);
+    ok("sunswap: bounds refuse a build paying a stranger, and a native-in build with its value stripped",
+      checkSunswapSwapBounds(route, ssRawFor(route, SS_OWNER, strangerCall, { callValue: strangerCall.callValue }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(route, ssRawFor(route, SS_OWNER, honestN, { callValue: 0n }), SS_OWNER).ok === false);
+    const ttArgs = ssArgs({ fromTokenAddress: SS_USDT, toTokenAddress: SS_USDC });
+    const ttRoute = parseSunswapQuote({ amounts: ["100000000", "318713637", "110908733"], pathHex: [SS_USDT_HEX, SS_WTRX_HEX, SS_USDC_HEX] }, ttArgs,
+      SS_CTX(50, { fromSymbol: "USDT", toSymbol: "USDC", fromPriceUsd: 1 }));
+    const honestT = buildSunswapSwapCallData(ttRoute, SS_OWNER, dl);
+    const iface = new ethers.Interface(SUNSWAP_ROUTER_ABI);
+    const gutted = iface.encodeFunctionData("swapExactTokensForTokens", [100000000n, 1n, [SS_USDT_HEX, SS_WTRX_HEX, SS_USDC_HEX].map((h) => "0x" + h), "0x" + tronAddressToHex(SS_OWNER).slice(2), BigInt(dl)]).slice(2);
+    const transferData = "a9059cbb" + "0".repeat(24) + SS_USDT_HEX + "0".repeat(63) + "1";
+    ok("sunswap: bounds refuse a gutted minimum, a stray call value, a wrong contract, an over-cap fee limit, an expired tx, a far deadline and a bare transfer",
+      honestT.functionName === "swapExactTokensForTokens"
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, honestT), SS_OWNER).ok === true
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, { dataHex: gutted }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, honestT, { callValue: 5n }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, honestT, { contractHex: tronAddressToHex(SS_USDT) }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, honestT, { feeLimitSun: 2000000000n }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, honestT, { expirationMs: Date.now() - 1000 }), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, buildSunswapSwapCallData(ttRoute, SS_OWNER, Math.floor(Date.now() / 1000) + 7200)), SS_OWNER).ok === false
+      && checkSunswapSwapBounds(ttRoute, ssRawFor(ttRoute, SS_OWNER, { dataHex: transferData }), SS_OWNER).ok === false);
+    const outRoute = parseSunswapQuote({ amounts: ["100000000", "318713637"], pathHex: [SS_USDT_HEX, SS_WTRX_HEX] }, ssArgs({ fromTokenAddress: SS_USDT, toTokenAddress: TRON_SWAP_NATIVE_TOKEN }),
+      SS_CTX(50, { fromSymbol: "USDT", toSymbol: "TRX", fromPriceUsd: 1, toPriceUsd: 0.31188064 }));
+    const honestO = buildSunswapSwapCallData(outRoute, SS_OWNER, dl);
+    ok("sunswap: the token→TRX shape composes as swapExactTokensForETH and passes bounds",
+      honestO.functionName === "swapExactTokensForETH"
+      && checkSunswapSwapBounds(outRoute, ssRawFor(outRoute, SS_OWNER, honestO), SS_OWNER).ok === true);
+  }
+  {
+    // Quote e2e over a stubbed TronGrid: the router answers the
+    // live probe numbers; a reverting candidate path must not
+    // kill the search; every other host is dark (prices fall
+    // back to the stable pin + the pair's own ratio).
+    const realFetch = globalThis.fetch;
+    const enc = (arr) => ethers.AbiCoder.defaultAbiCoder().encode(["uint256[]"], [arr.map(BigInt)]).slice(2);
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("/wallet/triggerconstantcontract")) {
+        const body = JSON.parse(opts.body);
+        const param = String(body.parameter || "");
+        if (param.includes(SS_WTRX_HEX) && param.includes(SS_USDC_HEX)) return { ok: true, json: async () => ({ result: { result: true }, constant_result: [enc(["100000000", "318713637", "110908733"])] }) };
+        if (param.includes(SS_USDC_HEX)) return { ok: true, json: async () => ({ result: { result: false, code: "REVERT" } }) }; // direct USDT/USDC pool absent
+        return { ok: true, json: async () => ({ result: { result: true }, constant_result: [enc(["100000000", "31188064"])] }) };
+      }
+      if (u.includes("/wallet/getchainparameters")) return { ok: true, json: async () => ({ chainParameter: [{ key: "getEnergyFee", value: 100 }] }) };
+      throw new Error("offline in test");
+    };
+    try {
+      const r1 = await getSunswapSwapRoute(ssArgs());
+      ok("sunswap e2e: TRX→USDT quotes off the router's own numbers and is executable",
+        r1.provider === "sunswap" && r1.sunswap.grossOut === "31188064" && swapRouteExecutable(r1).ok === true
+        && r1.platformFeeRaw === String(platformFeeOn(31188064n, r1.platformFeeBps))
+        && r1.toAmount === String(31188064n - BigInt(r1.platformFeeRaw)));
+      const r2 = await getSunswapSwapRoute(ssArgs({ fromTokenAddress: SS_USDT, toTokenAddress: SS_USDC }));
+      ok("sunswap e2e: a reverting direct path falls through to the WTRX hub path",
+        r2.provider === "sunswap" && r2.sunswap.pathHex.length === 3 && r2.sunswap.grossOut === "110908733" && swapRouteExecutable(r2).ok === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const coreS2 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appS2 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const quoteBody = coreS2.slice(coreS2.indexOf("export async function getSunswapSwapRoute"), coreS2.indexOf("export function buildSunswapSwapCallData"));
+    ok("sunswap wiring: cascade quotes it, dispatch executes it, the app names and discloses it",
+      coreS2.includes("sunswapSupportsPair(args)") && coreS2.includes('route.provider === "sunswap") return executeSunswapSwapRoute')
+      && appS2.includes('provider === "sunswap") return "SunSwap"') && appS2.includes("executeSunswapSwapRoute(wallet, route")
+      && appS2.includes('r.provider === "sunswap" && r.platformFeeCollecting === true'));
+    ok("sunswap wiring: the quote path never reads a balance (route-preview rule — enforcement lives at execution)",
+      !quoteBody.includes("Balance") && !quoteBody.includes("swapBalanceGate") && !quoteBody.includes("Allowance")
+      && typeof executeSunswapSwapRoute === "function");
+  }
+}
+
+// 100. Satora: Arkade as a swap endpoint (universal
+// composability §7.2, 2026-11-14). Arkade joins the swap sheet
+// as a full endpoint: a DESTINATION from EVM stablecoins (the
+// shipped Permit2 funding + the bridge's VHTLC claim machinery)
+// and a SOURCE to Lightning / EVM stablecoins (a new VTXO-send
+// wrapper in the arkade chunk, gated by the VHTLC recompute).
+// Fixtures mirror the live probes of 2026-11-14 (pair table,
+// fee-free + 25 bps quotes on all three Arkade pairs — the
+// extra fee folds into protocol_fee exactly as on the BTC/LN
+// lanes) and the reference SDK's wire schemas
+// (@lendasat/lendaswap-sdk-pure 2.8.1).
+{
+  const AUSER_AK = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const PHRASE_AK = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const ARB_USDC_AK = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const WBTC_ARB_AK = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const ARKADE_ADDR_AK = "ark1qz8y9x0w7v6u5t4s3r2q1p0o9n8m7l6k5j4h3g2f1d0s9a8b7c6d5e4f3g2h1j";
+  const BTC_USD_AK = 74414;
+  const LOCKTIME_AK = Math.floor(Date.now() / 1000) + 86400;
+  const identityAK = satoraSwapClaimKey(PHRASE_AK, 0);
+  const claimingAK = new ethers.Wallet("0x" + identityAK.secretKeyHex).address;
+  const jsonResAK = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const pairsAK = [
+    { source: "42161", target: "Arkade", min_sats: 335, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 4 },
+    { source: "137", target: "Arkade", min_sats: 335, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 4 },
+    { source: "Arkade", target: "42161", min_sats: 335, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 7 },
+    { source: "Arkade", target: "Lightning", min_sats: 335, max_sats: 1000000, fee_percentage: 0.003, network_fee_sats: 1 },
+  ];
+  // The live fee-free quotes of 2026-11-14, verbatim.
+  const quoteEvmArkAK = (o = {}) => ({ exchange_rate: "68189.56699624957381520627344", network_fee: 4, gasless_network_fee: 0, protocol_fee: 146, protocol_fee_rate: 0.005, min_amount: 335, max_amount: 20000000, source_amount: "20000000", target_amount: "29330", net_source_amount: "20000000", net_target_amount: "29180", ...o });
+  const quoteArkEvmAK = (o = {}) => ({ exchange_rate: "68141.546", network_fee: 7, gasless_network_fee: 0, protocol_fee: 500, protocol_fee_rate: 0.005, min_amount: 335, max_amount: 20000000, source_amount: "100000", target_amount: "68141546", net_source_amount: "100000", net_target_amount: "67796068", ...o });
+  const quoteArkLnAK = (o = {}) => ({ exchange_rate: "1.0", network_fee: 1, gasless_network_fee: 0, protocol_fee: 300, protocol_fee_rate: 0.003, min_amount: 335, max_amount: 1000000, source_amount: "100000", target_amount: "100000", net_source_amount: "100000", net_target_amount: "99699", ...o });
+  // The stub server folds extra_fees into protocol_fee exactly
+  // like the live one (extra = bps of the gross, recovered
+  // differentially by the parsers): for EVM-target quotes the
+  // net is in sats; for Arkade-source quotes the fee stack is
+  // in sats while the net is in target raw units, so the raw
+  // deduction converts at the quote's own rate.
+  const satoraStubAK = ({ create = null, swapGet = null, redeemCalldata = null, claimGasless = null, seen = { quotes: [], creates: [] } } = {}) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResAK([{ symbol: "BTCUSDT", price: String(BTC_USD_AK) }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResAK({});
+    if (u.includes("api.satora.io/version")) return jsonResAK({ tag: "backend-v0.3.26", commit_hash: "6ec950ae" });
+    if (u.includes("api.satora.io/status")) return jsonResAK({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResAK(pairsAK);
+    if (u.includes("api.satora.io/quote")) {
+      seen.quotes.push(u);
+      const p = new URL(u).searchParams;
+      const extra = Number(p.get("extra_fees") || 0);
+      let base = null;
+      if (p.get("source_chain") === "Arkade" && p.get("target_chain") === "Lightning") base = quoteArkLnAK();
+      else if (p.get("source_chain") === "Arkade" && p.get("source_amount") === "10000") base = quoteArkEvmAK({ source_amount: "10000", target_amount: "6814155", net_target_amount: "6775314", protocol_fee: 50 });
+      else if (p.get("source_chain") === "Arkade" && p.get("source_amount") === "2000") base = quoteArkEvmAK({ source_amount: "2000", target_amount: "1362831", net_target_amount: "1351247", protocol_fee: 10 });
+      else if (p.get("source_chain") === "Arkade") base = quoteArkEvmAK();
+      else if (p.get("target_chain") === "Arkade" && p.get("source_amount") === "200000") base = quoteEvmArkAK({ source_amount: "200000", target_amount: "293", net_target_amount: "288", protocol_fee: 1 });
+      else if (p.get("target_chain") === "Arkade") base = quoteEvmArkAK();
+      else throw new Error("unexpected quote in arkade stub: " + u);
+      if (extra > 0) {
+        const extraSats = Math.round(Number(base.protocol_fee) * extra / (Number(base.protocol_fee_rate) * 10000));
+        const rate = Number(base.exchange_rate);
+        const dec = p.get("source_chain") === "Arkade" ? (p.get("target_chain") === "Lightning" ? 8 : 6) : 8;
+        const netDeductRaw = p.get("source_chain") === "Arkade" ? Math.round(extraSats * rate * Math.pow(10, dec) / 1e8) : extraSats;
+        return jsonResAK({ ...base, protocol_fee: Number(base.protocol_fee) + extraSats, protocol_fee_rate: Number(base.protocol_fee_rate) + extra / 10000, net_target_amount: String(Number(base.net_target_amount) - netDeductRaw) });
+      }
+      return jsonResAK(base);
+    }
+    if (u.includes("redeem-and-swap-calldata")) return jsonResAK(typeof redeemCalldata === "function" ? redeemCalldata() : redeemCalldata);
+    if (u.includes("claim-gasless")) { seen.creates.push({ claimGasless: JSON.parse(opts.body || "{}") }); return typeof claimGasless === "function" ? claimGasless() : (claimGasless && typeof claimGasless.json === "function" ? claimGasless : jsonResAK(claimGasless)); }
+    if (u.includes("api.satora.io/swap/evm/arkade") || u.includes("api.satora.io/swap/arkade/")) { seen.creates.push(JSON.parse(opts.body || "{}")); return jsonResAK(typeof create === "function" ? create(u, JSON.parse(opts.body || "{}")) : create); }
+    if (u.includes("api.satora.io/swap/")) return jsonResAK(swapGet);
+    throw new Error("unexpected fetch in arkade stub: " + u);
+  };
+
+  // Constants + eligibility matrix (pure).
+  ok("arkade endpoint: chain id + floor are the evidenced ones", SATORA_ARKADE_CHAIN_ID === 20000000000003 && SATORA_MIN_NET_SATS.arkade === 335 && SATORA_ARKADE_HTLC_VERSION === 1);
+  ok("arkade endpoint: EVM stables -> Arkade is a Satora pair; other shapes are not",
+    !!satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: ARB_USDC_AK })
+    && !!satoraSupportsPair({ fromChainKey: "base", toChainKey: "arkade", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" })
+    && satoraSupportsPair({ fromChainKey: "bsc", toChainKey: "arkade", fromTokenAddress: ARB_USDC_AK }) === null
+    && satoraSupportsPair({ fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: WBTC_ARB_AK }) === null);
+  ok("arkade endpoint: Arkade -> Lightning / EVM stables is a Satora source pair; Arkade -> Bitcoin / Arkade is not",
+    !!satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc" })
+    && !!satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK })
+    && satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc" }) === null
+    && satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "arkade", fromTokenAddress: "btc" }) === null
+    && satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: WBTC_ARB_AK }) === null
+    && satoraArkadeSourceSupportsPair({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_AK }) === null);
+
+  // Arkade-source quote parsing: the fee stack is in sats, the
+  // target in its own raw units; the live fee-free quote
+  // accounts for itself, the live +25 bps pass attributes
+  // differentially, and unexplained deductions refuse.
+  const planArkEvmAK = satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK });
+  const parsedArkEvmAK = parseSatoraArkadeSourceQuote(quoteArkEvmAK(), planArkEvmAK, { fromAmount: "100000" });
+  ok("arkade endpoint: the live Arkade -> EVM fee-free quote parses (fees in sats, target in raw units)",
+    !!parsedArkEvmAK && parsedArkEvmAK.grossTargetRaw === 68141546 && parsedArkEvmAK.netTargetRaw === 67796068
+    && parsedArkEvmAK.protocolFeeSats === 500 && parsedArkEvmAK.networkFeeSats === 7 && parsedArkEvmAK.fluidFeeSats === 0);
+  const quoteArkEvm25AK = { exchange_rate: "68124.307", network_fee: 7, gasless_network_fee: 0, protocol_fee: 750, protocol_fee_rate: 0.0075, min_amount: 335, max_amount: 20000000, source_amount: "100000", target_amount: "68124307", net_source_amount: "100000", net_target_amount: "67608605" };
+  const parsedArkEvm25AK = parseSatoraArkadeSourceQuote(quoteArkEvm25AK, planArkEvmAK, { fromAmount: "100000" }, parsedArkEvmAK);
+  ok("arkade endpoint: the live +25 bps Arkade -> EVM pass attributes Fluid's 250 sats differentially",
+    !!parsedArkEvm25AK && parsedArkEvm25AK.fluidFeeSats === 250 && parsedArkEvm25AK.protocolFeeSats === 500 && parsedArkEvm25AK.netTargetRaw === 67608605);
+  ok("arkade endpoint: unexplained or irreconcilable Arkade-source quotes are refused",
+    parseSatoraArkadeSourceQuote(quoteArkEvmAK({ net_target_amount: "67696068" }), planArkEvmAK, { fromAmount: "100000" }) === null
+    && parseSatoraArkadeSourceQuote(quoteArkEvm25AK, planArkEvmAK, { fromAmount: "100000" }, { ...parsedArkEvmAK, netTargetRaw: 67000000, netSats: 98341 }) === null
+    && parseSatoraArkadeSourceQuote(quoteArkEvmAK(), planArkEvmAK, { fromAmount: "999" }) === null);
+  const planArkLnAK = satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc" });
+  ok("arkade endpoint: the live Arkade -> Lightning fee-free quote parses in pure sats",
+    (() => { const q = parseSatoraArkadeSourceQuote(quoteArkLnAK(), planArkLnAK, { fromAmount: "100000" }); return !!q && q.netTargetRaw === 99699 && q.protocolFeeSats === 300 && q.networkFeeSats === 1; })());
+
+  // Dispatcher routes, fetch stubbed.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubAK();
+    try {
+      resetSatoraCaches();
+      const routes = await getSwapRoutes({ fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: ARB_USDC_AK, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: AUSER_AK, toAddress: ARKADE_ADDR_AK });
+      const r = routes[0];
+      ok("arkade endpoint: dispatcher returns the Satora route for Arbitrum USDC -> Arkade, fee itemised",
+        routes.length === 1 && r.provider === "satora" && r.satora.destKey === "arkade" && r.toChainId === SATORA_ARKADE_CHAIN_ID
+        && r.toAmount === "29034" && r.satora.fluidFeeSats === 146 && r.platformFeeCollecting === true && swapRouteExecutable(r).ok === true);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubAK();
+    try {
+      resetSatoraCaches();
+      let err = null;
+      try { await getSwapRoutes({ fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: ARB_USDC_AK, toTokenAddress: "btc", fromAmount: "200000", fromAddress: AUSER_AK, toAddress: ARKADE_ADDR_AK }); } catch (e) { err = e; }
+      ok("arkade endpoint: a sub-335-sat landing to Arkade is refused with the floor stated + the marker set",
+        !!err && err.message.includes("335-sat minimum") && !!err.satoraBelowFloor && err.satoraBelowFloor.destKey === "arkade" && err.satoraBelowFloor.minSats === 335);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubAK();
+    try {
+      resetSatoraCaches();
+      const rEvm = await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK, fromAmount: "100000", fromAddress: "", toAddress: AUSER_AK });
+      ok("arkade endpoint: Arkade -> EVM at 100k sats — the route's own $0.38 cost already busts the $0.20 EVM ceiling, so the law charges 0 and says so",
+        !!rEvm && rEvm.provider === "satora" && rEvm.satora.sourceKey === "arkade" && rEvm.fromChainId === SATORA_ARKADE_CHAIN_ID
+        && rEvm.toAmount === "67796068" && rEvm.satora.fluidFeeSats === 0 && rEvm.platformFeeCollecting === false && swapRouteExecutable(rEvm).ok === true);
+      const rEvmSmall = await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK, fromAmount: "10000", fromAddress: "", toAddress: AUSER_AK });
+      ok("arkade endpoint: Arkade -> EVM at 10k sats — Satora's spread alone ($0.67) busts the ceiling, so the law still charges 0 and says so",
+        !!rEvmSmall && rEvmSmall.toAmount === "6775314" && rEvmSmall.satora.fluidFeeSats === 0 && rEvmSmall.platformFeeCollecting === false);
+      const rEvmTiny = await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK, fromAmount: "2000", fromAddress: "", toAddress: AUSER_AK });
+      ok("arkade endpoint: Arkade -> EVM collects where the route cost fits the ceiling (2k sats: Fluid's 10 sats at the cap)",
+        !!rEvmTiny && rEvmTiny.toAmount === "1344433" && rEvmTiny.satora.fluidFeeSats === 10 && rEvmTiny.platformFeeCollecting === true);
+      const rLn = await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: "", toAddress: "lnbc1example" });
+      ok("arkade endpoint: Arkade -> Lightning prices under the two-pass law (the $0.30 ceiling leaves 10 bps of headroom = 100 sats)",
+        !!rLn && rLn.satora.destKey === "lightning" && rLn.toAmount === "99599" && rLn.satora.fluidFeeSats === 100 && rLn.platformFeeCollecting === true && swapRouteExecutable(rLn).ok === true);
+      let err = null;
+      try { await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc", fromAmount: "300", fromAddress: "", toAddress: "lnbc1example" }); } catch (e) { err = e; }
+      ok("arkade endpoint: below the pair's 335-sat source floor the refusal is terminal and states it",
+        !!err && err.satoraTerminal === true && err.message.includes("335"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Milestone interplay: Arkade is a terminus (compositions run
+  // INTO it through the address book); no composition runs OUT
+  // of Arkade in this planner.
+  ok("arkade endpoint: milestone shapes treat Arkade as a terminus and never source from it",
+    (() => {
+      const into = milestoneShapes({ fromChainKey: "bsc", toChainKey: "arkade", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "btc", fromAmount: "1000000" });
+      const out = milestoneShapes({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK, fromAmount: "100000" });
+      return into.length >= 1 && into.every(sh => sh[sh.length - 1].toChainKey === "arkade") && out.length === 0;
+    })()
+    && milestoneAddressFor({ fromChainKey: "bsc", toChainKey: "arkade", toAddress: ARKADE_ADDR_AK, fromAddress: AUSER_AK, addresses: {} }, "arkade") === ARKADE_ADDR_AK);
+
+  // Creation builders (wire shapes, pure).
+  const routeEvmArkAK = { fromChainId: 42161, fromAmount: "20000000", fromToken: { address: ARB_USDC_AK, symbol: "USDC", decimals: 6 }, satora: { destKey: "arkade", destInput: ARKADE_ADDR_AK, grossSats: 29330, netSats: 29180, protocolFeeSats: 146, networkFeeSats: 4, fluidFeeSats: 0, extraFeesBps: 0 } };
+  ok("arkade endpoint: EVM -> Arkade create body is the SDK's shape (our lock, our claim key, pinned version, gasless)",
+    (() => { const b = buildSatoraArkadeCreateRequest({ route: routeEvmArkAK, userAddress: AUSER_AK, identity: identityAK, claimPk: identityAK.claimPk });
+      return b.hash_lock === identityAK.hashLock && b.receiver_pk === identityAK.claimPk && b.user_id === identityAK.userId
+        && b.target_address === ARKADE_ADDR_AK && b.token_address === ARB_USDC_AK && b.evm_chain_id === 42161 && b.amount_in === "20000000"
+        && b.gasless === true && b.arkade_htlc_script_version === 1; })());
+  const routeArkEvmAK = { fromChainId: SATORA_ARKADE_CHAIN_ID, fromAmount: "100000", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { sourceKey: "arkade", destKey: "evm", destChainKey: "arbitrum", destChainId: 42161, destInput: AUSER_AK, sourceSats: 100000, grossTargetRaw: 68141546, netTargetRaw: 67796068, protocolFeeSats: 500, networkFeeSats: 7, fluidFeeSats: 0, extraFeesBps: 0, btcUsd: 74414, targetToken: { address: ARB_USDC_AK, symbol: "USDC", decimals: 6 } } };
+  ok("arkade endpoint: Arkade -> EVM create body names our refund key + the claiming address derived from it",
+    (() => { const b = buildSatoraArkadeToEvmCreateRequest({ route: routeArkEvmAK, identity: identityAK, claimingAddress: claimingAK });
+      return b.hash_lock === identityAK.hashLock && b.refund_pk === identityAK.claimPk && b.claiming_address === claimingAK
+        && b.target_address === AUSER_AK && b.token_address === ARB_USDC_AK && b.evm_chain_id === 42161 && b.amount_in === 100000
+        && b.gasless === true && b.arkade_htlc_script_version === 1; })());
+  const INVOICE_HASH_AK = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+  const INVOICE_AK = encodeBolt11({ network: "bc", amountMsat: 250000000n, timestamp: Math.floor(Date.now() / 1000), privKey: "11".repeat(32), fields: [["p", INVOICE_HASH_AK], ["s", "22".repeat(32)], ["d", "arkade endpoint test"]] });
+  const routeArkLnAK = { fromChainId: SATORA_ARKADE_CHAIN_ID, fromAmount: "250301", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { sourceKey: "arkade", destKey: "lightning", destChainKey: null, destChainId: SATORA_LIGHTNING_CHAIN_ID, destInput: INVOICE_AK, grossTargetRaw: 250301, netTargetRaw: 250000, protocolFeeSats: 300, networkFeeSats: 1, fluidFeeSats: 0, extraFeesBps: 0, targetToken: null } };
+  ok("arkade endpoint: Arkade -> Lightning create body carries exactly one destination field and no amount beside an invoice",
+    (() => { const b = buildSatoraArkadeToLnCreateRequest({ route: routeArkLnAK, identity: identityAK });
+      return b.lightning_invoice === INVOICE_AK && b.lightning_address === undefined && b.lnurl === undefined
+        && b.source_amount_sats === undefined && b.target_amount_sats === undefined
+        && b.refund_pk === identityAK.claimPk && b.arkade_htlc_script_version === 1; })()
+    && (() => { const b = buildSatoraArkadeToLnCreateRequest({ route: { ...routeArkLnAK, fromAmount: "100000", satora: { ...routeArkLnAK.satora, destInput: "user@wallet.example" } }, identity: identityAK });
+      return b.lightning_address === "user@wallet.example" && b.source_amount_sats === 100000 && b.lightning_invoice === undefined; })());
+
+  // Creation bounds checks: accept the honest fixtures, refuse
+  // every tamper that would redirect or reprice the swap.
+  const SERVER_PK_AK = "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633";
+  const createEvmArkAK = (o = {}) => ({
+    id: "ak-evm-ark-1", status: "pending", fee_sats: 150, hash_lock: identityAK.hashLock,
+    source_token: { token_id: ARB_USDC_AK, symbol: "USDC", chain: "42161", decimals: 6 },
+    target_token: { token_id: "btc", symbol: "BTC", chain: "Arkade", decimals: 8 },
+    evm_chain_id: 42161, source_amount: "20000000", target_amount: "29180", evm_expected_sats: "29180",
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
+    client_evm_address: AUSER_AK, server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    evm_refund_locktime: LOCKTIME_AK, btc_vhtlc_address: "ark1qrealvhtlcaddressfortestingpurposes0000000000000000000000001",
+    sender_pk: SERVER_PK_AK, receiver_pk: identityAK.claimPk, arkade_server_pk: "02" + SERVER_PK_AK,
+    vhtlc_refund_locktime: LOCKTIME_AK + 3600, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, arkade_htlc_script_version: 1,
+    target_arkade_address: ARKADE_ADDR_AK, user_id: identityAK.userId, user_address: AUSER_AK, gasless: true, ...o,
+  });
+  ok("arkade endpoint: an honest EVM -> Arkade creation passes (with or without the lock token named)",
+    checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK(), { identity: identityAK, claimPk: identityAK.claimPk }).ok === true
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ wbtc_address: WBTC_ARB_AK }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === true);
+  ok("arkade endpoint: tampered EVM -> Arkade creations are refused (lock, claim key, target, version, lock address)",
+    checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ hash_lock: "0x" + "00".repeat(32) }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ receiver_pk: SERVER_PK_AK }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ target_arkade_address: "ark1qsomeoneelse000000000000000000000000000000000000000000000" }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ arkade_htlc_script_version: 2 }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ btc_vhtlc_address: "bc1pnotarkade" }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false
+    && checkSatoraCreateResponse(routeEvmArkAK, createEvmArkAK({ wbtc_address: "not-an-address" }), { identity: identityAK, claimPk: identityAK.claimPk }).ok === false);
+  const createArkEvmAK = (o = {}) => ({
+    id: "ak-ark-evm-1", status: "pending", fee_sats: 507, hash_lock: identityAK.hashLock,
+    source_token: { token_id: "btc", symbol: "BTC", chain: "Arkade", decimals: 8 },
+    target_token: { token_id: ARB_USDC_AK, symbol: "USDC", chain: "42161", decimals: 6 },
+    evm_chain_id: 42161, source_amount: "100000", target_amount: "68141546", evm_expected_sats: "99493",
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
+    client_evm_address: claimingAK, server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    evm_refund_locktime: LOCKTIME_AK, wbtc_address: WBTC_ARB_AK,
+    btc_vhtlc_address: "ark1qrealvhtlcaddressfortestingpurposes0000000000000000000000001",
+    sender_pk: identityAK.claimPk, receiver_pk: SERVER_PK_AK, arkade_server_pk: "02" + SERVER_PK_AK,
+    vhtlc_refund_locktime: LOCKTIME_AK + 3600, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, arkade_htlc_script_version: 1,
+    user_id: identityAK.userId, user_address: claimingAK, gasless: true, ...o,
+  });
+  ok("arkade endpoint: an honest Arkade -> EVM creation passes",
+    checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK(), { identity: identityAK, claimingAddress: claimingAK }).ok === true);
+  ok("arkade endpoint: tampered Arkade -> EVM creations are refused (refund key, claim address, fee, payout, lock)",
+    checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK({ sender_pk: SERVER_PK_AK }), { identity: identityAK, claimingAddress: claimingAK }).ok === false
+    && checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK({ client_evm_address: AUSER_AK }), { identity: identityAK, claimingAddress: claimingAK }).ok === false
+    && checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK({ fee_sats: 900 }), { identity: identityAK, claimingAddress: claimingAK }).ok === false
+    && checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK({ target_amount: "60000000" }), { identity: identityAK, claimingAddress: claimingAK }).ok === false
+    && checkSatoraArkadeToEvmCreateResponse(routeArkEvmAK, createArkEvmAK({ hash_lock: "0x" + "00".repeat(32) }), { identity: identityAK, claimingAddress: claimingAK }).ok === false);
+  const createArkLnAK = (o = {}) => ({
+    id: "ak-ark-ln-1", status: "pending", fee_sats: 301, hash_lock: "0x" + INVOICE_HASH_AK,
+    source_amount: "250301", target_amount: "250000",
+    arkade_vhtlc_address: "ark1qrealvhtlcaddressfortestingpurposes0000000000000000000000001",
+    sender_pk: identityAK.claimPk, receiver_pk: SERVER_PK_AK, arkade_server_pk: "02" + SERVER_PK_AK,
+    vhtlc_refund_locktime: LOCKTIME_AK + 3600, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, arkade_htlc_script_version: 1,
+    client_lightning_invoice: INVOICE_AK, user_id: identityAK.userId, ...o,
+  });
+  ok("arkade endpoint: an honest Arkade -> Lightning creation passes (lock = the invoice's payment hash)",
+    checkSatoraArkadeToLnCreateResponse(routeArkLnAK, createArkLnAK(), { identity: identityAK }).ok === true);
+  ok("arkade endpoint: tampered Arkade -> Lightning creations are refused (lock, invoice, lock amount, refund key)",
+    checkSatoraArkadeToLnCreateResponse(routeArkLnAK, createArkLnAK({ hash_lock: "0x" + "11".repeat(32) }), { identity: identityAK }).ok === false
+    && checkSatoraArkadeToLnCreateResponse(routeArkLnAK, createArkLnAK({ client_lightning_invoice: "lnbc1differentinvoice" }), { identity: identityAK }).ok === false
+    && checkSatoraArkadeToLnCreateResponse(routeArkLnAK, createArkLnAK({ source_amount: "260301" }), { identity: identityAK }).ok === false
+    && checkSatoraArkadeToLnCreateResponse(routeArkLnAK, createArkLnAK({ sender_pk: SERVER_PK_AK }), { identity: identityAK }).ok === false);
+
+  // Creation through the stubbed API: records carry the VHTLC
+  // and the claim wiring.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { quotes: [], creates: [] };
+    globalThis.fetch = satoraStubAK({ create: (u) => u.includes("/swap/evm/arkade") ? createEvmArkAK() : u.includes("/swap/arkade/evm") ? createArkEvmAK() : createArkLnAK(), seen });
+    try {
+      resetSatoraCaches();
+      const recDest = await createSatoraSwap(routeEvmArkAK, { phrase: PHRASE_AK, index: 0, userAddress: AUSER_AK });
+      ok("arkade endpoint: the EVM -> Arkade record carries the VHTLC + claim address, lock token honestly absent",
+        recDest.destKey === "arkade" && recDest.vhtlc.address === createEvmArkAK().btc_vhtlc_address
+        && recDest.claimAddress === ARKADE_ADDR_AK && recDest.wbtcAddress === null && recDest.hashLock === identityAK.hashLock);
+      const recSrc = await createSatoraArkadeSourceSwap(routeArkEvmAK, { phrase: PHRASE_AK, index: 0 });
+      ok("arkade endpoint: the Arkade -> EVM record carries the claiming address + VHTLC + creation-priced amounts",
+        recSrc.sourceKey === "arkade" && recSrc.claimingAddress === claimingAK && recSrc.vhtlc.senderPk === identityAK.claimPk
+        && recSrc.sourceAmountSats === 100000 && recSrc.netTargetRaw === 68141546 && recSrc.targetTokenAddress === ARB_USDC_AK);
+      const recLn = await createSatoraArkadeSourceSwap(routeArkLnAK, { phrase: PHRASE_AK, index: 0 });
+      ok("arkade endpoint: the Arkade -> Lightning record adopts the creation's lock amount + invoice",
+        recLn.sourceAmountSats === 250301 && recLn.invoice === INVOICE_AK && recLn.hashLock === "0x" + INVOICE_HASH_AK);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Funding payload adoption (the Arkade destination's creation
+  // may omit the lock token — the payload's is pinned onto the
+  // record by the executor; a lock in the sold token refuses).
+  {
+    const compRecordAK = { destKey: "arkade", wbtcAddress: null, coordinatorAddress: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", fromAmount: "20000000", hashLock: identityAK.hashLock, serverEvmAddress: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", refundLocktime: LOCKTIME_AK };
+    const approveAK = new ethers.Interface(["function approve(address,uint256)"]).encodeFunctionData("approve", ["0x1111111111111111111111111111111111111111", 20000000n]);
+    const callsAK = [
+      { target: ARB_USDC_AK, value: "0", call_data: approveAK },
+      { target: "0x1111111111111111111111111111111111111111", value: "0", call_data: "0xc04b8d59" + ARB_USDC_AK.slice(2).toLowerCase() + WBTC_ARB_AK.slice(2).toLowerCase() },
+    ];
+    const compAK = { coordinator_address: compRecordAK.coordinatorAddress, permit2_address: "0x000000000022D473030F116dDEE9F6B43aC78BA3", source_amount: "20000000", source_token_address: ARB_USDC_AK, lock_token_address: WBTC_ARB_AK, preimage_hash: identityAK.hashLock, claim_address: compRecordAK.serverEvmAddress, timelock: LOCKTIME_AK, calls: callsAK, calls_hash: satoraCallsHash(callsAK) };
+    ok("arkade endpoint: the funding payload's lock token is adoptable for an Arkade-destination record",
+      checkSatoraFundingComponents(compAK, compRecordAK).ok === true);
+    ok("arkade endpoint: a funding payload that would lock the sold token (or a malformed one) is refused",
+      checkSatoraFundingComponents({ ...compAK, lock_token_address: ARB_USDC_AK }, compRecordAK).ok === false
+      && checkSatoraFundingComponents({ ...compAK, lock_token_address: "0x123" }, compRecordAK).ok === false
+      && checkSatoraFundingComponents(compAK, { ...compRecordAK, wbtcAddress: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6" }).ok === false);
+  }
+
+  // The gasless redeem digest reproduces the SDK's digest
+  // exactly (independently recomputed through ethers' typed-data
+  // encoder), and the server's calldata answer is bounds-checked.
+  {
+    const recClaimAK = { ...createArkEvmAK(), id: "ak-ark-evm-1", sourceKey: "arkade", destKey: "evm", destChainId: 42161, destInput: AUSER_AK, claimingAddress: claimingAK, swapSecretKey: identityAK.secretKeyHex, netTargetRaw: 67796068, targetTokenAddress: ARB_USDC_AK, sourceAmountSats: 100000, refundLocktime: LOCKTIME_AK, coordinatorAddress: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", serverEvmAddress: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", htlcAddress: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", htlcVersion: 7, wbtcAddress: WBTC_ARB_AK, expectedSats: 99493 };
+    const preimageAK = "0x" + "ab".repeat(32);
+    const callsHashAK = "0x" + "cd".repeat(32);
+    const digestAK = buildSatoraRedeemDigest({ record: recClaimAK, preimageHex: preimageAK, destination: AUSER_AK, minAmountOut: "67796068", callsHash: callsHashAK });
+    const expectAK = ethers.TypedDataEncoder.hash(
+      { name: "HTLCErc20", version: "7", chainId: 42161, verifyingContract: recClaimAK.htlcAddress },
+      { Redeem: [
+        { name: "preimage", type: "bytes32" }, { name: "amount", type: "uint256" }, { name: "token", type: "address" },
+        { name: "sender", type: "address" }, { name: "timelock", type: "uint256" }, { name: "caller", type: "address" },
+        { name: "destination", type: "address" }, { name: "sweepToken", type: "address" },
+        { name: "minAmountOut", type: "uint256" }, { name: "callsHash", type: "bytes32" } ] },
+      { preimage: preimageAK, amount: 99493n, token: WBTC_ARB_AK, sender: recClaimAK.serverEvmAddress, timelock: BigInt(LOCKTIME_AK), caller: recClaimAK.coordinatorAddress, destination: AUSER_AK, sweepToken: ARB_USDC_AK, minAmountOut: 67796068n, callsHash: callsHashAK });
+    ok("arkade endpoint: the redeem digest matches an independent EIP-712 recomputation (HTLCErc20 v7)",
+      digestAK === expectAK && SATORA_REDEEM_TYPE_STRING === "Redeem(bytes32 preimage,uint256 amount,address token,address sender,uint256 timelock,address caller,address destination,address sweepToken,uint256 minAmountOut,bytes32 callsHash)" && /^0x[0-9a-f]{64}$/.test(SATORA_REDEEM_TYPEHASH));
+    const goodCalldataAK = { dex_calldata: { to: "0x1111111111111111111111111111111111111111", data: "0x1234", value: "0" }, calls_hash: callsHashAK, min_amount_out: "67796068", source_amount: "99493", nonce: "0", deadline: "0" };
+    ok("arkade endpoint: the server's redeem calldata is accepted when it meets the reviewed net",
+      checkSatoraRedeemCalldata(recClaimAK, goodCalldataAK).ok === true
+      && checkSatoraRedeemCalldata({ ...recClaimAK, targetTokenAddress: WBTC_ARB_AK }, { ...goodCalldataAK, dex_calldata: null }).ok === true);
+    ok("arkade endpoint: redeem calldata below the reviewed net, carrying value, or missing the DEX leg is refused",
+      checkSatoraRedeemCalldata(recClaimAK, { ...goodCalldataAK, min_amount_out: "60000000" }).ok === false
+      && checkSatoraRedeemCalldata(recClaimAK, { ...goodCalldataAK, dex_calldata: { ...goodCalldataAK.dex_calldata, value: "1" } }).ok === false
+      && checkSatoraRedeemCalldata(recClaimAK, { ...goodCalldataAK, dex_calldata: null }).ok === false);
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubAK({ redeemCalldata: goodCalldataAK, claimGasless: { id: "ak-ark-evm-1", status: "client_redeeming", tx_hash: "0x" + "12".repeat(32) } });
+    try {
+      resetSatoraCaches();
+      const claimed = await claimSatoraArkadeEvmSwap(recClaimAK, { phrase: PHRASE_AK });
+      ok("arkade endpoint: the gasless claim signs with the swap secret key and returns the server's tx",
+        claimed.status === "client_redeeming" && claimed.txHash === "0x" + "12".repeat(32));
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = satoraStubAK({ redeemCalldata: goodCalldataAK, claimGasless: jsonResAK({ error: "cannot claim a swap in client_redeemed" }, false, 400) });
+    try {
+      const again = await claimSatoraArkadeEvmSwap(recClaimAK, { phrase: PHRASE_AK });
+      ok("arkade endpoint: an already-claimed refusal is a success outcome, not an error",
+        again.already === true && again.status === "client_redeemed");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Arkade-source execution: create -> persist -> the injected
+  // VTXO funding at the CREATION's amount -> the funding tx id
+  // persisted; a funding failure leaves the record for recovery.
+  {
+    const realFetch = globalThis.fetch;
+    const store = new Map();
+    const storageAK = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+    const savedAK = () => JSON.parse(store.get("fluid_satora_swaps_v1") || "[]");
+    const fundArgsAK = [];
+    let createSeqAK = 0;
+    globalThis.fetch = satoraStubAK({ create: (u, body) => u.includes("/swap/arkade/evm") ? createArkEvmAK({ id: "ak-ark-evm-x" + (++createSeqAK), sender_pk: body.refund_pk, hash_lock: body.hash_lock, user_id: body.user_id, client_evm_address: body.claiming_address, user_address: body.claiming_address }) : createArkLnAK() });
+    try {
+      resetSatoraCaches();
+      const execRouteAK = await getSatoraArkadeSourceRoute({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_AK, fromAmount: "100000", fromAddress: "", toAddress: AUSER_AK });
+      const funded = await executeSatoraArkadeSourceRoute({ phrase: PHRASE_AK, route: execRouteAK, storage: storageAK,
+        fundVhtlc: async (args) => { fundArgsAK.push(args); return "arkfundtxid0001"; } });
+      const saved = savedAK();
+      ok("arkade endpoint: execution funds the CREATION's VHTLC amount and persists the funding tx",
+        Array.isArray(funded) && funded[0] === "arkfundtxid0001" && fundArgsAK.length === 1 && fundArgsAK[0].amountSats === 100000
+        && fundArgsAK[0].vhtlc.address === createArkEvmAK().btc_vhtlc_address && saved.length === 1 && saved[0].fundTxHash === "arkfundtxid0001");
+      let err = null;
+      try {
+        await executeSatoraArkadeSourceRoute({ phrase: PHRASE_AK, route: execRouteAK, storage: storageAK,
+          fundVhtlc: async () => { throw new Error("Not enough sats in the Arkade wallet"); } });
+      } catch (e) { err = e; }
+      const saved2 = savedAK();
+      ok("arkade endpoint: a funding failure leaves the created record persisted and unfunded for recovery",
+        !!err && err.message.includes("Not enough sats") && saved2.length === 2
+        && saved2.some(r => r.fundTxHash === null) && saved2.some(r => r.fundTxHash === "arkfundtxid0001"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // The VTXO funding wrapper (arkade chunk): the funding address
+  // is recomputed from the record's lock parameters and refused
+  // on any mismatch BEFORE any send; balance is checked first.
+  {
+    const arkChunkAK = await import("../src/arkade.js");
+    const recVhtlcAK = { senderPk: identityAK.claimPk, receiverPk: SERVER_PK_AK, serverPk: "02" + SERVER_PK_AK, refundLocktime: LOCKTIME_AK + 3600, unilateralClaimDelay: 605184, unilateralRefundDelay: 778240, unilateralRefundWithoutReceiverDelay: 778240 };
+    const builtAK = arkChunkAK.bridgeVhtlc({ record: recVhtlcAK, hashLock: identityAK.hashLock });
+    const fullRecAK = { ...recVhtlcAK, vhtlcAddress: builtAK.address };
+    const sendsAK = [];
+    const sessionAK = (balance) => ({ balanceSats: async () => balance, wallet: { send: async (args) => { sendsAK.push(args); return "arktxid0001"; } } });
+    const okFund = await arkChunkAK.fundArkadeVhtlc({ session: sessionAK(500000n), record: fullRecAK, hashLock: identityAK.hashLock, amountSats: 100000 });
+    ok("arkade endpoint: the VTXO wrapper sends the exact amount to the locally recomputed VHTLC address",
+      okFund.txid === "arktxid0001" && sendsAK.length === 1 && sendsAK[0].recipients[0].address === builtAK.address && sendsAK[0].recipients[0].amount === 100000);
+    let err = null;
+    try { await arkChunkAK.fundArkadeVhtlc({ session: sessionAK(500000n), record: { ...fullRecAK, refundLocktime: LOCKTIME_AK + 7200 }, hashLock: identityAK.hashLock, amountSats: 100000 }); } catch (e) { err = e; }
+    ok("arkade endpoint: a record whose lock parameters recompute to a different address is refused before any send",
+      !!err && err.message.includes("different VHTLC address") && sendsAK.length === 1);
+    err = null;
+    try { await arkChunkAK.fundArkadeVhtlc({ session: sessionAK(50000n), record: fullRecAK, hashLock: identityAK.hashLock, amountSats: 100000 }); } catch (e) { err = e; }
+    ok("arkade endpoint: insufficient Arkade balance refuses before any send",
+      !!err && err.message.includes("Not enough sats") && sendsAK.length === 1);
+    ok("arkade endpoint: the wrapper refuses an EVM-source route (no create, no VHTLC)",
+      swapRouteExecutable({ ...routeEvmArkAK, satora: { ...routeEvmArkAK.satora, destInput: "" } }).ok === false
+      && swapRouteExecutable({ ...routeArkEvmAK, satora: { ...routeArkEvmAK.satora, destInput: "" } }).ok === false);
+  }
+
+  // Gate interplay + honesty copy: an unreadable Arkade balance
+  // is the gate's unreadable verdict, never a silent pass; the
+  // review/history copy keeps the layer-2 framing and the
+  // refund truth.
+  ok("arkade endpoint: the balance gate treats an unreadable Arkade balance as unreadable, not as funded",
+    swapBalanceGate("0.001", null, 8).ok === false && swapBalanceGate("0.001", null, 8).kind === "unreadable"
+    && swapBalanceGate("0.001", 0.002, 8).ok === true);
+  ok("arkade endpoint: the review + history copy keeps the operator-assisted framing and the refund truth",
+    formatSatoraSwapIntent({ route: { ...routeEvmArkAK, toAmount: "29180", fromAmount: "20000000", fromToken: { symbol: "USDC", decimals: 6 }, toToken: { symbol: "BTC", decimals: 8 } } }).includes("operator-assisted, not a plain on-chain send")
+    && formatSatoraArkadeSourceIntent({ route: routeArkEvmAK }).includes("recomputes from the swap's own lock parameters")
+    && formatSatoraArkadeSourceIntent({ route: routeArkEvmAK }).includes("refunds to your own Arkade wallet")
+    && satoraSwapHistoryLine({ id: "ak1", destKey: "arkade", claimAddress: ARKADE_ADDR_AK, sourceSymbol: "USDC", fromAmount: "20000000", fromDecimals: 6, status: "serverfunded", grossSats: 29330, netSats: 29180 }).includes("Arkade")
+    && satoraSwapHistoryLine({ id: "ak2", sourceKey: "arkade", destKey: "evm", destChainKey: "arbitrum", fromAmount: "100000", netTargetRaw: 67455360, targetSymbol: "USDC", targetDecimals: 6, status: "serverfunded" }).includes("100,000 sats on Arkade"));
+
+  // Source pins: the endpoints live in core, the funding wiring
+  // in the sheet, and the warning is in the sheet DOM.
+  {
+    const coreSrcAK = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcAK = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
+      coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
+    ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
+  }
+}
+
+// 101. Satora: Lightning as a swap source (universal
+// composability §7.3, 2026-11-14). Lightning joins the swap
+// sheet as a SOURCE family: LN -> EVM stablecoins and
+// LN -> Bitcoin direct via Satora, paid from the user's own
+// LDK node against a bounds-checked creation (the
+// checkLnArkadeCreateResponse discipline generalised), with
+// the Bitcoin payout claimed by a client-built HTLC claim
+// transaction ported from the reference SDK's on-chain
+// construction. Fixtures are the LIVE quotes probed
+// 2026-11-14 (fee-free + fee-bearing passes on the Arbitrum
+// and Bitcoin pairs) and the SDK 2.8.1 wire schemas.
+{
+  const AUSER_LN = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const PHRASE_LN = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const ARB_USDC_LN = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const WBTC_ARB_LN = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const POL_USDT_LN = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F";
+  const BTC_USD_LN = 74414;
+  const LOCKTIME_LN = Math.floor(Date.now() / 1000) + 86400;
+  const identityLN = satoraSwapClaimKey(PHRASE_LN, 0);
+  const claimingLN = new ethers.Wallet("0x" + identityLN.secretKeyHex).address;
+  const BTC_ADDR_LN = satoraClaimKey(PHRASE_LN).address;
+  const SERVER_PK_LN = "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633";
+  const hash160LN = Buffer.from(nobleRipemd160(scureHex.decode(identityLN.hashLock.replace(/^0x/, "")))).toString("hex");
+  const HTLC_ADDR_LN = satoraBtcHtlcAddress({ hashLock160Hex: hash160LN, claimPkXonly: identityLN.claimPk, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN });
+  const INVOICE_LN = encodeBolt11({ network: "bc", amountMsat: 100000000n, timestamp: Math.floor(Date.now() / 1000), privKey: "11".repeat(32), fields: [["p", identityLN.hashLock.replace(/^0x/, "")], ["s", "22".repeat(32)], ["d", "ln source test"]] });
+  const INVOICE_WRONG_HASH_LN = encodeBolt11({ network: "bc", amountMsat: 100000000n, timestamp: Math.floor(Date.now() / 1000), privKey: "11".repeat(32), fields: [["p", "00".repeat(32)], ["s", "22".repeat(32)], ["d", "ln source test"]] });
+  const INVOICE_WRONG_AMOUNT_LN = encodeBolt11({ network: "bc", amountMsat: 99900000n, timestamp: Math.floor(Date.now() / 1000), privKey: "11".repeat(32), fields: [["p", identityLN.hashLock.replace(/^0x/, "")], ["s", "22".repeat(32)], ["d", "ln source test"]] });
+  const jsonResLN = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+
+  // Supports matrix (pure).
+  ok("ln source: chain id is the evidenced one, and the supports matrix serves exactly the live LN pairs",
+    SATORA_LIGHTNING_CHAIN_ID === 20000000000002
+    && !!satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN })
+    && !!satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "polygon", fromTokenAddress: "btc", toTokenAddress: POL_USDT_LN })
+    && !!satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "ethereum", fromTokenAddress: "btc", toTokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606EB48" })
+    && !!satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "bitcoin", fromTokenAddress: "btc" })
+    && satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arkade", fromTokenAddress: "btc" }) === null
+    && satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "lightning", fromTokenAddress: "btc" }) === null
+    && satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "base", fromTokenAddress: "btc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null
+    && satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: WBTC_ARB_LN }) === null
+    && satoraLnSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN }) === null
+    && satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: ARB_USDC_LN, toTokenAddress: ARB_USDC_LN }) === null);
+
+  // Quote parsing on the LIVE fixtures: fee-free identities
+  // hold to the sat, and the fee-bearing passes attribute
+  // differentially (250 at +25 bps to Arbitrum; 492 at +50 bps
+  // to Bitcoin — the fold computed on the post-fee base).
+  const planLnEvmLN = satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN });
+  const quoteLnEvmLN = (o = {}) => ({ exchange_rate: "67600.815", network_fee: 7, gasless_network_fee: 0, protocol_fee: 500, protocol_fee_rate: 0.005, min_amount: 356, max_amount: 20000000, source_amount: "100000", target_amount: "67600815", net_source_amount: "100000", net_target_amount: "67258078", ...o });
+  const parsedLnEvmLN = parseSatoraLnSourceQuote(quoteLnEvmLN(), planLnEvmLN, { fromAmount: "100000" });
+  ok("ln source: the live LN -> Arbitrum fee-free quote parses (fees in sats, target in raw units)",
+    !!parsedLnEvmLN && parsedLnEvmLN.grossTargetRaw === 67600815 && parsedLnEvmLN.netTargetRaw === 67258078
+    && parsedLnEvmLN.protocolFeeSats === 500 && parsedLnEvmLN.networkFeeSats === 7 && parsedLnEvmLN.fluidFeeSats === 0);
+  const quoteLnEvm25LN = { exchange_rate: "67537.962", network_fee: 7, gasless_network_fee: 0, protocol_fee: 750, protocol_fee_rate: 0.0075, min_amount: 356, max_amount: 20000000, source_amount: "100000", target_amount: "67537962", net_source_amount: "100000", net_target_amount: "67026699" };
+  const parsedLnEvm25LN = parseSatoraLnSourceQuote(quoteLnEvm25LN, planLnEvmLN, { fromAmount: "100000" }, parsedLnEvmLN);
+  ok("ln source: the live +25 bps LN -> Arbitrum pass attributes Fluid's 250 sats differentially",
+    !!parsedLnEvm25LN && parsedLnEvm25LN.fluidFeeSats === 250 && parsedLnEvm25LN.protocolFeeSats === 500 && parsedLnEvm25LN.netTargetRaw === 67026699);
+  const planLnBtcLN = satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "bitcoin", fromTokenAddress: "btc" });
+  const quoteLnBtcLN = (o = {}) => ({ exchange_rate: "1.0", network_fee: 486, gasless_network_fee: 0, protocol_fee: 298, protocol_fee_rate: 0.003, min_amount: 10000, max_amount: 20000000, source_amount: "100000", target_amount: "100000", net_source_amount: "100000", net_target_amount: "99216", ...o });
+  const parsedLnBtcLN = parseSatoraLnSourceQuote(quoteLnBtcLN(), planLnBtcLN, { fromAmount: "100000" });
+  const parsedLnBtc50LN = parseSatoraLnSourceQuote(quoteLnBtcLN({ protocol_fee: 790, protocol_fee_rate: 0.008, net_target_amount: "98724" }), planLnBtcLN, { fromAmount: "100000" }, parsedLnBtcLN);
+  ok("ln source: the live LN -> Bitcoin quotes parse in pure sats, the +50 bps fold attributing 492 (post-fee base)",
+    !!parsedLnBtcLN && parsedLnBtcLN.netTargetRaw === 99216 && parsedLnBtcLN.protocolFeeSats === 298 && parsedLnBtcLN.networkFeeSats === 486
+    && !!parsedLnBtc50LN && parsedLnBtc50LN.fluidFeeSats === 492 && parsedLnBtc50LN.netTargetRaw === 98724);
+  ok("ln source: unexplained or irreconcilable LN quotes are refused",
+    parseSatoraLnSourceQuote(quoteLnEvmLN({ net_target_amount: "67000000" }), planLnEvmLN, { fromAmount: "100000" }) === null
+    && parseSatoraLnSourceQuote(quoteLnEvm25LN, planLnEvmLN, { fromAmount: "100000" }, { ...parsedLnEvmLN, netTargetRaw: 66000000, netSats: 97000 }) === null
+    && parseSatoraLnSourceQuote(quoteLnEvmLN(), planLnEvmLN, { fromAmount: "999" }) === null);
+
+  // Creation builders (wire shapes, pure).
+  const routeLnEvmLN = { fromChainId: SATORA_LIGHTNING_CHAIN_ID, fromAmount: "100000", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { sourceKey: "lightning", destKey: "evm", destChainKey: "arbitrum", destChainId: 42161, destInput: AUSER_LN, sourceSats: 100000, grossTargetRaw: 67600815, netTargetRaw: 67258078, protocolFeeSats: 500, networkFeeSats: 7, fluidFeeSats: 0, extraFeesBps: 0, btcUsd: BTC_USD_LN, targetToken: { address: ARB_USDC_LN, symbol: "USDC", decimals: 6 } } };
+  const routeLnBtcLN = { fromChainId: SATORA_LIGHTNING_CHAIN_ID, fromAmount: "100000", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { sourceKey: "lightning", destKey: "bitcoin", destChainKey: "bitcoin", destChainId: SATORA_BITCOIN_CHAIN_ID, destInput: BTC_ADDR_LN, sourceSats: 100000, grossTargetRaw: 100000, netTargetRaw: 99216, protocolFeeSats: 298, networkFeeSats: 486, fluidFeeSats: 0, extraFeesBps: 0, btcUsd: BTC_USD_LN, targetToken: null } };
+  ok("ln source: LN -> EVM create body is the SDK's shape (our lock, our claiming address, the reviewed target, gasless)",
+    (() => { const b = buildSatoraLnToEvmCreateRequest({ route: routeLnEvmLN, identity: identityLN, claimingAddress: claimingLN });
+      return b.hash_lock === identityLN.hashLock && b.claiming_address === claimingLN && b.target_address === AUSER_LN
+        && b.token_address === ARB_USDC_LN && b.evm_chain_id === 42161 && b.amount_in === 100000 && b.gasless === true && b.user_id === identityLN.userId; })());
+  ok("ln source: LN -> BTC create body is the SDK's shape (our lock, our claim key, pinned script version, the reviewed address)",
+    (() => { const b = buildSatoraLnToBtcCreateRequest({ route: routeLnBtcLN, identity: identityLN });
+      return b.hash_lock === identityLN.hashLock && b.claim_pk === identityLN.claimPk && b.target_address === BTC_ADDR_LN
+        && b.source_amount_sats === 100000 && b.btc_htlc_script_version === 1 && b.user_id === identityLN.userId; })());
+
+  // Creation bounds checks: honest fixtures pass; every
+  // tamper that would redirect, reprice or de-lock the swap
+  // is refused BEFORE payment.
+  const createLnEvmLN = (o = {}) => ({
+    id: "ln-evm-1", status: "pending", fee_sats: 507, hash_lock: identityLN.hashLock,
+    source_token: { token_id: "btc", symbol: "BTC", chain: "Lightning", decimals: 8 },
+    target_token: { token_id: ARB_USDC_LN, symbol: "USDC", chain: "42161", decimals: 6 },
+    evm_chain_id: 42161, source_amount: "100000", target_amount: "67600815", evm_expected_sats: "99493",
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", client_evm_address: claimingLN,
+    server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", target_evm_address: AUSER_LN,
+    evm_refund_locktime: LOCKTIME_LN, wbtc_address: WBTC_ARB_LN,
+    bolt11_invoice: INVOICE_LN, invoice_expires_at: LOCKTIME_LN, user_id: identityLN.userId, gasless: true, ...o,
+  });
+  ok("ln source: an honest LN -> EVM creation passes",
+    checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN(), { identity: identityLN, claimingAddress: claimingLN }).ok === true);
+  ok("ln source: tampered LN -> EVM creations are refused (lock, invoice hash, invoice amount, fee, payout, claim address, target, version)",
+    checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ hash_lock: "0x" + "00".repeat(32) }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ bolt11_invoice: INVOICE_WRONG_HASH_LN }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ bolt11_invoice: INVOICE_WRONG_AMOUNT_LN }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ fee_sats: 900 }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ target_amount: "60000000" }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ client_evm_address: AUSER_LN }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ target_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac" }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ evm_htlc_version: 6 }), { identity: identityLN, claimingAddress: claimingLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnEvmLN, createLnEvmLN({ source_amount: "100001" }), { identity: identityLN, claimingAddress: claimingLN }).ok === false);
+  const createLnBtcLN = (o = {}) => ({
+    id: "ln-btc-1", status: "pending", fee_sats: 298, network_fee_sats: 486, hash_lock: identityLN.hashLock,
+    source_amount: "100000", target_amount: "99216", btc_htlc_script_version: 1,
+    btc_user_claim_pk: identityLN.claimPk, btc_server_refund_pk: SERVER_PK_LN, btc_hash_lock: hash160LN,
+    btc_htlc_address: HTLC_ADDR_LN, btc_refund_locktime: LOCKTIME_LN, target_btc_address: BTC_ADDR_LN,
+    bolt11_invoice: INVOICE_LN, invoice_expires_at: LOCKTIME_LN, user_id: identityLN.userId, ...o,
+  });
+  ok("ln source: an honest LN -> BTC creation passes (its HTLC address recomputes from its own lock parameters)",
+    checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN(), { identity: identityLN }).ok === true
+    && typeof HTLC_ADDR_LN === "string" && HTLC_ADDR_LN.startsWith("bc1p"));
+  ok("ln source: tampered LN -> BTC creations are refused (hash160, HTLC address, claim key, server key drift, target, fee sum, version, payout)",
+    checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_hash_lock: "00".repeat(20) }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_htlc_address: BTC_ADDR_LN }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_server_refund_pk: "11".repeat(32) }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_refund_locktime: LOCKTIME_LN + 7200 }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_user_claim_pk: "02" + SERVER_PK_LN }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ target_btc_address: "bc1pqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9e75rs" }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ network_fee_sats: 900 }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ btc_htlc_script_version: 2 }), { identity: identityLN }).ok === false
+    && checkSatoraLnCreateResponse(routeLnBtcLN, createLnBtcLN({ target_amount: "90000" }), { identity: identityLN }).ok === false);
+
+  // The Bitcoin HTLC construction (the SDK port): leaf
+  // scripts decode to the pinned op sequences, the address
+  // matches an independent p2tr rebuild, and the claim
+  // transaction's witness verifies cryptographically against
+  // an independently recomputed sighash.
+  {
+    const { hashlockScript, timelockScript } = satoraBtcHtlcLeafScripts({ hashLock160Hex: hash160LN, claimPkXonly: identityLN.claimPk, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN });
+    const decHash = btcSigner.Script.decode(hashlockScript);
+    const decTime = btcSigner.Script.decode(timelockScript);
+    const xonlyLN = identityLN.claimPk.length === 66 ? identityLN.claimPk.slice(2) : identityLN.claimPk;
+    ok("ln source: the HTLC leaves decode to the SDK's pinned op sequences (claim key + preimage-size + HASH160; locktime + server key)",
+      Buffer.from(decHash[0]).toString("hex") === xonlyLN && decHash[1] === "CHECKSIGVERIFY" && decHash[2] === "SIZE"
+      && Buffer.from(decHash[3]).toString("hex") === "20" && decHash[4] === "EQUALVERIFY" && decHash[5] === "HASH160"
+      && Buffer.from(decHash[6]).toString("hex") === hash160LN && decHash[7] === "EQUAL"
+      && (() => { const b = Buffer.alloc(4); b.writeUInt32LE(LOCKTIME_LN); return Buffer.from(decTime[0]).toString("hex") === b.toString("hex"); })() && decTime[1] === "CHECKLOCKTIMEVERIFY" && decTime[2] === "DROP"
+      && Buffer.from(decTime[3]).toString("hex") === SERVER_PK_LN && decTime[4] === "CHECKSIG");
+    const infoLN = btcSigner.p2tr(scureHex.decode("50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"), [{ script: hashlockScript }, { script: timelockScript }], btcSigner.NETWORK, true);
+    ok("ln source: the HTLC address matches an independent Taproot rebuild (NUMS internal key, two leaves)",
+      infoLN.address === HTLC_ADDR_LN);
+    const builtLN = buildSatoraBtcHtlcClaimTx({ fundingTxId: "ab".repeat(32), fundingVout: 1, htlcAmountSats: 99216, hashLock160Hex: hash160LN, claimPkXonly: identityLN.claimPk, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN, secretKeyHex: identityLN.secretKeyHex, preimageHex: identityLN.secretHex, destinationAddress: BTC_ADDR_LN, feeRateSatPerVb: 2 });
+    ok("ln source: the claim transaction takes the pinned 150-vbyte fee out of the lock and pays the rest to the reviewed address",
+      builtLN.feeSats === SATORA_BTC_CLAIM_TX_VBYTES * 2 && builtLN.claimAmountSats === 98916 && builtLN.htlcAddress === HTLC_ADDR_LN && /^[0-9a-f]{64}$/.test(builtLN.txId));
+    const rawLN = btcSigner.Transaction.fromRaw(scureHex.decode(builtLN.txHex));
+    const witLN = rawLN.getInput(0).finalScriptWitness;
+    const tx2LN = new btcSigner.Transaction();
+    tx2LN.addInput({ txid: "ab".repeat(32), index: 1, witnessUtxo: { script: infoLN.script, amount: 99216n }, tapLeafScript: [infoLN.tapLeafScript[0]], sequence: 0xffffffff });
+    tx2LN.addOutputAddress(BTC_ADDR_LN, 98916n, btcSigner.NETWORK);
+    const leafBytesLN = infoLN.tapLeafScript[0][1];
+    const sighashLN = tx2LN.preimageWitnessV1(0, [infoLN.script], btcSigner.SigHash.DEFAULT, [99216n], undefined, leafBytesLN.slice(0, leafBytesLN.length - 1), leafBytesLN[leafBytesLN.length - 1]);
+    ok("ln source: the claim witness is [preimage, signature, leaf, control block] and the signature verifies against the recomputed sighash",
+      witLN.length === 4 && Buffer.from(witLN[0]).toString("hex") === identityLN.secretHex
+      && Buffer.from(witLN[2]).toString("hex") === Buffer.from(hashlockScript).toString("hex")
+      && nobleSchnorr.verify(witLN[1], sighashLN, scureHex.decode(xonlyLN)) === true);
+    let claimErr = 0;
+    try { buildSatoraBtcHtlcClaimTx({ fundingTxId: "ab".repeat(32), fundingVout: 1, htlcAmountSats: 99216, hashLock160Hex: hash160LN, claimPkXonly: identityLN.claimPk, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN, secretKeyHex: identityLN.secretKeyHex, preimageHex: "00".repeat(32), destinationAddress: BTC_ADDR_LN, feeRateSatPerVb: 2 }); } catch { claimErr++; }
+    try { buildSatoraBtcHtlcClaimTx({ fundingTxId: "ab".repeat(32), fundingVout: 1, htlcAmountSats: 99216, hashLock160Hex: hash160LN, claimPkXonly: identityLN.claimPk, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN, secretKeyHex: identityLN.secretKeyHex, preimageHex: identityLN.secretHex, destinationAddress: BTC_ADDR_LN, feeRateSatPerVb: 1000 }); } catch { claimErr++; }
+    try { buildSatoraBtcHtlcClaimTx({ fundingTxId: "ab".repeat(32), fundingVout: 1, htlcAmountSats: 99216, hashLock160Hex: hash160LN, claimPkXonly: "02" + SERVER_PK_LN, serverRefundPkXonly: SERVER_PK_LN, refundLocktime: LOCKTIME_LN, secretKeyHex: identityLN.secretKeyHex, preimageHex: identityLN.secretHex, destinationAddress: BTC_ADDR_LN, feeRateSatPerVb: 2 }); } catch { claimErr++; }
+    ok("ln source: the claim builder refuses a wrong preimage, a fee that eats the lock, and a foreign claim key",
+      claimErr === 3);
+  }
+
+  // Stubbed Satora server: pairs + quotes fold extra_fees
+  // into protocol_fee exactly like the live one (the 100k-sat
+  // fixtures are the live probes; the 2,000-sat Arbitrum quote
+  // is constructed on the live 400-sat probe's rate).
+  const pairsLN = [
+    { source: "Lightning", target: "42161", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "Lightning", target: "137", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "Lightning", target: "Bitcoin", min_sats: 10000, max_sats: 20000000, fee_percentage: 0.003, network_fee_sats: 1 },
+  ];
+  const quoteLnEvmSmallLN = (o = {}) => ({ exchange_rate: "67574", network_fee: 7, gasless_network_fee: 0, protocol_fee: 10, protocol_fee_rate: 0.005, min_amount: 356, max_amount: 20000000, source_amount: "2000", target_amount: "1351480", net_source_amount: "2000", net_target_amount: "1339992", ...o });
+  const redeemCalldataLN = { dex_calldata: { to: "0x1111111111111111111111111111111111111111", data: "0x1234", value: "0" }, calls_hash: "0x" + "cd".repeat(32), min_amount_out: "67600815", source_amount: "99493", nonce: "0", deadline: "0" };
+  const satoraStubLN = ({ claimGasless = null, seen = { quotes: [], creates: [] } } = {}) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResLN([{ symbol: "BTCUSDT", price: String(BTC_USD_LN) }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResLN({});
+    if (u.includes("api.satora.io/version")) return jsonResLN({ tag: "backend-v0.3.26", commit_hash: "6ec950ae" });
+    if (u.includes("api.satora.io/status")) return jsonResLN({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResLN(pairsLN);
+    if (u.includes("api.satora.io/quote")) {
+      seen.quotes.push(u);
+      const p = new URL(u).searchParams;
+      const extra = Number(p.get("extra_fees") || 0);
+      let base = null;
+      if (p.get("target_chain") === "Bitcoin") base = quoteLnBtcLN();
+      else if (p.get("source_amount") === "2000") base = quoteLnEvmSmallLN();
+      else base = quoteLnEvmLN();
+      if (extra > 0) {
+        const extraSats = Math.round(Number(base.protocol_fee) * extra / (Number(base.protocol_fee_rate) * 10000));
+        const deductRaw = p.get("target_chain") === "Bitcoin" ? extraSats : Math.round(extraSats * Number(base.exchange_rate) * 1e6 / 1e8);
+        return jsonResLN({ ...base, protocol_fee: Number(base.protocol_fee) + extraSats, protocol_fee_rate: Number(base.protocol_fee_rate) + extra / 10000, net_target_amount: String(Number(base.net_target_amount) - deductRaw) });
+      }
+      return jsonResLN(base);
+    }
+    if (u.includes("redeem-and-swap-calldata")) return jsonResLN(redeemCalldataLN);
+    if (u.includes("claim-gasless")) { seen.creates.push({ claimGasless: JSON.parse(opts.body || "{}") }); return claimGasless && typeof claimGasless.json === "function" ? claimGasless : jsonResLN(claimGasless || { id: "ln-evm-1", status: "client_redeeming", tx_hash: "0x" + "12".repeat(32) }); }
+    if (u.includes("api.satora.io/swap/lightning/evm")) { const body = JSON.parse(opts.body || "{}"); seen.creates.push(body); return jsonResLN(createLnEvmLN({ hash_lock: body.hash_lock, client_evm_address: body.claiming_address, user_id: body.user_id })); }
+    if (u.includes("api.satora.io/swap/lightning/bitcoin")) { const body = JSON.parse(opts.body || "{}"); seen.creates.push(body); return jsonResLN(createLnBtcLN({ hash_lock: body.hash_lock, user_id: body.user_id })); }
+    if (u.includes("api.satora.io/swap/")) return jsonResLN({ id: "ln-evm-1", status: "serverfunded" });
+    throw new Error("unexpected fetch in ln stub: " + u);
+  };
+
+  // Routes under the two-pass law (fetch stubbed).
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubLN();
+    try {
+      resetSatoraCaches(); resetPricesCache();
+      const rBig = await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "100000", fromAddress: "", toAddress: AUSER_LN });
+      ok("ln source: LN -> EVM at 100k sats — Satora's spread busts the $0.20 EVM ceiling, so the law charges 0 and says so",
+        !!rBig && rBig.provider === "satora" && rBig.satora.sourceKey === "lightning" && rBig.fromChainId === SATORA_LIGHTNING_CHAIN_ID
+        && rBig.toAmount === "67258078" && rBig.satora.fluidFeeSats === 0 && rBig.platformFeeCollecting === false && swapRouteExecutable(rBig).ok === true);
+      const rSmall = await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "2000", fromAddress: "", toAddress: AUSER_LN });
+      const expExtraSmall = Math.round(10 * rSmall.satora.extraFeesBps / 50);
+      ok("ln source: LN -> EVM collects where the route cost fits the ceiling (2k sats, the stub's fold attributed exactly)",
+        !!rSmall && rSmall.platformFeeCollecting === true && rSmall.satora.fluidFeeSats === expExtraSmall && expExtraSmall > 0
+        && rSmall.toAmount === String(1339992 - Math.round(expExtraSmall * 67574 * 1e6 / 1e8)));
+      const rBtc = await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: "", toAddress: BTC_ADDR_LN });
+      const expExtraBtc = Math.round(298 * rBtc.satora.extraFeesBps / 30);
+      ok("ln source: LN -> BTC at 100k sats collects under the $1.50 Bitcoin ceiling (the stub's post-fee-base fold attributed exactly)",
+        !!rBtc && rBtc.satora.destKey === "bitcoin" && rBtc.toChainId === SATORA_BITCOIN_CHAIN_ID && rBtc.platformFeeCollecting === true
+        && rBtc.satora.fluidFeeSats === expExtraBtc && expExtraBtc > 0 && rBtc.toAmount === String(99216 - expExtraBtc) && swapRouteExecutable(rBtc).ok === true);
+      let errLow = null, errBtcLow = null, errHigh = null;
+      try { await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "300", fromAddress: "", toAddress: AUSER_LN }); } catch (e) { errLow = e; }
+      try { await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "bitcoin", fromTokenAddress: "btc", fromAmount: "5000", fromAddress: "", toAddress: BTC_ADDR_LN }); } catch (e) { errBtcLow = e; }
+      try { await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "20000001", fromAddress: "", toAddress: AUSER_LN }); } catch (e) { errHigh = e; }
+      ok("ln source: below the 356-sat EVM floor and above the pair max the refusals are terminal and state the limit",
+        !!errLow && errLow.satoraTerminal === true && errLow.message.includes("356")
+        && !!errHigh && errHigh.satoraTerminal === true && errHigh.message.includes("20,000,000"));
+      ok("ln source: below the 10,000-sat Bitcoin floor the refusal carries the Arkade way-through marker",
+        !!errBtcLow && errBtcLow.satoraTerminal === true && !!errBtcLow.lnBtcBelowFloor && errBtcLow.lnBtcBelowFloor.minSats === 10000 && errBtcLow.message.includes("Arkade"));
+      const routes = await getSwapRoutes({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "100000", fromAddress: "", toAddress: AUSER_LN });
+      ok("ln source: the dispatcher returns the Satora route for Lightning -> Arbitrum USDC",
+        routes.length === 1 && routes[0].provider === "satora" && routes[0].satora.sourceKey === "lightning" && routes[0].toAmount === "67258078");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Creation through the stubbed API + execution: the record
+  // persists BEFORE payment, the payer pays the CREATION's
+  // invoice, the EVM payout is claimed in-flow, and a payer
+  // failure leaves the record persisted and unpaid.
+  {
+    const realFetch = globalThis.fetch;
+    const seen = { quotes: [], creates: [] };
+    globalThis.fetch = satoraStubLN({ seen });
+    const store = new Map();
+    const storageLN = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+    const savedLN = () => JSON.parse(store.get("fluid_satora_swaps_v1") || "[]");
+    try {
+      resetSatoraCaches(); resetPricesCache();
+      const recBtc = await createSatoraLnSourceSwap(routeLnBtcLN, { phrase: PHRASE_LN, index: 0 });
+      ok("ln source: the LN -> BTC record carries the invoice, the recomputed HTLC address and the total fee",
+        recBtc.sourceKey === "lightning" && recBtc.invoice === INVOICE_LN && recBtc.btcHtlcAddress === HTLC_ADDR_LN
+        && recBtc.netTargetRaw === 99216 && recBtc.feeSats === 784 && recBtc.sourceAmountSats === 100000);
+      const execRouteLN = await getSatoraLnSourceRoute({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_LN, fromAmount: "100000", fromAddress: "", toAddress: AUSER_LN });
+      const paidInvoices = [];
+      const done = await executeSatoraLnSourceRoute({ phrase: PHRASE_LN, route: execRouteLN, storage: storageLN,
+        payInvoice: async (inv) => { paidInvoices.push(inv); } });
+      const saved = savedLN();
+      ok("ln source: execution pays the CREATION's invoice (never the quote's) and claims the EVM payout in-flow",
+        Array.isArray(done) && done[0] === "ln-evm-1" && paidInvoices.length === 1 && paidInvoices[0] === INVOICE_LN
+        && saved.length === 1 && saved[0].claimTxId === "0x" + "12".repeat(32) && !!saved[0].claimedAt);
+      const store2 = new Map();
+      const storageLN2 = { getItem: (k) => (store2.has(k) ? store2.get(k) : null), setItem: (k, v) => store2.set(k, String(v)), removeItem: (k) => store2.delete(k) };
+      let payErr = null;
+      try {
+        await executeSatoraLnSourceRoute({ phrase: PHRASE_LN, route: execRouteLN, storage: storageLN2,
+          payInvoice: async () => { throw new Error("You don't have that much you can send over Lightning"); } });
+      } catch (e) { payErr = e; }
+      const saved2 = JSON.parse(store2.get("fluid_satora_swaps_v1") || "[]");
+      ok("ln source: a payer failure leaves the created record persisted and unpaid for recovery",
+        !!payErr && payErr.message.includes("don't have that much") && saved2.length === 1 && !saved2[0].claimedAt && saved2[0].status === "pending");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // The gasless claim under its Lightning-source name,
+  // including the already-claimed mapping (mirrors the
+  // Arkade-source claim tests).
+  {
+    const recClaimLN = { id: "ln-evm-1", sourceKey: "lightning", destKey: "evm", destChainId: 42161, destInput: AUSER_LN, claimingAddress: claimingLN, index: 0, netTargetRaw: 67600815, targetTokenAddress: ARB_USDC_LN, refundLocktime: LOCKTIME_LN, coordinatorAddress: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", serverEvmAddress: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", htlcAddress: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", htlcVersion: 7, wbtcAddress: WBTC_ARB_LN, expectedSats: 99493 };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubLN({ claimGasless: { id: "ln-evm-1", status: "client_redeeming", tx_hash: "0x" + "34".repeat(32) } });
+    try {
+      resetSatoraCaches();
+      const claimed = await claimSatoraLnEvmSwap(recClaimLN, { phrase: PHRASE_LN });
+      ok("ln source: the gasless claim signs with the swap secret key and returns the server's tx",
+        claimed.status === "client_redeeming" && claimed.txHash === "0x" + "34".repeat(32));
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = satoraStubLN({ claimGasless: jsonResLN({ error: "cannot claim a swap in client_redeemed" }, false, 400) });
+    try {
+      const again = await claimSatoraLnEvmSwap(recClaimLN, { phrase: PHRASE_LN });
+      ok("ln source: an already-claimed refusal is a success outcome, not an error",
+        again.already === true && again.status === "client_redeemed");
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Milestone interplay: Lightning is a SOURCE (compositions
+  // run OUT of it through the Satora hub leg) and a terminus
+  // only as a destination; LN -> Bitcoin stays direct-only
+  // and LN -> Arkade stays in the bridge tab.
+  ok("ln source: milestone shapes source compositions out of Lightning and never detour LN -> BTC / LN -> Arkade",
+    (() => {
+      const tronUsdc = TRON_TOKENS.find(t => t.symbol === "USDC"), tronUsdt = TRON_TOKENS.find(t => t.symbol === "USDT");
+      const toTron = milestoneShapes({ fromChainKey: "lightning", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: tronUsdt.address, fromAmount: "100000" });
+      const toSui = milestoneShapes({ fromChainKey: "lightning", toChainKey: "sui", fromTokenAddress: "btc", toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "100000" });
+      const toBtc = milestoneShapes({ fromChainKey: "lightning", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000" });
+      const toArk = milestoneShapes({ fromChainKey: "lightning", toChainKey: "arkade", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000" });
+      return toTron.length >= 1 && toTron[0][0].fromChainKey === "lightning" && toTron[0][0].toChainKey === "arbitrum"
+        && toTron[0].length === 3 && toTron[0][2].toChainKey === "tron" && toTron[0][1].toTokenAddress === tronUsdc.address
+        && toSui.length >= 1 && toSui.every(sh => sh[0].fromChainKey === "lightning") && toSui.some(sh => sh.length === 3 && sh[2].toChainKey === "sui")
+        && toBtc.length === 0 && toArk.length === 0;
+    })());
+
+  // Honesty copy: the review sentences carry the full fee
+  // stack and each destination's refund truth; the history
+  // lines keep the same truths in short form.
+  ok("ln source: the review + history copy carries the fee stack and the refund truths",
+    formatSatoraLnSourceIntent({ route: routeLnEvmLN }).includes("Satora's protocol fee 500 sats")
+    && formatSatoraLnSourceIntent({ route: routeLnEvmLN }).includes("hold invoice locked to this swap's own payment hash")
+    && formatSatoraLnSourceIntent({ route: routeLnEvmLN }).includes("returned to your Lightning wallet automatically when the hold expires")
+    && formatSatoraLnSourceIntent({ route: routeLnBtcLN }).includes("on-chain HTLC under your own Fluid swap key")
+    && formatSatoraLnSourceIntent({ route: routeLnBtcLN }).includes("reclaims the lock after its refund time")
+    && satoraSwapHistoryLine({ id: "ln1", sourceKey: "lightning", destKey: "evm", destChainKey: "arbitrum", fromAmount: "100000", netTargetRaw: 67258078, targetSymbol: "USDC", targetDecimals: 6, status: "serverfunded" }).includes("100,000 sats over Lightning")
+    && satoraSwapHistoryLine({ id: "ln2", sourceKey: "lightning", destKey: "bitcoin", fromAmount: "100000", netTargetRaw: 99216, status: "serverfunded" }).includes("Claim it from the button below"));
+
+  // Source pins: the endpoints live in core, the payer + gate
+  // + claims wiring in the sheet.
+  {
+    const coreSrcLN = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcLN = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
+      coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
+    ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
+      && appSrcLN.includes("lnBtcBelowFloor"));
+  }
+}
+
+
+// 102. Part A (EVM -> BTC claim gap) + Part B (Bitcoin as a
+// swap source via Satora) — universal composability §7.4,
+// 2026-11-14. Part A: the SHIPPED EVM -> BTC records stored
+// btcHtlcAddress but no BTC lock parameters and had no claim
+// path; the claim now recovers the lock parameters from
+// Satora's current swap object, verifies them against the
+// record (hash lock = this swap's own, claim key = the
+// wallet's Taproot claim key the lane was created with, HTLC
+// address recomputed), and builds the claim with the shared
+// HTLC claim builder paying the record's own claim address.
+// Part B: Bitcoin joins as a SOURCE family — quotes in the
+// schema the other source lanes consume (fixtures are the
+// LIVE quotes probed 2026-11-14), creation bounds-checked by
+// the funding inspection (the HTLC address recomputed from
+// the creation's own parameters, BTC timelock strictly after
+// the EVM timelock), funding by an ordinary Bitcoin send, and
+// a user-key refund spend of the timelock leaf for expired
+// locks — sighash-verified like the LN claim (§101).
+{
+  const PHRASE_B = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const AUSER_B = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const ARB_USDC_B = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const WBTC_ARB_B = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const POL_USDC_B = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
+  const SERVER_PK_B = "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633";
+  const NOW_B = Math.floor(Date.now() / 1000);
+  const jsonResB = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+
+  // ---------- Part A: the shipped EVM -> BTC claim ----------
+  const identityA = satoraSwapClaimKey(PHRASE_B, 3);
+  const tapA = satoraTaprootClaimKey(PHRASE_B);
+  const hash160A = Buffer.from(nobleRipemd160(scureHex.decode(identityA.hashLock.replace(/^0x/, "")))).toString("hex");
+  const LOCKTIME_A = NOW_B + 86400;
+  const HTLC_A = satoraBtcHtlcAddress({ hashLock160Hex: hash160A, claimPkXonly: tapA.claimPkXonly, serverRefundPkXonly: SERVER_PK_B, refundLocktime: LOCKTIME_A });
+  // The record fixture is the SHIPPED shape createSatoraSwap
+  // persists for EVM -> BTC (no BTC lock parameters on it).
+  const recordA = { id: "evm-btc-1", index: 3, destKey: "bitcoin", destChainId: SATORA_BITCOIN_CHAIN_ID, destChainKey: "bitcoin", destInput: tapA.address, fromAmount: "20000000", fromSymbol: "USDC", grossSats: 26934, netSats: 26796, hashLock: identityA.hashLock, btcHtlcAddress: HTLC_A, claimAddress: tapA.address, status: "serverfunded", claimTxId: null, claimedAt: null };
+  const swapA = (o = {}) => ({ id: "evm-btc-1", status: "serverfunded", btc_htlc_address: HTLC_A, btc_user_claim_pk: tapA.claimPk, btc_hash_lock: hash160A, btc_htlc_script_version: 1, btc_server_refund_pk: SERVER_PK_B, btc_refund_locktime: LOCKTIME_A, btc_fund_txid: "ab".repeat(32), btc_fund_vout: 1, ...o });
+  ok("partA: the Taproot claim key is the BIP86 key the shipped lane was created with (66-hex claim pk, bc1p address)",
+    tapA.claimPk.length === 66 && tapA.claimPkXonly === tapA.claimPk.slice(2) && tapA.address.startsWith("bc1p") && tapA.address === satoraClaimKey(PHRASE_B).address);
+  ok("partA: an honest shipped EVM -> BTC swap passes the claim check (parameters recovered + recomputed)",
+    checkSatoraEvmBtcClaim(recordA, swapA(), { claimPk: tapA.claimPk }).ok === true);
+  ok("partA: tampered swap objects are refused (id, lock address, claim key, hash lock, version, server key, locktime)",
+    checkSatoraEvmBtcClaim(recordA, swapA({ id: "other" }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_htlc_address: tapA.address }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_user_claim_pk: "02" + "11".repeat(32) }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_hash_lock: "00".repeat(20) }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_htlc_script_version: 2 }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_server_refund_pk: "11".repeat(32) }), { claimPk: tapA.claimPk }).ok === false
+    && checkSatoraEvmBtcClaim(recordA, swapA({ btc_refund_locktime: LOCKTIME_A + 7200 }), { claimPk: tapA.claimPk }).ok === false);
+  {
+    // The claim spends the server's own funding outpoint
+    // ahead of a same-value decoy, and its witness verifies
+    // against an independently recomputed sighash.
+    const builtA = buildSatoraEvmBtcClaim({ record: recordA, swap: swapA(), utxos: [{ txid: "ef".repeat(32), vout: 0, value: 26796 }, { txid: "ab".repeat(32), vout: 1, value: 26800 }], identity: identityA, taproot: tapA, destinationAddress: tapA.address, feeRateSatPerVb: 2 });
+    ok("partA: the claim spends the creation's funding outpoint and pays the record's claim address, fee out of the lock",
+      builtA.fundingTxId === "ab".repeat(32) && builtA.fundingVout === 1 && builtA.claimAmountSats === 26800 - 300 && builtA.htlcAddress === HTLC_A);
+    const { hashlockScript, timelockScript } = satoraBtcHtlcLeafScripts({ hashLock160Hex: hash160A, claimPkXonly: tapA.claimPkXonly, serverRefundPkXonly: SERVER_PK_B, refundLocktime: LOCKTIME_A });
+    const infoA = btcSigner.p2tr(scureHex.decode("50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"), [{ script: hashlockScript }, { script: timelockScript }], btcSigner.NETWORK, true);
+    const rawA = btcSigner.Transaction.fromRaw(scureHex.decode(builtA.txHex));
+    const witA = rawA.getInput(0).finalScriptWitness;
+    const tx2A = new btcSigner.Transaction();
+    tx2A.addInput({ txid: "ab".repeat(32), index: 1, witnessUtxo: { script: infoA.script, amount: 26800n }, tapLeafScript: [infoA.tapLeafScript[0]], sequence: 0xffffffff });
+    tx2A.addOutputAddress(tapA.address, 26500n, btcSigner.NETWORK);
+    const leafBytesA = infoA.tapLeafScript[0][1];
+    const sighashA = tx2A.preimageWitnessV1(0, [infoA.script], btcSigner.SigHash.DEFAULT, [26800n], undefined, leafBytesA.slice(0, leafBytesA.length - 1), leafBytesA[leafBytesA.length - 1]);
+    ok("partA: the claim witness is [preimage, signature, leaf, control block] and verifies against the recomputed sighash",
+      witA.length === 4 && Buffer.from(witA[0]).toString("hex") === identityA.secretHex
+      && nobleSchnorr.verify(witA[1], sighashA, scureHex.decode(tapA.claimPkXonly)) === true);
+    let errA = 0;
+    try { buildSatoraEvmBtcClaim({ record: recordA, swap: swapA(), utxos: [], identity: identityA, taproot: tapA, destinationAddress: tapA.address, feeRateSatPerVb: 2 }); } catch { errA++; }
+    try { buildSatoraEvmBtcClaim({ record: recordA, swap: swapA(), utxos: [{ txid: "ab".repeat(32), vout: 1, value: 26800 }], identity: identityA, taproot: tapA, destinationAddress: "bc1pqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9e75rs", feeRateSatPerVb: 2 }); } catch { errA++; }
+    try { buildSatoraEvmBtcClaim({ record: recordA, swap: swapA(), utxos: [{ txid: "ab".repeat(32), vout: 1, value: 100 }], identity: identityA, taproot: tapA, destinationAddress: tapA.address, feeRateSatPerVb: 5 }); } catch { errA++; }
+    try { buildSatoraEvmBtcClaim({ record: recordA, swap: swapA(), utxos: [{ txid: "ab".repeat(32), vout: 1, value: 26800 }], identity: satoraSwapClaimKey(PHRASE_B, 4), taproot: tapA, destinationAddress: tapA.address, feeRateSatPerVb: 2 }); } catch { errA++; }
+    ok("partA: the claim builder refuses no visible lock output, a foreign destination, a fee that eats the lock, and a foreign swap secret",
+      errA === 4);
+  }
+  ok("partA: the history line offers the claim when funded, and states the shipped EVM-side refund path plainly when Satora refunded",
+    satoraSwapHistoryLine(recordA).includes("claim it from the button below")
+    && satoraSwapHistoryLine({ ...recordA, status: "clientfundedserverrefunded", refundLocktime: LOCKTIME_A }).includes("refund comes back as WBTC/tBTC")
+    && satoraSwapHistoryLine({ ...recordA, status: "clientfundedserverrefunded", refundLocktime: LOCKTIME_A }).includes("your own key"));
+
+  // ---------- Part B: supports + quote parsing ----------
+  ok("btc source: the supports matrix serves exactly the live BTC pairs (EVM stables + Lightning; never Arkade/Bitcoin/Base/WBTC)",
+    !!satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B })
+    && !!satoraBtcSourceSupportsPair({ fromChainKey: "btc", toChainKey: "polygon", fromTokenAddress: "btc", toTokenAddress: POL_USDC_B })
+    && !!satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "lightning", fromTokenAddress: "btc" })
+    && satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "arkade", fromTokenAddress: "btc" }) === null
+    && satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "bitcoin", fromTokenAddress: "btc" }) === null
+    && satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "base", fromTokenAddress: "btc", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null
+    && satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: WBTC_ARB_B }) === null
+    && satoraBtcSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B }) === null);
+  const planBtcEvmB = satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B });
+  const quoteBtcArbB = (o = {}) => ({ exchange_rate: "66800.147", network_fee: 492, gasless_network_fee: 0, protocol_fee: 500, protocol_fee_rate: 0.005, min_amount: 20000, max_amount: 20000000, source_amount: "100000", target_amount: "66800147", net_source_amount: "100000", net_target_amount: "66137489", ...o });
+  const parsedBtcArbB = parseSatoraBtcSourceQuote(quoteBtcArbB(), planBtcEvmB, { fromAmount: "100000" });
+  const parsedBtcArb25B = parseSatoraBtcSourceQuote(quoteBtcArbB({ protocol_fee: 750, protocol_fee_rate: 0.0075, net_target_amount: "65970489" }), planBtcEvmB, { fromAmount: "100000" }, parsedBtcArbB);
+  const planBtcLnB = satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "lightning", fromTokenAddress: "btc" });
+  const parsedBtcLnB = parseSatoraBtcSourceQuote({ exchange_rate: "1.0", network_fee: 486, gasless_network_fee: 0, protocol_fee: 298, protocol_fee_rate: 0.003, min_amount: 20000, max_amount: 20000000, source_amount: "100000", target_amount: "100000", net_source_amount: "100000", net_target_amount: "99216" }, planBtcLnB, { fromAmount: "100000" });
+  const planBtcPolB = satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "polygon", fromTokenAddress: "btc", toTokenAddress: POL_USDC_B });
+  const parsedBtcPolB = parseSatoraBtcSourceQuote({ exchange_rate: "66849.88", network_fee: 489, gasless_network_fee: 0, protocol_fee: 100, protocol_fee_rate: 0.005, min_amount: 10000, max_amount: 20000000, source_amount: "20000", target_amount: "13369976", net_source_amount: "20000", net_target_amount: "12976230" }, planBtcPolB, { fromAmount: "20000" });
+  ok("btc source: the LIVE Bitcoin -> Arbitrum / Lightning / Polygon quotes parse (fee-free identities to the sat; +25 bps attributes 250 differentially)",
+    !!parsedBtcArbB && parsedBtcArbB.grossTargetRaw === 66800147 && parsedBtcArbB.netTargetRaw === 66137489 && parsedBtcArbB.protocolFeeSats === 500 && parsedBtcArbB.networkFeeSats === 492 && parsedBtcArbB.fluidFeeSats === 0
+    && !!parsedBtcArb25B && parsedBtcArb25B.fluidFeeSats === 250 && parsedBtcArb25B.netTargetRaw === 65970489
+    && !!parsedBtcLnB && parsedBtcLnB.netTargetRaw === 99216 && parsedBtcLnB.protocolFeeSats === 298 && parsedBtcLnB.networkFeeSats === 486
+    && !!parsedBtcPolB && parsedBtcPolB.netTargetRaw === 12976230 && parsedBtcPolB.protocolFeeSats === 100);
+  ok("btc source: unexplained BTC quotes are refused",
+    parseSatoraBtcSourceQuote(quoteBtcArbB({ net_target_amount: "65000000" }), planBtcEvmB, { fromAmount: "100000" }) === null
+    && parseSatoraBtcSourceQuote(quoteBtcArbB(), planBtcEvmB, { fromAmount: "999" }) === null);
+
+  // ---------- Part B: creation bodies ----------
+  const identityB = satoraSwapClaimKey(PHRASE_B, 0);
+  const claimingB = new ethers.Wallet("0x" + identityB.secretKeyHex).address;
+  const routeBtcEvmB = { provider: "satora", type: "satora", fromChainId: SATORA_BITCOIN_CHAIN_ID, toChainId: 42161, fromAmount: "100000", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, toToken: { address: ARB_USDC_B, symbol: "USDC", decimals: 6 }, toAmount: "67258078", satora: { sourceKey: "bitcoin", destKey: "evm", destChainKey: "arbitrum", destChainId: 42161, destInput: AUSER_B, sourceSats: 100000, grossTargetRaw: 67600815, netTargetRaw: 67258078, protocolFeeSats: 500, networkFeeSats: 7, fluidFeeSats: 0, extraFeesBps: 0, btcUsd: 74414, pairMinSats: 20000, pairMaxSats: 20000000, targetToken: { address: ARB_USDC_B, symbol: "USDC", decimals: 6 } } };
+  const INVOICE_B = encodeBolt11({ network: "bc", amountMsat: 99216000n, timestamp: NOW_B, privKey: "11".repeat(32), fields: [["p", "42".repeat(32)], ["s", "22".repeat(32)], ["d", "btc source test"]] });
+  const INVOICE_WRONG_B = encodeBolt11({ network: "bc", amountMsat: 99216000n, timestamp: NOW_B, privKey: "11".repeat(32), fields: [["p", "00".repeat(32)], ["s", "22".repeat(32)], ["d", "btc source wrong"]] });
+  const routeBtcLnB = { fromChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "100000", fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { sourceKey: "bitcoin", destKey: "lightning", destChainKey: "lightning", destChainId: SATORA_LIGHTNING_CHAIN_ID, destInput: INVOICE_B, sourceSats: 100000, grossTargetRaw: 100000, netTargetRaw: 99216, protocolFeeSats: 298, networkFeeSats: 486, fluidFeeSats: 0, extraFeesBps: 0, btcUsd: 74414, pairMinSats: 20000, pairMaxSats: 20000000, targetToken: null } };
+  ok("btc source: BTC -> EVM create body is the SDK's shape (our lock, our refund key, script v1, the reviewed target/amount, gasless)",
+    (() => { const b = buildSatoraBtcToEvmCreateRequest({ route: routeBtcEvmB, identity: identityB, claimingAddress: claimingB });
+      return b.hash_lock === identityB.hashLock && b.refund_pk === identityB.claimPk && b.btc_htlc_script_version === 1 && b.user_id === identityB.userId
+        && b.claiming_address === claimingB && b.target_address === AUSER_B && b.token_address === ARB_USDC_B && b.evm_chain_id === 42161 && b.amount_in === 100000 && b.gasless === true; })());
+  ok("btc source: BTC -> LN create bodies carry exactly one destination field (invoice: no amount fields; address: source_amount_sats anchors)",
+    (() => { const bi = buildSatoraBtcToLnCreateRequest({ route: routeBtcLnB, identity: identityB });
+      const ba = buildSatoraBtcToLnCreateRequest({ route: { ...routeBtcLnB, satora: { ...routeBtcLnB.satora, destInput: "satoshi@example.com" } }, identity: identityB });
+      return bi.lightning_invoice === INVOICE_B && !("source_amount_sats" in bi) && !("lightning_address" in bi) && bi.refund_pk === identityB.claimPk && bi.btc_htlc_script_version === 1
+        && ba.lightning_address === "satoshi@example.com" && ba.source_amount_sats === 100000 && !("lightning_invoice" in ba); })());
+
+
+  // ---------- Part B: the funding inspection ----------
+  const EVM_REFUND_B = NOW_B + 43200, BTC_REFUND_B = EVM_REFUND_B + 86400;
+  const hash160B = Buffer.from(nobleRipemd160(scureHex.decode(identityB.hashLock.replace(/^0x/, "")))).toString("hex");
+  const HTLC_B = satoraBtcSourceHtlcAddress({ hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: BTC_REFUND_B });
+  const createBtcEvmB = (o = {}) => ({
+    id: "btc-evm-1", status: "pending", source_amount: "100000", target_amount: "67258078", fee_sats: 507,
+    evm_chain_id: 42161, evm_hash_lock: identityB.hashLock, btc_hash_lock: hash160B, btc_htlc_address: HTLC_B,
+    btc_htlc_script_version: 1, btc_refund_locktime: BTC_REFUND_B, btc_server_pk: SERVER_PK_B,
+    client_evm_address: claimingB, target_evm_address: AUSER_B,
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
+    evm_htlc_sender: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", wbtc_address: WBTC_ARB_B,
+    evm_htlc_version: 7, evm_htlc_kind: "erc20", evm_refund_locktime: EVM_REFUND_B, evm_expected_sats: "99493", ...o,
+  });
+  ok("btc source: an honest BTC -> EVM creation passes the funding inspection (its lock address recomputes from its own parameters)",
+    checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB(), { identity: identityB, claimingAddress: claimingB }).ok === true
+    && typeof HTLC_B === "string" && HTLC_B.startsWith("bc1p"));
+  ok("btc source: tampered BTC -> EVM creations are refused BEFORE funding (lock address, server key, lock, mirror hash, payout, fee, claim/target address, version, amount)",
+    checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ btc_htlc_address: tapA.address }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ btc_server_pk: "11".repeat(32) }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ evm_hash_lock: "0x" + "00".repeat(32) }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ btc_hash_lock: "00".repeat(20) }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ target_amount: "60000000" }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ fee_sats: 900 }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ client_evm_address: AUSER_B }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ target_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac" }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ evm_htlc_version: 6 }), { identity: identityB, claimingAddress: claimingB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ source_amount: "100001" }), { identity: identityB, claimingAddress: claimingB }).ok === false);
+  ok("btc source: a Bitcoin refund time NOT strictly after the EVM refund time refuses funding even when the lock recomputes",
+    (() => { const badAddr = satoraBtcSourceHtlcAddress({ hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: EVM_REFUND_B });
+      const chk = checkSatoraBtcSourceCreateResponse(routeBtcEvmB, createBtcEvmB({ btc_htlc_address: badAddr, btc_refund_locktime: EVM_REFUND_B }), { identity: identityB, claimingAddress: claimingB });
+      return chk.ok === false && chk.reason.includes("not after its EVM refund time"); })());
+  const hash160LnB = Buffer.from(nobleRipemd160(scureHex.decode("42".repeat(32)))).toString("hex");
+  const HTLC_LN_B = satoraBtcSourceHtlcAddress({ hashLock160Hex: hash160LnB, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: BTC_REFUND_B });
+  const createBtcLnB = (o = {}) => ({
+    id: "btc-ln-1", status: "pending", source_amount: "100000", target_amount: "99216", fee_sats: 298, network_fee_sats: 486,
+    hash_lock: "0x" + "42".repeat(32), btc_hash_lock: hash160LnB, btc_htlc_address: HTLC_LN_B,
+    btc_htlc_script_version: 1, btc_refund_locktime: BTC_REFUND_B, btc_server_pk: SERVER_PK_B,
+    client_lightning_invoice: INVOICE_B, invoice_expires_at: BTC_REFUND_B, ...o,
+  });
+  ok("btc source: an honest BTC -> LN (invoice) creation passes; tampers refuse (invoice swap, hash lock, fee sum, payout, lock address)",
+    checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB(), { identity: identityB }).ok === true
+    && checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB({ client_lightning_invoice: INVOICE_WRONG_B }), { identity: identityB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB({ btc_hash_lock: "00".repeat(20) }), { identity: identityB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB({ network_fee_sats: 900 }), { identity: identityB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB({ target_amount: "90000" }), { identity: identityB }).ok === false
+    && checkSatoraBtcSourceCreateResponse(routeBtcLnB, createBtcLnB({ btc_htlc_address: tapA.address }), { identity: identityB }).ok === false);
+
+  // ---------- Part B: the refund spend ----------
+  {
+    const REFUND_LOCK_B = NOW_B - 3600;
+    const addrRefundB = satoraBtcSourceHtlcAddress({ hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B });
+    const builtRefundB = buildSatoraBtcHtlcRefundTx({ fundingTxId: "cd".repeat(32), fundingVout: 0, htlcAmountSats: 100000, hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B, secretKeyHex: identityB.secretKeyHex, destinationAddress: tapA.address, feeRateSatPerVb: 2 });
+    ok("btc source: the refund takes the pinned fee out of the lock and pays the rest to the user's own address",
+      builtRefundB.feeSats === SATORA_BTC_REFUND_TX_VBYTES * 2 && builtRefundB.refundAmountSats === 99740 && builtRefundB.htlcAddress === addrRefundB);
+    const leavesRefundB = satoraBtcHtlcLeafScripts({ hashLock160Hex: hash160B, claimPkXonly: SERVER_PK_B, serverRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B });
+    const decHashB = btcSigner.Script.decode(leavesRefundB.hashlockScript);
+    const decTimeB = btcSigner.Script.decode(leavesRefundB.timelockScript);
+    const xonlyB = identityB.claimPk.slice(2);
+    ok("btc source: the source HTLC's leaves carry the flipped roles (Satora's key claims by secret; the USER's key refunds by timelock)",
+      Buffer.from(decHashB[0]).toString("hex") === SERVER_PK_B && Buffer.from(decTimeB[3]).toString("hex") === xonlyB && decTimeB[1] === "CHECKLOCKTIMEVERIFY");
+    const infoRefundB = btcSigner.p2tr(scureHex.decode("50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"), [{ script: leavesRefundB.hashlockScript }, { script: leavesRefundB.timelockScript }], btcSigner.NETWORK, true);
+    const rawRefundB = btcSigner.Transaction.fromRaw(scureHex.decode(builtRefundB.txHex));
+    const witRefundB = rawRefundB.getInput(0).finalScriptWitness;
+    const tx2RefundB = new btcSigner.Transaction({ lockTime: REFUND_LOCK_B });
+    tx2RefundB.addInput({ txid: "cd".repeat(32), index: 0, witnessUtxo: { script: infoRefundB.script, amount: 100000n }, tapLeafScript: [infoRefundB.tapLeafScript[1]], sequence: 4294967294 });
+    tx2RefundB.addOutputAddress(tapA.address, 99740n, btcSigner.NETWORK);
+    const leafBytesRefundB = infoRefundB.tapLeafScript[1][1];
+    const sighashRefundB = tx2RefundB.preimageWitnessV1(0, [infoRefundB.script], btcSigner.SigHash.DEFAULT, [100000n], undefined, leafBytesRefundB.slice(0, leafBytesRefundB.length - 1), leafBytesRefundB[leafBytesRefundB.length - 1]);
+    ok("btc source: the refund witness is [signature, leaf, control block], its locktime + sequence serialize, and the signature verifies against the recomputed sighash",
+      witRefundB.length === 3 && Buffer.from(witRefundB[1]).toString("hex") === Buffer.from(leavesRefundB.timelockScript).toString("hex")
+      && rawRefundB.lockTime === REFUND_LOCK_B && rawRefundB.getInput(0).sequence === 4294967294
+      && nobleSchnorr.verify(witRefundB[0], sighashRefundB, scureHex.decode(xonlyB)) === true);
+    let errRefundB = 0;
+    try { buildSatoraBtcHtlcRefundTx({ fundingTxId: "cd".repeat(32), fundingVout: 0, htlcAmountSats: 100000, hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: NOW_B + 7200, secretKeyHex: identityB.secretKeyHex, destinationAddress: tapA.address, feeRateSatPerVb: 2 }); } catch { errRefundB++; }
+    try { buildSatoraBtcHtlcRefundTx({ fundingTxId: "cd".repeat(32), fundingVout: 0, htlcAmountSats: 100000, hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B, secretKeyHex: satoraSwapClaimKey(PHRASE_B, 1).secretKeyHex, destinationAddress: tapA.address, feeRateSatPerVb: 2 }); } catch { errRefundB++; }
+    try { buildSatoraBtcHtlcRefundTx({ fundingTxId: "cd".repeat(32), fundingVout: 0, htlcAmountSats: 100, hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B, secretKeyHex: identityB.secretKeyHex, destinationAddress: tapA.address, feeRateSatPerVb: 5 }); } catch { errRefundB++; }
+    try { buildSatoraBtcHtlcRefundTx({ fundingTxId: "cd".repeat(32), fundingVout: 0, htlcAmountSats: 100000, hashLock160Hex: hash160B, serverClaimPkXonly: SERVER_PK_B, userRefundPkXonly: identityB.claimPk, refundLocktime: REFUND_LOCK_B, secretKeyHex: identityB.secretKeyHex, destinationAddress: "not-an-address", feeRateSatPerVb: 2 }); } catch { errRefundB++; }
+    ok("btc source: the refund builder refuses before the locktime, a foreign signing key, a fee that eats the lock, and an undecodable destination",
+      errRefundB === 4);
+  }
+
+  // ---------- Part B: routes, creation, execution (stubbed) ----------
+  const pairsB = [
+    { source: "Bitcoin", target: "42161", min_sats: 20000, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "Bitcoin", target: "Lightning", min_sats: 20000, max_sats: 20000000, fee_percentage: 0.003, network_fee_sats: 1 },
+  ];
+  const redeemCalldataB = { dex_calldata: { to: "0x1111111111111111111111111111111111111111", data: "0x1234", value: "0" }, calls_hash: "0x" + "cd".repeat(32), min_amount_out: "67258078", source_amount: "99493", nonce: "0", deadline: "0" };
+  const satoraStubB = ({ seen = { creates: [] } } = {}) => async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResB([{ symbol: "BTCUSDT", price: "66800" }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResB({});
+    if (u.includes("api.satora.io/version")) return jsonResB({ tag: "backend-v0.3.26", commit_hash: "6ec950ae" });
+    if (u.includes("api.satora.io/status")) return jsonResB({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResB(pairsB);
+    if (u.includes("api.satora.io/quote")) {
+      const p = new URL(u).searchParams;
+      const extra = Number(p.get("extra_fees") || 0);
+      const base = p.get("target_chain") === "Lightning"
+        ? { exchange_rate: "1.0", network_fee: 486, gasless_network_fee: 0, protocol_fee: 298, protocol_fee_rate: 0.003, min_amount: 20000, max_amount: 20000000, source_amount: "100000", target_amount: "100000", net_source_amount: "100000", net_target_amount: "99216" }
+        : quoteBtcArbB();
+      if (extra > 0) {
+        const extraSats = Math.round(Number(base.protocol_fee) * extra / (Number(base.protocol_fee_rate) * 10000));
+        const deductRaw = p.get("target_chain") === "Lightning" ? extraSats : Math.round(extraSats * Number(base.exchange_rate) * 1e6 / 1e8);
+        return jsonResB({ ...base, protocol_fee: Number(base.protocol_fee) + extraSats, protocol_fee_rate: Number(base.protocol_fee_rate) + extra / 10000, net_target_amount: String(Number(base.net_target_amount) - deductRaw) });
+      }
+      return jsonResB(base);
+    }
+    if (u.includes("redeem-and-swap-calldata")) return jsonResB(redeemCalldataB);
+    if (u.includes("claim-gasless")) return jsonResB({ id: "btc-evm-1", status: "client_redeeming", tx_hash: "0x" + "56".repeat(32) });
+    if (u.includes("api.satora.io/swap/bitcoin/evm")) {
+      const body = JSON.parse(opts.body || "{}"); seen.creates.push(body);
+      return jsonResB(createBtcEvmB({ source_amount: String(body.amount_in), evm_hash_lock: body.hash_lock, client_evm_address: body.claiming_address, target_evm_address: body.target_address }));
+    }
+    if (u.includes("api.satora.io/swap/")) return jsonResB({ id: "btc-evm-1", status: "serverfunded" });
+    throw new Error("unexpected fetch in btc stub: " + u);
+  };
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubB();
+    try {
+      resetSatoraCaches(); resetPricesCache();
+      const rEvm = await getSatoraBtcSourceRoute({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B, fromAmount: "100000", fromAddress: "", toAddress: AUSER_B });
+      ok("btc source: BTC -> EVM at 100k sats — the route cost busts the $0.20 EVM ceiling, so the law charges 0 and says so; the duration is honestly slow",
+        !!rEvm && rEvm.provider === "satora" && rEvm.satora.sourceKey === "bitcoin" && rEvm.fromChainId === SATORA_BITCOIN_CHAIN_ID
+        && rEvm.toAmount === "66137489" && rEvm.satora.fluidFeeSats === 0 && rEvm.platformFeeCollecting === false
+        && rEvm.executionDuration === 3600 && swapRouteExecutable(rEvm).ok === true);
+      const rLn = await getSatoraBtcSourceRoute({ fromChainKey: "bitcoin", toChainKey: "lightning", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: "", toAddress: INVOICE_B });
+      ok("btc source: BTC -> LN at 100k sats routes direct, priced in pure sats under the Lightning ceiling verdict",
+        !!rLn && rLn.satora.destKey === "lightning" && rLn.toChainId === SATORA_LIGHTNING_CHAIN_ID && rLn.toAmount === "99216" && swapRouteExecutable(rLn).ok === true);
+      let errFloorB = null;
+      try { await getSatoraBtcSourceRoute({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B, fromAmount: "15000", fromAddress: "", toAddress: AUSER_B }); } catch (e) { errFloorB = e; }
+      ok("btc source: below Satora's 20,000-sat route floor the refusal is terminal and attributes the floor to the route",
+        !!errFloorB && errFloorB.satoraTerminal === true && errFloorB.message.includes("20,000") && errFloorB.message.includes("route"));
+      const routes = await getSwapRoutes({ fromChainKey: "bitcoin", toChainKey: "arbitrum", fromTokenAddress: "btc", toTokenAddress: ARB_USDC_B, fromAmount: "100000", fromAddress: "", toAddress: AUSER_B });
+      ok("btc source: the dispatcher returns the Satora route for Bitcoin -> Arbitrum USDC",
+        routes.length === 1 && routes[0].provider === "satora" && routes[0].satora.sourceKey === "bitcoin" && routes[0].toAmount === "66137489");
+      ok("btc source: the gate refuses structurally incomplete Bitcoin-source routes",
+        swapRouteExecutable({ ...rEvm, fromChainId: 1 }).ok === false
+        && swapRouteExecutable({ ...rEvm, satora: { ...rEvm.satora, destKey: "arkade" } }).ok === false
+        && swapRouteExecutable({ ...rEvm, satora: { ...rEvm.satora, destInput: "" } }).ok === false);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    const seenB = { creates: [] };
+    globalThis.fetch = satoraStubB({ seen: seenB });
+    const storeB = new Map();
+    const storageB = { getItem: (k) => (storeB.has(k) ? storeB.get(k) : null), setItem: (k, v) => storeB.set(k, String(v)), removeItem: (k) => storeB.delete(k) };
+    const savedB = () => JSON.parse(storeB.get("fluid_satora_swaps_v1") || "[]");
+    try {
+      resetSatoraCaches(); resetPricesCache();
+      const recB = await createSatoraBtcSourceSwap(routeBtcEvmB, { phrase: PHRASE_B, index: 0 });
+      ok("btc source: the created record carries the recomputed lock address, the server claim key, both refund times and the EVM claim fields",
+        recB.sourceKey === "bitcoin" && recB.btcHtlcAddress === HTLC_B && recB.btcServerPk === SERVER_PK_B
+        && recB.btcRefundLocktime === BTC_REFUND_B && recB.refundLocktime === EVM_REFUND_B
+        && recB.serverEvmAddress === "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac" && recB.fundTxHash === null && recB.netTargetRaw === 67258078);
+      const doneB = await executeSatoraBtcSourceRoute({ phrase: PHRASE_B, route: routeBtcEvmB, storage: storageB, fundSwap: async () => "dd".repeat(32) });
+      const savedExecB = savedB();
+      ok("btc source: execution funds the recomputed lock (injected funder), persists the funding hash, and claims the EVM payout in-flow",
+        Array.isArray(doneB) && doneB[0] === "dd".repeat(32) && savedExecB.length === 1 && savedExecB[0].fundTxHash === "dd".repeat(32)
+        && savedExecB[0].claimTxId === "0x" + "56".repeat(32) && !!savedExecB[0].claimedAt);
+      const storeB2 = new Map();
+      const storageB2 = { getItem: (k) => (storeB2.has(k) ? storeB2.get(k) : null), setItem: (k, v) => storeB2.set(k, String(v)), removeItem: (k) => storeB2.delete(k) };
+      let fundErrB = null;
+      try { await executeSatoraBtcSourceRoute({ phrase: PHRASE_B, route: routeBtcEvmB, storage: storageB2, fundSwap: async () => { throw new Error("insufficient funds"); } }); } catch (e) { fundErrB = e; }
+      const savedFailB = JSON.parse(storeB2.get("fluid_satora_swaps_v1") || "[]");
+      ok("btc source: a funding failure leaves the created record persisted, pending and unfunded for recovery",
+        !!fundErrB && fundErrB.message.includes("insufficient funds") && savedFailB.length === 1 && !savedFailB[0].fundTxHash && savedFailB[0].status === "pending");
+    } finally { globalThis.fetch = realFetch; }
+  }
+  {
+    const recClaimB = { id: "btc-evm-1", sourceKey: "bitcoin", destKey: "evm", destChainId: 42161, destInput: AUSER_B, claimingAddress: claimingB, index: 0, netTargetRaw: 67258078, targetTokenAddress: ARB_USDC_B, refundLocktime: EVM_REFUND_B, coordinatorAddress: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", serverEvmAddress: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", htlcAddress: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", htlcVersion: 7, wbtcAddress: WBTC_ARB_B, expectedSats: 99493 };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = satoraStubB();
+    try {
+      resetSatoraCaches();
+      const claimedB = await claimSatoraBtcEvmSwap(recClaimB, { phrase: PHRASE_B });
+      ok("btc source: the gasless claim serves Bitcoin-source records under their own name",
+        claimedB.status === "client_redeeming" && claimedB.txHash === "0x" + "56".repeat(32));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Milestone interplay: Bitcoin is a SOURCE (compositions run
+  // OUT of it through the Satora hub leg); Bitcoin -> Lightning
+  // stays direct-only and Bitcoin -> Arkade composes via the
+  // EVM hub detour (no direct pair exists).
+  ok("btc source: milestone shapes source compositions out of Bitcoin, keep BTC -> LN direct-only, and detour BTC -> Arkade via the hub",
+    (() => {
+      const tronUsdt = TRON_TOKENS.find(t => t.symbol === "USDT");
+      const toTron = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: tronUsdt.address, fromAmount: "100000" });
+      const toSui = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "sui", fromTokenAddress: "btc", toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "100000" });
+      const toLn = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "lightning", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000" });
+      const toArk = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "arkade", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000" });
+      return toTron.length >= 1 && toTron[0][0].fromChainKey === "bitcoin" && toTron[0][0].toChainKey === "arbitrum" && toTron[0].length === 3 && toTron[0][2].toChainKey === "tron"
+        && toSui.length >= 1 && toSui.every(sh => sh[0].fromChainKey === "bitcoin") && toSui.some(sh => sh.length === 3 && sh[2].toChainKey === "sui")
+        && toLn.length === 0
+        && toArk.length >= 1 && toArk[0][0].fromChainKey === "bitcoin" && toArk[0][1].toChainKey === "arkade";
+    })());
+
+  // Honesty copy: full fee stack, the route floor disclosed as
+  // the route's, the slow duration, and the refund truth.
+  ok("btc source: the review + history copy carries the fee stack, the route floor, the slow truth and the refund truth",
+    formatSatoraBtcSourceIntent({ route: routeBtcEvmB }).includes("Satora's protocol fee 500 sats")
+    && formatSatoraBtcSourceIntent({ route: routeBtcEvmB }).includes("recomputes the lock address from the swap's own parameters")
+    && formatSatoraBtcSourceIntent({ route: routeBtcEvmB }).includes("on this route is 20,000 sats")
+    && formatSatoraBtcSourceIntent({ route: routeBtcEvmB }).includes("tens of minutes, not seconds")
+    && formatSatoraBtcSourceIntent({ route: routeBtcEvmB }).includes("recoverable by the refund path after the swap's Bitcoin refund time")
+    && formatSatoraBtcSourceIntent({ route: routeBtcLnB }).includes("on Lightning via Satora")
+    && satoraSwapHistoryLine({ id: "b1", sourceKey: "bitcoin", destKey: "evm", destChainKey: "arbitrum", fromAmount: "100000", netTargetRaw: 67258078, targetSymbol: "USDC", targetDecimals: 6, status: "serverfunded", fundTxHash: "dd".repeat(32), btcRefundLocktime: BTC_REFUND_B }).includes("100,000 sats on Bitcoin")
+    && satoraSwapHistoryLine({ id: "b1", sourceKey: "bitcoin", destKey: "evm", destChainKey: "arbitrum", fromAmount: "100000", netTargetRaw: 67258078, targetSymbol: "USDC", targetDecimals: 6, status: "serverfunded", fundTxHash: "dd".repeat(32), btcRefundLocktime: BTC_REFUND_B }).includes("recoverable by the refund path")
+    && satoraSwapHistoryLine({ id: "b2", sourceKey: "bitcoin", destKey: "lightning", fromAmount: "100000", netTargetRaw: 99216, status: "pending" }).includes("never funded"));
+
+  // Source pins: the endpoints live in core, the sheet wiring
+  // (nets, gate balance, intent, executor, claims, refund)
+  // in the app.
+  {
+    const coreSrcB = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcB = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("btc source: core carries the two BTC-source creation endpoints + the funding inspection + the refund builder",
+      coreSrcB.includes('"/swap/bitcoin/evm"') && coreSrcB.includes('"/swap/bitcoin/lightning"') && coreSrcB.includes("checkSatoraBtcSourceCreateResponse") && coreSrcB.includes("buildSatoraBtcHtlcRefundTx"));
+    ok("partA+btc source: the sheet wires the EVM -> BTC claim, the BTC-source executor + intent, both BTC claims and the refund button",
+      appSrcB.includes("satoraClaimEvmBtc") && appSrcB.includes("executeSatoraBtcSourceRoute") && appSrcB.includes("formatSatoraBtcSourceIntent")
+      && appSrcB.includes("satoraRefundBtcSource") && appSrcB.includes("Refund my Bitcoin") && appSrcB.includes("claimSatoraBtcEvmSwap")
+      && appSrcB.includes('chainKey === "bitcoin"') && (appSrcB.match(/Claim Bitcoin on-chain/g) || []).length >= 2);
+  }
+}
+
+// 103. Collaborative refund EXECUTION for EVM-source Satora
+// swaps (2026-11-14) — closing the follow-up §102 named with
+// the same prominence as the claim itself. Fixtures are the
+// SDK 2.8.1 wire shapes (its generated OpenAPI + client): the
+// params answer, the CollabRefund EIP-712 struct (digest pinned
+// against ethers' TypedDataEncoder, the independent
+// recomputation), the server's Refund signature answer, and
+// the refundBySig call (selector re-derived from the function
+// signature). The executor is driven end to end over a stubbed
+// fetch: the coordinator path's POST is only accepted by the
+// stub when the submitted signature recovers to the depositor
+// over the core-built digest; the direct path's submission is
+// injected (the house pattern for broadcast steps) and its
+// calldata decoded + asserted.
+{
+  const PHRASE_R = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const walletR = ethers.Wallet.fromPhrase(PHRASE_R);
+  const DEPOSITOR_R = walletR.address;
+  const SERVER_R = new ethers.Wallet("0x" + "33".repeat(32)).address;
+  const SIGNER_R = "0x5555555555555555555555555555555555555555";
+  const REC_R = {
+    id: "refund-103", provider: "satora", index: 0, destKey: "bitcoin", fromChainKey: "arbitrum",
+    fromSymbol: "USDC", fromAmount: "20000000", netSats: 26433, grossSats: 27000, feeSats: 800,
+    status: "serverwontfund", hashLock: "0x" + "ab".repeat(32),
+    coordinatorAddress: "0x1111111111111111111111111111111111111111",
+    htlcAddress: "0x2222222222222222222222222222222222222222",
+    serverEvmAddress: SERVER_R, wbtcAddress: "0x3333333333333333333333333333333333333333",
+    refundLocktime: 1794265512, htlcKind: "erc20", htlcVersion: 7,
+    fundTxHash: "0x" + "cd".repeat(32), claimTxId: null, claimedAt: null, refundedAt: null,
+    createdAt: 1, updatedAt: 1,
+  };
+  const PARAMS_COORD_R = {
+    refund_path: "coordinator", amount: "26000", calls_hash: SATORA_EMPTY_CALLS_HASH, chain_id: 42161,
+    claim_address: SERVER_R, coordinator_address: REC_R.coordinatorAddress, coordinator_version: 3,
+    htlc_address: REC_R.htlcAddress, htlc_kind: "erc20", htlc_version: 7, min_amount_out: "0",
+    preimage_hash: REC_R.hashLock, server_signer_address: SIGNER_R, sweep_token: REC_R.wbtcAddress,
+    timelock: REC_R.refundLocktime, token: REC_R.wbtcAddress,
+  };
+  const PARAMS_DIRECT_R = { ...PARAMS_COORD_R, refund_path: "direct", coordinator_version: 0, calls_hash: "0x" + "0".repeat(64) };
+  const SIG_R = {
+    id: REC_R.id, htlc_address: REC_R.htlcAddress, htlc_version: 7, htlc_kind: "erc20", chain_id: 42161,
+    preimage_hash: REC_R.hashLock, amount: "26000", token: REC_R.wbtcAddress, sender: DEPOSITOR_R,
+    claim_address: SERVER_R, timelock: REC_R.refundLocktime, v: 27, r: "0x" + "11".repeat(32), s: "0x" + "22".repeat(32),
+  };
+  const CHECK_OPTS_R = { depositor: DEPOSITOR_R, chainId: 42161, lockedAmountRaw: "26000" };
+
+  // Chain resolution: direct sources fund where they lock;
+  // bridged sources always lock on Arbitrum.
+  ok("collab refund: the refund chain resolves direct + bridged + refuses the unknown",
+    satoraEvmRefundChain(REC_R)?.chainId === 42161 && satoraEvmRefundChain(REC_R)?.chainKey === "arbitrum"
+    && satoraEvmRefundChain({ ...REC_R, fromChainKey: null, bridge: { sourceChain: "base" } })?.chainKey === "arbitrum"
+    && satoraEvmRefundChain({ ...REC_R, fromChainKey: "polygon" })?.chainId === 137
+    && satoraEvmRefundChain({ ...REC_R, fromChainKey: null }) === null);
+
+  // The pinned type string + typehash, verbatim from the SDK.
+  ok("collab refund: the CollabRefund type string + typehash are the SDK's",
+    SATORA_COLLAB_REFUND_TYPE_STRING === "CollabRefund(bytes32 preimageHash,uint256 amount,address token,address claimAddress,uint256 timelock,address caller,address sweepToken,uint256 minAmountOut,bytes32 callsHash)"
+    && SATORA_COLLAB_REFUND_TYPEHASH === ethers.keccak256(ethers.toUtf8Bytes(SATORA_COLLAB_REFUND_TYPE_STRING)));
+  ok("collab refund: the empty-calls hash is the ABI encoding of an empty calls array",
+    SATORA_EMPTY_CALLS_HASH === satoraCallsHash([])
+    && SATORA_EMPTY_CALLS_HASH === ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["tuple(address target, uint256 value, bytes callData)[]"], [[]])));
+
+  // Params checker: accept (both executable paths + the honest
+  // unavailable), then every tamper class refused.
+  const checkedCoordR = checkSatoraCollabRefundParams(REC_R, PARAMS_COORD_R, CHECK_OPTS_R);
+  ok("collab refund: coordinator params verify against the record",
+    checkedCoordR.ok === true && checkedCoordR.path === "coordinator" && checkedCoordR.params.amount === "26000" && checkedCoordR.params.caller === SIGNER_R);
+  ok("collab refund: the zero-hash spelling of no-calls is accepted on the coordinator path",
+    checkSatoraCollabRefundParams(REC_R, { ...PARAMS_COORD_R, calls_hash: "0x" + "0".repeat(64) }, CHECK_OPTS_R).ok === true);
+  ok("collab refund: direct params verify; unavailable is an honest ok",
+    checkSatoraCollabRefundParams(REC_R, PARAMS_DIRECT_R, CHECK_OPTS_R).ok === true
+    && checkSatoraCollabRefundParams(REC_R, { refund_path: "unavailable", sweep_token: REC_R.wbtcAddress }, CHECK_OPTS_R).path === "unavailable");
+  const PARAM_TAMPERS_R = [
+    ["a foreign sweep token", { sweep_token: "0x9999999999999999999999999999999999999999" }],
+    ["a foreign lock token", { token: "0x9999999999999999999999999999999999999999" }],
+    ["a foreign claim address", { claim_address: "0x9999999999999999999999999999999999999999" }],
+    ["a drifted timelock", { timelock: REC_R.refundLocktime + 1 }],
+    ["a foreign lock (preimage hash)", { preimage_hash: "0x" + "ff".repeat(32) }],
+    ["a foreign HTLC", { htlc_address: "0x9999999999999999999999999999999999999999" }],
+    ["a foreign coordinator", { coordinator_address: "0x9999999999999999999999999999999999999999" }],
+    ["the wrong chain", { chain_id: 1 }],
+    ["an unseen calls payload", { calls_hash: ethers.keccak256(ethers.toUtf8Bytes("unseen calls")) }],
+    ["a nonzero sweep floor", { min_amount_out: "5" }],
+    ["a zero amount", { amount: "0" }],
+    ["an amount that is not the locked amount", { amount: "25000" }],
+    ["a different HTLC version", { htlc_version: 6 }],
+    ["a native lock", { htlc_kind: "native" }],
+    ["an unreadable path", { refund_path: "bogus" }],
+  ];
+  ok("collab refund: every tampered coordinator params answer is refused",
+    PARAM_TAMPERS_R.every(([, m]) => checkSatoraCollabRefundParams(REC_R, { ...PARAMS_COORD_R, ...m }, CHECK_OPTS_R).ok === false));
+
+  // The digest: pinned against ethers' own TypedDataEncoder
+  // (the independent recomputation), and a signature over it
+  // recovers to the depositor.
+  {
+    const digest = buildSatoraCollabRefundDigest({ params: checkedCoordR.params });
+    const typedHash = ethers.TypedDataEncoder.hash(
+      { name: "HTLCCoordinator", version: "3", chainId: 42161, verifyingContract: REC_R.coordinatorAddress },
+      { CollabRefund: [
+        { name: "preimageHash", type: "bytes32" }, { name: "amount", type: "uint256" }, { name: "token", type: "address" },
+        { name: "claimAddress", type: "address" }, { name: "timelock", type: "uint256" }, { name: "caller", type: "address" },
+        { name: "sweepToken", type: "address" }, { name: "minAmountOut", type: "uint256" }, { name: "callsHash", type: "bytes32" }] },
+      { preimageHash: REC_R.hashLock, amount: 26000n, token: REC_R.wbtcAddress, claimAddress: SERVER_R,
+        timelock: BigInt(REC_R.refundLocktime), caller: SIGNER_R, sweepToken: REC_R.wbtcAddress, minAmountOut: 0n,
+        callsHash: SATORA_EMPTY_CALLS_HASH });
+    const sig = walletR.signingKey.sign(digest);
+    ok("collab refund: the digest matches ethers' TypedDataEncoder and the depositor's signature recovers",
+      digest === typedHash && ethers.recoverAddress(digest, sig) === DEPOSITOR_R);
+  }
+
+  // Signature checker: accept + tamper classes.
+  ok("collab refund: the server's Refund signature answer verifies against the record",
+    checkSatoraCollabRefundSignature(REC_R, SIG_R, CHECK_OPTS_R).ok === true);
+  const SIG_TAMPERS_R = [
+    ["a different swap id", { id: "other" }],
+    ["a foreign sender binding", { sender: "0x9999999999999999999999999999999999999999" }],
+    ["a foreign claim address", { claim_address: "0x9999999999999999999999999999999999999999" }],
+    ["an amount that is not the locked amount", { amount: "25000" }],
+    ["an unusable v", { v: 29 }],
+    ["a malformed r", { r: "0x1234" }],
+    ["a foreign HTLC", { htlc_address: "0x9999999999999999999999999999999999999999" }],
+    ["a drifted timelock", { timelock: REC_R.refundLocktime + 60 }],
+  ];
+  ok("collab refund: every tampered signature answer is refused",
+    SIG_TAMPERS_R.every(([, m]) => checkSatoraCollabRefundSignature(REC_R, { ...SIG_R, ...m }, CHECK_OPTS_R).ok === false));
+
+  // refundBySig call: pinned selector (re-derived from the
+  // signature) + a full decode round-trip of the checked terms.
+  {
+    const sigChecked = checkSatoraCollabRefundSignature(REC_R, SIG_R, CHECK_OPTS_R);
+    const call = buildSatoraRefundBySigCall({ record: REC_R, sig: sigChecked.sig });
+    const iface = new ethers.Interface(["function refundBySig(bytes32 preimageHash, uint256 amount, address token, uint256 timelock, uint8 v, bytes32 r, bytes32 s)"]);
+    const dec = call.ok ? iface.decodeFunctionData("refundBySig", call.data) : null;
+    ok("collab refund: refundBySig encodes the checked terms under the pinned selector",
+      call.ok === true && call.to === REC_R.htlcAddress
+      && SATORA_HTLC_ERC20_REFUND_BY_SIG_SELECTOR === "0x072c420d"
+      && SATORA_HTLC_ERC20_REFUND_BY_SIG_SELECTOR === iface.getFunction("refundBySig").selector
+      && call.data.slice(0, 10) === SATORA_HTLC_ERC20_REFUND_BY_SIG_SELECTOR
+      && dec[0] === REC_R.hashLock && dec[1] === 26000n && dec[2] === REC_R.wbtcAddress
+      && dec[3] === BigInt(REC_R.refundLocktime) && dec[4] === 27n && dec[5] === SIG_R.r && dec[6] === SIG_R.s);
+  }
+
+  // Executor harness: a stubbed Satora whose coordinator POST
+  // verifies the submitted signature itself (recovery over the
+  // core digest) — a wrong digest or key fails the run loudly.
+  const store103 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; };
+  const stubRefund103 = ({ status = "serverwontfund", params = PARAMS_COORD_R, sig = SIG_R, locked = "26000" } = {}) => {
+    const calls = [];
+    const fn = async (url, init) => {
+      const u = String(url); const method = init?.method || "GET";
+      calls.push(method + " " + u);
+      const json = (obj) => ({ ok: true, status: 200, json: async () => obj });
+      if (u.endsWith("/swap/" + REC_R.id) && method === "GET")
+        return json({ status, evm_htlc_locked_amount: locked, evm_htlc_sender: DEPOSITOR_R, evm_htlc_token: REC_R.wbtcAddress });
+      if (u.includes("/collab-refund-evm/params")) return json(params);
+      if (u.endsWith("/collab-refund-evm/signature")) return json(sig);
+      if (u.endsWith("/collab-refund-evm") && method === "POST") {
+        const body = JSON.parse(init.body);
+        const digest = buildSatoraCollabRefundDigest({ params: checkSatoraCollabRefundParams(REC_R, params, CHECK_OPTS_R).params });
+        if (body.depositor_address !== DEPOSITOR_R || ethers.recoverAddress(digest, { r: body.r, s: body.s, v: body.v }) !== DEPOSITOR_R)
+          throw new Error("stub: the submitted signature does not recover to the depositor");
+        return json({ id: REC_R.id, tx_hash: "0x" + "ef".repeat(32), message: "refunded" });
+      }
+      throw new Error("stub: unexpected fetch " + method + " " + u);
+    };
+    return { fn, calls };
+  };
+
+  // Coordinator path, end to end.
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({});
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      saveSatoraSwapRecord(storage, REC_R);
+      const updated = await executeSatoraCollabRefundEvmSwap(walletR, REC_R, storage);
+      const stored = loadSatoraSwapRecords(storage).find(r => r.id === REC_R.id);
+      ok("collab refund: the coordinator path signs, submits and persists the broadcast hash",
+        updated.refundTxId === "0x" + "ef".repeat(32) && updated.refundPathUsed === "coordinator"
+        && updated.refundAmountRaw === "26000" && !!updated.refundedAt
+        && stored.refundTxId === updated.refundTxId && !!stored.refundedAt);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // Wrong key discipline: a wallet whose signing key is not its
+  // address's key is refused by the flow's own verification
+  // step, before anything is submitted.
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({});
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      saveSatoraSwapRecord(storage, REC_R);
+      const foreign = new ethers.Wallet("0x" + "44".repeat(32));
+      const doctored = { address: DEPOSITOR_R, mnemonic: { phrase: PHRASE_R }, signingKey: foreign.signingKey };
+      let err = null;
+      try { await executeSatoraCollabRefundEvmSwap(doctored, REC_R, storage); } catch (e) { err = e; }
+      ok("collab refund: a signature from the wrong key is refused before submission",
+        !!err && err.message.includes("does not belong to the refunding address")
+        && !stub.calls.some(c => c.startsWith("POST") && c.endsWith("/collab-refund-evm")));
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // Direct path, end to end with the injected submission: the
+  // calldata handed over decodes to the checked terms.
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({ params: PARAMS_DIRECT_R });
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      saveSatoraSwapRecord(storage, REC_R);
+      let submitted = null;
+      const updated = await executeSatoraCollabRefundEvmSwap(walletR, REC_R, storage, () => {}, {
+        submitRefundCall: async (args) => { submitted = args; return "0x" + "99".repeat(32); },
+      });
+      const iface = new ethers.Interface(["function refundBySig(bytes32 preimageHash, uint256 amount, address token, uint256 timelock, uint8 v, bytes32 r, bytes32 s)"]);
+      const dec = submitted ? iface.decodeFunctionData("refundBySig", submitted.data) : null;
+      ok("collab refund: the direct path broadcasts refundBySig with the checked terms and persists its hash",
+        updated.refundTxId === "0x" + "99".repeat(32) && updated.refundPathUsed === "direct"
+        && submitted.to === REC_R.htlcAddress && submitted.chainKey === "arbitrum" && submitted.from === DEPOSITOR_R
+        && dec[0] === REC_R.hashLock && dec[1] === 26000n && dec[3] === BigInt(REC_R.refundLocktime));
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // Direct path, submission failure: nothing is persisted as
+  // refunded — the stored record keeps no refund fields.
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({ params: PARAMS_DIRECT_R });
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      saveSatoraSwapRecord(storage, REC_R);
+      let err = null;
+      try {
+        await executeSatoraCollabRefundEvmSwap(walletR, REC_R, storage, () => {}, {
+          submitRefundCall: async () => { throw new Error("The refund call does not verify against the lock on-chain (reverted) — nothing was broadcast."); },
+        });
+      } catch (e) { err = e; }
+      const stored = loadSatoraSwapRecords(storage).find(r => r.id === REC_R.id);
+      ok("collab refund: a failed direct broadcast persists nothing as refunded",
+        !!err && !stored.refundTxId && !stored.refundedAt);
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // Unavailable: the plain timelock sentence, and nothing is
+  // signed or submitted (no signature fetch, no POST).
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({ params: { refund_path: "unavailable", sweep_token: REC_R.wbtcAddress } });
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      saveSatoraSwapRecord(storage, REC_R);
+      let err = null;
+      try { await executeSatoraCollabRefundEvmSwap(walletR, REC_R, storage); } catch (e) { err = e; }
+      ok("collab refund: an unavailable path states the timelock fallback and signs nothing",
+        !!err && err.message.includes("no collaborative refund")
+        && !stub.calls.some(c => c.includes("/signature") || (c.startsWith("POST") && c.endsWith("/collab-refund-evm"))));
+    } finally { globalThis.fetch = realFetch; }
+  }
+  // State gates: the unilateral state refuses with its own
+  // sentence before any refund fetch; an unfunded record
+  // refuses outright.
+  {
+    const realFetch = globalThis.fetch;
+    const stub = stubRefund103({ status: "clientfundedserverrefunded" });
+    globalThis.fetch = stub.fn;
+    try {
+      const storage = store103();
+      let err = null;
+      try { await executeSatoraCollabRefundEvmSwap(walletR, REC_R, storage); } catch (e) { err = e; }
+      let err2 = null;
+      try { await executeSatoraCollabRefundEvmSwap(walletR, { ...REC_R, fundTxHash: null }, storage); } catch (e) { err2 = e; }
+      ok("collab refund: the timelock-path state and the unfunded record refuse plainly",
+        !!err && err.message.includes("timelock path") && !stub.calls.some(c => c.includes("collab-refund"))
+        && !!err2 && err2.message.includes("never funded"));
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Source pins: the endpoints + builders live in core, the
+  // button + handler in the sheet.
+  {
+    const coreSrcR = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcR = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("collab refund: core carries both endpoints, the digest, the refundBySig builder and the executor",
+      coreSrcR.includes("/collab-refund-evm/params") && coreSrcR.includes("/collab-refund-evm/signature") && coreSrcR.includes("buildSatoraCollabRefundDigest")
+      && coreSrcR.includes("buildSatoraRefundBySigCall") && coreSrcR.includes("executeSatoraCollabRefundEvmSwap") && coreSrcR.includes("0x072c420d"));
+    ok("collab refund: the sheet wires the refund button + handler for EVM-source records",
+      appSrcR.includes("Refund my locked tokens") && appSrcR.includes("satoraRefundEvmCollab") && appSrcR.includes("executeSatoraCollabRefundEvmSwap"));
+  }
+}
+
+// 104. Unilateral timelock refund EXECUTION for EVM-source
+// Satora swaps (2026-11-14) — the last refund path on the lane,
+// named as the residual in §103's report. The wire shape is the
+// reference SDK's own encoder (@lendasat/lendaswap-sdk-pure
+// 2.8.1, src/evm/htlc.ts): refund(bytes32,uint256,address,
+// address,uint256) under selector 0x36504721 — the in-tree
+// SATORA_HTLC_REFUND_INTERFACE spells it identically, and the
+// executor drives the pinned buildSatoraUnilateralRefundCall.
+// Eligibility is BOTH conditions (fresh refund-available phase
+// AND the lock chain's own clock at/past the timelock — the
+// chain clock is injected here, per the house pattern); the
+// amount is the swap object's evm_htlc_locked_amount,
+// cross-checked against the params answer when it carries one;
+// the submission step is injected (its default dry-runs the
+// call against the HTLC, per §103), so a submission failure
+// here is exactly the dry-run-revert refusal's stand-in.
+{
+  const PHRASE_U = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const walletU = ethers.Wallet.fromPhrase(PHRASE_U);
+  const DEPOSITOR_U = walletU.address;
+  const SERVER_U = new ethers.Wallet("0x" + "33".repeat(32)).address;
+  const TL_U = 1795000000;
+  const REC_U = {
+    id: "refund-104", provider: "satora", index: 0, destKey: "bitcoin", fromChainKey: "arbitrum",
+    fromSymbol: "USDC", fromAmount: "20000000", netSats: 26433, grossSats: 27000, feeSats: 800,
+    status: "clientfundedserverrefunded", hashLock: "0x" + "ab".repeat(32),
+    coordinatorAddress: "0x1111111111111111111111111111111111111111",
+    htlcAddress: "0x2222222222222222222222222222222222222222",
+    serverEvmAddress: SERVER_U, wbtcAddress: "0x3333333333333333333333333333333333333333",
+    refundLocktime: TL_U, htlcKind: "erc20", htlcVersion: 7,
+    fundTxHash: "0x" + "cd".repeat(32), claimTxId: null, claimedAt: null, refundedAt: null,
+    createdAt: 1, updatedAt: 1,
+  };
+  const PARAMS_U = { refund_path: "unavailable", amount: "26000", sweep_token: REC_U.wbtcAddress };
+  const store104 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; };
+  const stubUni104 = ({ status = "clientfundedserverrefunded", locked = "26000", sender = DEPOSITOR_U, token = REC_U.wbtcAddress, params = PARAMS_U, paramsDown = false } = {}) => {
+    const calls = [];
+    const fn = async (url, init) => {
+      const u = String(url); const method = init?.method || "GET";
+      calls.push(method + " " + u);
+      const json = (obj) => ({ ok: true, status: 200, json: async () => obj });
+      if (u.endsWith("/swap/" + REC_U.id) && method === "GET")
+        return json({ status, evm_htlc_locked_amount: locked, evm_htlc_sender: sender, evm_htlc_token: token });
+      if (u.includes("/collab-refund-evm/params")) {
+        if (paramsDown) throw new Error("stub: params endpoint down");
+        return json(params);
+      }
+      throw new Error("stub: unexpected fetch " + method + " " + u);
+    };
+    return { fn, calls };
+  };
+  const runUni104 = async ({ rec = REC_U, stubOpts = {}, chainNow = TL_U + 10, submit = null } = {}) => {
+    const realFetch = globalThis.fetch;
+    const stub = stubUni104(stubOpts);
+    globalThis.fetch = stub.fn;
+    const storage = store104();
+    saveSatoraSwapRecord(storage, rec);
+    let submitted = null;
+    const submitRefundCall = submit || (async (args) => { submitted = args; return "0x" + "aa".repeat(32); });
+    let updated = null, err = null;
+    try {
+      updated = await executeSatoraUnilateralRefundEvmSwap(walletU, rec, storage, () => {}, {
+        readChainNowSec: async () => chainNow, submitRefundCall,
+      });
+    } catch (e) { err = e; } finally { globalThis.fetch = realFetch; }
+    return { updated, err, submitted, stub, storage };
+  };
+  const runUni104Err = async (args) => {
+    const out = await runUni104(args);
+    return { err: out.err, out: out.err ? null : out, run: out };
+  };
+
+  // The pinned selector is the pinned ABI's own derivation.
+  {
+    const iface = new ethers.Interface(["function refund(bytes32 preimageHash, uint256 amount, address token, address claimAddress, uint256 timelock)"]);
+    ok("unilateral refund: the pinned selector re-derives from the pinned ABI signature",
+      SATORA_HTLC_ERC20_REFUND_SELECTOR === "0x36504721" && iface.getFunction("refund").selector === SATORA_HTLC_ERC20_REFUND_SELECTOR);
+  }
+
+  // Happy path on the unilateral state: both conditions hold,
+  // the call decodes to the record's terms, the record persists
+  // refunded ONLY with the broadcast hash.
+  {
+    const { updated, submitted, storage } = await runUni104({});
+    const iface = new ethers.Interface(["function refund(bytes32 preimageHash, uint256 amount, address token, address claimAddress, uint256 timelock)"]);
+    const dec = submitted ? iface.decodeFunctionData("refund", submitted.data) : null;
+    const stored = loadSatoraSwapRecords(storage).find(r => r.id === REC_U.id);
+    ok("unilateral refund: both conditions met — the pinned call broadcasts and persists on its hash",
+      updated.refundTxId === "0x" + "aa".repeat(32) && updated.refundPathUsed === "unilateral" && updated.refundAmountRaw === "26000"
+      && !!updated.refundedAt && stored.refundTxId === updated.refundTxId && !!stored.refundedAt
+      && submitted.to === REC_U.htlcAddress && submitted.chainKey === "arbitrum" && submitted.from === DEPOSITOR_U
+      && submitted.data.slice(0, 10) === SATORA_HTLC_ERC20_REFUND_SELECTOR
+      && dec[0] === REC_U.hashLock && dec[1] === 26000n && dec[2] === REC_U.wbtcAddress && dec[3] === SERVER_U && dec[4] === BigInt(TL_U));
+  }
+
+  // Scope-5 interaction: a record whose collaborative refund
+  // broadcast evidently never landed (refundedAt stored, the
+  // fresh state refund-available again in a COLLABORATIVE
+  // state) reaches the unilateral path once its timelock
+  // passes.
+  {
+    const rec = { ...REC_U, refundedAt: 123, refundPathUsed: "coordinator", refundTxId: "0x" + "ef".repeat(32) };
+    const { updated } = await runUni104({ rec, stubOpts: { status: "serverwontfund" } });
+    ok("unilateral refund: a never-landed collaborative refund reaches the timelock path post-timelock",
+      updated.refundPathUsed === "unilateral" && updated.refundTxId === "0x" + "aa".repeat(32));
+  }
+
+  // The params endpoint is NOT part of this path: its silence
+  // blocks nothing (the swap object + the dry run are the
+  // guards); no POST is ever made either way.
+  {
+    const { updated, stub } = await runUni104({ stubOpts: { paramsDown: true } });
+    ok("unilateral refund: the params endpoint being down blocks nothing, and nothing is ever POSTed",
+      updated.refundPathUsed === "unilateral" && !stub.calls.some(c => c.startsWith("POST")));
+  }
+
+  // Eligibility matrix: each single failing condition refuses
+  // before any submission, with nothing persisted as refunded.
+  {
+    const clockEarly = await runUni104Err({ chainNow: TL_U - 1 });
+    const fundedPhase = await runUni104Err({ stubOpts: { status: "clientfunded" } });
+    const serverFunded = await runUni104Err({ stubOpts: { status: "serverfunded" } });
+    const alreadyRefunded = await runUni104Err({ stubOpts: { status: "clientrefunded" } });
+    ok("unilateral refund: clock-not-reached and wrong-phase states refuse before any submission",
+      !!clockEarly.err && clockEarly.err.message.includes("has not opened") && !clockEarly.run.submitted
+      && !!fundedPhase.err && fundedPhase.err.message.includes("not in a refundable state") && !fundedPhase.run.submitted
+      && !!serverFunded.err && serverFunded.err.message.includes("not in a refundable state") && !serverFunded.run.submitted
+      && !!alreadyRefunded.err && alreadyRefunded.err.message.includes("already shows this swap as refunded"));
+    const recRefunded = { ...REC_U, refundedAt: 123, refundTxId: "0x" + "ef".repeat(32) };
+    const standsErr = await runUni104Err({ rec: recRefunded, stubOpts: { status: "clientfunded" } });
+    const storedStands = loadSatoraSwapRecords(standsErr.run.storage).find(x => x.id === REC_U.id);
+    ok("unilateral refund: a stored refund stands unless the fresh state is refund-available again",
+      !!standsErr.err && standsErr.err.message.includes("already refunded")
+      && storedStands.refundTxId === "0x" + "ef".repeat(32) && storedStands.refundedAt === 123);
+  }
+
+  // Tamper classes: every drifted term refuses before the
+  // submission step runs.
+  {
+    const cases = [
+      ["a lock keyed under a foreign sender", { stubOpts: { sender: "0x9999999999999999999999999999999999999999" } }, "keyed under a different address"],
+      ["a foreign lock token on the swap object", { stubOpts: { token: "0x9999999999999999999999999999999999999999" } }, "lock token differs"],
+      ["no recorded lock amount", { stubOpts: { locked: null } }, "does not state the amount"],
+      ["a zero recorded lock amount", { stubOpts: { locked: "0" } }, "does not state the amount"],
+      ["a params amount that disagrees with the lock", { stubOpts: { params: { ...PARAMS_U, amount: "25000" } } }, "different locked amount"],
+      ["a params sweep of a foreign token", { stubOpts: { params: { ...PARAMS_U, sweep_token: "0x9999999999999999999999999999999999999999" } } }, "sweep a different token"],
+      ["a native lock on the record", { rec: { ...REC_U, htlcKind: "native", htlcVersion: 2 } }, "did not lock on an ERC-20 HTLC"],
+      ["an unpinned HTLC version on the record", { rec: { ...REC_U, htlcVersion: 6 } }, "did not lock on the pinned ERC-20 HTLC"],
+      ["an unreadable hash lock on the record", { rec: { ...REC_U, hashLock: "0xzz" } }, "hash lock was unreadable"],
+      ["no refund timelock on the record", { rec: { ...REC_U, refundLocktime: 0 } }, "names no refund timelock"],
+    ];
+    let allRefused = true;
+    for (const [, args, needle] of cases) {
+      const { err, out, run } = await runUni104Err(args);
+      if (!err || !err.message.includes(needle) || out || run.submitted) allRefused = false;
+    }
+    ok("unilateral refund: every tampered term refuses before submission", allRefused);
+    // The chain clock itself unreadable refuses — the wall
+    // clock never substitutes for it.
+    const realFetch = globalThis.fetch;
+    const stub = stubUni104({});
+    globalThis.fetch = stub.fn;
+    let clockErr = null;
+    try {
+      await executeSatoraUnilateralRefundEvmSwap(walletU, REC_U, store104(), () => {}, {
+        readChainNowSec: async () => { throw new Error("RPC down"); },
+        submitRefundCall: async () => { throw new Error("must never be reached"); },
+      });
+    } catch (e) { clockErr = e; } finally { globalThis.fetch = realFetch; }
+    ok("unilateral refund: an unreadable chain clock refuses",
+      !!clockErr && clockErr.message.includes("could not read the lock chain's clock"));
+  }
+
+  // Broadcast failures persist nothing: a reverting dry run /
+  // failed broadcast (the injected submission throwing) and a
+  // malformed returned hash both leave the record untouched.
+  {
+    const fail = await runUni104Err({ submit: async () => { throw new Error("The refund call does not verify against the lock on-chain (reverted) — nothing was broadcast."); } });
+    const storedFail = loadSatoraSwapRecords(fail.run.storage).find(x => x.id === REC_U.id);
+    const badHash = await runUni104Err({ submit: async () => "not-a-hash" });
+    const storedBad = loadSatoraSwapRecords(badHash.run.storage).find(x => x.id === REC_U.id);
+    ok("unilateral refund: a failed broadcast and a hash-less return persist nothing as refunded",
+      !!fail.err && fail.err.message.includes("does not verify against the lock")
+      && !storedFail.refundTxId && !storedFail.refundedAt
+      && !!badHash.err && badHash.err.message.includes("no transaction hash")
+      && !storedBad.refundTxId && !storedBad.refundedAt);
+  }
+
+  // Source pins: the executor lives in core; the button +
+  // handler in the sheet, under the timelock-reached label.
+  {
+    const coreSrcU = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appSrcU = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("unilateral refund: core carries the executor over the pinned encoder",
+      coreSrcU.includes("executeSatoraUnilateralRefundEvmSwap") && coreSrcU.includes("buildSatoraUnilateralRefundCall") && coreSrcU.includes("0x36504721"));
+    ok("unilateral refund: the sheet wires the timelock-reached button + handler",
+      appSrcU.includes("Refund my locked tokens (timelock reached)") && appSrcU.includes("satoraRefundEvmUnilateral") && appSrcU.includes("executeSatoraUnilateralRefundEvmSwap"));
+  }
+}
+
+// ============================================================
+// 106. Cheapest-entry routing (2026-11-14, Ethuram's binding
+// instruction extending the universal-composability law): for
+// every destination prefer the cheapest viable DOOR into its
+// family, then move internally — ranked on true all-in cost
+// with floors counted. Bitcoin family doors: Arkade (335-sat
+// floor), Lightning (356 + the one-time 2,500-sat first-
+// receive channel cost for a channel-less wallet), Bitcoin
+// mainnet (10,000 composed / 20,000 direct). Arkade becomes a
+// milestone INTERMEDIATE: source -> (hub) -> Arkade -> LN and
+// source -> (hub) -> Arkade -> BTC, the BTC exit being the
+// operator's offboard (NOT a Satora pair), quoted from the
+// operator's public fee program. A via-Lightning composition
+// is deliberately NOT generated: an intermediate LN leg
+// settles by paying an invoice minted against the user's own
+// node — a sheet-level, user-present step, not a milestone
+// leg. Search never boots the Arkade session: an intermediate
+// Arkade leg previews against the deferred session marker and
+// execution re-resolves it, parking leg-due if it cannot.
+{
+  const PHRASE_CE = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const identityCE = satoraSwapClaimKey(PHRASE_CE, 0);
+  const ARB_USDC_CE = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const WBTC_ARB_CE = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const BTC_ADDR_CE = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+  const ARKADE_ADDR_CE = "ark1qz8y9x0w7v6u5t4s3r2q1p0o9n8m7l6k5j4h3g2f1d0s9a8b7c6d5e4f3g2h1j";
+  const LN_ADDR_CE = "user@wallet.example";
+  const EVM_CE = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const LOCKTIME_CE = Math.floor(Date.now() / 1000) + 86400;
+  const FUND_TX_CE = "0x" + "ef".repeat(32);
+  const jsonResCE = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const storageCE = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  const LIVE_PROGRAM_CE = { intentFee: { offchainInput: "inputType == 'vtxo' && expiry - now() > 2505216.0? amount * 0.002: 0.0", onchainInput: "", offchainOutput: "", onchainOutput: "200.0" }, txFeeRate: "0" };
+
+  // Door enumeration (pure).
+  ok("cheapest-entry: the Bitcoin family enumerates its doors cheapest-first; other families keep their own",
+    JSON.stringify(swapDestinationDoors("bitcoin")) === JSON.stringify(["bitcoin", "arkade", "lightning"])
+    && JSON.stringify(swapDestinationDoors("lightning")) === JSON.stringify(["lightning", "arkade"])
+    && JSON.stringify(swapDestinationDoors("arkade")) === JSON.stringify(["arkade"])
+    && swapDestinationDoors("sui") === null && swapDestinationDoors("base") === null && swapDestinationDoors("solana") === null);
+
+  // Shape generation (pure).
+  const bscBtcArgsCE = { fromChainKey: "bsc", toChainKey: "bitcoin", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "btc", fromAmount: "32000000000000000", fromAddress: EVM_CE, toAddress: BTC_ADDR_CE };
+  const shapesBscBtcCE = milestoneShapes(bscBtcArgsCE);
+  ok("cheapest-entry: BSC -> BTC gains via-Arkade shapes (hub -> Arkade -> Bitcoin) beside the direct-door shapes",
+    shapesBscBtcCE.some(s => s.length === 3 && s[1].toChainKey === "arkade" && s[2].fromChainKey === "arkade" && s[2].toChainKey === "bitcoin")
+    && shapesBscBtcCE.some(s => s.length === 2 && s[1].toChainKey === "bitcoin"));
+  const shapesArbBtcCE = milestoneShapes({ fromChainKey: "arbitrum", toChainKey: "bitcoin", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: BTC_ADDR_CE });
+  ok("cheapest-entry: a hub-asset origin gets the 1-leg direct shape AND the 2-leg via-Arkade shape",
+    shapesArbBtcCE.some(s => s.length === 1 && s[0].toChainKey === "bitcoin")
+    && shapesArbBtcCE.some(s => s.length === 2 && s[0].toChainKey === "arkade" && s[1].fromChainKey === "arkade" && s[1].toChainKey === "bitcoin"));
+  const shapesArbLnCE = milestoneShapes({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: LN_ADDR_CE });
+  ok("cheapest-entry: Lightning destinations gain the via-Arkade shape (hub -> Arkade -> Lightning)",
+    shapesArbLnCE.some(s => s.length === 2 && s[0].toChainKey === "arkade" && s[1].fromChainKey === "arkade" && s[1].toChainKey === "lightning"));
+  ok("cheapest-entry: no via-Arkade shape is generated for an Arkade destination, an Arkade/Bitcoin/Lightning source, or through Lightning as an intermediate",
+    milestoneShapes({ fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: ARKADE_ADDR_CE }).every(s => s.every(l => l.fromChainKey !== "arkade"))
+    && milestoneShapes({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: ARKADE_ADDR_CE, toAddress: BTC_ADDR_CE }).length === 0
+    && shapesBscBtcCE.every(s => s.every(l => l.fromChainKey !== "lightning" && !(l.toChainKey === "lightning" && l.fromChainKey !== "arkade"))));
+
+  // LN first-receive entry cost (pure).
+  {
+    const lnRouteCE = { provider: "satora", toChainKey: "lightning", toChainId: SATORA_LIGHTNING_CHAIN_ID, toAmount: "28879", toAmountUSD: 21.5, satora: { destKey: "lightning" } };
+    const btcRouteCE = { provider: "satora", toChainKey: "bitcoin", toChainId: SATORA_BITCOIN_CHAIN_ID, toAmount: "28900", toAmountUSD: 21.51, satora: { destKey: "bitcoin" } };
+    const stampedCount = applyLnFirstReceiveCost([lnRouteCE, btcRouteCE], { firstReceive: true, btcUsd: 74414 });
+    ok("cheapest-entry: a channel-less wallet's Lightning routes carry the one-time 2,500-sat channel cost in ranking (payout untouched)",
+      LN_FIRST_RECEIVE_CHANNEL_SATS === 2500 && stampedCount === 1 && lnRouteCE.entryCost?.kind === "lightning-first-receive"
+      && lnRouteCE.entryCost.sats === 2500 && Math.abs(lnRouteCE.entryCost.usd - 1.86035) < 1e-9
+      && Math.abs(lnRouteCE.toAmountUSD - (21.5 - 1.86035)) < 1e-9 && lnRouteCE.toAmount === "28879"
+      && btcRouteCE.entryCost === undefined);
+    const againCount = applyLnFirstReceiveCost([lnRouteCE], { firstReceive: true, btcUsd: 74414 });
+    ok("cheapest-entry: the entry cost is stamped once, and a returning user (or unknown state) is never charged it",
+      againCount === 0 && lnRouteCE.toAmountUSD < 21.5
+      && (() => { const r = { provider: "satora", toChainKey: "lightning", toChainId: SATORA_LIGHTNING_CHAIN_ID, toAmountUSD: 10 }; applyLnFirstReceiveCost([r], { firstReceive: false, btcUsd: 74414 }); return r.entryCost === undefined && r.toAmountUSD === 10; })()
+      && (() => { const r = { provider: "satora", toChainKey: "lightning", toChainId: SATORA_LIGHTNING_CHAIN_ID, toAmountUSD: 10 }; applyLnFirstReceiveCost([r], { firstReceive: true, btcUsd: null }); return r.entryCost?.sats === 2500 && r.entryCost.usd === undefined && r.toAmountUSD === 10; })());
+  }
+
+  // Marker re-resolution (pure).
+  {
+    const recCE = { legs: [
+      { fromChainKey: "arbitrum", toChainKey: "arkade", toAddress: ARKADE_SESSION_ADDRESS },
+      { fromChainKey: "arkade", toChainKey: "lightning", fromAddress: ARKADE_SESSION_ADDRESS, toAddress: LN_ADDR_CE },
+      { fromChainKey: "arbitrum", toChainKey: "arkade", toAddress: ARKADE_SESSION_ADDRESS },
+    ] };
+    const stillCE = resolveMilestoneArkadeAddresses(recCE, ARKADE_ADDR_CE);
+    ok("cheapest-entry: re-resolution points intermediate Arkade legs at the session address; a FINAL Arkade leg never takes the marker",
+      stillCE.length === 0 && recCE.legs[0].toAddress === ARKADE_ADDR_CE && recCE.legs[1].fromAddress === ARKADE_ADDR_CE
+      && recCE.legs[2].toAddress === ARKADE_SESSION_ADDRESS);
+    const recCE2 = { legs: [{ fromChainKey: "arkade", toChainKey: "bitcoin", fromAddress: ARKADE_SESSION_ADDRESS, toAddress: BTC_ADDR_CE }] };
+    ok("cheapest-entry: without a session address the marker legs are reported back (the runner parks them leg-due)",
+      resolveMilestoneArkadeAddresses(recCE2, null).length === 1 && recCE2.legs[0].fromAddress === ARKADE_SESSION_ADDRESS);
+  }
+
+  // The offboard quoter. ORDER MATTERS: the operator-program
+  // cache is module-level (60s), so the unparseable-programme
+  // refusal runs FIRST, while the cache is cold.
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("arkade.computer")) return jsonResCE({ fees: { intentFee: { offchainInput: "amount * 0.5", onchainInput: "", offchainOutput: "", onchainOutput: "200.0" }, txFeeRate: "0" }, dust: "330" });
+      if (u.includes("api.binance.com")) return jsonResCE([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+      if (u.includes("api.coingecko.com")) return jsonResCE({});
+      throw new Error("unexpected fetch in cheapest-entry stub: " + u);
+    };
+    try {
+      const r = await getArkadeOffboardRoute({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: ARKADE_ADDR_CE, toAddress: BTC_ADDR_CE });
+      ok("cheapest-entry: an unrecognised operator fee program quotes NO offboard — never a guessed fee", r === null);
+    } finally { globalThis.fetch = realFetch; }
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("arkade.computer")) return jsonResCE({ fees: LIVE_PROGRAM_CE, dust: "330" });
+      if (u.includes("api.binance.com")) return jsonResCE([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+      if (u.includes("api.coingecko.com")) return jsonResCE({});
+      throw new Error("unexpected fetch in cheapest-entry stub: " + u);
+    };
+    try {
+      const r = await getArkadeOffboardRoute({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: ARKADE_ADDR_CE, toAddress: BTC_ADDR_CE });
+      ok("cheapest-entry: the offboard quotes from the operator's live program (200 flat + 0.2% worst case), no Fluid fee inside an offboard",
+        !!r && r.provider === "arkade-offboard" && r.arkadeOffboard.feeSats === 400 && r.toAmount === "99600"
+        && r.platformFeeCollecting === false && r.executionDuration === 1800 && swapRouteExecutable(r).ok === true && swapRouteExecutable(r).arkadeOffboard === true);
+      const dust = await getArkadeOffboardRoute({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "500", fromAddress: ARKADE_ADDR_CE, toAddress: BTC_ADDR_CE });
+      const badAddr = await getArkadeOffboardRoute({ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: ARKADE_ADDR_CE, toAddress: "not-a-bitcoin-address" });
+      ok("cheapest-entry: an offboard whose output would sit at/below the operator dust, or to a non-address, is not quoted",
+        dust === null && badAddr === null
+        && arkadeOffboardSupportsPair({ fromChainKey: "arkade", toChainKey: "bitcoin" }) === true
+        && arkadeOffboardSupportsPair({ fromChainKey: "arkade", toChainKey: "lightning" }) === false
+        && arkadeOffboardSupportsPair({ fromChainKey: "arbitrum", toChainKey: "bitcoin" }) === false);
+      ok("cheapest-entry: the offboard gate refuses a fee at/above the amount it exits",
+        swapRouteExecutable({ ...r, arkadeOffboard: { ...r.arkadeOffboard, feeSats: 100000 } }).ok === false
+        && swapRouteExecutable({ ...r, fromChainId: 42161 }).ok === false);
+      const seenOff = [];
+      const out = await executeArkadeOffboardRoute({ route: r, btcAddress: BTC_ADDR_CE, amountSats: "100000", offboard: async (a) => { seenOff.push(a); return "arkoffboardtxid0001"; } });
+      let mismatchErr = null;
+      try { await executeArkadeOffboardRoute({ route: r, btcAddress: BTC_ADDR_CE, amountSats: "99999", offboard: async () => "x" }); } catch (e) { mismatchErr = e; }
+      let noInjErr = null;
+      try { await executeArkadeOffboardRoute({ route: r, btcAddress: BTC_ADDR_CE, amountSats: "100000" }); } catch (e) { noInjErr = e; }
+      ok("cheapest-entry: the offboard executor exits exactly the reviewed amount to the leg's own address, and refuses drift or a missing exit",
+        out[0] === "arkoffboardtxid0001" && seenOff.length === 1 && seenOff[0].btcAddress === BTC_ADDR_CE && seenOff[0].amountSats === 100000
+        && !!mismatchErr && !!noInjErr);
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // Family composition through a stubbed leg quoter: the
+  // search collects EVERY completed family composition (no
+  // duration race), the marker stands in for the unbooted
+  // session, and via-Arkade wins here on true net.
+  {
+    const seenLegArgsCE = [];
+    const legCE = (provider, toAmount, toAmountUSD, extra = {}) => ({
+      provider, id: "ce-" + provider + "-" + toAmount, type: "x", fromChainId: 56, toChainId: 42161,
+      fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 18 }, toToken: { address: "0x1", symbol: "Y", decimals: 6 },
+      toAmount, toAmountMin: toAmount, toAmountUSD, fromAmountUSD: 20, gasCostUSD: 0.01, routeFeeUsd: 0.01,
+      executionDuration: 300, platformFeeUsd: null, platformFeeCollecting: false, platformFeeBps: null, steps: [], ...extra,
+    });
+    const searchLegCE = async (a) => {
+      seenLegArgsCE.push(a);
+      const key = a.fromChainKey + "->" + a.toChainKey;
+      if (key === "bsc->arbitrum") return [legCE("relay", "20000000", 20, { fromAmount: a.fromAmount, relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] }, fromToken: { address: a.fromTokenAddress, symbol: "BNB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+      if (key === "arbitrum->bitcoin") return [legCE("satora", "28900", 21.51, { fromAmount: a.fromAmount, fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { destKey: "bitcoin", destInput: a.toAddress } })];
+      if (key === "arbitrum->arkade") return [legCE("satora", "29180", 21.72, { fromAmount: a.fromAmount, fromChainId: 42161, toChainId: SATORA_ARKADE_CHAIN_ID, fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, satora: { destKey: "arkade", destInput: a.toAddress } })];
+      if (key === "arkade->bitcoin") { const fee = 200 + Math.ceil(Number(a.fromAmount) * 0.002); return [legCE("arkade-offboard", String(Number(a.fromAmount) - fee), (Number(a.fromAmount) - fee) * 74414 / 1e8, { fromAmount: a.fromAmount, fromChainId: SATORA_ARKADE_CHAIN_ID, toChainId: SATORA_BITCOIN_CHAIN_ID, fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, executionDuration: 1800, arkadeOffboard: { feeSats: fee, dustSats: 330, btcUsd: 74414 } })]; }
+      throw new Error("No available quotes for the requested transfer");
+    };
+    const composedCE = await searchMilestoneCompositions(bscBtcArgsCE, { searchLeg: searchLegCE, pricesUsd: { BTC: 74414 } });
+    const viaCE = composedCE.find(r => r.milestone.legs.some(l => l.toChainKey === "arkade"));
+    const directCE = composedCE.find(r => r.milestone.legs.every(l => l.toChainKey !== "arkade"));
+    ok("cheapest-entry: a Bitcoin-family search returns EVERY completed door composition (direct + via-Arkade), not a duration-race winner",
+      composedCE.length === 2 && !!viaCE && !!directCE && directCE.toAmount === "28900" && viaCE.milestone.legs.length === 3);
+    ok("cheapest-entry: the via-Arkade composition nets MORE than the direct door at this size (28921 > 28900) — cheapest-first, honestly ranked",
+      viaCE.toAmount === "28921" && viaCE.milestone.legs[2].provider === "arkade-offboard" && viaCE.milestone.label.includes("arkade"));
+    ok("cheapest-entry: with no Arkade session in the book, the intermediate legs preview against the deferred marker — never a guessed address",
+      viaCE.milestone.legs[1].toAddress === ARKADE_SESSION_ADDRESS && viaCE.milestone.legs[2].fromAddress === ARKADE_SESSION_ADDRESS
+      && seenLegArgsCE.some(a => a.toChainKey === "arkade" && a.toAddress === ARKADE_SESSION_ADDRESS));
+    const directOnlyCE = await searchMilestoneCompositions(bscBtcArgsCE, { searchLeg: async (a) => { if (a.toChainKey === "arkade" || a.fromChainKey === "arkade") throw new Error("no arkade legs"); return searchLegCE(a); }, pricesUsd: { BTC: 74414 } });
+    ok("cheapest-entry: when the Arkade door does not quote, the family search returns just the direct composition",
+      directOnlyCE.length === 1 && directOnlyCE[0].toAmount === "28900");
+  }
+
+  // getSwapRoutes: the direct answer merges with via-Arkade
+  // compositions for family destinations; a below-floor direct
+  // refusal falls through to the composition before standing.
+  {
+    const directBtcCE = { provider: "satora", type: "satora", fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "28900", toAmountUSD: 21.51, satora: { destKey: "bitcoin", destInput: BTC_ADDR_CE }, platformFeeCollecting: true, steps: [] };
+    const viaCompCE = { provider: "milestone", type: "composite", fromChainId: 42161, toChainId: SATORA_BITCOIN_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "28921", toAmountUSD: 21.53, milestone: { label: "USDC → BTC on Arkade → BTC on Bitcoin", legs: [{ fromChainKey: "arbitrum", toChainKey: "arkade" }, { fromChainKey: "arkade", toChainKey: "bitcoin" }] }, milestoneLegRoutes: [] };
+    const arbBtcArgsCE = { fromChainKey: "arbitrum", toChainKey: "bitcoin", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: BTC_ADDR_CE };
+    const mergedCE = await getSwapRoutes(arbBtcArgsCE, { directSearch: async () => [directBtcCE], compositionSearch: async () => [viaCompCE] });
+    ok("cheapest-entry: the dispatcher merges the via-Arkade composition into a direct Satora answer and ranks it first on true net",
+      mergedCE.length === 2 && mergedCE[0].provider === "milestone" && mergedCE[1].provider === "satora");
+    const floorErrCE = new Error("Satora's minimum for Bitcoin is 10000 sats"); floorErrCE.satoraBelowFloor = { destKey: "bitcoin", minSats: 10000 };
+    const belowCE = await getSwapRoutes({ ...arbBtcArgsCE, fromAmount: "5000000" }, { directSearch: async () => { throw floorErrCE; }, compositionSearch: async () => [viaCompCE] });
+    ok("cheapest-entry: below the direct door's 10,000-sat floor, a via-Arkade composition answers instead of the refusal",
+      belowCE.length === 1 && belowCE[0].provider === "milestone");
+    let rethrownCE = null;
+    try { await getSwapRoutes({ ...arbBtcArgsCE, fromAmount: "5000000" }, { directSearch: async () => { throw floorErrCE; }, compositionSearch: async () => [] }); } catch (e) { rethrownCE = e; }
+    ok("cheapest-entry: when nothing composes below the floor, the floor refusal stands (with the sheet's way-through)",
+      !!rethrownCE && rethrownCE.satoraBelowFloor?.destKey === "bitcoin");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return jsonResCE([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+      if (u.includes("api.coingecko.com")) return jsonResCE({});
+      throw new Error("unexpected fetch in cheapest-entry stub: " + u);
+    };
+    try {
+      const lnDirectCE = { provider: "satora", type: "satora", fromChainId: 42161, toChainId: SATORA_LIGHTNING_CHAIN_ID, fromAmount: "20000000", fromToken: { address: ARB_USDC_CE, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 }, toAmount: "29180", toAmountUSD: 21.72, satora: { destKey: "lightning", destInput: LN_ADDR_CE }, platformFeeCollecting: true, steps: [] };
+      const lnArgsCE = { fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_CE, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: EVM_CE, toAddress: LN_ADDR_CE, lightningFirstReceive: true };
+      const stampedRoutesCE = await getSwapRoutes(lnArgsCE, { directSearch: async () => [structuredClone(lnDirectCE)], compositionSearch: async () => [] });
+      ok("cheapest-entry: the dispatcher stamps the first-receive channel cost only when the wallet state says so",
+        stampedRoutesCE[0].entryCost?.sats === 2500 && Math.abs(stampedRoutesCE[0].toAmountUSD - (21.72 - 1.86035)) < 1e-6 && stampedRoutesCE[0].toAmount === "29180");
+      const unstampedCE = await getSwapRoutes({ ...lnArgsCE, lightningFirstReceive: false }, { directSearch: async () => [structuredClone(lnDirectCE)], compositionSearch: async () => [] });
+      ok("cheapest-entry: a channel-holding wallet's routes are never inflated by the one-time cost",
+        unstampedCE[0].entryCost === undefined && unstampedCE[0].toAmountUSD === 21.72);
+    } finally { globalThis.fetch = realFetch; }
+  }
+}
+
+// §106 (continued): stubbed END-TO-END via-Arkade execution.
+// Arbitrum USDC -> Arkade -> Lightning, composed by the REAL
+// search against a stubbed Satora (marker preview — no session
+// in the book), then executed by the REAL milestone runner
+// through injected Arkade hands: the creation must name the
+// RE-RESOLVED session address (never the marker), the
+// intermediate leg completes through the claim, whose amount
+// becomes the Arkade -> Lightning leg's input, funded through
+// the injected VHTLC send.
+{
+  const PHRASE_CE2 = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const identityCE2 = satoraSwapClaimKey(PHRASE_CE2, 0);
+  const ARB_USDC_CE2 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const WBTC_ARB_CE2 = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f";
+  const BTC_ADDR_CE2 = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+  const ARKADE_ADDR_CE2 = "ark1qz8y9x0w7v6u5t4s3r2q1p0o9n8m7l6k5j4h3g2f1d0s9a8b7c6d5e4f3g2h1j";
+  const LN_ADDR_CE2 = "user@wallet.example";
+  const LOCKTIME_CE2 = Math.floor(Date.now() / 1000) + 86400;
+  const FUND_TX_CE2 = "0x" + "ef".repeat(32);
+  const SERVER_PK_CE2 = "75653010502f8aa3c4548eb589c094503b7f03bbceb0cf13d872f58db9fed633";
+  const jsonResCE2 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const storageCE2 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  const walletCE2 = await unlockVault((await importVault(PHRASE_CE2, "password123")).keystore, "password123");
+  const seenCE2 = { creates: [], funds: [] };
+  let lastEvmArkQuoteCE2 = null; // fee-bearing 42161->Arkade quote outcome
+  let lastLnFluidCE2 = 0;        // fee-bearing Arkade->Lightning fluid sats
+  let lastArkLnBaseFeeCE2 = 0;   // fee-free Arkade->Lightning protocol + network
+  const foldCE2 = (base, extra) => {
+    const extraSats = Math.round(Number(base.protocol_fee) * extra / (Number(base.protocol_fee_rate) * 10000));
+    return { extraSats, quote: { ...base, protocol_fee: Number(base.protocol_fee) + extraSats, protocol_fee_rate: Number(base.protocol_fee_rate) + extra / 10000, net_target_amount: String(Number(base.net_target_amount) - extraSats) } };
+  };
+  const quoteEvmArkCE2 = { exchange_rate: "68189.56699624957381520627344", network_fee: 4, gasless_network_fee: 0, protocol_fee: 146, protocol_fee_rate: 0.005, min_amount: 335, max_amount: 20000000, source_amount: "20000000", target_amount: "29330", net_source_amount: "20000000", net_target_amount: "29180" };
+  const quoteEvmLnCE2 = { ...quoteEvmArkCE2, min_amount: 356, net_target_amount: "29184" };
+  // Self-consistent at any size: protocol = 0.3% of source
+  // (the pair's rate), net = source - protocol - network —
+  // the parsers refuse quotes whose fee stack doesn't
+  // reconcile with their own rate, exactly as they should.
+  const quoteArkLnCE2 = (src) => { const protocol = Math.round(src * 0.003); return { exchange_rate: "1.0", network_fee: 1, gasless_network_fee: 0, protocol_fee: protocol, protocol_fee_rate: 0.003, min_amount: 335, max_amount: 1000000, source_amount: String(src), target_amount: String(src), net_source_amount: String(src), net_target_amount: String(src - protocol - 1) }; };
+  const pairsCE2 = [
+    { source: "42161", target: "Arkade", min_sats: 335, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 4 },
+    { source: "42161", target: "Lightning", min_sats: 356, max_sats: 20000000, fee_percentage: 0.005, network_fee_sats: 0 },
+    { source: "Arkade", target: "Lightning", min_sats: 335, max_sats: 1000000, fee_percentage: 0.003, network_fee_sats: 1 },
+  ];
+  const createEvmArkCE2 = (body) => ({
+    id: "ce-evm-ark-1", status: "pending", fee_sats: lastEvmArkQuoteCE2.feeTotal, hash_lock: body.hash_lock,
+    source_token: { token_id: ARB_USDC_CE2, symbol: "USDC", chain: "42161", decimals: 6 },
+    target_token: { token_id: "btc", symbol: "BTC", chain: "Arkade", decimals: 8 },
+    evm_chain_id: 42161, source_amount: "20000000", target_amount: lastEvmArkQuoteCE2.netTarget, evm_expected_sats: lastEvmArkQuoteCE2.netTarget,
+    evm_htlc_address: "0x6C38bF44A327bf36BfbeFcedc514c0FB3Fec6748", evm_htlc_version: 7, evm_htlc_kind: "erc20",
+    evm_coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f",
+    client_evm_address: walletCE2.address, server_evm_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    evm_refund_locktime: LOCKTIME_CE2, btc_vhtlc_address: "ark1qrealvhtlcaddressfortestingpurposes0000000000000000000000001",
+    sender_pk: SERVER_PK_CE2, receiver_pk: body.receiver_pk, arkade_server_pk: "02" + SERVER_PK_CE2,
+    vhtlc_refund_locktime: LOCKTIME_CE2 + 3600, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, arkade_htlc_script_version: 1,
+    target_arkade_address: body.target_address, user_id: body.user_id, user_address: walletCE2.address, gasless: true,
+  });
+  const createArkLnCE2 = (body) => ({
+    id: "ce-ark-ln-1", status: "pending", fee_sats: lastArkLnBaseFeeCE2 + lastLnFluidCE2, hash_lock: "0x" + "42".repeat(32),
+    source_amount: String(body.source_amount_sats), target_amount: String(body.source_amount_sats),
+    arkade_vhtlc_address: "ark1qrealvhtlcaddressfortestingpurposes0000000000000000000000001",
+    sender_pk: body.refund_pk, receiver_pk: SERVER_PK_CE2, arkade_server_pk: "02" + SERVER_PK_CE2,
+    vhtlc_refund_locktime: LOCKTIME_CE2 + 3600, unilateral_claim_delay: 605184, unilateral_refund_delay: 778240,
+    unilateral_refund_without_receiver_delay: 778240, arkade_htlc_script_version: 1,
+    client_lightning_invoice: "lnbc1ceinvoice", user_id: body.user_id,
+  });
+  const approveCE2 = new ethers.Interface(["function approve(address,uint256)"]).encodeFunctionData("approve", ["0x1111111111111111111111111111111111111111", 20000000n]);
+  const callsCE2 = [
+    { target: ARB_USDC_CE2, value: "0", call_data: approveCE2 },
+    { target: "0x1111111111111111111111111111111111111111", value: "0", call_data: "0xc04b8d59" + ARB_USDC_CE2.slice(2).toLowerCase() + WBTC_ARB_CE2.slice(2).toLowerCase() },
+  ];
+  const compCE2 = { coordinator_address: "0xb79118233552d4b7eD5c8D2d1E2BbA7e8eecb71f", htlc_kind: "erc20", htlc_version: 7, permit2_address: "0x000000000022D473030F116dDEE9F6B43aC78BA3", source_amount: "20000000", source_token_address: ARB_USDC_CE2, lock_token_address: WBTC_ARB_CE2, preimage_hash: identityCE2.hashLock, claim_address: "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac", timelock: LOCKTIME_CE2, calls: callsCE2, calls_hash: satoraCallsHash(callsCE2) };
+  const stubCE2 = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResCE2([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+    if (u.includes("api.coingecko.com")) return jsonResCE2({});
+    if (u.includes("arkade.computer")) return jsonResCE2({ fees: { intentFee: { offchainInput: "inputType == 'vtxo' && expiry - now() > 2505216.0? amount * 0.002: 0.0", onchainInput: "", offchainOutput: "", onchainOutput: "200.0" }, txFeeRate: "0" }, dust: "330" });
+    if (u.includes("api.satora.io/version")) return jsonResCE2({ tag: "backend-v0.3.26", commit_hash: "6ec950ae" });
+    if (u.includes("api.satora.io/status")) return jsonResCE2({ healthy: true, swaps_paused: false });
+    if (u.includes("api.satora.io/swap-pairs")) return jsonResCE2(pairsCE2);
+    if (u.includes("api.satora.io/quote")) {
+      const p = new URL(u).searchParams;
+      const extra = Number(p.get("extra_fees") || 0);
+      if (p.get("source_chain") === "42161" && p.get("target_chain") === "Arkade") {
+        if (extra > 0) { const f = foldCE2(quoteEvmArkCE2, extra); lastEvmArkQuoteCE2 = { netTarget: f.quote.net_target_amount, feeTotal: Number(f.quote.protocol_fee) + 4 }; return jsonResCE2(f.quote); }
+        return jsonResCE2(quoteEvmArkCE2);
+      }
+      if (p.get("source_chain") === "42161" && p.get("target_chain") === "Lightning") {
+        if (extra > 0) return jsonResCE2(foldCE2(quoteEvmLnCE2, extra).quote);
+        return jsonResCE2(quoteEvmLnCE2);
+      }
+      if (p.get("source_chain") === "Arkade" && p.get("target_chain") === "Lightning") {
+        const base = quoteArkLnCE2(Number(p.get("source_amount")));
+        if (extra > 0) { const f = foldCE2(base, extra); lastLnFluidCE2 = f.extraSats; return jsonResCE2(f.quote); }
+        lastArkLnBaseFeeCE2 = Number(base.protocol_fee) + Number(base.network_fee);
+        return jsonResCE2(base);
+      }
+      throw new Error("unexpected quote in cheapest-entry e2e stub: " + u);
+    }
+    if (u.includes("swap-and-lock-calldata-permit2")) return jsonResCE2(compCE2);
+    if (u.includes("fund-gasless")) { seenCE2.funds.push(JSON.parse(opts.body || "{}")); return jsonResCE2({ id: "ce-evm-ark-1", status: "clientfundingseen", tx_hash: FUND_TX_CE2 }); }
+    if (u.includes("api.satora.io/swap/evm/arkade")) { const b = JSON.parse(opts.body || "{}"); seenCE2.creates.push({ kind: "evm-arkade", body: b }); return jsonResCE2(createEvmArkCE2(b)); }
+    if (u.includes("api.satora.io/swap/arkade/lightning")) { const b = JSON.parse(opts.body || "{}"); seenCE2.creates.push({ kind: "arkade-lightning", body: b }); return jsonResCE2(createArkLnCE2(b)); }
+    if (u.includes("api.satora.io/swap/")) return jsonResCE2({ id: "ce-evm-ark-1", status: "clientfundingseen" });
+    throw new Error("unexpected fetch in cheapest-entry e2e stub: " + u);
+  };
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = stubCE2;
+  try {
+    resetSatoraCaches();
+    const foundCE2 = await searchMilestoneCompositions({ fromChainKey: "arbitrum", toChainKey: "lightning", fromTokenAddress: ARB_USDC_CE2, toTokenAddress: "btc", fromAmount: "20000000", fromAddress: walletCE2.address, toAddress: LN_ADDR_CE2, addresses: { arbitrum: walletCE2.address } });
+    const viaLnCE2 = foundCE2.find(r => r.milestone.legs.some(l => l.toChainKey === "arkade"));
+    ok("cheapest-entry e2e: the real search composes Arbitrum USDC -> Arkade -> Lightning, previewed against the marker (no session in the book)",
+      !!viaLnCE2 && viaLnCE2.milestone.legs.length === 2 && viaLnCE2.milestone.legs[0].toAddress === ARKADE_SESSION_ADDRESS && viaLnCE2.milestone.legs[1].fromChainKey === "arkade");
+    const plannedCE2 = viaLnCE2.milestone.legs[1].fromAmount;
+    const storageE2E = storageCE2();
+    const fundSeenCE2 = [], claimSeenCE2 = [];
+    const outCE2 = await executeMilestoneRoute(walletCE2, viaLnCE2, () => {}, { storage: storageE2E,
+      fundVhtlc: async (a) => { fundSeenCE2.push(a); return "arkfundtxid0001"; },
+      arkadeClaimPayout: async ({ hashes }) => { claimSeenCE2.push(hashes); return { claimedSats: Number(plannedCE2) }; },
+      arkadeAddress: ARKADE_ADDR_CE2 });
+    const savedCE2 = loadMilestoneRecords(storageE2E)[0];
+    const evmArkCreateCE2 = seenCE2.creates.find(c => c.kind === "evm-arkade");
+    const arkLnCreateCE2 = seenCE2.creates.find(c => c.kind === "arkade-lightning");
+    ok("cheapest-entry e2e: the via-Arkade composition executes end to end through the milestone runner",
+      outCE2.done === true && savedCE2.state === "done" && savedCE2.legs[1].fromAmount === plannedCE2);
+    ok("cheapest-entry e2e: the into-Arkade creation named the RE-RESOLVED session address — never the marker",
+      !!evmArkCreateCE2 && evmArkCreateCE2.body.target_address === ARKADE_ADDR_CE2);
+    ok("cheapest-entry e2e: the intermediate leg completed through the claim (against the funding hash), and the claimed amount funded the Arkade -> Lightning leg",
+      claimSeenCE2.length >= 1 && claimSeenCE2[0].includes(FUND_TX_CE2)
+      && fundSeenCE2.length === 1 && fundSeenCE2[0].amountSats === Number(plannedCE2)
+      && !!arkLnCreateCE2 && Number(arkLnCreateCE2.body.source_amount_sats) === Number(plannedCE2));
+  } finally { globalThis.fetch = realFetch; }
+
+  // An offboard-final record completes through the injected
+  // operator exit; a marker record with no session parks
+  // leg-due without touching any injection.
+  {
+    const storageG = storageCE2();
+    saveMilestoneRecord(storageG, newMilestoneRecord({ id: "ce-offboard-1", label: "BTC on Arkade → BTC on Bitcoin", state: "leg-due", currentLeg: 0,
+      legs: [{ fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromSymbol: "BTC", toSymbol: "BTC", fromAmount: "100000", fromAddress: ARKADE_ADDR_CE2, toAddress: BTC_ADDR_CE2, provider: "arkade-offboard", expectedToAmount: "99600" }] }));
+    globalThis.fetch = stubCE2;
+    try {
+      const offSeenG = [];
+      const outG = await completeMilestoneSwap({ mnemonic: { phrase: PHRASE_CE2 } }, "ce-offboard-1", () => {}, { storage: storageG, arkadeOffboard: async (a) => { offSeenG.push(a); return "arkoffboardtxid0001"; } });
+      ok("cheapest-entry e2e: an Arkade -> Bitcoin (offboard) final leg completes through the injected operator exit at the reviewed amount",
+        outG.done === true && offSeenG.length === 1 && offSeenG[0].btcAddress === BTC_ADDR_CE2 && offSeenG[0].amountSats === 100000);
+    } finally { globalThis.fetch = realFetch; }
+    const storageH = storageCE2();
+    saveMilestoneRecord(storageH, newMilestoneRecord({ id: "ce-park-1", label: "BTC on Arkade → Lightning", state: "leg-due", currentLeg: 0,
+      legs: [{ fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc", toTokenAddress: "btc", fromSymbol: "BTC", toSymbol: "BTC", fromAmount: "29180", fromAddress: ARKADE_SESSION_ADDRESS, toAddress: LN_ADDR_CE2, provider: "satora", expectedToAmount: "28879" }] }));
+    let parkErrCE = null, fundCallsH = 0;
+    try { await completeMilestoneSwap({ mnemonic: { phrase: PHRASE_CE2 } }, "ce-park-1", () => {}, { storage: storageH, fundVhtlc: async () => { fundCallsH++; return "x"; } }); } catch (e) { parkErrCE = e; }
+    ok("cheapest-entry e2e: a via-Arkade record whose session never loaded parks leg-due with the reason — no creation, no funding",
+      !!parkErrCE && parkErrCE.milestoneLegDue === true && fundCallsH === 0 && loadMilestoneRecords(storageH)[0].state === "leg-due");
+  }
+
+  // The advancer completes an intermediate Arkade leg through
+  // the claim injection alone (indexer truth), and leaves the
+  // record untouched without it.
+  {
+    const mkRecCE = () => newMilestoneRecord({ id: "ce-adv-1", label: "USDC → BTC on Arkade → Lightning", state: "awaiting-credit", currentLeg: 0, pendingLeg: 0, hashes: [FUND_TX_CE2],
+      legs: [
+        { fromChainKey: "arbitrum", toChainKey: "arkade", fromTokenAddress: ARB_USDC_CE2, toTokenAddress: "btc", fromSymbol: "USDC", toSymbol: "BTC", fromAmount: "20000000", fromAddress: walletCE2.address, toAddress: ARKADE_ADDR_CE2, provider: "satora", expectedToAmount: "29180" },
+        { fromChainKey: "arkade", toChainKey: "lightning", fromTokenAddress: "btc", toTokenAddress: "btc", fromSymbol: "BTC", toSymbol: "BTC", fromAmount: "1", fromAddress: ARKADE_ADDR_CE2, toAddress: LN_ADDR_CE2, provider: "satora", expectedToAmount: "28879" },
+      ] });
+    const storageI = storageCE2();
+    saveMilestoneRecord(storageI, mkRecCE());
+    const changedI = await advanceMilestoneRecords(storageI, { arkadeClaimPayout: async () => ({ claimedSats: 29180 }) });
+    const advCE = loadMilestoneRecords(storageI)[0];
+    ok("cheapest-entry: the advancer completes an intermediate Arkade leg from the claim's own amount and stages the next leg",
+      changedI === 1 && advCE.state === "leg-due" && advCE.currentLeg === 1 && advCE.legs[1].fromAmount === "29180" && advCE.receivedRaw === "29180");
+    const storageI2 = storageCE2();
+    saveMilestoneRecord(storageI2, mkRecCE());
+    const changedI2 = await advanceMilestoneRecords(storageI2);
+    ok("cheapest-entry: without the claim injection the advancer leaves an intermediate Arkade record exactly as it was",
+      changedI2 === 0 && loadMilestoneRecords(storageI2)[0].state === "awaiting-credit");
+  }
+
+  // Source pins: the sheet wires the injections, the wallet-
+  // state input, the entry-cost line and the shared claim.
+  {
+    const appSrcCE = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const docsCE = readFileSync(new URL("../docs/SWAPS.md", import.meta.url), "utf8");
+    ok("cheapest-entry: the sheet wires the milestone Arkade injections + session address into both execution entry points",
+      appSrcCE.includes("milestoneArkadeInjections()") && appSrcCE.includes("arkadeAddress: arkSession?.address || null")
+      && appSrcCE.includes("claimSatoraArkadeDestRecord") && appSrcCE.includes("arkadeClaimPayout: milestoneArkadeInjections().arkadeClaimPayout"));
+    ok("cheapest-entry: the sheet supplies the Lightning first-receive wallet state and states the counted cost on the card",
+      appSrcCE.includes("lightningFirstReceive: lnFirstReceive") && appSrcCE.includes("counted because your Lightning wallet has no channel yet")
+      && appSrcCE.includes("syncArkadeWarn(ranked)"));
+    ok("cheapest-entry: SWAPS.md documents the doors, the offboard leg and the not-composed Lightning intermediate",
+      docsCE.includes("Cheapest entry") && docsCE.includes("offboard") && docsCE.includes("2,500"));
+  }
+}
+
+// ============================================================
+// 107. Composition fixes (2026-11-14) — closing the any-to-any
+// sweep's structural SURPRISE families B, C and D, the
+// leg-down fast-fail, and the Arkade operator-info retry.
+// Sweep evidence: research_notes/fluid-any-to-any-matrix-
+// 20261114/report.md. All legs below are injected fakes in
+// the house pattern; the live re-probes of the same cells
+// are recorded in research_notes/fluid-composition-fixes-
+// 20261114/report.md.
+// ============================================================
+{
+  const FX_EVM = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const FX_TRON = "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf";
+  const FX_SUI = "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831";
+  const FX_BTC_ADDR = bitcoinTaprootAddress("legal winner thank year wave sausage worth useful legal winner thank yellow");
+  const FX_BOOK = { ethereum: FX_EVM, bsc: FX_EVM, base: FX_EVM, arbitrum: FX_EVM, polygon: FX_EVM, optimism: FX_EVM, avalanche: FX_EVM, linea: FX_EVM, tron: FX_TRON, sui: FX_SUI, bitcoin: FX_BTC_ADDR };
+  const FX_BTCB = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c";
+  const FX_BSC_USDC = NETWORKS.bsc.tokens.find(t => t.symbol === "USDC").address;
+  const FX_BSC_USDT = NETWORKS.bsc.tokens.find(t => t.symbol === "USDT").address;
+  const FX_BASE_USDC = NETWORKS.base.tokens.find(t => t.symbol === "USDC").address;
+  const FX_ARB_USDC = NETWORKS.arbitrum.tokens.find(t => t.symbol === "USDC").address;
+  const FX_POLYGON_USDC = NETWORKS.polygon.tokens.find(t => t.symbol === "USDC").address;
+  const FX_SUI_USDC = SUI_TOKENS[0].address;
+  const FX_TRON_USDC = TRON_TOKENS.find(t => t.symbol === "USDC").address;
+  const FX_TRON_USDT = TRON_TOKENS.find(t => t.symbol === "USDT").address;
+  const fxLeg = (id, provider, toAmount, dur, extra = {}) => ({
+    provider, id, type: "x", fromChainId: 56, toChainId: 8453,
+    fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 6 },
+    toToken: { address: "0x1", symbol: "Y", decimals: 6 },
+    toAmount, toAmountMin: toAmount, toAmountUSD: Number(toAmount) / 1e6, fromAmountUSD: 10,
+    gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: dur,
+    platformFeeUsd: 0.001, platformFeeCollecting: true, platformFeeBps: 10, steps: [], ...extra,
+  });
+  const FX_RELAY = { relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
+  const FX_RELAY_TRON = { relay: { originChainId: RELAY_TRON_CHAIN_ID, steps: [{ kind: "transaction", items: [{ data: { parameter: { owner_address: "41" + "00".repeat(20), contract_address: "41" + "11".repeat(20), data: "a9059cbb000000000000000000000000" } } }] }] } };
+  const FX_MAYAN = { mayan: { quote: { id: "fxq" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "base" } };
+  const FX_CETUS = { cetus: { routerData: { quoteID: "fx1" }, paths: [{ provider: "CETUS", id: "p1" }], aggregatorPackage: CETUS_AGGREGATOR_PACKAGE, quoteID: "fx1" }, fromChainId: SUI_SWAP_CHAIN_ID, toChainId: SUI_SWAP_CHAIN_ID };
+
+  // ---- Family C: shape generation ----
+  const FX_BTCB_SUI_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: FX_BTCB, toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "8000000000000", fromAddress: FX_EVM, toAddress: FX_SUI, addresses: FX_BOOK };
+  const anchC = milestoneAnchoredShapes(FX_BTCB_SUI_ARGS);
+  ok("fixes C: anchored shapes re-source the Sui branch's inbound through the origin's own stables (four-leg USDC-anchor shape, USDT-anchor variants, never over four legs) — and only for family destinations with a same-chain anchor",
+    anchC.length >= 2 && anchC.every(s => s.length <= 4)
+    && anchC.some(s => s.length === 4 && s[0].fromChainKey === "bsc" && s[0].toChainKey === "bsc" && s[0].toTokenAddress === FX_BSC_USDC
+      && s[1].fromTokenAddress === FX_BSC_USDC && s[1].toChainKey === "base" && s[3].toChainKey === "sui")
+    && anchC.some(s => s[0].toTokenAddress === FX_BSC_USDT)
+    && milestoneAnchoredShapes({ ...FX_BTCB_SUI_ARGS, toChainKey: "tron", toTokenAddress: FX_TRON_USDT }).length === 0
+    && milestoneAnchoredShapes({ fromChainKey: "bitcoin", toChainKey: "sui", fromTokenAddress: "btc", toTokenAddress: SUI_SWAP_NATIVE_TOKEN }).length === 0
+    && milestoneAnchoredShapes({ ...FX_BTCB_SUI_ARGS, fromChainKey: "arkade", fromTokenAddress: "btc" }).length === 0);
+
+  // ---- Family C: composition through the anchored inbound.
+  // The stub serves ONLY the anchored path — the classic
+  // first leg (BTCB straight into a hub's USDC) throws, as it
+  // does live.
+  const fxSearchC = async (a) => {
+    if (a.fromChainKey === "bsc" && a.toChainKey === "bsc" && a.fromTokenAddress === FX_BTCB) return [fxLeg("c0", "relay", "9900000", 10, { ...FX_RELAY, fromToken: { address: FX_BTCB, symbol: "BTCB", decimals: 18 }, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "bsc" && a.toChainKey === "base" && a.fromTokenAddress !== FX_BTCB) return [fxLeg("c1", "mayan", "9850000", 20, { mayan: { quote: { id: "c1q" }, tx: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x" }, fromChainName: "bsc" }, fromToken: { address: a.fromTokenAddress, symbol: "USDC", decimals: 6 }, toToken: { address: FX_BASE_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fxLeg("c2", "mayan", "9800000", 30, { ...FX_MAYAN, toToken: { address: FX_SUI_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [fxLeg("c3", "cetus", "12000000000", 10, { ...FX_CETUS, toToken: { address: SUI_SWAP_NATIVE_TOKEN, symbol: "SUI", decimals: 9 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedC = await searchMilestoneCompositions(FX_BTCB_SUI_ARGS, { searchLeg: fxSearchC, pricesUsd: { SUI: 0.8 } });
+  ok("fixes C: BTCB→SUI composes end-to-end through the anchored inbound (Relay anchor → Mayan crossings → Cetus finish), fee the sum of the legs', duration the honest sum",
+    composedC.length === 1 && composedC[0].milestone.legs.length === 4
+    && composedC[0].milestone.label === "BTCB → USDC → USDC on Base → USDC on Sui → SUI"
+    && composedC[0].toAmount === "12000000000"
+    && Math.abs(composedC[0].platformFeeUsd - 0.004) < 1e-9 && composedC[0].platformFeeCollecting === true
+    && composedC[0].executionDuration === 130 && composedC[0].executionDuration > MILESTONE_FAST_TOTAL_SEC
+    && swapRouteExecutable(composedC[0]).ok === true);
+  const composedC2 = await searchMilestoneCompositions({ ...FX_BTCB_SUI_ARGS, toTokenAddress: FX_SUI_USDC }, { searchLeg: fxSearchC, pricesUsd: { SUI: 0.8 } });
+  ok("fixes C: BTCB→USDC on Sui composes through the same anchored inbound in three legs",
+    composedC2.length === 1 && composedC2[0].milestone.legs.length === 3
+    && composedC2[0].milestone.label === "BTCB → USDC → USDC on Base → USDC on Sui"
+    && composedC2[0].toAmount === "9800000" && swapRouteExecutable(composedC2[0]).ok === true);
+
+  // ---- Family B: shapes + composition ----
+  const fxBtcTronShapes = milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: FX_TRON_USDT, fromAmount: "14851" });
+  ok("fixes B: BTC/LN→Tron shapes keep the classic hub tail first and append the alternate-anchor finish (cross into Tron's USDT — the stable that actually crosses)",
+    fxBtcTronShapes[0].length === 3 && fxBtcTronShapes[0][1].toTokenAddress === FX_TRON_USDC
+    && fxBtcTronShapes.some(s => s.length === 2 && s[0].toChainKey === "polygon" && s[1].toChainKey === "tron" && s[1].toTokenAddress === FX_TRON_USDT)
+    && milestoneShapes({ fromChainKey: "lightning", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: FX_TRON_USDT, fromAmount: "14851" })
+      .some(s => s.length === 2 && s[1].toTokenAddress === FX_TRON_USDT));
+  const fxSearchB = async (a) => {
+    if (a.fromChainKey === "bitcoin" && a.toChainKey === "polygon") return [fxLeg("b0", "satora", "9763716", 3600, { satora: { sourceKey: "bitcoin", destKey: "evm", destInput: FX_EVM }, fromChainId: SATORA_BITCOIN_CHAIN_ID, fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, toToken: { address: FX_POLYGON_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "lightning" && a.toChainKey === "polygon") return [fxLeg("b1", "satora", "9800000", 60, { satora: { sourceKey: "lightning", destKey: "evm", destInput: FX_EVM }, fromChainId: SATORA_LIGHTNING_CHAIN_ID, fromToken: { address: "btc", symbol: "BTC", decimals: 8 }, toToken: { address: FX_POLYGON_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "polygon" && a.toChainKey === "tron" && a.toTokenAddress === FX_TRON_USDT) return [fxLeg("b2", "relay", "9700000", 20, { relay: { originChainId: 137, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] }, fromChainId: 137, toChainId: TRON_SWAP_CHAIN_ID, toToken: { address: FX_TRON_USDT, symbol: "USDT", decimals: 6 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedB = await searchMilestoneCompositions({ fromChainKey: "bitcoin", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: FX_TRON_USDT, fromAmount: "14851", fromAddress: FX_BTC_ADDR, toAddress: FX_TRON, addresses: FX_BOOK }, { searchLeg: fxSearchB, pricesUsd: { BTC: 95000 } });
+  ok("fixes B: BTC→Tron USDT composes through the alternate anchor (Satora into Polygon USDC, Relay across into Tron's USDT)",
+    composedB.length === 1 && composedB[0].milestone.legs.length === 2
+    && composedB[0].milestone.label === "BTC → USDC on Polygon → USDT on Tron"
+    && composedB[0].toAmount === "9700000" && swapRouteExecutable(composedB[0]).ok === true);
+  const composedB2 = await searchMilestoneCompositions({ fromChainKey: "lightning", toChainKey: "tron", fromTokenAddress: "btc", toTokenAddress: FX_TRON_USDT, fromAmount: "14851", fromAddress: "lnprobe@example.com", toAddress: FX_TRON, addresses: FX_BOOK }, { searchLeg: fxSearchB, pricesUsd: { BTC: 95000 } });
+  ok("fixes B: LN→Tron USDT composes through the same alternate anchor",
+    composedB2.length === 1 && composedB2[0].milestone.legs.length === 2
+    && composedB2[0].milestone.label === "BTC → USDC on Polygon → USDT on Tron"
+    && swapRouteExecutable(composedB2[0]).ok === true);
+
+  // ---- Family D: compositions ----
+  const fxSearchD = async (a) => {
+    if (a.fromChainKey === "tron" && a.toChainKey === "tron") return [fxLeg("d0", "sunswap", "9900000", 15, { sunswap: { router: SUNSWAP_V2_ROUTER, pathHex: ["41aaaa", "41bbbb"], fromAddress: FX_TRON }, fromChainId: TRON_SWAP_CHAIN_ID, toChainId: TRON_SWAP_CHAIN_ID, fromToken: { address: FX_TRON_USDC, symbol: "USDC", decimals: 6 }, toToken: { address: FX_TRON_USDT, symbol: "USDT", decimals: 6 } })];
+    if (a.fromChainKey === "tron" && a.toChainKey === "arbitrum" && a.fromTokenAddress === FX_TRON_USDT) return [fxLeg("d1", "relay", "9850000", 25, { ...FX_RELAY_TRON, fromChainId: TRON_SWAP_CHAIN_ID, toChainId: 42161, toToken: { address: FX_ARB_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "arbitrum" && a.toChainKey === "bitcoin") return [fxLeg("d2", "satora", "14000", 3600, { satora: { destKey: "bitcoin" }, fromChainId: 42161, toChainId: BITCOIN_SWAP_CHAIN_ID, fromToken: { address: FX_ARB_USDC, symbol: "USDC", decimals: 6 }, toToken: { address: "btc", symbol: "BTC", decimals: 8 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const composedD1 = await searchMilestoneCompositions({ fromChainKey: "tron", toChainKey: "bitcoin", fromTokenAddress: FX_TRON_USDC, toTokenAddress: "btc", fromAmount: "10000000", fromAddress: FX_TRON, toAddress: FX_BTC_ADDR, addresses: FX_BOOK }, { searchLeg: fxSearchD, pricesUsd: { BTC: 95000 } });
+  ok("fixes D: Tron USDC→Bitcoin composes like Tron USDC→Arbitrum does — the SunSwap USDC→USDT anchor first, then the crossing, then the Satora leg",
+    composedD1.length === 1 && composedD1[0].milestone.legs.length === 3
+    && composedD1[0].milestone.label === "USDC → USDT → USDC on Arbitrum → BTC on Bitcoin"
+    && composedD1[0].toAmount === "14000" && swapRouteExecutable(composedD1[0]).ok === true);
+  const fxSearchD2 = async (a) => {
+    if (a.fromChainKey === "tron" && a.toChainKey === "base" && a.fromTokenAddress === FX_TRON_USDT) return [fxLeg("d3", "relay", "9850000", 25, { ...FX_RELAY_TRON, fromChainId: TRON_SWAP_CHAIN_ID, toChainId: 8453, toToken: { address: FX_BASE_USDC, symbol: "USDC", decimals: 6 } })];
+    if (a.fromChainKey === "base" && a.toChainKey === "sui") return [fxLeg("d4", "mayan", "9800000", 30, { ...FX_MAYAN, toToken: { address: FX_SUI_USDC, symbol: "USDC", decimals: 6 } })];
+    return fxSearchD(a);
+  };
+  const composedD2 = await searchMilestoneCompositions({ fromChainKey: "tron", toChainKey: "sui", fromTokenAddress: FX_TRON_USDC, toTokenAddress: FX_SUI_USDC, fromAmount: "10000000", fromAddress: FX_TRON, toAddress: FX_SUI, addresses: FX_BOOK }, { searchLeg: fxSearchD2, pricesUsd: {} });
+  ok("fixes D: Tron USDC→Sui USDC composes through the same SunSwap anchor into the CCTP milestone",
+    composedD2.length === 1 && composedD2[0].milestone.legs.length === 3
+    && composedD2[0].milestone.label === "USDC → USDT → USDC on Base → USDC on Sui"
+    && composedD2[0].toAmount === "9800000" && swapRouteExecutable(composedD2[0]).ok === true);
+
+  // ---- Leg-down fast-fail ----
+  // Every (bsc→milestone) and (milestone→Sui) leg quotes;
+  // the Sui finish leg is dead ([] forever). Seven classic
+  // shapes and fourteen anchored variants all require it —
+  // without the fast-fail it would be quoted 21 times.
+  const fxDownCalls = [];
+  const fxSearchDown = async (a) => {
+    fxDownCalls.push([a.fromChainKey, a.toChainKey, a.fromTokenAddress, a.toTokenAddress].join("|"));
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") return [];
+    if (a.fromChainKey === "bsc") return [fxLeg("dl1", "relay", "9900000", 10, { ...FX_RELAY, toToken: { address: a.toTokenAddress, symbol: "USDC", decimals: 6 } })];
+    if (a.toChainKey === "sui") return [fxLeg("dl2", "mayan", "9850000", 10, { ...FX_MAYAN, toToken: { address: FX_SUI_USDC, symbol: "USDC", decimals: 6 } })];
+    throw new Error("No available quotes for the requested transfer");
+  };
+  const FX_BNB_SUI_ARGS = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: SUI_SWAP_NATIVE_TOKEN, fromAmount: "350000000000000", fromAddress: FX_EVM, toAddress: FX_SUI, addresses: FX_BOOK };
+  const downResult = await searchMilestoneCompositions(FX_BNB_SUI_ARGS, { searchLeg: fxSearchDown, pricesUsd: { SUI: 0.8 } });
+  const fxFinishQuotes = fxDownCalls.filter(k => k.startsWith("sui|sui")).length;
+  ok("fixes leg-down: a leg that answers empty three times running is not quoted again in that search — the search still concludes honestly empty, inside a bounded quote count",
+    downResult.length === 0 && fxFinishQuotes === MILESTONE_LEG_DOWN_THRESHOLD
+    && fxDownCalls.length <= 17 + MILESTONE_ANCHORED_MAX_LEG_QUOTES);
+  // Consecutive means consecutive: two silences then an
+  // answer keeps the leg alive, and the composition forms.
+  let fxFlapCount = 0;
+  const fxSearchFlap = async (a) => {
+    if (a.fromChainKey === "sui" && a.toChainKey === "sui") { fxFlapCount++; if (fxFlapCount < 3) return []; return [fxLeg("f3", "cetus", "12000000000", 10, { ...FX_CETUS, toToken: { address: SUI_SWAP_NATIVE_TOKEN, symbol: "SUI", decimals: 9 } })]; }
+    return fxSearchDown(a);
+  };
+  const flapResult = await searchMilestoneCompositions(FX_BNB_SUI_ARGS, { searchLeg: fxSearchFlap, pricesUsd: { SUI: 0.8 } });
+  ok("fixes leg-down: the streak is consecutive — a leg silent twice then answering still completes its composition",
+    flapResult.length === 1 && flapResult[0].milestone.legs.length === 3 && fxFlapCount === 3);
+
+  // ---- Anchored-phase worst case: a fully dead BTCB→SUI
+  // search spends 7 one-crossing first-leg quotes + the two
+  // memoised anchor legs, then concludes — never the whole
+  // 14-variant grid.
+  let fxDeadCalls = 0;
+  const deadResult = await searchMilestoneCompositions(FX_BTCB_SUI_ARGS, { searchLeg: async () => { fxDeadCalls++; return []; }, pricesUsd: {} });
+  ok("fixes C: a fully dead BTCB→SUI search concludes empty inside a bounded quote count (one-crossing first legs + memoised anchors, under the phase cap)",
+    deadResult.length === 0 && fxDeadCalls <= 12 && MILESTONE_ANCHORED_MAX_LEG_QUOTES === 30);
+
+  // ---- Arkade operator-info retry ----
+  {
+    const realFetch = globalThis.fetch;
+    const jsonResFx = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+    const FX_PROGRAM = { intentFee: { offchainInput: "inputType == 'vtxo' && expiry - now() > 2505216.0? amount * 0.002: 0.0", onchainInput: "", offchainOutput: "", onchainOutput: "200.0" }, txFeeRate: "0" };
+    const fxOffArgs = { fromChainKey: "arkade", toChainKey: "bitcoin", fromTokenAddress: "btc", toTokenAddress: "btc", fromAmount: "100000", fromAddress: "arkadeaddr", toAddress: FX_BTC_ADDR };
+    let arkCalls = 0;
+    resetArkadeOperatorProgramCache();
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("arkade.computer")) { arkCalls++; if (arkCalls < 3) throw new Error("socket hangup"); return jsonResFx({ fees: FX_PROGRAM, dust: "330" }); }
+      if (u.includes("api.binance.com")) return jsonResFx([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+      if (u.includes("api.coingecko.com")) return jsonResFx({});
+      throw new Error("unexpected fetch in fixes stub: " + u);
+    };
+    try {
+      const r = await getArkadeOffboardRoute(fxOffArgs);
+      ok("fixes offboard: the operator-info read retries through flickers — the offboard quotes on the third attempt with its worst-case pricing unchanged (200 flat + 0.2%)",
+        !!r && arkCalls === 3 && r.arkadeOffboard.feeSats === 400 && r.toAmount === "99600" && r.platformFeeCollecting === false);
+    } finally { globalThis.fetch = realFetch; }
+    arkCalls = 0;
+    resetArkadeOperatorProgramCache();
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("arkade.computer")) { arkCalls++; throw new Error("socket hangup"); }
+      if (u.includes("api.binance.com")) return jsonResFx([{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }]);
+      if (u.includes("api.coingecko.com")) return jsonResFx({});
+      throw new Error("unexpected fetch in fixes stub: " + u);
+    };
+    try {
+      const r2 = await getArkadeOffboardRoute(fxOffArgs);
+      ok("fixes offboard: a persistently unreachable operator still quotes nothing — exactly three attempts, never a guessed fee",
+        r2 === null && arkCalls === 3);
+    } finally { globalThis.fetch = realFetch; }
+    resetArkadeOperatorProgramCache();
+  }
+  {
+    // Relay top-up refusal ladder — the Family B $50 root
+    // cause: the pass carrying the destination-gas top-up is
+    // refused (live: HTTP 400 NO_SWAP_ROUTES_FOUND into
+    // Tron), and the refusal must degrade the route, never
+    // kill it. The fixture's route cost ($0.03 shortfall)
+    // keeps the Tron ceiling from zeroing the fee pass, so
+    // both ladder rungs are exercised.
+    const realFetch = globalThis.fetch;
+    const jsonResFx2 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+    const EVM_L = "0x1111111111111111111111111111111111111111";
+    const USDC_POLY_L = hubTokenForChain("polygon").address;
+    const TRON_USDT_L = milestoneAltAnchorFor("tron").address;
+    const relayQuoteTronL = (reqId, withAppFee) => ({
+      requestId: reqId,
+      steps: [{ id: "deposit", kind: "transaction", items: [{ data: { to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0x12345678" } }] }],
+      fees: { gas: { amount: "10000", amountUsd: "0.01" }, ...(withAppFee ? { app: { amount: "149066", amountUsd: "0.149" } } : {}) },
+      details: { sender: EVM_L,
+        currencyIn: { currency: { chainId: 137, address: USDC_POLY_L, symbol: "USDC", decimals: 6 }, amount: "49688911", amountUsd: "49.69" },
+        currencyOut: { currency: { chainId: 728126428, address: TRON_USDT_L, symbol: "USDT", decimals: 6 }, amount: "49660000", amountUsd: "49.66", minimumAmount: "49600000" },
+        timeEstimate: 60 },
+    });
+    const legArgsL = { fromChainKey: "polygon", toChainKey: "tron", fromTokenAddress: USDC_POLY_L, toTokenAddress: TRON_USDT_L, fromAmount: "49688911", fromAddress: EVM_L, toAddress: "TYBNgWfhGuNzdLtjKtxXTfskAhTbMcqbaG", gasDrop: { needed: true, chainKey: "tron", symbol: "TRX", shortfallUsd: 4.7 } };
+    const bodiesL = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (!u.includes("api.relay.link")) throw new Error("unexpected fetch in relay ladder stub: " + u);
+      const body = JSON.parse(opts.body || "{}");
+      bodiesL.push(body);
+      if (body.topupGas) return jsonResFx2({ message: "no routes found", errorCode: "NO_SWAP_ROUTES_FOUND" }, false, 400);
+      if (body.appFees) return jsonResFx2(relayQuoteTronL("0xfeeonly", true));
+      return jsonResFx2(relayQuoteTronL("0xpass1", false));
+    };
+    try {
+      const r = await getRelaySwapRoute(legArgsL);
+      const topupIdx = bodiesL.findIndex(b => b.topupGas === true);
+      const feeOnlyIdx = bodiesL.findIndex((b, i) => i > topupIdx && b.appFees && !b.topupGas);
+      ok("fixes B relay ladder: a refused top-up pass retries fee-only — the route survives, still collects, and honestly carries no gas drop",
+        !!r && r.relay.requestId === "0xfeeonly" && r.platformFeeCollecting === true && r.gasDrop === undefined
+        && topupIdx >= 0 && feeOnlyIdx > topupIdx && Number(r.platformFeeBps) === Number(bodiesL[feeOnlyIdx].appFees[0].fee));
+    } finally { globalThis.fetch = realFetch; }
+    bodiesL.length = 0;
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (!u.includes("api.relay.link")) throw new Error("unexpected fetch in relay ladder stub: " + u);
+      const body = JSON.parse(opts.body || "{}");
+      bodiesL.push(body);
+      if (body.topupGas || body.appFees) return jsonResFx2({ message: "no routes found", errorCode: "NO_SWAP_ROUTES_FOUND" }, false, 400);
+      return jsonResFx2(relayQuoteTronL("0xpass1", false));
+    };
+    try {
+      const r2 = await getRelaySwapRoute(legArgsL);
+      ok("fixes B relay ladder: when every priced pass is refused, pass 1's executable fee-free quote stands with its non-collection disclosed",
+        !!r2 && r2.relay.requestId === "0xpass1" && r2.platformFeeBps === 0 && r2.platformFeeCollecting === false);
+    } finally { globalThis.fetch = realFetch; }
+  }
+}
 
 console.log(`\n${passed} checks passed`);

@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  humanizeTxError, amountVsBalance, amountExceedsBalance, amountUsdLine,
+  humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine,
   dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
   mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
@@ -15,7 +15,7 @@ import {
   planDogecoinSend, broadcastDogeTx, formatDogeSendIntent,
   bitcoinCashAddress, getBitcoinCashBalance, planBitcoinCashSend, broadcastBitcoinCashTx, isValidBchAddress, formatBitcoinCashSendIntent,
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
-  solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, executeSolanaSwapRoute, swapChainOf,
+  solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
   stellarAddressFromPhrase, getStellarAccount, sendStellar, isValidStellarAddress, formatStellarSendIntent, stellarSendPlan, STELLAR_EXPLORER,
   tonAddressFromPhrase, getTonAccount, sendTon, isValidTonAddress, formatTonSendIntent, tonSendPlan, TON_EXPLORER, TON_USDT,
@@ -27,22 +27,24 @@ import {
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
-  RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, cosmosSendSelection,
+  RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, rankPickerTokens, pickerListState, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
   buildSignedNameClaim, publishNameClaimEvent, publishNameClaimEventDetailed, queryNameClaimEvent, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_REPAIR_AFTER_MS,
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  LIFI_NATIVE_TOKEN, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeSwapRoute, executeRelaySwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeTronSwapRoute, executeSuiSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, platformFeeOn, swapFeeCollectingChain, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
-  formatSatoraSwapIntent, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
+  formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, formatMayanRefundNote,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction,
-  looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LIFI_DIAMOND,
+  looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
-  fetchLifiTokenList, lifiTokenVerified, getDexScreenerTokenInfo, dexChainIdForEvmChain,
+  fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
@@ -159,7 +161,7 @@ const priceOfRow = (b, symPrice) => (b.priceUsd !== undefined ? b.priceUsd : sym
 const rowUsdValue = (b, symPrice) => { const p = priceOfRow(b, symPrice); return p != null ? Number(b.amount) * p : null; };
 // Custom tokens (added by contract address) persist per EVM chain id.
 const CUSTOM_TOKENS_KEY = "fluid_custom_tokens_v1";
-const LIFI_TOKENS_KEY = "fluid_lifi_tokens_v1"; // single-slot cache: the most recent chain's LI.FI list, 24h
+const CG_TOKENS_KEY = "fluid_cg_tokens_v1"; // per-chain CoinGecko token lists, 24h TTL (see cgCacheGet)
 function loadCustomTokens(chainId) {
   try { const all = JSON.parse(localStorage.getItem(CUSTOM_TOKENS_KEY) || "{}"); return Array.isArray(all[chainId]) ? all[chainId] : []; }
   catch { return []; }
@@ -219,16 +221,41 @@ function saveHeldTokens(chainId, entries) {
   all[chainId] = [...byAddress.values()].slice(-500);
   try { localStorage.setItem(HELD_TOKENS_KEY, JSON.stringify(all)); } catch { /* best effort */ }
 }
-function lifiCacheGet(chainId) {
+/* CoinGecko token-list cache — PER CHAIN (2026-11-13 performance
+ * repair): this used to be a single slot holding only the most
+ * recent chain's list, so every chain switch evicted the
+ * previous chain's list and the next visit re-downloaded the
+ * full multi-thousand-token list and re-ran the whole scan —
+ * a steady "slower every time you move around" tax. The cache
+ * now keeps up to CG_CACHE_MAX_CHAINS chains (freshest kept),
+ * each with the same 24 h TTL. Storage stays best-effort: a
+ * list that does not fit simply is not stored, exactly as
+ * before. The stored shape is { v: 2, byChain: { [chainId]:
+ * { fetchedAt, tokens } } }; the old single-slot shape is
+ * migrated on first read. */
+const CG_CACHE_MAX_CHAINS = 3;
+function cgCacheReadAll() {
   try {
-    const s = JSON.parse(localStorage.getItem(LIFI_TOKENS_KEY) || "null");
-    if (s && s.chainId === chainId && Date.now() - (s.fetchedAt || 0) < 24 * 3600 * 1000 && Array.isArray(s.tokens)) return s.tokens;
+    const s = JSON.parse(localStorage.getItem(CG_TOKENS_KEY) || "null");
+    if (!s) return {};
+    if (s.byChain && typeof s.byChain === "object") return s.byChain;
+    if (s.chainId != null && Array.isArray(s.tokens)) return { [s.chainId]: { fetchedAt: s.fetchedAt || 0, tokens: s.tokens } };
   } catch { /* no cache */ }
+  return {};
+}
+function cgCacheGet(chainId) {
+  const entry = cgCacheReadAll()[chainId];
+  if (entry && Date.now() - (entry.fetchedAt || 0) < 24 * 3600 * 1000 && Array.isArray(entry.tokens)) return entry.tokens;
   return null;
 }
-function lifiCacheSet(chainId, tokens) {
-  try { localStorage.setItem(LIFI_TOKENS_KEY, JSON.stringify({ chainId, fetchedAt: Date.now(), tokens })); }
-  catch { /* list too big for storage — session-only, refetched next time */ }
+function cgCacheSet(chainId, tokens) {
+  try {
+    const byChain = cgCacheReadAll();
+    byChain[chainId] = { fetchedAt: Date.now(), tokens };
+    const ids = Object.keys(byChain).sort((a, b) => (byChain[b].fetchedAt || 0) - (byChain[a].fetchedAt || 0));
+    for (const id of ids.slice(CG_CACHE_MAX_CHAINS)) delete byChain[id];
+    localStorage.setItem(CG_TOKENS_KEY, JSON.stringify({ v: 2, byChain }));
+  } catch { /* list too big for storage — session-only, refetched next time */ }
 }
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
@@ -448,7 +475,7 @@ const TW_CHAIN = { ethereum: "ethereum", bsc: "smartchain", base: "base", arbitr
   polygon: "polygon", optimism: "optimism", avalanche: "avalanchec" };
 /** Token logo markup — the ONLY builder of logo <img>s (§4.5/§6).
  *  Resolution order (first hit wins):
- *  1. token.logoURI from a list that provides one (LI.FI), validated
+ *  1. token.logoURI from a list that provides one (CoinGecko), validated
  *     with new URL() + https: before use;
  *  2. EVM contract → Trust Wallet assets CDN, constructed here from
  *     the checksummed address (network key → TW chain slug);
@@ -942,7 +969,14 @@ async function renderMain() {
     if (hydratedFams.has("cosmos")) cosmosRows = cosmosRows.map(r => ({ ...r, amount: null }));
     markLoaded("cosmos"); paintAssets();
   });
-  $("assetList").innerHTML = "Loading assets…";
+  // First-paint fix (2026-11-13 performance repair): when the
+  // balance cache hydrated, paintAssets has ALREADY rendered the
+  // last-known snapshot above — overwriting it here, in the same
+  // synchronous run before the browser can present it, erased
+  // the snapshot and left "Loading assets…" standing until the
+  // EVM read landed. The loading line is only for a genuine
+  // cold start with nothing painted yet.
+  if (!cachePaint) $("assetList").innerHTML = "Loading assets…";
   // Hydration already ran at the top of renderMain (its prices are
   // the floor the live price merge builds on); the cached amounts it
   // painted stand until the live reads fired above replace them
@@ -1753,7 +1787,7 @@ function paintAssets() {
 
 // ---------- chain discovery (Phase 0: gated EVM auto-discovery) ----------
 // The 15 built-ins stay canonical. Discovered chains (gated in core:
-// active, no reused ids, no testnets, LI.FI-listed or real TVL) persist on
+// active, no reused ids, no testnets, real TVL) persist on
 // this device, refresh every 24h, and are fingerprint-checked with
 // probeChain before the wallet ever switches to one. Discovery runs in
 // the background after unlock and can never break the wallet — if every
@@ -1797,7 +1831,7 @@ async function discoverChains() {
   } catch { /* every source failed — the built-ins carry on regardless */ }
   discoveryRunning = false;
 }
-/** Lazily fetch a discovered chain's USDC/USDT (LI.FI) the first time it
+/** Lazily fetch a discovered chain's USDC/USDT (CoinGecko list) the first time it
  *  is selected; the result is cached on the entry, in the live registry
  *  and in local storage. Built-ins and already-loaded chains are no-ops. */
 async function ensureStableTokens(key) {
@@ -1819,18 +1853,18 @@ loadStoredChains();
 // ---------- universal tokens: EVM discovery on the ACTIVE chain ----------
 // Runs in the background after the base balances paint (renderMain).
 // Custom tokens merge first (a handful of direct reads); then the
-// active chain's LI.FI list is scanned for positive balances via
+// active chain's CoinGecko list is scanned for positive balances via
 // Multicall3. Only the ACTIVE chain is ever scanned — never the whole
 // universe. Scan results are session-cached per chain for 5 minutes;
-// the LI.FI list itself is cached on-device for 24h (single slot: the
-// most recent chain's list).
+// the CoinGecko list itself is cached on-device per chain for 24h
+// (see cgCacheGet — up to three chains kept).
 const evmScanCache = new Map(); // chainId -> { at, status, rows }
 let evmHydrateSeq = 0;
-async function lifiTokensForChain(chainId) {
-  const cached = lifiCacheGet(chainId);
+async function cgTokensForChain(chainId) {
+  const cached = cgCacheGet(chainId);
   if (cached) return cached;
-  const list = await fetchLifiTokenList(chainId);
-  if (list) lifiCacheSet(chainId, list);
+  const list = await fetchChainTokenList(chainId);
+  if (list) cgCacheSet(chainId, list);
   return list;
 }
 function mergeEvmRows(customRows, scannedRows) {
@@ -1920,8 +1954,8 @@ async function hydrateEvmTokens() {
       }
     } catch { /* the full scan below remains the fallback */ }
   }
-  // 3) The chain's LI.FI list (24h on-device cache when it fits).
-  const list = await lifiTokensForChain(chainId);
+  // 3) The chain's CoinGecko list (24h on-device cache when it fits).
+  const list = await cgTokensForChain(chainId);
   if (!alive()) return;
   if (!list) {
     // No token list, no full scan: previously merged scanned rows
@@ -1935,7 +1969,7 @@ async function hydrateEvmTokens() {
   const byAddr = new Map(list.map(t => [t.address.toLowerCase(), t]));
   for (const cr of customRows) {
     const t = byAddr.get(cr.address.toLowerCase());
-    if (t) { cr.verified = lifiTokenVerified(t); if (t.priceUSD != null) cr.priceUsd = t.priceUSD; if (t.logoURI) cr.logoURI = t.logoURI; }
+    if (t) { cr.verified = chainTokenVerified(t); if (t.priceUSD != null) cr.priceUsd = t.priceUSD; if (t.logoURI) cr.logoURI = t.logoURI; }
   }
   if (prev && prev.status === "done" && Date.now() - prev.at < 5 * 60 * 1000) {
     mergeEvmRows(customRows, prev.rows);
@@ -1966,7 +2000,7 @@ async function hydrateEvmTokens() {
       if (!t) continue;
       seenScanned.add(addrLower);
       scannedRows.push({ symbol: t.symbol, name: t.name, amount: formatTokenAmount(raw, t.decimals),
-                         address: t.address, decimals: t.decimals, verified: lifiTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
+                         address: t.address, decimals: t.decimals, verified: chainTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
     }
   };
   let scan;
@@ -2004,7 +2038,7 @@ async function hydrateEvmTokens() {
   // before it arrived).
   for (const r of quickRows) {
     const t = byAddr.get(r.address.toLowerCase());
-    if (t) { r.verified = lifiTokenVerified(t); if (t.priceUSD != null) r.priceUsd = t.priceUSD; if (t.logoURI) r.logoURI = t.logoURI; }
+    if (t) { r.verified = chainTokenVerified(t); if (t.priceUSD != null) r.priceUsd = t.priceUSD; if (t.logoURI) r.logoURI = t.logoURI; }
   }
   const allScannedRows = [...quickRows, ...scannedRows];
   // Remember every held token's identity (metadata only — never
@@ -4164,7 +4198,7 @@ function openDogeSheet() {
 // EthAccount signer inside sendCosmos/estimateCosmosFee (see
 // wallet-core) — the sheet is chain-generic and doesn't care. One
 // honest limit, stated in the sheet itself: swaps from Cosmos
-// chains aren't available yet (LI.FI carries no Cosmos chains;
+// chains aren't available yet (no audited rail carries them;
 // Skip Go's routes hide the swap inside an opaque transfer memo).
 function openCosmosSheet(row) {
   const chain = row; // COSMOS_CHAINS entry + { address, amount|null, tokens|null }
@@ -4670,6 +4704,32 @@ function lnFirstReceiveWarning(sats) {
   return `Before you send: if this is their first Lightning receive, this payment opens their channel, and Megalith takes a one-time 2,500 sats out of it for the opening — a payment of ${fmt(sats)} sats is too small to survive that: it either can't go through at all or leaves almost nothing behind. Send around 5,000 sats or more so a meaningful amount lands in that case. If they've received a payment before, the full ${fmt(sats)} sats lands and no fee is taken. ${lnChannelOpenSentence("their", prices.BTC)} Tap Pay again to send anyway, or raise the amount.`;
 }
 
+/** The swap sheet's Lightning payer (2026-11-14): pays a
+ *  Satora LN-source creation's invoice from the user's own
+ *  node. Injected into core's executors (the LDK chunk is
+ *  app-side). The invoice is a HOLD invoice — it settles only
+ *  when the payout side claims — so this awaits DISPATCH, not
+ *  settlement: immediate failures (node unavailable, sending
+ *  room short, the node refusing the invoice) throw here,
+ *  while an in-flight payment returns and Satora's status
+ *  machine becomes the settlement evidence. The amount paid
+ *  is the invoice's own — core's creation checker has already
+ *  pinned it to the reviewed sats to the msat. */
+async function payLnSwapInvoice(invoice) {
+  if (!lnSession) await lnEnsureSession("bitcoin");
+  if (!lnSession) throw new Error("Your Lightning wallet isn't available right now — open the Lightning panel once, then try the swap again.");
+  let parsed = null;
+  try { parsed = parseBolt11(invoice); } catch { parsed = null; }
+  if (parsed?.amountMsat != null) {
+    const spendable = Number(lnSession.balance()?.spendableMsat || 0);
+    if (Number(parsed.amountMsat) > spendable)
+      throw new Error(`You don't have that much you can send over Lightning right now — your sending room is ${Math.floor(spendable / 1000).toLocaleString()} sats.`);
+  }
+  const sent = lnSession.payInvoice(invoice, null);
+  if (sent && typeof sent.catch === "function") {
+    await Promise.race([sent, new Promise((resolve) => setTimeout(resolve, 4500))]);
+  }
+}
 async function lnPayWithNode() {
   const target = $("lnTarget").value.trim();
   const sats = Number($("lnSatsIn").value) || 0;
@@ -6438,67 +6498,100 @@ $("actCash").onclick = () => rampSheet("sell");
 const hzBuy = $("homeBuy"); if (hzBuy) hzBuy.onclick = () => $("actBuy").click();
 const hzRcv = $("homeReceive"); if (hzRcv) hzRcv.onclick = () => $("actReceive").click();
 
-// ---------- swap (LI.FI routes: same-chain + cross-chain) ----------
-// Token pickers are searchable over the chain's FULL LI.FI token list
+// ---------- swap (multi-rail routes: same-chain + cross-chain) ----------
+// Token pickers are searchable over the chain's FULL token list
 // (universal token support) — thousands of tokens per chain, fetched
 // on demand and cached — plus the user's custom tokens on EVM chains.
 // A token is pickable the moment any list knows it; unverified ones
 // (custom tokens no list knows) carry ⚠ and add a caution line to the
 // approval sentence, exactly like unverified sends.
 let pendingSwap = null;
-const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
+// Route-search generation (2026-11-13 performance repair): a
+// search is a multi-second cascade, and a second tap (or an
+// amount edit that re-fires the search) used to race the first —
+// whichever finished LAST painted, so a slow stale search could
+// overwrite the fresh result the user was looking at (the
+// screenshot showed a stale route card under a still-running
+// "Searching routes…" line). Each search takes a generation;
+// only the latest generation may paint or diagnose.
+let routeSearchSeq = 0;
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
-  if (netKey === "bitcoin" || netKey === "lightning") {
-    // Satora destinations: the receive asset is BTC itself (sats on
-    // Bitcoin mainnet, sats over Lightning). Not a LI.FI token.
+  if (netKey === "bitcoin" || netKey === "lightning" || netKey === "arkade") {
+    // Satora families: the asset is BTC itself (sats on Bitcoin
+    // mainnet, sats over Lightning, sats on Arkade). Not a router token.
     return [{ symbol: "BTC", address: "btc", decimals: 8, native: false }];
   }
   if (netKey === "tron") {
-    // LI.FI addresses Tron tokens by their base58 T-address; the native
-    // TRX entry is LI.FI's T-form zero address (see core).
+    // The swap universe addresses Tron tokens by their base58
+    // T-address; the native TRX entry is the T-form zero address
+    // (see core).
     return [{ symbol: "TRX", address: TRON_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
             ...TRON_TOKENS.map(t => ({ ...t, native: false }))];
   }
   if (netKey === "solana") {
-    // LI.FI addresses Solana tokens by mint; native SOL is the System
-    // Program id (see core).
+    // The swap universe addresses Solana tokens by mint; native
+    // SOL is the System Program id (see core).
     return [{ symbol: "SOL", address: SOLANA_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
             ...SOLANA_TOKENS.map(t => ({ ...t, native: false }))];
   }
   if (netKey === "sui") {
-    // LI.FI addresses Sui tokens by full coin type; native SUI is the
-    // zero-padded 0x2::sui::SUI type (see core).
+    // The swap universe addresses Sui tokens by full coin type;
+    // native SUI is the zero-padded 0x2::sui::SUI type (see core).
     return [{ symbol: "SUI", address: SUI_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
             ...SUI_TOKENS.map(t => ({ ...t, native: false }))];
   }
   const net = NETWORKS[netKey];
-  return [{ symbol: net.symbol, address: LIFI_NATIVE_TOKEN, decimals: 18, native: true },
+  return [{ symbol: net.symbol, address: NATIVE_TOKEN_ADDRESS, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
 }
 function swapRouteName(route) {
-  // Across and Relay return single quotes, not LI.FI-style tool
-  // steps — their router names are simply "Across" / "Relay", and
-  // the confirm sentence names the router so the user always sees
-  // which one will move their money.
+  // Every rail names itself plainly — the confirm sentence names
+  // the router so the user always sees which one will move their
+  // money. Every route the search produces carries one of these
+  // providers; the fallback is a plain "Swap route".
   if (route && route.provider === "across") return "Across";
   if (route && route.provider === "relay") return "Relay";
   if (route && route.provider === "satora") return "Satora";
   if (route && route.provider === "jupiter") return "Jupiter";
   if (route && route.provider === "mayan") return "Mayan";
+  if (route && route.provider === "cetus") return "Cetus";
+  if (route && route.provider === "sunswap") return "SunSwap";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
-  return names.join(" → ") || "LI.FI route";
+  return names.join(" → ") || "Swap route";
 }
 function swapDurationText(sec) {
   if (!Number.isFinite(sec)) return "time varies";
   return sec < 90 ? `~${Math.max(1, Math.round(sec))} sec` : `~${Math.round(sec / 60)} min`;
 }
 // The picker's token universe per chain: curated/native entries first
-// (always available instantly), merged with the chain's full LI.FI
-// list once fetched. Entries: {symbol, name, address, decimals,
-// native, verified, priceUSD}.
-const swapLists = new Map(); // chainKey -> { tokens, full }
+// (always available instantly), merged with the chain's full token
+// list once fetched (CoinGecko for EVM chains, Jupiter's strict list
+// for Solana; Tron and Sui merge the wallet's own held rows instead —
+// no public full list is wired for them). Entries: {symbol, name,
+// address, decimals, native, verified, priceUSD}.
+const swapLists = new Map(); // chainKey -> { tokens, full, failed }
+const swapListInflight = new Map(); // chainKey -> Promise<tokens> (one fetch per chain at a time)
+const swapListListeners = new Set(); // fns called with chainKey when a chain's list settles
+/** Subscribe to swap-list settlements — a chain's full list
+ *  landing OR its load failing. The swap sheet repaints an open
+ *  token picker off this (first-user walk 2026-11-13, D1: the
+ *  list landed in cache while the picker sat on "still loading"
+ *  and nothing repainted it until the user typed again). Returns
+ *  the unsubscribe function. */
+function onSwapListSettled(fn) { swapListListeners.add(fn); return () => swapListListeners.delete(fn); }
+/** Record a chain's settled list entry and tell every listener.
+ *  Display state only: this writes the picker's token universe,
+ *  never balances — a late list arrival can never resurrect a
+ *  spent balance, because nothing here reads or writes one. */
+function settleSwapList(netKey, entry) {
+  swapLists.set(netKey, entry);
+  for (const fn of [...swapListListeners]) {
+    try { fn(netKey); } catch { /* a stale sheet listener must never break a list settle */ }
+  }
+}
 function swapBaseTokens(netKey) {
   return swapTokenList(netKey).map(t => ({ symbol: t.symbol, name: t.symbol, address: t.address,
     decimals: t.decimals, native: !!t.native, verified: true, priceUSD: null }));
@@ -6507,16 +6600,57 @@ function swapTokensFor(netKey) {
   const hit = swapLists.get(netKey);
   return hit ? hit.tokens : swapBaseTokens(netKey);
 }
+/** Solana's picker list: Jupiter's strict token list (the same
+ *  list the Solana balance scan resolves metadata against), in
+ *  picker-entry shape. Null when the list doesn't answer — the
+ *  picker then keeps the curated + held rows and retries next
+ *  open. */
+async function solanaPickerList() {
+  const m = await fetchJupiterStrictMap().catch(() => null);
+  if (!m) return null;
+  return [...m.entries()].map(([address, t]) => ({ symbol: t.symbol, name: t.name, address,
+    decimals: t.decimals, verified: true, priceUSD: null, logoURI: null }));
+}
+/** The wallet's own held rows for a non-EVM family, in
+ *  picker-entry shape — how a held Tron/Sui token outside the
+ *  curated set still reaches the picker. */
+function heldPickerEntries(rows) {
+  const out = [];
+  for (const r of rows || []) {
+    if (!r || !r.address || !(Number(r.amount) > 0)) continue;
+    out.push({ symbol: r.symbol, name: r.name || r.symbol, address: r.address, decimals: r.decimals,
+               native: false, verified: !!r.verified, priceUSD: r.priceUsd ?? null, logoURI: null });
+  }
+  return out;
+}
 async function ensureSwapList(netKey) {
   const existing = swapLists.get(netKey);
   if (existing && existing.full) return existing.tokens;
+  // One fetch per chain at a time: concurrent callers (sheet open,
+  // chain switch, a picker render, a retry) share the same load,
+  // and every one of them is answered by the same settle.
+  const inflight = swapListInflight.get(netKey);
+  if (inflight) return inflight;
+  const p = loadSwapList(netKey);
+  swapListInflight.set(netKey, p);
+  try { return await p; } finally { if (swapListInflight.get(netKey) === p) swapListInflight.delete(netKey); }
+}
+async function loadSwapList(netKey) {
   const base = swapBaseTokens(netKey);
   const sc = swapChainOf(netKey);
-  if (!sc) { swapLists.set(netKey, { tokens: base, full: true }); return base; }
-  // EVM chains reuse the 24h on-device LI.FI cache; other families
-  // fetch per session (their lists are only needed inside this sheet).
-  const list = NETWORKS[netKey] ? await lifiTokensForChain(sc.chainId) : await fetchLifiTokenList(sc.chainId);
-  if (!list) { swapLists.set(netKey, { tokens: base, full: false }); return base; }
+  if (!sc) { settleSwapList(netKey, { tokens: base, full: true, failed: false }); return base; }
+  // EVM chains reuse the 24h on-device CoinGecko cache; Solana
+  // fetches Jupiter's strict list per session; Tron and Sui have
+  // no public full list wired, so their pickers merge the
+  // wallet's own held rows over the curated base.
+  const list = NETWORKS[netKey] ? await cgTokensForChain(sc.chainId)
+    : netKey === "solana" ? await solanaPickerList()
+    : netKey === "tron" ? heldPickerEntries(tronBalances)
+    : netKey === "sui" ? heldPickerEntries(suiBalances)
+    : [];
+  // A failed load settles as FAILED, not as an endless "loading":
+  // the picker shows the failure with a retry (walk D1).
+  if (!list) { settleSwapList(netKey, { tokens: base, full: false, failed: true }); return base; }
   const seen = new Set(base.map(t => t.address.toLowerCase()));
   const merged = [...base];
   for (const t of list) {
@@ -6524,7 +6658,7 @@ async function ensureSwapList(netKey) {
     if (seen.has(k)) continue;
     seen.add(k);
     merged.push({ symbol: t.symbol, name: t.name, address: t.address, decimals: t.decimals,
-                  native: false, verified: lifiTokenVerified(t), priceUSD: t.priceUSD, logoURI: t.logoURI || null });
+                  native: false, verified: t.verified != null ? t.verified : chainTokenVerified(t), priceUSD: t.priceUSD, logoURI: t.logoURI || null });
   }
   if (NETWORKS[netKey]) {
     for (const ct of loadCustomTokens(sc.chainId)) {
@@ -6535,35 +6669,99 @@ async function ensureSwapList(netKey) {
                     native: false, verified: false, priceUSD: null, custom: true });
     }
   }
-  swapLists.set(netKey, { tokens: merged, full: true });
+  settleSwapList(netKey, { tokens: merged, full: true, failed: false });
   return merged;
 }
-/** Targeted balance read for the swap sheet's pre-flight check —
- *  works for ANY token in the picker, not just balance-list rows. */
+/** Targeted balance read for the swap sheet's EXECUTION gate —
+ *  works for ANY token in the picker, not just balance-list rows.
+ *  Since the 2026-11-14 route-preview decision (walk defect D2)
+ *  this read never gates route SEARCH: discovery is balance-free,
+ *  and the read runs only when a route is taken toward execution. */
 async function swapBalanceOf(chainKey, tok) {
   try {
     if (chainKey === "tron") return await getTronTokenBalance(tronAddr, tok.native ? null : { address: tok.address, decimals: tok.decimals });
     if (chainKey === "solana") return await getSolanaTokenBalance(solAddr, tok.native ? null : tok.address, tok.decimals);
     if (chainKey === "sui") return await getSuiTokenBalance(suiAddr, tok.native ? SUI_COIN_TYPE : tok.address, tok.decimals);
+    if (chainKey === "bitcoin") {
+      // Bitcoin balance for the EXECUTION gate (Part B,
+      // 2026-11-14): the wallet's own BTC balance — the same
+      // read the Bitcoin tab shows. A failed read yields no
+      // number, which the gate reads as its unreadable
+      // verdict — never a silent pass.
+      const bal = await getBitcoinBalance(btcAddr);
+      return bal == null ? null : Number(bal);
+    }
+    if (chainKey === "arkade") {
+      // Arkade balance for the EXECUTION gate (2026-11-14,
+      // universal composability §7.2): the session boots lazily
+      // here — an execution-time step, never a search side
+      // effect (route search stays balance-free and boot-free).
+      // A failed boot or read returns null, which the gate
+      // reads as its unreadable verdict — never a silent pass.
+      const s = await arkEnsureSession();
+      return Number(await s.balanceSats()) / 1e8;
+    }
+    if (chainKey === "lightning") {
+      // Lightning balance for the EXECUTION gate (2026-11-14,
+      // universal composability §7.3): what can be PAID OUT is
+      // the node's spendable balance — the payer's own
+      // constraint, surfaced honestly. The session boots lazily
+      // here (an execution-time step, like Arkade's — route
+      // search stays balance-free and boot-free). A failed boot
+      // or read returns null, which the gate reads as its
+      // unreadable verdict — never a silent pass.
+      if (!lnSession) await lnEnsureSession("bitcoin");
+      if (!lnSession) return null;
+      const bal = lnSession.balance();
+      return Number(bal?.spendableMsat || 0) / 1e11;
+    }
     return await getEvmTokenBalance(wallet, chainKey, tok);
   } catch { return null; }
+}
+/** The execution balance gate (2026-11-14): a FRESH targeted read
+ *  judged by core's swapBalanceGate. Returns { ok: true } when the
+ *  balance covers the amount; otherwise { ok: false, line } with
+ *  the plain sentence the review shows while Confirm stays
+ *  disabled. Runs at route-tap (review) time AND again inside the
+ *  Confirm handler, so a balance that moved — or a review reached
+ *  by any other path — can never carry a preview into signing. */
+async function swapExecutionGate(fromKey, fromTok, amount) {
+  const have = await swapBalanceOf(fromKey, fromTok);
+  const verdict = swapBalanceGate(amount, have, fromTok.decimals);
+  if (verdict.ok) return { ok: true, have };
+  const line = verdict.kind === "insufficient"
+    ? `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${fmt(have)}).`
+    : `Couldn't check your ${fromTok.symbol} balance on ${swapChainName(fromKey)} — check your connection, then search again.`;
+  return { ok: false, have, line };
 }
 $("actSwap").onclick = () => {
   pendingSwap = null;
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui"];
-  // Bitcoin and Lightning are receive-only swap destinations
-  // (Satora, from EVM stablecoins) — they appear in the To list only.
-  const swapDestNets = [...swapNets, "bitcoin", "lightning"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin"];
+  // Bitcoin is a full endpoint (Part B, 2026-11-14): a
+  // destination from EVM stablecoins AND a source to EVM
+  // stablecoins / Lightning, both via Satora — funded by an
+  // ordinary Bitcoin send into an HTLC lock whose address
+  // Fluid recomputes locally before sending, and refundable
+  // by the user's own key after its timelock. Satora's
+  // Bitcoin-source floors (20,000 sats; 10,000 to Polygon)
+  // are disclosed in the review copy — not $1-class.
+  // Lightning is a full endpoint (2026-11-14): a destination
+  // from EVM stablecoins AND a source to EVM stablecoins /
+  // Bitcoin mainnet, both via Satora, paid from the user's own
+  // Lightning node. Arkade is a full endpoint (2026-11-14): a
+  // destination from EVM stablecoins AND a source to Lightning
+  // / EVM stablecoins, both via Satora.
+  const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron and Sui — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, Lightning and Bitcoin — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -6599,12 +6797,13 @@ $("actSwap").onclick = () => {
       <label class="tag" id="wDestLabel"></label>
       <input id="wDestAddr" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
+    <p class="tag hidden" id="wArkWarn" style="color:var(--warn);margin:8px 0 0"></p>
     <button class="btn" id="wRoutes">Get routes</button>
     <div id="wList"></div>
     <details id="wHow" style="margin:10px 0">
       <summary class="tag" style="cursor:pointer">How swaps work</summary>
-      <p class="tag">One search across every Fluid chain (routes by Relay — LI.FI covers the chains Relay doesn't; Satora covers Bitcoin and Lightning from EVM stablecoins). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
-      <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana.</p>
+      <p class="tag">One search across every Fluid chain (routes by Relay, Across, Mayan and Jupiter; Satora covers Bitcoin, Lightning and Arkade from EVM stablecoins, spends out of Arkade to Lightning and EVM stablecoins, spends out of Lightning to EVM stablecoins and Bitcoin — paid from your own Lightning wallet — and spends out of Bitcoin to EVM stablecoins and Lightning (Satora's minimums apply there: 20,000 sats, 10,000 to Polygon)). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
+      <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana. Arkade routes cap at $0.20 total cost the same way.</p>
     </details>
     <div id="wConfirm" class="hidden">
       <p class="seed" id="wIntentText"></p>
@@ -6648,6 +6847,7 @@ $("actSwap").onclick = () => {
     setPick(side, defaultTok(side, key));
     ensureSwapList(key);
     if (side === "to") syncDestRow();
+    syncArkadeWarn();
   }
   function updatePickBtn(side) {
     const t = pick[side];
@@ -6689,9 +6889,46 @@ $("actSwap").onclick = () => {
       $("wDestLabel").textContent = "Lightning destination — an amount-bearing invoice, a Lightning address, or an LNURL";
       if (/^bc1p/i.test(inp.value)) inp.value = "";
       inp.placeholder = "lnbc… invoice, name@domain, or lnurl…";
+    } else if (tk === "arkade") {
+      wrap.classList.remove("hidden");
+      $("wDestLabel").textContent = "Arkade address to receive at — your own Arkade wallet by default; the sats arrive as a lock you claim into it";
+      if (/^bc1p/i.test(inp.value) || /^ln/i.test(inp.value)) inp.value = "";
+      inp.placeholder = "ark1…";
+      if (!inp.value) {
+        if (arkSession && arkSession.address) inp.value = arkSession.address;
+        else {
+          // Lazy boot, the exit flow's pattern: choosing the
+          // destination is the user's own action, and the boot
+          // fills their address in when it lands. Route search
+          // never waits on it — a still-empty field simply asks
+          // for the address, exactly like Bitcoin's row does.
+          arkEnsureSession().then((s) => {
+            const cur = $("wDestAddr");
+            if (cur && netSel.to === "arkade" && !cur.value && s && s.address) cur.value = s.address;
+          }).catch(() => { /* the field stays editable — any Arkade address can be pasted */ });
+        }
+      }
     } else {
       wrap.classList.add("hidden");
     }
+  }
+  // ALWAYS-WARN (Arkade, 2026-11-14): whenever Arkade is either
+  // side of this swap, its honesty framing stands in the sheet —
+  // the same class of copy the exit tab carries (a Bitcoin
+  // layer-2, operator-assisted exits, expiring VTXOs), visible
+  // before any route is searched, not buried in the review.
+  function syncArkadeWarn(routes) {
+    const el = $("wArkWarn"); if (!el) return;
+    // Cheapest-entry (2026-11-14): a composition that passes
+    // THROUGH Arkade as an intermediate carries the same
+    // framing — the swap touches Arkade even when it is
+    // neither endpoint. The search re-syncs with its results.
+    const viaArkade = Array.isArray(routes) && routes.some(r => r?.provider === "arkade-offboard"
+      || (r?.milestone?.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade"));
+    if (netSel.from === "arkade" || netSel.to === "arkade" || viaArkade) {
+      el.textContent = "⚠ Arkade is a Bitcoin layer-2 with operator-assisted exits: sats there sit in Arkade VTXOs under your own keys, exits back to Bitcoin mainnet are batched by the Arkade operator rather than sent on-chain directly, and unmaintained VTXOs expire — the Bitcoin bridge tab tracks your Arkade wallet.";
+      el.classList.remove("hidden");
+    } else el.classList.add("hidden");
   }
   // BTC-floor way-through: a sub-10,000-sat swap to Bitcoin mainnet
   // is refused by the swap route (Satora's settlement floor). That
@@ -6728,6 +6965,23 @@ $("actSwap").onclick = () => {
       else { inp.focus(); msg("wMsg", "Lightning is selected with the same amount — paste the invoice or Lightning address to receive at, then tap Get routes.", true); }
     };
   }
+  // LN->BTC floor way-through (2026-11-14): the DIRECT
+  // Lightning -> Bitcoin pair opens at 10,000 sats (Satora's
+  // floor for the pair), but the move itself does not — the
+  // Bitcoin bridge tab composes Lightning -> Arkade -> Bitcoin
+  // at any size the bridge pair serves (measured end-to-end at
+  // ~211 sats total cost on 2,673 sats). The sheet turns the
+  // refusal into that way-through instead of a dead end: one
+  // tap lands on the bridge tab, where the composition lives.
+  function paintLnBtcFloorWayThrough(floor) {
+    const host = $("wList"); if (!host) return;
+    host.innerHTML = `<div class="netitem" style="cursor:default">
+        <span>Direct Lightning → Bitcoin swaps open at <b>${Number(floor.minSats).toLocaleString("en-GB")} sats</b> on this route.<br>
+        <small style="color:var(--dim)">That floor belongs to the direct pair, not to the move: the Bitcoin bridge composes Lightning → Arkade → Bitcoin for smaller amounts (about 211 sats of total cost when it was measured on 2,673 sats).</small></span>
+      </div>
+      <button class="btn" id="wLnBtcBridge" style="margin:8px 0">Open the Bitcoin bridge instead</button>`;
+    $("wLnBtcBridge").onclick = () => { closeSheet(true); goTab("bridge"); };
+  }
   // Satora swaps in flight / history, inside this sheet (no new
   // surface): persisted swap ids are the recovery key; statuses are
   // polled from the server and rendered as text only (audit C1).
@@ -6736,7 +6990,412 @@ $("actSwap").onclick = () => {
     const records = loadSatoraSwapRecords(localStorage);
     if (!records.length) { host.innerHTML = ""; return; }
     host.innerHTML = `<h4>Satora swaps</h4>` + records.map(r => `<p class="tag" data-satora-line="${esc(r.id)}"></p>`).join("");
-    host.querySelectorAll("[data-satora-line]").forEach((el, i) => { el.textContent = satoraSwapHistoryLine(records[i]); });
+    host.querySelectorAll("[data-satora-line]").forEach((el, i) => {
+      const r = records[i];
+      el.textContent = satoraSwapHistoryLine(r);
+      // Arkade claim actions (2026-11-14): an EVM -> Arkade swap
+      // whose VHTLC Satora has funded is claimed into the user's
+      // own Arkade wallet (the bridge tab's claim machinery,
+      // driven off this record); an Arkade -> EVM swap whose
+      // EVM side Satora has locked is claimed under the user's
+      // own claim signature (core's gasless claim). Buttons are
+      // DOM nodes appended to the text-only line (audit C1).
+      const claimable = !r.claimedAt && (r.status === "serverfunded" || r.status === "clientredeeming");
+      if (claimable && r.destKey === "arkade" && r.vhtlc) {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Claim sats into my Arkade wallet";
+        b.onclick = () => satoraClaimArkadeDest(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (claimable && r.sourceKey === "arkade" && r.destKey === "evm") {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = `Claim ${r.targetSymbol || "payout"} on ${swapChainName(r.destChainKey)}`;
+        b.onclick = () => satoraClaimArkadeEvm(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (claimable && r.sourceKey === "lightning" && r.destKey === "evm") {
+        // LN -> EVM claim (2026-11-14): the same gasless claim
+        // under the user's own claim signature as the
+        // Arkade-source lane (core serves both).
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = `Claim ${r.targetSymbol || "payout"} on ${swapChainName(r.destChainKey)}`;
+        b.onclick = () => satoraClaimLnEvm(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (claimable && !r.sourceKey && r.destKey === "bitcoin") {
+        // EVM -> BTC claim (Part A, 2026-11-14): the shipped
+        // lane's missing half — a client-built on-chain claim
+        // keyed by the wallet's Taproot claim key (how these
+        // records were created). The lock parameters are
+        // recovered from Satora's current swap object and
+        // verified in core against the record before anything
+        // is built or broadcast.
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Claim Bitcoin on-chain";
+        b.onclick = () => satoraClaimEvmBtc(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (claimable && r.sourceKey === "bitcoin" && r.destKey === "evm") {
+        // BTC -> EVM claim (Part B, 2026-11-14): the same
+        // gasless claim under the user's own claim signature
+        // as the other source lanes (core serves all three).
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = `Claim ${r.targetSymbol || "payout"} on ${swapChainName(r.destChainKey)}`;
+        b.onclick = () => satoraClaimBtcEvm(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (claimable && r.sourceKey === "lightning" && r.destKey === "bitcoin") {
+        // LN -> BTC claim (2026-11-14): a client-built on-chain
+        // claim — core builds + signs the HTLC spend from the
+        // record's own lock parameters; the funding output is
+        // read from the explorer at the recomputed address.
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Claim Bitcoin on-chain";
+        b.onclick = () => satoraClaimLnBtc(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      }
+      // Bitcoin-source refund (Part B, 2026-11-14): a funded
+      // swap Satora could not complete, or one whose refund
+      // time has passed unclaimed, is refunded by the user's
+      // OWN key from this list — a script-path spend of the
+      // lock's timelock leaf, built and bounds-checked in
+      // core. Shown only when the record proves funding
+      // (fundTxHash) and the refund is actually available.
+      if (r.sourceKey === "bitcoin" && r.fundTxHash && !r.claimedAt && !r.refundedAt
+        && (r.status === "serverwontfund" || r.status === "expired" || Math.floor(Date.now() / 1000) >= Number(r.btcRefundLocktime || Infinity))) {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Refund my Bitcoin";
+        b.onclick = () => satoraRefundBtcSource(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      }
+      // EVM-source collaborative refund (2026-11-14): a funded
+      // EVM-source record whose state carries the collaborative
+      // path is refunded from this list — core refreshes the
+      // state, pins Satora's refund terms to the creation
+      // record, and runs the path the server names (the
+      // coordinator path signs + lets Satora broadcast, gasless;
+      // the direct path broadcasts refundBySig from the user's
+      // own wallet after an on-chain dry run). A record whose
+      // earlier refund broadcast evidently did not land (its
+      // polled state is refund-available again) offers the
+      // button again; the executor's own guards stop a true
+      // double refund.
+      const rPhase = satoraSwapPhase(r.status);
+      // Unilateral timelock refund (2026-11-14): once the
+      // record's refund timelock has passed, a refund-available
+      // EVM-source record's primary action is the depositor's
+      // OWN refund — no server cooperation, broadcast from the
+      // user's wallet (which pays the funding chain's gas) after
+      // core gates BOTH conditions (fresh refund-available phase
+      // + the lock chain's own clock at/past the timelock) and
+      // dry-runs the call. This is also the recovery for a
+      // record whose earlier collaborative broadcast evidently
+      // never landed: post-timelock it reaches this path. The
+      // wall clock here only decides which button PAINTS; the
+      // executor's chain-clock check is the gate. Pre-timelock,
+      // collaborative states keep the collaborative button
+      // below — the two never present as primary together.
+      const rTimelockPassed = Number.isInteger(Number(r.refundLocktime)) && Number(r.refundLocktime) > 0
+        && Math.floor(Date.now() / 1000) >= Number(r.refundLocktime);
+      if (!r.sourceKey && r.fundTxHash && !r.claimedAt && rPhase.phase === "refund-available" && rTimelockPassed) {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Refund my locked tokens (timelock reached)";
+        b.onclick = () => satoraRefundEvmUnilateral(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      } else if (!r.sourceKey && r.fundTxHash && !r.claimedAt && rPhase.refundPath === "collaborative"
+        && (!r.refundedAt || rPhase.phase === "refund-available")) {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Refund my locked tokens";
+        b.onclick = () => satoraRefundEvmCollab(r.id, b).catch((e) => toast(e.message || String(e)));
+        el.appendChild(document.createTextNode(" ")); el.appendChild(b);
+      }
+    });
+  }
+  // Claim an EVM -> Arkade swap's funded VHTLC into the user's
+  // own Arkade wallet: the bridge claim construction, with the
+  // funded state read from the indexer (the ground truth), not
+  // from the swap's status string.
+  // The claim itself, shared by the swaps-list button below
+  // and the milestone runner's intermediate-Arkade-leg
+  // completion (cheapest-entry, 2026-11-14): the funded state
+  // is read from the indexer (the ground truth), the payout
+  // is claimed into the user's own Arkade wallet, and the
+  // claimed amount is persisted on the record — the
+  // milestone advancer reads claimedSats from it when the
+  // claim already happened outside the runner. Returns
+  // { txId, claimedSats }, or null when Satora hasn't funded
+  // the lock yet.
+  async function claimSatoraArkadeDestRecord(record) {
+    if (!record || !record.vhtlc) return null;
+    const session = await arkEnsureSession();
+    const mod = await arkLoadChunk();
+    const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, record.index);
+    const flat = { ...record.vhtlc, vhtlcAddress: record.vhtlc.address };
+    const funded = await mod.bridgeVhtlcFundedSats(flat, identity.hashLock).catch(() => 0);
+    if (!(funded > 0)) return null;
+    const res = await mod.claimBridgeVhtlc({
+      secretKeyHex: identity.secretKeyHex, claimPkHex: identity.claimPk,
+      preimageHex: identity.secretHex, hashLockHex: identity.hashLock,
+      record: flat, destinationAddress: session.address,
+    });
+    record.claimTxId = res.txId;
+    record.claimedSats = Number(res.claimAmount);
+    record.claimedAt = Date.now();
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    return { txId: res.txId, claimedSats: Number(res.claimAmount) };
+  }
+  async function satoraClaimArkadeDest(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || !record.vhtlc) return;
+    if (btn) btn.disabled = true;
+    toast("Claiming into your Arkade wallet…");
+    const res = await claimSatoraArkadeDestRecord(record);
+    if (!res) { toast("Satora hasn't funded the Arkade lock yet — try again in a few minutes."); if (btn) btn.disabled = false; return; }
+    paintSatoraSwaps();
+    toast(`Claimed ${Number(res.claimedSats).toLocaleString()} sats into your Arkade wallet ✓`);
+  }
+  // Milestone Arkade injections (cheapest-entry, 2026-11-14):
+  // core's milestone runner cannot import the lazy Arkade
+  // chunk, so a via-Arkade composition executes through these
+  // app-side hands — the same boundary as the direct
+  // Arkade-source swap's fundVhtlc below. Each one boots the
+  // session lazily, only when a leg actually runs; building
+  // this object boots nothing.
+  function milestoneArkadeInjections() {
+    return {
+      fundVhtlc: async ({ vhtlc, hashLock, amountSats }) => {
+        const mod = await arkLoadChunk();
+        const session = await arkEnsureSession();
+        return mod.fundArkadeVhtlc({ session, record: { ...vhtlc, vhtlcAddress: vhtlc.address }, hashLock, amountSats });
+      },
+      arkadeOffboard: async ({ btcAddress, amountSats }) => {
+        const session = await arkEnsureSession();
+        const info = await session.operatorInfo();
+        return session.offboard({ btcAddress, feeInfo: info.fees, amountSats });
+      },
+      arkadeClaimPayout: async ({ hashes }) => {
+        const rec = loadSatoraSwapRecords(localStorage).find(r => r.destKey === "arkade" && r.vhtlc && (hashes || []).includes(r.fundTxHash));
+        if (!rec) return null;
+        if (rec.claimedAt && Number(rec.claimedSats) > 0) return { claimedSats: Number(rec.claimedSats), txId: rec.claimTxId || null };
+        return claimSatoraArkadeDestRecord(rec);
+      },
+    };
+  }
+  // Claim an LN -> EVM swap's payout under the user's own
+  // claim signature — the same core claim as the Arkade-source
+  // lane, under its Lightning-source name.
+  async function satoraClaimLnEvm(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record) return;
+    if (btn) btn.disabled = true;
+    toast("Claiming your payout…");
+    const res = await claimSatoraLnEvmSwap(record, { phrase: wallet.mnemonic.phrase });
+    record.claimTxId = res.txHash || null;
+    record.claimedAt = Date.now();
+    if (res.status) record.status = res.status;
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
+  }
+  // Claim an LN -> BTC swap's on-chain HTLC: the funding
+  // output is read from the explorer at the HTLC address the
+  // record's own lock parameters recompute to (never an
+  // address the server merely names), the claim transaction
+  // is built + signed in core from those same parameters, and
+  // the broadcast is a plain Bitcoin send. Claiming reveals
+  // the swap secret, which settles the held Lightning payment
+  // — that is the swap completing, stated in the review copy.
+  async function satoraClaimLnBtc(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || record.destKey !== "bitcoin" || !record.btcHtlcAddress) return;
+    if (btn) btn.disabled = true;
+    const identity = satoraSwapClaimKey(wallet.mnemonic.phrase, record.index);
+    const address = satoraBtcHtlcAddress({
+      hashLock160Hex: record.btcHashLock, claimPkXonly: identity.claimPk,
+      serverRefundPkXonly: record.btcServerRefundPk, refundLocktime: record.refundLocktime,
+    });
+    if (!address || address !== record.btcHtlcAddress) { toast("This swap's Bitcoin lock doesn't recompute from its record — refusing to claim."); if (btn) btn.disabled = false; return; }
+    const utxos = await fetchBtcUtxos(address).catch(() => null);
+    const want = Math.round(Number(record.netTargetRaw) || 0);
+    const utxo = (utxos || []).find(u => Number(u.value) === want) || (utxos || [])[0];
+    if (!utxo) { toast("Satora hasn't funded the Bitcoin lock yet — try again in a few minutes."); if (btn) btn.disabled = false; return; }
+    const fees = await getBtcFeeRateInfo().catch(() => null);
+    const built = buildSatoraBtcHtlcClaimTx({
+      fundingTxId: utxo.txid, fundingVout: utxo.vout, htlcAmountSats: Number(utxo.value),
+      hashLock160Hex: record.btcHashLock, claimPkXonly: identity.claimPk,
+      serverRefundPkXonly: record.btcServerRefundPk, refundLocktime: record.refundLocktime,
+      secretKeyHex: identity.secretKeyHex, preimageHex: identity.secretHex,
+      destinationAddress: record.destInput, feeRateSatPerVb: fees?.rate || 5,
+    });
+    toast("Broadcasting your Bitcoin claim…");
+    const txid = await broadcastBitcoinTx(built.txHex);
+    record.claimTxId = txid;
+    record.claimedAt = Date.now();
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast(`Claimed ${Number(built.claimAmountSats).toLocaleString()} sats to your Bitcoin address ✓`);
+  }
+  // Claim an EVM -> BTC swap's on-chain HTLC (Part A,
+  // 2026-11-14): these records were created keyed by the
+  // wallet's Taproot claim key (satoraClaimKey) but never
+  // persisted the BTC lock parameters, so the current swap
+  // object is fetched from Satora and verified in core
+  // against the record — the hash lock must be this swap's
+  // own, the claim key this wallet's Taproot key, and the
+  // HTLC address must recompute to the address recorded at
+  // creation — before the claim transaction is built from
+  // the verified parameters, paying the record's own claim
+  // address. Lazy and user-driven, like the Arkade claim.
+  async function satoraClaimEvmBtc(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || record.destKey !== "bitcoin" || !record.btcHtlcAddress) return;
+    if (btn) btn.disabled = true;
+    const phrase = wallet.mnemonic.phrase;
+    const identity = satoraSwapClaimKey(phrase, record.index);
+    const taproot = satoraTaprootClaimKey(phrase);
+    const data = await fetchSatoraSwapStatus(record.id).catch(() => null);
+    if (!data) { toast("Satora's swap state couldn't be read just now — try again in a few minutes."); if (btn) btn.disabled = false; return; }
+    const check = checkSatoraEvmBtcClaim(record, data, { claimPk: taproot.claimPk });
+    if (!check.ok) { toast(check.reason); if (btn) btn.disabled = false; return; }
+    const utxos = await fetchBtcUtxos(check.btcHtlcAddress).catch(() => null);
+    if (!utxos) { toast("The Bitcoin lock's balance couldn't be read just now — try again in a few minutes."); if (btn) btn.disabled = false; return; }
+    const fees = await getBtcFeeRateInfo().catch(() => null);
+    let built;
+    try {
+      built = buildSatoraEvmBtcClaim({ record, swap: data, utxos, identity, taproot, destinationAddress: record.destInput, feeRateSatPerVb: fees?.rate || 5 });
+    } catch (e) { toast(e.message || String(e)); if (btn) btn.disabled = false; return; }
+    toast("Broadcasting your Bitcoin claim…");
+    const txid = await broadcastBitcoinTx(built.txHex);
+    record.claimTxId = txid;
+    record.claimedAt = Date.now();
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast(`Claimed ${Number(built.claimAmountSats).toLocaleString()} sats to your Bitcoin address ✓`);
+  }
+  // Claim a BTC -> EVM swap's payout under the user's own
+  // claim signature — the same core claim as the other
+  // source lanes, under its Bitcoin-source name.
+  async function satoraClaimBtcEvm(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record) return;
+    if (btn) btn.disabled = true;
+    toast("Claiming your payout…");
+    const res = await claimSatoraBtcEvmSwap(record, { phrase: wallet.mnemonic.phrase });
+    record.claimTxId = res.txHash || null;
+    record.claimedAt = Date.now();
+    if (res.status) record.status = res.status;
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
+  }
+  // Refund a Bitcoin-source swap's expired lock with the
+  // user's OWN key (Part B, 2026-11-14): the lock address is
+  // recomputed from the record's own fields first (never an
+  // address the server merely names), the lock's UTXO is
+  // read from the explorer at that address, and core builds
+  // the timelock-leaf spend — bounds-checked by construction
+  // (one input, one output to the user's own Bitcoin
+  // address, fee out of the lock, locktime set) and refused
+  // before the refund time. If the lock is already empty,
+  // Satora has claimed or reclaimed it — stated plainly.
+  async function satoraRefundBtcSource(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || record.sourceKey !== "bitcoin" || !record.fundTxHash) return;
+    if (btn) btn.disabled = true;
+    const phrase = wallet.mnemonic.phrase;
+    const identity = satoraSwapClaimKey(phrase, record.index);
+    const address = satoraBtcSourceHtlcAddress({
+      hashLock160Hex: record.btcHashLock, serverClaimPkXonly: record.btcServerPk,
+      userRefundPkXonly: identity.claimPk, refundLocktime: record.btcRefundLocktime,
+    });
+    if (!address || address !== record.btcHtlcAddress) { toast("This swap's Bitcoin lock doesn't recompute from its record — refusing to refund."); if (btn) btn.disabled = false; return; }
+    const utxos = await fetchBtcUtxos(address).catch(() => null);
+    const utxo = (utxos || []).find(u => String(u.txid) === String(record.fundTxHash))
+      || (utxos || []).find(u => Number(u.value) === Number(record.fromAmount)) || (utxos || [])[0];
+    if (!utxo) { toast("The Bitcoin lock is empty — Satora has already claimed it, or the funding hasn't landed yet."); if (btn) btn.disabled = false; return; }
+    const fees = await getBtcFeeRateInfo().catch(() => null);
+    let built;
+    try {
+      built = buildSatoraBtcHtlcRefundTx({
+        fundingTxId: utxo.txid, fundingVout: utxo.vout, htlcAmountSats: Number(utxo.value),
+        hashLock160Hex: record.btcHashLock, serverClaimPkXonly: record.btcServerPk,
+        userRefundPkXonly: identity.claimPk, refundLocktime: record.btcRefundLocktime,
+        secretKeyHex: identity.secretKeyHex, destinationAddress: btcAddr,
+        feeRateSatPerVb: fees?.rate || 5,
+      });
+    } catch (e) { toast(e.message || String(e)); if (btn) btn.disabled = false; return; }
+    toast("Broadcasting your Bitcoin refund…");
+    const txid = await broadcastBitcoinTx(built.txHex);
+    record.refundTxId = txid;
+    record.refundedAt = Date.now();
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast(`Refunded ${Number(built.refundAmountSats).toLocaleString()} sats to your Bitcoin address ✓`);
+  }
+  // Refund a funded EVM-source swap collaboratively (2026-11-14):
+  // core refreshes the swap's state, pins Satora's refund terms
+  // to the creation record before anything is signed, and runs
+  // the path the server names — the coordinator path (Fluid
+  // signs the CollabRefund authorisation; Satora co-signs and
+  // broadcasts, gasless) or the direct path (the server's Refund
+  // signature, broadcast as refundBySig from the user's own
+  // wallet after the dry run accepts it). The refund returns
+  // the locked WBTC/tBTC to the user's own address on the
+  // funding chain — the record is only marked refunded on the
+  // broadcast's tx hash.
+  async function satoraRefundEvmCollab(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || record.sourceKey || !record.fundTxHash) return;
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await executeSatoraCollabRefundEvmSwap(wallet, record, localStorage, (t) => toast(t));
+      paintSatoraSwaps();
+      toast(updated.refundPathUsed === "coordinator"
+        ? "Refund complete ✓ — Satora broadcast it, and the locked WBTC/tBTC is back at your own address."
+        : "Refund broadcast ✓ — the locked WBTC/tBTC returns to your own address on the funding chain.");
+    } catch (e) { toast(e.message || String(e)); if (btn) btn.disabled = false; }
+  }
+  // Refund a funded EVM-source swap UNILATERALLY (2026-11-14):
+  // after the refund timelock, the depositor's own refund() call
+  // on the swap's HTLC — no Satora cooperation at all. Core
+  // gates eligibility on BOTH the fresh refund-available phase
+  // and the lock chain's own clock at/past the timelock, pins
+  // every term to the creation record, takes the amount from
+  // the swap object's recorded lock amount, dry-runs the exact
+  // call against the HTLC, and only then broadcasts it from
+  // the user's own wallet — which pays the funding chain's gas
+  // (the toast says so up front via the progress line). The
+  // refund returns the locked WBTC/tBTC to the user's own
+  // address; the record is marked refunded only on the
+  // broadcast's tx hash.
+  async function satoraRefundEvmUnilateral(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record || record.sourceKey || !record.fundTxHash) return;
+    if (btn) btn.disabled = true;
+    try {
+      await executeSatoraUnilateralRefundEvmSwap(wallet, record, localStorage, (t) => toast(t));
+      paintSatoraSwaps();
+      toast("Refund broadcast ✓ — the locked WBTC/tBTC returns to your own address on the funding chain; you paid that chain's gas for the call.");
+    } catch (e) { toast(e.message || String(e)); if (btn) btn.disabled = false; }
+  }
+  // Claim an Arkade -> EVM swap's payout under the user's own
+  // claim signature (core verifies the claim key against the
+  // creation record and bounds-checks the redeem calldata
+  // before signing).
+  async function satoraClaimArkadeEvm(id, btn) {
+    const record = loadSatoraSwapRecords(localStorage).find((r) => r.id === id);
+    if (!record) return;
+    if (btn) btn.disabled = true;
+    toast("Claiming your payout…");
+    const res = await claimSatoraArkadeEvmSwap(record, { phrase: wallet.mnemonic.phrase });
+    record.claimTxId = res.txHash || null;
+    record.claimedAt = Date.now();
+    if (res.status) record.status = res.status;
+    record.updatedAt = Date.now();
+    saveSatoraSwapRecord(localStorage, record);
+    paintSatoraSwaps();
+    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
   }
   paintSatoraSwaps();
   pollSatoraSwapStatuses(localStorage).then(() => paintSatoraSwaps()).catch(() => {});
@@ -6813,7 +7472,14 @@ $("actSwap").onclick = () => {
         b.onclick = async () => {
           b.disabled = true;
           try {
-            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb });
+            // A record passing through Arkade (cheapest-entry,
+            // 2026-11-14) resumes through the Arkade
+            // injections, with the session loaded first so the
+            // runner can re-resolve the legs' Arkade address —
+            // this tap is the user action that loads it.
+            const touchesArkade = (r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
+            if (touchesArkade) { try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ } }
+            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null });
             msg("wMsg", "Swap complete ✓");
             rescanAfterActivity();
           } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
@@ -6825,25 +7491,66 @@ $("actSwap").onclick = () => {
     });
   }
   paintMilestoneSwaps();
-  advanceMilestoneRecords(localStorage).then(() => paintMilestoneSwaps()).catch(() => {});
+  advanceMilestoneRecords(localStorage, { arkadeClaimPayout: milestoneArkadeInjections().arkadeClaimPayout }).then(() => paintMilestoneSwaps()).catch(() => {});
   function renderPickList(side) {
     const netKey = netSel[side];
     const q = $(P[side].search).value.trim().toLowerCase();
     const toks = swapTokensFor(netKey);
-    const list = toks.filter(t => !q || t.symbol.toLowerCase().includes(q)
-      || String(t.name || "").toLowerCase().includes(q) || t.address.toLowerCase() === q).slice(0, 80);
+    // Relevance-ranked by core (walk D2-minor): an exact symbol
+    // match always lists first — "BTCB" must never sit below
+    // BTCBAM. Blank query keeps the curated-first list order.
+    const list = rankPickerTokens(toks, q).slice(0, 80);
     const entry = swapLists.get(netKey);
-    $(P[side].list).innerHTML = list.length
-      ? list.map(t => `<button class="netitem" data-pick="${side}" data-addr="${esc(t.address)}">
+    // If this chain's list was never fetched and no fetch is
+    // running or failed, start one now: an open picker showing
+    // "still loading" always has a live fetch behind it, and the
+    // settle listener below repaints the moment it lands (walk
+    // D1). In-flight fetches are deduped inside ensureSwapList,
+    // so re-renders cost nothing; a FAILED entry is never
+    // auto-retried — the user taps Retry.
+    if (!entry || (!entry.full && !entry.failed)) ensureSwapList(netKey).catch(() => {});
+    const rowHtml = list.map(t => `<button class="netitem" data-pick="${side}" data-addr="${esc(t.address)}">
           <span>${t.verified === false ? "⚠ " : ""}${esc(t.symbol)}<br><small style="color:var(--dim)">${esc(t.name || "")}</small></span>
-          <span>${t.priceUSD != null ? usd(t.priceUSD) : ""}</span></button>`).join("")
-      : `<p class="tag">No tokens match${entry && entry.full ? "" : " — the full token list is still loading"}.</p>`;
+          <span>${t.priceUSD != null ? usd(t.priceUSD) : ""}</span></button>`).join("");
+    const state = pickerListState(entry, list.length);
+    $(P[side].list).innerHTML =
+      state === "rows" ? rowHtml
+      : state === "rows-stale" ? rowHtml + `<p class="tag">That's the built-in list — the full token list couldn't load.</p><button class="btn ghost" data-retry-list="${side}">Retry the full list</button>`
+      : state === "failed" ? `<p class="tag">The full token list couldn't load — check your connection and try again.</p><button class="btn ghost" data-retry-list="${side}">Retry</button>`
+      : state === "nomatch" ? `<p class="tag">No tokens match.</p>`
+      : `<p class="tag">No tokens match — the full token list is still loading.</p>`;
     document.querySelectorAll(`[data-pick="${side}"]`).forEach(b => b.onclick = () => {
       const t = swapTokensFor(netKey).find(x => x.address === b.dataset.addr);
       if (t) setPick(side, t);
       show(P[side].panel, false);
     });
+    document.querySelectorAll(`[data-retry-list="${side}"]`).forEach(b => b.onclick = () => {
+      // Back to the honest loading state at once; the settle
+      // listener repaints with whatever the retry brings.
+      const cur = swapLists.get(netKey);
+      if (cur) swapLists.set(netKey, { tokens: cur.tokens, full: false, failed: false });
+      renderPickList(side);
+      ensureSwapList(netKey).catch(() => {});
+    });
   }
+  // Walk D1 (2026-11-13): when a chain's full token list settles —
+  // lands OR fails — while a picker for that chain is open,
+  // repaint the picker with what arrived. No further typing is
+  // needed, and a failure replaces "still loading" with the
+  // failure + retry state instead of hanging forever. DISPLAY
+  // ONLY: this re-renders the picker's own list from the settled
+  // token universe; it never reads or writes balances, so a late
+  // arrival can never resurrect a spent balance.
+  const offSwapListSettled = onSwapListSettled((key) => {
+    for (const side of ["from", "to"]) {
+      if (netSel[side] !== key) continue;
+      const panel = $(P[side].panel);
+      if (!panel) { offSwapListSettled(); return; } // this sheet's DOM is gone — stop listening
+      if (!panel.classList.contains("hidden")) renderPickList(side);
+    }
+  });
+  const prevSheetCloseHook = sheetCloseHook;
+  sheetCloseHook = () => { offSwapListSettled(); if (prevSheetCloseHook) { try { prevSheetCloseHook(); } catch { /* chained hooks stay isolated */ } } };
   for (const side of ["from", "to"]) {
     $(P[side].btn).onclick = () => {
       const opening = $(P[side].panel).classList.contains("hidden");
@@ -6863,6 +7570,7 @@ $("actSwap").onclick = () => {
   setPick("from", defaultTok("from", fromKey0));
   setPick("to", defaultTok("to", toKey0));
   syncDestRow();
+  syncArkadeWarn();
   // Detail preselect (item F): apply the tapped token as the From
   // pick — instantly when the picker's base list already carries
   // it, else once the chain's full list lands. A token the picker
@@ -6881,8 +7589,10 @@ $("actSwap").onclick = () => {
   ensureStableTokens(toKey0).then(() => ensureSwapList(toKey0));
   $("wFlip").onclick = async () => {
     const fn = netSel.from, tn = netSel.to;
-    if (fn === "bitcoin" || fn === "lightning" || tn === "bitcoin" || tn === "lightning")
-      return msg("wMsg", "Bitcoin and Lightning are receive-only swap destinations — they can't be a swap source.");
+    // Every family flips freely (2026-11-14): Bitcoin and
+    // Lightning are sources AND destinations since Part B /
+    // the Lightning-source build — no receive-only family
+    // remains in the sheet.
     const fTok = pick.from, tTok = pick.to;
     setNetValue("from", tn); setNetValue("to", fn);
     show(P.from.panel, false); show(P.to.panel, false);
@@ -6892,11 +7602,16 @@ $("actSwap").onclick = () => {
     setPick("to", findTok(fn, fTok) || defaultTok("to", fn));
     ensureSwapList(tn).then(() => { const nt = findTok(tn, tTok); if (nt) setPick("from", nt); });
     ensureSwapList(fn).then(() => { const nt = findTok(fn, fTok); if (nt) setPick("to", nt); });
+    syncDestRow();
+    syncArkadeWarn();
     msg("wMsg", "");
   };
   const searchRoutes = async () => {
+    const mySearch = ++routeSearchSeq;
+    const stale = () => mySearch !== routeSearchSeq;
     await ensureStableTokens(netSel.from);
     await ensureStableTokens(netSel.to);
+    if (stale()) return;
     const fromKey = netSel.from, toKey = netSel.to;
     const fromTok = pick.from, toTok = pick.to;
     const amount = $("wAmt").value.trim();
@@ -6905,22 +7620,44 @@ $("actSwap").onclick = () => {
     if (fromKey === toKey && fromTok.address.toLowerCase() === toTok.address.toLowerCase())
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
     try {
-      msg("wMsg", "Checking your balance…", true);
-      const have = await swapBalanceOf(fromKey, fromTok);
-      // Wei-exact compare (2026-11-12): the float compare could
-      // pass an amount a hair above the real balance.
-      if (have == null || amountExceedsBalance(amount, have, fromTok.decimals) === true)
-        return msg("wMsg", `Not enough ${fromTok.symbol} on ${swapChainName(fromKey)} (you have ${have == null ? "0" : fmt(have)}).`);
+      // Route-preview decision (2026-11-14, walk defect D2): the
+      // search is balance-free discovery — no balance pre-flight
+      // stands in front of it, so an unfunded wallet previews the
+      // same routes, cards and prices a funded one sees. Balance
+      // is enforced only at execution (swapExecutionGate, at the
+      // review step and again in the Confirm handler).
       msg("wMsg", "Searching routes across chains…", true);
-      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : wallet.address);
+      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : k === "bitcoin" ? btcAddr : k === "arkade" ? (arkSession && arkSession.address ? arkSession.address : "") : k === "lightning" ? "" : wallet.address);
+      // Address book for milestone composition (address-book
+      // lift, 2026-11-14, universal-composability §7.1): an
+      // intermediate chain of a composed route settles to the
+      // user's OWN address on that chain, so the search carries
+      // every family's address alongside the endpoints. EVERY
+      // entry below is derived from THIS wallet's seed — the
+      // EVM address, tronAddr / solAddr / suiAddr (derived at
+      // unlock), the wallet's own Taproot address, and the
+      // Arkade session's address when that session has already
+      // booted this session (the book never boots Arkade as a
+      // side effect of a search, and carries no entry for it
+      // until then). No external, provider or Fluid address
+      // can be in this book by construction — it is assembled
+      // only from these derived values.
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr };
+      for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
+      if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
+      if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
       // Satora destinations take their destination from the input
       // row: the Bitcoin address (defaulted to the user's Taproot
-      // address) or the pasted Lightning invoice / address / LNURL.
+      // address), the pasted Lightning invoice / address / LNURL,
+      // or the Arkade address (defaulted to the user's own Arkade
+      // wallet once its session has booted — the search itself
+      // never boots it or waits on it).
       let destInput = "";
-      if (toKey === "bitcoin" || toKey === "lightning") {
+      if (toKey === "bitcoin" || toKey === "lightning" || toKey === "arkade") {
         destInput = ($("wDestAddr").value || "").trim();
         if (toKey === "bitcoin" && !destInput) { try { destInput = bitcoinTaprootAddress(wallet.mnemonic.phrase); } catch { /* handled below */ } }
-        if (!destInput) return msg("wMsg", toKey === "bitcoin" ? "Enter the Bitcoin address to receive at." : "Paste the Lightning invoice, Lightning address or LNURL to pay first.");
+        if (toKey === "arkade" && !destInput && arkSession && arkSession.address) destInput = arkSession.address;
+        if (!destInput) return msg("wMsg", toKey === "bitcoin" ? "Enter the Bitcoin address to receive at." : toKey === "arkade" ? "Enter the Arkade address to receive at — your own Arkade address fills in here once the Arkade wallet loads." : "Paste the Lightning invoice, Lightning address or LNURL to pay first.");
         if (toKey === "lightning" && classifyLightningTarget(destInput).kind === "fluid-name") {
           // Completion audit §5.6.3 — Satora as a name consumer: a
           // registered Lightning ADDRESS passes through as the swap
@@ -6934,15 +7671,26 @@ $("actSwap").onclick = () => {
           destInput = t.value;
         }
       }
+      // Cheapest-entry wallet-state input (2026-11-14): the
+      // one-time Lightning first-receive channel cost counts
+      // in route ranking only when this wallet's OWN Lightning
+      // node is live and reports no channel yet. An unknown
+      // state (node not started) never charges it — the flag
+      // is a fact about the node, not a guess.
+      let lnFirstReceive = false;
+      if (toKey === "lightning" && lnSession) { try { lnFirstReceive = lnSession.channels().length === 0; } catch { lnFirstReceive = false; } }
       const swapArgs = {
         fromChainKey: fromKey, toChainKey: toKey,
         fromTokenAddress: fromTok.address, toTokenAddress: toTok.address,
         fromAmount: swapAmountToRaw(amount, fromTok.decimals),
         fromAddress: addrOf(fromKey),
-        toAddress: (toKey === "bitcoin" || toKey === "lightning") ? destInput : addrOf(toKey),
+        toAddress: (toKey === "bitcoin" || toKey === "lightning" || toKey === "arkade") ? destInput : addrOf(toKey),
+        addresses: addressBook,
+        lightningFirstReceive: lnFirstReceive,
       };
       let routes = null, routeErr = null;
       try { routes = await getSwapRoutes(swapArgs); } catch (e) { routeErr = e; }
+      if (stale()) return; // a newer search owns the sheet now
       if (!routes || !routes.length) {
         // A no-quote failure gets a diagnosed answer, not the bare
         // router error: core probes the pair at climbing sizes and,
@@ -6953,13 +7701,14 @@ $("actSwap").onclick = () => {
         // transport failure (rate limit, network) keeps its own
         // error below: probing it would burn quota and mislabel it.
         // Bitcoin/Lightning destinations keep their Satora copy.
-        if (toKey !== "bitcoin" && toKey !== "lightning" && (!routeErr || isNoQuoteSwapError(routeErr))) {
+        if (toKey !== "bitcoin" && toKey !== "lightning" && toKey !== "arkade" && fromKey !== "arkade" && fromKey !== "lightning" && fromKey !== "bitcoin" && (!routeErr || isNoQuoteSwapError(routeErr))) {
           try {
             msg("wMsg", "No route at that size — checking what would work…", true);
             const verdict = await diagnoseNoRouteSwap(swapArgs, {
               fromDecimals: fromTok.decimals,
               fromPriceUsd: Number(prices[fromTok.symbol]) || fromTok.priceUSD || null,
             });
+            if (stale()) return;
             const floorText = verdict.floor?.found ? `${fmt(verdict.floor.amountHuman)} ${fromTok.symbol} (≈ $${Number(verdict.floor.usd).toFixed(0)})` : "";
             const nativeSymbol = (swapTokensFor(fromKey).find(t => t.native) || {}).symbol || "";
             return msg("wMsg", formatSwapNoRouteMessage({
@@ -6974,19 +7723,61 @@ $("actSwap").onclick = () => {
       }
       const ranked = rankSwapRoutes(routes, Number(toTok.priceUSD) || null).slice(0, 3);
       msg("wMsg", "");
+      // Honest badging (2026-11-13 global repair): CHEAPEST /
+      // FASTEST are claims about a route the user can actually
+      // take. When at least one listed route is executable, the
+      // pills are computed over the EXECUTABLE rows only — a
+      // non-executable route (no signable steps) never wears a
+      // pill while a usable route sits unbadged below it (the
+      // Milestone screenshot defect). When nothing listed is
+      // executable, core's flags stand — every row is disabled
+      // with its reason, so the pills claim nothing usable.
+      const execResults = ranked.map(r => swapRouteExecutable(r));
+      const execFlags = execResults.map(e => e.ok);
+      const anyExec = execFlags.some(Boolean);
+      let cheapestExec = -1, fastestExec = -1;
+      if (anyExec) {
+        for (let i = 0; i < ranked.length; i++) {
+          if (!execFlags[i]) continue;
+          if (cheapestExec < 0 || ranked[i].netUsd > ranked[cheapestExec].netUsd) cheapestExec = i;
+          // FASTEST is a speed claim, gated by the staged-swap
+          // speed standard (2026-11-13): only an executable route
+          // estimated at ≤90s may wear it. A slower route — e.g.
+          // an ~8-minute composition — never presents as fast;
+          // if nothing qualifies, no FASTEST pill is shown.
+          if ((Number(ranked[i].durationSec) || Infinity) <= 90 && (fastestExec < 0 || ranked[i].durationSec < ranked[fastestExec].durationSec)) fastestExec = i;
+        }
+      }
       $("wList").innerHTML = ranked.map((r, i) => {
-        const ex = swapRouteExecutable(r);
-        const badges = `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
+        const ex = execResults[i];
+        const badges = anyExec
+          ? `${i === cheapestExec ? '<span class="pill">CHEAPEST</span> ' : ""}${i === fastestExec ? '<span class="pill">FASTEST</span> ' : ""}`
+          : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
-        return `<button class="netitem" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small></span>
-            <span>${usd(r.toAmountUSD)}</span></button>
+        return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "milestone" && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total, above the 1–1.5 minute staged-swap standard. No faster composition was found for this pair.</small>` : ""}</span>
+            <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
+      syncArkadeWarn(ranked);
       document.querySelectorAll("[data-route]").forEach(b => b.onclick = async () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
         pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        // Execution balance gate (2026-11-14): preview ends here.
+        // A fresh read decides whether Confirm may arm — a short
+        // or unreadable balance leaves the review on screen with
+        // the plain line and Confirm disabled, and no provider
+        // branch below runs, so nothing on this path can sign.
+        msg("wMsg", "Checking your balance…", true);
+        const gate0 = await swapExecutionGate(fromKey, fromTok, amount);
+        if (!gate0.ok) {
+          $("wIntentText").textContent = gate0.line;
+          $("wDo").disabled = true;
+          show("wConfirm"); msg("wMsg", "");
+          return;
+        }
+        msg("wMsg", "");
         if (r.provider === "satora") {
           // Receivability gate first (Lightning): an invoice paying
           // the user's own channel-less Lightning wallet is blocked
@@ -7015,7 +7806,15 @@ $("actSwap").onclick = () => {
           // live — confirming runs the executor, which re-verifies
           // the creation record, the funding payload and the
           // Permit2 witness field by field before signing.
-          $("wIntentText").textContent = formatSatoraSwapIntent({ route: r, destInput });
+          // Arkade-source routes carry their own sentence (the
+          // VHTLC recompute + refund + layer-2 framing).
+          $("wIntentText").textContent = r.satora?.sourceKey === "arkade"
+            ? formatSatoraArkadeSourceIntent({ route: r })
+            : r.satora?.sourceKey === "lightning"
+              ? formatSatoraLnSourceIntent({ route: r })
+              : r.satora?.sourceKey === "bitcoin"
+                ? formatSatoraBtcSourceIntent({ route: r })
+                : formatSatoraSwapIntent({ route: r, destInput });
           $("wDo").disabled = false;
           show("wConfirm"); msg("wMsg", "");
           return;
@@ -7025,19 +7824,15 @@ $("actSwap").onclick = () => {
         // sentence, priced by the fee model (a markup on the route's
         // own cost, capped at 0.5% — core's two-pass search set the
         // rate) and recomputed from THIS final quote's own numbers —
-        // never a typed-in number. Relay states the fee it will
-        // actually take in its quote (platformFeeUsd, parsed from
-        // fees.app) but may skip collecting dust-sized fees, and its
-        // quote says so (platformFeeCollecting); LI.FI charges the
-        // bps the search attached to this route (platformFeeBps)
-        // out of fromAmount, priced here by the quote itself. Only
-        // where the route actually collects: LI.FI attaches the fee
-        // per source chain only where its portal fee wallet is
-        // registered (swapFeeCollectingChain) — no fee is disclosed
-        // on a route that will not charge it.
-        const collects = r.provider === "relay" ? r.platformFeeCollecting === true : swapFeeCollectingChain(r.fromChainId);
+        // never a typed-in number. Every rail states the fee it will
+        // actually take on the route itself (platformFeeUsd, with
+        // platformFeeCollecting saying whether it collects at all —
+        // Relay, for instance, may skip dust-sized fees and says
+        // so), and each provider branch below discloses exactly that
+        // figure. No fee is disclosed on a route that will not
+        // charge it.
         let platformFeeUsd = null, platformFeePct = null;
-        if (collects && r.provider === "relay" && Number(r.platformFeeUsd) > 0) {
+        if (r.provider === "relay" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
@@ -7054,16 +7849,14 @@ $("actSwap").onclick = () => {
           // the aggregator program; core derived the charged figure
           // from the final build's own gross-vs-net output
           // (platformFeeUsd) — disclose exactly that figure, like
-          // Across's. (The generic LI.FI branch below must never
-          // price a Jupiter fee: it would read the bps off the
-          // INPUT amount, the wrong mint entirely.)
+          // Across's.
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         } else if (r.provider === "milestone" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
           // Milestone composite: core summed EVERY leg's fee
           // (each leg collects its own through its own rail —
-          // Relay App Fees, Mayan referrer, LI.FI integrator)
+          // Relay App Fees, Mayan referrer, and the like)
           // into platformFeeUsd at quote time — disclose
           // exactly that figure, like the gas-fallback's.
           platformFeeUsd = Number(r.platformFeeUsd);
@@ -7081,19 +7874,38 @@ $("actSwap").onclick = () => {
           // final quote's own referrerFeeUsd (paid in the source
           // asset on a Swift, in destination USDC on a Fast
           // MCTP) — disclose exactly that figure, like Across's.
-          // (The generic LI.FI branch below must never price a
-          // Mayan fee: it would read the bps off the input
-          // amount in the wrong asset and chain.)
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
-        } else if (collects && Number(r.platformFeeBps) > 0 && r.fromAmount != null) {
-          const feeRaw = platformFeeOn(r.fromAmount, Number(r.platformFeeBps));
-          const amtRaw = Number(r.fromAmount), amtUsd = Number(r.fromAmountUSD);
-          if (feeRaw > 0n && amtRaw > 0 && amtUsd > 0) {
-            platformFeeUsd = (Number(feeRaw) / amtRaw) * amtUsd;
-            platformFeePct = (platformFeeUsd / amtUsd) * 100;
-          }
+        } else if (r.provider === "satora" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Satora states the fee it takes in the quote itself
+          // (core computed platformFeeUsd from the quote's own
+          // fluidFeeSats at the fetched BTC price) — disclose
+          // exactly that figure, like Across's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "sunswap" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // SunSwap states the fee it will take as the
+          // output-side skim (core computed platformFeeUsd from
+          // the router quote's own gross output at the law's
+          // bps) — disclose exactly that figure, like
+          // Jupiter's (its fee also comes out of the output).
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "cetus" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Cetus takes the fee as an overlay skimmed from the
+          // swap's OUTPUT by the aggregator (core computed
+          // platformFeeUsd from the final quote's own
+          // overlayFee at the quote's own output price, the
+          // overlay itself pinned to the law's arithmetic in
+          // parseCetusRoute) — disclose exactly that figure,
+          // like Jupiter's (its fee also comes out of the
+          // output).
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -7113,8 +7925,12 @@ $("actSwap").onclick = () => {
         show("wConfirm"); msg("wMsg", "");
       });
     } catch (e) {
+      if (stale()) return; // a newer search owns the sheet now
       if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && netSel.to === "bitcoin") {
         paintBtcFloorWayThrough(e.satoraBelowFloor);
+        msg("wMsg", "");
+      } else if (e && e.lnBtcBelowFloor && netSel.from === "lightning" && netSel.to === "bitcoin") {
+        paintLnBtcFloorWayThrough(e.lnBtcBelowFloor);
         msg("wMsg", "");
       } else { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", "Route search failed: " + humanizeTxError({ message: String((e && (e.shortMessage || e.message)) || e || "").replace(/^Route search failed:\s*/, ""), code: e && e.code, data: e && e.data })); }
     }
@@ -7123,12 +7939,24 @@ $("actSwap").onclick = () => {
   $("wDo").onclick = async () => {
     if (!pendingSwap) return;
     const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
+    // Execution gate, re-run at the Confirm tap (2026-11-14 hard
+    // stop): the review-step check is not trusted on its own — the
+    // balance is re-read NOW, and a short or unreadable balance
+    // refuses here, before any executor is called, so nothing can
+    // be signed. This is what keeps a preview-only route
+    // un-signable even if the review was armed some other way.
+    const gate1 = await swapExecutionGate(fromKey, fromTok, amount);
+    if (!gate1.ok) {
+      $("wDo").disabled = true;
+      $("wIntentText").textContent = gate1.line;
+      return msg("wMsg", gate1.line);
+    }
     const btn = $("wDo"); setSendBusy(btn, true);
     try {
       let hashes, srcExplorer, srcLink;
       // Keep a device record of every approval Fluid makes, so the user
       // can review and revoke them later (More → Token approvals).
-      // Shared by both EVM executors (Relay and LI.FI).
+      // Shared by the EVM executors (Relay, Across, Mayan, Satora).
       const recordEvmApproval = (rec) => {
         const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
         list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
@@ -7159,9 +7987,17 @@ $("actSwap").onclick = () => {
         // complete, its error says exactly where the money is
         // and the sheet's "Complete the swap" button finishes
         // it later.
-        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+        // A via-Arkade composition (cheapest-entry, 2026-11-14)
+        // executes through the Arkade injections, with the
+        // session loaded first so the runner can re-resolve
+        // the legs' Arkade address — confirming the swap is
+        // the user action that loads it.
+        if ((route.milestone?.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade")) {
+          try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ }
+        }
+        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null });
         hashes = out.hashes;
-        srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
+        srcExplorer = fromKey === "lightning" ? "" : fromKey === "bitcoin" ? "https://mempool.space" : fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
         if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
@@ -7178,16 +8014,81 @@ $("actSwap").onclick = () => {
         // hashes lead with the burn; resume completes a crossing
         // still in flight. The persisted record joins the Satora
         // swaps list in this sheet, whose polling tracks it.
-        hashes = await executeSatoraSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
-        // Bridge sources: the source chain may be Solana (no
-        // NETWORKS entry) — its explorer is the Solana one.
-        srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : NETWORKS[fromKey].explorer;
+        if (route.satora?.sourceKey === "bitcoin") {
+          // Bitcoin-source route (Part B, 2026-11-14): core
+          // creates the swap, runs the funding inspection
+          // (the HTLC address recomputed from the creation's
+          // own parameters — any mismatch refuses before
+          // funding), persists the record, and only then funds
+          // it with an ordinary Bitcoin send of the exact
+          // reviewed sats. An EVM payout is claimed in-flow;
+          // the returned handle is the funding transaction.
+          hashes = await executeSatoraBtcSourceRoute({
+            phrase: wallet.mnemonic.phrase, route, storage: localStorage,
+            onProgress: (t) => msg("wMsg", t, true),
+          });
+          srcExplorer = "https://mempool.space";
+        } else if (route.satora?.sourceKey === "lightning") {
+          // Lightning-source route (2026-11-14): core creates
+          // the swap (bounds-checked — amounts, fees, the
+          // invoice's lock = the swap's payment hash, and for a
+          // Bitcoin payout the HTLC address recomputed from its
+          // own lock parameters — record persisted first), then
+          // pays the CREATION's invoice from the user's own
+          // Lightning node through payLnSwapInvoice, and claims
+          // an EVM payout in-flow once Satora funds its side.
+          // The returned handle is the swap record id (a
+          // Lightning payment has no chain hash or web explorer
+          // — the swaps list below tracks the swap).
+          hashes = await executeSatoraLnSourceRoute({
+            phrase: wallet.mnemonic.phrase, route, storage: localStorage,
+            onProgress: (t) => msg("wMsg", t, true),
+            payInvoice: payLnSwapInvoice,
+          });
+          srcExplorer = "";
+        } else if (route.satora?.sourceKey === "arkade") {
+          // Arkade-source route (2026-11-14): core creates the
+          // swap (bounds-checked, record persisted first), then
+          // the lazy chunk funds the VHTLC — recomputing the lock
+          // address from the record's own parameters and refusing
+          // on any mismatch before a single VTXO moves. The
+          // returned hash is the Arkade funding transaction (no
+          // web explorer — the swaps list below tracks the swap).
+          const mod = await arkLoadChunk();
+          const session = await arkEnsureSession();
+          hashes = await executeSatoraArkadeSourceRoute({
+            phrase: wallet.mnemonic.phrase, route, storage: localStorage,
+            onProgress: (t) => msg("wMsg", t, true),
+            fundVhtlc: ({ vhtlc, hashLock, amountSats }) => mod.fundArkadeVhtlc({
+              session, record: { ...vhtlc, vhtlcAddress: vhtlc.address }, hashLock, amountSats,
+            }),
+          });
+          srcExplorer = "";
+        } else {
+          hashes = await executeSatoraSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval });
+          // Bridge sources: the source chain may be Solana (no
+          // NETWORKS entry) — its explorer is the Solana one.
+          srcExplorer = fromKey === "solana" ? SOLANA_EXPLORER : NETWORKS[fromKey].explorer;
+        }
         try { paintSatoraSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else if (route.provider === "relay") {
-        // Relay route (primary router): EVM source by construction —
-        // its steps are complete transactions, bounds-checked in core.
-        hashes = await executeRelaySwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
-        srcExplorer = NETWORKS[fromKey].explorer;
+        // Relay route (primary router): EVM sources sign Relay's
+        // complete transactions, bounds-checked in core; a Tron
+        // source goes through the Relay-from-Tron executor, which
+        // builds the Tron transaction locally from Relay's call
+        // parameters and inspects the built bytes before signing.
+        if (fromKey === "tron") {
+          hashes = await executeRelayTronSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+            const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+            list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+            localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+          });
+          srcExplorer = TRON_EXPLORER;
+          srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+        } else {
+          hashes = await executeRelaySwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+          srcExplorer = NETWORKS[fromKey].explorer;
+        }
       } else if (route.provider === "across") {
         // Across route (same-asset EVM majors): one SpokePool
         // deposit, bounds-checked in core; Fluid composes its own
@@ -7198,22 +8099,42 @@ $("actSwap").onclick = () => {
       } else if (route.provider === "jupiter") {
         // Jupiter route (Solana same-chain primary): Fluid
         // assembled the transaction itself from the decomposed
-        // instructions and signs with the wallet's Solana key —
-        // checked BEFORE the generic Solana branch below, whose
-        // executor expects LI.FI step payloads a Jupiter route
-        // does not carry.
+        // instructions and signs with the wallet's Solana key.
         hashes = await executeJupiterSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
         srcExplorer = SOLANA_EXPLORER;
         srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
+      } else if (route.provider === "cetus") {
+        // Cetus route (Sui same-chain, the aggregator port):
+        // core re-quotes fresh, composes the PTB locally,
+        // inspects every command (checkCetusPtbSafety) and only
+        // then signs with the wallet's Sui key.
+        hashes = await executeCetusSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+        srcExplorer = SUI_EXPLORER;
+        srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
+      } else if (route.provider === "sunswap") {
+        // SunSwap route (Tron same-chain, the direct V2 port):
+        // core re-quotes the path fresh, takes its own
+        // exact-amount approval when a token goes in, composes
+        // the router call locally, bounds-checks the built
+        // bytes (checkSunswapSwapBounds) and only then signs
+        // with the wallet's Tron key; Fluid's fee is skimmed
+        // from the output to the DripBot Tron wallet inside
+        // the same flow (a second hash, when a fee was taken).
+        hashes = await executeSunswapSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
+          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+        });
+        srcExplorer = TRON_EXPLORER;
+        srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
       } else if (route.provider === "mayan") {
         // Mayan route (ranked candidate — it is here because it
         // quoted cheapest): EVM sources sign the bounds-checked
         // Forwarder payload in core; Solana sources sign the
         // locally assembled instruction set with the wallet's
-        // Solana key. Checked BEFORE the generic Solana branch
-        // below, whose executor expects LI.FI step payloads.
-        // The swap is then tracked by its source hash in the
-        // Mayan history (statuses polled from Mayan's explorer).
+        // Solana key. The swap is then tracked by its source hash
+        // in the Mayan history (statuses polled from Mayan's
+        // explorer).
         hashes = await executeMayanSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
           const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
           list.unshift({ chainKey: fromKey, token: fromTok.address, tokenSymbol: sanitizePersistedSymbol(fromTok.symbol), spender: rec.spender, amount: rec.amount, at: Date.now() });
@@ -7225,28 +8146,14 @@ $("actSwap").onclick = () => {
           deadline64: route.mayan.deadline64, at: Date.now(), updatedAt: Date.now(),
         });
         if (fromKey === "solana") { srcExplorer = SOLANA_EXPLORER; srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`; }
+        else if (fromKey === "sui") { srcExplorer = SUI_EXPLORER; srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`; }
         else srcExplorer = NETWORKS[fromKey].explorer;
-      } else if (fromKey === "solana") {
-        hashes = await executeSolanaSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
-        srcExplorer = SOLANA_EXPLORER;
-        srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
-      } else if (fromKey === "tron") {
-        // Tron signs with the same key as the EVM account (the unlocked
-        // wallet object carries it) — never the phrase.
-        hashes = await executeTronSwapRoute(wallet, route, (t) => msg("wMsg", t, true), (rec) => {
-          const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
-          list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
-          localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
-        });
-        srcExplorer = TRON_EXPLORER;
-        srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
-      } else if (fromKey === "sui") {
-        hashes = await executeSuiSwapRoute(wallet.mnemonic.phrase, route, (t) => msg("wMsg", t, true));
-        srcExplorer = SUI_EXPLORER;
-        srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
       } else {
-        hashes = await executeSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
-        srcExplorer = NETWORKS[fromKey].explorer;
+        // Every route the search can produce carries a provider
+        // handled above (milestone, satora, relay, across,
+        // jupiter, cetus, mayan, gasfallback). Anything else is a
+        // shape Fluid cannot sign — refuse plainly rather than guess.
+        throw new Error("That route can't be executed — search again and pick another route.");
       }
       const destAddr = route.provider === "satora" ? (route.satora.destInput || wallet.address) : toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -7278,7 +8185,7 @@ $("actSwap").onclick = () => {
 
 // ---------- activity ----------
 // SECURITY (audit C1): history entries persist token symbols from ERC-20 /
-// LI.FI metadata — attacker-controlled. They render ONLY through
+// token-list metadata — attacker-controlled. They render ONLY through
 // formatHistoryEntry (wallet-core), which escapes every value and rebuilds
 // the explorer link from a validated hash / clean https URL. Never
 // interpolate a stored history field into innerHTML directly here.
@@ -8678,8 +9585,8 @@ $("approvalsBtn").onclick = () => {
   const emptyNote = `<p class="tag">No approvals recorded — swaps approve the exact amount needed, and they'll appear here.</p>`;
   const paint = () => {
     const mine = loadApprovals().map((a, i) => ({ ...a, _i: i })).filter(a => a.chainKey === networkKey || a.chainKey === "tron");
-    // SECURITY (audit C1): approval records persist LI.FI token symbols —
-    // attacker-controlled. Rows render ONLY through formatApprovalRow /
+    // SECURITY (audit C1): approval records persist token symbols from
+    // token metadata — attacker-controlled. Rows render ONLY through formatApprovalRow /
     // formatRevokePrompt (wallet-core), which escape every stored value.
     $("apList").innerHTML = mine.length ? mine.map(a => `
       <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -8712,7 +9619,9 @@ $("approvalsBtn").onclick = () => {
   // On-chain section (audit M5): Fluid's records alone can give false
   // assurance — approvals granted by other apps on this address are the
   // dangerous set. Scan allowance() for the wallet's known tokens ×
-  // (spenders from Fluid's records on this chain + LI.FI's diamond).
+  // (spenders from Fluid's records on this chain + the legacy router
+  // diamond, kept in the scan so approvals granted to the removed
+  // aggregator by earlier builds stay visible and revocable).
   const paintChain = () => {
     const el = $("apChainList"); if (!el) return;
     if (!chainFound) return; // still loading or failed — the placeholder/error text stands
@@ -8720,7 +9629,7 @@ $("approvalsBtn").onclick = () => {
       <div class="hist" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span><b>${esc(r.tokenSymbol || "Token")}</b> · ${r.unlimited ? "Unlimited ∞" : esc(formatTokenAmount(r.allowance, r.decimals))}<br><small style="color:var(--dim)">spender ${esc(String(r.spender).slice(0, 6))}…${esc(String(r.spender).slice(-4))} · found on-chain</small></span>
         <button class="btn ghost" data-chain-revoke="${i}" style="width:auto;padding:6px 12px">Revoke</button>
-      </div>`).join("") : `<p class="tag">No live approvals found on-chain for your known tokens and the spenders checked (Fluid's swap spenders + LI.FI's router).</p>`;
+      </div>`).join("") : `<p class="tag">No live approvals found on-chain for your known tokens and the spenders checked (Fluid's swap spenders + the legacy router).</p>`;
     document.querySelectorAll("[data-chain-revoke]").forEach(b => b.onclick = () => {
       const r = chainFound[Number(b.dataset.chainRevoke)]; if (!r) return;
       pendingChainRevoke = Number(b.dataset.chainRevoke);
@@ -8747,7 +9656,7 @@ $("approvalsBtn").onclick = () => {
   (async () => {
     try {
       const records = loadApprovals().filter(a => a.chainKey === networkKey);
-      const spenders = [...new Set([...records.map(a => a.spender), LIFI_DIAMOND])];
+      const spenders = [...new Set([...records.map(a => a.spender), LEGACY_ROUTER_DIAMOND])];
       const toks = new Map();
       const addTok = (address, symbol, decimals) => {
         if (address && ethersIsAddress(address) && !/^0x0{40}$/i.test(address)) {
