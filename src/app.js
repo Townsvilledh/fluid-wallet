@@ -34,7 +34,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -847,6 +847,7 @@ async function renderMain() {
   resumePendingClaim();
   refreshHomeClaimBanner();
   refreshHomeBackupCard();
+  paintHomeMilestoneSwaps();
   // A failed Bitcoin load is UNKNOWN, not zero (EVM precedent): each
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
@@ -1245,34 +1246,50 @@ function heroTotal() {
 // new fetching. heroTotal() stays the "all" total; scoped views read
 // their slice here.
 function familyUsdTotals() {
-  const sumRows = (rows, priceFn) => rows.reduce((t, b) => {
-    const p = priceOfRow(b, priceFn(b)); return p != null ? t + Number(b.amount) * p : t;
-  }, 0);
+  // The sum goes through core's familyRowsTotalUsd (DOT-walk
+  // repair, 2026-11-14): a family containing ANY couldn't-load
+  // row (amount null) totals null — unknown, rendered "—" —
+  // never a figure summed over unloaded rows. The reduce this
+  // replaces coerced a null amount to 0, so Solana and Sui
+  // (the two families with no load-failed flag below) showed
+  // a bare "$0.00" subtotal over couldn't-load rows in the
+  // verification walk, and every family had the same hole on
+  // a partial failure.
+  const sumRows = (rows, priceFn) => familyRowsTotalUsd(rows, (b) => priceOfRow(b, priceFn(b)));
   const m = {};
   // A failed Bitcoin load is unknown, not $0.00: the card total is
   // null (renders "—") and the unknown rows stay out of the total.
-  m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);
+  // A family that has not LOADED yet this render (nor been
+  // cache-hydrated — hydration marks it loaded) has no total
+  // at all (incident repair I2, 2026-11-14): before this, an
+  // unloaded family's initialised globals summed to a bare
+  // $0.00 card subtotal over its skeleton rows, so a cold or
+  // slow reopen read as "all my balances are zero" while the
+  // scan was still running. Loaded-and-failed stays null via
+  // the flags; loaded carries the null-row rule inside
+  // sumRows (familyRowsTotalUsd).
+  m.bitcoin = (btcLoadFailed || !famLoaded.has("bitcoin")) ? null : (btcBal + btcTrBal) * (prices.BTC || 0);
   // EVERY family's failed load is unknown, not $0.00 (audit
   // TS-F2): the Bitcoin/EVM rule above applies to all — a family
   // whose rows couldn't load gets a null total, which the card
   // header renders as "—". (Before this fix Tron, XRPL, BCH and
   // the Cosmos chains printed "$0.00" over "couldn't load" rows.)
-  m.litecoin = ltcLoadFailed ? null : ltcBal * (prices.LTC || 0);
-  m.dogecoin = dogeLoadFailed ? null : dogeBal * (prices.DOGE || 0);
-  m.bitcoincash = bchLoadFailed ? null : bchBal * (prices.BCH || 0);
+  m.litecoin = (ltcLoadFailed || !famLoaded.has("litecoin")) ? null : ltcBal * (prices.LTC || 0);
+  m.dogecoin = (dogeLoadFailed || !famLoaded.has("dogecoin")) ? null : dogeBal * (prices.DOGE || 0);
+  m.bitcoincash = (bchLoadFailed || !famLoaded.has("bitcoincash")) ? null : bchBal * (prices.BCH || 0);
   const net = NETWORKS[networkKey];
-  m.evm = evmLoadFailed ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
-  m.tron = tronLoadFailed ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
-  m.solana = sumRows(solBalances, (b) => prices[b.symbol]);
-  m.sui = sumRows(suiBalances, (b) => prices[b.symbol]);
-  m.stellar = stellarLoadFailed ? null : sumRows(stellarBalances, (b) => prices[b.symbol]);
-  m.ton = tonLoadFailed ? null : sumRows(tonBalances, (b) => prices[b.symbol]);
-  m.near = nearLoadFailed ? null : sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
-  m.algorand = algoLoadFailed ? null : sumRows(algoBalances, (b) => prices[b.symbol]);
-  m.xrpl = xrpLoadFailed ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
-  m.polkadot = dotLoadFailed ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
-  m.aptos = aptosLoadFailed ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
-  m.stacks = (stacksLoadFailed || stacksScanFailed) ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
+  m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
+  m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
+  m.solana = !famLoaded.has("solana") ? null : sumRows(solBalances, (b) => prices[b.symbol]);
+  m.sui = !famLoaded.has("sui") ? null : sumRows(suiBalances, (b) => prices[b.symbol]);
+  m.stellar = (stellarLoadFailed || !famLoaded.has("stellar")) ? null : sumRows(stellarBalances, (b) => prices[b.symbol]);
+  m.ton = (tonLoadFailed || !famLoaded.has("ton")) ? null : sumRows(tonBalances, (b) => prices[b.symbol]);
+  m.near = (nearLoadFailed || !famLoaded.has("near")) ? null : sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+  m.algorand = (algoLoadFailed || !famLoaded.has("algorand")) ? null : sumRows(algoBalances, (b) => prices[b.symbol]);
+  m.xrpl = (xrpLoadFailed || !famLoaded.has("xrpl")) ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
+  m.polkadot = (dotLoadFailed || !famLoaded.has("polkadot")) ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
+  m.aptos = (aptosLoadFailed || !famLoaded.has("aptos")) ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
+  m.stacks = (stacksLoadFailed || stacksScanFailed || !famLoaded.has("stacks")) ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
   m.lightning = lnSession ? (Number(lnSession.balance().spendableMsat || 0) / 1e11) * (prices.BTC || 0) : null;
   for (const r of cosmosRows) m[r.key] = r.amount == null ? null : Number(r.amount) * (prices[r.symbol] || 0);
   return m;
@@ -1281,7 +1298,12 @@ function scopedTotal() {
   if (viewKey === "all") return heroTotal();
   const m = familyUsdTotals();
   if (viewKey === "evm") return m.evm;
-  return m[viewKey] != null ? m[viewKey] : 0;
+  // An unknown family total stays unknown (null) — the hero
+  // renders "—" for it (DOT-walk repair). The mapping this
+  // replaces turned null into 0, so a scoped view of a failed
+  // family headed itself with the same fabricated $0.00 the
+  // card subtotals showed.
+  return m[viewKey] != null ? m[viewKey] : null;
 }
 
 /** Unpriced-holdings signal for the hero (2026-11-09 unpriced-native
@@ -1406,7 +1428,8 @@ function paintHeader() {
   if (pill) pill.innerHTML = `${esc(viewDisplayName())} <svg class="ic ic-sm"><use href="#i-chev-d"/></svg>`;
   const totalEl = $("totalUsd");
   if (totalEl) {
-    const t = usd(scopedTotal());
+    const st = scopedTotal();
+    const t = st == null ? "—" : usd(st);
     if (totalEl.textContent !== t) { // Part 5: hero number cross-fades on change
       totalEl.textContent = t;
       totalEl.classList.remove("herofade"); void totalEl.offsetWidth; totalEl.classList.add("herofade");
@@ -1416,7 +1439,14 @@ function paintHeader() {
   if (sub) {
     // While a cache paint is still waiting on live reads, say so —
     // the numbers on screen are last-known, not final.
-    const updating = cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k));
+    // "Updating…" covers BOTH paints (incident repair I2,
+    // 2026-11-14): a cache paint waiting on live reads (the
+    // original case) AND a cold start with no cache at all —
+    // before this, a cold reopen showed a bare hero figure
+    // with no disclosure while every family was still
+    // loading, which reads as "all my balances are zero".
+    const updating = !HOME_FAMILIES.every((k) => famLoaded.has(k))
+      || (cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k)));
     sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`)
       + (hasUnpricedHoldings() ? " + holdings with no live price" : "")
       + (balancesUnloadedInView() ? " + some balances couldn't load" : "")
@@ -7100,6 +7130,16 @@ $("actSwap").onclick = () => {
   // the sheet reads (the old selects were read via .value in a
   // dozen places; they all read netSel now).
   const netSel = { from: fromKey0, to: toKey0 };
+  // Destination/origin resolution for this sheet goes through
+  // core's swapOwnAddressFor (DOT-walk repair, 2026-11-14):
+  // each family resolves to its OWN derived address
+  // (shape-validated), an EVM network key to the EVM address,
+  // and an unresolvable family to null — an honest refusal,
+  // never another family's address. The inline ternary this
+  // replaces had no "polkadot" case, so Polkadot fell through
+  // to the EVM address and the direct DOT route reached the
+  // core gate with a destination it must refuse.
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -7690,13 +7730,9 @@ $("actSwap").onclick = () => {
   // surfaces its line plus the one-tap "Complete the swap"
   // button (the user holds the native token throughout — the
   // completion is a fresh same-chain swap, signed on tap).
-  const recordEvmApprovalGfb = (rec) => {
-    try {
-      const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
-      list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
-      localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
-    } catch { /* the approvals list is a nicety, never a blocker */ }
-  };
+  // recordEvmApprovalGfb lives at app scope (lifted in the
+  // DOT-walk repair, 2026-11-14) — the home pending-swap
+  // card's resume path records approvals through it too.
   function paintGasFallbackSwaps() {
     const host = $("wGasFallback"); if (!host) return;
     const records = loadGasFallbackRecords(localStorage);
@@ -7883,9 +7919,21 @@ $("actSwap").onclick = () => {
   const searchRoutes = async () => {
     const mySearch = ++routeSearchSeq;
     const stale = () => mySearch !== routeSearchSeq;
+    // A route search is user activity (DOT-walk repair,
+    // 2026-11-14): stamping the clock here — and in the
+    // unlock handler — keeps the auto-lock from firing
+    // inside a search the user is actively waiting on.
+    lastActivity = Date.now();
     await ensureStableTokens(netSel.from);
     await ensureStableTokens(netSel.to);
     if (stale()) return;
+    // The pre-flight above awaits the network; a lock that
+    // landed inside it owns the screen now (the sheet is
+    // already closed) — abandon silently instead of reading
+    // the nulled session wallet below, which threw
+    // "Cannot read properties of null (reading 'address')"
+    // as a raw "Route search failed" on the walked build.
+    if (!wallet) return;
     const fromKey = netSel.from, toKey = netSel.to;
     const fromTok = pick.from, toTok = pick.to;
     const amount = $("wAmt").value.trim();
@@ -7901,7 +7949,8 @@ $("actSwap").onclick = () => {
       // is enforced only at execution (swapExecutionGate, at the
       // review step and again in the Confirm handler).
       msg("wMsg", "Searching routes across chains…", true);
-      const addrOf = (k) => (k === "tron" ? tronAddr : k === "solana" ? solAddr : k === "sui" ? suiAddr : k === "bitcoin" ? btcAddr : k === "arkade" ? (arkSession && arkSession.address ? arkSession.address : "") : k === "lightning" ? "" : wallet.address);
+      // addrOf is the sheet-scope resolver defined beside
+      // netSel above (swapOwnAddressFor — see its comment).
       // Address book for milestone composition (address-book
       // lift, 2026-11-14, universal-composability §7.1): an
       // intermediate chain of a composed route settles to the
@@ -8279,6 +8328,7 @@ $("actSwap").onclick = () => {
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
         try { paintMilestoneSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+        paintHomeMilestoneSwaps();
       } else if (route.provider === "satora") {
         // Satora route (Bitcoin / Lightning destinations): the
         // executor creates the swap, persists its id, verifies
@@ -8441,7 +8491,12 @@ $("actSwap").onclick = () => {
         // shape Fluid cannot sign — refuse plainly rather than guess.
         throw new Error("That route can't be executed — search again and pick another route.");
       }
-      const destAddr = route.provider === "satora" ? (route.satora.destInput || wallet.address) : toKey === "solana" ? solAddr : toKey === "tron" ? tronAddr : toKey === "sui" ? suiAddr : wallet.address;
+      // The recorded/shown destination resolves through the
+      // same addrOf as the search (DOT-walk repair): the
+      // ternary this replaces fell through to the EVM address
+      // for every other family, so a completed DOT swap would
+      // have recorded the EVM address as its destination.
+      const destAddr = route.provider === "satora" ? (route.satora.destInput || wallet.address) : (addrOf(toKey) || (route.chainflip && route.chainflip.destAddress) || (NETWORKS[toKey] ? wallet.address : ""));
       const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
       localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -8904,6 +8959,12 @@ $("importBtn").onclick = async () => {
 $("unlockBtn").onclick = async () => {
   try {
     wallet = await unlockVault(localStorage.getItem(VAULT_KEY), $("unlockPw").value);
+    // Unlocking is activity (DOT-walk repair, 2026-11-14):
+    // without this stamp the idle clock still measures from
+    // before the lock, so the auto-lock could re-fire within
+    // seconds of the unlock — inside the next search's
+    // pre-flight — and brick it the way the walk hit.
+    lastActivity = Date.now();
     // Opportunistic KDF upgrade (audit H2): a vault written at the old
     // scrypt strength is re-encrypted at the current strength with the
     // password the user just proved — silently, and a failure here must
@@ -9101,6 +9162,96 @@ $("homeClaimBtn").onclick = () => {
  *  next session until the quiz passes. Wallets created before the
  *  state existed, and imported wallets, carry no state and are
  *  never nagged. */
+/** Record an EVM approval in the persisted approvals list —
+ *  shared by the swap sheet's completion paths and the home
+ *  pending-swap card's resume path. */
+const recordEvmApprovalGfb = (rec) => {
+  try {
+    const list = JSON.parse(localStorage.getItem(APPROVALS_KEY) || "[]");
+    list.unshift({ chainKey: rec.chainKey, token: rec.token, tokenSymbol: sanitizePersistedSymbol(rec.tokenSymbol), spender: rec.spender, amount: rec.decimals != null ? swapRawToAmount(rec.amount, rec.decimals) : rec.amount, at: rec.at });
+    localStorage.setItem(APPROVALS_KEY, JSON.stringify(list.slice(0, 50)));
+  } catch { /* the approvals list is a nicety, never a blocker */ }
+};
+
+/** THE milestone resume entry point (incident I1, 2026-11-14;
+ *  built for the follow-on auto-continue build to drive):
+ *  given a pending milestone record (a row of
+ *  fluid_milestone_swaps_v1, e.g. from loadMilestoneRecords),
+ *  arm and run its completion. State it needs: the unlocked
+ *  module `wallet`, localStorage, the booted Arkade session
+ *  if any. It advances the record first when a step is still
+ *  landing (completeMilestoneSwap does), then runs the
+ *  remaining legs from what actually arrived. A record whose
+ *  legs pass through Arkade needs the sheet's Arkade
+ *  injections, so it is routed to the swap sheet instead —
+ *  the sheet's own completion button drives those. */
+async function resumeMilestoneRecord(record, status = () => {}) {
+  const touchesArkade = (record.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
+  if (touchesArkade) { $("actSwap").click(); return { viaSheet: true }; }
+  return completeMilestoneSwap(wallet, record.id, status, { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, arkadeAddress: arkSession?.address || null });
+}
+
+let homeMilestonePaintSeq = 0;
+let homeMilestoneBusy = false;
+/** The last completion outcome per record (error / pending
+ *  note), rendered by every repaint — an outcome must survive
+ *  the repaint that follows the attempt, or a failed
+ *  completion reads as silence (found in the I1 walk). */
+const homeMilestoneNotes = new Map();
+/** Home pending-swap surfacing (incident I1, 2026-11-14):
+ *  after unlock, a wallet holding an unfinished composed
+ *  swap sees it on the HOME screen — the arrived asset named
+ *  (milestoneHistoryLine), with the one-tap "Complete the
+ *  swap" for a landed step — never buried in the swap sheet.
+ *  Called from renderMain, so reopen + unlock surfaces it. */
+async function paintHomeMilestoneSwaps() {
+  const card = $("homeMilestoneCard"); if (!card) return;
+  if (!wallet) { card.classList.add("hidden"); return; }
+  // While a completion runs from this card, its row carries
+  // the live status — a scan-driven repaint must not rebuild
+  // the list under it and eat the outcome (found in the I1
+  // verification walk, 2026-11-14).
+  if (homeMilestoneBusy) { card.classList.remove("hidden"); return; }
+  const seq = ++homeMilestonePaintSeq;
+  try { await advanceMilestoneRecords(localStorage); } catch { /* surfacing never fails on the advancer */ }
+  if (seq !== homeMilestonePaintSeq || !wallet) return;
+  const host = $("homeMilestoneList"); if (!host) return;
+  const records = loadMilestoneRecords(localStorage).filter(r => r.state === "leg-due" || r.state === "awaiting-credit");
+  if (!records.length) { host.innerHTML = ""; card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  host.innerHTML = records.map(r => `<p class="tag" data-home-ms="${esc(r.id || "")}" style="margin:6px 0 2px"></p>`).join("");
+  host.querySelectorAll("[data-home-ms]").forEach((el, i) => {
+    const r = records[i];
+    el.textContent = milestoneHistoryLine(r);
+    if (milestoneNeedsAction(r)) {
+      const b = document.createElement("button");
+      b.className = "btn ghost";
+      b.textContent = "Complete the swap";
+      b.style.cssText = "width:auto;padding:8px 14px;margin:6px 0 4px";
+      const st = document.createElement("span");
+      st.className = "tag";
+      st.style.marginLeft = "8px";
+      if (homeMilestoneNotes.has(r.id)) st.textContent = homeMilestoneNotes.get(r.id);
+      b.onclick = async () => {
+        b.disabled = true;
+        homeMilestoneBusy = true;
+        st.textContent = "Finishing your swap…";
+        try {
+          const out = await resumeMilestoneRecord(r, (t) => { st.textContent = t; });
+          if (out?.viaSheet) { homeMilestoneNotes.set(r.id, "Opened in the swap sheet — its Arkade step needs the sheet."); st.textContent = homeMilestoneNotes.get(r.id); }
+          else if (out?.pending) { homeMilestoneNotes.set(r.id, "Still finishing — it stays here until it lands."); st.textContent = homeMilestoneNotes.get(r.id); }
+          else { homeMilestoneNotes.delete(r.id); toast("Swap complete ✓"); rescanAfterActivity(); }
+        } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the home screen */ } homeMilestoneNotes.set(r.id, humanizeTxError(e)); st.textContent = homeMilestoneNotes.get(r.id); }
+        homeMilestoneBusy = false;
+        paintHomeMilestoneSwaps();
+      };
+      el.appendChild(document.createElement("br"));
+      el.appendChild(b);
+      el.appendChild(st);
+    }
+  });
+}
+
 function refreshHomeBackupCard() {
   const card = $("homeBackupCard"); if (!card) return;
   let showCard = false;

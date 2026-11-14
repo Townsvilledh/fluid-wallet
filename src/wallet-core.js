@@ -7232,7 +7232,7 @@ export async function executeRelayTronSwapRoute(wallet, route, onProgress = () =
         try {
           const spenderHex = "41" + String(prm.data).slice(8, 72).slice(-40).toLowerCase();
           onApprove({ chainKey: "tron", token: route.fromToken?.address || null, tokenSymbol: route.fromToken?.symbol || null,
-            spender: tronHexToAddress(spenderHex), amount: String(route.fromAmount),
+            spender: tronAddressFromHex(spenderHex), amount: String(route.fromAmount),
             decimals: route.fromToken?.decimals ?? null, at: Date.now() });
         } catch { /* recording an approval must never break a swap */ }
         if (!(await tronWaitTxVisible(txID))) throw new Error("The token approval didn't land on Tron in time — no swap was attempted. Try again.");
@@ -15165,6 +15165,23 @@ export function mayanSuiUsdcCoinType() {
 }
 const MAYAN_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const MAYAN_ZERO_PERMIT = { value: 0n, deadline: 0n, v: 0, r: "0x" + "00".repeat(32), s: "0x" + "00".repeat(32) };
+/** The minimal standard ERC20 surface — allowance/approve
+ *  drive the Mayan EVM executor's allowance step below;
+ *  balanceOf/transfer complete the token contract shape.
+ *  P0 repair (2026-11-14): the executor referenced ERC20_ABI
+ *  by this name with no definition anywhere in src, so
+ *  every Mayan EVM swap from an ERC20 source threw
+ *  "ERC20_ABI is not defined" at the allowance check,
+ *  before anything was sent — the fault that stalled the
+ *  first real user's composed swap at its Mayan leg (and
+ *  his manual recovery after it). The branch now has an
+ *  executing test (suite section 113). */
+export const ERC20_ABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function balanceOf(address) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+];
 const MAYAN_FORWARDER_ABI = [
   "function forwardERC20(address tokenIn, uint256 amountIn, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permitParams, address mayanProtocol, bytes protocolData)",
   "function forwardEth(address mayanProtocol, bytes protocolData) payable",
@@ -18231,6 +18248,67 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "polkadot") return isValidDotAddress(a) ? a : null;
   return a;
 }
+/** The wallet's OWN address for one swap chain key, resolved
+ *  from the derived-address set the app holds (`own`:
+ *  { evm, tron, solana, sui, bitcoin, polkadot, arkade }).
+ *  This is the ONE resolution the app seam may use for swap
+ *  endpoints (DOT-walk repair, 2026-11-14): the direct-route
+ *  path previously resolved destinations through an inline
+ *  ternary whose fall-through handed EVERY unmatched family
+ *  the EVM address — Polkadot included — so the direct
+ *  USDT -> DOT route always reached the Chainflip gate with
+ *  an EVM-shaped destination and refused as "incomplete",
+ *  while the milestone path (milestoneAddressFor + the
+ *  address book) resolved the same destination correctly.
+ *  Rules: an EVM network key yields the EVM address (shape-
+ *  checked); each non-EVM family yields ONLY its own derived
+ *  address, validated against its family shape; Lightning
+ *  and unknown keys yield null (endpoint families name their
+ *  destination from user input, never from this resolver);
+ *  a missing or malformed family address yields null — an
+ *  honest refusal downstream, never another family's
+ *  address. Pure. */
+export function swapOwnAddressFor(chainKey, own) {
+  if (!chainKey || !own || typeof own !== "object") return null;
+  if (NETWORKS[chainKey]) {
+    const evm = typeof own.evm === "string" ? own.evm.trim() : "";
+    return /^0x[0-9a-fA-F]{40}$/.test(evm) ? evm : null;
+  }
+  switch (chainKey) {
+    case "tron": return isValidTronAddress(own.tron || "") ? own.tron : null;
+    case "solana": return isValidSolanaAddress(own.solana || "") ? own.solana : null;
+    case "sui": { const s = typeof own.sui === "string" ? own.sui.trim() : ""; if (!s) return null; try { return normalizeSuiAddress(s); } catch { return null; } }
+    case "bitcoin": return isValidBitcoinAddress(own.bitcoin || "") ? own.bitcoin : null;
+    case "polkadot": return isValidDotAddress(own.polkadot || "") ? own.polkadot : null;
+    case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
+    default: return null;
+  }
+}
+/** A row family's USD total, or null when the total is
+ *  UNKNOWN (DOT-walk repair, 2026-11-14): any row whose
+ *  amount is null — the couldn't-load row shape every family
+ *  renders — makes the whole family total unknown, as does
+ *  a non-numeric amount or a non-array input. Before this,
+ *  the app's per-family sum coerced a couldn't-load row to
+ *  Number(null) === 0, so a family whose every read failed
+ *  (Solana and Sui in the verification walk) presented a
+ *  bare "$0.00" subtotal over couldn't-load rows; families
+ *  WITH a load-failed flag nulled out, families without one
+ *  (Solana, Sui) and partially-failed families did not.
+ *  Rows with a loaded amount but no live price contribute
+ *  nothing (priced-sum semantics, unchanged). Pure. */
+export function familyRowsTotalUsd(rows, priceFor) {
+  if (!Array.isArray(rows) || typeof priceFor !== "function") return null;
+  let total = 0;
+  for (const b of rows) {
+    if (!b || b.amount == null) return null;
+    const n = Number(b.amount);
+    if (!Number.isFinite(n)) return null;
+    const p = priceFor(b);
+    if (p != null) total += n * p;
+  }
+  return total;
+}
 /** The user's address on an intermediate chain of a
  *  composition. Resolution order:
  *   1. The swap's own endpoints — the destination chain's
@@ -19155,12 +19233,25 @@ export function newMilestoneRecord(fields) {
 export function milestoneNeedsAction(record) {
   return !!record && record.state === "leg-due";
 }
-/** One plain line per record for the swap sheet. */
+/** One plain line per record for the swap sheet and the
+ *  home pending-swap card. Fallback-clarity rule (incident
+ *  I3, 2026-11-14): an incomplete composition NEVER reads
+ *  as if funds are gone — between steps the money sits in
+ *  the user's own wallet, and the line names the arrived
+ *  asset, its amount, and the chain it sits on. */
 export function milestoneHistoryLine(record) {
   const label = record?.label || "Multi-step swap";
   switch (record?.state) {
-    case "awaiting-credit": return `${label}: a leg is on its way — when it lands, finish the swap here.`;
-    case "leg-due": return `${label}: the last leg landed in your wallet. Complete the swap to continue.`;
+    case "awaiting-credit": return `${label}: a step is on its way to your own wallet. Your money stays in your wallet between steps — closing Fluid loses nothing. When it lands, finish the swap here.`;
+    case "leg-due": {
+      const leg = record.legs?.[record.currentLeg];
+      const sym = leg?.fromSymbol || null;
+      const dec = record.currentLeg > 0 ? milestoneLegTokenDecimals(record, record.currentLeg - 1, "to") : null;
+      const amt = sym && dec != null && record.receivedRaw != null ? swapRawToAmount(record.receivedRaw, dec) : null;
+      if (leg && sym && amt != null)
+        return `${label}: ${amt} ${sym} is in your wallet on ${destChainName(leg.fromChainKey)} — yours to keep, spend, or Complete the swap to continue${record.toSymbol ? " to " + record.toSymbol : ""}.`;
+      return `${label}: the last step landed in your wallet. Complete the swap to continue.`;
+    }
     case "done": return `${label}: complete.`;
     default: return `${label}.`;
   }
@@ -19810,6 +19901,26 @@ const chainflipUsdOf = (raw, decimals, priceUsd) => {
  *  configured); direction "out" quotes fee-free only and
  *  carries collecting:false — its gate refuses execution
  *  (see the section header). */
+/** The Polkadot-side address of a Chainflip route
+ *  (DOT-walk repair, 2026-11-14): the caller's address when
+ *  it is a valid DOT address (a user's chosen external DOT
+ *  destination is preserved exactly — the address book never
+ *  overrides a valid choice, milestoneAddressFor's rule);
+ *  otherwise the swap's own address book entry for Polkadot
+ *  (the wallet's derived DOT address, shape-validated by
+ *  swapAddressBookEntry). Null when neither names a DOT
+ *  address — the gate then refuses honestly. This is the
+ *  same resolution the milestone path applies to its final
+ *  leg; the direct path previously took args.toAddress
+ *  verbatim, so an app wiring fault that supplied the EVM
+ *  address for a DOT destination (the walk's D1) reached
+ *  the gate as a permanently "incomplete" route instead of
+ *  resolving to the wallet's own DOT address the book
+ *  already carried. */
+function chainflipDotSideAddress(args, primary) {
+  if (isValidDotAddress(primary || "")) return primary;
+  return swapAddressBookEntry(args && args.addresses, "polkadot");
+}
 export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT } = {}) {
   const plan = chainflipSupportsPair(args);
   if (!plan) return null;
@@ -19875,7 +19986,7 @@ export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BR
       steps: [],
       chainflip: {
         direction: "in", srcAsset: anchor.cfAsset, destAsset: "DOT",
-        destAddress: args.toAddress || null, refundAddress: args.fromAddress || null,
+        destAddress: chainflipDotSideAddress(args, args.toAddress), refundAddress: args.fromAddress || null,
         quote: { estimatedPrice: quote.estimatedPrice, egressAmount: quote.egressAmount, intermediateAmount: quote.intermediateAmount, fees: quote.fees },
         fok: { slippageTolerancePercent: quote.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
         brokerBps: feeBps, lowLiquidityWarning: quote.lowLiquidityWarning === true,
@@ -19911,7 +20022,7 @@ export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BR
     steps: [],
     chainflip: {
       direction: "out", srcAsset: "DOT", destAsset: anchor.cfAsset,
-      destAddress: args.toAddress || null, refundAddress: args.fromAddress || null,
+      destAddress: args.toAddress || null, refundAddress: chainflipDotSideAddress(args, args.fromAddress),
       quote: { estimatedPrice: q0.estimatedPrice, egressAmount: q0.egressAmount, intermediateAmount: q0.intermediateAmount, fees: q0.fees },
       fok: { slippageTolerancePercent: q0.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
       brokerBps: 0, lowLiquidityWarning: q0.lowLiquidityWarning === true,

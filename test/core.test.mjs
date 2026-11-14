@@ -1,6 +1,6 @@
 // Fluid core tests — run: npm test
 import assert from "node:assert";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, readdirSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
 import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
@@ -23,8 +23,8 @@ import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook,
 import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
-import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
+import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -4870,7 +4870,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcEvm.includes("if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;"));
   ok("evm load-failed: failed rows render as couldn't-load, total as —",
     appSrcEvm.includes("? [{ symbol: net.symbol, amount: null, address: null, verified: true },")
-    && appSrcEvm.includes("m.evm = evmLoadFailed ? null : sumRows(")
+    && appSrcEvm.includes("m.evm = (evmLoadFailed || !famLoaded.has(\"evm\")) ? null : sumRows(")
     && appSrcEvm.includes('totalVal == null ? "—" : usd(totalVal || 0)'));
   ok("evm load-failed: hydrate never merges rows over a failed load",
     appSrcEvm.includes("if (evmLoadFailed) return;\n  const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;"));
@@ -5089,7 +5089,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcBtc.includes('if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn\'t be loaded right now.";'));
   ok("btc load-failed: row renders couldn't-load, total is null, hero total excludes BTC",
     appSrcBtc.includes("scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)")
-    && appSrcBtc.includes("m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
+    && appSrcBtc.includes("m.bitcoin = (btcLoadFailed || !famLoaded.has(\"bitcoin\")) ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
     && appSrcBtc.includes("let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)"));
   ok("btc load-failed: home-zero card stays hidden while Bitcoin is unknown",
     appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal"));
@@ -9944,8 +9944,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // TS-F2 (app source): every family's failed load nulls its card
   // total (renders "—"), and a fully-failed Cosmos card does too.
   ok("TS-F2: failed families report a null (—) header total, not $0.00",
-    appSrcBatch.includes("m.tron = tronLoadFailed ? null :") && appSrcBatch.includes("m.xrpl = xrpLoadFailed ? null :")
-    && appSrcBatch.includes("m.bitcoincash = bchLoadFailed ? null :") && appSrcBatch.includes("m.polkadot = dotLoadFailed ? null :")
+    appSrcBatch.includes("m.tron = (tronLoadFailed || !famLoaded.has(\"tron\")) ? null :") && appSrcBatch.includes("m.xrpl = (xrpLoadFailed || !famLoaded.has(\"xrpl\")) ? null :")
+    && appSrcBatch.includes("m.bitcoincash = (bchLoadFailed || !famLoaded.has(\"bitcoincash\")) ? null :") && appSrcBatch.includes("m.polkadot = (dotLoadFailed || !famLoaded.has(\"polkadot\")) ? null :")
     && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("COSMOS_CHAINS.every(c => totals[c.key] == null)"));
 
   // P1-16: transaction-id shapes route to a transaction lookup.
@@ -15853,6 +15853,386 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     coreSrcReset.includes('export const BALANCE_CACHE_KEY = "fluid_balcache_v2";')
     && coreSrcReset.includes('export const BALANCE_CACHE_LEGACY_KEY = "fluid_balcache_v1";')
     && coreSrcReset.includes("const out = { v: 2,") && coreSrcReset.includes("o.v !== 2"));
+}
+
+// 112. DOT-walk repairs (2026-11-14) — the verification walk
+// on the Chainflip release (stamp c20120a2d6) FAILED with
+// defects the Chainflip build's own verification could not
+// see because it called CORE functions with correct inputs
+// the APP never supplies. These pins sit at the app seam:
+// the resolver the app actually calls, the args the app
+// actually passes, and the amounts the planner actually
+// chains. D1: the direct DOT route was dead in the app —
+// app.js addrOf had no "polkadot" case and fell through to
+// the EVM address, which the core gate must refuse. D3:
+// BTCB -> DOT did not compose in the walk; the leg-2
+// amounts it captured are Relay's own leg-1 outputs for
+// its 10 BTCB input (proven live — the planner chains raw
+// amounts unchanged, pinned below at both scales). D2:
+// family subtotals summed couldn't-load rows as 0.
+{
+  const DW_EVM = "0xBf4E9D9FE4Cb6f9e0cdb4416d4Bf12fDdA4f6D34"; // the walk wallet's EVM address
+  const DW_DOT = "16GMzWmuPnEijHPofsYh1jZ8fsVASB2rJtiwhHBiJ6ZCBT5X"; // the walk wallet's DOT address
+  const DW_OWN = {
+    evm: DW_EVM,
+    tron: "TYBNgWfhGuNzdLtjKtxXTfskAhTbMcqbaG",
+    solana: "oeYf6KAJkLYhBuR8CiGc6L4D4Xtfepr85fuDgA9kq96",
+    sui: "0xc88ef07b9b8b2fc3b7daad9478f4e1337f01792e2eab9c3794494e610636026e",
+    bitcoin: "bc1q4qw42stdzjqs59xvlrlxr8526e3nunw7mp73te",
+    polkadot: DW_DOT,
+    arkade: "ark1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0qqqqqqqq",
+  };
+  // -- D1: the seam resolver --------------------------------
+  ok("dot repair D1: every swap family resolves to its OWN derived address",
+    swapOwnAddressFor("tron", DW_OWN) === DW_OWN.tron
+    && swapOwnAddressFor("solana", DW_OWN) === DW_OWN.solana
+    && swapOwnAddressFor("sui", DW_OWN) === DW_OWN.sui
+    && swapOwnAddressFor("bitcoin", DW_OWN) === DW_OWN.bitcoin
+    && swapOwnAddressFor("polkadot", DW_OWN) === DW_OWN.polkadot
+    && swapOwnAddressFor("bsc", DW_OWN) === DW_OWN.evm
+    && swapOwnAddressFor("base", DW_OWN) === DW_OWN.evm
+    && swapOwnAddressFor("arkade", DW_OWN) === DW_OWN.arkade);
+  ok("dot repair D1: no non-EVM key can return the EVM address; endpoint/unknown keys resolve to null",
+    ["tron", "solana", "sui", "bitcoin", "polkadot", "arkade"].every(k => swapOwnAddressFor(k, DW_OWN) !== DW_OWN.evm)
+    && swapOwnAddressFor("lightning", DW_OWN) === null
+    && swapOwnAddressFor("notachain", DW_OWN) === null
+    && swapOwnAddressFor("", DW_OWN) === null && swapOwnAddressFor("bsc", null) === null);
+  ok("dot repair D1: an unresolvable family yields null, never another family's address",
+    swapOwnAddressFor("polkadot", { ...DW_OWN, polkadot: DW_EVM }) === null
+    && swapOwnAddressFor("polkadot", { ...DW_OWN, polkadot: undefined }) === null
+    && swapOwnAddressFor("tron", { ...DW_OWN, tron: "not-an-address" }) === null
+    && swapOwnAddressFor("bsc", { ...DW_OWN, evm: "0x123" }) === null);
+  // -- D1: the Chainflip route built from the app's (buggy) args --
+  const dwFixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const Q_DW_USDT10 = dwFixture("chainflip-quote-usdt-dot-10.json");
+  const jsonResDw = (body, okFlag = true, status = 200) => ({
+    ok: okFlag, status,
+    text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+    json: async () => (typeof body === "string" ? JSON.parse(body) : body),
+  });
+  const dwFetch = async (url) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonResDw([
+      { symbol: "BTCUSDT", price: "90000" }, { symbol: "ETHUSDT", price: "3000" },
+      { symbol: "BNBUSDT", price: "890" }, { symbol: "DOTUSDT", price: "0.79" }]);
+    if (u.includes("coingecko")) return jsonResDw({});
+    if (u.includes("chainflip-swap.chainflip.io/v2/quote")) return jsonResDw(Q_DW_USDT10);
+    throw new Error("unexpected fetch in dot-repair stub: " + u);
+  };
+  const realFetchDw = globalThis.fetch;
+  globalThis.fetch = dwFetch;
+  try {
+    // Exactly what the shipped app supplied before the fix:
+    // toAddress = the EVM address (addrOf's fall-through),
+    // with the address book carrying the real DOT address.
+    const buggyArgs = { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: DW_EVM, toAddress: DW_EVM, addresses: { polkadot: DW_DOT } };
+    const rBuggy = await getChainflipSwapRoute(buggyArgs);
+    ok("dot repair D1: a Chainflip route built from the app's old args resolves its destination from the address book and reaches the gate executable",
+      !!rBuggy && rBuggy.chainflip.destAddress === DW_DOT && swapRouteExecutable(rBuggy).ok === true);
+    const rNoBook = await getChainflipSwapRoute({ ...buggyArgs, addresses: undefined });
+    ok("dot repair D1: with no book to resolve from, the route's destination stays null and the gate refuses honestly",
+      !!rNoBook && rNoBook.chainflip.destAddress === null && swapRouteExecutable(rNoBook).ok === false);
+    const DW_DOT_EXT = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo";
+    const rExt = await getChainflipSwapRoute({ ...buggyArgs, toAddress: DW_DOT_EXT });
+    ok("dot repair D1: a valid user-chosen DOT destination is preserved — the book never overrides it",
+      !!rExt && rExt.chainflip.destAddress === DW_DOT_EXT && swapRouteExecutable(rExt).ok === true);
+  } finally { globalThis.fetch = realFetchDw; }
+  // -- D1: app wiring (source pins) --------------------------
+  const appSrcDw = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("dot repair D1 app: the sheet resolves endpoints through swapOwnAddressFor with the DOT address in the set, and the old EVM fall-through is gone",
+    appSrcDw.includes("const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr,")
+    && !appSrcDw.includes('k === "lightning" ? "" : wallet.address')
+    && appSrcDw.includes("toAddress: (toKey === \"bitcoin\" || toKey === \"lightning\" || toKey === \"arkade\") ? destInput : addrOf(toKey)"));
+  ok("dot repair D1 app: the recorded swap destination resolves through the same addrOf, not an EVM fall-through",
+    appSrcDw.includes("(addrOf(toKey) || (route.chainflip && route.chainflip.destAddress) || (NETWORKS[toKey] ? wallet.address : \"\"))"));
+  // -- D3: planner amount chaining at both scales ------------
+  const DW_BTCB = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c";
+  const DW_USDT = "0x55d398326f99059fF775485246999027B3197955";
+  const dwFakeLeg = (provider, toAmount, extra = {}) => ({
+    provider, id: `dw-${provider}`, type: "x", fromChainId: 56, toChainId: 56,
+    fromAmount: "0", fromToken: { address: "0x0", symbol: "X", decimals: 18 },
+    toToken: { address: "0x1", symbol: "Y", decimals: 18 },
+    toAmount, toAmountMin: toAmount, toAmountUSD: 13, fromAmountUSD: 13,
+    gasCostUSD: 0.01, routeFeeUsd: 0.02, executionDuration: 30,
+    platformFeeUsd: 0, platformFeeCollecting: false, platformFeeBps: 0, steps: [], ...extra,
+  });
+  const DW_RELAY_EXEC = { relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
+  const dwCompose = async (fromAmount, leg1Out) => {
+    const seen = [];
+    const searchLeg = async (a) => {
+      if (a.toChainKey === "polkadot") {
+        seen.push({ fromAmount: a.fromAmount, toAddress: a.toAddress });
+        return [dwFakeLeg("chainflip", "163822283773", {
+          toChainId: POLKADOT_SWAP_CHAIN_ID,
+          fromToken: { address: a.fromTokenAddress, symbol: "USDT", decimals: 18 },
+          toToken: { address: POLKADOT_DOT_TOKEN, symbol: "DOT", decimals: 10 },
+          chainflip: { direction: "in", srcAsset: "USDT", destAsset: "DOT", destAddress: a.toAddress, refundAddress: a.fromAddress, quote: { estimatedPrice: "1", egressAmount: "163822283773", intermediateAmount: "0", fees: {} }, fok: { slippageTolerancePercent: 0.5, retryDurationBlocks: 150 }, brokerBps: 0 },
+        })];
+      }
+      if (a.toTokenAddress === DW_USDT) return [dwFakeLeg("relay", leg1Out, { ...DW_RELAY_EXEC, toToken: { address: DW_USDT, symbol: "USDT", decimals: 18 } })];
+      if (a.toTokenAddress === NATIVE_TOKEN_ADDRESS) return [dwFakeLeg("relay", "21839175745438294", { ...DW_RELAY_EXEC, toToken: { address: NATIVE_TOKEN_ADDRESS, symbol: "BNB", decimals: 18 } })];
+      throw new Error("No available quotes for the requested transfer");
+    };
+    const args = { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: DW_BTCB, toTokenAddress: "dot", fromAmount, fromAddress: DW_EVM, toAddress: DW_DOT, addresses: { polkadot: DW_DOT } };
+    const routes = await searchMilestoneCompositions(args, { searchLeg, pricesUsd: { DOT: 0.79, BTC: 90000 } });
+    return { routes, seen };
+  };
+  {
+    const small = await dwCompose("200000000000000", "13103901127902684558");
+    ok("dot repair D3: BTCB -> DOT composes, and the leg-2 Chainflip quote is requested at exactly the leg-1 output — $10-class in, $10-class leg 2",
+      small.routes.length >= 1 && small.seen.length >= 1
+      && small.seen.every(s => s.fromAmount === "13103901127902684558" && s.toAddress === DW_DOT));
+    const walk = await dwCompose("10000000000000000000", "655923627372098367443907");
+    ok("dot repair D3: at the walk's 10 BTCB scale the leg-1 output passes to leg 2 UNCHANGED — no price-ratio rescaling exists in the planner (the walk's 6.59e23 figure is Relay's own output at that input)",
+      walk.routes.length >= 1 && walk.seen.length >= 1
+      && walk.seen.every(s => s.fromAmount === "655923627372098367443907"));
+  }
+  // -- D2: family totals --------------------------------------
+  ok("dot repair D2: a family total sums its loaded rows (unpriced rows contribute nothing)",
+    familyRowsTotalUsd([{ amount: "2", symbol: "SOL" }, { amount: "3", symbol: "X" }], b => b.symbol === "SOL" ? 100 : null) === 200
+    && familyRowsTotalUsd([], () => 5) === 0);
+  ok("dot repair D2: ANY couldn't-load row makes the family total unknown — never a figure over unloaded rows",
+    familyRowsTotalUsd([{ amount: "2" }, { amount: null }], () => 100) === null
+    && familyRowsTotalUsd([{ amount: null }], () => 100) === null
+    && familyRowsTotalUsd([{ amount: "not-a-number" }], () => 100) === null
+    && familyRowsTotalUsd(null, () => 100) === null);
+  ok("dot repair D2 app: familyUsdTotals sums through familyRowsTotalUsd and the scoped hero keeps an unknown total unknown",
+    appSrcDw.includes("const sumRows = (rows, priceFn) => familyRowsTotalUsd(rows, (b) => priceOfRow(b, priceFn(b)));")
+    && appSrcDw.includes("return m[viewKey] != null ? m[viewKey] : null;")
+    && appSrcDw.includes("const t = st == null ? \"—\" : usd(st);"));
+}
+
+// 112b. Incident pins (2026-11-14, same build): I1 home
+// surfacing + the reusable resume entry point, I3 fallback
+// clarity in the milestone line, D5 lifecycle pins, I2
+// loaded-gating pins.
+{
+  const appSrcI = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const htmlSrcI = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  // I3: a leg-due line names the arrived asset, its amount
+  // and the chain it sits on, and keeps the exact
+  // "Complete the swap" phrase; an awaiting-credit line
+  // says the money stays in the user's own wallet and
+  // closing Fluid loses nothing. Fixture = the incident's
+  // shape: BNB -> USDC(Base) landed, USDC -> SUI due.
+  const recI = {
+    label: "BNB → SUI", state: "leg-due", currentLeg: 1, receivedRaw: "474054", toSymbol: "SUI",
+    legs: [
+      { fromChainKey: "bsc", toChainKey: "base", fromSymbol: "BNB", toSymbol: "USDC", fromTokenAddress: null, toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+      { fromChainKey: "base", toChainKey: "sui", fromSymbol: "USDC", toSymbol: "SUI", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toTokenAddress: "0x2::sui::SUI" },
+    ],
+  };
+  const lineI = milestoneHistoryLine(recI);
+  ok("incident I3: the leg-due line names the arrived asset, amount and chain — never implies funds are gone",
+    lineI.includes("0.474054 USDC") && lineI.includes("Base") && lineI.includes("Complete the swap") && lineI.includes("SUI"));
+  const waitI = milestoneHistoryLine({ ...recI, state: "awaiting-credit" });
+  ok("incident I3: the awaiting-credit line says the money stays in the user's wallet and closing loses nothing",
+    waitI.includes("your own wallet") && waitI.includes("closing Fluid loses nothing"));
+  // I1: the home card exists, the resume entry point is a
+  // single app-scope function, and renderMain paints it.
+  ok("incident I1: home pending-swap card + reusable resume entry point are wired",
+    htmlSrcI.includes('id="homeMilestoneCard"') && htmlSrcI.includes('id="homeMilestoneList"')
+    && appSrcI.includes("async function resumeMilestoneRecord(record, status")
+    && appSrcI.includes("async function paintHomeMilestoneSwaps()")
+    && appSrcI.includes("paintHomeMilestoneSwaps();")
+    && appSrcI.includes("completeMilestoneSwap(wallet, record.id, status,")
+    && appSrcI.includes("homeMilestoneBusy") && appSrcI.includes("homeMilestoneNotes"));
+  // D5: unlocking stamps activity, a search stamps activity,
+  // and a search whose pre-flight spans a lock abandons
+  // quietly instead of reading the nulled wallet.
+  ok("dot repair D5: unlock and search count as activity; the lock-spanning search abandons on the null wallet",
+    appSrcI.includes("Unlocking is activity (DOT-walk repair")
+    && appSrcI.includes("A route search is user activity (DOT-walk repair")
+    && appSrcI.includes("if (!wallet) return;"));
+  // I2: family totals stay unknown until the family has
+  // loaded — Solana/Sui included (they carry no failure
+  // flag, so the loaded set is their only honest gate).
+  ok("incident I2: family totals are gated on the family having loaded (Solana/Sui included)",
+    appSrcI.includes('!famLoaded.has("solana")') && appSrcI.includes('!famLoaded.has("sui")')
+    && appSrcI.includes("const updating ="));
+}
+
+// 113. P0 (2026-11-14) — the Mayan EVM executor's allowance
+// branch referenced ERC20_ABI, an identifier defined NOWHERE
+// in src: every Mayan EVM swap from an ERC20 source threw
+// "ERC20_ABI is not defined" at the allowance check, before
+// anything was sent. It stalled the first real user's
+// composed swap at its Mayan leg (leg 1 Relay had settled
+// 0.474054 USDC to his own Base address) and his manual
+// recovery after it. The 2,483-check suite shipped it
+// because the branch had NO executing test — the Mayan
+// section built routes and checked bounds, but never ran
+// executeMayanSwapRoute. This section runs it, through the
+// suite's proven FetchRequest RPC seam, on the exact branch:
+// ERC20 source, allowance below need -> approve -> settle ->
+// swap send. A second arm proves the sufficient-allowance
+// path skips the approve. The sweep pin then guards the
+// whole used-but-undefined class, not just this instance.
+{
+  ok("p0: ERC20_ABI is the minimal ERC20 surface the Mayan executor uses",
+    Array.isArray(ERC20_ABI) && ERC20_ABI.length === 4
+    && ERC20_ABI.some(s => s.startsWith("function allowance("))
+    && ERC20_ABI.some(s => s.startsWith("function approve("))
+    && ERC20_ABI.some(s => s.startsWith("function balanceOf("))
+    && ERC20_ABI.some(s => s.startsWith("function transfer(")));
+
+  const P0_USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const P0_USDC_ARB = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  // A well-known PUBLIC test key (Hardhat account #0) — never a
+  // real wallet; used so the executor can sign against the stub.
+  const p0Wallet = new ethers.Wallet("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+  const p0Quote = (over = {}) => ({
+    type: "SWIFT", gasless: false, swiftVersion: "V2", fromChain: "base", toChain: "arbitrum",
+    fromToken: { contract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, standard: "erc20" },
+    toToken: { contract: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", symbol: "USDC", decimals: 6, standard: "erc20" },
+    effectiveAmountIn: 100, effectiveAmountIn64: "100000000",
+    expectedAmountOut: 99.93, expectedAmountOutBaseUnits: "99930000",
+    minAmountOut: 99.93, minReceived: 99.93, minReceivedBaseUnits: "99930000",
+    minMiddleAmount: 100, price: 0.9996, toTokenPrice: 0.99976,
+    protocolBps: 0, protocolFeeUsd: 0, referrerBps: 0, referrerFeeUsd: 0,
+    swiftMayanContract: "0x40fFE85A28DC9993541449464d7529a922142960", swiftInputContract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    swiftInputDecimals: 6, swiftInputContractStandard: "erc20", swiftWrapAndLock: false, swiftAuctionMode: 3,
+    cancelRelayerFee64: "210", refundRelayerFee64: "137", submitRelayerFee64: "0",
+    deadline64: String(Math.floor(Date.now() / 1000) + 3600), gasDrop: 0, slippageBps: 100, etaSeconds: 3,
+    rentCost: "3000000", suggestedPriorityFee: 0, quoteId: "0xdddddddddddddddddddddddddddddddd",
+    ...over,
+  });
+  const p0WithFee = (q, bps, outHuman) => ({
+    ...q, referrerBps: bps, referrerFeeUsd: bps / 100,
+    expectedAmountOut: outHuman, expectedAmountOutBaseUnits: String(Math.round(outHuman * 10 ** q.toToken.decimals)),
+    minAmountOut: outHuman, minReceived: outHuman, minReceivedBaseUnits: String(Math.round(outHuman * 10 ** q.toToken.decimals)),
+  });
+  const jsonResP0 = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj), headers: { get: () => null } });
+  // Base JSON-RPC through the FetchRequest seam: allowance is
+  // whatever the arm says it is; sends are decoded and recorded.
+  const p0Rpc = (state) => async (req) => {
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const word = (v) => "0x" + BigInt(v).toString(16).padStart(64, "0");
+    const block = { number: "0x64", hash: "0x" + "22".repeat(32), parentHash: "0x" + "11".repeat(32), timestamp: "0x67300000", transactions: [], gasLimit: "0x1c9c380", gasUsed: "0x0", miner: "0x0000000000000000000000000000000000000000", difficulty: "0x0", baseFeePerGas: "0x5f5e100", extraData: "0x", nonce: "0x0000000000000000", mixHash: "0x" + "00".repeat(32), sha3Uncles: "0x" + "00".repeat(32), logsBloom: "0x" + "00".repeat(256), stateRoot: "0x" + "00".repeat(32), transactionsRoot: "0x" + "00".repeat(32), receiptsRoot: "0x" + "00".repeat(32), uncles: [] };
+    const answer = (r) => {
+      let result;
+      switch (r.method) {
+        case "eth_chainId": result = "0x2105"; break;
+        case "net_version": result = "8453"; break;
+        case "eth_blockNumber": result = "0x64"; break;
+        case "eth_getBlockByNumber": result = block; break;
+        case "eth_getBalance": result = "0x38d7ea4c68000"; break;
+        case "eth_getTransactionCount": result = "0x0"; break;
+        case "eth_gasPrice": result = "0x5f5e100"; break;
+        case "eth_maxPriorityFeePerGas": result = "0x0"; break;
+        case "eth_feeHistory": result = { baseFeePerGas: ["0x5f5e100", "0x5f5e100"], gasUsedRatio: [0.5], reward: [["0x0"]], oldestBlock: "0x1" }; break;
+        case "eth_estimateGas": result = "0x493e0"; break;
+        case "eth_call": {
+          const data = String(r.params?.[0]?.data || "");
+          result = data.startsWith("0xdd62ed3e") ? word(state.allowance) : word(0n);
+          break;
+        }
+        case "eth_sendRawTransaction": {
+          const raw = r.params[0];
+          const tx = ethers.Transaction.from(raw);
+          state.sends.push({ to: tx.to, data: tx.data, value: tx.value });
+          if (String(tx.to).toLowerCase() === P0_USDC_BASE.toLowerCase()) state.allowance = 100000000n; // the approve landed
+          result = ethers.keccak256(raw);
+          break;
+        }
+        case "eth_getTransactionReceipt": result = { transactionHash: r.params[0], transactionIndex: "0x0", blockHash: "0x" + "22".repeat(32), blockNumber: "0x64", from: p0Wallet.address, to: P0_USDC_BASE, cumulativeGasUsed: "0x30000", gasUsed: "0x30000", contractAddress: null, logs: [], logsBloom: "0x" + "00".repeat(256), status: "0x1", effectiveGasPrice: "0x5f5e100", type: "0x2" }; break;
+        case "eth_getTransactionByHash": result = null; break;
+        default: throw new Error("unexpected rpc method " + r.method);
+      }
+      return { jsonrpc: "2.0", id: r.id, result };
+    };
+    const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+  };
+  const defaultGetUrlP0 = FetchRequest.createGetUrlFunc();
+  const p0Run = async (allowance) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("price-api.mayan.finance/v3/quote")) { const b = JSON.parse(opts.body); return jsonResP0({ quotes: [b.referrerBps ? p0WithFee(p0Quote(), b.referrerBps, 99.93 - (b.referrerBps / 100) / 0.99976) : p0Quote()] }); }
+      if (u.includes("api.binance.com")) return jsonResP0([{ symbol: "ETHUSDT", price: "3000" }, { symbol: "BNBUSDT", price: "890" }, { symbol: "BTCUSDT", price: "90000" }, { symbol: "DOTUSDT", price: "0.79" }]);
+      if (u.includes("coingecko")) return jsonResP0({});
+      throw new Error("unexpected fetch in p0 stub: " + u);
+    };
+    const state = { allowance, sends: [] };
+    FetchRequest.registerGetUrl(p0Rpc(state));
+    try {
+      const route = await getMayanSwapRoute({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: P0_USDC_BASE, toTokenAddress: P0_USDC_ARB, fromAmount: "100000000", fromAddress: p0Wallet.address, toAddress: p0Wallet.address });
+      const approvals = [];
+      const hashes = await executeMayanSwapRoute(p0Wallet, route, () => {}, (rec) => approvals.push(rec));
+      return { route, state, approvals, hashes };
+    } finally { globalThis.fetch = realFetch; FetchRequest.registerGetUrl(defaultGetUrlP0); }
+  };
+  {
+    // Allowance BELOW need: the exact branch that threw. The
+    // executor must approve the Forwarder for exactly the swap
+    // amount, settle, then send the swap — no ReferenceError.
+    const { state, approvals, hashes } = await p0Run(0n);
+    const approveTx = state.sends[0] || {};
+    const approveDec = approveTx.data ? new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]).decodeFunctionData("approve", approveTx.data) : null;
+    ok("p0: Mayan EVM executor runs the allowance step — approve precedes the swap when allowance is short",
+      Array.isArray(hashes) && hashes.length === 1 && state.sends.length === 2
+      && String(approveTx.to).toLowerCase() === P0_USDC_BASE.toLowerCase()
+      && !!approveDec && approveDec[0] === MAYAN_FORWARDER && approveDec[1] === 100000000n
+      && String(state.sends[1].to).toLowerCase() === MAYAN_FORWARDER.toLowerCase());
+    ok("p0: the approval is reported through onApprove with the Forwarder as spender",
+      approvals.length === 1 && approvals[0].spender === MAYAN_FORWARDER && approvals[0].amount === "100000000");
+  }
+  {
+    // Allowance ALREADY sufficient: no approve, swap only.
+    const { state, approvals, hashes } = await p0Run(100000000n);
+    ok("p0: a sufficient allowance skips the approve and sends only the swap",
+      Array.isArray(hashes) && hashes.length === 1 && state.sends.length === 1
+      && String(state.sends[0].to).toLowerCase() === MAYAN_FORWARDER.toLowerCase() && approvals.length === 0);
+  }
+  {
+    // The class guard: no ALL_CAPS identifier may be
+    // referenced in a src module without a declaration in
+    // that module (the ERC20_ABI class — the bundler does
+    // not check free variables, so the bundle builds green
+    // and the branch throws only when a user reaches it).
+    // AST scan via the typescript package when resolvable;
+    // the concrete historical instances are pinned either
+    // way (the sibling tronHexToAddress — an undefined
+    // camelCase helper whose throw was swallowed by the
+    // approval-recording catch — is one of them).
+    const srcDirP0 = new URL("../src/", import.meta.url);
+    let sweepOkP0 = null;
+    try {
+      const ts = (await import("typescript")).default;
+      const CAPS = /^[A-Z][A-Z0-9_]{2,}$/;
+      const RUNTIME_CAPS = new Set(["JSON", "URL", "CSS"]); // language/runtime globals, not module constants
+      const missingP0 = [];
+      for (const f of readdirSync(srcDirP0).filter(x => x.endsWith(".js"))) {
+        const text = readFileSync(new URL(f, srcDirP0), "utf8");
+        const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+        const declared = new Set(); const usedRefs = new Set();
+        const bind = (name) => { if (!name) return; if (ts.isIdentifier(name)) declared.add(name.text); else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) name.elements.forEach(el => bind(el.name)); };
+        const visit = (node) => {
+          if (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) bind(node.name);
+          if (ts.isCatchClause(node) && node.variableDeclaration) bind(node.variableDeclaration.name);
+          if (ts.isEnumDeclaration(node)) declared.add(node.name.text);
+          if (ts.isImportDeclaration(node) && node.importClause) { const ic = node.importClause; if (ic.name) declared.add(ic.name.text); if (ic.namedBindings) { if (ts.isNamespaceImport(ic.namedBindings)) declared.add(ic.namedBindings.name.text); else ic.namedBindings.elements.forEach(el => declared.add(el.name.text)); } }
+          if (ts.isIdentifier(node) && CAPS.test(node.text)) {
+            const p = node.parent;
+            const skip = !p || (ts.isPropertyAccessExpression(p) && p.name === node) || (ts.isPropertyAssignment(p) && p.name === node) || (ts.isShorthandPropertyAssignment(p) && p.name === node) || (ts.isVariableDeclaration(p) && p.name === node) || (ts.isFunctionDeclaration(p) && p.name === node) || (ts.isClassDeclaration(p) && p.name === node) || (ts.isParameter(p) && p.name === node) || ts.isImportSpecifier(p) || ts.isExportSpecifier(p) || (ts.isPropertyDeclaration(p) && p.name === node) || (ts.isMethodDeclaration(p) && p.name === node) || (ts.isPropertySignature(p) && p.name === node) || (ts.isEnumMember(p) && p.name === node) || ts.isQualifiedName(p);
+            if (!skip) usedRefs.add(node.text);
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        for (const n of usedRefs) if (!declared.has(n) && !RUNTIME_CAPS.has(n)) missingP0.push(f + ": " + n);
+      }
+      sweepOkP0 = missingP0.length === 0;
+      if (!sweepOkP0) console.error("  sweep found undeclared:", missingP0.join(", "));
+    } catch { sweepOkP0 = null; }
+    const coreSrcP0 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("p0: the used-but-undefined class is empty across src (AST sweep; concrete instances pinned regardless)",
+      sweepOkP0 !== false
+      && coreSrcP0.includes("export const ERC20_ABI = [")
+      && !coreSrcP0.includes("tronHexToAddress(")
+      && coreSrcP0.includes("tronAddressFromHex(spenderHex)"));
+  }
 }
 
 console.log(`\n${passed} checks passed`);
