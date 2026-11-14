@@ -1,0 +1,373 @@
+{
+ "requestId": "0x17946683037b64b73c8901b87d33341f92f439fc7924936d68c389ba65e0365e",
+ "steps": [
+  {
+   "id": "deposit",
+   "action": "Confirm transaction in your wallet",
+   "description": "Depositing funds to the relayer to execute the swap for USDC",
+   "kind": "transaction",
+   "items": [
+    {
+     "status": "incomplete",
+     "data": {
+      "messages": [
+       {
+        "from": "EQAT3OD7z1oIW9VfKvYxjBe5FHytgET5pnlf88Ed-bCnVaSr",
+        "to": "EQCrdGsDTqA2t6xRR4N6V4J705F7w_VQbUdHnofsh-8lVIPs",
+        "mode": 1,
+        "value": "10000000000",
+        "bounce": false,
+        "body": "te6cckEBAQEASAAAjAAAAAAweDMyNTc4MmQzNzM3M2U2ZjI4YWY4NjM0Mjc1ZGRkYTYxNmE5NjU5ZDAxNmEzMmQ2MDFkNzY4MjAyNWJhNDQ0NDcMzQUJ"
+       }
+      ]
+     },
+     "check": {
+      "endpoint": "/intents/status/v3?requestId=0x17946683037b64b73c8901b87d33341f92f439fc7924936d68c389ba65e0365e",
+      "method": "GET"
+     }
+    }
+   ],
+   "requestId": "0x17946683037b64b73c8901b87d33341f92f439fc7924936d68c389ba65e0365e",
+   "depositAddress": ""
+  }
+ ],
+ "fees": {
+  "gas": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "0",
+   "amountFormatted": "0.0",
+   "amountUsd": "0",
+   "minimumAmount": "0"
+  },
+  "relayer": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "38775839",
+   "amountFormatted": "0.038775839",
+   "amountUsd": "0.041082",
+   "minimumAmount": "38775839"
+  },
+  "relayerGas": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "960818",
+   "amountFormatted": "0.000960818",
+   "amountUsd": "0.001018",
+   "minimumAmount": "960818"
+  },
+  "relayerService": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "37815021",
+   "amountFormatted": "0.037815021",
+   "amountUsd": "0.040064",
+   "minimumAmount": "37815021"
+  },
+  "app": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "0",
+   "amountFormatted": "0.0",
+   "amountUsd": "0",
+   "minimumAmount": "0"
+  },
+  "subsidized": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "0",
+   "amountFormatted": "0.0",
+   "amountUsd": "0",
+   "minimumAmount": "0"
+  }
+ },
+ "details": {
+  "operation": "swap",
+  "sender": "EQAT3OD7z1oIW9VfKvYxjBe5FHytgET5pnlf88Ed-bCnVaSr",
+  "recipient": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
+  "currencyIn": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "10000000000",
+   "amountFormatted": "10.0",
+   "amountUsd": "10.594790",
+   "minimumAmount": "10000000000"
+  },
+  "currencyOut": {
+   "currency": {
+    "chainId": 8453,
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "name": "USD Coin",
+    "decimals": 6,
+    "metadata": {
+     "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+     "verified": true
+    }
+   },
+   "amount": "10581398",
+   "amountFormatted": "10.581398",
+   "amountUsd": "10.578679",
+   "minimumAmount": "10369770"
+  },
+  "refundCurrency": {
+   "currency": {
+    "chainId": 224235520,
+    "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "symbol": "GRAM",
+    "name": "Gram",
+    "decimals": 9,
+    "metadata": {
+     "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+     "verified": true
+    }
+   },
+   "amount": "10000000000",
+   "amountFormatted": "10.0",
+   "amountUsd": "10.594790",
+   "minimumAmount": "10000000000"
+  },
+  "totalImpact": {
+   "usd": "-0.016111",
+   "percent": "-0.15"
+  },
+  "swapImpact": {
+   "usd": "0.024971",
+   "percent": "0.24"
+  },
+  "expandedPriceImpact": {
+   "swap": {
+    "usd": "0.011199"
+   },
+   "execution": {
+    "usd": "-0.02097"
+   },
+   "relay": {
+    "usd": "-0.006341"
+   },
+   "app": {
+    "usd": "0"
+   },
+   "sponsored": {
+    "usd": "0"
+   }
+  },
+  "rate": "1.0581398",
+  "slippageTolerance": {
+   "total": "200",
+   "origin": {
+    "usd": "0.000000",
+    "value": "0",
+    "percent": "0.00"
+   },
+   "destination": {
+    "usd": "0.211574",
+    "value": "211628",
+    "percent": "2.00"
+   }
+  },
+  "timeEstimate": 1,
+  "userBalance": "0",
+  "isFixedRate": false,
+  "route": {
+   "origin": {
+    "inputCurrency": {
+     "currency": {
+      "chainId": 224235520,
+      "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+      "symbol": "GRAM",
+      "name": "Gram",
+      "decimals": 9,
+      "metadata": {
+       "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+       "verified": true
+      }
+     },
+     "amount": "10000000000",
+     "amountFormatted": "10.0",
+     "amountUsd": "10.594790",
+     "minimumAmount": "10000000000"
+    },
+    "outputCurrency": {
+     "currency": {
+      "chainId": 224235520,
+      "address": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+      "symbol": "GRAM",
+      "name": "Gram",
+      "decimals": 9,
+      "metadata": {
+       "logoURI": "https://assets.relay.link/icons/currencies/ton.png",
+       "verified": true
+      }
+     },
+     "amount": "10000000000",
+     "amountFormatted": "10.0",
+     "amountUsd": "10.594790",
+     "minimumAmount": "10000000000"
+    },
+    "router": "relay"
+   },
+   "destination": {
+    "inputCurrency": {
+     "currency": {
+      "chainId": 8453,
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 6,
+      "metadata": {
+       "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+       "verified": true
+      }
+     },
+     "amount": "10581398",
+     "amountFormatted": "10.581398",
+     "amountUsd": "10.578679",
+     "minimumAmount": "10369770"
+    },
+    "outputCurrency": {
+     "currency": {
+      "chainId": 8453,
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 6,
+      "metadata": {
+       "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+       "verified": true
+      }
+     },
+     "amount": "10581398",
+     "amountFormatted": "10.581398",
+     "amountUsd": "10.578679",
+     "minimumAmount": "10369770"
+    },
+    "router": "relay"
+   }
+  }
+ },
+ "protocol": {
+  "v2": {
+   "orderId": "0x325782d37373e6f28af8634275ddda616a9659d016a32d601d7682025ba44447",
+   "hubType": "onchain",
+   "orderData": {
+    "version": "v1",
+    "solverChainId": "base",
+    "solver": "0xf70da97812cb96acdf810712aa562db8dfa3dbef",
+    "salt": "0x27b87c2033dfff3a0a9d4d6bf0ef1091d985a5c6085dce44d84a003373887eec",
+    "inputs": [
+     {
+      "payment": {
+       "chainId": "ton",
+       "currency": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+       "amount": "10000000000",
+       "weight": "1"
+      },
+      "refunds": [
+       {
+        "chainId": "ton",
+        "recipient": "EQAT3OD7z1oIW9VfKvYxjBe5FHytgET5pnlf88Ed-bCnVaSr",
+        "currency": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+        "minimumAmount": "0",
+        "deadline": 1795273103,
+        "extraData": "0x"
+       },
+       {
+        "chainId": "base",
+        "recipient": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
+        "currency": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "minimumAmount": "0",
+        "deadline": 1795273103,
+        "extraData": "0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"
+       }
+      ]
+     }
+    ],
+    "output": {
+     "chainId": "base",
+     "payments": [
+      {
+       "recipient": "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B",
+       "currency": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+       "minimumAmount": "10369770",
+       "expectedAmount": "10581398"
+      }
+     ],
+     "calls": [],
+     "deadline": 1795273103,
+     "extraData": "0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"
+    },
+    "fees": []
+   },
+   "paymentDetails": {
+    "chainId": "ton",
+    "depository": "EQCrdGsDTqA2t6xRR4N6V4J705F7w_VQbUdHnofsh-8lVIPs",
+    "currency": "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
+    "amount": "10000000000"
+   }
+  }
+ }
+}

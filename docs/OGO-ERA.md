@@ -8,16 +8,17 @@
 > definition. No playable build exists yet; the build starts once the
 > wallet settles, after deep gaming research.
 
-*OGO ERA is a street-football **RPG** (not a MOBA): an intelligent,
-interactive role-playing game with Lagos culture and storytelling at its
-heart, and a real sense of belonging for its players. Your character is
-your Companion; your progression is on-chain; your rewards are real.*
+*OGO ERA is a world-building game **universe**: many games — digital
+and real-life alike — in one world, with storytelling at its heart and
+a real sense of belonging for its players. Your character is your
+Companion; your progression is on-chain; your rewards are real. Street
+football is the first chapter, not the whole.*
 
 ---
 
-## OGO ERA — THE GAME
+## OGO ERA — CHAPTER 1: STREET FOOTBALL
 
-**What it is:** Street football set in Lagos. Not FIFA. Fast, small-sided,
+**What this chapter is:** Street football set in Lagos. Not FIFA. Fast, small-sided,
 3v3 / 4v4, on dusty pitches, under bridges, in markets. The culture is
 Lagos street football: nutmegs, skills, trash talk, celebrations.
 

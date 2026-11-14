@@ -41,7 +41,7 @@ import {
   Asset as StellarAsset, Networks as StellarNetworks,
 } from "@stellar/stellar-sdk/base";
 import {
-  Address as TonAddress, beginCell as tonBeginCell, storeMessage as tonStoreMessage,
+  Address as TonAddress, beginCell as tonBeginCell, Cell as TonCell, storeMessage as tonStoreMessage,
   external as tonExternal, internal as tonInternal, toNano as tonToNano, fromNano as tonFromNano,
 } from "@ton/core";
 import { WalletContractV4 as TonWalletContractV4 } from "@ton/ton";
@@ -819,6 +819,11 @@ const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "poly
  * CoinGecko remains the other leg. Both fetches are time-bounded so a
  * hung source fails closed instead of hanging a send. */
 export async function getVerifiedPrice(symbol) {
+  // GRAM is the display name of TON's native coin (the
+  // Toncoin rebrand): the price tables stay keyed by the
+  // internal symbol TON, and the display symbol resolves
+  // to the same sources here.
+  if (symbol === "GRAM") symbol = "TON";
   const pair = PRICE_PAIRS[symbol], cgId = CG_IDS[symbol];
   if (symbol === "USDT") return 1;
   if (!pair && !cgId) throw new Error(`No price sources known for ${symbol} — refusing to value it.`);
@@ -938,6 +943,12 @@ async function fetchPricesFresh() {
   if (Object.keys(CG).some(s => out[s] == null)) {
     try { await mergeCgFallbackPrices(out); } catch { /* partial prices stand */ }
   }
+  // GRAM alias (the Toncoin rebrand): the tables stay keyed
+  // by the internal symbol TON, but balance rows now carry
+  // the display symbol GRAM and price themselves through
+  // prices[row.symbol] — without this alias a GRAM row would
+  // render $0.00 over a real balance.
+  if (out.TON != null) out.GRAM = out.TON;
   return out;
 }
 
@@ -4363,7 +4374,7 @@ export const PLATFORM_FEE_ROUTE_MULTIPLIER_EVM = 4;
  *  0.5%-of-amount cap is the binding term anyway — the ceiling
  *  exists only as a hard cap on user pain, so it sits at $1.50
  *  rather than starving the lane at $0.50. */
-export const PLATFORM_FEE_TOTAL_CEILINGS_USD = { evm: 0.20, bitcoin: 1.50, lightning: 0.30, solana: 0.30, polkadot: 0.30 };
+export const PLATFORM_FEE_TOTAL_CEILINGS_USD = { evm: 0.20, bitcoin: 1.50, lightning: 0.30, solana: 0.30, polkadot: 0.30, ton: 0.30 };
 /** The destination ecosystem a swap chain key belongs to, for fee
  *  purposes: a NETWORKS key is "evm"; the named non-EVM families
  *  with their own ceiling get their own row; anything else —
@@ -4375,6 +4386,7 @@ export function platformFeeEcosystemOf(destChainKey) {
   if (destChainKey === "bitcoin" || destChainKey === "btc") return "bitcoin";
   if (destChainKey === "lightning" || destChainKey === "ln") return "lightning";
   if (destChainKey === "polkadot") return "polkadot";
+  if (destChainKey === "ton") return "ton";
   if (typeof destChainKey === "string" && NETWORKS[destChainKey]) return "evm";
   return "default";
 }
@@ -6637,12 +6649,25 @@ export const POLKADOT_SWAP_CHAIN_ID = 20000000000004;
  *  Bitcoin's "btc" / Sui's native coin type): native DOT has
  *  no contract address, so routes name it "dot". */
 export const POLKADOT_DOT_TOKEN = "dot";
+// TON's id in the swap universe is its Relay chain id
+// (224235520, live-probed 2026-11-14 — see the Relay-from-TON
+// section): unlike Polkadot, TON IS in swapChainOf, because
+// its rail (Relay) quotes in the router's own id space and
+// parseRelayQuote requires the Fluid-space id to match it.
+export const TON_SWAP_CHAIN_ID = 224235520;
+/** Native GRAM's "address" in the swap universe: Relay names
+ *  TON's native coin by the friendly zero address (its sole
+ *  TON currency, live-probed 2026-11-14). The coin displays
+ *  as GRAM (the Toncoin rebrand — Relay and CoinGecko both
+ *  name it Gram); the chain stays TON. */
+export const TON_SWAP_NATIVE_TOKEN = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c";
 /** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
  *  a non-EVM family key ("tron", "solana", "sui"). Null when unknown. */
 export function swapChainOf(chainKey) {
   if (chainKey === "tron") return { chainId: TRON_SWAP_CHAIN_ID, name: "Tron" };
   if (chainKey === "solana") return { chainId: SOLANA_SWAP_CHAIN_ID, name: "Solana" };
   if (chainKey === "sui") return { chainId: SUI_SWAP_CHAIN_ID, name: "Sui" };
+  if (chainKey === "ton") return { chainId: TON_SWAP_CHAIN_ID, name: "TON" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -6703,6 +6728,13 @@ const RELAY_API = "https://api.relay.link";
 export const RELAY_SOLANA_CHAIN_ID = 792703809;
 /** Relay's chain id for Tron — the same id the swap universe uses. */
 export const RELAY_TRON_CHAIN_ID = 728126428;
+/** Relay's chain id for TON — the same id the swap universe uses. */
+export const RELAY_TON_CHAIN_ID = 224235520;
+/** Relay's pinned TON depository (live-probed 2026-11-14): the
+ *  one address a TON-source deposit message may ever pay. A
+ *  quote naming any other recipient is refused at the bounds
+ *  check, before anything is signed (see checkRelayTonStepBounds). */
+export const RELAY_TON_DEPOSITORY = "EQCrdGsDTqA2t6xRR4N6V4J705F7w_VQbUdHnofsh-8lVIPs";
 /** The one Relay App Fees claim address: the DripBot collection
  *  wallet's EVM address. Relay requires an EVM recipient even for
  *  non-EVM chains and settles all app fees to it in USDC, off-chain. */
@@ -6722,6 +6754,7 @@ export const RELAY_EVM_CHAIN_IDS = new Set([
 export function relayChainOf(chainKey) {
   if (chainKey === "tron") return { chainId: RELAY_TRON_CHAIN_ID, name: "Tron" };
   if (chainKey === "solana") return { chainId: RELAY_SOLANA_CHAIN_ID, name: "Solana" };
+  if (chainKey === "ton") return { chainId: RELAY_TON_CHAIN_ID, name: "TON" };
   if (chainKey === "sui") return null;
   const n = NETWORKS[chainKey];
   if (!n) return null;
@@ -6736,6 +6769,12 @@ export function relayChainOf(chainKey) {
 export function relaySupportsPair(fromChainKey, toChainKey) {
   if (!relayChainOf(fromChainKey) || !relayChainOf(toChainKey)) return false;
   if (fromChainKey === "tron") return toChainKey !== "tron";
+  // TON sources are wired (the Relay-from-TON executor below):
+  // a GRAM deposit message Fluid rebuilds and bounds-checks
+  // locally. TON→TON is not a Relay lane — Relay's TON universe
+  // holds the native coin only and refuses same-chain TON
+  // pairs (INVALID_INPUT_CURRENCY, live-probed 2026-11-14).
+  if (fromChainKey === "ton") return toChainKey !== "ton";
   return !!NETWORKS[fromChainKey];
 }
 /** The currency address Relay will accept for one side of a swap.
@@ -6933,6 +6972,26 @@ export function relayTronExecutableSteps(route) {
         && typeof prm.data === "string" && prm.data.length >= 8;
     }));
 }
+/** The Relay steps Fluid can sign for a TON source: transaction
+ *  steps whose items carry a non-empty `messages` array — the
+ *  wallet-signed deposit shape Relay returns for originChainId
+ *  224235520 (live-probed 2026-11-14: GRAM → USDC on Base, one
+ *  deposit step, one item, ONE message paying the pinned
+ *  depository the exact input, its body a pinned-grammar cell —
+ *  see the Relay-from-TON section). Relay does NOT get its blob
+ *  signed: Fluid strictly decodes the body, rebuilds the cell
+ *  locally from the parsed tag, and signs only its own rebuild
+ *  after the full envelope bounds check (checkRelayTonStepBounds). */
+export function relayTonExecutableSteps(route) {
+  if (route?.provider !== "relay") return [];
+  if (Number(route?.relay?.originChainId) !== RELAY_TON_CHAIN_ID) return [];
+  return (route.relay.steps || []).filter(s =>
+    s && s.kind === "transaction" && Array.isArray(s.items) && s.items.length > 0
+    && s.items.every(it => {
+      const msgs = it && it.data && it.data.messages;
+      return Array.isArray(msgs) && msgs.length > 0;
+    }));
+}
 /** Ask Relay for its single executable quote (with the given fee
  *  options) and parse it into route shape. Throws on any failure
  *  (HTTP error, unusable or unsignable quote) — getSwapRoutes
@@ -6953,7 +7012,7 @@ async function fetchRelayRoute(args, opts) {
   // caller's native-scale figure.
   const route = parseRelayQuote(data, { ...args, fromAmount: body.amount });
   if (!route) throw new Error("Relay returned no usable route for that pair.");
-  if (!relayExecutableSteps(route).length && !relayTronExecutableSteps(route).length) throw new Error("Relay's route for that pair carries no steps Fluid can sign.");
+  if (!relayExecutableSteps(route).length && !relayTronExecutableSteps(route).length && !relayTonExecutableSteps(route).length) throw new Error("Relay's route for that pair carries no steps Fluid can sign.");
   return route;
 }
 /** Relay's route for a swap, priced under the fee model — a
@@ -7241,6 +7300,158 @@ export async function executeRelayTronSwapRoute(wallet, route, onProgress = () =
     }
   }
   return hashes;
+}
+
+/* ---------- Relay from a TON source ----------
+ * Relay serves TON-origin quotes (live-probed 2026-11-14 — see
+ * relayTonExecutableSteps): its TON universe is the native coin
+ * only (GRAM — the Toncoin rebrand; Relay and CoinGecko both
+ * name it Gram, the chain stays TON), and the workable shape is
+ * the wallet-signed deposit: ONE message from the user's own
+ * TON wallet to Relay's pinned depository, carrying the exact
+ * input amount with send mode 1 (fees paid separately, so the
+ * full amount arrives) and a body cell that is Relay's
+ * deposit-matching tag in a text comment.
+ *
+ * The body grammar is PINNED from live captures: exactly one
+ * cell, zero references, exactly 560 bits — a 32-bit op of
+ * 0x00000000 (the text-comment op) followed by 66 ASCII bytes
+ * matching /^0x[0-9a-f]{64}$/ (the tag). The tag is Relay's own
+ * deposit id: it is NOT the requestId and NOT derivable from
+ * it (sha256/keccak variants were tested and excluded at probe
+ * time); it appears exactly once in the quote, inside this
+ * body. So the discipline is the Cetus/Mayan one, strengthened:
+ * Fluid STRICTLY decodes the received body, rebuilds the cell
+ * locally from the parsed tag, and requires the rebuild's hash
+ * to equal the received cell's hash — and the executor signs
+ * FLUID'S REBUILT CELL, never Relay's blob. Any deviation from
+ * the grammar (wrong op, added reference, longer or shorter
+ * tag, trailing bits) fails the decode and the route is
+ * refused before anything is signed.
+ *
+ * Fee capture rides Relay's App Fees exactly as on EVM/Tron
+ * routes (live-probed: a 50 bps pass on 10 GRAM → USDC returned
+ * fees.app.amount = exactly 0.05 GRAM in the input currency) —
+ * the standard two-pass model in getRelaySwapRoute applies
+ * unchanged, and parseRelayQuote's collecting test (app amount
+ * > 0) reads TON quotes the same way. Relay's TON floor is its
+ * own: 0.1 GRAM quotes, 0.01 GRAM refuses AMOUNT_TOO_LOW — no
+ * Fluid-side floor is invented. USDT-on-TON and same-chain TON
+ * pairs refuse INVALID_INPUT_CURRENCY at Relay itself and stay
+ * honestly routeless (holders can still hold/send/receive
+ * USDT-on-TON — presence is not swap coverage). */
+/** TON address equality on the PARSED address (workchain +
+ *  account id): friendly forms differ in case and bounce flag
+ *  for the same account, so TON addresses are never compared
+ *  as strings anywhere in swap space. False on unparseable
+ *  input. */
+export function tonAddressEquals(a, b) {
+  try { return TonAddress.parse(String(a)).equals(TonAddress.parse(String(b))); }
+  catch { return false; }
+}
+const RELAY_TON_TAG_RE = /^0x[0-9a-f]{64}$/;
+/** Build Relay's TON deposit body from its tag: the pinned
+ *  grammar (op 0 text comment ++ the 66-byte ASCII tag),
+ *  Fluid's own construction — this, not the quote's blob, is
+ *  what the executor signs. Throws on a tag outside the
+ *  pinned shape. */
+export function buildRelayTonDepositBody(tag) {
+  if (typeof tag !== "string" || !RELAY_TON_TAG_RE.test(tag))
+    throw new Error("Relay's TON deposit tag is not the pinned shape Fluid can rebuild.");
+  return tonBeginCell().storeUint(0, 32).storeBuffer(Buffer.from(tag, "ascii")).endCell();
+}
+/** Strictly decode a Relay TON deposit body (base64 BoC) and
+ *  return { tag }, or null for ANY deviation from the pinned
+ *  grammar: not a single-cell bag, a cell with references, a
+ *  bit length other than 560, a non-zero op, a tag that is not
+ *  66 ASCII bytes of 0x-prefixed lowercase hex, trailing bits,
+ *  or a cell whose hash differs from Fluid's own rebuild of
+ *  the parsed tag (the rebuild-equality proof that the bytes
+ *  carry nothing beyond the grammar). */
+export function parseRelayTonDepositBody(bodyB64) {
+  try {
+    if (typeof bodyB64 !== "string" || !bodyB64) return null;
+    const cells = TonCell.fromBoc(Buffer.from(bodyB64, "base64"));
+    if (!Array.isArray(cells) || cells.length !== 1) return null;
+    const cell = cells[0];
+    if (cell.refs.length !== 0) return null;
+    if (cell.bits.length !== 560) return null;
+    const s = cell.beginParse();
+    if (s.loadUint(32) !== 0) return null;
+    const tag = s.loadBuffer(66).toString("ascii");
+    if (s.remainingBits !== 0 || s.remainingRefs !== 0) return null;
+    if (!RELAY_TON_TAG_RE.test(tag)) return null;
+    if (!buildRelayTonDepositBody(tag).hash().equals(cell.hash())) return null;
+    return { tag };
+  } catch { return null; }
+}
+/** The full envelope bounds check for a Relay TON deposit,
+ *  run by the executor before anything is signed (the gate has
+ *  already established the route's shape; this binds the
+ *  MESSAGE to the trade the user agreed to): exactly one step,
+ *  one item, one message; the message spends from the wallet's
+ *  own TON address, pays ONLY the pinned depository, carries
+ *  exactly route.fromAmount nanoGRAM, uses send mode 1 with
+ *  bounce off, and its body decodes under the pinned grammar
+ *  (rebuild-equal). Returns { ok: true, tag } or the standard
+ *  refusal shape. */
+export function checkRelayTonStepBounds(route, ownerAddress) {
+  const refuse = (m) => ({ ok: false, reason: `Fluid refused this route: ${m} Pick another route.` });
+  const steps = relayTonExecutableSteps(route);
+  if (steps.length !== 1) return refuse("a TON deposit must be exactly one step.");
+  const items = steps[0].items || [];
+  if (items.length !== 1) return refuse("a TON deposit step must contain exactly one item.");
+  const msgs = (items[0] && items[0].data && items[0].data.messages) || [];
+  if (msgs.length !== 1) return refuse("a TON deposit must carry exactly one message.");
+  const msg = msgs[0] || {};
+  if (!isValidTonAddress(ownerAddress) || !tonAddressEquals(msg.from, ownerAddress))
+    return refuse("the deposit message spends from a different account.");
+  if (!tonAddressEquals(msg.to, RELAY_TON_DEPOSITORY))
+    return refuse("the deposit message pays an address other than Relay's TON depository.");
+  let want = null; try { want = BigInt(route?.fromAmount); } catch { want = null; }
+  let got = null; try { got = BigInt(msg.value); } catch { got = null; }
+  if (want == null || got == null || got !== want)
+    return refuse("the deposit message carries a different amount of GRAM than the amount you agreed to swap.");
+  if (Number(msg.mode) !== 1)
+    return refuse("the deposit message's send mode is not the one Fluid allows (fees paid separately, so the full amount arrives).");
+  if (msg.bounce !== false)
+    return refuse("the deposit message asks for a bounceable transfer.");
+  const parsed = parseRelayTonDepositBody(msg.body);
+  if (!parsed) return refuse("the deposit message's payload is not the pinned deposit-comment shape Fluid can rebuild and verify.");
+  return { ok: true, tag: parsed.tag };
+}
+/** Execute a Relay route SOURCED from TON: re-run the gate,
+ *  bind the deposit message to the trade (checkRelayTonStepBounds),
+ *  confirm the wallet holds the amount plus the family's
+ *  standing fee reserve, then send ONE internal message through
+ *  sendTon carrying FLUID'S REBUILT body cell at Relay's send
+ *  mode 1. Relay's solver watches the depository for the tag
+ *  and fills the destination side. Returns [hash] — the
+ *  external message hash, sendTon's own return. */
+export async function executeRelayTonSwapRoute(wallet, route, onProgress = () => {}) {
+  const gate = swapRouteExecutable(route);
+  if (!gate.ok || !gate.tonvm) throw new Error(gate.reason || "That route does not start on TON.");
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("The wallet is locked — unlock it to swap from TON.");
+  const fromAddress = tonAddressFromPhrase(phrase);
+  const bounds = checkRelayTonStepBounds(route, fromAddress);
+  if (!bounds.ok) throw new Error(bounds.reason);
+  const acct = await getTonAccount(fromAddress);
+  const native = acct && Array.isArray(acct.balances) ? acct.balances[0] : null;
+  let have = null;
+  try { have = native && native.amount != null ? ethers.parseUnits(String(native.amount), 9) : null; } catch { have = null; }
+  if (have == null) throw new Error("Your GRAM balance on TON could not be read — try again.");
+  if (have < BigInt(route.fromAmount) + tonToNano(TON_FEE_RESERVE))
+    throw new Error(`Not enough GRAM — this swap needs ${swapRawToAmount(route.fromAmount, 9)} GRAM plus about ${TON_FEE_RESERVE} GRAM set aside for fees (you have ${native.amount} GRAM).`);
+  onProgress("Sending the GRAM deposit…");
+  const { hash } = await sendTon(phrase, {
+    to: RELAY_TON_DEPOSITORY,
+    amount: swapRawToAmount(route.fromAmount, 9),
+    body: buildRelayTonDepositBody(bounds.tag),
+    sendMode: 1,
+  });
+  onProgress("GRAM deposit sent ✓");
+  return [hash];
 }
 
 /* ---------- SunSwap (Tron same-chain, direct port) ----------
@@ -17707,6 +17918,7 @@ export function destChainName(chainKey) {
   if (chainKey === "tron") return "Tron";
   if (chainKey === "sui") return "Sui";
   if (chainKey === "polkadot") return "Polkadot Asset Hub";
+  if (chainKey === "ton") return "TON";
   return NETWORKS[chainKey]?.name || String(chainKey || "");
 }
 /** Whether a token address IS the destination chain's native gas
@@ -17718,6 +17930,7 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "tron") return a === TRON_SWAP_NATIVE_TOKEN;
   if (chainKey === "sui") return suiCoinTypeEq(a, SUI_COIN_TYPE) || suiCoinTypeEq(a, SUI_SWAP_NATIVE_TOKEN);
   if (chainKey === "polkadot") return a.toLowerCase() === POLKADOT_DOT_TOKEN;
+  if (chainKey === "ton") return tonAddressEquals(a, TON_SWAP_NATIVE_TOKEN);
   return a.toLowerCase() === NATIVE_TOKEN_ADDRESS;
 }
 /** The destination native token's address in the swap universe's
@@ -17727,6 +17940,7 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "tron") return TRON_SWAP_NATIVE_TOKEN;
   if (chainKey === "sui") return SUI_SWAP_NATIVE_TOKEN;
   if (chainKey === "polkadot") return POLKADOT_DOT_TOKEN;
+  if (chainKey === "ton") return TON_SWAP_NATIVE_TOKEN;
   if (NETWORKS[chainKey]) return NATIVE_TOKEN_ADDRESS;
   return null;
 }
@@ -17748,6 +17962,16 @@ export async function readDestNativeRaw(chainKey, address) {
       const acct = await getDotAccount(address);
       const row = (acct?.balances || []).find(b => b && b.address == null && b.symbol === "DOT") || acct?.balances?.[0];
       return row && row.amount != null ? ethers.parseUnits(String(row.amount), 10) : null;
+    }
+    if (chainKey === "ton") {
+      // The native row is balances[0] by construction in
+      // getTonAccount (human GRAM string, 9 decimals) — the
+      // read the milestone credit watch polls for a TON leg's
+      // landing. A failed read throws inside getTonAccount and
+      // lands in this function's catch: null, never a zero.
+      const acct = await getTonAccount(address);
+      const row = acct?.balances?.[0];
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), 9) : null;
     }
     if (chainKey === "tron") {
       const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(15000) });
@@ -18001,9 +18225,13 @@ export async function pollDestNativeCredit(chainKey, address, preRaw, minDeltaRa
  *  is mirrored by GAS_FALLBACK_LEG_PROVIDERS at the
  *  executability gate — keep the two in step. */
 async function dispatchSwapExecution(wallet, route, progress, { onApprove = null, onApproveMayan = null } = {}) {
-  if (route.provider === "relay") return Number(route.relay?.originChainId) === RELAY_TRON_CHAIN_ID
-    ? executeRelayTronSwapRoute(wallet, route, progress, onApprove)
-    : executeRelaySwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "relay") {
+    if (Number(route.relay?.originChainId) === RELAY_TRON_CHAIN_ID)
+      return executeRelayTronSwapRoute(wallet, route, progress, onApprove);
+    if (Number(route.relay?.originChainId) === RELAY_TON_CHAIN_ID)
+      return executeRelayTonSwapRoute(wallet, route, progress);
+    return executeRelaySwapRoute(wallet, route, progress, onApprove);
+  }
   if (route.provider === "across") return executeAcrossSwapRoute(wallet, route, progress, onApprove);
   if (route.provider === "mayan") return executeMayanSwapRoute(wallet, route, progress, onApproveMayan || onApprove);
   if (route.provider === "jupiter") return executeJupiterSwapRoute(wallet?.mnemonic?.phrase, route, progress);
@@ -18217,6 +18445,17 @@ function isHubTokenOn(chainKey, tokenAddress) {
 function tokenSymbolOn(chainKey, tokenAddress) {
   if (chainKey === "bitcoin" || chainKey === "lightning" || chainKey === "arkade") return "BTC";
   if (chainKey === "polkadot") return "DOT";
+  // TON addresses are case-sensitive friendly strings and are
+  // compared on the parsed address only (tonAddressEquals) —
+  // never through swapTokenEq's lowercase fold. Only two TON
+  // tokens exist in swap space: native GRAM (Relay's sole TON
+  // currency) and USDT-on-TON (held/sendable, honestly
+  // routeless — Relay refuses it INVALID_INPUT_CURRENCY).
+  if (chainKey === "ton") {
+    if (tokenAddress == null || tonAddressEquals(tokenAddress, TON_SWAP_NATIVE_TOKEN)) return "GRAM";
+    if (tonAddressEquals(tokenAddress, TON_USDT_MASTER)) return "USDT";
+    return null;
+  }
   if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
   const hub = hubTokenForChain(chainKey);
   if (hub && swapTokenEq(chainKey, tokenAddress, hub.address)) return "USDC";
@@ -18253,11 +18492,12 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "tron") return isValidTronAddress(a) ? a : null;
   if (chainKey === "bitcoin") return isValidBitcoinAddress(a) ? a : null;
   if (chainKey === "polkadot") return isValidDotAddress(a) ? a : null;
+  if (chainKey === "ton") return isValidTonAddress(a) ? a : null;
   return a;
 }
 /** The wallet's OWN address for one swap chain key, resolved
  *  from the derived-address set the app holds (`own`:
- *  { evm, tron, solana, sui, bitcoin, polkadot, arkade }).
+ *  { evm, tron, solana, sui, bitcoin, polkadot, ton, arkade }).
  *  This is the ONE resolution the app seam may use for swap
  *  endpoints (DOT-walk repair, 2026-11-14): the direct-route
  *  path previously resolved destinations through an inline
@@ -18287,6 +18527,7 @@ export function swapOwnAddressFor(chainKey, own) {
     case "sui": { const s = typeof own.sui === "string" ? own.sui.trim() : ""; if (!s) return null; try { return normalizeSuiAddress(s); } catch { return null; } }
     case "bitcoin": return isValidBitcoinAddress(own.bitcoin || "") ? own.bitcoin : null;
     case "polkadot": return isValidDotAddress(own.polkadot || "") ? own.polkadot : null;
+    case "ton": return isValidTonAddress(own.ton || "") ? own.ton : null;
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     default: return null;
   }
@@ -18556,6 +18797,44 @@ export function milestoneShapes(args) {
     }
     return shapes;
   }
+  // TON destinations (Relay, 2026-11-14): the destination rail
+  // sources from any chain Relay serves and lands the native
+  // coin only — Relay's TON universe holds GRAM alone — so the
+  // composition runs any origin into a CCTP milestone chain's
+  // USDC, then the Relay leg into GRAM (USDC-on-Solana → GRAM
+  // composes exactly this way: Solana sources have no direct
+  // Relay execution, so the hub leg is the only door). A TON
+  // target that is not the native coin (USDT-on-TON) gets no
+  // shape: Relay refuses it INVALID_INPUT_CURRENCY and it
+  // stays honestly routeless. Bitcoin as a SOURCE gets no
+  // shape either (the Polkadot branch's precedent — no rail in
+  // this planner carries BTC value into a milestone hub). A
+  // LIGHTNING source composes here directly (LN → USDC on a
+  // Satora chain → GRAM), because the generic Lightning branch
+  // below never runs for a TON destination.
+  if (args.toChainKey === "ton") {
+    if (args.fromChainKey === "bitcoin") return shapes;
+    if (!tonAddressEquals(args.toTokenAddress || "", TON_SWAP_NATIVE_TOKEN)) return shapes;
+    if (args.fromChainKey === "lightning") {
+      for (const m of ["arbitrum", "polygon", "ethereum"]) {
+        const mHub = hubTokenForChain(m);
+        if (!mHub) continue;
+        pushShape([leg("lightning", m, args.fromTokenAddress, mHub.address), leg(m, "ton", mHub.address, TON_SWAP_NATIVE_TOKEN)]);
+      }
+      return shapes;
+    }
+    const milestones = MILESTONE_CCTP_CHAINS.filter(c => c !== args.fromChainKey);
+    if (MILESTONE_CCTP_CHAINS.includes(args.fromChainKey)) milestones.unshift(args.fromChainKey);
+    for (const m of milestones) {
+      const mHub = hubTokenForChain(m);
+      if (!mHub) continue;
+      pushShape([
+        leg(args.fromChainKey, m, args.fromTokenAddress, mHub.address),
+        leg(m, "ton", mHub.address, TON_SWAP_NATIVE_TOKEN),
+      ]);
+    }
+    return shapes;
+  }
   // Generic hub composition: origin hub leg (when the FROM
   // token is not the origin's hub) → hub-to-hub crossing →
   // destination hub leg (when the target is not the
@@ -18713,10 +18992,24 @@ export function milestoneShapes(args) {
     }
     return shapes;
   }
-  const fromHub = hubTokenForChain(args.fromChainKey), toHub = hubTokenForChain(args.toChainKey);
+  // A TON source joins the generic grammar with GRAM as its
+  // own hub (hubTokenForChain stays null for TON — its "hub"
+  // is the native coin itself, not a USDC, and tokenSymbolOn
+  // must never label it one): the crossing leg IS the Relay
+  // GRAM leg, so GRAM → a non-hub token on a hub chain composes
+  // as [GRAM → hub USDC] → [the hub chain's own leg]. Only the
+  // native coin substitutes — USDT-on-TON has no crossing and
+  // stays routeless here too.
+  const fromHub = args.fromChainKey === "ton" && tonAddressEquals(args.fromTokenAddress || "", TON_SWAP_NATIVE_TOKEN)
+    ? { symbol: "GRAM", address: TON_SWAP_NATIVE_TOKEN, decimals: 9 }
+    : hubTokenForChain(args.fromChainKey);
+  const toHub = hubTokenForChain(args.toChainKey);
   if (fromHub && toHub) {
     const legs = [];
-    if (!isHubTokenOn(args.fromChainKey, args.fromTokenAddress)) legs.push(leg(args.fromChainKey, args.fromChainKey, args.fromTokenAddress, fromHub.address));
+    const fromIsHub = args.fromChainKey === "ton"
+      ? tonAddressEquals(args.fromTokenAddress || "", fromHub.address)
+      : isHubTokenOn(args.fromChainKey, args.fromTokenAddress);
+    if (!fromIsHub) legs.push(leg(args.fromChainKey, args.fromChainKey, args.fromTokenAddress, fromHub.address));
     legs.push(leg(args.fromChainKey, args.toChainKey, fromHub.address, toHub.address));
     if (!isHubTokenOn(args.toChainKey, args.toTokenAddress)) legs.push(leg(args.toChainKey, args.toChainKey, toHub.address, args.toTokenAddress));
     pushShape(legs);
@@ -18823,7 +19116,25 @@ export function milestoneTwoCrossingShapes(args) {
   if (to === "bitcoin" || to === "lightning" || to === "arkade" || to === "sui") return shapes;
   if (from === "bitcoin" || from === "lightning" || from === "arkade") return shapes;
   if (args.fromTokenAddress == null && from !== "sui" && from !== "solana" && from !== "tron" && !NETWORKS[from]) return shapes;
-  const fromHub = hubTokenForChain(from), toHub = hubTokenForChain(to);
+  // TON endpoints join with GRAM as the endpoint's own hub —
+  // the same local substitution milestoneShapes' generic
+  // grammar makes (hubTokenForChain itself stays null for
+  // TON): a TON source's crossing out IS the Relay GRAM leg,
+  // and a TON destination whose one-crossing shapes all died
+  // on the origin's hub wall (USDC-on-Tron is the live case)
+  // is rescued by the origin's alternate anchor plus this
+  // second crossing. Only the native coin substitutes, on
+  // either side; USDT-on-TON keeps toHub/fromHub null and the
+  // pair stays honestly routeless. Endpoint equality on a TON
+  // side compares parsed addresses (eqOn) — friendly strings
+  // are case-sensitive and never lowercase-folded.
+  const eqOn = (chainKey, a, b) => chainKey === "ton" ? tonAddressEquals(a || "", b || "") : swapTokenEq(chainKey, a, b);
+  const fromHub = from === "ton" && tonAddressEquals(args.fromTokenAddress || "", TON_SWAP_NATIVE_TOKEN)
+    ? { symbol: "GRAM", address: TON_SWAP_NATIVE_TOKEN, decimals: 9 }
+    : hubTokenForChain(from);
+  const toHub = to === "ton" && tonAddressEquals(args.toTokenAddress || "", TON_SWAP_NATIVE_TOKEN)
+    ? { symbol: "GRAM", address: TON_SWAP_NATIVE_TOKEN, decimals: 9 }
+    : hubTokenForChain(to);
   if (!fromHub || !toHub) return shapes;
   const leg = (fromChainKey, toChainKey, fromTokenAddress, toTokenAddress) => ({
     fromChainKey, toChainKey, fromTokenAddress, toTokenAddress,
@@ -18838,18 +19149,18 @@ export function milestoneTwoCrossingShapes(args) {
     return alt ? [hub, alt] : [hub];
   };
   const srcAnchors = anchorsOf(from, fromHub), dstAnchors = anchorsOf(to, toHub);
-  const targetIsAnchor = dstAnchors.some(a => swapTokenEq(to, args.toTokenAddress, a.address));
+  const targetIsAnchor = dstAnchors.some(a => eqOn(to, args.toTokenAddress, a.address));
   for (const hubKey of MILESTONE_TWO_CROSSING_HUBS) {
     if (hubKey === from || hubKey === to) continue;
     const hub = hubTokenForChain(hubKey);
     if (!hub) continue;
     for (const srcA of srcAnchors) {
       const head = [];
-      if (!swapTokenEq(from, args.fromTokenAddress, srcA.address)) head.push(leg(from, from, args.fromTokenAddress, srcA.address));
+      if (!eqOn(from, args.fromTokenAddress, srcA.address)) head.push(leg(from, from, args.fromTokenAddress, srcA.address));
       head.push(leg(from, hubKey, srcA.address, hub.address));
       for (const dstA of dstAnchors) {
         const legsX = [...head, leg(hubKey, to, hub.address, dstA.address)];
-        if (!swapTokenEq(to, args.toTokenAddress, dstA.address)) legsX.push(leg(to, to, dstA.address, args.toTokenAddress));
+        if (!eqOn(to, args.toTokenAddress, dstA.address)) legsX.push(leg(to, to, dstA.address, args.toTokenAddress));
         pushShape(legsX);
       }
       if (!targetIsAnchor) pushShape([...head, leg(hubKey, to, hub.address, args.toTokenAddress)]);
@@ -19301,12 +19612,14 @@ function milestoneFromTokenDecimals(chainKey, tokenAddress) {
       case "sui": return 9;
       case "solana": return 9;
       case "tron": return 6;
+      case "ton": return 9;
       default: return 18;
     }
   }
   if (chainKey === "sui") return SUI_TOKENS.find(t => suiCoinTypeEq(t.address, tokenAddress))?.decimals ?? 6;
   if (chainKey === "solana") return 6;
   if (chainKey === "polkadot") return 10;
+  if (chainKey === "ton") return 6; // the only TON jetton in swap space is USDT-on-TON
   const t = (NETWORKS[chainKey]?.tokens || []).find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
   return t ? t.decimals : 18;
 }
@@ -19394,11 +19707,13 @@ function milestoneLegTokenDecimals(record, legIndex, side) {
     if (leg.toChainKey === "solana") return 6;
     if (leg.toChainKey === "polkadot") return 10;
     if (leg.toChainKey === "tron") return TRON_TOKENS.find(t => String(t.address) === String(leg.toTokenAddress))?.decimals ?? 6;
+    if (leg.toChainKey === "ton") return isDestNativeToken("ton", leg.toTokenAddress) ? 9 : 6;
     const t = (NETWORKS[leg.toChainKey]?.tokens || []).find(x => String(x.address).toLowerCase() === String(leg.toTokenAddress || "").toLowerCase());
     if (t) return t.decimals;
     return isDestNativeToken(leg.toChainKey, leg.toTokenAddress) ? 18 : 18;
   }
   if (leg.fromChainKey === "polkadot") return 10;
+  if (leg.fromChainKey === "ton") return isDestNativeToken("ton", leg.fromTokenAddress) ? 9 : 6;
   return 18;
 }
 /** Re-point a milestone record's Arkade legs at the booted
@@ -21319,6 +21634,19 @@ export function swapRouteExecutable(route) {
         ? { ok: true, relay: true, tvm: true, steps }
         : { ok: false, reason: "This Relay route's Tron steps aren't signable by Fluid — pick another route." };
     }
+    if (Number(route?.relay?.originChainId) === RELAY_TON_CHAIN_ID) {
+      // TON deposits move the native coin only: Relay's TON
+      // universe holds GRAM alone, so a route claiming a
+      // jetton origin is not one this executor may sign (the
+      // executor's own bounds check binds the message to the
+      // pinned depository and the exact amount regardless).
+      if (!tonAddressEquals(route.fromToken?.address || "", TON_SWAP_NATIVE_TOKEN))
+        return { ok: false, reason: "Relay TON deposits move the native coin (GRAM) only — pick another route." };
+      const steps = relayTonExecutableSteps(route);
+      return steps.length
+        ? { ok: true, relay: true, tonvm: true, steps }
+        : { ok: false, reason: "This Relay route's TON steps aren't signable by Fluid — pick another route." };
+    }
     const steps = relayExecutableSteps(route);
     return steps.length
       ? { ok: true, relay: true, steps }
@@ -22995,7 +23323,10 @@ async function tonJettonMeta(masterRaw) {
   return meta;
 }
 function tonNativeRow(amount) {
-  return { symbol: "TON", name: "Toncoin", amount, address: null, decimals: 9, verified: true };
+  // The coin displays under its rebrand name (GRAM / Gram —
+  // Relay and CoinGecko both name it so); the chain, the
+  // family key and the price-table key stay TON.
+  return { symbol: "GRAM", name: "Gram", amount, address: null, decimals: 9, verified: true };
 }
 /** The full TON account state: native balance + account state +
  *  EVERY jetton wallet toncenter's indexer knows for the address
@@ -23074,12 +23405,12 @@ export async function tonSendPlan(fromAddress, { token = null } = {}) {
 /** The signer principle, TON edition: a sentence, never a blob. */
 export function formatTonSendIntent({ amount, symbol, to, isJetton = false }) {
   let s = `Send ${amount} ${symbol} to ${to} on TON.`;
-  s += ` About ${TON_FEE_RESERVE} TON is set aside for network fees${isJetton ? " (jetton transfers move through your token wallet contract)" : ""} — what isn't used comes back to you.`;
+  s += ` About ${TON_FEE_RESERVE} GRAM is set aside for network fees${isJetton ? " (jetton transfers move through your token wallet contract)" : ""} — what isn't used comes back to you.`;
   return s + " Confirm?";
 }
 function tonParseAmount(amount, decimals) {
   try { return ethers.parseUnits(String(amount), decimals); }
-  catch { throw new Error(`TON amounts can have at most ${decimals} decimal places.`); }
+  catch { throw new Error(`Amounts on TON can have at most ${decimals} decimal places.`); }
 }
 /** The TEP-74 jetton transfer body (op 0xf8a7ea5) — the standard
  *  layout every TON wallet builds: query id, amount, destination,
@@ -23102,7 +23433,7 @@ export function tonJettonTransferBody({ queryId = 0n, amountRaw, to, responseTo 
  *  assembled here — state-init included when the wallet contract
  *  isn't deployed yet — and only the finished BOC touches the
  *  network. Returns {hash} = the external message hash. */
-export async function sendTon(phrase, { to, amount, token = null }) {
+export async function sendTon(phrase, { to, amount, token = null, body = null, sendMode = null }) {
   if (!isValidTonAddress(to)) throw new Error("That is not a valid TON address.");
   const kp = tonKeypair(phrase);
   const wallet = tonWalletContract(kp.publicKey);
@@ -23120,14 +23451,18 @@ export async function sendTon(phrase, { to, amount, token = null }) {
     const amt = tonParseAmount(amount, 9);
     if (amt <= 0n) throw new Error("Enter an amount.");
     if (amt + feeReserve > balanceNano) {
-      throw new Error(`Not enough TON — a transfer needs the amount plus about ${TON_FEE_RESERVE} TON set aside for fees (you have ${tonFromNano(balanceNano)} TON).`);
+      throw new Error(`Not enough GRAM — a transfer needs the amount plus about ${TON_FEE_RESERVE} GRAM set aside for fees (you have ${tonFromNano(balanceNano)} GRAM).`);
     }
-    message = tonInternal({ to: TonAddress.parse(to), value: amt, bounce: false });
+    // `body` is the caller's own locally built payload cell
+    // (the Relay deposit comment, rebuilt and hash-verified
+    // by its bounds check before it ever reaches here); a
+    // plain send passes none and stays bodyless, as before.
+    message = tonInternal({ to: TonAddress.parse(to), value: amt, bounce: false, ...(body ? { body } : {}) });
   } else {
     const raw = tonParseAmount(amount, token.decimals);
     if (raw <= 0n) throw new Error("Enter an amount.");
     if (feeReserve > balanceNano) {
-      throw new Error(`Jetton transfers are paid for in TON — you need about ${TON_FEE_RESERVE} TON for fees (you have ${tonFromNano(balanceNano)} TON).`);
+      throw new Error(`Jetton transfers are paid for in GRAM — you need about ${TON_FEE_RESERVE} GRAM for fees (you have ${tonFromNano(balanceNano)} GRAM).`);
     }
     const jw = await tonJettonWalletOf(from, token.address);
     if (!jw) throw new Error(`You have no ${token.symbol} wallet on TON to send from.`);
@@ -23136,12 +23471,16 @@ export async function sendTon(phrase, { to, amount, token = null }) {
       body: tonJettonTransferBody({ amountRaw: raw, to, responseTo: from }),
     });
   }
-  const body = wallet.createTransfer({
+  const xferBody = wallet.createTransfer({
     seqno, secretKey: kp.secretKey, timeout: Math.floor(Date.now() / 1000) + 300,
-    sendMode: 3, messages: [message],
+    // The send mode is the plain-send default (3: pay fees
+    // separately + ignore errors) unless the caller pins one —
+    // the Relay deposit pins mode 1 (fees paid separately, the
+    // full amount arrives), the mode its quote was built on.
+    sendMode: sendMode ?? 3, messages: [message],
   });
   const extCell = tonBeginCell().store(tonStoreMessage(tonExternal({
-    to: wallet.address, init: state === "active" ? undefined : wallet.init, body,
+    to: wallet.address, init: state === "active" ? undefined : wallet.init, body: xferBody,
   }))).endCell();
   const res = await fetch(TONCENTER_V2, {
     method: "POST", headers: { "Content-Type": "application/json" },

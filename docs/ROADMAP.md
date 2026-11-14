@@ -7,7 +7,7 @@
 > index) and the README's roadmap. Kept as the record of the plan and
 > its corrections.
 
-Fluid = non-custodial, router-based universal wallet for Nigeria. OGO ERA (Lagos street football) is distribution. UBI claims are a feature. Gaming rewards (RAIN) are earned through play. If Fluid the company dies, users keep their funds — that is the whole design test.
+Fluid = non-custodial, router-based universal wallet for Nigeria. OGO ERA (a world-building game universe) is distribution. UBI claims are a feature. Gaming rewards (RAIN) are earned through play. If Fluid the company dies, users keep their funds — that is the whole design test.
 
 ## Claude's three corrections — all accepted and applied
 

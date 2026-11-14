@@ -34,7 +34,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -961,7 +961,7 @@ async function renderMain() {
   // discipline: placeholder rows, honest state notes on failure —
   // never a fake zero presented as a loaded balance.
   tonAddr = tonAddressFromPhrase(w.mnemonic.phrase);
-  if (!hydratedFams.has("ton")) tonBalances = [{ symbol: "TON", name: "Toncoin", amount: "0", address: null, decimals: 9, verified: true },
+  if (!hydratedFams.has("ton")) tonBalances = [{ symbol: "GRAM", name: "Gram", amount: "0", address: null, decimals: 9, verified: true },
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false; tonScanFailed = false;
   getTonAccount(tonAddr)
@@ -969,7 +969,7 @@ async function renderMain() {
     .catch(() => {
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
       tonLoadFailed = true;
-      tonBalances = [{ symbol: "TON", name: "Toncoin", amount: null, address: null, decimals: 9, verified: true },
+      tonBalances = [{ symbol: "GRAM", name: "Gram", amount: null, address: null, decimals: 9, verified: true },
                      { ...TON_USDT, amount: null }];
       markLoaded("ton"); paintAssets();
     });
@@ -6837,6 +6837,16 @@ function swapTokenList(netKey) {
     // swap-served Polkadot asset in this build (Chainflip).
     return [{ symbol: "DOT", address: "dot", decimals: 10, native: true }];
   }
+  if (netKey === "ton") {
+    // TON: the native coin under its rebrand name (GRAM — the
+    // swap universe names it by Relay's friendly zero-address
+    // sentinel, see core), plus USDT-on-TON. USDT is listed
+    // deliberately: holders see their token and get the
+    // honest no-route diagnosis (Relay's TON universe is
+    // GRAM-only) instead of a missing token.
+    return [{ symbol: "GRAM", address: TON_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
+            { symbol: "USDT", address: TON_USDT.address, decimals: 6, native: false }];
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: NATIVE_TOKEN_ADDRESS, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -7022,6 +7032,21 @@ async function swapBalanceOf(chainKey, tok) {
       const row = (acct?.balances || []).find(b => b && b.address == null && b.symbol === "DOT");
       return row && row.amount != null ? Number(row.amount) : null;
     }
+    if (chainKey === "ton") {
+      // TON balance for the EXECUTION gate: the native GRAM
+      // row (balances[0] by construction in core's
+      // getTonAccount) or the picked jetton's row. A failed
+      // account read throws into the catch below → null; a
+      // jetton row whose amount is null is a FAILED jetton
+      // read and also returns null — the gate's unreadable
+      // verdict, never a silent pass. No row at all for the
+      // jetton means no jetton wallet: a true zero.
+      const acct = await getTonAccount(tonAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
     return await getEvmTokenBalance(wallet, chainKey, tok);
   } catch { return null; }
 }
@@ -7046,7 +7071,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7063,12 +7088,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, Lightning and Bitcoin — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning and Bitcoin — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7142,7 +7167,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, arkade: arkSession && arkSession.address ? arkSession.address : null });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -7986,7 +8011,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8446,6 +8471,16 @@ $("actSwap").onclick = () => {
           });
           srcExplorer = TRON_EXPLORER;
           srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+        } else if (fromKey === "ton") {
+          // Relay route from a TON source: core rebuilds the
+          // deposit body cell locally, verifies the rebuild's
+          // hash against Relay's, bounds-checks the whole
+          // message envelope, and signs only its own rebuild
+          // (executeRelayTonSwapRoute). NETWORKS has no TON
+          // entry — the explorer is the family's own.
+          hashes = await executeRelayTonSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+          srcExplorer = TON_EXPLORER;
+          srcLink = `${TON_EXPLORER}/transaction/${hashes[0]}`;
         } else {
           hashes = await executeRelaySwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
           srcExplorer = NETWORKS[fromKey].explorer;

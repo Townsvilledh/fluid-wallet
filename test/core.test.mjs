@@ -18,13 +18,13 @@ import { hex as scureHex } from "@scure/base";
 import { SATORA_PERMIT2_TYPE_STRING, SATORA_WITNESS_TYPE_STRING, SATORA_WITNESS_TYPEHASH, SATORA_FUNDING_DEADLINE_SECS, SATORA_HTLC_ERC20_REFUND_SELECTOR, satoraPermitRefundAddress, satoraRandomPermitNonce, buildSatoraPermitTypedData, buildSatoraEip2612Permit, buildSatoraFundGaslessBody, submitSatoraFundGasless, buildSatoraUnilateralRefundCall } from "../src/wallet-core.js";
 import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESSAGE_TRANSMITTER_V2, parseIrisCctpFee, computeSatoraCctpMaxFee, fetchSatoraCctpAttestation, checkSatoraCctpMessage, buildSatoraCctpEvmBurn, checkSatoraCctpEvmBurn, buildSatoraCctpReceiveMessageCall, satoraCctpSolanaPdas, buildSatoraSolanaBurnInstruction, buildSatoraSolanaCctpBurn, checkSatoraSolanaCctpBurn, satoraFundingAmount, resumeSatoraBridgedSwaps } from "../src/wallet-core.js";
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
-import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC } from "../src/wallet-core.js";
+import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC, TON_SWAP_CHAIN_ID, TON_SWAP_NATIVE_TOKEN, RELAY_TON_CHAIN_ID, RELAY_TON_DEPOSITORY, relayTonExecutableSteps, buildRelayTonDepositBody, parseRelayTonDepositBody, checkRelayTonStepBounds, tonAddressEquals, executeRelayTonSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
 import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, familyRollupTotalUsd } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, destChainName, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, familyRollupTotalUsd } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -48,7 +48,7 @@ import { rampRouteCostUsd, rampTier1Eligible, rampFeeQuote, formatRampSellIntent
   buildSolanaRampSplitTx, newRampFeeOrder, rampFeeOrderTransition, rampFeeRefundInstruction,
   rampFeeOrderSummary, loadRampFeeOrders, saveRampFeeOrder } from "../src/wallet-core.js";
 import { SATORA_PERMIT2_ADDRESS } from "../src/wallet-core.js";
-import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAddress, tonNanoToTon, tonTonToNano, formatTonSendIntent, tonJettonTransferBody, TON_USDT_MASTER,
+import { tonAddressFromPhrase, tonAddressFromSeed, tonSeedFromSeed, isValidTonAddress, tonNanoToTon, tonTonToNano, formatTonSendIntent, tonJettonTransferBody, TON_USDT_MASTER, getTonAccount, getVerifiedPrice,
   nearAddressFromPhrase, nearAddressFromSeed, nearSeedFromSeed, isValidNearAddress, nearYoctoToNear, nearNearToYocto, nearMinExistYocto, nearTransactionBytes, nearSignedTransactionBytes, nearActionTransfer, nearActionFunctionCall, formatNearSendIntent, NEAR_TOKENS,
   algoAddressFromPhrase, algoAddressFromSeed, algoSeedFromSeed, algoAddressFromPubkey, algoAddressDecode, isValidAlgorandAddress, algoMicroToAlgo, algoAlgoToMicro, formatAlgoSendIntent, ALGO_USDC, ALGO_USDC_ASA,
   xrplAddressFromPhrase, xrplAddressFromPubkey, xrplAddressDecode, isValidXrplAddress, xrplDropsToXrp, xrplXrpToDrops, xrplCurrencyLabel, xrplSignPayment, formatXrplSendIntent, XRPL_USDC, XRPL_USDC_ISSUER,
@@ -67,7 +67,7 @@ import { SUNSWAP_V2_ROUTER, SUNSWAP_V2_FACTORY, SUNSWAP_WTRX, SUNSWAP_FEE_RECEIV
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import { WalletContractV4 as TonWalletV4 } from "@ton/ton";
-import { contractAddress as tonContractAddress, beginCell as tonBeginCell, storeMessageRelaxed as tonStoreMessageRelaxed, internal as tonInternalMsg, Address as TonAddr } from "@ton/core";
+import { contractAddress as tonContractAddress, beginCell as tonBeginCell, storeMessageRelaxed as tonStoreMessageRelaxed, internal as tonInternalMsg, Address as TonAddr, Cell as TonCellT, loadMessage as tonLoadMessage, loadMessageRelaxed as tonLoadMessageRelaxed } from "@ton/core";
 import { derivePath as ed25519HdDerivePath } from "ed25519-hd-key";
 import { KeyPair as NearKeyPair, PublicKey as NearPublicKey, createTransaction as nearCreateTx, actions as nearActions, encodeTransaction as nearEncodeTx, baseEncode as nearBaseEncode, baseDecode as nearBaseDecode } from "near-api-js";
 import algosdk from "algosdk";
@@ -861,14 +861,17 @@ ok("swap intent without fee value omits the clause", !formatSwapIntent({ fromAmo
 // Jupiter fee account, Mayan in-quote). The collection master
 // switch stays on; per-rail gating lives at each builder.
 ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
-// The swap universe is exactly the EVM networks + tron/solana/sui. Bitcoin (and every
+// The swap universe is exactly the EVM networks + tron/solana/sui + ton. Bitcoin (and every
 // other send-only family) is NOT swappable — pinned so adding a family to the swap
 // universe forces a fee-coverage review instead of silently shipping an unfeed route.
-ok("swap universe is evm + tron + solana + sui only", (() => {
+// TON joined 2026-11-14 WITH that review done: its destination ceiling sits in the
+// fee law (platformFeeEcosystemOf("ton")) and its capture is proven in §116.
+ok("swap universe is evm + tron + solana + sui + ton only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
-  const famOk = ["tron", "solana", "sui"].every(k => swapChainOf(k) !== null);
-  const notSwappable = ["bitcoin", "litecoin", "dogecoin", "cosmoshub", "ton", "near", "xrpl", "stellar", "algorand", "aptos"].every(k => swapChainOf(k) === null);
-  return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001;
+  const famOk = ["tron", "solana", "sui", "ton"].every(k => swapChainOf(k) !== null);
+  const notSwappable = ["bitcoin", "litecoin", "dogecoin", "cosmoshub", "near", "xrpl", "stellar", "algorand", "aptos"].every(k => swapChainOf(k) === null);
+  return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001
+    && platformFeeEcosystemOf("ton") === "ton";
 })());
 // Relay-Tron executor pins (LI.FI removal, 2026-11-13): Relay is
 // the Tron-source rail. Its deposit step carries a
@@ -1920,10 +1923,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !isValidTonAddress("hello") && !isValidTonAddress("") && !isValidTonAddress(null));
   ok("ton: nano conversions", tonTonToNano("0.05") === 50000000n && tonNanoToTon(1500000000n) === "1.5");
   const tonIntent = formatTonSendIntent({ amount: "2", symbol: "TON", to: ABANDON_TON });
-  ok("ton: intent discloses the fee reserve", tonIntent.includes("Send 2 TON") && tonIntent.includes("0.05 TON is set aside for network fees")
+  ok("ton: intent discloses the fee reserve", tonIntent.includes("Send 2 TON") && tonIntent.includes("0.05 GRAM is set aside for network fees")
     && tonIntent.includes("comes back to you") && tonIntent.includes("Confirm?"));
   ok("ton: USDT master is Tether's verified contract", TON_USDT_MASTER === "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs");
-  ok("ton: no swap chain registered", swapChainOf("ton") === null);
+  ok("ton: swap chain registered (TON swaps, 2026-11-14 — Relay id space)", swapChainOf("ton")?.chainId === 224235520 && swapChainOf("ton")?.name === "TON");
 
   // ----- NEAR (SLIP-0010 coin 397, implicit accounts) -----
   const ABANDON_NEAR = "4e7de0a21d8a20f970c86b6edf407906d7ba9e205979c3268270eef80a286e2d";
@@ -6451,7 +6454,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11419,7 +11422,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12860,7 +12863,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13207,7 +13210,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -15029,7 +15032,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const coreSrcSZ = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("app honesty: failed family reads substitute couldn't-load (null) rows for all five swept families",
     appSrcSZ.includes("stellarBalances = [{ symbol: \"XLM\", name: \"Stellar Lumens\", amount: null")
-    && appSrcSZ.includes("tonBalances = [{ symbol: \"TON\", name: \"Toncoin\", amount: null")
+    && appSrcSZ.includes("tonBalances = [{ symbol: \"GRAM\", name: \"Gram\", amount: null")
     && appSrcSZ.includes("nearBalances = [{ symbol: \"NEAR\", name: \"NEAR\", amount: null")
     && appSrcSZ.includes("algoBalances = [{ symbol: \"ALGO\", name: \"Algorand\", amount: null")
     && appSrcSZ.includes("aptosBalances = [{ symbol: \"APT\", name: \"Aptos\", amount: null")
@@ -16490,6 +16493,252 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("fixb app: every new search clears the previous route list (and its Arkade warning) BEFORE the search runs — no settle path can leave a stale executable card above the new answer",
     searchStart115 > 0 && clearAt115 > searchStart115 && searchCallAt115 > clearAt115
     && appSrc115.includes("syncArkadeWarn([]);"));
+}
+
+// ---------- 116. TON swaps via Relay (GRAM) (2026-11-14) ----------
+// Live-probed handover: research_notes/fluid-ton-swaps-20261114/
+// probe-notes.md. Relay's TON universe is the native coin only
+// (chain 224235520, GRAM), the deposit is a wallet-signed message
+// to the pinned depository whose body is a pinned-grammar cell
+// (op 0 ++ a 66-byte ASCII 0x-tag, 560 bits, no refs), and fee
+// capture rides Relay's App Fees. The two fixtures are full live
+// quotes (10 GRAM → USDC on Base), fee pass and no-fee pass.
+{
+  const fixture116 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const clone116 = (x) => JSON.parse(JSON.stringify(x));
+  const quoteFee116 = fixture116("relay-ton-deposit-quote.json");
+  const quoteNoFee116 = fixture116("relay-ton-deposit-quote-nofee.json");
+  const TON_SENDER116 = "EQAT3OD7z1oIW9VfKvYxjBe5FHytgET5pnlf88Ed-bCnVaSr";
+  const ABANDON116 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const ABANDON_TON116 = "EQAzWZa6nM5mJev91wGc7VCSfBoIsYRqKJpV78N8Add9-U9d";
+  const EVM116 = "0xC66626790039681d22B96302415896a0574C0F4e";
+  const USDC_BASE116 = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+  const BTCB_BSC116 = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c";
+  const USDC_SOL116 = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDT_TRON116 = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+  const appSrc116 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const coreSrc116 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const throws116 = async (p) => { try { await p; return null; } catch (e) { return e; } };
+
+  // --- the universe, pinned ---
+  ok("tonswap: the swap universe and Relay agree on TON's chain id, and the native sentinel is Relay's GRAM currency",
+    TON_SWAP_CHAIN_ID === 224235520 && RELAY_TON_CHAIN_ID === TON_SWAP_CHAIN_ID
+    && TON_SWAP_NATIVE_TOKEN === "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c"
+    && RELAY_TON_DEPOSITORY === "EQCrdGsDTqA2t6xRR4N6V4J705F7w_VQbUdHnofsh-8lVIPs");
+  ok("tonswap: Relay pair support — TON sources quote to EVM/Solana/Tron; EVM and Tron quote into TON; TON→TON and Sui pairs refuse; a Solana SOURCE stays off direct Relay (its GRAM route composes through a hub — §116 planner pins)",
+    relaySupportsPair("ton", "base") && relaySupportsPair("ton", "solana") && relaySupportsPair("ton", "tron")
+    && relaySupportsPair("base", "ton") && relaySupportsPair("bsc", "ton") && relaySupportsPair("tron", "ton")
+    && !relaySupportsPair("solana", "ton")
+    && !relaySupportsPair("ton", "ton") && !relaySupportsPair("ton", "sui") && !relaySupportsPair("sui", "ton"));
+
+  // --- the pinned body grammar ---
+  const fxMsg116 = quoteFee116.steps[0].items[0].data.messages[0];
+  const fxParsed116 = parseRelayTonDepositBody(fxMsg116.body);
+  ok("tonswap: the live fixture's deposit body decodes under the pinned grammar",
+    !!fxParsed116 && /^0x[0-9a-f]{64}$/.test(fxParsed116.tag));
+  ok("tonswap: Fluid's rebuild of the parsed tag is hash-equal to Relay's received cell",
+    TonCellT.fromBoc(Buffer.from(fxMsg116.body, "base64"))[0].hash().equals(buildRelayTonDepositBody(fxParsed116.tag).hash()));
+  ok("tonswap: grammar round-trip — a locally built body parses back to its tag",
+    parseRelayTonDepositBody(buildRelayTonDepositBody(fxParsed116.tag).toBoc().toString("base64"))?.tag === fxParsed116.tag);
+  const cellB64116 = (builder) => builder.endCell().toBoc().toString("base64");
+  const tagBuf116 = Buffer.from(fxParsed116.tag, "ascii");
+  ok("tonswap: grammar refusals — wrong op, added ref, short tag, long tag, non-hex tag, trailing bits, garbage",
+    parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0xf8a7ea5, 32).storeBuffer(tagBuf116))) === null
+    && parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0, 32).storeBuffer(tagBuf116).storeRef(tonBeginCell().endCell()))) === null
+    && parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0, 32).storeBuffer(tagBuf116.subarray(0, 65)))) === null
+    && parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0, 32).storeBuffer(Buffer.concat([tagBuf116, Buffer.from("0")])))) === null
+    && parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0, 32).storeBuffer(Buffer.from("0x" + "zz".repeat(32), "ascii")))) === null
+    && parseRelayTonDepositBody(cellB64116(tonBeginCell().storeUint(0, 32).storeBuffer(tagBuf116).storeBit(1))) === null
+    && parseRelayTonDepositBody("not-a-boc") === null && parseRelayTonDepositBody("") === null && parseRelayTonDepositBody(null) === null);
+  ok("tonswap: the builder itself refuses a tag outside the pinned shape",
+    (() => { try { buildRelayTonDepositBody("0xZZ"); return false; } catch { return true; } })()
+    && (() => { try { buildRelayTonDepositBody("hello"); return false; } catch { return true; } })());
+
+  // --- quote parsing + capture ---
+  const args116 = { fromChainKey: "ton", toChainKey: "base", fromAmount: "10000000000", fromAddress: TON_SENDER116 };
+  const routeFee116 = parseRelayQuote(clone116(quoteFee116), args116);
+  const routeNoFee116 = parseRelayQuote(clone116(quoteNoFee116), args116);
+  ok("tonswap: the fee-pass fixture parses into a TON-origin route in Fluid's id space",
+    !!routeFee116 && routeFee116.fromChainId === 224235520 && routeFee116.toChainId === 8453
+    && routeFee116.fromToken.symbol === "GRAM" && routeFee116.fromToken.address === TON_SWAP_NATIVE_TOKEN
+    && routeFee116.toAmount === "10528281" && relayTonExecutableSteps(routeFee116).length === 1);
+  ok("tonswap: capture proof — the 50 bps pass collects exactly 0.05 GRAM in-response; the no-fee pass collects nothing",
+    routeFee116.platformFeeCollecting === true && routeFee116.platformFeeRaw === "50000000"
+    && routeNoFee116.platformFeeCollecting === false && routeNoFee116.platformFeeRaw === "0");
+  ok("tonswap: a quote whose sender is not the requesting wallet never parses",
+    parseRelayQuote(clone116(quoteFee116), { ...args116, fromAddress: ABANDON_TON116 }) === null);
+
+  // --- the gate, both directions of discipline ---
+  const gate116 = swapRouteExecutable(routeFee116);
+  ok("tonswap: the gate passes a GRAM-origin Relay route as tonvm",
+    gate116.ok === true && gate116.tonvm === true && gate116.relay === true);
+  const routeJetton116 = clone116(routeFee116);
+  routeJetton116.fromToken = { ...routeJetton116.fromToken, address: TON_USDT_MASTER };
+  ok("tonswap: the gate refuses a jetton-origin TON route — deposits move GRAM only",
+    swapRouteExecutable(routeJetton116).ok === false && /GRAM/.test(swapRouteExecutable(routeJetton116).reason || ""));
+
+  // --- envelope bounds ---
+  ok("tonswap: the live fixture's message passes the full envelope bounds check",
+    checkRelayTonStepBounds(routeFee116, TON_SENDER116).ok === true
+    && checkRelayTonStepBounds(routeFee116, TON_SENDER116).tag === fxParsed116.tag);
+  const tamper116 = (fn) => { const r = clone116(routeFee116); fn(r.relay.steps[0].items[0].data.messages[0], r); return r; };
+  ok("tonswap: bounds refusals — payee, amount, sender, mode, bounce and body each refuse",
+    !checkRelayTonStepBounds(tamper116(m => { m.to = ABANDON_TON116; }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116(m => { m.value = "999"; }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116(m => { m.from = ABANDON_TON116; }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116(m => { m.mode = 3; }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116(m => { m.bounce = true; }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116(m => { m.body = cellB64116(tonBeginCell().storeUint(7, 32).storeBuffer(tagBuf116)); }), TON_SENDER116).ok);
+  ok("tonswap: bounds refusals — a second message or a second step refuses",
+    !checkRelayTonStepBounds(tamper116((m, r) => { r.relay.steps[0].items[0].data.messages.push({ ...m }); }), TON_SENDER116).ok
+    && !checkRelayTonStepBounds(tamper116((m, r) => { r.relay.steps.push(clone116(r.relay.steps[0])); }), TON_SENDER116).ok);
+
+  // --- the executor, through its real entry (gate re-run + bounds + send) ---
+  const errMismatch116 = await throws116(executeRelayTonSwapRoute({ mnemonic: { phrase: ABANDON116 } }, routeFee116));
+  ok("tonswap: the executor refuses a wallet that is not the quote's sender — the envelope check fires inside the real entry",
+    !!errMismatch116 && /different account/.test(errMismatch116.message));
+  const stubTon116 = (balanceNano) => {
+    const real = globalThis.fetch;
+    const cap = { boc: null };
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("toncenter.com/api/v3")) return { ok: true, status: 200, json: async () => ({ jetton_wallets: [] }) };
+      if (u.includes("toncenter.com/api/v2")) {
+        const body = JSON.parse(opts.body);
+        if (body.method === "getAddressBalance") return { ok: true, status: 200, json: async () => ({ ok: true, result: balanceNano }) };
+        if (body.method === "getAddressState") return { ok: true, status: 200, json: async () => ({ ok: true, result: "active" }) };
+        if (body.method === "runGetMethod") return { ok: true, status: 200, json: async () => ({ ok: true, result: { stack: [["num", "0x0"]] } }) };
+        if (body.method === "sendBoc") { cap.boc = body.params.boc; return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) }; }
+      }
+      throw new Error("unexpected fetch in the §116 stub: " + u);
+    };
+    return { cap, restore: () => { globalThis.fetch = real; } };
+  };
+  const routeMine116 = clone116(routeFee116);
+  routeMine116.relay.steps[0].items[0].data.messages[0].from = ABANDON_TON116;
+  {
+    const stub = stubTon116("100000000000"); // 100 GRAM
+    try {
+      const hashes = await executeRelayTonSwapRoute({ mnemonic: { phrase: ABANDON116 } }, routeMine116);
+      ok("tonswap: the executor sends exactly one deposit and returns its hash",
+        Array.isArray(hashes) && hashes.length === 1 && /^[0-9a-f]{64}$/.test(hashes[0]) && !!stub.cap.boc);
+      const extMsg = tonLoadMessage(TonCellT.fromBoc(Buffer.from(stub.cap.boc, "base64"))[0].beginParse());
+      const ts = extMsg.body.beginParse();
+      ts.loadBuffer(64); ts.loadUint(32); ts.loadUint(32); ts.loadUint(32);
+      const actOp = ts.loadUint(8), actMode = ts.loadUint(8);
+      const inner = tonLoadMessageRelaxed(ts.loadRef().beginParse());
+      ok("tonswap: the SIGNED bytes are Fluid's rebuild — pinned depository, exact amount, mode 1, body hash-equal to the local rebuild",
+        actOp === 0 && actMode === 1
+        && inner.info.dest.toString({ bounceable: true, urlSafe: true }) === RELAY_TON_DEPOSITORY
+        && inner.info.value.coins === 10000000000n && inner.info.bounce === false
+        && !!inner.body && inner.body.hash().equals(buildRelayTonDepositBody(fxParsed116.tag).hash()));
+    } finally { stub.restore(); }
+  }
+  {
+    const stub = stubTon116("0");
+    try {
+      const err = await throws116(executeRelayTonSwapRoute({ mnemonic: { phrase: ABANDON116 } }, routeMine116));
+      ok("tonswap: an empty wallet refuses on the balance check (amount + the 0.05 GRAM reserve) and nothing is broadcast",
+        !!err && /Not enough GRAM/.test(err.message) && stub.cap.boc === null);
+    } finally { stub.restore(); }
+  }
+  ok("tonswap: the milestone dispatcher and the sheet both route TON legs to this executor",
+    coreSrc116.includes("executeRelayTonSwapRoute(wallet, route, progress)")
+    && appSrc116.includes("executeRelayTonSwapRoute(wallet, route"));
+
+  // --- app seam pins (the DOT-walk lesson): the address the APP supplies ---
+  ok("tonswap seam: swapOwnAddressFor resolves TON to the wallet's own TON address — never the EVM fall-through",
+    swapOwnAddressFor("ton", { evm: EVM116, ton: ABANDON_TON116 }) === ABANDON_TON116
+    && swapOwnAddressFor("ton", { evm: EVM116, ton: ABANDON_TON116 }) !== EVM116
+    && swapOwnAddressFor("ton", { evm: EVM116 }) === null
+    && swapOwnAddressFor("ton", { evm: EVM116, ton: "not-an-address" }) === null);
+  ok("tonswap seam: the address book validates TON entries by family shape",
+    swapAddressBookEntry({ ton: ABANDON_TON116 }, "ton") === ABANDON_TON116
+    && swapAddressBookEntry({ ton: EVM116 }, "ton") === null && swapAddressBookEntry({}, "ton") === null);
+  ok("tonswap seam: the sheet wires TON through addrOf, the address book, the network list and the token picker",
+    appSrc116.includes("polkadot: dotAddr, ton: tonAddr") && appSrc116.includes("sui: suiAddr, polkadot: dotAddr, ton: tonAddr")
+    && appSrc116.includes('"polkadot", "ton"') && appSrc116.includes('netKey === "ton"')
+    && appSrc116.includes('chainKey === "ton"'));
+
+  // --- composition shapes ---
+  const shapesBtcB116 = milestoneShapes({ fromChainKey: "bsc", fromTokenAddress: BTCB_BSC116, toChainKey: "ton", toTokenAddress: TON_SWAP_NATIVE_TOKEN });
+  ok("tonswap planner: BTCB on BSC composes into GRAM through a hub leg then the Relay TON leg",
+    shapesBtcB116.length > 0 && shapesBtcB116[0].length === 2
+    && shapesBtcB116[0][1].toChainKey === "ton" && shapesBtcB116[0][1].toTokenAddress === TON_SWAP_NATIVE_TOKEN
+    && shapesBtcB116[0][1].toSymbol === "GRAM");
+  const shapesSol116 = milestoneShapes({ fromChainKey: "solana", fromTokenAddress: USDC_SOL116, toChainKey: "ton", toTokenAddress: TON_SWAP_NATIVE_TOKEN });
+  ok("tonswap planner: USDC on Solana composes into GRAM (Solana has no direct Relay execution — the hub leg is the door)",
+    shapesSol116.length > 0 && shapesSol116[0][0].fromChainKey === "solana"
+    && shapesSol116[0][shapesSol116[0].length - 1].toChainKey === "ton");
+  ok("tonswap planner: honest no-shape classes — Bitcoin source and USDT-on-TON destination compose nothing",
+    milestoneShapes({ fromChainKey: "bitcoin", fromTokenAddress: "btc", toChainKey: "ton", toTokenAddress: TON_SWAP_NATIVE_TOKEN }).length === 0
+    && milestoneShapes({ fromChainKey: "base", fromTokenAddress: USDC_BASE116, toChainKey: "ton", toTokenAddress: TON_USDT_MASTER }).length === 0);
+  const shapesLn116 = milestoneShapes({ fromChainKey: "lightning", fromTokenAddress: "btc", toChainKey: "ton", toTokenAddress: TON_SWAP_NATIVE_TOKEN });
+  ok("tonswap planner: a Lightning source composes into GRAM through a Satora hub leg",
+    shapesLn116.length > 0 && shapesLn116[0][0].fromChainKey === "lightning" && shapesLn116[0][1].toChainKey === "ton");
+  const shapesGramOut116 = milestoneShapes({ fromChainKey: "ton", fromTokenAddress: TON_SWAP_NATIVE_TOKEN, toChainKey: "base", toTokenAddress: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" });
+  ok("tonswap planner: GRAM composes out through its own hub grammar (GRAM → hub USDC → the target's own leg)",
+    shapesGramOut116.length > 0 && shapesGramOut116[0][0].fromChainKey === "ton" && shapesGramOut116[0][0].toChainKey === "base"
+    && shapesGramOut116[0][0].fromSymbol === "GRAM" && shapesGramOut116[0][0].toSymbol === "USDC");
+  const shapesCross116 = milestoneTwoCrossingShapes({ fromChainKey: "ton", fromTokenAddress: TON_SWAP_NATIVE_TOKEN, toChainKey: "tron", toTokenAddress: USDT_TRON116 });
+  ok("tonswap planner: GRAM → USDT on Tron forms in the two-crossing planner with GRAM as its own anchor",
+    shapesCross116.length > 0 && shapesCross116[0][0].fromChainKey === "ton"
+    && shapesCross116[0][shapesCross116[0].length - 1].toChainKey === "tron");
+  const shapesCrossIn116 = milestoneTwoCrossingShapes({ fromChainKey: "tron", fromTokenAddress: USDT_TRON116, toChainKey: "ton", toTokenAddress: TON_SWAP_NATIVE_TOKEN });
+  ok("tonswap planner: USDT on Tron → GRAM forms in the two-crossing planner (the one-crossing hub wall's rescue)",
+    shapesCrossIn116.length > 0 && shapesCrossIn116[0][shapesCrossIn116[0].length - 1].toChainKey === "ton"
+    && shapesCrossIn116[0][shapesCrossIn116[0].length - 1].toTokenAddress === TON_SWAP_NATIVE_TOKEN);
+  ok("tonswap planner: USDT-on-TON as a source forms nothing anywhere — honestly routeless",
+    milestoneTwoCrossingShapes({ fromChainKey: "ton", fromTokenAddress: TON_USDT_MASTER, toChainKey: "tron", toTokenAddress: USDT_TRON116 }).length === 0
+    && milestoneShapes({ fromChainKey: "ton", fromTokenAddress: TON_USDT_MASTER, toChainKey: "base", toTokenAddress: USDC_BASE116 }).length === 0);
+
+  // --- driver coverage pieces: native identity, credit reads, record amounts ---
+  ok("tonswap driver: TON's native token identity resolves for the milestone credit watch",
+    destNativeTokenAddress("ton") === TON_SWAP_NATIVE_TOKEN
+    && isDestNativeToken("ton", TON_SWAP_NATIVE_TOKEN) === true && isDestNativeToken("ton", TON_USDT_MASTER) === false
+    && destChainName("ton") === "TON");
+  ok("tonswap driver: a milestone record's GRAM input amount reads back at 9 decimals",
+    milestoneRecordFromAmountHuman({ legs: [{ fromChainKey: "ton", fromTokenAddress: TON_SWAP_NATIVE_TOKEN, fromAmount: "10000000000" }] }) === "10.0");
+  ok("tonswap fees: the fee law gives TON destinations their own $0.30 total-cost ceiling",
+    platformFeeEcosystemOf("ton") === "ton" && platformFeeCeilingFor("ton") === 0.30);
+
+  // --- naming as shipped: rows, prices ---
+  {
+    const stub = stubTon116("1500000000"); // 1.5 GRAM
+    try {
+      const acct = await getTonAccount(ABANDON_TON116);
+      ok("tonswap naming: the native balance row displays GRAM / Gram (chain and price key stay TON)",
+        acct.balances[0].symbol === "GRAM" && acct.balances[0].name === "Gram" && acct.balances[0].amount === "1.5");
+    } finally { stub.restore(); }
+  }
+  {
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return { ok: true, status: 200, json: async () => [{ symbol: "TONUSDT", price: "1.062" }] };
+      if (u.includes("api.coingecko.com")) return { ok: true, status: 200, json: async () => ({}) };
+      throw new Error("unexpected fetch in the §116 price stub: " + u);
+    };
+    try {
+      resetPricesCache();
+      const prices = await getPrices();
+      ok("tonswap naming: the price table carries the GRAM alias of the TON price — a GRAM row never prices at $0.00",
+        prices.TON === 1.062 && prices.GRAM === 1.062);
+    } finally { globalThis.fetch = real; resetPricesCache(); }
+  }
+  {
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("coinbase.com")) return { ok: true, status: 200, json: async () => ({ price: "1.06" }) };
+      if (u.includes("api.coingecko.com")) return { ok: true, status: 200, json: async () => ({ "the-open-network": { usd: 1.06 } }) };
+      throw new Error("unexpected fetch in the §116 verified-price stub: " + u);
+    };
+    try {
+      ok("tonswap naming: getVerifiedPrice resolves the display symbol GRAM through the TON sources",
+        (await getVerifiedPrice("GRAM")) === 1.06);
+    } finally { globalThis.fetch = real; }
+  }
 }
 
 console.log(`\n${passed} checks passed`);
