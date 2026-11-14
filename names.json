@@ -182,5 +182,13 @@
     "sol": "Ddfe4em39btnR6RCdQ4t61MWQd9M6bDuijNKfXXVDZuj",
     "tron": "TGggsuTYC34ddrpVS2nuFXte71y7EvRRJj",
     "sui": "0x0e6fdd280c9afabc21a9d7a01825439db5c30c5374aa1213e967167224ca878f"
+  },
+  "bravomanya": {
+    "evm": "0x3F03cb7594E369bA4d861051C1C9bcE46904192e",
+    "btc": "bc1q7dxjrgd7f2pm68x3euvunnnxwyh8xwn5czp45j",
+    "algo": "CQK52L2AACRCFMEMJFXSCZNI722CL24DDLTTZC4UKMBX4XHGJS7HPIKMOQ",
+    "sol": "5UvX2sHHPC9rUb99hp453VR2c3meSn1hTnJ57Z9UVE1B",
+    "tron": "TFiQ7oswtQEFU52ve32YarwUAw3oYWPEaN",
+    "sui": "0xc7ea232e0dc23425bdd755ecc1fe46b7518929d5621b0bcc62fbae06042ecda4"
   }
 }
