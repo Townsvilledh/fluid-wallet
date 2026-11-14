@@ -190,5 +190,13 @@
     "sol": "5UvX2sHHPC9rUb99hp453VR2c3meSn1hTnJ57Z9UVE1B",
     "tron": "TFiQ7oswtQEFU52ve32YarwUAw3oYWPEaN",
     "sui": "0xc7ea232e0dc23425bdd755ecc1fe46b7518929d5621b0bcc62fbae06042ecda4"
+  },
+  "cosmosverify77362": {
+    "evm": "0xEE72E7333FBddb18F915bC2e8CfBbAfAC05479C7",
+    "btc": "bc1q43azusgcqfa0fzpsc3sjj4gsw6gcenpmph658w",
+    "algo": "GTM2GVQJ6UY33SSKKBOKC5EMY6SKBJD6WJOT277R3W2IGVC23H2MBXDDEE",
+    "sol": "2DEB8hzw2iHficyHWJ6AEQrVfMQjdwv3KnB1z87FNPjM",
+    "tron": "TXi1UKjSgtYsmp6Cqk5EHMA5q32ENc1QhS",
+    "sui": "0x4c42ff9266deffe05662f3c09ba4a0a254afbd9cc31430a93f69f88067a3dc50"
   }
 }
