@@ -34,7 +34,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, executeRelaySwapRoute, executeRelayTronSwapRoute, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -53,7 +53,7 @@ import {
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
-  BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,
+  BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
   FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
   newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
   loadRampFeeOrders, saveRampFeeOrder,
@@ -101,6 +101,19 @@ const liveFams = new Set();
 const hydratedFams = new Set();
 let cachePaint = false;
 const markLoaded = (k) => { famLoaded.add(k); liveFams.add(k); };
+// Cache-honesty provenance (2026-11-14): liveOkFams tracks families
+// whose LIVE read this render actually SUCCEEDED — whole, or in the
+// family's partial sense (its rows then carry per-row nulls for the
+// parts that failed, which are part of the proven result).
+// persistBalanceCache writes ONLY these families: a failed read
+// produces no cache content — it neither invents a number nor
+// erases the family's last proven entry (docs/CHAINS.md, "The
+// balance cache contract"). markLiveOk also arms a one-shot
+// throttle bypass so a family's settled state is written at its
+// own settle paint, not left to whatever snapshot happens last.
+const liveOkFams = new Set();
+let cacheWriteNeeded = false;
+const markLiveOk = (k) => { if (!liveOkFams.has(k)) { liveOkFams.add(k); cacheWriteNeeded = true; } };
 const HOME_FAMILIES = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
   "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash"];
 function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
@@ -156,6 +169,12 @@ let evmLoadFailed = false; // the curated EVM balance load failed — rows are U
 // OR — the combined total is unknown if either account is unknown.
 let btcSegwitFailed = false, btcTaprootFailed = false, btcLoadFailed = false;
 function syncBtcLoadFailed() { btcLoadFailed = btcSegwitFailed || btcTaprootFailed; }
+// Per-ACCOUNT success provenance for the balance cache: the
+// family's combined failure flag cannot say WHICH account's
+// scalar is proven, and the two reads settle independently — a
+// persist between them must write only the settled account's
+// number (never the other account's untouched global).
+let btcSegwitOk = false, btcTaprootOk = false;
 // A row's own priceUsd (present on discovered rows, null when no
 // source prices them) always wins over the symbol table — a scam
 // token can call itself "USDC", it cannot borrow USDC's price here.
@@ -632,6 +651,17 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
   }
 }
 
+/* One-time balance-cache reset (2026-11-14): entries written
+ * before the cache-honesty fix cannot be trusted to trace to a
+ * successful read (the old persist path could store an
+ * initialiser 0 or a mid-scan partial sum as if measured), so the
+ * legacy fluid_balcache_v1 store is dropped here, once, at load —
+ * before any hydrate can run. The first open after the upgrade is
+ * an honest cold start: rows load, then settle to proven values
+ * or couldn't-load. Every other store is untouched. The full
+ * contract is in docs/CHAINS.md, "The balance cache contract". */
+try { dropLegacyBalanceCache(localStorage); } catch { /* storage unavailable — the v2 key alone guarantees nothing legacy is read */ }
+
 /* ---------- balance cache: paint last-known amounts instantly ----------
  * hydrateBalanceCache runs mid-renderMain (after the placeholder
  * state is set up, before the EVM await): it copies the cached rows
@@ -639,9 +669,12 @@ async function loadFamilyRows(allFn, fallbackFn, fam) {
  * first paint shows real amounts — marked "Updating…" in the hero —
  * instead of skeletons. Every live read then replaces its family's
  * paint as it lands; persistBalanceCache (called from paintAssets)
- * writes back only families whose LIVE read has settled this
- * render, so a failed read never overwrites the last good values,
- * and the failure rendering (couldn't-load) overrides the cache. */
+ * writes back only families whose live read SUCCEEDED this render
+ * (liveOkFams), so a failed read never overwrites the last good
+ * values and never writes an untouched balance global as if it
+ * were measured — the failure rendering (couldn't-load) overrides
+ * the cache in-session only. The full contract is stated in
+ * docs/CHAINS.md, "The balance cache contract". */
 function hydrateBalanceCache(w) {
   let cached = null;
   try { cached = unpackBalanceCache(localStorage.getItem(BALANCE_CACHE_KEY), w.address); } catch { /* storage unavailable */ }
@@ -668,14 +701,20 @@ function hydrateBalanceCache(w) {
     famLoaded.add("evm"); hydratedFams.add("evm");
   }
   const sc = cached.scalars || {};
-  if (Number.isFinite(Number(sc.btcBal)) || Number.isFinite(Number(sc.btcTrBal))) {
-    if (Number.isFinite(Number(sc.btcBal))) btcBal = Number(sc.btcBal);
-    if (Number.isFinite(Number(sc.btcTrBal))) btcTrBal = Number(sc.btcTrBal);
+  // Scalars hydrate ONLY as stored finite numbers — never coerced
+  // (Number(null) is 0, and a coerced unknown would paint as a
+  // measured zero). Bitcoin's two account scalars hydrate TOGETHER
+  // or not at all: the row shows their sum, and a one-sided cache
+  // must not present a partial sum as the BTC balance — the live
+  // reads fill in whichever account is missing.
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+  if (isNum(sc.btcBal) && isNum(sc.btcTrBal)) {
+    btcBal = sc.btcBal; btcTrBal = sc.btcTrBal;
     famLoaded.add("bitcoin"); hydratedFams.add("bitcoin");
   }
-  if (Number.isFinite(Number(sc.ltcBal))) { ltcBal = Number(sc.ltcBal); famLoaded.add("litecoin"); hydratedFams.add("litecoin"); }
-  if (Number.isFinite(Number(sc.dogeBal))) { dogeBal = Number(sc.dogeBal); famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
-  if (Number.isFinite(Number(sc.bchBal))) { bchBal = Number(sc.bchBal); famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
+  if (isNum(sc.ltcBal)) { ltcBal = sc.ltcBal; famLoaded.add("litecoin"); hydratedFams.add("litecoin"); }
+  if (isNum(sc.dogeBal)) { dogeBal = sc.dogeBal; famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
+  if (isNum(sc.bchBal)) { bchBal = sc.bchBal; famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
   cachePaint = hydratedFams.size > 0;
   if (cachePaint) paintAssets();
 }
@@ -685,32 +724,50 @@ function persistBalanceCache() {
   if (!wallet || !liveFams.size) return;
   const now = Date.now();
   const complete = HOME_FAMILIES.every((k) => liveFams.has(k));
-  if (!complete && now - lastCacheWrite < 2000) return; // throttle mid-load writes
+  // Throttle mid-load writes — EXCEPT when a family has just
+  // settled with proven state (cacheWriteNeeded): its final state
+  // is written at its own settle paint, so the record of it never
+  // depends on a later snapshot happening to run.
+  if (!complete && !cacheWriteNeeded && now - lastCacheWrite < 2000) return;
   lastCacheWrite = now;
+  cacheWriteNeeded = false;
   try {
     const prev = unpackBalanceCache(localStorage.getItem(BALANCE_CACHE_KEY), wallet.address);
     const rows = { ...(prev ? prev.fams : {}) };
-    const take = (key, arr) => { if (liveFams.has(key)) rows[key] = arr; };
+    // PROVENANCE GATE (the cache contract, docs/CHAINS.md): only
+    // families whose live read SUCCEEDED this render are written.
+    // A failed family's previous entry stands untouched (it came
+    // from `prev` above) — the failure is rendered live in this
+    // session but never memorialised over the last proven state.
+    const take = (key, arr) => { if (liveOkFams.has(key)) rows[key] = arr; };
     take("tron", tronBalances); take("solana", solBalances); take("sui", suiBalances);
     take("stellar", stellarBalances); take("ton", tonBalances); take("near", nearBalances);
     take("algorand", algoBalances); take("xrpl", xrpBalances); take("polkadot", dotBalances);
     take("aptos", aptosBalances); take("stacks", stacksBalances);
     delete rows.cosmos; // cosmos travels via cosmosRows in the pack format
     const scalars = { ...(prev && prev.scalars ? prev.scalars : {}) };
-    if (liveFams.has("bitcoin")) { scalars.btcBal = btcBal; scalars.btcTrBal = btcTrBal; }
-    if (liveFams.has("litecoin")) scalars.ltcBal = ltcBal;
-    if (liveFams.has("dogecoin")) scalars.dogeBal = dogeBal;
-    if (liveFams.has("bitcoincash")) scalars.bchBal = bchBal;
+    // Scalars are per-ACCOUNT proven: each is written only when
+    // ITS read succeeded this render. (The defect this replaces:
+    // a family's failure path marked it "live" via markLoaded and
+    // this copied the UNTOUCHED global — on a first-ever open,
+    // the initialiser 0 — into the cache as if measured; the next
+    // open painted it as fact for ~30 s. Bitcoin Cash, live
+    // verification walk 2026-11-14, defect 1.)
+    if (btcSegwitOk) scalars.btcBal = btcBal;
+    if (btcTaprootOk) scalars.btcTrBal = btcTrBal;
+    if (liveOkFams.has("litecoin")) scalars.ltcBal = ltcBal;
+    if (liveOkFams.has("dogecoin")) scalars.dogeBal = dogeBal;
+    if (liveOkFams.has("bitcoincash")) scalars.bchBal = bchBal;
     // Phantom-balance fix (2026-11-12): only CURATED rows are
     // persisted. Scanned/custom rows are session reads — persisting
     // them let a stale scan result (a token the wallet no longer
     // holds, e.g. BTCB 0.00001 against an on-chain zero) repaint
     // next session as spendable truth in the Send/Swap sheets.
     // They now re-enter only from a fresh scan/read this session.
-    const evm = liveFams.has("evm") && !evmLoadFailed
+    const evm = liveOkFams.has("evm")
       ? { network: networkKey, rows: balances.filter(b => !b.scanned && !b.custom) }
       : (prev && prev.evm ? prev.evm : null);
-    const cosmosRowsSnap = liveFams.has("cosmos") ? cosmosRows
+    const cosmosRowsSnap = liveOkFams.has("cosmos") ? cosmosRows
       : (prev && prev.fams && Array.isArray(prev.fams.cosmos) ? prev.fams.cosmos : null);
     const packed = packBalanceCache(wallet.address, {
       rows, scalars,
@@ -740,6 +797,8 @@ async function renderMain() {
   renderAgents();
   famLoaded.clear();
   liveFams.clear();
+  liveOkFams.clear();
+  cacheWriteNeeded = false;
   hydratedFams.clear();
   cachePaint = false;
   paintHeader();
@@ -792,11 +851,12 @@ async function renderMain() {
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
   btcSegwitFailed = btcTaprootFailed = false; btcLoadFailed = false;
-  getBitcoinBalance(btcAddr).then(b => { btcBal = b; btcSegwitFailed = false; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcSegwitFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
+  btcSegwitOk = btcTaprootOk = false;
+  getBitcoinBalance(btcAddr).then(b => { btcBal = b; btcSegwitFailed = false; btcSegwitOk = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcSegwitFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
   // Taproot (BIP86) — a second Bitcoin account from the same seed
   // (Build B): its own address and balance, rolled into the BTC totals.
   btcTrAddr = bitcoinTaprootAddress(w.mnemonic.phrase);
-  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; btcTaprootFailed = false; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcTaprootFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
+  getBitcoinBalance(btcTrAddr).then(b => { btcTrBal = b; btcTaprootFailed = false; btcTaprootOk = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); }).catch(() => { btcTaprootFailed = true; syncBtcLoadFailed(); markLoaded("bitcoin"); paintAssets(); });
   // Tron next (a family like Bitcoin, not an EVM network): same key as
   // the EVM account, its own rows, painted with zero placeholders until
   // TronGrid answers.
@@ -830,6 +890,7 @@ async function renderMain() {
         tronLoadFailed = true;
         tronBalances = tronBalances.map(b => ({ ...b, amount: null }));
       }
+      if (rows) markLiveOk("tron");
       markLoaded("tron"); paintAssets();
     });
   // Solana (a family like Bitcoin/Tron, not an EVM network): SLIP-0010
@@ -850,6 +911,7 @@ async function renderMain() {
         solBalances = [{ symbol: "SOL", amount: null, address: null, decimals: 9 },
                        ...SOLANA_TOKENS.map(t => ({ ...t, amount: null }))];
       }
+      if (rows) markLiveOk("solana");
       markLoaded("solana"); paintAssets();
     });
   // Sui (Phase 2b): SLIP-0010 Ed25519 branch (coin type 784) of the
@@ -868,6 +930,7 @@ async function renderMain() {
         suiBalances = [{ symbol: "SUI", amount: null, address: null, decimals: 9 },
                        ...SUI_TOKENS.map(t => ({ ...t, amount: null }))];
       }
+      if (rows) markLiveOk("sui");
       markLoaded("sui"); paintAssets();
     });
   // Stellar (Phase 3b): SLIP-0010 Ed25519 branch (coin type 148) of
@@ -879,7 +942,7 @@ async function renderMain() {
   if (!hydratedFams.has("stellar")) stellarBalances = [{ symbol: "XLM", name: "Stellar Lumens", amount: "0", address: null, assetCode: null, issuer: null, decimals: 7, verified: true }];
   stellarFunded = null; stellarLoadFailed = false;
   getStellarAccount(stellarAddr)
-    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; markLoaded("stellar"); paintAssets(); })
+    .then(acct => { stellarBalances = acct.balances; stellarFunded = acct.funded; markLiveOk("stellar"); markLoaded("stellar"); paintAssets(); })
     .catch(() => {
       // A failed read is UNKNOWN, not zero (the XRPL/DOT pattern):
       // the row carries amount null and renders "couldn't load" —
@@ -901,7 +964,7 @@ async function renderMain() {
                  { ...TON_USDT, amount: "0" }];
   tonState = null; tonLoadFailed = false; tonScanFailed = false;
   getTonAccount(tonAddr)
-    .then(acct => { tonBalances = acct.balances; tonState = acct.state; tonScanFailed = !!acct.jettonsFailed; markLoaded("ton"); paintAssets(); })
+    .then(acct => { tonBalances = acct.balances; tonState = acct.state; tonScanFailed = !!acct.jettonsFailed; markLiveOk("ton"); markLoaded("ton"); paintAssets(); })
     .catch(() => {
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
       tonLoadFailed = true;
@@ -914,7 +977,7 @@ async function renderMain() {
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
-    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; markLoaded("near"); paintAssets(); })
+    .then(acct => { nearBalances = acct.balances; nearExists = acct.exists; markLiveOk("near"); markLoaded("near"); paintAssets(); })
     .catch(() => {
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
       nearLoadFailed = true;
@@ -927,7 +990,7 @@ async function renderMain() {
                   { ...ALGO_USDC, amount: "0" }];
   algoFunded = null; algoLoadFailed = false;
   getAlgorandAccount(algoAddr)
-    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; markLoaded("algorand"); paintAssets(); })
+    .then(acct => { algoBalances = acct.balances; algoFunded = acct.funded; markLiveOk("algorand"); markLoaded("algorand"); paintAssets(); })
     .catch(() => {
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix:
       // the send sheet used to present this placeholder as "0 ALGO").
@@ -940,7 +1003,7 @@ async function renderMain() {
   if (!hydratedFams.has("xrpl")) xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
   xrpFunded = null; xrpLoadFailed = false;
   getXrplAccount(xrpAddr)
-    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; markLoaded("xrpl"); paintAssets(); })
+    .then(acct => { xrpBalances = acct.balances; xrpFunded = acct.funded; markLiveOk("xrpl"); markLoaded("xrpl"); paintAssets(); })
     .catch(() => {
       // A failed read is UNKNOWN, not zero (QA F12): the row carries
       // amount null and renders "couldn't load" — never a $0.00
@@ -954,7 +1017,7 @@ async function renderMain() {
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
   getDotAccount(dotAddr)
-    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; markLoaded("polkadot"); paintAssets(); })
+    .then(acct => { dotBalances = acct.balances; dotExists = acct.exists; markLiveOk("polkadot"); markLoaded("polkadot"); paintAssets(); })
     .catch(() => {
       // A failed read is UNKNOWN, not zero (QA F12, same pattern
       // as XRPL): rows carry amount null and render "couldn't
@@ -974,7 +1037,7 @@ async function renderMain() {
                    ...APTOS_TOKENS.map(t => ({ ...t, amount: "0", verified: true }))];
   aptosExists = null; aptosLoadFailed = false; aptosScanFailed = false;
   getAptosAccount(aptosAddr)
-    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; markLoaded("aptos"); paintAssets(); })
+    .then(acct => { aptosBalances = acct.balances; aptosExists = acct.exists; aptosScanFailed = acct.scanFailed; markLiveOk("aptos"); markLoaded("aptos"); paintAssets(); })
     .catch(() => {
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
       aptosLoadFailed = true;
@@ -1004,6 +1067,7 @@ async function renderMain() {
       }
       stacksBalances = [{ symbol: "STX", name: "Stacks", amount: stxMicroToStx(acct.stxUstx), decimals: 6, verified: true, contract: null },
                         ...acct.tokens.map(t => ({ ...t, amount: stacksRawToAmount(t.balanceRaw, t.decimals) }))];
+      markLiveOk("stacks");
       paintAssets();
     })
     .catch(() => {
@@ -1016,11 +1080,11 @@ async function renderMain() {
   // Litecoin (BIP84 coin 2), Dogecoin (BIP44 coin 3, legacy),
   // Bitcoin Cash (BIP44 coin 145, CashAddr).
   ltcAddr = litecoinAddress(w.mnemonic.phrase);
-  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; ltcLoadFailed = false; markLoaded("litecoin"); paintAssets(); }).catch(() => { ltcLoadFailed = true; markLoaded("litecoin"); paintAssets(); });
+  getLitecoinBalance(ltcAddr).then(b => { ltcBal = b; ltcLoadFailed = false; markLiveOk("litecoin"); markLoaded("litecoin"); paintAssets(); }).catch(() => { ltcLoadFailed = true; markLoaded("litecoin"); paintAssets(); });
   dogeAddr = dogecoinAddress(w.mnemonic.phrase);
-  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; markLoaded("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; markLoaded("dogecoin"); paintAssets(); });
+  getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; markLiveOk("dogecoin"); markLoaded("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; markLoaded("dogecoin"); paintAssets(); });
   bchAddr = bitcoinCashAddress(w.mnemonic.phrase);
-  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; markLoaded("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; markLoaded("bitcoincash"); paintAssets(); });
+  getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; markLiveOk("bitcoincash"); markLoaded("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; markLoaded("bitcoincash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -1028,9 +1092,17 @@ async function renderMain() {
   // answer; a chain that never answers keeps the honest null instead
   // of a fake zero (the DOGE precedent).
   cosmosAddrs = cosmosAddresses(w.mnemonic.phrase);
-  cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
+  // Same hydration guard as every row family (the in-flight
+  // placeholder rule): on a re-open the cached Cosmos rows are
+  // settled last-known state and must stand until the live read
+  // replaces them. This reset used to run UNCONDITIONALLY and
+  // clobbered the cache paint with null placeholders before the
+  // first presented frame, so rotation-rescued chains repainted
+  // as "couldn't load" although the cache held their proven
+  // zeros (live verification walk 2026-11-14, observation 2).
+  if (!hydratedFams.has("cosmos")) cosmosRows = COSMOS_CHAINS.map(c => ({ ...c, address: cosmosAddrs[c.key], amount: null }));
   paintAssets();
-  getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; markLoaded("cosmos"); paintAssets(); }).catch(() => {
+  getCosmosAllBalances(w.mnemonic.phrase).then(rows => { cosmosRows = rows; markLiveOk("cosmos"); markLoaded("cosmos"); paintAssets(); }).catch(() => {
     // A failed live read over a cache paint: cached Cosmos amounts
     // become "unavailable" (amount null), never final numbers.
     if (hydratedFams.has("cosmos")) cosmosRows = cosmosRows.map(r => ({ ...r, amount: null }));
@@ -1085,11 +1157,13 @@ async function renderMain() {
       if (Date.now() - settleAt > EVM_LATE_ADOPT_MS) return;
       balances = late;
       evmLoadFailed = false;
+      markLiveOk("evm");
       markLoaded("evm");
       paintAssets();
       hydrateEvmTokens();
     }).catch(() => {});
   }
+  if (!evmLoadFailed) markLiveOk("evm");
   markLoaded("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
@@ -1101,8 +1175,14 @@ function heroTotal() {
   const net = NETWORKS[networkKey];
   // A failed Bitcoin load is unknown, not $0.00: its contribution
   // stays out of the total (same discipline as the EVM family).
+  // A failed scalar load is UNKNOWN, not its cached value: BTC's
+  // exclusion rule applies to LTC/DOGE/BCH identically (their
+  // per-family totals already null out on failure —
+  // familyUsdTotals). Before this, the hero total kept counting
+  // a failed altcoin's last cached value while its row said
+  // "couldn't load".
   let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)
-    + ltcBal * (prices.LTC || 0) + dogeBal * (prices.DOGE || 0) + bchBal * (prices.BCH || 0);
+    + (ltcLoadFailed ? 0 : ltcBal) * (prices.LTC || 0) + (dogeLoadFailed ? 0 : dogeBal) * (prices.DOGE || 0) + (bchLoadFailed ? 0 : bchBal) * (prices.BCH || 0);
   for (const b of balances) {
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
     if (p != null) t += Number(b.amount) * p;
@@ -1856,7 +1936,7 @@ function paintAssets() {
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !anyBal && scopedTotal() === 0));
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal && scopedTotal() === 0));
   }
   // Address chips copy WITHOUT opening the row's destination —
   // the two taps are unambiguous (chip = copy, row = detail).
@@ -6692,7 +6772,7 @@ let pendingSwap = null;
 // "Searching routes…" line). Each search takes a generation;
 // only the latest generation may paint or diagnose.
 let routeSearchSeq = 0;
-const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
   if (netKey === "bitcoin" || netKey === "lightning" || netKey === "arkade") {
     // Satora families: the asset is BTC itself (sats on Bitcoin
@@ -6718,6 +6798,12 @@ function swapTokenList(netKey) {
     return [{ symbol: "SUI", address: SUI_SWAP_NATIVE_TOKEN, decimals: 9, native: true },
             ...SUI_TOKENS.map(t => ({ ...t, native: false }))];
   }
+  if (netKey === "polkadot") {
+    // The swap universe addresses native DOT by the "dot"
+    // sentinel (see core); Asset Hub DOT is the only
+    // swap-served Polkadot asset in this build (Chainflip).
+    return [{ symbol: "DOT", address: "dot", decimals: 10, native: true }];
+  }
   const net = NETWORKS[netKey];
   return [{ symbol: net.symbol, address: NATIVE_TOKEN_ADDRESS, decimals: 18, native: true },
           ...(net.tokens || []).map(t => ({ ...t, native: false }))];
@@ -6734,6 +6820,7 @@ function swapRouteName(route) {
   if (route && route.provider === "mayan") return "Mayan";
   if (route && route.provider === "cetus") return "Cetus";
   if (route && route.provider === "sunswap") return "SunSwap";
+  if (route && route.provider === "chainflip") return "Chainflip";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -6892,6 +6979,16 @@ async function swapBalanceOf(chainKey, tok) {
       const bal = lnSession.balance();
       return Number(bal?.spendableMsat || 0) / 1e11;
     }
+    if (chainKey === "polkadot") {
+      // Polkadot balance for the EXECUTION gate: the native
+      // DOT row of the Asset Hub account read. A failed read
+      // throws out of getDotAccount into the catch below,
+      // which returns null — the gate's unreadable verdict,
+      // never a silent zero or a silent pass.
+      const acct = await getDotAccount(dotAddr);
+      const row = (acct?.balances || []).find(b => b && b.address == null && b.symbol === "DOT");
+      return row && row.amount != null ? Number(row.amount) : null;
+    }
     return await getEvmTokenBalance(wallet, chainKey, tok);
   } catch { return null; }
 }
@@ -6916,7 +7013,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7819,7 +7916,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8307,6 +8404,15 @@ $("actSwap").onclick = () => {
         });
         srcExplorer = TRON_EXPLORER;
         srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
+      } else if (route.provider === "chainflip") {
+        // Chainflip route (Polkadot rail): core re-encodes
+        // the vault deposit at execution time and verifies
+        // every field against the quote — vault address,
+        // token, amount, the user's own Polkadot destination
+        // bytes, and the fill-or-kill terms — before the
+        // user's BSC wallet signs anything.
+        hashes = await executeChainflipSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+        srcExplorer = NETWORKS[fromKey].explorer;
       } else if (route.provider === "mayan") {
         // Mayan route (ranked candidate — it is here because it
         // quoted cheapest): EVM sources sign the bounds-checked

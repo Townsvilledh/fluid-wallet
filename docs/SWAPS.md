@@ -180,10 +180,80 @@ a rate limit would burn quota and manufacture a verdict.
   Sui, Bitcoin and Lightning destinations.
 - Bitcoin-family, Cosmos and the other send/receive families
   (`docs/CHAINS.md`) exit through the routed families above.
+- Polkadot Asset Hub is a swap destination since 2026-11-14
+  (Chainflip, next-but-one section): BSC USDT or BNB in, DOT
+  out at your own Asset Hub address, composable from any
+  origin that can reach a BSC anchor. DOT as a source is
+  quoted but not yet executable — the section says why.
 - Arkade is a swap endpoint in its own right (2026-11-14) — see
   the next section.
 - Some source chains cannot be quoted from every network environment;
   when that happens the sheet shows an honest refusal, not a fake zero.
+
+## Polkadot as a swap destination (2026-11-14)
+
+DOT on Asset Hub joins the swap universe through Chainflip.
+Fluid already held, sent and received DOT; what was missing
+was the rail, and Chainflip's vault swap is it: your own BSC
+wallet makes ONE call to the Chainflip vault with USDT or
+BNB, and native DOT lands at your own Asset Hub address.
+There is no deposit channel and no operator address in the
+path. Before anything is signed, Fluid re-encodes the
+deposit and verifies every field against the quote — the
+vault address, the token, the amount, the value, the
+destination bytes (your own account, decoded from your
+address), and the fill-or-kill terms, which must match an
+independently encoded copy byte-for-byte. A mismatch
+refuses before funding.
+
+- **Floors are Chainflip's, named as Chainflip's.** The
+  smallest swap into DOT is 10 USDT or 0.02 BNB — the
+  protocol's own per-pair minimums, refused by its quote
+  API below them. A smaller amount is refused with the
+  floor named before you commit; nothing is ever sent
+  under it.
+- **Speed is disclosed, never dressed up.** The leg takes
+  ~110 seconds end to end (deposit ~7s, swap ~12s, egress
+  ~91s), so neither the direct route nor any composition
+  through it is ever badged fast — a composed BTCB → USDT →
+  DOT route quotes ~141 seconds and says so.
+- **Failure posture.** The swap is fill-or-kill: if it
+  cannot fill at or above the quote's minimum price inside
+  the retry window (~5 minutes), the deposit refunds
+  automatically to your own BSC address — the refund
+  address is part of the verified terms, and the executor
+  refuses any route whose refund address is not yours.
+  A wrong-asset or wrong-destination deposit cannot be
+  produced by the executor: those are calldata fields it
+  verifies, not free text.
+- **Fee capture.** Chainflip pays broker commission in
+  bps, itemised as a BROKER fee in the quote and taken out
+  of the output; Fluid's fee law applies under the Polkadot
+  ceiling ($0.30 total route cost). Collecting needs
+  Fluid's registered Chainflip broker account — an operator
+  setup item that is not live yet — so until it lands,
+  Chainflip routes quote with the fee at exactly zero and
+  the card's collecting flag says so. When the account is
+  registered, a fee-bearing quote must reconcile with the
+  fee-free one (commission itemised, output reduced by
+  about the commission) or no route is shown.
+- **DOT as a source is quoting only, for now.** Chainflip
+  serves DOT → BSC quotes, but a DOT deposit can only be
+  made through a deposit channel opened by a broker, and
+  the commission that carries Fluid's fee can only ride a
+  channel Fluid's own broker opened. Shipping the direction
+  without capture would break the rule that a surface that
+  cannot return Fluid's fees does not ship — so DOT-out
+  routes display their quote with the reason named and are
+  not tappable, until the broker is live. Bitcoin and
+  Lightning origins likewise do not compose into DOT yet:
+  no rail in the planner carries their value into a BSC
+  anchor.
+- **Size limit, honestly.** At very large sizes (seen at
+  $66,000) Chainflip's quote API offers only a DCA product
+  instead of a regular swap. Fluid never substitutes it —
+  an outsized search returns no route rather than a
+  different product wearing the route's clothes.
 
 ## Arkade as a swap endpoint (2026-11-14)
 

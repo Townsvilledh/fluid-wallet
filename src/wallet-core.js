@@ -969,9 +969,13 @@ export async function getBitcoinBalance(address) {
       const res = await fetch(`${base}/address/${address}`);
       if (!res.ok) continue;
       const d = await res.json();
-      const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
-      const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
-      return (funded - spent) / 1e8;
+      const funded = Number(d?.chain_stats?.funded_txo_sum) + Number(d?.mempool_stats?.funded_txo_sum || 0);
+      const spent = Number(d?.chain_stats?.spent_txo_sum) + Number(d?.mempool_stats?.spent_txo_sum || 0);
+      const bal = (funded - spent) / 1e8;
+      // A body that parses but carries no real sums is a FAILED
+      // source (the arithmetic is NaN), never a balance — fall
+      // through to the next source; both failing throws above.
+      if (Number.isFinite(bal)) return bal;
     } catch { /* this source failed — try the next one */ }
   }
   throw new Error("Bitcoin balance lookup failed.");
@@ -1526,10 +1530,15 @@ async function blockcypherBalance(coin, address) {
 export async function getLitecoinBalance(address) {
   try {
     const res = await fetch(`${LTC_API}/address/${address}`);
+    if (!res.ok) throw new Error("Litecoin balance lookup failed (HTTP " + res.status + ").");
     const d = await res.json();
-    const funded = d.chain_stats.funded_txo_sum + (d.mempool_stats?.funded_txo_sum || 0);
-    const spent = d.chain_stats.spent_txo_sum + (d.mempool_stats?.spent_txo_sum || 0);
-    return (funded - spent) / 1e8;
+    const funded = Number(d?.chain_stats?.funded_txo_sum) + Number(d?.mempool_stats?.funded_txo_sum || 0);
+    const spent = Number(d?.chain_stats?.spent_txo_sum) + Number(d?.mempool_stats?.spent_txo_sum || 0);
+    const bal = (funded - spent) / 1e8;
+    // A parseable body with no real sums is a failed source
+    // (NaN), never a balance — the BlockCypher fallback decides.
+    if (!Number.isFinite(bal)) throw new Error("Litecoin balance lookup failed.");
+    return bal;
   } catch {
     // Fallback (see blockcypherBalance): both reads failing THROWS,
     // so the UI shows "couldn't load" instead of a fake zero.
@@ -1639,7 +1648,7 @@ export async function getDogecoinBalance(address) {
     const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`);
     const d = await res.json();
     const bal = d?.balance ?? d?.data?.balance;
-    if (bal == null) throw new Error("Dogecoin balance lookup failed.");
+    if (bal == null || !Number.isFinite(Number(bal))) throw new Error("Dogecoin balance lookup failed.");
     return Number(bal);
   } catch {
     // dogechain is CORS-blocked from browsers (verified live
@@ -1931,9 +1940,16 @@ export function buildSignedBchTx({ inputs, outputs, privateKey, publicKey, ownSc
 const HASKOIN_BCH = "https://api.haskoin.com/bch"; // keyless, verified live 2026-11-06
 export async function getBitcoinCashBalance(address) {
   const res = await fetch(`${HASKOIN_BCH}/address/${address}/balance`);
+  if (!res.ok) throw new Error("Bitcoin Cash balance lookup failed (HTTP " + res.status + ").");
   const d = await res.json();
   if (d?.confirmed == null) throw new Error("Bitcoin Cash balance lookup failed.");
-  return (Number(d.confirmed) + Number(d.unconfirmed || 0)) / 1e8;
+  const confirmed = Number(d.confirmed);
+  const unconfirmed = Number(d?.unconfirmed ?? 0);
+  // A body without a real confirmed sum is a FAILED read (the
+  // caller shows "couldn't load"), never a numeric balance —
+  // Number(garbage) is NaN, and NaN must not travel as a result.
+  if (!Number.isFinite(confirmed)) throw new Error("Bitcoin Cash balance lookup failed.");
+  return (confirmed + (Number.isFinite(unconfirmed) ? unconfirmed : 0)) / 1e8;
 }
 export const BCH_DUST = 546;
 export function formatBitcoinCashSendIntent({ amount, to, feeBch, feeUsd, note }) {
@@ -4347,7 +4363,7 @@ export const PLATFORM_FEE_ROUTE_MULTIPLIER_EVM = 4;
  *  0.5%-of-amount cap is the binding term anyway — the ceiling
  *  exists only as a hard cap on user pain, so it sits at $1.50
  *  rather than starving the lane at $0.50. */
-export const PLATFORM_FEE_TOTAL_CEILINGS_USD = { evm: 0.20, bitcoin: 1.50, lightning: 0.30, solana: 0.30 };
+export const PLATFORM_FEE_TOTAL_CEILINGS_USD = { evm: 0.20, bitcoin: 1.50, lightning: 0.30, solana: 0.30, polkadot: 0.30 };
 /** The destination ecosystem a swap chain key belongs to, for fee
  *  purposes: a NETWORKS key is "evm"; the named non-EVM families
  *  with their own ceiling get their own row; anything else —
@@ -4358,6 +4374,7 @@ export function platformFeeEcosystemOf(destChainKey) {
   if (destChainKey === "solana") return "solana";
   if (destChainKey === "bitcoin" || destChainKey === "btc") return "bitcoin";
   if (destChainKey === "lightning" || destChainKey === "ln") return "lightning";
+  if (destChainKey === "polkadot") return "polkadot";
   if (typeof destChainKey === "string" && NETWORKS[destChainKey]) return "evm";
   return "default";
 }
@@ -6608,6 +6625,18 @@ export const SUI_SWAP_NATIVE_TOKEN = "0x0000000000000000000000000000000000000000
 // never signs a payload shape it has not inspected. Bitcoin is a
 // swap DESTINATION through Satora (see the Satora section).
 export const BITCOIN_SWAP_CHAIN_ID = 20000000000001;
+// Polkadot Asset Hub's id in the same router chain-id space
+// (…002 Lightning and …003 Arkade live in the Satora section).
+// Like Bitcoin, Polkadot is deliberately NOT added to
+// swapChainOf: the router universe must not quote it — DOT
+// joins swaps through its own rail (Chainflip, below), whose
+// routes carry this id so fee gates, explorers and ranking see
+// a stable identity.
+export const POLKADOT_SWAP_CHAIN_ID = 20000000000004;
+/** DOT's sentinel "address" in the swap universe (mirrors
+ *  Bitcoin's "btc" / Sui's native coin type): native DOT has
+ *  no contract address, so routes name it "dot". */
+export const POLKADOT_DOT_TOKEN = "dot";
 /** Resolve a swap-side chain key to {chainId, name}: a NETWORKS key, or
  *  a non-EVM family key ("tron", "solana", "sui"). Null when unknown. */
 export function swapChainOf(chainKey) {
@@ -17660,6 +17689,7 @@ export function destChainName(chainKey) {
   if (chainKey === "solana") return "Solana";
   if (chainKey === "tron") return "Tron";
   if (chainKey === "sui") return "Sui";
+  if (chainKey === "polkadot") return "Polkadot Asset Hub";
   return NETWORKS[chainKey]?.name || String(chainKey || "");
 }
 /** Whether a token address IS the destination chain's native gas
@@ -17670,6 +17700,7 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "solana") return a === SOLANA_SWAP_NATIVE_TOKEN;
   if (chainKey === "tron") return a === TRON_SWAP_NATIVE_TOKEN;
   if (chainKey === "sui") return suiCoinTypeEq(a, SUI_COIN_TYPE) || suiCoinTypeEq(a, SUI_SWAP_NATIVE_TOKEN);
+  if (chainKey === "polkadot") return a.toLowerCase() === POLKADOT_DOT_TOKEN;
   return a.toLowerCase() === NATIVE_TOKEN_ADDRESS;
 }
 /** The destination native token's address in the swap universe's
@@ -17678,6 +17709,7 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "solana") return SOLANA_SWAP_NATIVE_TOKEN;
   if (chainKey === "tron") return TRON_SWAP_NATIVE_TOKEN;
   if (chainKey === "sui") return SUI_SWAP_NATIVE_TOKEN;
+  if (chainKey === "polkadot") return POLKADOT_DOT_TOKEN;
   if (NETWORKS[chainKey]) return NATIVE_TOKEN_ADDRESS;
   return null;
 }
@@ -17694,6 +17726,11 @@ export async function readDestNativeRaw(chainKey, address) {
     if (chainKey === "solana") {
       const bal = await solanaRpc("getBalance", [address]);
       return bal && bal.value != null ? BigInt(bal.value) : null;
+    }
+    if (chainKey === "polkadot") {
+      const acct = await getDotAccount(address);
+      const row = (acct?.balances || []).find(b => b && b.address == null && b.symbol === "DOT") || acct?.balances?.[0];
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), 10) : null;
     }
     if (chainKey === "tron") {
       const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(15000) });
@@ -17955,6 +17992,7 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
   if (route.provider === "jupiter") return executeJupiterSwapRoute(wallet?.mnemonic?.phrase, route, progress);
   if (route.provider === "cetus") return executeCetusSwapRoute(wallet, route, progress);
   if (route.provider === "sunswap") return executeSunswapSwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "chainflip") return executeChainflipSwapRoute(wallet, route, progress, onApprove);
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** Run a gas-fallback record's second leg from what ACTUALLY
@@ -18154,6 +18192,7 @@ function isHubTokenOn(chainKey, tokenAddress) {
 }
 function tokenSymbolOn(chainKey, tokenAddress) {
   if (chainKey === "bitcoin" || chainKey === "lightning" || chainKey === "arkade") return "BTC";
+  if (chainKey === "polkadot") return "DOT";
   if (tokenAddress == null || isDestNativeToken(chainKey, tokenAddress)) return destGasSpec(chainKey)?.symbol || NETWORKS[chainKey]?.symbol || null;
   const hub = hubTokenForChain(chainKey);
   if (hub && swapTokenEq(chainKey, tokenAddress, hub.address)) return "USDC";
@@ -18189,6 +18228,7 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "solana") return isValidSolanaAddress(a) ? a : null;
   if (chainKey === "tron") return isValidTronAddress(a) ? a : null;
   if (chainKey === "bitcoin") return isValidBitcoinAddress(a) ? a : null;
+  if (chainKey === "polkadot") return isValidDotAddress(a) ? a : null;
   return a;
 }
 /** The user's address on an intermediate chain of a
@@ -18391,6 +18431,27 @@ export function milestoneShapes(args) {
       return shapes;
     }
   }
+  // Polkadot destinations (Chainflip, 2026-11-14): the rail
+  // sources only from BSC — USDT (the proven anchor) or BNB —
+  // so the composition runs any origin into a BSC anchor,
+  // then the Chainflip leg into DOT (BTCB on BSC -> USDT ->
+  // DOT is the spec's proven shape). Bitcoin-family sources
+  // get no shape here: no rail in this planner carries BTC
+  // or Lightning value into a BSC anchor (Satora's family
+  // legs land on Arbitrum / Polygon / Ethereum stables), so
+  // there is nothing genuine to compose from — the honest
+  // no-route diagnosis stands for those origins.
+  if (args.toChainKey === "polkadot") {
+    if (args.fromChainKey === "bitcoin" || args.fromChainKey === "lightning") return shapes;
+    for (const a of [CHAINFLIP_BSC_USDT.address, NATIVE_TOKEN_ADDRESS]) {
+      const legs = [];
+      if (!(args.fromChainKey === "bsc" && swapTokenEq("bsc", args.fromTokenAddress, a)))
+        legs.push(leg(args.fromChainKey, "bsc", args.fromTokenAddress, a));
+      legs.push(leg("bsc", "polkadot", a, POLKADOT_DOT_TOKEN));
+      pushShape(legs);
+    }
+    return shapes;
+  }
   // Generic hub composition: origin hub leg (when the FROM
   // token is not the origin's hub) → hub-to-hub crossing →
   // destination hub leg (when the target is not the
@@ -18514,6 +18575,37 @@ export function milestoneShapes(args) {
           legs.push(leg(args.toChainKey, args.toChainKey, toAltBtc.address, args.toTokenAddress));
         pushShape(legs);
       }
+    }
+    return shapes;
+  }
+  // Polkadot as a SOURCE (Chainflip, 2026-11-14): the first
+  // leg IS the crossing out of Polkadot — DOT into a BSC
+  // anchor (USDT first, then BNB) — then the ordinary tail
+  // from BSC (its hub leg into the destination, plus the
+  // destination's own leg when the target is not the hub;
+  // when BSC IS the destination, just its same-chain leg).
+  // These shapes are real but their first leg gates
+  // non-executable until Fluid's Chainflip broker is live
+  // (quoting only — see the Chainflip section), so a
+  // composition through DOT prices honestly and presents
+  // its gate reason instead of pretending to be tappable.
+  // Bitcoin-family and Sui destinations never reach here
+  // (their branches above already returned).
+  if (args.fromChainKey === "polkadot") {
+    const toHubDot = hubTokenForChain(args.toChainKey);
+    for (const a of [CHAINFLIP_BSC_USDT.address, NATIVE_TOKEN_ADDRESS]) {
+      const legs = [leg("polkadot", "bsc", POLKADOT_DOT_TOKEN, a)];
+      if (args.toChainKey === "bsc") {
+        if (!swapTokenEq("bsc", args.toTokenAddress, a))
+          legs.push(leg("bsc", "bsc", a, args.toTokenAddress));
+      } else if (toHubDot) {
+        legs.push(leg("bsc", args.toChainKey, a, toHubDot.address));
+        if (!isHubTokenOn(args.toChainKey, args.toTokenAddress))
+          legs.push(leg(args.toChainKey, args.toChainKey, toHubDot.address, args.toTokenAddress));
+      } else {
+        legs.push(leg("bsc", args.toChainKey, a, args.toTokenAddress));
+      }
+      pushShape(legs);
     }
     return shapes;
   }
@@ -19124,10 +19216,12 @@ function milestoneLegTokenDecimals(record, legIndex, side) {
   if (side === "to") {
     if (leg.toChainKey === "sui") return isDestNativeToken("sui", leg.toTokenAddress) ? 9 : (SUI_TOKENS.find(t => suiCoinTypeEq(t.address, leg.toTokenAddress))?.decimals ?? 6);
     if (leg.toChainKey === "solana") return 6;
+    if (leg.toChainKey === "polkadot") return 10;
     const t = (NETWORKS[leg.toChainKey]?.tokens || []).find(x => String(x.address).toLowerCase() === String(leg.toTokenAddress || "").toLowerCase());
     if (t) return t.decimals;
     return isDestNativeToken(leg.toChainKey, leg.toTokenAddress) ? 18 : 18;
   }
+  if (leg.fromChainKey === "polkadot") return 10;
   return 18;
 }
 /** Re-point a milestone record's Arkade legs at the booted
@@ -19448,6 +19542,525 @@ export async function completeMilestoneSwap(wallet, recordId, progress = () => {
  *  cannot carry the gas delivery, collecting candidates until
  *  a capable route is in hand or the sources run out — merit
  *  ranking in getSwapRoutes then decides. */
+// ---------- Chainflip: BSC <-> Polkadot Asset Hub DOT ----------
+// Fluid's Polkadot swap rail (2026-11-14; spec + live probes:
+// research_notes/fluid-polkadot-swap-leg-20261114/spec.md).
+// Fluid already derives, holds, sends and receives DOT on
+// Asset Hub — what was missing is the swap rail, and Chainflip
+// is it: a vault swap on BSC (the user's own wallet calls the
+// Chainflip vault with the tokens or BNB, in ONE transaction)
+// whose output lands as native DOT at the user's own Asset
+// Hub address. No deposit channel is opened (deposit channels
+// belong to the broker's API — see the OUT direction below),
+// so there is no channel to expire and no operator-held
+// address in the path: the only signed payload is the vault
+// call, and it is verified field-by-field against the quote
+// before signing (checkChainflipVaultSwapData) — the vault
+// address, the selector, the token, the amount, the value,
+// the destination bytes (the user's own accountId32, decoded
+// from their SS58 address), and the fill-or-kill parameters
+// bytes, which must equal an INDEPENDENT encode of the
+// intended terms (refund address = the user's own BSC
+// address, the quote's min price, the retry window).
+//
+// FAILURE POSTURE (Chainflip's own model, probed/documented
+// in the spec): the swap is fill-or-kill — if it cannot fill
+// at or above the quote's min price inside the retry window
+// (~5 minutes), the deposit refunds automatically to the
+// refund address, which Fluid always sets to the user's own
+// BSC address. Below-minimum swaps are refused by the quote
+// API before anything is sent (the floors below are
+// Chainflip's own per-pair minimums, live-refused under them:
+// 10 USDT and 0.02 BNB into DOT), and Fluid's quote refuses
+// under them with the floor named before the user commits.
+// A wrong-asset or wrong-destination deposit cannot be
+// produced by this executor: the token, amount and
+// destination are calldata fields it verifies, not free text.
+//
+// FEE CAPTURE rides Chainflip's broker commission: the quote
+// API takes brokerCommissionBps and itemises the commission
+// as a BROKER fee entry taken out of the output (proven at
+// quote level in the spec: bps 100 moved the egress by
+// exactly the commission). Collecting needs a REGISTERED
+// Chainflip broker account (an SS58 account funded with FLIP
+// for the registration bond) — an operator setup item, named
+// in CHAINFLIP_BROKER_ACCOUNT below. Until it is set, quotes
+// run at 0 bps and platformFeeCollecting is false (the Satora
+// developer-key precedent: the route is live, the fee is
+// honestly zero, never assumed). When it is set, the fee
+// follows the fee law under the Polkadot ceiling ($0.30) and
+// the fee-bearing quote must RECONCILE with the fee-free one
+// (checkChainflipQuoteCommission) or no route is shown.
+//
+// DOT AS A SOURCE is quoting-only in this build: Chainflip
+// serves DOT -> BSC quotes (probed), but a DOT deposit can
+// only be made through a deposit channel, deposit channels
+// are opened through a broker API, and the commission on a
+// channel can only be charged by the broker who opened it —
+// a broker Fluid does not yet operate. Shipping DOT-out
+// execution without capture would break the universal
+// capture law (the Hyperbridge precedent), so the gate
+// refuses DOT-source routes with the reason named, and the
+// reversal is this one section plus the gate branch once
+// Fluid's broker is live.
+export const CHAINFLIP_API_BASE = "https://chainflip-swap.chainflip.io";
+/** The Chainflip vault contract on BSC — the only address a
+ *  Chainflip deposit transaction may target. Live-encoded
+ *  2026-11-14 (encodeVaultSwapData, both asset shapes). */
+export const CHAINFLIP_BSC_VAULT = "0x79001a5e762f3befc8e5871b42f6734e00498920";
+export const CHAINFLIP_VAULT_SELECTOR_ERC20 = "0x04fc7da0";
+export const CHAINFLIP_VAULT_SELECTOR_NATIVE = "0xdd687345";
+/** Chainflip's internal chain enums as they appear in the
+ *  vault calldata (live-encoded 2026-11-14): BSC = 6,
+ *  Asset Hub = 11. The execution check pins them — if the
+ *  protocol ever renumbers, deposits refuse rather than
+ *  improvise. */
+export const CHAINFLIP_SRC_CHAIN_ENUM_BSC = 6;
+export const CHAINFLIP_DEST_CHAIN_ENUM_ASSETHUB = 11;
+/** Fluid's registered Chainflip broker account (SS58) — the
+ *  commission beneficiary the quote and the vault encode
+ *  name. OPERATOR SETUP ITEM: registration is a Chainflip
+ *  state-chain transaction that escrows FLIP (amount not yet
+ *  verified against the live chain — do not guess it here).
+ *  null until registered; while null, Chainflip routes quote
+ *  at 0 bps with platformFeeCollecting false. */
+export const CHAINFLIP_BROKER_ACCOUNT = null;
+/** Resolve the effective broker configuration (the seam
+ *  the fee pass reads through, Satora's satoraFeeConfig
+ *  pattern): a non-empty account string collects; anything
+ *  else runs fee-free with collecting false. */
+export function chainflipBrokerConfig(account = CHAINFLIP_BROKER_ACCOUNT) {
+  return (typeof account === "string" && account.trim())
+    ? { brokerAccount: account.trim() }
+    : { brokerAccount: null };
+}
+/** The fill-or-kill retry window baked into every deposit,
+ *  in source-chain blocks — the value the live encode
+ *  accepted alongside the quote's recommended 5-minute
+ *  retry duration (2026-11-14). If the swap cannot fill at
+ *  the min price inside this window, the deposit refunds to
+ *  the user's own BSC address automatically. */
+export const CHAINFLIP_FOK_RETRY_BLOCKS = 50;
+const CHAINFLIP_BSC_USDT = { address: "0x55d398326f99059fF775485246999027B3197955", symbol: "USDT", name: "Tether USD", decimals: 18, cfAsset: "USDT" };
+const CHAINFLIP_BSC_BNB = { address: NATIVE_TOKEN_ADDRESS, symbol: "BNB", name: "BNB", decimals: 18, cfAsset: "BNB" };
+/** Chainflip's own minimum swap amounts INTO DOT, raw units
+ *  of the BSC source asset — live-refused below them by the
+ *  quote API (2026-11-14): USDT "expected amount is below
+ *  minimum swap amount (10000000000000000000)", BNB likewise
+ *  at 0.02. These are the protocol's floors, surfaced as the
+ *  protocol's, never hidden or rounded. */
+export const CHAINFLIP_MIN_SWAP_INTO_DOT = { USDT: "10000000000000000000", BNB: "20000000000000000" };
+function chainflipBscAnchorFor(tokenAddress) {
+  if (tokenAddress == null) return null;
+  const a = String(tokenAddress).toLowerCase();
+  if (a === CHAINFLIP_BSC_USDT.address.toLowerCase()) return CHAINFLIP_BSC_USDT;
+  if (a === NATIVE_TOKEN_ADDRESS || a === NATIVE_TOKEN_SENTINEL.toLowerCase()) return CHAINFLIP_BSC_BNB;
+  return null;
+}
+function chainflipIsDotToken(tokenAddress) {
+  return tokenAddress == null || String(tokenAddress).toLowerCase() === POLKADOT_DOT_TOKEN;
+}
+/** The pairs Chainflip serves for Fluid: BSC USDT/BNB ->
+ *  Asset Hub DOT ("in", executable), and Asset Hub DOT ->
+ *  BSC USDT/BNB ("out", quoting only — see the section
+ *  header). Returns { direction, anchor } or null. Pure. */
+export function chainflipSupportsPair(args) {
+  if (!args) return null;
+  if (args.fromChainKey === "bsc" && args.toChainKey === "polkadot") {
+    if (!chainflipIsDotToken(args.toTokenAddress)) return null;
+    const anchor = chainflipBscAnchorFor(args.fromTokenAddress);
+    return anchor ? { direction: "in", anchor } : null;
+  }
+  if (args.fromChainKey === "polkadot" && args.toChainKey === "bsc") {
+    if (!chainflipIsDotToken(args.fromTokenAddress)) return null;
+    const anchor = chainflipBscAnchorFor(args.toTokenAddress);
+    return anchor ? { direction: "out", anchor } : null;
+  }
+  return null;
+}
+function chainflipFloorError({ srcSymbol, destSymbol, minRaw, decimals }) {
+  const human = ethers.formatUnits(BigInt(minRaw), decimals).replace(/\.0$/, "");
+  const e = new Error(`No route at that size: Chainflip's own minimum for ${srcSymbol} → ${destSymbol} is ${human} ${srcSymbol} — the floor is Chainflip's, not Fluid's, and it is shown before you commit. Swap at least ${human} ${srcSymbol}.`);
+  e.chainflipTerminal = true;
+  e.chainflipBelowFloor = { asset: srcSymbol, minRaw: String(minRaw) };
+  return e;
+}
+function chainflipTerminalError(message) {
+  const e = new Error(message);
+  e.chainflipTerminal = true;
+  return e;
+}
+/** Translate a quote-API failure: a below-minimum refusal
+ *  becomes the named-floor error (the minimum is parsed out
+ *  of the API's own message, so a protocol-side floor change
+ *  is surfaced at its new value, never a stale constant);
+ *  anything else passes through as a transport failure. */
+function chainflipTranslateQuoteError(e, { srcSymbol, destSymbol, srcDecimals }) {
+  if (e && e.chainflipTerminal) return e;
+  if (e && e.chainflipBelowMinimum) {
+    return chainflipFloorError({ srcSymbol, destSymbol, minRaw: e.chainflipBelowMinimum, decimals: srcDecimals });
+  }
+  return e;
+}
+async function chainflipQuoteRaw({ srcChain, srcAsset, destChain, destAsset, amountRaw, brokerBps = 0 }) {
+  const q = new URLSearchParams({ srcChain, srcAsset, destChain, destAsset, amount: String(amountRaw) });
+  if (brokerBps > 0) q.set("brokerCommissionBps", String(Math.floor(brokerBps)));
+  const res = await fetch(`${CHAINFLIP_API_BASE}/v2/quote?${q.toString()}`, {
+    signal: AbortSignal.timeout(25000),
+    headers: { "X-Chainflip-Sdk-Version": "2.3.2" },
+  });
+  const text = await res.text().catch(() => "");
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* non-JSON error body */ }
+  if (!res.ok) {
+    const msg = (data && data.message) || `Chainflip quote failed (HTTP ${res.status}).`;
+    const minMatch = /below minimum swap amount \((\d+)\)/.exec(msg);
+    if (minMatch) { const e = new Error(msg); e.chainflipBelowMinimum = minMatch[1]; throw e; }
+    throw new Error(msg);
+  }
+  return data;
+}
+/** Parse one Chainflip quote response (the /v2/quote array;
+ *  the REGULAR entry — DCA entries, offered at large sizes,
+ *  are a different product and never silently substituted).
+ *  Pure; null on any shape drift. */
+export function parseChainflipQuote(raw) {
+  const arr = Array.isArray(raw) ? raw : null;
+  if (!arr || !arr.length) return null;
+  const q = arr.find(x => x && (x.type == null || x.type === "REGULAR")) || null;
+  if (!q || q.egressAmount == null || !Array.isArray(q.includedFees)) return null;
+  const feeOf = (t) => {
+    const f = q.includedFees.find(x => x && x.type === t);
+    return f && f.amount != null ? String(f.amount) : null;
+  };
+  const d = q.estimatedDurationsSeconds || {};
+  const summed = (Number(d.deposit) || 0) + (Number(d.swap) || 0) + (Number(d.egress) || 0);
+  return {
+    type: q.type || "REGULAR",
+    egressAmount: String(q.egressAmount),
+    intermediateAmount: q.intermediateAmount != null ? String(q.intermediateAmount) : null,
+    depositAmount: q.depositAmount != null ? String(q.depositAmount) : null,
+    estimatedPrice: q.estimatedPrice != null ? String(q.estimatedPrice) : null,
+    estimatedDurationSeconds: Number(q.estimatedDurationSeconds) || (summed > 0 ? summed : null),
+    slippageTolerancePercent: Number(q.recommendedSlippageTolerancePercent) || 0.5,
+    retryDurationMinutes: Number(q.recommendedRetryDurationMinutes) || 5,
+    lowLiquidityWarning: q.lowLiquidityWarning === true,
+    fees: { ingress: feeOf("INGRESS"), network: feeOf("NETWORK"), egress: feeOf("EGRESS"), broker: feeOf("BROKER") },
+  };
+}
+/** The fill-or-kill min price in Chainflip's X128 fixed
+ *  point: floor(price × (1 − slippage) × 2^128), computed in
+ *  exact BigInt math on the quote's decimal-string price —
+ *  no float ever touches it. Null when the price is not a
+ *  plain decimal string. */
+export function chainflipMinPriceX128(estimatedPrice, slippageTolerancePercent) {
+  const s = String(estimatedPrice ?? "");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const [ip, fp = ""] = s.split(".");
+  const scale = 10n ** BigInt(fp.length);
+  const num = BigInt(ip) * scale + BigInt(fp || "0");
+  const slipBps = BigInt(Math.round((Number(slippageTolerancePercent) || 0) * 100));
+  if (slipBps < 0n || slipBps >= 10000n) return null;
+  return ((num * (10000n - slipBps) * (2n ** 128n)) / (scale * 10000n)).toString();
+}
+/** The commission reconciliation (Satora's two-pass
+ *  discipline, Chainflip's evidence): a fee-bearing quote
+ *  collects for Fluid ONLY when (1) it itemises a BROKER fee,
+ *  (2) that fee matches the requested bps of the fee-free
+ *  quote's intermediate amount, and (3) the output actually
+ *  fell by about the commission. Anything else is not proof
+ *  of capture and the route refuses. Pure. */
+export function checkChainflipQuoteCommission(qFree, qFee, bps, prices = {}) {
+  const no = (reason) => ({ ok: false, reason });
+  if (!qFree || !qFee) return no("a quote is missing");
+  if (!qFee.fees || qFee.fees.broker == null) return no("the fee-bearing quote itemises no BROKER fee");
+  let brokerRaw;
+  try { brokerRaw = BigInt(qFee.fees.broker); } catch { return no("the BROKER fee is not an integer amount"); }
+  if (brokerRaw <= 0n) return no("the BROKER fee is zero");
+  // The BROKER entry is denominated in the intermediate
+  // asset (USDC, 6 dp) whatever the source asset was.
+  const brokerUsd = Number(brokerRaw) / 1e6;
+  if (qFree.intermediateAmount != null) {
+    const interUsd = Number(BigInt(qFree.intermediateAmount)) / 1e6;
+    if (interUsd > 0) {
+      const expected = interUsd * (Number(bps) || 0) / 10000;
+      if (!(brokerUsd >= expected * 0.5 && brokerUsd <= expected * 1.05 + 0.01))
+        return no("the BROKER fee does not match the requested commission");
+    }
+  }
+  let egressFree, egressFee;
+  try { egressFree = BigInt(qFree.egressAmount); egressFee = BigInt(qFee.egressAmount); } catch { return no("an egress amount is not an integer"); }
+  if (!(egressFee < egressFree)) return no("the fee-bearing quote does not reduce the output");
+  const dotPx = Number(prices?.DOT);
+  if (Number.isFinite(dotPx) && dotPx > 0) {
+    const dropUsd = (Number(egressFree - egressFee) / 1e10) * dotPx;
+    if (!(dropUsd >= brokerUsd * 0.5 && dropUsd <= brokerUsd * 2))
+      return no("the output drop does not match the BROKER fee");
+  }
+  return { ok: true, brokerUsd };
+}
+const chainflipUsdOf = (raw, decimals, priceUsd) => {
+  const px = Number(priceUsd);
+  if (raw == null || !Number.isFinite(px) || !(px > 0)) return null;
+  try { return Number(ethers.formatUnits(BigInt(raw), decimals)) * px; } catch { return null; }
+};
+/** Quote a Chainflip route. Direction "in" is the full
+ *  two-pass build (fee-free quote -> fee law -> fee-bearing
+ *  re-quote with reconciliation, when a broker account is
+ *  configured); direction "out" quotes fee-free only and
+ *  carries collecting:false — its gate refuses execution
+ *  (see the section header). */
+export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT } = {}) {
+  const plan = chainflipSupportsPair(args);
+  if (!plan) return null;
+  const brokerCfg = chainflipBrokerConfig(brokerAccount);
+  const { direction, anchor } = plan;
+  const fromAmount = String(args?.fromAmount ?? "");
+  if (!/^\d+$/.test(fromAmount) || BigInt(fromAmount) <= 0n) return null;
+  const prices = await getPrices().catch(() => ({}));
+  const srcPxIn = anchor.cfAsset === "BNB" ? prices?.BNB : 1;
+  if (direction === "in") {
+    const floor = CHAINFLIP_MIN_SWAP_INTO_DOT[anchor.cfAsset];
+    if (floor && BigInt(fromAmount) < BigInt(floor))
+      throw chainflipFloorError({ srcSymbol: anchor.cfAsset, destSymbol: "DOT", minRaw: floor, decimals: anchor.decimals });
+    const quoteArgs = { srcChain: "Bsc", srcAsset: anchor.cfAsset, destChain: "Assethub", destAsset: "DOT", amountRaw: fromAmount };
+    let raw0;
+    try { raw0 = await chainflipQuoteRaw({ ...quoteArgs, brokerBps: 0 }); }
+    catch (e) { throw chainflipTranslateQuoteError(e, { srcSymbol: anchor.cfAsset, destSymbol: "DOT", srcDecimals: anchor.decimals }); }
+    const q0 = parseChainflipQuote(raw0);
+    if (!q0 || !q0.estimatedPrice)
+      throw chainflipTerminalError("Chainflip's quote could not be read — no route is shown rather than a guessed one.");
+    const fromUsd = chainflipUsdOf(fromAmount, anchor.decimals, srcPxIn);
+    const declaredUsd = (q) => {
+      const parts = [
+        chainflipUsdOf(q.fees.ingress, anchor.decimals, srcPxIn) || 0,
+        chainflipUsdOf(q.fees.network, 6, 1) || 0,
+        chainflipUsdOf(q.fees.egress, 10, prices?.DOT) || 0,
+      ];
+      return parts.reduce((a, b) => a + b, 0);
+    };
+    const toUsd0 = chainflipUsdOf(q0.egressAmount, 10, prices?.DOT);
+    const routeFeeUsd = routeCostUsd(declaredUsd(q0),
+      fromUsd != null && toUsd0 != null ? fromUsd - toUsd0 : NaN);
+    let quote = q0, feeBps = 0, feeUsd = 0;
+    if (brokerCfg.brokerAccount) {
+      const bps = platformFeeBpsForRoute(routeFeeUsd, fromUsd, "polkadot");
+      if (bps > 0) {
+        let raw1;
+        try { raw1 = await chainflipQuoteRaw({ ...quoteArgs, brokerBps: bps }); }
+        catch (e) { throw chainflipTranslateQuoteError(e, { srcSymbol: anchor.cfAsset, destSymbol: "DOT", srcDecimals: anchor.decimals }); }
+        const q1 = parseChainflipQuote(raw1);
+        const check = q1 ? checkChainflipQuoteCommission(q0, q1, bps, prices || {})
+          : { ok: false, reason: "the fee-bearing quote could not be read" };
+        if (!check.ok)
+          throw chainflipTerminalError(`Chainflip's fee-bearing quote did not reconcile with its fee-free quote (${check.reason}), so no route is shown rather than charging an unverified fee.`);
+        quote = q1; feeBps = bps; feeUsd = check.brokerUsd;
+      }
+    }
+    const slipBps = Math.round((quote.slippageTolerancePercent || 0.5) * 100);
+    const toAmountMin = (BigInt(quote.egressAmount) * BigInt(10000 - slipBps) / 10000n).toString();
+    return {
+      provider: "chainflip",
+      id: `chainflip:bsc-${anchor.cfAsset.toLowerCase()}:polkadot-dot`,
+      type: "chainflip",
+      fromChainId: NETWORKS.bsc.chainId, toChainId: POLKADOT_SWAP_CHAIN_ID,
+      fromAmount,
+      fromToken: { address: anchor.address, symbol: anchor.symbol, name: anchor.name, decimals: anchor.decimals, chainId: NETWORKS.bsc.chainId },
+      toToken: { address: POLKADOT_DOT_TOKEN, symbol: "DOT", name: "Polkadot", decimals: 10, chainId: POLKADOT_SWAP_CHAIN_ID },
+      toAmount: quote.egressAmount, toAmountMin,
+      fromAmountUSD: fromUsd, toAmountUSD: chainflipUsdOf(quote.egressAmount, 10, prices?.DOT),
+      gasCostUSD: declaredUsd(quote), routeFeeUsd,
+      executionDuration: Math.ceil(quote.estimatedDurationSeconds || 110),
+      platformFeeBps: feeBps, platformFeeUsd: feeUsd, platformFeeCollecting: feeBps > 0,
+      steps: [],
+      chainflip: {
+        direction: "in", srcAsset: anchor.cfAsset, destAsset: "DOT",
+        destAddress: args.toAddress || null, refundAddress: args.fromAddress || null,
+        quote: { estimatedPrice: quote.estimatedPrice, egressAmount: quote.egressAmount, intermediateAmount: quote.intermediateAmount, fees: quote.fees },
+        fok: { slippageTolerancePercent: quote.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
+        brokerBps: feeBps, lowLiquidityWarning: quote.lowLiquidityWarning === true,
+      },
+    };
+  }
+  // Direction "out" — DOT -> BSC anchor. Quoting only (see
+  // the section header): fee-free quote, collecting false,
+  // and the executability gate refuses with the reason.
+  const quoteArgs = { srcChain: "Assethub", srcAsset: "DOT", destChain: "Bsc", destAsset: anchor.cfAsset, amountRaw: fromAmount };
+  let raw0;
+  try { raw0 = await chainflipQuoteRaw({ ...quoteArgs, brokerBps: 0 }); }
+  catch (e) { throw chainflipTranslateQuoteError(e, { srcSymbol: "DOT", destSymbol: anchor.cfAsset, srcDecimals: 10 }); }
+  const q0 = parseChainflipQuote(raw0);
+  if (!q0 || !q0.estimatedPrice)
+    throw chainflipTerminalError("Chainflip's quote could not be read — no route is shown rather than a guessed one.");
+  const slipBps = Math.round((q0.slippageTolerancePercent || 0.5) * 100);
+  const toAmountMin = (BigInt(q0.egressAmount) * BigInt(10000 - slipBps) / 10000n).toString();
+  return {
+    provider: "chainflip",
+    id: `chainflip:polkadot-dot:bsc-${anchor.cfAsset.toLowerCase()}`,
+    type: "chainflip",
+    fromChainId: POLKADOT_SWAP_CHAIN_ID, toChainId: NETWORKS.bsc.chainId,
+    fromAmount,
+    fromToken: { address: POLKADOT_DOT_TOKEN, symbol: "DOT", name: "Polkadot", decimals: 10, chainId: POLKADOT_SWAP_CHAIN_ID },
+    toToken: { address: anchor.address, symbol: anchor.symbol, name: anchor.name, decimals: anchor.decimals, chainId: NETWORKS.bsc.chainId },
+    toAmount: q0.egressAmount, toAmountMin,
+    fromAmountUSD: chainflipUsdOf(fromAmount, 10, prices?.DOT), toAmountUSD: chainflipUsdOf(q0.egressAmount, anchor.decimals, anchor.cfAsset === "BNB" ? prices?.BNB : 1),
+    gasCostUSD: (chainflipUsdOf(q0.fees.ingress, 10, prices?.DOT) || 0) + (chainflipUsdOf(q0.fees.network, 6, 1) || 0) + (chainflipUsdOf(q0.fees.egress, anchor.decimals, anchor.cfAsset === "BNB" ? prices?.BNB : 1) || 0),
+    routeFeeUsd: 0,
+    executionDuration: Math.ceil(q0.estimatedDurationSeconds || 110),
+    platformFeeBps: 0, platformFeeUsd: 0, platformFeeCollecting: false,
+    steps: [],
+    chainflip: {
+      direction: "out", srcAsset: "DOT", destAsset: anchor.cfAsset,
+      destAddress: args.toAddress || null, refundAddress: args.fromAddress || null,
+      quote: { estimatedPrice: q0.estimatedPrice, egressAmount: q0.egressAmount, intermediateAmount: q0.intermediateAmount, fees: q0.fees },
+      fok: { slippageTolerancePercent: q0.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
+      brokerBps: 0, lowLiquidityWarning: q0.lowLiquidityWarning === true,
+    },
+  };
+}
+async function chainflipPost(path, body) {
+  const res = await fetch(`${CHAINFLIP_API_BASE}${path}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(25000),
+    headers: { "Content-Type": "application/json", "X-Chainflip-Sdk-Version": "2.3.2" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text().catch(() => "");
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* non-JSON error body */ }
+  if (!res.ok) throw new Error((data && data.message) || `Chainflip encode failed (HTTP ${res.status}).`);
+  return data;
+}
+/** Execution-time encode: ask the API to encode the vault
+ *  call AND, independently, the fill-or-kill parameters for
+ *  exactly the intended terms — the check then requires the
+ *  call to carry the independent parameters byte-for-byte. */
+export async function requestChainflipVaultSwap(route, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT } = {}) {
+  const c = route?.chainflip;
+  if (!c || c.direction !== "in") throw new Error("That route is not a Chainflip route into Polkadot.");
+  const minPriceX128 = chainflipMinPriceX128(c.quote?.estimatedPrice, c.fok?.slippageTolerancePercent);
+  if (!minPriceX128) throw new Error("The Chainflip quote's price could not be read — refusing to encode a deposit without its fill-or-kill floor.");
+  const body = {
+    srcAsset: { chain: "Bsc", asset: c.srcAsset },
+    destAsset: { chain: "Assethub", asset: "DOT" },
+    srcAddress: c.refundAddress, destAddress: c.destAddress,
+    amount: String(route.fromAmount),
+    fillOrKillParams: { refundAddress: c.refundAddress, retryDurationBlocks: c.fok?.retryDurationBlocks || CHAINFLIP_FOK_RETRY_BLOCKS, minPriceX128 },
+  };
+  if (chainflipBrokerConfig(brokerAccount).brokerAccount && c.brokerBps > 0) {
+    body.brokerAccount = chainflipBrokerConfig(brokerAccount).brokerAccount;
+    body.commissionBps = c.brokerBps;
+  } else {
+    body.commissionBps = 0;
+  }
+  const cfParameters = await chainflipPost("/api/encodeCfParameters", body);
+  const encoded = await chainflipPost("/api/encodeVaultSwapData", body);
+  return { encoded, cfParameters };
+}
+/** Verify an encoded Chainflip vault call against the route
+ *  before anything is signed — the checkXxx pattern of the
+ *  shipped executors. Every value-moving field is pinned:
+ *  the vault address, the chain, the selector, the chain
+ *  enums, the source token, the amount, the BNB value, the
+ *  destination bytes (the user's own Asset Hub accountId),
+ *  and the fill-or-kill parameters, which must equal the
+ *  independently encoded terms byte-for-byte; the decoded
+ *  call must also re-encode to itself exactly (no hidden
+ *  fields). Pure. */
+export function checkChainflipVaultSwapData(route, encoded, expectedCfParameters) {
+  const bad = (reason) => ({ ok: false, reason });
+  const c = route?.chainflip;
+  if (!c || c.direction !== "in") return bad("not a Chainflip route into Polkadot");
+  if (!encoded || typeof encoded.calldata !== "string" || !encoded.calldata.startsWith("0x"))
+    return bad("the vault call could not be encoded");
+  if (String(encoded.chain || "Bsc") !== "Bsc") return bad("the vault call targets the wrong chain");
+  if (String(encoded.to || "").toLowerCase() !== CHAINFLIP_BSC_VAULT)
+    return bad("the deposit does not go to Chainflip's BSC vault");
+  const native = c.srcAsset === "BNB";
+  if (native) {
+    if (String(encoded.value ?? "0") !== String(route.fromAmount))
+      return bad("the BNB value of the vault call does not match the route amount");
+    if (encoded.sourceTokenAddress) return bad("a native vault swap names no source token");
+  } else {
+    if (String(encoded.value ?? "0") !== "0") return bad("an ERC-20 vault swap must carry no BNB value");
+    if (String(encoded.sourceTokenAddress || "").toLowerCase() !== CHAINFLIP_BSC_USDT.address.toLowerCase())
+      return bad("the vault call names the wrong source token");
+  }
+  const selector = encoded.calldata.slice(0, 10).toLowerCase();
+  if (selector !== (native ? CHAINFLIP_VAULT_SELECTOR_NATIVE : CHAINFLIP_VAULT_SELECTOR_ERC20))
+    return bad("the vault call has an unexpected shape");
+  const types = native
+    ? ["uint256", "bytes", "uint256", "bytes"]
+    : ["uint256", "bytes", "uint256", "address", "uint256", "bytes"];
+  let vals;
+  try {
+    vals = ethers.AbiCoder.defaultAbiCoder().decode(types, "0x" + encoded.calldata.slice(10));
+  } catch { return bad("the vault call could not be decoded"); }
+  if (Number(vals[0]) !== CHAINFLIP_SRC_CHAIN_ENUM_BSC || Number(vals[2]) !== CHAINFLIP_DEST_CHAIN_ENUM_ASSETHUB)
+    return bad("the vault call names the wrong chains");
+  let wantDest;
+  try { wantDest = ethers.hexlify(dotDecodeAddress(c.destAddress)); }
+  catch { return bad("the route's Polkadot destination is not a valid address"); }
+  if (String(vals[1]).toLowerCase() !== wantDest.toLowerCase())
+    return bad("the swap's destination is not your Polkadot address");
+  if (!native) {
+    if (String(vals[3]).toLowerCase() !== CHAINFLIP_BSC_USDT.address.toLowerCase())
+      return bad("the vault call names the wrong source token");
+    if (String(vals[4]) !== String(route.fromAmount))
+      return bad("the amount in the vault call does not match the route");
+  }
+  const cfBytes = native ? vals[3] : vals[5];
+  if (typeof expectedCfParameters !== "string" || String(cfBytes).toLowerCase() !== expectedCfParameters.toLowerCase())
+    return bad("the fill-or-kill parameters do not match the independently encoded terms (refund address, price floor, retry window)");
+  try {
+    const reEncoded = selector + ethers.AbiCoder.defaultAbiCoder().encode(types, [...vals]).slice(2);
+    if (reEncoded.toLowerCase() !== encoded.calldata.toLowerCase())
+      return bad("the vault call does not re-encode to itself exactly");
+  } catch { return bad("the vault call could not be re-encoded"); }
+  return { ok: true };
+}
+/** Execute a Chainflip route into Polkadot: re-encode the
+ *  deposit at execution time, verify every field against
+ *  the quote (checkChainflipVaultSwapData), approve exactly
+ *  the deposit amount when the source is USDT, then send the
+ *  vault call from the user's own BSC wallet. DOT settles
+ *  to the user's own Asset Hub address; a fill-or-kill miss
+ *  refunds to the user's own BSC address automatically. */
+export async function executeChainflipSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
+  const { ok, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const c = route.chainflip;
+  if (!isValidDotAddress(c.destAddress || ""))
+    throw new Error("The Polkadot destination is not a valid Asset Hub address — refusing before anything is signed.");
+  if (!c.refundAddress || String(c.refundAddress).toLowerCase() !== String(wallet.address).toLowerCase())
+    throw new Error("The fill-or-kill refund address is not your own BSC address — refusing before anything is signed.");
+  onProgress("Re-encoding the Chainflip deposit and verifying it against the quote…");
+  const { encoded, cfParameters } = await requestChainflipVaultSwap(route);
+  const check = checkChainflipVaultSwapData(route, encoded, cfParameters);
+  if (!check.ok) throw new Error(`Chainflip deposit refused: ${check.reason}. Nothing was signed.`);
+  const provider = providerFor("bsc");
+  const signer = wallet.connect(provider);
+  const approvalHashes = [];
+  if (c.srcAsset !== "BNB") {
+    const need = BigInt(route.fromAmount);
+    const token = new ethers.Contract(CHAINFLIP_BSC_USDT.address, SWAP_ERC20, signer);
+    if ((await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) < need) {
+      onProgress("Approving USDT for the Chainflip vault (exact amount only)…");
+      const atx = await token.approve(CHAINFLIP_BSC_VAULT, need);
+      approvalHashes.push(atx.hash);
+      await settleApprovalOrThrow("bsc", atx.hash, async () => (await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) >= need);
+      try {
+        onApprove({ chainKey: "bsc", token: CHAINFLIP_BSC_USDT.address, tokenSymbol: "USDT", spender: CHAINFLIP_BSC_VAULT, amount: need.toString(), decimals: 18, at: Date.now() });
+      } catch { /* recording an approval must never break a swap */ }
+    }
+  }
+  onProgress("Signing the Chainflip deposit…");
+  const tx = await signer.sendTransaction({ to: encoded.to, data: encoded.calldata, value: BigInt(encoded.value ?? "0") });
+  onProgress("Deposit sent — Chainflip delivers DOT to your Polkadot address (about 2 minutes; if the price floor is missed inside the retry window, the deposit refunds to your BSC address automatically)…");
+  await settleBroadcastOrThrow("bsc", tx.hash);
+  return [tx.hash, ...approvalHashes];
+}
+
 async function getSwapRoutesCascade(args, { needGas = false } = {}) {
   const found = [];
   const collect = (routes) => { if (routes && routes.length) found.push(...routes); };
@@ -19521,6 +20134,24 @@ async function getSwapRoutesCascade(args, { needGas = false } = {}) {
     } catch (e) {
       if (e && e.satoraTerminal) throw e;
       /* Satora failed or is on an unknown version — fall through */
+    }
+  }
+  // Chainflip serves Polkadot Asset Hub: BSC USDT/BNB ->
+  // DOT through its vault swap, and DOT -> BSC as quotes
+  // (the out direction's execution is gated until Fluid's
+  // Chainflip broker is live — see the Chainflip section).
+  // Its pairs never overlap the other routers' (polkadot is
+  // deliberately not in swapChainOf, and no other rail lists
+  // it), so quoting it here changes nothing for any existing
+  // pair. A floor refusal is marked chainflipTerminal and
+  // propagates: it is the honest answer for this pair.
+  if (chainflipSupportsPair(args)) {
+    try {
+      const route = await getChainflipSwapRoute(args);
+      if (route) collect([route]);
+    } catch (e) {
+      if (e && e.chainflipTerminal) throw e;
+      /* Chainflip failed — fall through */
     }
   }
   // Jupiter serves Solana → Solana pairs directly (its own
@@ -20234,6 +20865,30 @@ export function swapRouteExecutable(route) {
     return okShape
       ? { ok: true, arkadeOffboard: true }
       : { ok: false, reason: "This Arkade exit route is incomplete — pick another route." };
+  }
+  // Chainflip routes (Polkadot rail, 2026-11-14): INTO
+  // Polkadot is executable when the route is structurally
+  // complete — the executor re-encodes the deposit at
+  // execution time and verifies every field against the
+  // quote before signing (checkChainflipVaultSwapData), so
+  // the gate is structural, exactly like the lanes above.
+  // OUT of Polkadot is quoting only until Fluid's Chainflip
+  // broker is live: a DOT deposit needs a broker-opened
+  // deposit channel, and the commission that carries
+  // Fluid's fee can only ride a channel Fluid's own broker
+  // opened — without capture the direction does not ship
+  // (the universal capture law; see the Chainflip section).
+  if (route?.provider === "chainflip") {
+    const c = route.chainflip;
+    if (c?.direction === "out")
+      return { ok: false, reason: "Swaps out of Polkadot are quoting only until Fluid's Chainflip broker is live — the fee on this direction can only ride a deposit channel Fluid operates, and that service is not live yet. The quote is real; execution opens with the broker." };
+    const complete = !!c && c.direction === "in"
+      && Number(route.fromChainId) === NETWORKS.bsc.chainId && Number(route.toChainId) === POLKADOT_SWAP_CHAIN_ID
+      && !!route.fromAmount && !!route.toAmount && !!c.quote?.estimatedPrice
+      && isValidDotAddress(c.destAddress || "") && !!c.refundAddress;
+    return complete
+      ? { ok: true, chainflip: true }
+      : { ok: false, reason: "This Chainflip route is incomplete — pick another route." };
   }
   // Milestone composed routes (Stage 1, 2026-11-13): executable
   // when the composition carries its legs and its first leg is
@@ -23759,8 +24414,44 @@ export function sortHomeFamilies(entries) {
  * the wallet), and is a PAINT-EARLY layer only: live reads replace
  * it family by family, the UI marks the paint as updating until
  * they land, and a failed live read renders couldn't-load — the
- * cached value is never presented as final. */
-export const BALANCE_CACHE_KEY = "fluid_balcache_v1";
+ * cached value is never presented as final.
+ *
+ * ONE-TIME RESET (2026-11-14): the key and the envelope version
+ * moved v1 -> v2 together. Entries written before the
+ * cache-honesty fix cannot be trusted to trace to a successful
+ * read — the old persist path could store a balance global's
+ * initialiser 0 for a family whose read had failed, or a BTC
+ * partial sum snapshotted mid-scan, and such a manufactured value
+ * is indistinguishable from a proven one. Under the post-fix
+ * contract a failed scan writes nothing, so a poisoned v1 entry
+ * would have re-painted on every open until a read happened to
+ * succeed. The v1 store is therefore dropped wholesale on first
+ * run of the new build (dropLegacyBalanceCache, called from the
+ * app at load): every wallet's first open after the upgrade is an
+ * honest cold start — loading, then proven values or
+ * couldn't-load — and the cache rebuilds from proven reads only.
+ * The envelope bump makes the reset hold at the format layer too:
+ * a v1 payload is rejected even if it somehow lands under the v2
+ * key. */
+export const BALANCE_CACHE_KEY = "fluid_balcache_v2";
+export const BALANCE_CACHE_LEGACY_KEY = "fluid_balcache_v1";
+
+/** The one-time v1 -> v2 balance-cache reset: remove the legacy
+ *  key's data from `storage` (a localStorage-shaped object).
+ *  Returns true when a legacy entry was present and dropped.
+ *  Touches NOTHING else — every other persisted store (vault,
+ *  names, approvals, history, settings) is left byte-identical.
+ *  Never throws: storage being unavailable must not break boot,
+ *  and the v2 key alone already guarantees nothing legacy is
+ *  ever read back. Idempotent — a second run drops nothing. */
+export function dropLegacyBalanceCache(storage) {
+  if (!storage || typeof storage.getItem !== "function" || typeof storage.removeItem !== "function") return false;
+  try {
+    if (storage.getItem(BALANCE_CACHE_LEGACY_KEY) == null) return false;
+    storage.removeItem(BALANCE_CACHE_LEGACY_KEY);
+    return true;
+  } catch { return false; }
+}
 const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks"];
 const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal"];
 
@@ -23771,7 +24462,7 @@ const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "b
  *  or null when the snapshot carries nothing worth caching. */
 export function packBalanceCache(address, snap, now = Date.now()) {
   if (!address || !snap || typeof snap !== "object") return null;
-  const out = { v: 1, address: String(address), t: Number(now) || 0, fams: {} };
+  const out = { v: 2, address: String(address), t: Number(now) || 0, fams: {} };
   let any = false;
   const rows = snap.rows || {};
   for (const k of BALANCE_CACHE_ROW_KEYS) {
@@ -23783,7 +24474,12 @@ export function packBalanceCache(address, snap, now = Date.now()) {
   }
   const sc = snap.scalars || {};
   const scalars = {};
-  for (const k of BALANCE_CACHE_SCALAR_KEYS) if (Number.isFinite(Number(sc[k]))) scalars[k] = Number(sc[k]);
+  // Scalars pack ONLY as finite numbers: a null here means "no
+  // proven read" and must stay ABSENT — Number(null) is 0, so the
+  // old coercion would have packed an unknown as a measured zero
+  // (cache-honesty rule, 2026-11-14: a value enters the cache only
+  // from a successful read).
+  for (const k of BALANCE_CACHE_SCALAR_KEYS) if (typeof sc[k] === "number" && Number.isFinite(sc[k])) scalars[k] = sc[k];
   if (Object.keys(scalars).length) { out.scalars = scalars; any = true; }
   if (snap.prices && typeof snap.prices === "object") out.prices = snap.prices;
   return any ? JSON.stringify(out) : null;
@@ -23792,11 +24488,13 @@ export function packBalanceCache(address, snap, now = Date.now()) {
 /** Parse + validate a cached snapshot for `address`. Returns the
  *  snapshot object, or null for anything malformed, foreign (a
  *  different wallet's cache), or from an unknown version — the
- *  caller then simply paints from live reads as before. */
+ *  caller then simply paints from live reads as before. Only the
+ *  v2 envelope is accepted: v1 is the pre-honesty-fix format and
+ *  is rejected outright (the one-time reset, see BALANCE_CACHE_KEY). */
 export function unpackBalanceCache(json, address) {
   if (!json || !address) return null;
   let o; try { o = JSON.parse(json); } catch { return null; }
-  if (!o || o.v !== 1 || String(o.address).toLowerCase() !== String(address).toLowerCase()) return null;
+  if (!o || o.v !== 2 || String(o.address).toLowerCase() !== String(address).toLowerCase()) return null;
   if (!o.fams || typeof o.fams !== "object") return null;
   for (const k of Object.keys(o.fams)) if (!Array.isArray(o.fams[k])) return null;
   if (o.evm != null && (typeof o.evm !== "object" || typeof o.evm.network !== "string" || !Array.isArray(o.evm.rows))) return null;

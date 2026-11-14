@@ -71,6 +71,81 @@ displaying $0.00 while their endpoints were down.
   arrived. The zero-placeholder row shapes exist only as the
   cold-start pre-read state the skeleton covers.
 
+### The balance cache contract
+
+The on-device balance cache (`fluid_balcache_v2`) is a
+paint-early layer, and it holds **only proven states**. Three
+rules govern it:
+
+1. **Provenance.** A number — zero included — enters the cache
+   only from a successful live read in the current session. The
+   app tracks this per family (`liveOkFams`), and per account
+   for Bitcoin's two accounts (SegWit and Taproot settle
+   independently; each account's scalar is written only when
+   that account's read succeeded). A failed or never-completed
+   read writes nothing. Per-row unknowns inside a *successful*
+   read (a Cosmos chain that stayed dark, a TON jetton scan that
+   failed) are part of that read's proven result and persist as
+   `null` rows, exactly as read.
+2. **Finality.** A family's cache entry is replaced only by
+   that family's settled live state — after any endpoint
+   rotation/fallback rescue inside the read, and, for EVM,
+   after late-read adoption (a read rescued inside the 120 s
+   adoption window is marked proven at adoption, and its settle
+   paint persists it). A persist fired mid-scan snapshots only
+   families already settled with proven state; a family whose
+   read lands later writes at its own settle paint (the
+   throttle yields to a fresh proven settle), so no
+   intermediate snapshot is ever the only record.
+3. **Paint fidelity.** Hydration renders persisted entries
+   exactly as stored: rows verbatim, scalars only when they are
+   finite numbers (never coerced — `Number(null)` is 0, and a
+   coerced unknown is a fake zero), and Bitcoin's two account
+   scalars together or not at all, so a one-sided cache never
+   presents a partial sum as the BTC balance.
+
+**What a failed scan does to a previously-good cached value:
+nothing.** The failure is rendered live in-session — the rows
+switch to "couldn't load" over the cache paint, the header
+carries the marker, and the hero total excludes the failed
+family (the scalar rule covers BTC, LTC, DOGE and BCH alike) —
+but it is never written back. The next open therefore paints
+the last *proven* state, marked "Updating…", and the new scan
+replaces it or fails over it honestly. The reason: a failed
+read produces no information about a balance, so it must not
+manufacture cache content in either direction — neither a
+number it never measured, nor the erasure of the last measured
+truth. Both failure directions shipped before this contract
+was stated (2026-11-14): a failed Bitcoin Cash read persisted
+the balance global's initialiser `0`, which the next open
+painted as a measured zero for ~30 s; and failed re-scans
+persisted their couldn't-load rows over rotation-rescued
+proven values, so re-opens repainted rescued families as
+"couldn't load" although their last settled state was a proven
+zero. The cache is also written under the wallet's own address
+key and holds public balance data only — no keys or seed
+material ever enter it.
+
+**One-time reset on upgrade.** The contract above governs what
+the cache writes *now* — it cannot retroactively judge entries
+written by earlier builds. Before the honesty fix, the persist
+path could manufacture values: a failed Bitcoin Cash scan
+persisted the balance global's initialiser `0`, and a Bitcoin
+persist fired mid-scan could snapshot one account's settled
+value beside the other's unsettled one. Stored, those values
+are indistinguishable from proven ones — and because a failed
+scan now writes nothing, a poisoned entry would have kept
+re-painting on every open until a read happened to succeed.
+So the first run of the fixed build drops the entire legacy
+store (`fluid_balcache_v1`) unread, and the cache key and
+envelope version moved to v2 together, so a pre-fix payload is
+rejected even if it somehow lands under the new key. The reset
+happens once; no other store (vault, names, approvals, history,
+settings) is touched. Every wallet's first open after the
+upgrade is therefore a cold start — rows show loading, then
+settle to proven values or "couldn't load", never a number
+without a read — and the cache rebuilds from proven reads only.
+
 ## Send & receive
 
 - **Send to a raw address or a Fluid username** — every send field

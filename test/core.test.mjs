@@ -7,6 +7,7 @@ import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcro
 import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
 import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
+import { chainflipSupportsPair, parseChainflipQuote, chainflipMinPriceX128, checkChainflipQuoteCommission, checkChainflipVaultSwapData, getChainflipSwapRoute, executeChainflipSwapRoute, chainflipBrokerConfig, CHAINFLIP_BROKER_ACCOUNT, CHAINFLIP_BSC_VAULT, CHAINFLIP_MIN_SWAP_INTO_DOT, POLKADOT_SWAP_CHAIN_ID, POLKADOT_DOT_TOKEN, destNativeTokenAddress } from "../src/wallet-core.js";
 import { SATORA_ARKADE_CHAIN_ID, SATORA_ARKADE_HTLC_VERSION, SATORA_LIGHTNING_CHAIN_ID, satoraArkadeSourceSupportsPair, parseSatoraArkadeSourceQuote, getSatoraArkadeSourceRoute, buildSatoraArkadeCreateRequest, buildSatoraArkadeToEvmCreateRequest, buildSatoraArkadeToLnCreateRequest, checkSatoraArkadeToEvmCreateResponse, checkSatoraArkadeToLnCreateResponse, createSatoraArkadeSourceSwap, checkSatoraRedeemCalldata, buildSatoraRedeemDigest, SATORA_REDEEM_TYPEHASH, SATORA_REDEEM_TYPE_STRING, claimSatoraArkadeEvmSwap, executeSatoraArkadeSourceRoute, formatSatoraArkadeSourceIntent } from "../src/wallet-core.js";
 import { SATORA_BITCOIN_CHAIN_ID, satoraLnSourceSupportsPair, parseSatoraLnSourceQuote, getSatoraLnSourceRoute, buildSatoraLnToEvmCreateRequest, buildSatoraLnToBtcCreateRequest, checkSatoraLnCreateResponse, createSatoraLnSourceSwap, satoraBtcHtlcLeafScripts, satoraBtcHtlcAddress, buildSatoraBtcHtlcClaimTx, SATORA_BTC_CLAIM_TX_VBYTES, claimSatoraLnEvmSwap, executeSatoraLnSourceRoute, formatSatoraLnSourceIntent } from "../src/wallet-core.js";
 import { satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceSupportsPair, parseSatoraBtcSourceQuote, getSatoraBtcSourceRoute, buildSatoraBtcToEvmCreateRequest, buildSatoraBtcToLnCreateRequest, checkSatoraBtcSourceCreateResponse, createSatoraBtcSourceSwap, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, SATORA_BTC_REFUND_TX_VBYTES, formatSatoraBtcSourceIntent } from "../src/wallet-core.js";
@@ -3762,7 +3763,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
-    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !anyBal')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
   ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
     !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
@@ -5079,10 +5080,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("btc load-failed: per-account flags and derived family flag declared",
     appSrcBtc.includes("let btcSegwitFailed = false, btcTaprootFailed = false, btcLoadFailed = false;")
     && appSrcBtc.includes("function syncBtcLoadFailed() { btcLoadFailed = btcSegwitFailed || btcTaprootFailed; }"));
-  ok("btc load-failed: load callbacks set/clear the per-account flags",
-    appSrcBtc.includes("btcSegwitFailed = false; syncBtcLoadFailed();")
+  ok("btc load-failed: load callbacks set/clear the per-account flags (and set cache provenance on success — section 112)",
+    appSrcBtc.includes("btcSegwitFailed = false; btcSegwitOk = true; syncBtcLoadFailed();")
     && appSrcBtc.includes("btcSegwitFailed = true; syncBtcLoadFailed();")
-    && appSrcBtc.includes("btcTaprootFailed = false; syncBtcLoadFailed();")
+    && appSrcBtc.includes("btcTaprootFailed = false; btcTaprootOk = true; syncBtcLoadFailed();")
     && appSrcBtc.includes("btcTaprootFailed = true; syncBtcLoadFailed();"));
   ok("btc load-failed: family alert names Bitcoin",
     appSrcBtc.includes('if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn\'t be loaded right now.";'));
@@ -5091,7 +5092,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcBtc.includes("m.bitcoin = btcLoadFailed ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
     && appSrcBtc.includes("let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)"));
   ok("btc load-failed: home-zero card stays hidden while Bitcoin is unknown",
-    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !anyBal"));
+    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal"));
   ok("btc load-failed: sheet header shows couldn't-load per account",
     appSrcBtc.includes('btcLoadFailed ? "Balance couldn\'t load"')
     && appSrcBtc.includes('btcSegwitFailed ? "couldn\'t load"')
@@ -5256,10 +5257,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     !!back && !("seedPhrase" in back) && !("keystore" in back) && !JSON.stringify(back).includes("must never"));
   ok("balance cache: a different wallet's cache is rejected",
     unpackBalanceCache(packed, "0x0000000000000000000000000000000000000001") === null);
-  ok("balance cache: malformed and foreign payloads are rejected",
+  ok("balance cache: malformed and foreign payloads are rejected (v1 is the dropped pre-honesty format — section 113; v3 is unknown)",
     unpackBalanceCache("not json", ADDR) === null
-    && unpackBalanceCache(JSON.stringify({ v: 2, address: ADDR, fams: {} }), ADDR) === null
-    && unpackBalanceCache(JSON.stringify({ v: 1, address: ADDR, fams: { solana: "nope" } }), ADDR) === null
+    && unpackBalanceCache(JSON.stringify({ v: 1, address: ADDR, fams: {} }), ADDR) === null
+    && unpackBalanceCache(JSON.stringify({ v: 3, address: ADDR, fams: {} }), ADDR) === null
+    && unpackBalanceCache(JSON.stringify({ v: 2, address: ADDR, fams: { solana: "nope" } }), ADDR) === null
     && unpackBalanceCache(null, ADDR) === null && unpackBalanceCache(packed, null) === null);
   ok("balance cache: an empty snapshot packs to null",
     packBalanceCache(ADDR, { rows: {}, scalars: {} }) === null && packBalanceCache(null, snap) === null);
@@ -6449,7 +6451,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11417,7 +11419,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12858,7 +12860,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13205,7 +13207,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -15274,6 +15276,583 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && buildBody110.includes("gasReserve: {") && buildBody110.includes("legs: {"));
   ok("gasfallback gate: the confirm path reaches the executor for a route the gate enables",
     appSrc110.includes('route.provider === "gasfallback"') && appSrc110.includes("executeGasFallbackRoute(wallet, route"));
+}
+
+// 111. Chainflip–Polkadot leg (2026-11-14) — the first
+// expansion build in Ethuram's order: DOT joins the swap
+// universe through Chainflip's BSC vault swap (spec +
+// live probes: research_notes/
+// fluid-polkadot-swap-leg-20261114/spec.md). Everything
+// below runs on fixtures captured live from this VM on
+// 2026-11-14 (test/fixtures/chainflip-*.json): the quote
+// responses at the proven sizes, the broker-commission
+// quote at 50 bps, and the hosted API's own vault-calldata
+// encodes. Pinned here: pair support, quote parsing, the
+// protocol's floors named as the protocol's, the fee law
+// under the $0.30 Polkadot ceiling, the two-pass commission
+// reconciliation (including tampered-commission refusals),
+// the vault-calldata verification (including a swapped
+// destination), the executability gate (in = executable,
+// out = quoting only until Fluid's broker is live),
+// composition shapes through the BSC USDT anchor, and the
+// honest slow disclosure of a ~110-second leg.
+{
+  const CF_EVM = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34"; // muse ops EVM (the spec's probe wallet)
+  const CF_DOT = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo"; // muse ops Asset Hub (the spec's probe wallet)
+  const CF_USDT = "0x55d398326f99059fF775485246999027B3197955"; // USDT on BSC
+  const CF_BTCB = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"; // BTCB on BSC
+  const CF_BROKER = CF_DOT; // any non-empty SS58 string stands in for the registered broker in the seam
+  const cfFixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const Q_USDT10 = cfFixture("chainflip-quote-usdt-dot-10.json");
+  const Q_USDT1000 = cfFixture("chainflip-quote-usdt-dot-1000.json");
+  const Q_USDT1000_B50 = cfFixture("chainflip-quote-usdt-dot-1000-broker50.json");
+  const Q_BNB = cfFixture("chainflip-quote-bnb-dot.json");
+  const Q_DOT_OUT = cfFixture("chainflip-quote-dot-usdt-20.json");
+  const ENC_USDT = cfFixture("chainflip-encode-vault-usdt.json");
+  const ENC_BNB = cfFixture("chainflip-encode-vault-bnb.json");
+  const CFPARAMS_USDT = cfFixture("chainflip-encode-cfparams-usdt.json");
+  const jsonResCf = (body, okFlag = true, status = 200) => ({
+    ok: okFlag, status,
+    text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+    json: async () => (typeof body === "string" ? JSON.parse(body) : body),
+  });
+  const cfPrices = (u) => {
+    if (u.includes("api.binance.com")) return jsonResCf([
+      { symbol: "BTCUSDT", price: "90000" }, { symbol: "ETHUSDT", price: "3000" },
+      { symbol: "BNBUSDT", price: "890" }, { symbol: "DOTUSDT", price: "0.79" }]);
+    if (u.includes("coingecko")) return jsonResCf({});
+    return null;
+  };
+  // A quote stub over the captured fixtures; `tamper` swaps
+  // the fee-bearing answer for an attacker's version.
+  const cfFetch = ({ tamper = null } = {}) => async (url) => {
+    const u = String(url);
+    const priced = cfPrices(u);
+    if (priced) return priced;
+    if (u.includes("chainflip-swap.chainflip.io/v2/quote")) {
+      const sp = new URL(u).searchParams;
+      if (sp.get("srcChain") === "Assethub") {
+        if (sp.get("amount") === "1000000000")
+          return jsonResCf({ message: "expected amount is below minimum swap amount (50000000000)" }, false, 400);
+        return jsonResCf(Q_DOT_OUT);
+      }
+      if (sp.get("brokerCommissionBps")) {
+        if (tamper === "noBrokerEntry") return jsonResCf(Q_USDT1000);
+        if (tamper === "egressNotReduced") {
+          const t = JSON.parse(JSON.stringify(Q_USDT1000_B50));
+          t[0].egressAmount = Q_USDT1000[0].egressAmount;
+          return jsonResCf(t);
+        }
+        return jsonResCf(Q_USDT1000_B50);
+      }
+      if (sp.get("srcAsset") === "BNB") return jsonResCf(Q_BNB);
+      if (sp.get("amount") === "1000000000000000000000") return jsonResCf(Q_USDT1000);
+      return jsonResCf(Q_USDT10);
+    }
+    throw new Error("unexpected fetch in chainflip stub: " + u);
+  };
+  const CF_ARGS10 = { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: CF_USDT, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: CF_EVM, toAddress: CF_DOT };
+
+  // -- Pair support ------------------------------------------
+  ok("chainflip: pair support is exactly BSC USDT/BNB into DOT and DOT out to BSC USDT/BNB",
+    chainflipSupportsPair(CF_ARGS10)?.direction === "in" && chainflipSupportsPair(CF_ARGS10)?.anchor?.cfAsset === "USDT"
+    && chainflipSupportsPair({ ...CF_ARGS10, fromTokenAddress: NATIVE_TOKEN_ADDRESS })?.anchor?.cfAsset === "BNB"
+    && chainflipSupportsPair({ ...CF_ARGS10, fromTokenAddress: NATIVE_TOKEN_SENTINEL })?.anchor?.cfAsset === "BNB"
+    && chainflipSupportsPair({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT })?.direction === "out"
+    && chainflipSupportsPair({ ...CF_ARGS10, fromTokenAddress: CF_BTCB }) === null
+    && chainflipSupportsPair({ ...CF_ARGS10, fromChainKey: "arbitrum" }) === null
+    && chainflipSupportsPair({ ...CF_ARGS10, toChainKey: "sui" }) === null
+    && chainflipSupportsPair({ ...CF_ARGS10, toTokenAddress: "1984" }) === null);
+  ok("chainflip: polkadot joins the swap primitives — DOT is its own native sentinel, Asset Hub its name",
+    isDestNativeToken("polkadot", "dot") === true && isDestNativeToken("polkadot", null) === true
+    && destNativeTokenAddress("polkadot") === POLKADOT_DOT_TOKEN
+    && POLKADOT_SWAP_CHAIN_ID === 20000000000004 && swapChainOf("polkadot") === null);
+
+  // -- Quote parsing (live fixtures) -------------------------
+  const pUsdt10 = parseChainflipQuote(Q_USDT10);
+  ok("chainflip: the $10 USDT quote parses to its live values (egress, itemised fees, ~110s)",
+    pUsdt10.egressAmount === "120943821642" && pUsdt10.intermediateAmount === "9482855"
+    && pUsdt10.fees.network === "500000" && pUsdt10.fees.ingress === "5281585170575063" && pUsdt10.fees.egress === "197450000"
+    && pUsdt10.fees.broker === null && Math.abs(pUsdt10.estimatedDurationSeconds - 110.125) < 1e-9
+    && pUsdt10.slippageTolerancePercent === 0.5 && pUsdt10.estimatedPrice === "1.21205287246771784066");
+  const pBnb = parseChainflipQuote(Q_BNB);
+  const pOut = parseChainflipQuote(Q_DOT_OUT);
+  ok("chainflip: the BNB quote and the DOT-out quote parse to their live values",
+    pBnb.egressAmount === "149494175325" && pBnb.fees.ingress === "7000000000000"
+    && pOut.egressAmount === "15159942596541202092" && pOut.fees.network === "500000"
+    && parseChainflipQuote(null) === null && parseChainflipQuote([{ egressAmount: "1" }]) === null
+    && parseChainflipQuote([]) === null);
+  ok("chainflip: the fill-or-kill min price is exact X128 math on the quote's own price",
+    chainflipMinPriceX128("1.21205287246771784066", 0.5) === "410378019175254208469750483767268205712"
+    && chainflipMinPriceX128("748.72017868754063922373", 0.5) === "253502393192437992788926549156714401700467"
+    && chainflipMinPriceX128("not-a-price", 0.5) === null && chainflipMinPriceX128(null, 0.5) === null);
+
+  // -- Fee law ------------------------------------------------
+  ok("chainflip: the fee law carries the Polkadot ceiling at $0.30 and starves the fee when route cost busts it",
+    platformFeeCeilingFor("polkadot") === 0.30 && PLATFORM_FEE_TOTAL_CEILINGS_USD.polkadot === 0.30
+    && platformFeeEcosystemOf("polkadot") === "polkadot"
+    && platformFeeBpsForRoute(0.446, 10, "polkadot") === 0
+    && chainflipBrokerConfig(null).brokerAccount === null && chainflipBrokerConfig(CF_BROKER).brokerAccount === CF_BROKER
+    && CHAINFLIP_BROKER_ACCOUNT === null);
+
+  // -- Quote builds under the stub ----------------------------
+  const realFetchCf = globalThis.fetch;
+  try {
+    globalThis.fetch = cfFetch();
+    resetPricesCache();
+    const r10 = await getChainflipSwapRoute(CF_ARGS10);
+    ok("chainflip: the $10 USDT route builds with the quote's own numbers and an honest 111s (never fast)",
+      r10.provider === "chainflip" && r10.fromChainId === 56 && r10.toChainId === POLKADOT_SWAP_CHAIN_ID
+      && r10.toAmount === "120943821642" && r10.toAmountMin === "120339102533"
+      && r10.executionDuration === 111 && r10.executionDuration > MILESTONE_FAST_TOTAL_SEC
+      && r10.chainflip.destAddress === CF_DOT && r10.chainflip.refundAddress === CF_EVM
+      && r10.chainflip.fok.retryDurationBlocks === 50);
+    ok("chainflip: with no broker registered the fee is honestly zero — bps 0, collecting false, never assumed",
+      r10.platformFeeBps === 0 && r10.platformFeeUsd === 0 && r10.platformFeeCollecting === false);
+    resetPricesCache();
+    const r10b = await getChainflipSwapRoute(CF_ARGS10, { brokerAccount: CF_BROKER });
+    ok("chainflip: even WITH a broker, the $10 floor size pays no fee — Chainflip's own ~$0.45 route cost busts the $0.30 ceiling",
+      r10b.platformFeeBps === 0 && r10b.platformFeeCollecting === false);
+    resetPricesCache();
+    const rBnb = await getChainflipSwapRoute({ ...CF_ARGS10, fromTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "20000000000000000" });
+    ok("chainflip: the 0.02 BNB route builds at Chainflip's BNB floor",
+      rBnb.toAmount === "149494175325" && rBnb.fromToken.symbol === "BNB" && rBnb.executionDuration === 111);
+    // Two-pass capture at $1,000: the law's degenerate-cost
+    // fallback (the quote beats the stubbed spot, so the
+    // measured shortfall is zero) yields the 50 bps cap; the
+    // stub's fee-bearing answer is the live 50 bps capture.
+    resetPricesCache();
+    let sawBrokerBps = null;
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sp = new URL(String(url)).searchParams;
+      if (sp.get("brokerCommissionBps")) sawBrokerBps = sp.get("brokerCommissionBps");
+      return baseFetch(url, opts);
+    };
+    const r1000 = await getChainflipSwapRoute({ ...CF_ARGS10, fromAmount: "1000000000000000000000" }, { brokerAccount: CF_BROKER });
+    globalThis.fetch = baseFetch;
+    ok("chainflip: at $1,000 the fee pass re-quotes at the law's bps and the route carries the itemised commission",
+      sawBrokerBps === "50" && r1000.platformFeeBps === 50 && r1000.platformFeeCollecting === true
+      && Math.abs(r1000.platformFeeUsd - 4.986189) < 1e-6 && r1000.toAmount === "12675586245605");
+    resetPricesCache();
+    globalThis.fetch = cfFetch({ tamper: "noBrokerEntry" });
+    let tamperErr = null;
+    try { await getChainflipSwapRoute({ ...CF_ARGS10, fromAmount: "1000000000000000000000" }, { brokerAccount: CF_BROKER }); }
+    catch (e) { tamperErr = e; }
+    ok("chainflip: a fee-bearing quote with NO broker entry refuses the route — an unverified fee is never charged",
+      !!tamperErr && /did not reconcile/.test(tamperErr.message) && tamperErr.chainflipTerminal === true);
+    resetPricesCache();
+    globalThis.fetch = cfFetch({ tamper: "egressNotReduced" });
+    let tamperErr2 = null;
+    try { await getChainflipSwapRoute({ ...CF_ARGS10, fromAmount: "1000000000000000000000" }, { brokerAccount: CF_BROKER }); }
+    catch (e) { tamperErr2 = e; }
+    ok("chainflip: a fee-bearing quote whose output did not fall by the commission refuses the route",
+      !!tamperErr2 && /did not reconcile/.test(tamperErr2.message));
+    globalThis.fetch = cfFetch();
+    // Floors: refused before the API is even asked (the local
+    // constants), with the floor named as Chainflip's.
+    let floorErr = null;
+    try { await getChainflipSwapRoute({ ...CF_ARGS10, fromAmount: "5000000000000000000" }); } catch (e) { floorErr = e; }
+    ok("chainflip: 5 USDT refuses with Chainflip's own 10 USDT floor named, classified as a no-quote floor",
+      !!floorErr && floorErr.message.includes("Chainflip's own minimum for USDT → DOT is 10 USDT")
+      && floorErr.chainflipTerminal === true && isNoQuoteSwapError(floorErr) === true
+      && CHAINFLIP_MIN_SWAP_INTO_DOT.USDT === "10000000000000000000");
+    let floorErrBnb = null;
+    try { await getChainflipSwapRoute({ ...CF_ARGS10, fromTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "10000000000000000" }); } catch (e) { floorErrBnb = e; }
+    ok("chainflip: 0.01 BNB refuses with Chainflip's own 0.02 BNB floor named",
+      !!floorErrBnb && floorErrBnb.message.includes("is 0.02 BNB") && CHAINFLIP_MIN_SWAP_INTO_DOT.BNB === "20000000000000000");
+    // DOT out: quotes build, execution gated.
+    resetPricesCache();
+    const rOut = await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "200000000000", fromAddress: CF_DOT, toAddress: CF_EVM });
+    const outGate = swapRouteExecutable(rOut);
+    ok("chainflip: DOT-out quotes are real (20 DOT -> ~15.16 USDT) but gate non-executable — quoting only until the broker is live",
+      rOut.toAmount === "15159942596541202092" && rOut.platformFeeCollecting === false && rOut.executionDuration === 112
+      && outGate.ok === false && /quoting only until Fluid's Chainflip broker is live/.test(outGate.reason));
+    // A DOT-out floor refusal from the API itself surfaces
+    // with the API's own minimum parsed into DOT.
+    let outFloorErr = null;
+    try { await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "1000000000", fromAddress: CF_DOT, toAddress: CF_EVM }); }
+    catch (e) { outFloorErr = e; }
+    ok("chainflip: a DOT-out below-minimum refusal names the API's own floor (5 DOT) in DOT terms",
+      !!outFloorErr && outFloorErr.message.includes("Chainflip's own minimum for DOT → USDT is 5 DOT"));
+    // The cascade serves the pair end to end.
+    resetPricesCache();
+    const viaSearch = await getSwapRoutes(CF_ARGS10);
+    ok("chainflip: the live route search serves BSC USDT -> DOT through the cascade",
+      Array.isArray(viaSearch) && viaSearch.some(r => r.provider === "chainflip" && r.toAmount === "120943821642"));
+    var CF_R10 = r10;
+  } finally { globalThis.fetch = realFetchCf; }
+
+  // -- Commission reconciliation (pure) -----------------------
+  const qFree = parseChainflipQuote(Q_USDT1000), qFee = parseChainflipQuote(Q_USDT1000_B50);
+  const commOk = checkChainflipQuoteCommission(qFree, qFee, 50, { DOT: 0.79 });
+  ok("chainflip: the live 50 bps capture reconciles — BROKER entry $4.986 against a $5.03 output drop",
+    commOk.ok === true && Math.abs(commOk.brokerUsd - 4.986189) < 1e-6);
+  const qFeeNoBroker = parseChainflipQuote(Q_USDT1000);
+  ok("chainflip: reconciliation refuses a missing BROKER entry and a mismatched bps alike",
+    checkChainflipQuoteCommission(qFree, qFeeNoBroker, 50, { DOT: 0.79 }).ok === false
+    && checkChainflipQuoteCommission(qFree, qFee, 500, { DOT: 0.79 }).ok === false);
+
+  // -- Vault calldata verification (live encodes) -------------
+  const cfRouteUsdt = {
+    provider: "chainflip", fromChainId: 56, toChainId: POLKADOT_SWAP_CHAIN_ID, fromAmount: "10000000000000000000",
+    chainflip: { direction: "in", srcAsset: "USDT", destAsset: "DOT", destAddress: CF_DOT, refundAddress: CF_EVM, quote: { estimatedPrice: "1.21205287246771784066" }, fok: { slippageTolerancePercent: 0.5, retryDurationBlocks: 50 }, brokerBps: 0 },
+  };
+  ok("chainflip: the API's own USDT vault encode verifies against the route and the independent cf-parameters",
+    checkChainflipVaultSwapData(cfRouteUsdt, ENC_USDT, CFPARAMS_USDT).ok === true
+    && ENC_USDT.to.toLowerCase() === CHAINFLIP_BSC_VAULT && ENC_USDT.value === "0");
+  const coderCf = ethers.AbiCoder.defaultAbiCoder();
+  const tamperCalldata = (encoded, mutate) => {
+    const types = ["uint256", "bytes", "uint256", "address", "uint256", "bytes"];
+    const vals = [...coderCf.decode(types, "0x" + encoded.calldata.slice(10))];
+    mutate(vals);
+    return { ...encoded, calldata: encoded.calldata.slice(0, 10) + coderCf.encode(types, vals).slice(2) };
+  };
+  const otherAcct = "0x" + "11".repeat(32);
+  ok("chainflip: a vault call sending the DOT to a DIFFERENT account is refused before signing",
+    checkChainflipVaultSwapData(cfRouteUsdt, tamperCalldata(ENC_USDT, v => { v[1] = otherAcct; }), CFPARAMS_USDT).ok === false
+    && /not your Polkadot address/.test(checkChainflipVaultSwapData(cfRouteUsdt, tamperCalldata(ENC_USDT, v => { v[1] = otherAcct; }), CFPARAMS_USDT).reason));
+  ok("chainflip: wrong vault, wrong token, wrong amount, BNB value on an ERC-20 call, and foreign cf-parameters all refuse",
+    checkChainflipVaultSwapData(cfRouteUsdt, { ...ENC_USDT, to: "0x0000000000000000000000000000000000000001" }, CFPARAMS_USDT).ok === false
+    && checkChainflipVaultSwapData(cfRouteUsdt, tamperCalldata(ENC_USDT, v => { v[3] = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"; }), CFPARAMS_USDT).ok === false
+    && checkChainflipVaultSwapData(cfRouteUsdt, tamperCalldata(ENC_USDT, v => { v[4] = 20000000000000000000n; }), CFPARAMS_USDT).ok === false
+    && checkChainflipVaultSwapData(cfRouteUsdt, { ...ENC_USDT, value: "1" }, CFPARAMS_USDT).ok === false
+    && checkChainflipVaultSwapData(cfRouteUsdt, ENC_USDT, "0xdeadbeef").ok === false);
+  const cfRouteBnb = { ...cfRouteUsdt, fromAmount: "20000000000000000", chainflip: { ...cfRouteUsdt.chainflip, srcAsset: "BNB" } };
+  const cfParamsBnb = (() => {
+    const types = ["uint256", "bytes", "uint256", "bytes"];
+    return coderCf.decode(types, "0x" + ENC_BNB.calldata.slice(10))[3];
+  })();
+  ok("chainflip: the API's BNB vault encode verifies (value carries the amount); a zero value refuses",
+    checkChainflipVaultSwapData(cfRouteBnb, ENC_BNB, cfParamsBnb).ok === true
+    && checkChainflipVaultSwapData(cfRouteBnb, { ...ENC_BNB, value: "0" }, cfParamsBnb).ok === false);
+
+  // -- Gate + executor refusals --------------------------------
+  ok("chainflip: the gate passes a complete in-route and refuses an incomplete one",
+    swapRouteExecutable(CF_R10).ok === true && swapRouteExecutable(CF_R10).chainflip === true
+    && swapRouteExecutable({ ...CF_R10, chainflip: { ...CF_R10.chainflip, destAddress: null } }).ok === false
+    && swapRouteExecutable({ ...CF_R10, toChainId: 1 }).ok === false);
+  {
+    let execErr = null, fetchCalls = 0;
+    const savedFetch = globalThis.fetch;
+    globalThis.fetch = async () => { fetchCalls++; throw new Error("no network in the executor-refusal test"); };
+    try {
+      await executeChainflipSwapRoute({ address: CF_EVM }, { provider: "chainflip", fromChainId: POLKADOT_SWAP_CHAIN_ID, toChainId: 56, fromAmount: "200000000000", chainflip: { direction: "out", srcAsset: "DOT" } });
+    } catch (e) { execErr = e; } finally { globalThis.fetch = savedFetch; }
+    ok("chainflip: the executor refuses a DOT-out route at the gate, before any network call",
+      !!execErr && /quoting only/.test(execErr.message) && fetchCalls === 0);
+  }
+
+  // -- Composition shapes ---------------------------------------
+  const cfShapesBtcb = milestoneShapes({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: CF_BTCB, toTokenAddress: "dot", fromAmount: "1000000000", fromAddress: CF_EVM, toAddress: CF_DOT });
+  ok("chainflip: BTCB composes to DOT through the BSC USDT anchor (the spec's proven shape), BNB anchor second",
+    cfShapesBtcb.length === 2
+    && cfShapesBtcb[0].length === 2 && cfShapesBtcb[0][0].fromChainKey === "bsc" && cfShapesBtcb[0][0].toChainKey === "bsc"
+    && cfShapesBtcb[0][0].toTokenAddress === CF_USDT && cfShapesBtcb[0][1].fromChainKey === "bsc" && cfShapesBtcb[0][1].toChainKey === "polkadot"
+    && cfShapesBtcb[0][1].toSymbol === "DOT" && cfShapesBtcb[1][1].fromTokenAddress === NATIVE_TOKEN_ADDRESS);
+  const cfShapesArb = milestoneShapes({ fromChainKey: "arbitrum", toChainKey: "polkadot", fromTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", toTokenAddress: "dot", fromAmount: "10000000", fromAddress: CF_EVM, toAddress: CF_DOT });
+  ok("chainflip: other EVM origins reach DOT the same way — into the BSC anchor, then the Chainflip leg",
+    cfShapesArb.length === 2 && cfShapesArb[0][0].fromChainKey === "arbitrum" && cfShapesArb[0][0].toChainKey === "bsc"
+    && cfShapesArb[0][1].toChainKey === "polkadot");
+  const cfShapesOut = milestoneShapes({ fromChainKey: "polkadot", toChainKey: "base", fromTokenAddress: "dot", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", fromAmount: "200000000000", fromAddress: CF_DOT, toAddress: CF_EVM });
+  ok("chainflip: DOT-source compositions shape through the BSC anchor, then the destination's hub leg",
+    cfShapesOut.length === 2 && cfShapesOut[0][0].fromChainKey === "polkadot" && cfShapesOut[0][0].toChainKey === "bsc"
+    && cfShapesOut[0][0].toSymbol === "USDT" && cfShapesOut[0][1].fromChainKey === "bsc" && cfShapesOut[0][1].toChainKey === "base"
+    && cfShapesOut[0][1].toSymbol === "USDC");
+  ok("chainflip: Bitcoin and Lightning origins get NO Polkadot shapes — no rail carries their value into a BSC anchor",
+    milestoneShapes({ fromChainKey: "bitcoin", toChainKey: "polkadot", fromTokenAddress: "btc", toTokenAddress: "dot", fromAmount: "100000", fromAddress: "bc1q", toAddress: CF_DOT }).length === 0
+    && milestoneShapes({ fromChainKey: "lightning", toChainKey: "polkadot", fromTokenAddress: "btc", toTokenAddress: "dot", fromAmount: "100000", fromAddress: "ln", toAddress: CF_DOT }).length === 0);
+
+  // -- Composed search: forms, executable, honestly slow --------
+  {
+    const RELAY_EXEC_CF = { relay: { originChainId: 56, steps: [{ kind: "transaction", items: [{ data: { to: "0x5567954cd026cebfe486062cb75848e0f1c12e58", data: "0xf9e4bab4" } }] }] } };
+    const legSearchCf = async (a) => {
+      if (a.fromChainKey === "bsc" && a.toChainKey === "bsc") return [{
+        provider: "relay", id: "cf-leg1", type: "relay", fromChainId: 56, toChainId: 56,
+        fromAmount: a.fromAmount, fromToken: { address: a.fromTokenAddress, symbol: "BTCB", decimals: 18 },
+        toToken: { address: a.toTokenAddress, symbol: "USDT", decimals: 18 },
+        toAmount: "10000000000000000000", toAmountMin: "10000000000000000000", toAmountUSD: 10, fromAmountUSD: 10,
+        gasCostUSD: 0.001, routeFeeUsd: 0.002, executionDuration: 20,
+        platformFeeUsd: 0, platformFeeCollecting: false, platformFeeBps: 0, steps: [], ...RELAY_EXEC_CF,
+      }];
+      if (a.fromChainKey === "bsc" && a.toChainKey === "polkadot") return [CF_R10];
+      throw new Error("No available quotes for the requested transfer");
+    };
+    const composedCf = await searchMilestoneCompositions(
+      { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: CF_BTCB, toTokenAddress: "dot", fromAmount: "100000000000", fromAddress: CF_EVM, toAddress: CF_DOT },
+      { searchLeg: legSearchCf, pricesUsd: { DOT: 0.79, BTC: 90000 } });
+    ok("chainflip: BTCB -> DOT composes into ONE milestone route whose final leg is the Chainflip leg",
+      composedCf.length === 1 && composedCf[0].provider === "milestone" && composedCf[0].milestone.legs.length === 2
+      && composedCf[0].milestoneLegRoutes[1].provider === "chainflip"
+      && composedCf[0].milestone.label.includes("DOT") && swapRouteExecutable(composedCf[0]).ok === true);
+    ok("chainflip: the composed route is honestly SLOW — its total exceeds the 90s fast standard, so it can never wear a fastest badge",
+      composedCf.length === 1 && composedCf[0].executionDuration > MILESTONE_FAST_TOTAL_SEC);
+  }
+
+  // -- Wiring pins ----------------------------------------------
+  const coreSrcCf = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrcCf = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("chainflip: wiring — cascade quotes it, dispatch executes it, the sheet names, lists and confirms it",
+    coreSrcCf.includes("if (chainflipSupportsPair(args))") && coreSrcCf.includes('if (route.provider === "chainflip") return executeChainflipSwapRoute')
+    && appSrcCf.includes('if (route && route.provider === "chainflip") return "Chainflip";')
+    && appSrcCf.includes('if (netKey === "polkadot")') && appSrcCf.includes('route.provider === "chainflip")')
+    && appSrcCf.includes("executeChainflipSwapRoute(wallet, route")
+    && appSrcCf.includes('k === "polkadot" ? "Polkadot Asset Hub"'));
+}
+
+// 112. Cache honesty (2026-11-14) — the light verification walk
+// on stamp 24fc0b1270 caught the silent-zero class surviving on
+// the CACHE path: Bitcoin Cash painted a bare "0 / $0.00" from
+// the balance cache for ~30 s on re-open although no BCH read
+// had ever succeeded for that wallet (defect 1), and
+// rotation-rescued families repainted as "couldn't load"
+// although their last settled state was a proven zero
+// (observation 2). Root causes pinned here: the UTXO readers
+// could return NaN for a parseable-but-sunless body;
+// packBalanceCache coerced cache scalars with Number(...)
+// (Number(null) === 0 — an unknown would pack as a zero); the
+// Cosmos placeholder reset ran unconditionally and clobbered
+// hydrated rows before the first presented frame; and
+// persistBalanceCache copied the scalar globals for any family
+// markLoaded had marked "live" — including on the FAILURE path,
+// where the global still holds its initialiser. The contract
+// (docs/CHAINS.md, "The balance cache contract"): the cache
+// holds only proven states; a failed read writes nothing; the
+// paint renders persisted entries exactly as stored.
+{
+  const {
+    getBitcoinBalance, getLitecoinBalance, getDogecoinBalance, getBitcoinCashBalance,
+    packBalanceCache, unpackBalanceCache,
+  } = await import("../src/wallet-core.js");
+  const ABANDON = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const realFetch = globalThis.fetch;
+  const jsonRes = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const BTC_ADDR = bitcoinAddress(ABANDON);
+  const LTC_ADDR = litecoinAddress(ABANDON);
+  const DOGE_ADDR = dogecoinAddress(ABANDON);
+  const BCH_ADDR = bitcoinCashAddress(ABANDON);
+  const esplora = (funded, spent = 0) => ({ chain_stats: { funded_txo_sum: funded, spent_txo_sum: spent }, mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0 } });
+
+  try {
+    // --- Bitcoin (UTXO): garbage is a failed source, not a number ---
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getBitcoinBalance(BTC_ADDR));
+    ok("cache-honesty btc: both Esplora sources down THROWS — no fabricated zero", true);
+    let btcCalls = 0;
+    globalThis.fetch = async (url) => {
+      btcCalls++;
+      if (String(url).includes("mempool.space")) return jsonRes({ chain_stats: {} }); // parses, carries no sums
+      return jsonRes(esplora(150000000));
+    };
+    ok("cache-honesty btc: a sumless mempool body is a failed source — Blockstream's real answer wins",
+      (await getBitcoinBalance(BTC_ADDR)) === 1.5 && btcCalls === 2);
+    btcCalls = 0;
+    globalThis.fetch = async () => { btcCalls++; return jsonRes(esplora(0)); };
+    ok("cache-honesty btc: an answered zero is a TRUE zero (second source never needed)",
+      (await getBitcoinBalance(BTC_ADDR)) === 0 && btcCalls === 1);
+
+    // --- Litecoin (UTXO): the same discipline via BlockCypher ---
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("litecoinspace")) return jsonRes({ chain_stats: {} });
+      if (String(url).includes("blockcypher")) return jsonRes({ final_balance: 200000000 });
+      throw new Error("unexpected url " + url);
+    };
+    ok("cache-honesty ltc: a sumless primary body falls through to BlockCypher's real answer",
+      (await getLitecoinBalance(LTC_ADDR)) === 2);
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getLitecoinBalance(LTC_ADDR));
+    ok("cache-honesty ltc: both sources down THROWS — no fabricated zero", true);
+    let ltcCalls = 0;
+    globalThis.fetch = async (url) => { ltcCalls++; if (String(url).includes("blockcypher")) throw new Error("fallback must not run"); return jsonRes(esplora(0)); };
+    ok("cache-honesty ltc: an answered zero from the primary is a TRUE zero",
+      (await getLitecoinBalance(LTC_ADDR)) === 0 && ltcCalls === 1);
+
+    // --- Dogecoin (UTXO) ---
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("dogechain")) return jsonRes({ balance: "not-a-number" });
+      if (String(url).includes("blockcypher")) return jsonRes({ final_balance: 100000000 });
+      throw new Error("unexpected url " + url);
+    };
+    ok("cache-honesty doge: a non-numeric dogechain balance is a failed source — BlockCypher decides",
+      (await getDogecoinBalance(DOGE_ADDR)) === 1);
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getDogecoinBalance(DOGE_ADDR));
+    ok("cache-honesty doge: both sources down THROWS — no fabricated zero", true);
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("dogechain")) return jsonRes({ balance: "0" });
+      throw new Error("fallback must not run");
+    };
+    ok("cache-honesty doge: an answered \"0\" is a TRUE zero",
+      (await getDogecoinBalance(DOGE_ADDR)) === 0);
+
+    // --- Bitcoin Cash (UTXO, single source): the walk's family ---
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await assert.rejects(() => getBitcoinCashBalance(BCH_ADDR));
+    ok("cache-honesty bch: haskoin down THROWS — the reader never invents the zero the cache later painted", true);
+    globalThis.fetch = async () => jsonRes({ confirmed: null });
+    await assert.rejects(() => getBitcoinCashBalance(BCH_ADDR));
+    ok("cache-honesty bch: a body without a confirmed sum THROWS", true);
+    globalThis.fetch = async () => jsonRes({ confirmed: "garbage" });
+    await assert.rejects(() => getBitcoinCashBalance(BCH_ADDR));
+    ok("cache-honesty bch: a non-numeric confirmed sum THROWS (NaN is not a balance)", true);
+    globalThis.fetch = async () => jsonRes({ confirmed: 0, unconfirmed: 0 });
+    ok("cache-honesty bch: an answered zero is a TRUE zero",
+      (await getBitcoinCashBalance(BCH_ADDR)) === 0);
+    globalThis.fetch = async () => jsonRes({ confirmed: 50000000, unconfirmed: 25000000 });
+    ok("cache-honesty bch: confirmed + unconfirmed sums parse",
+      (await getBitcoinCashBalance(BCH_ADDR)) === 0.75);
+
+    // --- pack: only proven numbers enter the cache ---
+    const packedNull = unpackBalanceCache(packBalanceCache(BTC_ADDR, {
+      rows: {}, scalars: { bchBal: null, ltcBal: 0, dogeBal: "3", btcBal: 1.25 }, prices: {},
+    }), BTC_ADDR);
+    ok("cache-honesty pack: a null scalar stays ABSENT — never packs as 0; a proven 0 packs as 0; a string never packs",
+      packedNull && !("bchBal" in (packedNull.scalars || {})) && packedNull.scalars.ltcBal === 0
+      && !("dogeBal" in (packedNull.scalars || {})) && packedNull.scalars.btcBal === 1.25);
+    const rescuedRows = [{ symbol: "OSMO", amount: "0" }, { symbol: "ATOM", amount: null }, { symbol: "INJ", amount: "4.5" }];
+    const packedRows = unpackBalanceCache(packBalanceCache(BTC_ADDR, {
+      rows: {}, cosmosRows: rescuedRows, scalars: {}, prices: {},
+    }), BTC_ADDR);
+    ok("cache-honesty pack: a settled read's rows persist VERBATIM — proven zeros, per-row unknowns and values alike (re-open paints them as stored)",
+      packedRows && JSON.stringify(packedRows.fams.cosmos) === JSON.stringify(rescuedRows));
+  } finally { globalThis.fetch = realFetch; }
+
+  // --- app wiring (source pins, the suite's app.js convention) ---
+  const appSrcCh = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("cache-honesty app: provenance tracking exists and resets per render",
+    appSrcCh.includes("const liveOkFams = new Set();") && appSrcCh.includes("liveOkFams.clear();")
+    && appSrcCh.includes("let btcSegwitOk = false, btcTaprootOk = false;"));
+  ok("cache-honesty app: persist writes ONLY proven families/accounts — the untouched-global copy is gone",
+    appSrcCh.includes("const take = (key, arr) => { if (liveOkFams.has(key)) rows[key] = arr; };")
+    && appSrcCh.includes("if (btcSegwitOk) scalars.btcBal = btcBal;") && appSrcCh.includes("if (btcTaprootOk) scalars.btcTrBal = btcTrBal;")
+    && appSrcCh.includes('if (liveOkFams.has("bitcoincash")) scalars.bchBal = bchBal;')
+    && !appSrcCh.includes('if (liveFams.has("bitcoincash")) scalars.bchBal')
+    && !appSrcCh.includes('if (liveFams.has("bitcoin")) { scalars.btcBal'));
+  ok("cache-honesty app: every family's success site marks provenance; no failure path does (BCH examined branch by branch)",
+    ["tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks", "litecoin", "dogecoin", "bitcoincash", "cosmos", "evm"]
+      .every(k => appSrcCh.includes(`markLiveOk("${k}")`))
+    && (() => { const at = appSrcCh.indexOf("getBitcoinCashBalance(bchAddr)");
+         const s = appSrcCh.slice(at, at + 400); const cut = s.indexOf(".catch");
+         return s.slice(0, cut).includes('markLiveOk("bitcoincash")') && !s.slice(cut).includes("markLiveOk"); })());
+  ok("cache-honesty app: the EVM late-adoption path marks provenance too, so a rescued read persists inside its own scan",
+    (() => { const at = appSrcCh.indexOf("evmRead.then((late)");
+         return appSrcCh.slice(at, at + 700).includes('markLiveOk("evm")'); })()
+    && appSrcCh.includes("if (!complete && !cacheWriteNeeded && now - lastCacheWrite < 2000) return;"));
+  ok("cache-honesty app: hydration renders persisted scalars exactly as stored — strict numbers, Bitcoin's pair atomic",
+    appSrcCh.includes('const isNum = (v) => typeof v === "number" && Number.isFinite(v);')
+    && appSrcCh.includes("if (isNum(sc.btcBal) && isNum(sc.btcTrBal))")
+    && !appSrcCh.includes("Number.isFinite(Number(sc.bchBal))"));
+  ok("cache-honesty app: Cosmos placeholder reset respects hydration like every other family (observation 2)",
+    appSrcCh.includes('if (!hydratedFams.has("cosmos")) cosmosRows = COSMOS_CHAINS.map('));
+  ok("cache-honesty app: the hero total excludes EVERY failed scalar family, not just Bitcoin",
+    appSrcCh.includes("(ltcLoadFailed ? 0 : ltcBal)") && appSrcCh.includes("(dogeLoadFailed ? 0 : dogeBal)")
+    && appSrcCh.includes("(bchLoadFailed ? 0 : bchBal)"));
+}
+
+// 113. Balance-cache reset (2026-11-14) — the cache-honesty fix
+// (section 112) stops NEW poison, but entries written by earlier
+// builds can already hold manufactured values: an initialiser 0
+// persisted for a UTXO family whose read had failed, or a BTC
+// partial sum snapshotted mid-scan. Such an entry is
+// indistinguishable from a proven value, and under the new
+// contract a failed scan writes nothing — so a poisoned entry
+// would re-paint on every open until a read happened to succeed.
+// The parent decision: a one-time reset on upgrade. The storage
+// key and the envelope version moved v1 -> v2 together, the
+// legacy store (fluid_balcache_v1) is removed — not orphaned —
+// on first run, and every other persisted store is untouched.
+// Pins: (a) a legacy poisoned entry is never painted after the
+// upgrade path runs; (b) the old key is gone after migration;
+// (c) a post-migration proven scan rebuilds under the new key
+// and paints verbatim; (d) non-balance stores are byte-identical
+// across the migration.
+{
+  const {
+    packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
+    BALANCE_CACHE_KEY, BALANCE_CACHE_LEGACY_KEY,
+  } = await import("../src/wallet-core.js");
+  const ADDR = "0xb6714bf82EC9a1b27623FF0386e24307a8A185E1";
+  const fakeStorage = (seed = {}) => {
+    const m = new Map(Object.entries(seed));
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => { m.set(k, String(v)); },
+      removeItem: (k) => { m.delete(k); },
+      _map: m,
+    };
+  };
+  // A legacy entry in the exact shape the pre-fix build wrote:
+  // v1 envelope carrying a manufactured BCH 0 (the walk's defect)
+  // and a one-sided BTC pair (a mid-scan partial sum).
+  const legacyPoison = JSON.stringify({
+    v: 1, address: ADDR, t: 1700000000000,
+    fams: { solana: [{ symbol: "SOL", amount: "0" }] },
+    scalars: { bchBal: 0, btcBal: 0.5 },
+    prices: { BCH: 400 },
+  });
+
+  ok("cache reset: the keys are named — v2 is live, v1 is the legacy store being dropped",
+    BALANCE_CACHE_KEY === "fluid_balcache_v2" && BALANCE_CACHE_LEGACY_KEY === "fluid_balcache_v1");
+
+  {
+    const st = fakeStorage({ [BALANCE_CACHE_LEGACY_KEY]: legacyPoison });
+    ok("cache reset (a): a legacy v1 payload is rejected at the format layer even before migration runs",
+      unpackBalanceCache(legacyPoison, ADDR) === null);
+    const dropped = dropLegacyBalanceCache(st);
+    ok("cache reset (a)+(b): after the upgrade path runs, the legacy entry is GONE and nothing is left to paint",
+      dropped === true && st.getItem(BALANCE_CACHE_LEGACY_KEY) === null
+      && unpackBalanceCache(st.getItem(BALANCE_CACHE_KEY), ADDR) === null);
+    ok("cache reset (b): the migration is idempotent — a second run drops nothing and does not throw",
+      dropLegacyBalanceCache(st) === false && dropLegacyBalanceCache(null) === false
+      && dropLegacyBalanceCache({}) === false);
+  }
+
+  {
+    const st = fakeStorage({ [BALANCE_CACHE_LEGACY_KEY]: legacyPoison });
+    dropLegacyBalanceCache(st);
+    // Post-migration, a successful scan persists a proven snapshot
+    // (a proven BCH zero and a complete BTC pair among it) and the
+    // next open unpacks it verbatim under the new key/envelope.
+    const packed = packBalanceCache(ADDR, {
+      rows: { solana: [{ symbol: "SOL", amount: "0" }] },
+      scalars: { bchBal: 0, btcBal: 0.5, btcTrBal: 0.25 },
+      prices: { SOL: 150 },
+    }, 1700000001000);
+    st.setItem(BALANCE_CACHE_KEY, packed);
+    const back = unpackBalanceCache(st.getItem(BALANCE_CACHE_KEY), ADDR);
+    ok("cache reset (c): a post-migration proven scan rebuilds under the v2 key and re-open paints it verbatim (proven 0, complete BTC pair)",
+      JSON.parse(packed).v === 2 && !!back && back.scalars.bchBal === 0
+      && back.scalars.btcBal === 0.5 && back.scalars.btcTrBal === 0.25
+      && back.fams.solana[0].amount === "0" && back.t === 1700000001000);
+  }
+
+  {
+    const others = {
+      fluid_vault_v1: "{\"iv\":\"x\",\"ct\":\"y\"}",
+      fluid_history_v1: "[{\"hash\":\"0xabc\",\"amount\":\"1\"}]",
+      fluid_name: "somefluidname",
+      fluid_approvals_v1: "[{\"spender\":\"0xdef\"}]",
+      fluid_chains_v1: "{\"bsc\":{}}",
+      unrelated_key: "leave-me-alone",
+    };
+    const st = fakeStorage({ [BALANCE_CACHE_LEGACY_KEY]: legacyPoison, ...others });
+    dropLegacyBalanceCache(st);
+    ok("cache reset (d): every non-balance store is byte-identical across the migration; only the legacy cache key is removed",
+      Object.entries(others).every(([k, v]) => st.getItem(k) === v)
+      && st.getItem(BALANCE_CACHE_LEGACY_KEY) === null && st._map.size === Object.keys(others).length);
+  }
+
+  // --- app wiring (source pins, the suite's app.js convention) ---
+  const appSrcReset = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("cache reset app: the migration is imported and runs once at load, before any hydrate",
+    appSrcReset.includes("dropLegacyBalanceCache,")
+    && appSrcReset.includes("try { dropLegacyBalanceCache(localStorage); } catch {")
+    && appSrcReset.indexOf("dropLegacyBalanceCache(localStorage)") < appSrcReset.indexOf("function hydrateBalanceCache"));
+  const coreSrcReset = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("cache reset core: the v2 key, the legacy key and the envelope bump are pinned in source",
+    coreSrcReset.includes('export const BALANCE_CACHE_KEY = "fluid_balcache_v2";')
+    && coreSrcReset.includes('export const BALANCE_CACHE_LEGACY_KEY = "fluid_balcache_v1";')
+    && coreSrcReset.includes("const out = { v: 2,") && coreSrcReset.includes("o.v !== 2"));
 }
 
 console.log(`\n${passed} checks passed`);
