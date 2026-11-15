@@ -18538,4 +18538,178 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 }
 
+// ---------- Gap #7: Robinhood Chain (4663) built-in canonicalisation, Relay + Across (2026-11-15) ----------
+// Research: research_notes/fluid-robinhood-chain-20261115/probe-notes.md.
+// Unlike gap #6, nothing here was broken: 4663 is a LIVE mainnet
+// (Arbitrum Orbit, mainnet since 2026-07-01; the testnet is a
+// different id, 46630) on clean registry data, and discovery
+// already admitted it. The built-in is canonicalisation: the
+// discovered entry rode a single rate-limited RPC, had no
+// token-list slug, and — decisively — the chain's only stable
+// could never surface, because fetchStableTokens hunted USDC/
+// USDT symbols and neither exists on 4663. Every pin below is a
+// fact verified in-page from the production origin on build day.
+{
+  const { relayDepositoryFor, RELAY_DEPOSITORY, builtinNetworkForChainId, ACROSS_WETH } = await import("../src/wallet-core.js");
+  const fx7 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const ACCT7 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const USDG_4663 = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+  const WETH_4663 = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+  const WETH_1 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const ETH_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+  const rh = NETWORKS.robinhood;
+  ok("gap7: Robinhood Chain admission entry — key, chain, symbol, explorer, RPC rotation (official first; it is documented rate-limited)",
+    rh && rh.chainId === 4663 && rh.name === "Robinhood Chain" && rh.symbol === "ETH" && rh.priceSym === "ETH"
+    && rh.explorer === "https://robinhoodchain.blockscout.com" && rh.rpc === "https://rpc.mainnet.chain.robinhood.com"
+    && rh.rpcFallback === "https://robinhood-rpc.publicnode.com"
+    && JSON.stringify(evmRpcUrls("robinhood")) === JSON.stringify(["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com", "https://robinhood.drpc.org"]));
+  ok("gap7: pinned tokens are USDG (the chain's Paxos stable, stable-flagged, 6 dp) and the canonical WETH (18 dp)",
+    rh.tokens.length === 2
+    && rh.tokens[0].symbol === "USDG" && rh.tokens[0].address === USDG_4663 && rh.tokens[0].decimals === 6 && rh.tokens[0].stable === true
+    && rh.tokens[1].symbol === "WETH" && rh.tokens[1].address === WETH_4663 && rh.tokens[1].decimals === 18);
+  ok("gap7: IMPOSTOR GUARD at the pin layer — no USDC or USDT row exists on 4663 (neither token exists on this chain)",
+    rh.tokens.every(t => t.symbol !== "USDC" && t.symbol !== "USDT"));
+  ok("gap7: CoinGecko token-list slug for chain 4663 (the list is live — 1,467 tokens at probe)",
+    COINGECKO_TOKEN_LIST_SLUGS[4663] === "robinhood");
+  ok("gap7: swapChainOf resolves the built-in; the built-in snapshot owns 4663 (a discovered c4663 never shadows it)",
+    swapChainOf("robinhood")?.chainId === 4663 && swapChainOf("robinhood")?.name === "Robinhood Chain"
+    && builtinNetworkForChainId(4663) === rh);
+  // No discovered duplicate can ever sit beside the built-in —
+  // including one resurrected from a stale localStorage cache:
+  // applyDiscovered (which loadStoredChains also routes through)
+  // drops any entry whose chainId a built-in owns, and
+  // registerNetworks can never overwrite a built-in key.
+  ok("gap7: registerNetworks can never overwrite the robinhood built-in",
+    (() => {
+      registerNetworks({ robinhood: { name: "Fake Chain", chainId: 1, symbol: "FAKE", rpc: "https://example.invalid", explorer: "", tokens: [] } });
+      return NETWORKS.robinhood.name === "Robinhood Chain" && NETWORKS.robinhood.chainId === 4663;
+    })());
+  {
+    const appSrc7 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("gap7: discovery drops any chainId a built-in owns — a cached c4663 included (BUILTIN_CHAIN_IDS derives from NETWORKS; the cache load routes through the same skip)",
+      appSrc7.includes("const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));")
+      && appSrc7.includes("BUILTIN_CHAIN_IDS.has(d.chainId)) continue;")
+      && appSrc7.includes("applyDiscovered(chainsCache.chains)"));
+  }
+  // USDG surfacing + the impostor guard, behaviourally: against
+  // the chain's REAL CoinGecko list (saved research fixture) the
+  // curated stable set is exactly the USDG pin; against a
+  // POISONED list carrying impostor "USDC"/"USDT" entries the
+  // result is still exactly the pin; and with the list lookup
+  // failing outright the pin still surfaces on its own
+  // authority (a built-in's pins do not depend on the list).
+  {
+    const realFetch7 = globalThis.fetch;
+    const cgReal7 = JSON.parse(readFileSync(new URL("../research_notes/fluid-robinhood-chain-20261115/fixtures/coingecko-robinhood-tokenlist.json", import.meta.url), "utf8"));
+    try {
+      globalThis.fetch = async (url) => String(url).includes("tokens.coingecko.com/robinhood/")
+        ? { ok: true, status: 200, json: async () => cgReal7 } : { ok: true, status: 200, json: async () => ({ tokens: [] }) };
+      const real7 = await fetchStableTokens(4663);
+      ok("gap7: fetchStableTokens(4663) against the real CoinGecko list returns exactly the USDG pin — the chain's curated stable row",
+        Array.isArray(real7) && real7.length === 1 && real7[0].symbol === "USDG"
+        && real7[0].address === USDG_4663 && real7[0].decimals === 6);
+      globalThis.fetch = async (url) => String(url).includes("tokens.coingecko.com/robinhood/")
+        ? { ok: true, status: 200, json: async () => ({ tokens: [
+            { symbol: "USDC", address: "0x1111111111111111111111111111111111111111", decimals: 6, name: "USD Coin (impostor)" },
+            { symbol: "USDT", address: "0x2222222222222222222222222222222222222222", decimals: 6, name: "Tether (impostor)" },
+            { symbol: "USDG", address: USDG_4663, decimals: 6, name: "Global Dollar" },
+          ] }) } : { ok: true, status: 200, json: async () => ({ tokens: [] }) };
+      const poisoned7 = await fetchStableTokens(4663);
+      ok("gap7: IMPOSTOR GUARD — a poisoned list's fake USDC/USDT entries never become rows on 4663; the result is still exactly the USDG pin",
+        Array.isArray(poisoned7) && poisoned7.length === 1 && poisoned7[0].symbol === "USDG" && poisoned7[0].address === USDG_4663);
+      globalThis.fetch = async () => { throw new Error("network down"); };
+      const offline7 = await fetchStableTokens(4663);
+      ok("gap7: the USDG pin surfaces even when the token-list lookup fails outright (pins are the authority for a built-in)",
+        Array.isArray(offline7) && offline7.length === 1 && offline7[0].symbol === "USDG" && offline7[0].address === USDG_4663);
+    } finally { globalThis.fetch = realFetch7; }
+  }
+  // Relay: 4663's depository in Relay's own live chains table IS
+  // Fluid's pinned canonical constant (code proven on-chain
+  // there), so the H-B pinning/bounds-check covers Robinhood
+  // Chain with no new constants — pinned here against regression.
+  ok("gap7: Relay resolves 4663 and its depository is the pinned canonical constant",
+    relayChainOf("robinhood")?.chainId === 4663 && relayDepositoryFor(4663) === RELAY_DEPOSITORY);
+  ok("gap7: Relay pair support — out, in and intra",
+    relaySupportsPair("robinhood", "base") === true && relaySupportsPair("base", "robinhood") === true
+    && relaySupportsPair("robinhood", "robinhood") === true);
+  const rOut7 = parseRelayQuote(fx7("relay-robinhood-eth-to-base-usdc.json"),
+    { fromChainKey: "robinhood", toChainKey: "base", fromAmount: "10000000000000000", fromAddress: ACCT7 });
+  ok("gap7: Relay ETH(4663) -> Base USDC (real build-day quote) collects exactly the 50 bps dial",
+    rOut7?.platformFeeCollecting === true && rOut7.platformFeeRaw === "50000000000000"
+    && rOut7.toAmount === "18097400" && rOut7.toToken.symbol === "USDC");
+  ok("gap7: Relay OUT steps pass the H-B bounds check — the deposit targets the pinned depository",
+    relayExecutableSteps(rOut7).length === 1
+    && relayExecutableSteps(rOut7).every(s => s.items.every(it => checkRelayStepBounds(rOut7, s, it, ACCT7).ok)));
+  const rUsdgOut7 = parseRelayQuote(fx7("relay-robinhood-usdg-to-eth-usdc.json"),
+    { fromChainKey: "robinhood", toChainKey: "ethereum", fromAmount: "20000000", fromAddress: ACCT7 });
+  ok("gap7: Relay USDG(4663) -> Ethereum USDC (real build-day quote) collects; every step passes the bounds check",
+    rUsdgOut7?.platformFeeCollecting === true && rUsdgOut7.platformFeeRaw === "100000"
+    && rUsdgOut7.toAmount === "19800439" && rUsdgOut7.toToken.symbol === "USDC"
+    && relayExecutableSteps(rUsdgOut7).length === 2
+    && relayExecutableSteps(rUsdgOut7).every(s => s.items.every(it => checkRelayStepBounds(rUsdgOut7, s, it, ACCT7).ok)));
+  const rIn7 = parseRelayQuote(fx7("relay-robinhood-base-usdc-to-usdg.json"),
+    { fromChainKey: "base", toChainKey: "robinhood", fromAmount: "20000000", fromAddress: ACCT7 });
+  ok("gap7: Relay Base USDC -> USDG(4663) (real build-day quote) collects; every step passes the bounds check",
+    rIn7?.platformFeeCollecting === true && rIn7.platformFeeRaw === "100000"
+    && rIn7.toAmount === "19868358" && rIn7.toToken.symbol === "USDG"
+    && relayExecutableSteps(rIn7).length === 2
+    && relayExecutableSteps(rIn7).every(s => s.items.every(it => checkRelayStepBounds(rIn7, s, it, ACCT7).ok)));
+  const rIntra7 = parseRelayQuote(fx7("relay-robinhood-eth-to-usdg-intra.json"),
+    { fromChainKey: "robinhood", toChainKey: "robinhood", fromAmount: "10000000000000000", fromAddress: ACCT7 });
+  ok("gap7: Relay intra ETH -> USDG(4663) collects at quote level (fees.app = the full dial)",
+    rIntra7?.platformFeeCollecting === true && rIntra7.platformFeeRaw === "50000000000000"
+    && rIntra7.toAmount === "18160328" && rIntra7.toToken.symbol === "USDG");
+  ok("gap7: Relay intra's swap step is refused by the H-B depository pinning — the fleet-uniform same-chain behaviour (a Base -> Base quote refuses identically; Relay's same-chain router-step grammar is unpinned product-wide)",
+    (() => { const s = relayExecutableSteps(rIntra7)[0]; return checkRelayStepBounds(rIntra7, s, s.items[0], ACCT7).ok === false; })());
+  // Across: wired ONLY because the build-day in-page probe (from
+  // the production origin, Fluid's own two-pass shape) echoed the
+  // app fee in BOTH directions on the WETH pair — 49,717,673,510,382
+  // raw out and 49,966,442,301,006 raw in on 0.01 ETH — and the
+  // real quotes parse collecting and pass the deposit bounds
+  // against the pins taken from those same quotes. The control is
+  // the fee-free pair of bodies: they carry a ZERO app fee in
+  // their fee details, and they do not parse at all — Across's
+  // native-output grammar routes even a fee-free delivery through
+  // the handler (an unwrap message), which the fee-free bounds
+  // branch refuses. That shape is FLEET-WIDE, not 4663's: the
+  // identical control probe against the long-wired Ethereum ->
+  // Base WETH lane the same day returned the same handler-message
+  // fee-free deposit, parsing null the same way, while its fee
+  // quote parsed collecting (control bodies saved in the research
+  // folder). So 4663's WETH lane stands exactly where every wired
+  // chain's WETH lane stands; the non-vacuity of the echo pins
+  // rests on the bounds check itself, which passes a fee quote
+  // only when its deposit carries exactly one transfer of exactly
+  // the parsed app fee to the collection wallet. USDG is NOT an
+  // Across hub asset (Fluid's grammar serves the same hub asset
+  // both sides; USDG pairs stay Relay's), pinned below.
+  ok("gap7: Across chain set + 4663 pins (handler, message adapter, SpokePool, canonical WETH — all read off the live fee-bearing probe quotes)",
+    ACROSS_CHAIN_IDS.has(4663)
+    && ACROSS_HANDLERS[4663] === "0xa8ad2e87e2043711d8bec77e8bc3e2683c0ab6bd"
+    && ACROSS_MESSAGE_ADAPTERS[4663] === "0xBF75133b48b0a42AB9374027902E83C5E2949034"
+    && ACROSS_SPOKE_POOLS[4663] === "0xD29C85F15DF544bA632C9E25829fd29d767d7978"
+    && ACROSS_WETH.robinhood === WETH_4663);
+  const aOutArgs7 = { fromChainKey: "robinhood", toChainKey: "ethereum", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "10000000000000000", fromAddress: ACCT7, toAddress: ACCT7 };
+  const aInArgs7 = { fromChainKey: "ethereum", toChainKey: "robinhood", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "10000000000000000", fromAddress: ACCT7, toAddress: ACCT7 };
+  ok("gap7: Across gate resolves the WETH pair both directions on 4663 (and nothing same-chain; USDG is not a hub asset)",
+    acrossSupportsPair(aOutArgs7)?.asset === "WETH" && acrossSupportsPair(aInArgs7)?.asset === "WETH"
+    && acrossSupportsPair({ ...aOutArgs7, toChainKey: "robinhood" }) === null
+    && acrossSupportsPair({ fromChainKey: "robinhood", toChainKey: "ethereum", fromTokenAddress: USDG_4663, toTokenAddress: ETH_USDC, fromAmount: "20000000", fromAddress: ACCT7, toAddress: ACCT7 }) === null);
+  const aOut7 = parseAcrossQuote(fx7("across-robinhood-weth-out-fee.json"), aOutArgs7, acrossSupportsPair(aOutArgs7));
+  ok("gap7: Across OUT (4663 -> Ethereum, WETH) fee echo verified collecting on the real probe quote; executable in one step",
+    aOut7?.platformFeeCollecting === true && aOut7.platformFeeRaw === "49717673510382"
+    && aOut7.toAmount === "9893817028566194" && acrossExecutableSteps(aOut7).length === 1);
+  const aIn7 = parseAcrossQuote(fx7("across-robinhood-weth-in-fee.json"), aInArgs7, acrossSupportsPair(aInArgs7));
+  ok("gap7: Across IN (Ethereum -> 4663, WETH) fee echo verified collecting; the deposit passes the bounds check against the 4663 handler pin",
+    aIn7?.platformFeeCollecting === true && aIn7.platformFeeRaw === "49966442301006"
+    && aIn7.toAmount === "9943322017900327" && checkAcrossDepositBounds(aIn7, ACCT7).ok === true);
+  const aOutFree7 = parseAcrossQuote(fx7("across-robinhood-weth-out-nofee.json"), aOutArgs7, acrossSupportsPair(aOutArgs7));
+  const aInFree7 = parseAcrossQuote(fx7("across-robinhood-weth-in-nofee.json"), aInArgs7, acrossSupportsPair(aInArgs7));
+  ok("gap7: Across control — the fee-free probe quotes carry a zero app fee and do not parse (Across's native-output handler-message shape, refused by the fee-free bounds branch — the fleet-wide WETH position, Base's lane identical)",
+    fx7("across-robinhood-weth-out-nofee.json").fees.total.details.app.amount === "0"
+    && fx7("across-robinhood-weth-in-nofee.json").fees.total.details.app.amount === "0"
+    && aOutFree7 === null && aInFree7 === null);
+}
+
 console.log(`\n${passed} checks passed`);

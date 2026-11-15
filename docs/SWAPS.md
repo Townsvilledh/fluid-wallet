@@ -788,9 +788,11 @@ Lightning (no signable source leg existed); since the
 Lightning-source build and Part B (Bitcoin as a source,
 above) both families compose OUT through their Satora hub
 legs inside the one-crossing limit, and the remaining
-boundary is a chain Fluid does not support at all (Robinhood
-Chain, as of this writing) cannot be a composition endpoint —
-support for a chain is its own work, never invented here. Bitcoin/Lightning/Arkade destinations
+boundary is a chain Fluid does not support at all cannot be
+a composition endpoint — support for a chain is its own
+work, never invented here. (Robinhood Chain stood here as
+the example until 2026-11-15; it is a built-in since the
+gap-#7 build — see the Robinhood Chain section below.) Bitcoin/Lightning/Arkade destinations
 compose through USDC on a Satora source chain (Arbitrum first):
 any asset → USDC on Arbitrum → Satora to BTC/Lightning/Arkade,
 inheriting Satora's floors (10,000 sats to mainnet — below
@@ -1307,6 +1309,99 @@ chain.
   funded deposit is the end-to-end proof, gated on Muse
   earnings), HYPE pricing depth beyond CoinGecko, and USD₮0
   liquidity at size.
+
+## Robinhood Chain (4663) — audit gap #7 (2026-11-15)
+
+Chain 4663 joins as a hand-verified built-in (`robinhood`) —
+as canonicalisation, not an admission repair. Robinhood
+Chain (an Arbitrum-Orbit L2) launched its public mainnet on
+2026-07-01 — its testnet is a different id, 46630 — and
+discovery already admitted it on clean registry data; the
+line above that named it "a chain Fluid does not support at
+all" dated from before that mainnet and was simply stale.
+What discovery could not give it: a token list (no CoinGecko
+slug was wired, so no scan or metadata), an RPC rotation
+(the discovered entry rides the single official endpoint,
+which Robinhood's own ecosystem docs note is rate-limited),
+and its stable — the stable-token lookup hunted USDC/USDT
+symbols, and neither exists on this chain. Verified by hand
+instead (research:
+`research_notes/fluid-robinhood-chain-20261115/probe-notes.md`,
+all probes in-page from the production origin). ETH is the
+native, priced through the existing ETH wiring (CoinGecko
+with the Coinbase cross-check). RPC rotation carries three
+endpoints with the official RPC first.
+
+- **The chain's stable is USDG — and USDC/USDT do not exist
+  here.** USDG (Paxos Global Dollar, contract
+  `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`, 6 dp) is
+  verified against Robinhood's own contracts page, Paxos's
+  docs, Relay's catalogue, CoinGecko's list and on-chain
+  reads; it is an upgradeable proxy, the same trust class as
+  USDC. Circle issues no USDC on 4663 and there is no
+  Tether deployment, so any "USDC" a user meets on this
+  chain is an impostor token — Robinhood's docs warn about
+  exactly this. Fluid pins none, and the stable lookup can
+  never synthesise one: for a built-in chain a USDC/USDT
+  list entry survives only when a hand-verified pin names
+  the same address, and a pin carrying the fleet's
+  `stable: true` marker (USDG) surfaces on the pin's own
+  authority — both pinned in the test suite, the guard
+  against a poisoned list fixture.
+- **Relay is the primary rail, collecting in every
+  direction.** ETH out, USDG out, USDC in to USDG, and
+  intra ETH → USDG all quoted with the 50 bps App Fee
+  echoed in full on build day; Relay settles on 4663 in
+  exactly its two solver currencies, ETH and USDG. Relay's
+  own chains table gives 4663's depository as Fluid's
+  already-pinned canonical depository constant (code proven
+  on-chain there), so the security build's deposit pinning
+  and bounds-check cover Robinhood Chain with no new
+  constants — pinned in the test suite against regression.
+- **Across is wired as the second rail on the WETH pair,
+  collecting both directions.** The build-day probe
+  (in-page from the production origin, Fluid's own two-pass
+  quote shape) echoed the app fee on real quotes —
+  49,717,673,510,382 raw out and 49,966,442,301,006 raw in
+  on 0.01 ETH — and the quotes parse collecting and pass
+  the deposit bounds check. The handler (a chain-specific
+  contract, not the common handler), message adapter and
+  SpokePool pins for 4663 were read off those same live
+  quotes. One caveat, and it is fleet-wide rather than
+  4663's: Across's native-output grammar routes even a
+  fee-free delivery through the handler (an unwrap
+  message), which Fluid's fee-free bounds branch refuses —
+  so the two-pass flow's first pass cannot price a WETH
+  pair today and the dispatcher falls back to Relay. The
+  identical control probe against the long-wired
+  Ethereum → Base WETH lane on build day returned the same
+  shape and the same refusal, so 4663's WETH lane stands
+  exactly where every wired chain's WETH lane stands; the
+  stable lanes (USDC/USDT, whose fee-free deposits are
+  plain) are unaffected. USDG is not an Across hub asset
+  in Fluid's grammar (the same hub asset must pin on both
+  sides), so USDG pairs stay Relay's.
+- **Relay intra-chain quotes collect at quote level, but
+  their execution is refused by the depository pinning** —
+  Relay builds same-chain swaps as a router call, not a
+  depository deposit, and that step grammar is unpinned
+  product-wide: a Base → Base quote refuses identically.
+  Robinhood Chain is in exactly the fleet's position.
+- **Not wired:** 1Click (no Robinhood entries in its token
+  list) and Mayan (both directions refused with Fluid's
+  exact request shape — `CHAIN_NOT_SUPPORTED` out,
+  `ROUTE_NOT_FOUND` in). Not needed: Relay covers both
+  directions with capture.
+- **Unverified, named:** any funded 4663 settlement (the
+  first funded deposit is the end-to-end proof, gated on
+  Muse earnings), USDG liquidity at size, the Across WETH
+  two-pass first pass (the fleet-wide native-output item
+  above — the fee-bearing quote itself is verified
+  collecting and bounds-clean), and the chain's stock
+  tokens — Robinhood Stock Tokens are the chain's headline
+  assets; the CoinGecko scan surfaces held ones as scanned
+  rows under the fleet's existing rules, and no curated
+  stock-token pins are made.
 
 ## Canonical-bridge moves — the LADYS class (2026-11-15)
 

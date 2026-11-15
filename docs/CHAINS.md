@@ -6,10 +6,10 @@ same seed. Everything listed here **ships**: balance, receive and send.
 
 ## Chain families
 
-- **EVM — 19 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
+- **EVM — 20 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
   OP Mainnet, Polygon, Avalanche, zkSync Era, Linea, Scroll, Mantle,
   Gnosis, Celo, Fuse, B² Network, Sei EVM, Injective EVM, HyperEVM,
-  and Sepolia (testnet). Networks the swap routers support beyond
+  Robinhood Chain, and Sepolia (testnet). Networks the swap routers support beyond
   the built-ins (for example **Arc**, chain 5042) are discovered and
   added automatically after unlock. Sei EVM (chain 1329) is where SEI lives
   now — Sei's Cosmos network is retired (see Cosmos below).
@@ -19,7 +19,11 @@ same seed. Everything listed here **ships**: balance, receive and send.
   counts it once). HyperEVM (chain 999, HYPE) is hand-verified
   rather than discovered: the public registries still carry the
   id's previous occupant, so discovery cannot admit it — see
-  `docs/SWAPS.md`.
+  `docs/SWAPS.md`. Robinhood Chain (chain 4663, ETH) is a built-in
+  as canonicalisation: discovery admitted it, but only the built-in
+  carries its RPC rotation, its token list, and its stable — USDG,
+  because USDC and USDT do not exist on that chain at all (any
+  "USDC" there is an impostor) — see `docs/SWAPS.md`.
 - **Bitcoin** — BIP84 native SegWit (bc1q…) and BIP86 Taproot (bc1p…).
   See `docs/BITCOIN-NATIVE.md`.
 - **Lightning** — Fluid's own in-browser node (LDK) from the same seed.

@@ -1,0 +1,319 @@
+{
+ "crossSwapType": "bridgeableToBridgeable",
+ "amountType": "exactInput",
+ "checks": {
+  "allowance": {
+   "token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "spender": "0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5",
+   "actual": "0",
+   "expected": "10000000000000000"
+  },
+  "balance": {
+   "token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "actual": "0",
+   "expected": "10000000000000000"
+  }
+ },
+ "approvalTxns": [
+  {
+   "chainId": 1,
+   "to": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "data": "0x095ea7b30000000000000000000000005c7bcd6e7de5423a257d81b442095a1a6ced35c5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  }
+ ],
+ "steps": {
+  "bridge": {
+   "inputAmount": "10000000000000000",
+   "outputAmount": "9993295801802686",
+   "tokenIn": {
+    "decimals": 18,
+    "symbol": "WETH",
+    "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "name": "Wrapped Ether",
+    "chainId": 1
+   },
+   "tokenOut": {
+    "decimals": 18,
+    "symbol": "WETH",
+    "address": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "name": "Wrapped Ether",
+    "chainId": 4663
+   },
+   "fees": {
+    "amount": "6704198197314",
+    "pct": "670419819731400",
+    "token": {
+     "decimals": 18,
+     "symbol": "WETH",
+     "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+     "name": "Wrapped Ether",
+     "chainId": 1
+    },
+    "details": {
+     "type": "across",
+     "relayerCapital": {
+      "amount": "697083333334",
+      "pct": "69708333333400",
+      "token": {
+       "decimals": 18,
+       "symbol": "WETH",
+       "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+       "name": "Wrapped Ether",
+       "chainId": 1
+      }
+     },
+     "destinationGas": {
+      "amount": "6007114863980",
+      "pct": "600711486398000",
+      "token": {
+       "decimals": 18,
+       "symbol": "WETH",
+       "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+       "name": "Wrapped Ether",
+       "chainId": 1
+      }
+     },
+     "lp": {
+      "amount": "0",
+      "pct": "0",
+      "token": {
+       "decimals": 18,
+       "symbol": "WETH",
+       "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+       "name": "Wrapped Ether",
+       "chainId": 1
+      }
+     }
+    }
+   },
+   "provider": "across"
+  }
+ },
+ "inputToken": {
+  "decimals": 18,
+  "symbol": "WETH",
+  "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "name": "Wrapped Ether",
+  "chainId": 1
+ },
+ "outputToken": {
+  "decimals": 18,
+  "symbol": "WETH",
+  "address": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  "name": "Wrapped Ether",
+  "chainId": 4663
+ },
+ "refundToken": {
+  "decimals": 18,
+  "symbol": "WETH",
+  "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "name": "Wrapped Ether",
+  "chainId": 1
+ },
+ "fees": {
+  "total": {
+   "amount": "6719659100221",
+   "amountUsd": "0.0123",
+   "token": {
+    "decimals": 18,
+    "symbol": "WETH",
+    "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "name": "Wrapped Ether",
+    "chainId": 1
+   },
+   "pct": "671965910022126",
+   "details": {
+    "type": "total-breakdown",
+    "swapImpact": {
+     "amount": "15460902907",
+     "amountUsd": "0.00002830040972659",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "chainId": 1
+     },
+     "pct": "1546090290726"
+    },
+    "app": {
+     "amount": "0",
+     "amountUsd": "0.0",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "name": "Wrapped Ether",
+      "chainId": 4663
+     },
+     "pct": "0"
+    },
+    "bridge": {
+     "amount": "6704198197314",
+     "amountUsd": "0.012271699590273411",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "chainId": 1
+     },
+     "pct": "670419819731400",
+     "details": {
+      "type": "across",
+      "lp": {
+       "amount": "0",
+       "amountUsd": "0.0",
+       "token": {
+        "decimals": 18,
+        "symbol": "WETH",
+        "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "name": "Wrapped Ether",
+        "chainId": 1
+       },
+       "pct": "0"
+      },
+      "relayerCapital": {
+       "amount": "697083333334",
+       "amountUsd": "0.00127597618750122",
+       "token": {
+        "decimals": 18,
+        "symbol": "WETH",
+        "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "name": "Wrapped Ether",
+        "chainId": 1
+       },
+       "pct": "69708333333400"
+      },
+      "destinationGas": {
+       "amount": "6005605629317",
+       "amountUsd": "0.010995723402772191",
+       "token": {
+        "chainId": 4663,
+        "address": "0x0000000000000000000000000000000000000000",
+        "decimals": 18,
+        "symbol": "ETH"
+       },
+       "pct": "600711486398000"
+      }
+     }
+    }
+   }
+  },
+  "totalMax": {
+   "amount": "6719659100221",
+   "amountUsd": "0.0123",
+   "token": {
+    "decimals": 18,
+    "symbol": "WETH",
+    "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "name": "Wrapped Ether",
+    "chainId": 1
+   },
+   "pct": "671965910022126",
+   "details": {
+    "type": "max-total-breakdown",
+    "maxSwapImpact": {
+     "amount": "15460902907",
+     "amountUsd": "0.00002830040972659",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "chainId": 1
+     },
+     "pct": "1546090290726"
+    },
+    "app": {
+     "amount": "0",
+     "amountUsd": "0.0",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "name": "Wrapped Ether",
+      "chainId": 4663
+     },
+     "pct": "0"
+    },
+    "bridge": {
+     "amount": "6704198197314",
+     "amountUsd": "0.012271699590273411",
+     "token": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "chainId": 1
+     },
+     "pct": "670419819731400",
+     "details": {
+      "type": "across",
+      "lp": {
+       "amount": "0",
+       "amountUsd": "0.0",
+       "token": {
+        "decimals": 18,
+        "symbol": "WETH",
+        "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "name": "Wrapped Ether",
+        "chainId": 1
+       },
+       "pct": "0"
+      },
+      "relayerCapital": {
+       "amount": "697083333334",
+       "amountUsd": "0.00127597618750122",
+       "token": {
+        "decimals": 18,
+        "symbol": "WETH",
+        "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "name": "Wrapped Ether",
+        "chainId": 1
+       },
+       "pct": "69708333333400"
+      },
+      "destinationGas": {
+       "amount": "6005605629317",
+       "amountUsd": "0.010995723402772191",
+       "token": {
+        "chainId": 4663,
+        "address": "0x0000000000000000000000000000000000000000",
+        "decimals": 18,
+        "symbol": "ETH"
+       },
+       "pct": "600711486398000"
+      }
+     }
+    }
+   }
+  },
+  "originGas": {
+   "amount": "0",
+   "amountUsd": "0.0",
+   "token": {
+    "chainId": 1,
+    "address": "0x0000000000000000000000000000000000000000",
+    "decimals": 18,
+    "symbol": "ETH"
+   }
+  },
+  "submission": null
+ },
+ "inputAmount": "10000000000000000",
+ "maxInputAmount": "10000000000000000",
+ "expectedOutputAmount": "9993295801802686",
+ "minOutputAmount": "9993295801802686",
+ "expectedFillTime": 2,
+ "swapTx": {
+  "ecosystem": "evm",
+  "simulationSuccess": false,
+  "chainId": 1,
+  "to": "0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5",
+  "data": "0xad5425c60000000000000000000000009858effd232b4033e47d90003d41ec34ecaeda94000000000000000000000000a8ad2e87e2043711d8bec77e8bc3e2683c0ab6bd000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000bd7d308f8e1639fab988df18a8011f41eacad73000000000000000000000000000000000000000000000000002386f26fc10000000000000000000000000000000000000000000000000000002380d97e66dfbe00000000000000000000000000000000000000000000000000000000000012370000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006af9863b000000000000000000000000000000000000000000000000000000006af9a25b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000005600000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000220000000000000000000000000a8ad2e87e2043711d8bec77e8bc3e2683c0ab6bd000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044ef8738d30000000000000000000000000bd7d308f8e1639fab988df18a8011f41eacad730000000000000000000000009858effd232b4033e47d90003d41ec34ecaeda9400000000000000000000000000000000000000000000000000000000000000000000000000000000a8ad2e87e2043711d8bec77e8bc3e2683c0ab6bd000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044ef8738d30000000000000000000000000bd7d308f8e1639fab988df18a8011f41eacad730000000000000000000000009858effd232b4033e47d90003d41ec34ecaeda9400000000000000000000000000000000000000000000000000000000000000000000000000000000bf75133b48b0a42ab9374027902e83c5e2949034000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000224d836083e000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000bd7d308f8e1639fab988df18a8011f41eacad73000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000009858effd232b4033e47d90003d41ec34ecaeda94000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046e6f6e65000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000073c0de",
+  "gas": "0"
+ },
+ "quoteExpiryTimestamp": 1999999999,
+ "id": "d8r85-1794737938529-b96393be5bb2"
+}

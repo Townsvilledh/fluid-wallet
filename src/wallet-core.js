@@ -58,6 +58,12 @@ import { decodeAddress as dotDecodeAddress, cryptoWaitReady as dotCryptoWaitRead
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
+// USDG (Paxos Global Dollar): carries the fleet's `stable: true`
+// marker (the 1Click asset table's convention) so the stable
+// machinery can recognise a built-in's pinned stable without a
+// symbol list — see fetchStableTokens.
+const USDG = (address, decimals = 6) => ({ symbol: "USDG", address, decimals, stable: true });
+const WETH = (address, decimals = 18) => ({ symbol: "WETH", address, decimals });
 
 // priceSym: the symbol used for USD pricing (L2s price their ETH as ETH).
 export const NETWORKS = {
@@ -243,12 +249,59 @@ export const NETWORKS = {
     rpcFallback: "https://hyperliquid.drpc.org",
     tokens: [USDC("0xb88339CB7199b77E23DB6E890353E22632Ba630f"), USDT("0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb")],
   },
+  // Robinhood Chain (audit gap #7, 2026-11-15): Robinhood's
+  // Arbitrum-Orbit L2, public mainnet since 2026-07-01 (the
+  // testnet is a DIFFERENT id, 46630 — never wired here).
+  // Discovery already admits 4663 on clean registry data, so
+  // this built-in is canonicalisation, not an admission
+  // repair: it gives the chain a three-endpoint RPC rotation
+  // (the discovered entry rides the single official endpoint,
+  // which Robinhood's own ecosystem docs note is
+  // rate-limited), its CoinGecko token-list slug, and —
+  // decisively — its curated stable. Read endpoints probed
+  // IN-PAGE from the production origin: chainId 0x1237,
+  // ~100 ms blocks flowing on all three (research_notes/
+  // fluid-robinhood-chain-20261115). The chain's stable is
+  // USDG (Paxos Global Dollar — an upgradeable proxy, the
+  // same trust class as USDC; verified against Robinhood's
+  // own contracts page, Paxos's docs, Relay's catalogue,
+  // CoinGecko's list and on-chain reads). USDC and USDT DO
+  // NOT EXIST on this chain — Circle issues no USDC here
+  // and there is no Tether deployment — so any "USDC" a
+  // user meets on 4663 is an impostor token: Fluid pins
+  // none, and fetchStableTokens can never synthesise one
+  // (its impostor guard, below). WETH is the chain's
+  // canonical wrapped native (Robinhood's
+  // protocol-contracts page + on-chain reads).
+  robinhood: {
+    name: "Robinhood Chain", chainId: 4663, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://rpc.mainnet.chain.robinhood.com", explorer: "https://robinhoodchain.blockscout.com",
+    rpcs: [
+      "https://rpc.mainnet.chain.robinhood.com",
+      "https://robinhood-rpc.publicnode.com",
+      "https://robinhood.drpc.org",
+    ],
+    rpcFallback: "https://robinhood-rpc.publicnode.com",
+    tokens: [USDG("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"), WETH("0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73")],
+  },
   sepolia: {
     name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
     rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
     tokens: [],
   },
 };
+
+/** The built-in networks exactly as shipped in source,
+ *  snapshotted before any runtime registration can add
+ *  discovered chains (registerNetworks only ever adds
+ *  "c<chainId>" keys, but this snapshot makes the distinction
+ *  structural rather than conventional). fetchStableTokens
+ *  consults it: a built-in's hand-verified token pins are the
+ *  authority on which stables the chain has. */
+const BUILTIN_NETWORKS_SNAPSHOT = Object.values(NETWORKS);
+export function builtinNetworkForChainId(chainId) {
+  return BUILTIN_NETWORKS_SNAPSHOT.find(n => n.chainId === Number(chainId)) || null;
+}
 
 const ERC20 = [
   "function balanceOf(address) view returns (uint256)",
@@ -10988,8 +11041,14 @@ export const ACROSS_APP_FEE_RECIPIENT = RELAY_APP_FEE_RECIPIENT;
  *  from the production origin verified the app-fee echo
  *  COLLECTING in both directions on USDC pairs (the fee-bearing
  *  quotes are pinned as test fixtures; the 999 handler, adapter
- *  and SpokePool pins below come from those same quotes). */
-export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 999, 8453, 42161, 43114, 59144, 5042]);
+ *  and SpokePool pins below come from those same quotes).
+ *  Robinhood Chain (4663) was added 2026-11-15 (gap #7) the
+ *  same way: the echo verified COLLECTING in both directions
+ *  on the WETH pair — the only hub asset Fluid's grammar can
+ *  serve there, since the chain's stable is USDG, not a
+ *  USDC/USDT hub asset (the fee-bearing quotes are pinned as
+ *  test fixtures; the 4663 pins below come from them). */
+export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 999, 4663, 8453, 42161, 43114, 59144, 5042]);
 /** Canonical WETH per chain key, for the chains whose native coin
  *  IS ETH (Across quotes native routes against the WETH address).
  *  Polygon's wrapped native is WPOL, BSC's is WBNB and Avalanche's
@@ -11004,6 +11063,7 @@ export const ACROSS_WETH = {
   optimism: "0x4200000000000000000000000000000000000006",
   linea: "0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f",
   zksync: "0x5AEa5775959fBC2557Cc8789Bc1bf90A239D9a91",
+  robinhood: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", // Robinhood Chain — the gap-#7 fee-bearing probe quotes (2026-11-15)
 };
 /** Across's destination handler contract per destination chain id
  *  — the deposit's on-chain recipient whenever a message rides
@@ -11023,6 +11083,7 @@ export const ACROSS_HANDLERS = {
   43114: "0x9610954acdca5ff7905f051a040ce33fe613c60e",
   5042: "0xA07480456C4EbaD7626e4FdF4a180709E238547b", // Arc — live fee-bearing probe, 2026-11-09
   999: "0x5E7840E06fAcCb6d1c3b5F5E0d1d3d07F2829bba", // HyperEVM — live fee-bearing probe, 2026-11-15 (gap #6): the IN quote's own deposit recipient
+  4663: "0xa8ad2e87e2043711d8bec77e8bc3e2683c0ab6bd", // Robinhood Chain — live fee-bearing probe, 2026-11-15 (gap #7): the IN quote's own deposit recipient (a chain-specific handler, not the common one)
 };
 /** The message-adapter contract per destination chain id — the
  *  target of the composed message's final call (the alternate
@@ -11040,6 +11101,7 @@ export const ACROSS_MESSAGE_ADAPTERS = {
   43114: "0x25b15Fc38d6A2C13FEDdD9cb51f184F7Cf0D4C11",
   5042: "0x446Fe2Be6a8D90fA89F30f3d0A686aAFfe621237", // Arc — same live probe as the handler pin
   999: "0xBF75133b48b0a42AB9374027902E83C5E2949034", // HyperEVM — the common adapter, named by the same live probe (gap #6)
+  4663: "0xBF75133b48b0a42AB9374027902E83C5E2949034", // Robinhood Chain — the common adapter, named by the same live probe (gap #7)
 };
 /** Origin SpokePools, pinned where a live quote named them (the
  *  deposit transaction's target — and the response's own
@@ -11050,6 +11112,7 @@ export const ACROSS_SPOKE_POOLS = {
   42161: "0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A",
   5042: "0x9b4A302A548c7e313c2b74C461db7b84d3074A84", // Arc — the probe quote's own allowance spender
   999: "0x35E63eA3eb0fb7A3bc543C71FB66412e1F6B0E04", // HyperEVM — the probe quote's own allowance spender (gap #6)
+  4663: "0xD29C85F15DF544bA632C9E25829fd29d767d7978", // Robinhood Chain — the probe quote's own allowance spender (gap #7)
 };
 const ACROSS_DEPOSIT_ABI = ["function deposit(bytes32 depositor, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 destinationChainId, bytes32 exclusiveRelayer, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes message)"];
 const ACROSS_ERC20_TRANSFER = ["function transfer(address to, uint256 amount) returns (bool)"];
@@ -25805,19 +25868,45 @@ export async function probeChain(entry) {
  *  token list (see fetchChainTokenList). Returns [{symbol, address,
  *  decimals}] for USDC/USDT, [] when the chain has none (or no
  *  list), null when the lookup itself failed (callers may retry
- *  later). */
+ *  later).
+ *
+ *  Built-in chains (gap #7): a built-in's hand-verified token
+ *  pins are the authority, in both directions —
+ *   - IMPOSTOR GUARD: a USDC/USDT list entry that no pin
+ *     verifies (same address) is dropped. On Robinhood Chain
+ *     (4663) USDC/USDT do not exist at all, so any "USDC" a
+ *     list offers there is an impostor token and must never
+ *     become a curated row.
+ *   - PINNED STABLES SURFACE: a pinned token carrying the
+ *     fleet's `stable: true` marker joins the result on the
+ *     pin's own authority, whether or not the list carries
+ *     it — the USDC/USDT symbol hunt can never see a chain
+ *     whose stable is neither (Robinhood's USDG, one of only
+ *     two assets Relay settles on 4663). Driven by the
+ *     built-in's pins, never by a global symbol list: a fake
+ *     "USDG" on some other chain's list gains nothing here.
+ *  A built-in's pins do not depend on the list, so a failed
+ *  list lookup no longer returns null for a built-in chain. */
 export async function fetchStableTokens(chainId) {
+  const builtin = builtinNetworkForChainId(chainId);
+  const pins = builtin ? (builtin.tokens || []) : [];
   const list = await fetchChainTokenList(chainId);
-  if (list == null) return null;
+  if (list == null && !builtin) return null;
   const out = [];
   for (const sym of ["USDC", "USDT"]) {
-    const t = list.find(x => x && x.symbol === sym);
+    const t = (list || []).find(x => x && x.symbol === sym);
     // GAP-1: never attach a chain's native-asset predeploy (Arc's
     // USDC) as an ERC-20 row — it is the native coin itself, and a
     // second row would paint the same funds twice.
     if (t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address) && !isNativePredeploy(chainId, t.address)) {
+      if (builtin && !pins.some(p => p && String(p.address).toLowerCase() === t.address.toLowerCase())) continue;
       out.push({ symbol: sym, address: t.address, decimals: t.decimals ?? 6 });
     }
+  }
+  for (const p of pins) {
+    if (!p || p.stable !== true || !ethers.isAddress(p.address || "")) continue;
+    if (!out.some(o => o.address.toLowerCase() === String(p.address).toLowerCase()))
+      out.push({ symbol: p.symbol, address: p.address, decimals: p.decimals ?? 6 });
   }
   return out;
 }
@@ -26115,6 +26204,11 @@ export const COINGECKO_TOKEN_LIST_SLUGS = {
   // HyperEVM (999) is CoinGecko's "hyperevm" platform (934
   // tokens live-counted 2026-11-15, gap #6 research).
   999: "hyperevm",
+  // Robinhood Chain (4663) is CoinGecko's "robinhood"
+  // platform (1,467 tokens live-counted 2026-11-15, gap #7
+  // research). Without the slug the chain has no token
+  // scan/metadata at all.
+  4663: "robinhood",
 };
 function cgTokenShape(t) {
   if (!t || !t.address || !t.symbol) return null;
