@@ -8992,7 +8992,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;

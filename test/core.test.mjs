@@ -11470,7 +11470,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -20332,11 +20332,11 @@ import { ALGORAND_SWAP_CHAIN_ID, ALGORAND_SWAP_NATIVE_TOKEN, ALGORAND_SWAP_TOKEN
     ALGORAND_SWAP_TOKENS.length === 5 && ALGORAND_SWAP_TOKENS[0].native === true
     && ALGORAND_SWAP_TOKENS.map(t => t.address).join(",") === "algo,31566704,312769,386192725,386195940"
     && ALGORAND_SWAP_TOKENS.find(t => t.symbol === "goBTC").decimals === 8);
-  ok("gap12: pair support is Algorand-to-Algorand over the pinned table only",
-    algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "algo" }, toToken: { address: "31566704" } }) === true
-    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "base", fromToken: { address: "algo" }, toToken: { address: "31566704" } }) === false
-    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "31566704" }, toToken: { address: "31566704" } }) === false
-    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "algo" }, toToken: { address: "999999" } }) === false);
+  ok("gap12: pair support is Algorand-to-Algorand over the pinned table only (production search-args shape)",
+    algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromTokenAddress: "algo", toTokenAddress: "31566704" }) === true
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "base", fromTokenAddress: "algo", toTokenAddress: "31566704" }) === false
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromTokenAddress: "31566704", toTokenAddress: "31566704" }) === false
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromTokenAddress: "algo", toTokenAddress: "999999" }) === false);
   // Pool derivation, verified live 2026-11-15: both accounts
   // exist on mainnet carrying the validator's local state.
   ok("gap12: the Tinyman pool address derivation reproduces the live mainnet pools",
@@ -20484,6 +20484,69 @@ import { ALGORAND_SWAP_CHAIN_ID, ALGORAND_SWAP_NATIVE_TOKEN, ALGORAND_SWAP_TOKEN
     && algoDisclosureLines(routeB133).join(" ").includes("separate opt-in transaction")
     && algoDisclosureLines(routeB133).join(" ").includes("below $1")
     && algoDisclosureLines(routeFree133).join(" ").includes("No Fluid fee on this route"));
+}
+
+/* ================= §134 — gap #12 repair: the dispatcher
+ * actually invokes the Algorand-intra candidate =========
+ * The shipped gate read args.fromToken/toToken — a shape no
+ * production caller ever sets — so every live intra-Algorand
+ * search ended at a generic no-route with ZERO requests to
+ * any Algorand source (first-user walk, 2026-11-15). These
+ * pins run the REAL dispatcher (getSwapRoutes) with the
+ * sheet's exact args shape (fromTokenAddress / toTokenAddress
+ * / raw fromAmount) behind a per-host fetch stub, and require
+ * a Tinyman route back plus both venues' requests on the
+ * wire — a candidate that is registered but never dispatched
+ * fails here, not just in a walk. */
+import { getAlgoSwapRoutes } from "../src/wallet-core.js";
+{
+  const realFetch134 = globalThis.fetch;
+  const jsonRes134 = (body, okFlag = true, status = 200) => ({ ok: okFlag, status, json: async () => body });
+  const USER134 = algoAddressFromPhrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
+  const POOL134 = tinymanPoolAddress(0, 31566704);
+  const kv134 = (k, uint) => ({ key: Buffer.from(k, "utf8").toString("base64"), value: { type: 2, uint } });
+  const poolAcct134 = { "apps-local-state": [{ id: 1002541853, "key-value": [
+    kv134("asset_1_id", 31566704), kv134("asset_2_id", 0), kv134("asset_1_reserves", 705294605770),
+    kv134("asset_2_reserves", 8858585505904), kv134("total_fee_share", 36)] }] };
+  const seen134 = [];
+  const stub134 = (ownAcct) => async (url) => {
+    const u = String(url);
+    seen134.push(u);
+    if (u.includes("/v2/accounts/" + POOL134)) return jsonRes134(poolAcct134);
+    if (u.includes("/v2/accounts/" + USER134)) return jsonRes134(ownAcct);
+    if (u.includes("api.pact.fi")) return jsonRes134({ results: [] });
+    throw new Error("unexpected url " + u);
+  };
+  const args134 = { fromChainKey: "algorand", toChainKey: "algorand",
+    fromTokenAddress: "algo", toTokenAddress: "31566704", fromAmount: "251400000",
+    fromAddress: USER134, toAddress: USER134, addresses: { algorand: USER134 } };
+  try {
+    // Funded and already opted in: the dispatcher must ask
+    // both venues and return the Tinyman route, collecting.
+    seen134.length = 0;
+    globalThis.fetch = stub134({ amount: 1000000000, assets: [{ "asset-id": 31566704, amount: 5000000 }] });
+    const funded134 = await getSwapRoutes(args134);
+    const tm134 = funded134.find(r => r.provider === "tinyman");
+    ok("gap12-repair: the dispatcher invokes the Algorand-intra candidate for an ALGO → ASA pair (production args shape)",
+      !!tm134 && seen134.some(u => u.includes("/v2/accounts/" + POOL134)) && seen134.some(u => u.includes("api.pact.fi")));
+    ok("gap12-repair: a funded, opted-in wallet's Tinyman route collects the skim and needs no opt-in step",
+      !!tm134 && tm134.collecting === true && BigInt(tm134.platformFeeRaw) > 0n && tm134.algo.needsOptIn === false);
+    // Zero balance, not opted in: the same search stays
+    // honest — the route forms fee-free and the opt-in is
+    // flagged as its own step.
+    seen134.length = 0;
+    globalThis.fetch = stub134({ amount: 0, assets: [] });
+    const broke134 = await getSwapRoutes(args134);
+    const tmBroke134 = broke134.find(r => r.provider === "tinyman");
+    ok("gap12-repair: a zero-balance wallet's Tinyman route is honestly fee-free and flags the separate opt-in",
+      !!tmBroke134 && tmBroke134.collecting === false && tmBroke134.platformFeeRaw === "0" && tmBroke134.algo.needsOptIn === true);
+    // Cross-chain stays out of the venues' hands entirely.
+    const cross134 = await getAlgoSwapRoutes({ ...args134, toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
+    ok("gap12-repair: the Algorand venues never take a cross-chain pair",
+      Array.isArray(cross134) && cross134.length === 0);
+  } finally {
+    globalThis.fetch = realFetch134;
+  }
 }
 
 console.log(`\n${passed} checks passed`);

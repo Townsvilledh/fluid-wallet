@@ -33940,9 +33940,28 @@ export function algoPoolImpliedUsd({ unknownReserveWhole, anchorReserveWhole, an
   if (!(u > 0) || !(a > 0) || !(p > 0)) return null;
   return (a / u) * p;
 }
+/** The args-side token ref for one side of a swap search.
+ *  The fleet's search args carry token ADDRESSES
+ *  (fromTokenAddress / toTokenAddress — the shape the sheet
+ *  passes and every other candidate's gate reads); a token
+ *  object is accepted as a fallback for direct core callers.
+ *  (Repair, 2026-11-15: gap #12 shipped with the gate below
+ *  reading ONLY args.fromToken/toToken — a shape no
+ *  production caller ever sets — so the gate was false for
+ *  every real search, the candidate never ran, and the live
+ *  walk found zero Algorand requests behind a generic
+ *  no-route. §134 pins the production shape through the
+ *  dispatcher itself.) */
+function algoArgsTokenRef(args, side) {
+  if (!args) return null;
+  const addr = side === "from" ? args.fromTokenAddress : args.toTokenAddress;
+  if (typeof addr === "string" && addr) return { address: addr };
+  const tok = side === "from" ? args.fromToken : args.toToken;
+  return tok && typeof tok === "object" ? tok : null;
+}
 export function algoSwapSupportsPair(args) {
   if (!args || args.fromChainKey !== "algorand" || args.toChainKey !== "algorand") return false;
-  const inId = algoAssetIdOfToken(args.fromToken), outId = algoAssetIdOfToken(args.toToken);
+  const inId = algoAssetIdOfToken(algoArgsTokenRef(args, "from")), outId = algoAssetIdOfToken(algoArgsTokenRef(args, "to"));
   if (inId == null || outId == null || inId === outId) return false;
   return !!algoSwapTokenById(inId) && !!algoSwapTokenById(outId);
 }
@@ -34095,12 +34114,26 @@ function buildAlgoVenueRoute({ venueState, assetInId, assetOutId, amountInRaw, p
  *  appear; the pair is an honest no-route when neither does. */
 export async function getAlgoSwapRoutes(planArgs) {
   if (!algoSwapSupportsPair(planArgs)) return [];
-  const assetInId = algoAssetIdOfToken(planArgs.fromToken), assetOutId = algoAssetIdOfToken(planArgs.toToken);
+  const assetInId = algoAssetIdOfToken(algoArgsTokenRef(planArgs, "from")), assetOutId = algoAssetIdOfToken(algoArgsTokenRef(planArgs, "to"));
   let amountInRaw;
-  try { amountInRaw = BigInt(swapAmountToRaw(planArgs.amount, planArgs.fromToken.decimals)); } catch { return []; }
+  try {
+    // The fleet's args carry the amount already raw
+    // (fromAmount); a human `amount` from a direct core
+    // caller is converted at the input token's pinned
+    // decimals.
+    amountInRaw = planArgs.fromAmount != null && planArgs.fromAmount !== ""
+      ? BigInt(planArgs.fromAmount)
+      : BigInt(swapAmountToRaw(planArgs.amount, algoSwapTokenById(assetInId).decimals));
+  } catch { return []; }
   if (amountInRaw <= 0n) return [];
   const prices = await getPrices().catch(() => ({}));
-  const own = swapOwnAddressFor("algorand", planArgs.addresses);
+  // The user's own Algorand account drives the skim's
+  // affordability call and the destination opt-in check: the
+  // search's address book first, the search's own fromAddress
+  // (by construction the user's address on the from-chain)
+  // as the fallback.
+  const own = swapOwnAddressFor("algorand", planArgs.addresses)
+    || (typeof planArgs.fromAddress === "string" && isValidAlgorandAddress(planArgs.fromAddress) ? planArgs.fromAddress : null);
   let ownAlgoMicro = null, needsOptIn = false;
   if (own) {
     const res = await algodJson("/v2/accounts/" + own);
