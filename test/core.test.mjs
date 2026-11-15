@@ -85,7 +85,7 @@ import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english
 import { zcashAddress, isValidZcashAddress, dashAddress, isValidDashAddress, buildSignedDashTx, DASH_DUST_SAT, DASH_MIN_OUTPUT, parseBlockchairDashboard, zecTxidFromRaw, zecSighash, buildZecTransparentTx, zecFeeZats, zecLogicalActions, ZEC_CONSENSUS_BRANCH_ID, ZCASH_SWAP_CHAIN_ID, DASH_SWAP_CHAIN_ID, ZCASH_SWAP_NATIVE_TOKEN, DASH_SWAP_NATIVE_TOKEN, formatDashSendIntent, formatZcashSendIntent } from "../src/wallet-core.js";
 import { STELLAR_SWAP_CHAIN_ID, STELLAR_SWAP_NATIVE_TOKEN, STELLAR_SWAP_ASSETS, stellarSwapAssetFor, stellarSacAddress, SOROSWAP_API, SOROSWAP_API_KEY, SOROSWAP_PARTNER_BPS, soroswapConfig, SOROSWAP_AGGREGATOR_CONTRACT, SOROSWAP_PROTOCOLS, SOROSWAP_SLIPPAGE_BPS, SOROSWAP_MAX_TX_FEE_STROOPS, soroswapSupportsPair, parseSoroswapQuote, getSoroswapSwapRoute, checkSoroswapSwapBounds, checkSoroswapTrustlineBounds, executeSoroswapSwapRoute } from "../src/wallet-core.js";
 import { CCTP_APTOS_DOMAIN, CCTP_V2_STANDARD_FINALITY, CCTP_APTOS_EVM_DOMAINS, CCTP_V2_TOKEN_MESSENGER, CCTP_V2_MESSAGE_TRANSMITTER, CCTP_APTOS_FEE_ADDRESS, CCTP_APTOS_DURATION_SEC, CCTP_APTOS_STORAGE_KEY, CCTP_APTOS_BURN_SCRIPT_SHA256, CCTP_APTOS_RECEIVE_SCRIPT_SHA256, verifyCctpAptosScriptBytes, cctpAptosScriptBytes, cctpAptosBurnScriptCall, cctpAptosReceiveScriptCall, buildCctpV2Burn, checkCctpV2Burn, checkCctpV2Message, cctpAptosSupportsPair, cctpAptosFeeFor, getCctpAptosSwapRoute, cctpAptosDisclosureLines, loadCctpAptosRecords, saveCctpAptosRecord, cctpAptosPhase, cctpAptosHistoryLine, aptosBuildScriptTransaction } from "../src/wallet-core.js";
-import { cvUint, cvInt, cvBool, cvBuff, cvPrincipal, cvContractPrincipal, cvTuple, cvList, cvSome, cvNone, serializeClarityValue, parseClarityValue, splitContractId, stacksStxPostCondition, stacksFungiblePostCondition, stacksContractCallPayload, buildSignedStacksContractCall, decodeStacksTx, checkStacksContractCall, STACKS_MAX_CALL_FEE_USTX, SBTC_REGISTRY_CONTRACT, SBTC_WITHDRAWAL_CONTRACT, SBTC_TOKEN_CONTRACT, SBTC_PEG_OUT_DUST_SATS, SBTC_PEG_STORAGE_KEY, parseSbtcSignerData, buildSbtcDepositScript, buildSbtcReclaimScript, buildSbtcDepositAddress, btcScriptNumEncode, sbtcRecipientForBtcAddress, sbtcPegOutCallSpec, sbtcPegInDisclosureLines, sbtcPegOutDisclosureLines, loadSbtcPegRecords, saveSbtcPegRecord, sbtcPegPhase, sbtcPegHistoryLine, sbtcPegPairForRoute, BITFLOW_PINNED_CONTRACTS, BITFLOW_SLIPPAGE_BPS, STACKS_SWAP_CHAIN_ID, STACKS_SWAP_NATIVE_TOKEN, bitflowConfig, bitflowSupportsPair, bitflowArgsForCall, getBitflowSwapRoute, bitflowGuardPostConditions, bitflowDisclosureLines } from "../src/wallet-core.js";
+import { cvUint, cvInt, cvBool, cvBuff, cvPrincipal, cvContractPrincipal, cvTuple, cvList, cvSome, cvNone, serializeClarityValue, parseClarityValue, splitContractId, stacksStxPostCondition, stacksFungiblePostCondition, stacksContractCallPayload, buildSignedStacksContractCall, decodeStacksTx, checkStacksContractCall, STACKS_MAX_CALL_FEE_USTX, SBTC_REGISTRY_CONTRACT, SBTC_WITHDRAWAL_CONTRACT, SBTC_TOKEN_CONTRACT, SBTC_PEG_OUT_DUST_SATS, SBTC_PEG_STORAGE_KEY, parseSbtcSignerData, buildSbtcDepositScript, buildSbtcReclaimScript, buildSbtcDepositAddress, btcScriptNumEncode, sbtcRecipientForBtcAddress, sbtcPegOutCallSpec, sbtcPegInDisclosureLines, sbtcPegOutDisclosureLines, loadSbtcPegRecords, saveSbtcPegRecord, sbtcPegPhase, sbtcPegHistoryLine, sbtcPegPairForRoute, advanceSbtcPegRecord, advanceSbtcPegRecords, sbtcPositiveMinted, BITFLOW_PINNED_CONTRACTS, BITFLOW_SLIPPAGE_BPS, STACKS_SWAP_CHAIN_ID, STACKS_SWAP_NATIVE_TOKEN, bitflowConfig, bitflowSupportsPair, bitflowArgsForCall, getBitflowSwapRoute, bitflowGuardPostConditions, bitflowDisclosureLines } from "../src/wallet-core.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -20184,6 +20184,125 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && appSrc131.includes("openSbtcPegSheet") && appSrc131.includes('id="wSbtcPeg"')
     && appSrc131.includes('if (route && route.provider === "bitflow") return "Bitflow";')
     && appSrc131.includes("executeBitflowSwapRoute(wallet, route") && appSrc131.includes("advanceSbtcPegRecords(wallet"));
+}
+
+/* ================= §132 — gap #11 repair: the peg driver's
+ * completion evidence (2026-11-15) =================
+ * The first-user walk (check 6) proved the pre-repair driver
+ * could complete a peg-in on NO evidence: its fallback mint
+ * band [amount − maxFee, amount] had no positive floor, so a
+ * seeded record (amount 50,000 < the 80,000 cap, fabricated
+ * deposit txid, zero sBTC credit) was written done with
+ * mintedAmountSats "0" and the whole deposit explained away
+ * as "sweep fee". The repair's invariant, pinned here over
+ * stubbed transports: (1) NO completion path — registry or
+ * fallback — runs before the record's own deposit is proven
+ * to exist AND be confirmed on Bitcoin; (2) the fallback
+ * delta must be positive AND in band; (3) the written amount
+ * is the observed one, and the sweep-fee copy renders only
+ * on a positive completion; (4) registry-confirmed
+ * completion is unchanged. */
+{
+  const ABANDON132 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const SP132 = stacksAddressFromPhrase(ABANDON132);
+  const hex132 = (b) => Buffer.from(b).toString("hex");
+  const TXID132 = "ab".repeat(32);
+  const SBTC_KEY132 = `${SBTC_TOKEN_CONTRACT}::sbtc-token`;
+  const store132 = { _m: new Map(), getItem(k) { return this._m.has(k) ? this._m.get(k) : null; }, setItem(k, v) { this._m.set(k, String(v)); } };
+  const env132 = { tx: null, tip: 900000, registryResult: "0x09", sbtcBalance: "0" };
+  const realFetch132 = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("get-completed-deposit")) return { ok: true, status: 200, json: async () => ({ okay: true, result: env132.registryResult }), text: async () => "" };
+    if (u.includes("/blocks/tip/height")) return { ok: true, status: 200, json: async () => env132.tip, text: async () => String(env132.tip) };
+    if (u.includes("/tx/")) {
+      if (!env132.tx) return { ok: false, status: 404, json: async () => ({}), text: async () => "Transaction not found" };
+      return { ok: true, status: 200, json: async () => env132.tx, text: async () => JSON.stringify(env132.tx) };
+    }
+    if (u.includes("/extended/v1/address/")) return { ok: true, status: 200, json: async () => ({ stx: { balance: "0" }, fungible_tokens: { [SBTC_KEY132]: { balance: env132.sbtcBalance } } }), text: async () => "" };
+    if (u.includes("/v2/accounts/")) return { ok: true, status: 200, json: async () => ({ nonce: 0, balance: "0" }), text: async () => "" };
+    return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+  };
+  const mkRec132 = (over = {}) => ({
+    id: "sbtcpeg-132-" + Math.floor(Math.random() * 1e9).toString(36), kind: "peg-in", state: "sent",
+    hashes: [TXID132], btcTxid: TXID132, vout: 0,
+    amountSats: "200000", maxFeeSats: 80000, lockBlocks: 950,
+    depositAddress: "bc1p132", depositScript: "51", reclaimScript: "51",
+    stacksAddress: SP132, btcAddress: "bc1q132",
+    baselineSbtcRaw: "0", blockHeight: null, confirmations: 0, mintedAmountSats: null,
+    fromSymbol: "BTC", toSymbol: "sBTC", createdAt: 1, ...over,
+  });
+  const CONFIRMED132 = { txid: TXID132, status: { confirmed: true, block_height: 899990 } };
+  try {
+    // (a) The walk's exact seeded case: amount below the fee
+    // cap, fabricated txid (Esplora 404 on both hosts),
+    // registry none, zero sBTC credit. Pre-repair this
+    // completed with minted "0"; now it stays in-progress.
+    env132.tx = null; env132.registryResult = "0x09"; env132.sbtcBalance = "0";
+    const walkSeed = await advanceSbtcPegRecord(mkRec132({ amountSats: "50000" }), { storage: store132 });
+    ok("gap11 repair: the walk's seeded case (amount < cap, fake txid, zero credit) stays in-progress with minted null",
+      walkSeed.mintedAmountSats === null && walkSeed.state !== "done"
+      && sbtcPegPhase(walkSeed) === "sent" && !sbtcPegHistoryLine(walkSeed).includes("sweep fee"));
+
+    // (b) A fake txid stays in-progress even with amount >
+    // cap AND an in-band credit sitting in the wallet: the
+    // deposit gate, not the band, is what refuses.
+    env132.tx = null; env132.sbtcBalance = "199500";
+    const fakeTxid = await advanceSbtcPegRecord(mkRec132(), { storage: store132 });
+    ok("gap11 repair: a fake-txid record with amount > cap and an in-band credit stays in-progress",
+      fakeTxid.mintedAmountSats === null && fakeTxid.state !== "done" && sbtcPegPhase(fakeTxid) === "sent");
+
+    // (c) An unconfirmed deposit + the same in-band credit:
+    // still no completion — existence is not confirmation.
+    env132.tx = { txid: TXID132, status: { confirmed: false } }; env132.sbtcBalance = "199500";
+    const unconf = await advanceSbtcPegRecord(mkRec132(), { storage: store132 });
+    ok("gap11 repair: an unconfirmed deposit with an in-band unrelated credit stays in-progress",
+      unconf.mintedAmountSats === null && unconf.state !== "done" && unconf.blockHeight === null && sbtcPegPhase(unconf) === "sent");
+
+    // (d) The fixture-genuine fallback: confirmed deposit,
+    // registry none, positive in-band delta → completes with
+    // exactly the observed amount.
+    env132.tx = CONFIRMED132; env132.registryResult = "0x09"; env132.sbtcBalance = "199500";
+    const genuine = await advanceSbtcPegRecord(mkRec132(), { storage: store132 });
+    ok("gap11 repair: a confirmed deposit + registry none + positive in-band delta completes with the observed amount",
+      genuine.mintedAmountSats === "199500" && genuine.state === "done" && sbtcPegPhase(genuine) === "minted"
+      && genuine.blockHeight === 899990 && genuine.confirmations === 11
+      && sbtcPegHistoryLine(genuine).includes("0.001995 sBTC arrived") && sbtcPegHistoryLine(genuine).includes("sweep fee"));
+
+    // (e) Registry-confirmed completion is unchanged: the
+    // registry's amount wins, with no baseline for the
+    // fallback to run on.
+    env132.tx = CONFIRMED132;
+    env132.registryResult = "0x" + hex132(serializeClarityValue(cvSome(cvTuple({ amount: cvUint(199000n) }))));
+    const regDone = await advanceSbtcPegRecord(mkRec132({ baselineSbtcRaw: null }), { storage: store132 });
+    ok("gap11 repair: registry-confirmed completion still completes with the registry's amount",
+      regDone.mintedAmountSats === "199000" && regDone.state === "done" && sbtcPegPhase(regDone) === "minted");
+
+    // (f) The sweep-fee copy renders ONLY on a positive
+    // completion: a zero figure is not a completion at the
+    // render layer either, however it got into storage.
+    ok("gap11 repair: the sweep-fee copy renders only on positive-delta completions",
+      sbtcPositiveMinted({ mintedAmountSats: "0" }) === null && sbtcPositiveMinted({ mintedAmountSats: "junk" }) === null
+      && sbtcPositiveMinted({ mintedAmountSats: "5" }) === 5n && sbtcPositiveMinted({}) === null
+      && sbtcPegPhase({ ...mkRec132(), mintedAmountSats: "0", blockHeight: 899990 }) !== "minted"
+      && !sbtcPegHistoryLine({ ...mkRec132(), mintedAmountSats: "0", blockHeight: 899990 }, { tipHeight: 900000 }).includes("sweep fee")
+      && sbtcPegHistoryLine({ ...mkRec132(), mintedAmountSats: "199500" }).includes("sweep fee"));
+
+    // (g) Repair-on-read: a record the pre-repair driver
+    // poisoned (state "done", minted "0") is re-derived by
+    // the fleet driver, not skipped — with the deposit
+    // confirmed but no mint observed it returns to
+    // in-progress with the figure cleared.
+    env132.tx = CONFIRMED132; env132.registryResult = "0x09"; env132.sbtcBalance = "0";
+    saveSbtcPegRecord(store132, mkRec132({ id: "sbtcpeg-132-poisoned", amountSats: "50000", state: "done", mintedAmountSats: "0" }));
+    const healedList = await advanceSbtcPegRecords(null, { storage: store132 });
+    const healed = healedList.find(r => r.id === "sbtcpeg-132-poisoned");
+    const storedHealed = loadSbtcPegRecords(store132).find(r => r.id === "sbtcpeg-132-poisoned");
+    ok("gap11 repair: a poisoned 'done' record (minted 0) is re-derived to in-progress, never skipped",
+      !!healed && healed.mintedAmountSats === null && healed.state === "confirming"
+      && sbtcPegPhase(healed, { tipHeight: 900000 }) === "confirming"
+      && !!storedHealed && storedHealed.state === "confirming" && storedHealed.mintedAmountSats === null);
+  } finally { globalThis.fetch = realFetch132; }
 }
 
 console.log(`\n${passed} checks passed`);

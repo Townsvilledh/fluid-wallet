@@ -1882,6 +1882,31 @@ transaction against the reviewed spec before broadcast —
     completed-deposit / withdrawal-request reads, the sBTC
     balance delta, the payout visible on the user's Bitcoin
     address) — a record's own state claim never completes it.
+  - **Repair (2026-11-15, the first-user walk's check 6):**
+    the peg-in driver's fallback mint evidence — the sBTC
+    balance delta against the plan's baseline — originally
+    accepted any delta in [amount − maxFee, amount] with no
+    positive floor and no deposit gate, so a seeded record
+    whose amount sat below the fee cap completed on a zero
+    delta (fabricated deposit txid, no registry entry, no
+    credit) and the panel explained the whole deposit away
+    as "sweep fee". The invariant now: **no completion
+    without deposit evidence** — neither the registry read
+    nor the fallback runs until the record's own deposit is
+    proven to exist AND be confirmed on Bitcoin (an unfound
+    or unconfirmed deposit leaves the record in-progress,
+    never done, never failed); the fallback delta must be
+    **positive** and in band (a genuine mint always credits
+    a positive amount — the planner refuses maxFee ≥
+    amount — while a zero delta is the absence of a mint);
+    the written amount is always the observed one, and the
+    sweep-fee explanation renders only on a positive
+    completion. A record already carrying a non-positive
+    "minted" figure is re-derived, not trusted
+    (repair-on-read). §132 of the suite pins the walk's
+    seeded case, the fake-txid and unconfirmed-deposit
+    cases, the genuine fallback, and the unchanged
+    registry-confirmed path.
 - **Bitflow intra-Stacks swaps — the v1 shape.** Quotes are
   computed the legacy SDK's client-side way: the route set
   comes from the pinned **docs gateway host** (the SDK's

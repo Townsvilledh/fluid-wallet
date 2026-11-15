@@ -32914,6 +32914,17 @@ export function removeSbtcPegRecord(storage, id) {
   try { storage.setItem(SBTC_PEG_STORAGE_KEY, JSON.stringify(loadSbtcPegRecords(storage).filter(r => r.id !== id))); } catch { /* best-effort */ }
 }
 function newSbtcPegRecordId() { return "sbtcpeg-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36); }
+/** The record's minted figure as a positive BigInt, or null
+ *  when it is absent, zero or unparseable. Only a positive
+ *  figure is a completion: a zero can only be a pre-repair
+ *  driver write (the unfloored fallback band — gap-#11 walk
+ *  check 6) or a seed, and must never render the completion
+ *  line, whose copy explains the difference as the signers'
+ *  sweep fee. */
+export function sbtcPositiveMinted(record) {
+  if (!record || record.mintedAmountSats == null) return null;
+  try { const v = BigInt(record.mintedAmountSats); return v > 0n ? v : null; } catch { return null; }
+}
 export function sbtcPegPhase(record, { tipHeight = null } = {}) {
   if (!record) return "unknown";
   if (record.kind === "peg-out") {
@@ -32922,7 +32933,7 @@ export function sbtcPegPhase(record, { tipHeight = null } = {}) {
     if (record.reqStatus === "accepted") return "accepted";
     return "requested";
   }
-  if (record.mintedAmountSats != null) return "minted";
+  if (sbtcPositiveMinted(record) != null) return "minted";
   if (record.blockHeight != null && tipHeight != null && Number(tipHeight) >= Number(record.blockHeight) + Number(record.lockBlocks || SBTC_DEPOSIT_LOCK_BLOCKS)) return "reclaimable";
   if (record.blockHeight != null) return "confirming";
   return "sent";
@@ -33127,37 +33138,67 @@ export async function advanceSbtcPegRecord(record, { storage = null, network = "
   if (!record) return record;
   try {
     if (record.kind === "peg-in") {
-      if (record.mintedAmountSats != null) return record;
+      // A standing completion must be a POSITIVE minted
+      // amount. Anything else written there (the pre-repair
+      // driver's zero, a seed) is cleared and re-derived
+      // from evidence below — repair-on-read, so a poisoned
+      // record renders in-progress and can still complete
+      // genuinely.
+      if (record.mintedAmountSats != null) {
+        if (sbtcPositiveMinted(record) != null) return record;
+        record.mintedAmountSats = null;
+      }
       let tip = null;
       const tx = await fetchBtcTxEsplora(record.btcTxid).catch(() => null);
-      if (tx?.status?.confirmed && Number.isFinite(Number(tx.status.block_height))) {
+      const depositConfirmed = !!(tx?.status?.confirmed && Number.isFinite(Number(tx.status.block_height)));
+      if (depositConfirmed) {
         record.blockHeight = Number(tx.status.block_height);
         tip = await fetchBtcTipHeight().catch(() => null);
         if (tip != null) record.confirmations = Math.max(0, tip - record.blockHeight + 1);
       }
-      // Mint evidence, strongest first: the registry's own
-      // completed-deposit entry for this outpoint…
+      // NO completion without deposit evidence: mint evidence
+      // is read ONLY behind this record's own deposit proven
+      // to exist AND be confirmed on Bitcoin. An unfound or
+      // unconfirmed deposit leaves the record in-progress —
+      // never done, never failed — however the other reads
+      // answer. (The gap-#11 walk's seeded record completed
+      // on a fabricated txid because neither path was gated.)
       let minted = null;
-      try {
-        const res = await stacksCallReadWithArgs(SBTC_REGISTRY_CONTRACT, "get-completed-deposit",
-          [serializeClarityValue(cvBuff(btcTxidInternalBytes(record.btcTxid))), serializeClarityValue(cvUint(record.vout ?? 0))],
-          SBTC_DEPLOYER, network);
-        const { value } = parseClarityValue(res);
-        if (value?.t === "some" && value.v?.t === "tuple" && value.v.v.amount?.t === "uint") minted = value.v.v.amount.v;
-      } catch { /* the registry read is one evidence source, not the only one */ }
-      // …then the sBTC balance delta against the baseline the
-      // plan captured (bounded by the deposit and its fee cap,
-      // so an unrelated credit can't complete this record).
-      if (minted == null && record.baselineSbtcRaw != null) {
-        const acct = await fetchStacksAccount(record.stacksAddress, network);
-        if (!acct.scanFailed) {
-          const row = (acct.tokens || []).find(t => t.contract === SBTC_TOKEN_CONTRACT);
-          const now = row ? BigInt(row.balanceRaw) : 0n;
-          const delta = now - BigInt(record.baselineSbtcRaw);
-          if (delta >= BigInt(record.amountSats) - BigInt(record.maxFeeSats) && delta <= BigInt(record.amountSats)) minted = delta;
+      if (depositConfirmed) {
+        // Mint evidence, strongest first: the registry's own
+        // completed-deposit entry for this outpoint…
+        try {
+          const res = await stacksCallReadWithArgs(SBTC_REGISTRY_CONTRACT, "get-completed-deposit",
+            [serializeClarityValue(cvBuff(btcTxidInternalBytes(record.btcTxid))), serializeClarityValue(cvUint(record.vout ?? 0))],
+            SBTC_DEPLOYER, network);
+          const { value } = parseClarityValue(res);
+          if (value?.t === "some" && value.v?.t === "tuple" && value.v.v.amount?.t === "uint") minted = value.v.v.amount.v;
+        } catch { /* the registry read is one evidence source, not the only one */ }
+        // …then the sBTC balance delta against the baseline
+        // the plan captured. The band is a bounded heuristic,
+        // not proof: it runs only behind the confirmed
+        // deposit above, and it carries a POSITIVE floor —
+        // the sweep fee is strictly smaller than the deposit
+        // (the planner refuses maxFee >= amount), so a
+        // genuine mint always credits a positive in-band
+        // amount, while a zero delta is the ABSENCE of a
+        // mint. The pre-repair band had no floor and
+        // completed a record on delta 0, explaining the
+        // whole deposit away as "sweep fee".
+        if (minted == null && record.baselineSbtcRaw != null) {
+          const acct = await fetchStacksAccount(record.stacksAddress, network);
+          if (!acct.scanFailed) {
+            const row = (acct.tokens || []).find(t => t.contract === SBTC_TOKEN_CONTRACT);
+            const now = row ? BigInt(row.balanceRaw) : 0n;
+            const delta = now - BigInt(record.baselineSbtcRaw);
+            if (delta > 0n && delta >= BigInt(record.amountSats) - BigInt(record.maxFeeSats) && delta <= BigInt(record.amountSats)) minted = delta;
+          }
         }
       }
-      if (minted != null) record.mintedAmountSats = minted.toString();
+      // The written amount is always the observed one, and
+      // only a positive observation completes the record —
+      // from either evidence path.
+      if (minted != null && minted > 0n) record.mintedAmountSats = minted.toString();
       const ph = sbtcPegPhase(record, { tipHeight: tip });
       record.state = ph === "minted" ? "done" : ph;
       if (storage) saveSbtcPegRecord(storage, record);
@@ -33200,7 +33241,11 @@ export async function advanceSbtcPegRecords(wallet, { storage = null, onRecord =
   const records = loadSbtcPegRecords(storage);
   const out = [];
   for (const r of records) {
-    if (r.state === "done" || r.state === "rejected") { out.push(r); continue; }
+    // A peg-in "done" resting on a non-positive minted
+    // figure is a pre-repair write, not a completion: fall
+    // through and let the driver re-derive it.
+    const poisonedDone = r.kind === "peg-in" && r.state === "done" && sbtcPositiveMinted(r) == null;
+    if ((r.state === "done" || r.state === "rejected") && !poisonedDone) { out.push(r); continue; }
     const before = JSON.stringify(r);
     const next = await advanceSbtcPegRecord(r, { storage, network });
     out.push(next);
