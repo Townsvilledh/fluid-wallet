@@ -334,5 +334,13 @@
     "sol": "EmkTQN9knSvsmn8v8D4i7vWLJcduJ2sW1ZKcRZP7mhWL",
     "tron": "TZFGDYs6XeaTmAdDhReNaDniYQBHapJUUv",
     "sui": "0x20bade0c1a484a305bd2ec51782c8db8a838f8f097fb94b017b18bbd82288721"
+  },
+  "verifyrw18807": {
+    "evm": "0x719c712ba951C17bC1e41815e82738953E092Fd8",
+    "btc": "bc1q9qnm0syrze5s2nmanuc3v7s7snudr2qg53eqg7",
+    "algo": "VL54DWQYJPNJ7N5UOSSRNXUBOYK25NKRORAZSYQ5KE7NW4ST5QUF6YAUWU",
+    "sol": "5xH1aZFDPCjoZQrAWvyEPuFt7zj4togh5RWXnCKG524D",
+    "tron": "TLKvmXCtZBXyVyanH6RMed3L4L2BxyWmh5",
+    "sui": "0xb01ab6b93f5627b56e0830dab0cc767a7635d6035870e932f7d7d68516965884"
   }
 }
