@@ -14,6 +14,7 @@ import {
   dogecoinAddress, getDogecoinBalance, isValidDogeAddress, DOGE_MIN_OUTPUT,
   planDogecoinSend, broadcastDogeTx, formatDogeSendIntent,
   bitcoinCashAddress, getBitcoinCashBalance, planBitcoinCashSend, broadcastBitcoinCashTx, isValidBchAddress, formatBitcoinCashSendIntent,
+  cardanoAddress, cardanoStakeAddress, getCardanoBalance, getCardanoAccount, planCardanoSend, submitCardanoTx, isValidCardanoAddress, formatCardanoSendIntent, CARDANO_EXPLORER, CARDANO_SWAP_NATIVE_TOKEN,
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
@@ -116,7 +117,7 @@ const liveOkFams = new Set();
 let cacheWriteNeeded = false;
 const markLiveOk = (k) => { if (!liveOkFams.has(k)) { liveOkFams.add(k); cacheWriteNeeded = true; } };
 const HOME_FAMILIES = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
-  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash"];
+  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano"];
 function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
 const viewMeta = () => RECEIVE_NETWORKS.find(m => m.id === viewKey) || null;
 const isCosmosView = () => COSMOS_CHAINS.some(c => c.key === viewKey);
@@ -126,7 +127,7 @@ const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
-  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", XLM: "#3b5bdb",
+  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", ADA: "#0033ad", XLM: "#3b5bdb",
   TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a" };
 // P2-1: the display formatters live in wallet-core (dustDisplayFloor &
@@ -151,6 +152,7 @@ let stacksAddr = null, stacksBalances = [], stacksLoadFailed = false, stacksScan
 let ltcAddr = null, ltcBal = 0, ltcLoadFailed = false;
 let dogeAddr = null, dogeBal = 0, dogeLoadFailed = false;
 let bchAddr = null, bchBal = 0, bchLoadFailed = false;
+let adaAddr = null, adaBal = 0, adaLoadFailed = false;
 let cosmosAddrs = {}, cosmosRows = [];
 
 // ---------- universal tokens: shared presentation state ----------
@@ -542,7 +544,7 @@ document.addEventListener("error", (e) => {
 // Chain badges (§4.5): a symbol living on more than one network gets
 // the network's own icon at its logo's corner in the All view.
 let dupSymbols = new Set();
-const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH",
+const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH", cardano: "ADA",
   tron: "TRX", solana: "SOL", sui: "SUI", stellar: "XLM", ton: "TON", near: "NEAR",
   algorand: "ALGO", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
 function badgeHtml(b, famKey) {
@@ -716,6 +718,7 @@ function hydrateBalanceCache(w) {
   if (isNum(sc.ltcBal)) { ltcBal = sc.ltcBal; famLoaded.add("litecoin"); hydratedFams.add("litecoin"); }
   if (isNum(sc.dogeBal)) { dogeBal = sc.dogeBal; famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
   if (isNum(sc.bchBal)) { bchBal = sc.bchBal; famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
+  if (isNum(sc.adaBal)) { adaBal = sc.adaBal; famLoaded.add("cardano"); hydratedFams.add("cardano"); }
   cachePaint = hydratedFams.size > 0;
   if (cachePaint) paintAssets();
 }
@@ -759,6 +762,7 @@ function persistBalanceCache() {
     if (liveOkFams.has("litecoin")) scalars.ltcBal = ltcBal;
     if (liveOkFams.has("dogecoin")) scalars.dogeBal = dogeBal;
     if (liveOkFams.has("bitcoincash")) scalars.bchBal = bchBal;
+    if (liveOkFams.has("cardano")) scalars.adaBal = adaBal;
     // Phantom-balance fix (2026-11-12): only CURATED rows are
     // persisted. Scanned/custom rows are session reads — persisting
     // them let a stale scan result (a token the wallet no longer
@@ -1087,6 +1091,10 @@ async function renderMain() {
   getDogecoinBalance(dogeAddr).then(b => { dogeBal = b; dogeLoadFailed = false; markLiveOk("dogecoin"); markLoaded("dogecoin"); paintAssets(); }).catch(() => { dogeLoadFailed = true; markLoaded("dogecoin"); paintAssets(); });
   bchAddr = bitcoinCashAddress(w.mnemonic.phrase);
   getBitcoinCashBalance(bchAddr).then(b => { bchBal = b; bchLoadFailed = false; markLiveOk("bitcoincash"); markLoaded("bitcoincash"); paintAssets(); }).catch(() => { bchLoadFailed = true; markLoaded("bitcoincash"); paintAssets(); });
+  // Cardano (audit gap #3): CIP-1852 from the same phrase,
+  // hand-rolled in core; the balance is the Koios UTxO sum.
+  adaAddr = cardanoAddress(w.mnemonic.phrase);
+  getCardanoBalance(adaAddr).then(b => { adaBal = b; adaLoadFailed = false; markLiveOk("cardano"); markLoaded("cardano"); paintAssets(); }).catch(() => { adaLoadFailed = true; markLoaded("cardano"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -1184,7 +1192,8 @@ function heroTotal() {
   // a failed altcoin's last cached value while its row said
   // "couldn't load".
   let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)
-    + (ltcLoadFailed ? 0 : ltcBal) * (prices.LTC || 0) + (dogeLoadFailed ? 0 : dogeBal) * (prices.DOGE || 0) + (bchLoadFailed ? 0 : bchBal) * (prices.BCH || 0);
+    + (ltcLoadFailed ? 0 : ltcBal) * (prices.LTC || 0) + (dogeLoadFailed ? 0 : dogeBal) * (prices.DOGE || 0) + (bchLoadFailed ? 0 : bchBal) * (prices.BCH || 0)
+    + (adaLoadFailed ? 0 : adaBal) * (prices.ADA || 0);
   for (const b of balances) {
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
     if (p != null) t += Number(b.amount) * p;
@@ -1278,6 +1287,7 @@ function familyUsdTotals() {
   m.litecoin = (ltcLoadFailed || !famLoaded.has("litecoin")) ? null : ltcBal * (prices.LTC || 0);
   m.dogecoin = (dogeLoadFailed || !famLoaded.has("dogecoin")) ? null : dogeBal * (prices.DOGE || 0);
   m.bitcoincash = (bchLoadFailed || !famLoaded.has("bitcoincash")) ? null : bchBal * (prices.BCH || 0);
+  m.cardano = (adaLoadFailed || !famLoaded.has("cardano")) ? null : adaBal * (prices.ADA || 0);
   const net = NETWORKS[networkKey];
   m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
   m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
@@ -1339,7 +1349,7 @@ function countUnpricedInView() {
   let n = 0;
   const btcTotal = Number(btcBal) + Number(btcTrBal);
   if (!btcLoadFailed && btcTotal > 0 && prices.BTC == null) n++;
-  for (const [bal, sym] of [[ltcBal, "LTC"], [dogeBal, "DOGE"], [bchBal, "BCH"]]) {
+  for (const [bal, sym] of [[ltcBal, "LTC"], [dogeBal, "DOGE"], [bchBal, "BCH"], [adaBal, "ADA"]]) {
     if (Number(bal) > 0 && prices[sym] == null) n++;
   }
   n += countUnpricedHoldings(unpricedHoldingGroups());
@@ -1361,7 +1371,7 @@ function viewAddress() {
   const byKey = {
     bitcoin: btcAddr, tron: tronAddr, solana: solAddr, sui: suiAddr, stellar: stellarAddr,
     ton: tonAddr, near: nearAddr, algorand: algoAddr, xrpl: xrpAddr, polkadot: dotAddr,
-    aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr,
+    aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr,
   };
   if (viewKey === "lightning") return { text: "Your own Lightning node", copy: null };
   const a = isCosmosView() ? cosmosAddrs[viewKey] : byKey[viewKey];
@@ -1388,7 +1398,7 @@ function balancesUnloadedInView() {
   const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
   if (viewKey === "all") {
     return evmLoadFailed || rowNull(balances)
-      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed
+      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed || adaLoadFailed
       || tronLoadFailed || rowNull(tronBalances)
       || stellarLoadFailed || rowNull(stellarBalances)
       || tonLoadFailed || tonScanFailed || rowNull(tonBalances)
@@ -1407,6 +1417,7 @@ function balancesUnloadedInView() {
     case "litecoin": return ltcLoadFailed;
     case "dogecoin": return dogeLoadFailed;
     case "bitcoincash": return bchLoadFailed;
+    case "cardano": return adaLoadFailed;
     case "tron": return tronLoadFailed || rowNull(tronBalances);
     case "stellar": return stellarLoadFailed || rowNull(stellarBalances);
     case "ton": return tonLoadFailed || tonScanFailed || rowNull(tonBalances);
@@ -1550,6 +1561,7 @@ function familyAlertMap() {
   if (ltcLoadFailed) m.litecoin = "Litecoin balances couldn't be loaded right now.";
   if (dogeLoadFailed) m.dogecoin = "Dogecoin balances couldn't be loaded right now.";
   if (bchLoadFailed) m.bitcoincash = "Bitcoin Cash balances couldn't be loaded right now.";
+  if (adaLoadFailed) m.cardano = "Cardano balances couldn't be loaded right now.";
   if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn't be loaded right now.";
   if (familyScanFailed.solana) m.solana = "Full token scan isn't available from the free public Solana endpoints right now — showing main Solana tokens only. Your main tokens above are up to date; the full scan needs an endpoint that serves indexed token lookups, which the free ones currently refuse.";
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
@@ -1823,6 +1835,10 @@ function paintAssets() {
       <span class="logowrap">${tokenLogoHtml({ symbol: "BCH" }, "bitcoincash")}${badgeHtml({ symbol: "BCH" }, "bitcoincash")}</span>
       <span class="grow"><b class="rname">Bitcoin Cash</b><small>BCH · CashAddr</small></span>
       <span class="amt">${scalarAmtHtml(bchLoadFailed, bchBal, prices.BCH)}</span></div>` : skeletonRowsHtml(1)]);
+  grp("cardano", "", [famLoaded.has("cardano") ? `<div class="row" data-ada="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "ADA" }, "cardano")}${badgeHtml({ symbol: "ADA" }, "cardano")}</span>
+      <span class="grow"><b class="rname">Cardano</b><small>ADA · Shelley</small></span>
+      <span class="amt">${scalarAmtHtml(adaLoadFailed, adaBal, prices.ADA)}</span></div>` : skeletonRowsHtml(1)]);
   // Render per viewKey (§4.5): each family is its OWN card with a
   // header (name + subtotal + alert) in the All view; a scoped view
   // renders its single group without the header. The seven Cosmos
@@ -1846,7 +1862,7 @@ function paintAssets() {
     const btcT = Number(btcBal) + Number(btcTrBal);
     if (!btcLoadFailed && btcT > 0 && prices.BTC == null)
       unpricedNativeByKey.bitcoin = { amount: fmt(btcT), sym: "BTC" };
-    for (const [bal, sym, key] of [[ltcBal, "LTC", "litecoin"], [dogeBal, "DOGE", "dogecoin"], [bchBal, "BCH", "bitcoincash"]])
+    for (const [bal, sym, key] of [[ltcBal, "LTC", "litecoin"], [dogeBal, "DOGE", "dogecoin"], [bchBal, "BCH", "bitcoincash"], [adaBal, "ADA", "cardano"]])
       if (Number(bal) > 0 && prices[sym] == null) unpricedNativeByKey[key] = { amount: fmt(bal, 8), sym };
     for (const [key, rows, sym0, flag] of [
       ["tron", tronBalances, "TRX", tronLoadFailed], ["solana", solBalances, "SOL", false],
@@ -1881,6 +1897,7 @@ function paintAssets() {
     near: anyHeld(nearBalances), algorand: anyHeld(algoBalances), xrpl: anyHeld(xrpBalances),
     polkadot: anyHeld(dotBalances), aptos: anyHeld(aptosBalances), stacks: anyHeld(stacksBalances),
     litecoin: Number(ltcBal) > 0, dogecoin: Number(dogeBal) > 0, bitcoincash: Number(bchBal) > 0,
+    cardano: Number(adaBal) > 0,
     cosmos: cosmosRows.some(r => Number(r.amount) > 0),
   };
   // Home ordering (owner request, 2026-11-08): what you hold comes
@@ -1894,7 +1911,7 @@ function paintAssets() {
   // holds anything and at least one read came back unavailable.
   const famFailed = {
     bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,
-    dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, tron: tronLoadFailed,
+    dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, cardano: adaLoadFailed, tron: tronLoadFailed,
     stellar: stellarLoadFailed, ton: tonLoadFailed, near: nearLoadFailed,
     algorand: algoLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
     aptos: aptosLoadFailed, stacks: stacksLoadFailed || stacksScanFailed,
@@ -1966,11 +1983,11 @@ function paintAssets() {
   // once balances have actually loaded with nothing anywhere.
   const hz = $("homeZero");
   if (hz) {
-    const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal) > 0
+    const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal) > 0
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal && scopedTotal() === 0));
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal && scopedTotal() === 0));
   }
   // Address chips copy WITHOUT opening the row's destination —
   // the two taps are unambiguous (chip = copy, row = detail).
@@ -1987,6 +2004,7 @@ function paintAssets() {
   const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
   const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
   const bchEl = document.querySelector("[data-bch]"); if (bchEl) bchEl.onclick = openBchSheet;
+  const adaEl = document.querySelector("[data-ada]"); if (adaEl) adaEl.onclick = openCardanoSheet;
   const lnEl = document.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
@@ -2618,6 +2636,9 @@ $("actReceive").onclick = () => {
     bitcoincash: `<p class="tag">Bitcoin Cash address:</p>
       <img class="qr" id="qrBch"><p class="mono">${bchAddr}</p>
       <button class="btn ghost" id="cpBch">Copy Bitcoin Cash address</button>`,
+    cardano: `<p class="tag">Cardano address (ADA and Cardano native tokens):</p>
+      <img class="qr" id="qrAda"><p class="mono">${adaAddr}</p>
+      <button class="btn ghost" id="cpAda">Copy Cardano address</button>`,
   };
   // Cosmos: seven prefixes (six over one shared account, Injective on the
   // Keplr path) — one panel per chain, as the family's own sheets show.
@@ -2702,6 +2723,7 @@ $("actReceive").onclick = () => {
     litecoin: () => { qr("qrLtc", ltcAddr); $("cpLtc").onclick = () => copyText(ltcAddr, $("cpLtc")); },
     dogecoin: () => { qr("qrDoge", dogeAddr); $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge")); },
     bitcoincash: () => { qr("qrBch", bchAddr); $("cpBch").onclick = () => copyText(bchAddr, $("cpBch")); },
+    cardano: () => { qr("qrAda", adaAddr); $("cpAda").onclick = () => copyText(adaAddr, $("cpAda")); },
   };
   for (const c of COSMOS_CHAINS) {
     binds[c.key] = () => {
@@ -2771,6 +2793,7 @@ $("actSend").onclick = () => {
   if (viewKey === "litecoin") return openLtcSheet();
   if (viewKey === "dogecoin") return openDogeSheet();
   if (viewKey === "bitcoincash") return openBchSheet();
+  if (viewKey === "cardano") return openCardanoSheet();
   if (isCosmosView()) { const row = cosmosRows.find(r => r.key === viewKey); if (row) return openCosmosSheet(row); return openEvmSendSheet(); }
   const nativeOf = (rows) => rows.find(b => !b.address && !b.contract) || rows[0];
   if (viewKey === "tron") return openTronSheet(nativeOf(tronBalances));
@@ -4401,6 +4424,84 @@ function openBchSheet() {
         feeText: `${done.plan.feeBch.toFixed(8)} BCH`,
         explorerUrl: historyTxUrl({ link: `https://blockchair.com/bitcoin-cash/transaction/${txid}` }), txid, pending: true });
     } catch (e) { sendFailed(btn, "cMsg", e); }
+  };
+}
+
+// ---------- Cardano sheet ----------
+// Receive (QR + copy), the native-token list (display only
+// this slice) and send in the established review -> intent
+// sentence -> confirm pattern. The transaction is built and
+// signed on this device by core's hand-rolled CIP-1852/CBOR
+// builder (no WASM, CSL-verified — see wallet-core) and
+// submitted exactly as signed via Koios (Blockfrost fallback
+// when the operator configures a project ID). Cardano's
+// min-UTxO rule means small sends carry a ~1 ADA floor per
+// output — the builder names it when an amount trips it.
+function openCardanoSheet() {
+  let pendingAda = null;
+  openSheet(`<h3>Cardano</h3>
+    <p><b>${adaLoadFailed ? "Balance couldn't load" : fmt(adaBal, 6) + " ADA"}</b>${adaLoadFailed ? "" : ` · ${usd(adaBal * (prices.ADA || 0))}`}</p>
+    <img class="qr" id="qrAda2"><p class="mono">${adaAddr}</p>
+    <button class="btn ghost" id="cpAda2">Copy address</button>
+    <div id="cdTokens"></div>
+    <hr style="border-color:var(--line)">
+    <h3>Send ADA</h3>
+    <input id="cdTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient addr1… address" autocapitalize="none">
+    <input id="cdAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="cdReview">Review send</button>
+    <div id="cdIntent" class="hidden">
+      <p class="seed" id="cdIntentText"></p>
+      <button class="btn" id="cdConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="cdMsg"></p>
+    <p class="tag">Built and signed on this device, then submitted exactly as signed — no server ever builds your transaction. Cardano requires every output to carry about 1 ADA (the network's min-UTxO rule), so very small sends are refused with the minimum named. Sends are final.</p>`);
+  qr("qrAda2", adaAddr);
+  $("cpAda2").onclick = () => copyText(adaAddr, $("cpAda2"));
+  getCardanoAccount(adaAddr).then(acct => {
+    const host = $("cdTokens"); if (!host) return;
+    if (!acct.tokens.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<p class="tag" style="margin-top:10px">Cardano native tokens here (shown for information — sending tokens is not in this build yet):</p>` +
+      acct.tokens.map(t => `<div class="row"><span class="grow"><b class="rname">${esc(t.symbol)}</b><small>${esc(t.fingerprint || "")}</small></span><span class="amt"><b>${fmt(t.amount, t.decimals ? 6 : 0)}</b></span></div>`).join("");
+  }).catch(() => { const host = $("cdTokens"); if (host) host.innerHTML = `<p class="tag">The native-token list couldn't load right now.</p>`; });
+  $("cdReview").onclick = async () => {
+    const to = $("cdTo").value.trim(), amount = $("cdAmt").value.trim();
+    if (!isValidCardanoAddress(to)) return msg("cdMsg", "That is not a valid Cardano address.");
+    if (!amount || Number(amount) <= 0) return msg("cdMsg", "Enter an amount.");
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (adaLoadFailed) return msg("cdMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
+    if (Number(amount) > adaBal) return msg("cdMsg", "Amount is more than your balance.");
+    try {
+      // Build now, show the EXACT fee, submit the same bytes on
+      // confirm (audit H1) — the fee depends on the selected
+      // inputs and the network's live parameters.
+      msg("cdMsg", "Checking the network fee…", true);
+      const plan = await planCardanoSend(wallet.mnemonic.phrase, { to, amountAda: Number(amount) });
+      pendingAda = { to, amount, plan };
+      $("cdIntentText").textContent = formatCardanoSendIntent({
+        amount, to, feeAda: plan.feeAda.toFixed(6), feeUsd: usd(plan.feeAda * (prices.ADA || 0)),
+      });
+      setBalanceAfter($("cdIntentText"), { balance: adaBal, amount, fee: plan.feeAda, symbol: "ADA", decimals: 6 });
+      show("cdIntent"); msg("cdMsg", "");
+    } catch (e) { msg("cdMsg", "Could not check the fee: " + e.message); }
+  };
+  $("cdConfirm").onclick = async () => {
+    if (!pendingAda) return;
+    const btn = $("cdConfirm");
+    try {
+      setSendBusy(btn, true);
+      msg("cdMsg", "Submitting the transaction you reviewed…", true);
+      const txid = await submitCardanoTx(pendingAda.plan.cborHex, { txHash: pendingAda.plan.txHash });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingAda.amount, symbol: "ADA", to: pendingAda.to,
+        link: `${CARDANO_EXPLORER}/transaction/${txid}`, explorer: CARDANO_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingAda; pendingAda = null;
+      showTxSuccess({ verb: "Submitted", amount: done.amount, symbol: "ADA",
+        logoHtml: tokenLogoHtml({ symbol: "ADA" }, "cardano"), to: done.to, familyName: "Cardano",
+        feeText: `${done.plan.feeAda.toFixed(6)} ADA`,
+        explorerUrl: historyTxUrl({ link: `${CARDANO_EXPLORER}/transaction/${txid}` }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "cdMsg", e); }
   };
 }
 
@@ -6870,6 +6971,11 @@ function swapTokenList(netKey) {
   if (netKey === "bitcoincash") {
     return [{ symbol: "BCH", address: BITCOINCASH_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
   }
+  if (netKey === "cardano") {
+    // Cardano (1Click, audit gap #3): ADA is the family's
+    // only swap-universe asset in this build.
+    return [{ symbol: "ADA", address: CARDANO_SWAP_NATIVE_TOKEN, decimals: 6, native: true }];
+  }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
     // the curated FA stables.
@@ -7111,6 +7217,7 @@ async function swapBalanceOf(chainKey, tok) {
     if (chainKey === "litecoin") return await getLitecoinBalance(ltcAddr);
     if (chainKey === "dogecoin") return await getDogecoinBalance(dogeAddr);
     if (chainKey === "bitcoincash") return await getBitcoinCashBalance(bchAddr);
+    if (chainKey === "cardano") return await getCardanoBalance(adaAddr);
     if (chainKey === "aptos") {
       // Aptos balance for the EXECUTION gate: the native APT
       // row or the picked FA's row of the account read, with
@@ -7159,7 +7266,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7176,12 +7283,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash and Aptos — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "aptos"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano and Aptos — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7256,7 +7363,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -8114,7 +8221,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8698,6 +8805,7 @@ $("actSwap").onclick = () => {
         else if (fromKey === "aptos") srcLink = `${APTOS_EXPLORER}/transaction/${hashes[0]}`;
         else if (fromKey === "dogecoin") srcLink = `https://blockchair.com/dogecoin/transaction/${hashes[0]}`;
         else if (fromKey === "bitcoincash") srcLink = `https://blockchair.com/bitcoin-cash/transaction/${hashes[0]}`;
+        else if (fromKey === "cardano") srcLink = `${CARDANO_EXPLORER}/transaction/${hashes[0]}`;
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
         try { paintOneClickSwaps(); } catch { /* the list repaints on sheet open regardless */ }
@@ -8794,7 +8902,7 @@ function historyDayLabel(at) {
 }
 const HISTORY_FAMILY_BY_HOST = [
   ["litecoinspace.org", "Litecoin"], ["blockchair.com/dogecoin", "Dogecoin"],
-  ["blockchair.com/bitcoin-cash", "Bitcoin Cash"], ["mempool.space", "Bitcoin"],
+  ["blockchair.com/bitcoin-cash", "Bitcoin Cash"], ["cardanoscan.io", "Cardano"], ["mempool.space", "Bitcoin"],
   ["blockstream.info", "Bitcoin"], ["tronscan.org", "Tron"], ["solscan.io", "Solana"],
   ["suiscan.xyz", "Sui"], ["stellar.expert", "Stellar"], ["tonviewer.io", "TON"],
   ["nearblocks.io", "NEAR"], ["perawallet", "Algorand"], ["xrpscan.com", "XRP Ledger"],
@@ -9479,7 +9587,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a
@@ -10757,7 +10865,7 @@ $("approvalsBtn").onclick = () => {
 // ---------- About (§4.9/§4.11): the essay, for humans, in More ----------
 $("aboutBtn").onclick = () => {
   openSheet(`<h3>What is Fluid?</h3>
-    <p class="tag">Fluid is a free, open-source (MIT), non-custodial wallet for every blockchain. One seed phrase derives your accounts on EVM chains and L2s (15 built in, more auto-discovered), Bitcoin and Lightning, Stacks (the Bitcoin L2), Litecoin, Dogecoin, Bitcoin Cash, Tron, Solana, Sui, seven Cosmos chains, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot Asset Hub and Aptos — and every chain both sends and receives.</p>
+    <p class="tag">Fluid is a free, open-source (MIT), non-custodial wallet for every blockchain. One seed phrase derives your accounts on EVM chains and L2s (15 built in, more auto-discovered), Bitcoin and Lightning, Stacks (the Bitcoin L2), Litecoin, Dogecoin, Bitcoin Cash, Cardano, Tron, Solana, Sui, seven Cosmos chains, Stellar, TON, NEAR, Algorand, the XRP Ledger, Polkadot Asset Hub and Aptos — and every chain both sends and receives.</p>
     <p class="tag">Fluid never holds your keys or your funds: your keys stay encrypted on your own device, there is no account, no sign-up and no KYC on Fluid's side — buy and sell routes run their own quick checks — and if Fluid disappeared tomorrow your seed phrase would restore everything in any standard wallet.</p>
     <p class="tag">Buy and cash out worldwide at the cheapest available route, swap between chains, and send to a simple name — like you.fluid.is-a.dev — instead of a long address.</p>
     <p class="tag">Source code: <a href="https://github.com/Townsvilledh/fluid-wallet" target="_blank" rel="noopener">github.com/Townsvilledh/fluid-wallet</a></p>`);

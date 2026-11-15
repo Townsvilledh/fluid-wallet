@@ -28,7 +28,8 @@ import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDe
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { mnemonicToSeedSync } from "@scure/bip39";
+import { mnemonicToSeedSync, mnemonicToEntropy } from "@scure/bip39";
+import { wordlist as bip39EnglishWordlist120 } from "@scure/bip39/wordlists/english.js";
 import { Keypair as SolKeypair, PublicKey as SolPublicKey } from "@solana/web3.js";
 import { suiAddressFromPhrase, suiAddressFromSeed, suiSeedFromSeed, isValidSuiAddress, normalizeSuiAddress, suiMistToSui, suiSuiToMist, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_SWAP_CHAIN_ID, SUI_SWAP_NATIVE_TOKEN } from "../src/wallet-core.js";
 import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
@@ -65,6 +66,7 @@ import { withDeadline, dotApi } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
+import { CARDANO_SWAP_CHAIN_ID, CARDANO_SWAP_NATIVE_TOKEN, CARDANO_EXPLORER, CARDANO_BLOCKFROST_PROJECT_ID, CARDANO_ONECLICK_MIN_DURATION_SEC, cardanoAddress, cardanoStakeAddress, cardanoPaymentNode, cardanoMasterKeyFromEntropy, cardanoSignExtended, cardanoAddressToBytes, isValidCardanoAddress, cborEncode, parseKoiosTip, parseKoiosEpochParams, parseKoiosUtxos, getCardanoAccount, getCardanoBalance, getCardanoBalanceLovelace, cardanoFeeForTxSize, cardanoMinUtxoLovelace, buildCardanoPaymentTx, planCardanoSend, submitCardanoTx, cardanoSubmitConfig, formatCardanoSendIntent } from "../src/wallet-core.js";
 import { SUNSWAP_V2_ROUTER, SUNSWAP_V2_FACTORY, SUNSWAP_WTRX, SUNSWAP_FEE_RECEIVER, SUNSWAP_SLIPPAGE_BPS, SUNSWAP_ROUTER_ABI, sunswapTokenOf, sunswapSupportsPair, sunswapCandidatePaths, parseSunswapAmountsOut, parseSunswapQuote, getSunswapSwapRoute, buildSunswapSwapCallData, checkSunswapSwapBounds, executeSunswapSwapRoute } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
@@ -878,10 +880,14 @@ ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
 // their capture (Skip's measured 75/25 affiliate split, inverted by skipFeeRequest
 // and echo-verified before signing) is proven in §119. The Noble CCTP exit carries
 // no Fluid fee — its only skim is the per-quote disclosed relay fee.
-ok("swap universe is evm + tron + solana + sui + ton + the six 1Click families + the six Cosmos slice-1 chains only", (() => {
+// Cardano joined 2026-11-15 WITH the same review (audit gap #3): its rail is
+// 1Click (the seventh family in that table), its destination prices under the
+// fee law's default ceiling, and its capture (the same §6 inverse transform +
+// echo verification, probed live for ADA both directions) is proven in §120.
+ok("swap universe is evm + tron + solana + sui + ton + the seven 1Click families + the six Cosmos slice-1 chains only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
-  const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos",
-    "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"].every(k => swapChainOf(k) !== null);
+  const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cardano",
+    "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"].every(k => swapChainOf(k) !== null);
   const notSwappable = ["bitcoin", "stellar", "algorand", "sei"].every(k => swapChainOf(k) === null);
   return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001
     && platformFeeEcosystemOf("ton") === "ton";
@@ -2165,12 +2171,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 {
   const ids = q => filterReceiveNetworks(q).map(m => m.id);
   const TOP_IDS = ["evm", "bitcoin", "lightning", "tron", "solana", "sui", "stellar", "ton", "near",
-    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash"];
-  ok("receive: one entry per network (17 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 24);
+    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash", "cardano"];
+  ok("receive: one entry per network (18 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 25);
   ok("receive: ids unique", new Set(RECEIVE_NETWORKS.map(m => m.id)).size === RECEIVE_NETWORKS.length);
   ok("receive: every panel id covered", TOP_IDS.every(id => RECEIVE_NETWORKS.some(m => m.id === id))
     && COSMOS_CHAINS.every(c => RECEIVE_NETWORKS.some(m => m.id === c.key)));
-  ok("receive: blank query lists everything", ids("") .length === 24 && ids("   ").length === 24);
+  ok("receive: blank query lists everything", ids("") .length === 25 && ids("   ").length === 25);
   ok("receive: btc → Bitcoin only (not Bitcoin Cash)", JSON.stringify(ids("btc")) === '["bitcoin"]');
   ok("receive: ln → Lightning only", JSON.stringify(ids("ln")) === '["lightning"]');
   ok("receive: lightning → Lightning only", JSON.stringify(ids("lightning")) === '["lightning"]');
@@ -3780,7 +3786,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
-    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
   ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
     !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
@@ -5109,7 +5115,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcBtc.includes("m.bitcoin = (btcLoadFailed || !famLoaded.has(\"bitcoin\")) ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
     && appSrcBtc.includes("let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)"));
   ok("btc load-failed: home-zero card stays hidden while Bitcoin is unknown",
-    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !anyBal"));
+    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal"));
   ok("btc load-failed: sheet header shows couldn't-load per account",
     appSrcBtc.includes('btcLoadFailed ? "Balance couldn\'t load"')
     && appSrcBtc.includes('btcSegwitFailed ? "couldn\'t load"')
@@ -6468,7 +6474,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11436,7 +11442,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12877,7 +12883,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13224,7 +13230,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17068,7 +17074,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17529,6 +17535,303 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && appSrc119.includes('} else if (route.provider === "skip") {')
     && appSrc119.includes("cosmoshub: cosmosAddrs.cosmoshub")
     && appSrc119.includes("skipChainOf(netKey)"));
+}
+
+// 120. Cardano presence + the 1Click ADA rail (audit gap #3,
+// 2026-11-15): Cardano had NO presence at all — this slice
+// adds the family hand-rolled (CIP-1852 derivation, CBOR,
+// payment builder) from primitives the bundle already
+// carries, CSL/Mesh WASM rejected on bundle weight
+// (+2.75 MB measured), plus ADA as the seventh 1Click
+// family. The derivation/signature pins below pin CSL
+// equivalence transitively: the fixtures were produced by
+// the research prototype (derive-reference.mjs) whose
+// addresses AND signatures were byte-compared against
+// cardano-serialization-lib during the probe, and this
+// implementation is that prototype's port. Koios reads are
+// keyless GETs (the POST form, incl. /submittx, never
+// answered from the build environment — submit is built to
+// the published spec with a Blockfrost config seam, and the
+// first funded send is its proof; docs/SWAPS.md says so).
+// 1Click capture for ADA was probed live in both
+// directions: the fee-50 echo is the shipped transform
+// (Fluid 25 / 1Click 25), the floor is 1.2 ADA out, read
+// from the API's own refusal.
+{
+  const ABANDON_120 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture120 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const FEE_RECIPIENT_120 = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+  const EVM_120 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const USDC_BASE_120 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const ADA_ADDR_120 = "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv";
+  const jsonRes120 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body, text: async () => (typeof body === "string" ? body : JSON.stringify(body ?? "")) });
+  const clone120 = (x) => JSON.parse(JSON.stringify(x));
+  const memStorage120 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+
+  // Derivation: the CIP-0003 Icarus vector and both
+  // CSL-cross-checked fixture vectors, byte for byte.
+  {
+    const vec = fixture120("cardano-derivation-vectors.json");
+    const root = cardanoMasterKeyFromEntropy(mnemonicToEntropy(vec.cip3_icarus.phrase, bip39EnglishWordlist120));
+    ok("cardano icarus: the master key matches the official CIP-0003 test vector byte for byte",
+      scureHex.encode(root) === vec.cip3_icarus.expected_root_xprv_96B);
+    ok("cardano derivation: both fixture mnemonics derive the CSL-verified base and stake addresses",
+      vec.vectors.every(v => cardanoAddress(v.phrase) === v.base_address && cardanoStakeAddress(v.phrase) === v.stake_address));
+    ok("cardano derivation: the suite's abandon wallet derives the probe's reference address",
+      cardanoAddress(ABANDON_120) === ADA_ADDR_120);
+  }
+
+  // Extended-key signing: byte-pinned (the pinned bytes are
+  // the CSL-verified algorithm's output — see the header)
+  // and verifiable under noble's RFC 8032 verifier.
+  {
+    const node = cardanoPaymentNode(ABANDON_120);
+    const msg = new TextEncoder().encode("fluid cardano probe");
+    const sig = cardanoSignExtended(node, msg);
+    ok("cardano signing: the payment key and its extended-key signature are byte-pinned",
+      scureHex.encode(node.publicKey) === "7ea09a34aebb13c9841c71397b1cabfec5ddf950405293dee496cac2f437480a"
+      && scureHex.encode(sig) === "8a0eac182942fc6d52b58a7fe056ac9ddbddc78867137bec332843363e44953b339db79fd0e04569a710a220b2bb964b53ea47f5bd8b95110d76dbfa9193f004");
+    ok("cardano signing: the signature verifies under noble's RFC 8032 verifier",
+      ed25519.verify(sig, msg, node.publicKey) === true);
+  }
+
+  // Address shapes: base (57 bytes) and enterprise (29 —
+  // the 1Click deposit form) validate; foreign and garbled
+  // addresses refuse.
+  {
+    const fxOut = fixture120("quote-ada-out-fee50.json");
+    ok("cardano addresses: base and enterprise forms validate and decode to 57 / 29 bytes",
+      isValidCardanoAddress(ADA_ADDR_120) && isValidCardanoAddress(fxOut.quote.depositAddress)
+      && cardanoAddressToBytes(ADA_ADDR_120).length === 57 && cardanoAddressToBytes(fxOut.quote.depositAddress).length === 29);
+    ok("cardano addresses: a Bitcoin address, an Osmosis address and junk all refuse",
+      !isValidCardanoAddress("bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr")
+      && !isValidCardanoAddress("osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3pz") && !isValidCardanoAddress("") && !isValidCardanoAddress("addr1qqqq"));
+  }
+
+  // CBOR primitives (the payment-tx subset), shortest-form.
+  {
+    const enc = (v) => scureHex.encode(cborEncode(v));
+    ok("cardano cbor: uints encode shortest-form across every width boundary, bigint included",
+      enc(0) === "00" && enc(23) === "17" && enc(24) === "1818" && enc(255) === "18ff" && enc(256) === "190100"
+      && enc(1000000) === "1a000f4240" && enc(18446744073709551615n) === "1bffffffffffffffff");
+    ok("cardano cbor: bytes, text, arrays, maps and the simple values encode canonically",
+      enc(Uint8Array.of(0xde, 0xad)) === "42dead" && enc("ada") === "63616461" && enc([1, 2]) === "820102"
+      && enc(new Map([[0, 1]])) === "a10001" && enc(true) === "f5" && enc(false) === "f4" && enc(null) === "f6");
+  }
+
+  // Koios parsers over the live fixtures, plus a populated
+  // UTxO body synthesised from Koios's published schema
+  // (the live GET returned [] for the unfunded probe
+  // address — probe-notes UNVERIFIED #6).
+  {
+    const tip = parseKoiosTip(fixture120("koios-tip.json"));
+    const params = parseKoiosEpochParams(fixture120("koios-epoch-params.json"));
+    ok("cardano koios: tip and epoch params parse from the live fixtures",
+      tip.absSlot === 203134678 && tip.blockHeight === 14201699 && tip.epochNo === 667
+      && params.minFeeA === 44 && params.minFeeB === 155381 && params.coinsPerUtxoSize === 4310);
+    ok("cardano koios: the live empty UTxO body parses to an empty set (a true zero, not a failure)",
+      Array.isArray(parseKoiosUtxos(fixture120("koios-address-utxos-empty.json"))) && parseKoiosUtxos(fixture120("koios-address-utxos-empty.json")).length === 0);
+    const POLICY_120 = "bb".repeat(28);
+    const popBody = [
+      { tx_hash: "aa".repeat(32), tx_index: 0, address: ADA_ADDR_120, value: "10000000", asset_list: [] },
+      { tx_hash: "cc".repeat(32), tx_index: 1, address: ADA_ADDR_120, value: "2500000", asset_list: [{ policy_id: POLICY_120, asset_name: "abcd", quantity: "777", fingerprint: "asset1test", decimals: 0 }] },
+    ];
+    const pop = parseKoiosUtxos(popBody);
+    ok("cardano koios: a populated UTxO parses with lovelace and asset quantities kept as exact strings",
+      pop[1].lovelace === "2500000" && pop[1].assets[0].policyId === POLICY_120 && pop[1].assets[0].quantity === "777" && pop[1].assets[0].fingerprint === "asset1test");
+    let threw = 0;
+    try { parseKoiosUtxos([{ tx_hash: "zz", tx_index: 0, value: "5", asset_list: [] }]); } catch { threw++; }
+    try { parseKoiosUtxos([{ tx_hash: "aa".repeat(32), tx_index: 0, value: "1.5", asset_list: [] }]); } catch { threw++; }
+    try { parseKoiosTip([{ abs_slot: "soon" }]); } catch { threw++; }
+    ok("cardano koios: garbled bodies throw — a failed read can never coerce into a balance", threw === 3);
+    const seenUrls = [];
+    const stubAcct = async (url) => { seenUrls.push(String(url)); return jsonRes120(popBody); };
+    const acct = await getCardanoAccount(ADA_ADDR_120, { fetchImpl: stubAcct });
+    ok("cardano account: the balance is the UTxO sum, tokens aggregate across UTxOs, and the read rides the array-literal GET form",
+      acct.lovelace === "12500000" && acct.ada === 12.5 && acct.tokens.length === 1 && acct.tokens[0].quantity === "777" && acct.tokens[0].symbol === "asset1test"
+      && seenUrls.length === 1 && decodeURIComponent(seenUrls[0]).includes(`_addresses={${ADA_ADDR_120}}`));
+    ok("cardano account: the lovelace read behind the milestone credit watch returns exact base units",
+      (await getCardanoBalanceLovelace(ADA_ADDR_120, { fetchImpl: stubAcct })) === 12500000n
+      && (await getCardanoBalance(ADA_ADDR_120, { fetchImpl: stubAcct })) === 12.5);
+  }
+
+  // Money math + the payment builder, byte-pinned.
+  {
+    const params = parseKoiosEpochParams(fixture120("koios-epoch-params.json"));
+    ok("cardano fees: the ledger formula and the min-UTxO rule run over the live params",
+      cardanoFeeForTxSize(200, params) === 164181 && cardanoMinUtxoLovelace(69, params) === 4310 * 229);
+    const node = cardanoPaymentNode(ABANDON_120);
+    const DEST_120 = cardanoAddress(fixture120("cardano-derivation-vectors.json").vectors[1].phrase);
+    const bare = (h, i, lovelace, assets = []) => ({ txHash: h, index: i, address: ADA_ADDR_120, lovelace: String(lovelace), assets });
+    const utxo10 = bare("aa".repeat(32), 0, 10000000);
+    const built = buildCardanoPaymentTx({ paymentNode: node, paymentPub: node.publicKey, utxos: [utxo10], to: DEST_120, amountLovelace: 5000000n, changeAddress: ADA_ADDR_120, params, ttlSlot: 203134678 + 7200 });
+    ok("cardano builder: a 5 ADA payment from one 10 ADA UTxO is byte-pinned (tx hash, CBOR, fee, change)",
+      built.txHash === "c6f361349cdd6ce1b9aa30a668943f5576104766b2607c435d5763a3c28f2dc0"
+      && built.feeLovelace === "168273" && built.changeLovelace === "4831727" && built.inputsUsed === 1
+      && built.cborHex === "84a400d9010281825820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0001828258390119e07fbcc7577359d6c51f1e49cf1b0bf4c943b48ba4e4905a8702e49558e969caa9e57adcfc40b9907eb794363b590faf42fff48c38eb881a004c4b40825839010fdc780023d8be7c9ff3a6bdc0d8d3b263bd0cc12448c40948efbf42e557890352095f1cf6fd2b7d1a28e3c3cb029f48cf34ff890a28d1761a0049b9ef021a00029151031a0c1bb2f6a100818258207ea09a34aebb13c9841c71397b1cabfec5ddf950405293dee496cac2f437480a58404c8b2b8b30d96b89a8cf002e1ad4a991e2f39d3098742d2eac8ab48b450bd598202bbad9a00e812553769fc0086d2295bb7e0caa0058a2b269473731161c3b07f5f6");
+    const POLICY_120 = "bb".repeat(28);
+    const tokUtxo = bare("cc".repeat(32), 1, 10000000, [{ policyId: POLICY_120, assetName: "abcd", fingerprint: "asset1test", decimals: 0, quantity: "777" }]);
+    const builtTok = buildCardanoPaymentTx({ paymentNode: node, paymentPub: node.publicKey, utxos: [tokUtxo], to: DEST_120, amountLovelace: 5000000n, changeAddress: ADA_ADDR_120, params, ttlSlot: 203134678 + 7200 });
+    ok("cardano builder: a token-bearing input's assets ride into the change output untouched — never burned",
+      builtTok.cborHex.includes(POLICY_120) && builtTok.feeLovelace === "169989" && builtTok.changeLovelace === "4830011");
+    const folded = buildCardanoPaymentTx({ paymentNode: node, paymentPub: node.publicKey, utxos: [utxo10], to: DEST_120, amountLovelace: 9831727n, changeAddress: ADA_ADDR_120, params, ttlSlot: 203134678 + 7200 });
+    ok("cardano builder: sending the balance minus the fee folds the remainder — no change output, the fee stays the network's",
+      folded.changeLovelace === "0" && folded.feeLovelace === "168273" && folded.txHash === "7b1596bcd2d17ce7f82c647ee0c41f2eeb77c0e51bb9419b2ba974f9fb8bd287");
+    let minErr = null, insuffErr = null;
+    try { buildCardanoPaymentTx({ paymentNode: node, paymentPub: node.publicKey, utxos: [utxo10], to: DEST_120, amountLovelace: 500000n, changeAddress: ADA_ADDR_120, params, ttlSlot: 1 }); } catch (e) { minErr = e; }
+    try { buildCardanoPaymentTx({ paymentNode: node, paymentPub: node.publicKey, utxos: [utxo10], to: DEST_120, amountLovelace: 50000000n, changeAddress: ADA_ADDR_120, params, ttlSlot: 1 }); } catch (e) { insuffErr = e; }
+    ok("cardano builder: a sub-minimum output refuses naming the min-UTxO minimum, and an uncovered amount refuses naming the shortfall",
+      !!minErr && /min-UTxO rule/.test(minErr.message) && /0\.96975 ADA/.test(minErr.message)
+      && !!insuffErr && /Not enough confirmed ADA/.test(insuffErr.message));
+    ok("cardano intent: the send sentence is human-readable with the exact fee",
+      formatCardanoSendIntent({ amount: "5", to: DEST_120, feeAda: "0.168273" }).startsWith(`Send 5 ADA to ${DEST_120} on Cardano. Network fee about 0.168273 ADA.`));
+  }
+
+  // planCardanoSend over stubbed Koios reads builds the
+  // very transaction the pure builder builds (TTL = tip
+  // slot + 7200), and submit rides Koios first, Blockfrost
+  // only when the operator configures a project ID.
+  {
+    const DEST_120 = cardanoAddress(fixture120("cardano-derivation-vectors.json").vectors[1].phrase);
+    const utxoBody = [{ tx_hash: "aa".repeat(32), tx_index: 0, address: ADA_ADDR_120, value: "10000000", asset_list: [] }];
+    const stubReads = async (url) => {
+      const u = String(url);
+      if (u.includes("/tip")) return jsonRes120(fixture120("koios-tip.json"));
+      if (u.includes("/epoch_params")) return jsonRes120(fixture120("koios-epoch-params.json"));
+      if (u.includes("/address_utxos")) return jsonRes120(utxoBody);
+      throw new Error("unexpected fetch in cardano plan pin: " + u);
+    };
+    const plan = await planCardanoSend(ABANDON_120, { to: DEST_120, amountLovelace: 5000000n, fetchImpl: stubReads });
+    ok("cardano plan: tip -> params -> UTxOs over keyless GETs builds the byte-pinned transaction",
+      plan.txHash === "c6f361349cdd6ce1b9aa30a668943f5576104766b2607c435d5763a3c28f2dc0" && plan.from === ADA_ADDR_120 && plan.to === DEST_120 && plan.feeAda === 0.168273);
+    let badErr = null;
+    try { await planCardanoSend(ABANDON_120, { to: "not-an-address", amountLovelace: 5000000n, fetchImpl: stubReads }); } catch (e) { badErr = e; }
+    ok("cardano plan: an invalid destination refuses before any network read", !!badErr && /not a valid Cardano address/.test(badErr.message));
+    ok("cardano submit config: the Blockfrost project ID ships unset — Koios is the only submit path until the operator registers one",
+      CARDANO_BLOCKFROST_PROJECT_ID === "" && cardanoSubmitConfig().projectId === null && cardanoSubmitConfig({ projectId: " pid " }).projectId === "pid");
+    const HASH_120 = "ef".repeat(32);
+    const calls = [];
+    const stubKoiosOk = async (url, opts) => { calls.push({ url: String(url), opts }); return jsonRes120(HASH_120); };
+    const h1 = await submitCardanoTx(plan.cborHex, { fetchImpl: stubKoiosOk, txHash: plan.txHash });
+    ok("cardano submit: Koios /submittx receives the exact signed CBOR as application/cbor and its hash is returned",
+      h1 === HASH_120 && calls.length === 1 && calls[0].url.endsWith("/submittx") && calls[0].opts.headers["Content-Type"] === "application/cbor"
+      && scureHex.encode(calls[0].opts.body) === plan.cborHex);
+    let koiosErr = null;
+    const stubKoios400 = async () => ({ ok: false, status: 400, json: async () => null, text: async () => "bad tx" });
+    try { await submitCardanoTx(plan.cborHex, { fetchImpl: stubKoios400, txHash: plan.txHash }); } catch (e) { koiosErr = e; }
+    ok("cardano submit: a Koios rejection surfaces as-is when no Blockfrost ID is configured (no silent second path)",
+      !!koiosErr && /Koios rejected the transaction \(HTTP 400\)/.test(koiosErr.message));
+    const bfCalls = [];
+    const stubFallback = async (url, opts) => {
+      bfCalls.push({ url: String(url), opts });
+      if (String(url).includes("koios")) return { ok: false, status: 500, json: async () => null, text: async () => "down" };
+      return jsonRes120(HASH_120);
+    };
+    const h2 = await submitCardanoTx(plan.cborHex, { fetchImpl: stubFallback, txHash: plan.txHash, projectId: "test-project-id" });
+    ok("cardano submit: with a project ID configured, a Koios failure falls back to Blockfrost /tx/submit carrying the ID",
+      h2 === HASH_120 && bfCalls.length === 2 && bfCalls[1].url === "https://cardano-mainnet.blockfrost.io/api/v0/tx/submit" && bfCalls[1].opts.headers.project_id === "test-project-id");
+  }
+
+  // The 1Click table entry + swap-universe helpers.
+  {
+    const adaEntry = oneClickAssetFor("cardano", "ada");
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_120);
+    ok("cardano 1click: ADA is the table's seventh family (nep141:cardano.omft.near, 6 decimals, native)",
+      !!adaEntry && adaEntry.asset === "nep141:cardano.omft.near" && adaEntry.decimals === 6 && adaEntry.native === true
+      && CARDANO_SWAP_CHAIN_ID === 20000000000017 && CARDANO_SWAP_NATIVE_TOKEN === "ada" && CARDANO_EXPLORER === "https://cardanoscan.io");
+    ok("cardano 1click: the pair serves both directions and refuses the same-asset pair",
+      !!oneClickSupportsPair({ fromChainKey: "cardano", toChainKey: "base", fromTokenAddress: "ada", toTokenAddress: USDC_BASE_120 })
+      && !!oneClickSupportsPair({ fromChainKey: "base", toChainKey: "cardano", fromTokenAddress: USDC_BASE_120, toTokenAddress: "ada" })
+      && !oneClickSupportsPair({ fromChainKey: "cardano", toChainKey: "cardano", fromTokenAddress: "ada", toTokenAddress: "ada" }));
+    ok("cardano helpers: symbols, the native token and the own-address seam resolve — a foreign family's address never passes",
+      tokenSymbolOn("cardano", "ada") === "ADA" && destNativeTokenAddress("cardano") === "ada" && isDestNativeToken("cardano", "ada") === true
+      && swapChainOf("cardano").chainId === CARDANO_SWAP_CHAIN_ID && swapOwnAddressFor("cardano", { cardano: ADA_ADDR_120 }) === ADA_ADDR_120
+      && swapOwnAddressFor("cardano", { cardano: "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf3pz" }) === null
+      && swapAddressBookEntry({ cardano: ADA_ADDR_120 }, "cardano") === ADA_ADDR_120);
+  }
+
+  // Fee echo + quote parse over the LIVE fixtures: the
+  // 50 bps echo is the shipped transform in both
+  // directions, and Cardano pairs floor at the slow-class
+  // duration whatever the API estimates.
+  {
+    const adaEntry = oneClickAssetFor("cardano", "ada");
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_120);
+    const vOut = verifyOneClickFeeEcho(fixture120("quote-ada-out-fee50.json"), { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_120);
+    const vIn = verifyOneClickFeeEcho(fixture120("quote-ada-in-fee50.json"), { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_120);
+    ok("cardano 1click echo: the live fee-50 quotes verify against the transform (50 total, 25 to Fluid) in BOTH directions",
+      vOut.ok === true && vOut.totalBps === 50 && vOut.fluidBps === 25 && vIn.ok === true && vIn.fluidBps === 25);
+    const tampered = clone120(fixture120("quote-ada-out-fee50.json")); tampered.quoteRequest.appFees[0].fee = 30;
+    ok("cardano 1click echo: a tampered split fails verification",
+      verifyOneClickFeeEcho(tampered, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_120).ok === false);
+    const rOut = parseOneClickQuote(fixture120("quote-ada-out-fee50.json"), { fromEntry: adaEntry, toEntry: usdcBase, amountRaw: "100000000", refundTo: ADA_ADDR_120, recipient: EVM_120 }, {});
+    ok("cardano 1click parse: ADA -> USDC carries the enterprise deposit address, the output and NO memo — and floors at the slow-class duration, never the API's 29 s",
+      rOut.provider === "oneclick" && rOut.oneclick.depositAddress === "addr1vxw4klakdnpz9pledyy38p20cydj0mqfdr0fshg4c8g5pugrekfd2"
+      && rOut.toAmount === "14639175" && rOut.oneclick.depositMemo === null && rOut.executionDuration === CARDANO_ONECLICK_MIN_DURATION_SEC && CARDANO_ONECLICK_MIN_DURATION_SEC === 300);
+    const rIn = parseOneClickQuote(fixture120("quote-ada-in-fee50.json"), { fromEntry: usdcBase, toEntry: adaEntry, amountRaw: "15000000", refundTo: EVM_120, recipient: ADA_ADDR_120 }, {});
+    ok("cardano 1click parse: USDC -> ADA deposits to the wallet's EVM address, pays out to the wallet's ADA address, and is slow-class too",
+      rIn.oneclick.depositAddress === "0xB9F597e18C088dA7990eBEC766Ff33147A0D0791" && rIn.toAmount === "100892793" && rIn.executionDuration === 300);
+    const rFree = parseOneClickQuote(fixture120("quote-ada-out-nofee.json"), { fromEntry: adaEntry, toEntry: usdcBase, amountRaw: "100000000", refundTo: ADA_ADDR_120, recipient: EVM_120 }, {});
+    ok("cardano 1click parse: the fee-free live quote carries exactly 1Click's standing 20 bps and nothing for Fluid",
+      verifyOneClickFeeEcho(fixture120("quote-ada-out-nofee.json"), { expectedTotalBps: 20, expectedFluidBps: 0 }, FEE_RECIPIENT_120).ok === true && rFree.executionDuration === 300);
+  }
+
+  // The two-pass capture for ADA through the real route
+  // search, the floor refusal, and the executor seam
+  // (mirrors §117).
+  {
+    const args120 = { fromChainKey: "cardano", toChainKey: "base", fromTokenAddress: "ada", toTokenAddress: USDC_BASE_120, fromAmount: "100000000", fromAddress: ADA_ADDR_120, toAddress: EVM_120 };
+    const nofee = fixture120("quote-ada-out-nofee.json"), fee50 = fixture120("quote-ada-out-fee50.json");
+    const bodies = [];
+    const twoPass = async (url, opts) => { const b = JSON.parse(opts.body); bodies.push(b); return jsonRes120(Array.isArray(b.appFees) && b.appFees.length ? fee50 : nofee); };
+    const route = await getOneClickSwapRoute(args120, { feeRecipient: FEE_RECIPIENT_120, fetchImpl: twoPass });
+    ok("cardano 1click capture: two passes run and the charged pass requests F=50 to Fluid's recipient",
+      bodies.length === 2 && bodies[1].appFees?.[0]?.recipient === FEE_RECIPIENT_120 && bodies[1].appFees?.[0]?.fee === 50);
+    ok("cardano 1click capture: the verified ADA route collects 25 bps with the echo verified",
+      route.platformFeeCollecting === true && route.platformFeeBps === 25 && route.oneclick.feeVerified === true && route.oneclick.requestedFeeBps === 50 && route.oneclick.totalFeeBps === 50);
+    let calls = 0;
+    const onePass = async () => { calls++; return jsonRes120(nofee); };
+    const free = await getOneClickSwapRoute(args120, { fetchImpl: onePass });
+    ok("cardano 1click capture: with no fee recipient configured the ADA route ships fee-free in ONE pass (the shipped config state)",
+      free.platformFeeCollecting === false && calls === 1);
+    let floorErr = null;
+    const floorFetch = async () => jsonRes120(fixture120("quote-ada-out-1-nofee.json"), false, 400);
+    try { await getOneClickSwapRoute({ ...args120, fromAmount: "1000000" }, { fetchImpl: floorFetch }); } catch (e) { floorErr = e; }
+    ok("cardano 1click floor: a 1 ADA quote refuses with 1Click's own 1.2 ADA floor named — parsed from the API's refusal, never invented",
+      !!floorErr && floorErr.oneclickBelowFloor?.minRaw === "1200000" && floorErr.oneclickBelowFloor?.minHuman === "1.2" && /1\.2 ADA/.test(floorErr.message));
+    const storage = memStorage120();
+    const seen = [];
+    let atSend = null;
+    const fx = fixture120("quote-ada-out-fee50.json");
+    const execRoute = parseOneClickQuote(fx, { fromEntry: oneClickAssetFor("cardano", "ada"), toEntry: oneClickAssetFor("base", USDC_BASE_120), amountRaw: "100000000", refundTo: ADA_ADDR_120, recipient: EVM_120 }, {});
+    const out = await executeOneClickSwapRoute({}, execRoute, () => {}, {
+      storage,
+      sendImpl: async (w, p) => { seen.push(p); atSend = loadOneClickSwapRecords(storage)[0] || null; return { hash: "ab".repeat(32) }; },
+      submitImpl: async () => true,
+      onDeposit: (r) => { seen.push({ deposited: r }); },
+    });
+    ok("cardano 1click exec: the deposit is a plain transfer of exactly the quoted 100 ADA to the quote's enterprise deposit address, no memo/tag",
+      seen[0].to === fx.quote.depositAddress && seen[0].amountRaw === "100000000" && seen[0].token == null && seen[0].destinationTag == null
+      && !!atSend && atSend.depositTxHash == null && out.record.depositTxHash === out.hashes[0] && out.record.refundTo === ADA_ADDR_120);
+  }
+
+  // App + core wiring (source pins, the §116 pattern).
+  {
+    const appSrc120 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const coreSrc120 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("cardano app: the family is on the home list, loads its Koios balance, and the sheet, receive panel and send route all open it",
+      appSrc120.includes('"bitcoincash", "cardano"]') && appSrc120.includes("adaAddr = cardanoAddress(w.mnemonic.phrase)")
+      && appSrc120.includes("getCardanoBalance(adaAddr)") && appSrc120.includes("function openCardanoSheet()")
+      && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
+      && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
+    ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
+      appSrc120.includes('"injective", "dydx", "cardano"]') && appSrc120.includes('if (netKey === "cardano")')
+      && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
+      && appSrc120.includes("cardano: adaAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr"));
+    ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
+      coreSrc120.includes('case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));')
+      && coreSrc120.includes('asset: "nep141:cardano.omft.near"'));
+  }
 }
 
 

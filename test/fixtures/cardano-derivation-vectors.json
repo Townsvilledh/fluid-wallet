@@ -1,0 +1,31 @@
+{
+  "generated": "2026-11-15",
+  "method": "hand-rolled with @noble/hashes+@noble/curves+@scure/bip39+@scure/base (versions vendored in fluid-wallet), cross-checked against @emurgo/cardano-serialization-lib-nodejs v14",
+  "vectors": [
+    {
+      "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      "path": "m/1852'/1815'/0'/0/0 (+ stake 2/0)",
+      "base_address": "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv",
+      "stake_address": "stake1u8j40zgr2gy4788kl54h6x3gu0pukq5lfr8nflufpg5dzaskqlx2l",
+      "base_matches_csl": true,
+      "stake_matches_csl": true,
+      "signature_matches_csl": true,
+      "signature_verifies_rfc8032": true
+    },
+    {
+      "phrase": "eight country switch draw meat scout mystery blade tip drift useless good keep usage title",
+      "path": "m/1852'/1815'/0'/0/0 (+ stake 2/0)",
+      "base_address": "addr1qyv7qlaucathxkwkc503ujw0rv9lfj2rkj96feyst2rs9ey4tr5knj4fu4adelzqhxg8adu5xca4jra0gtllfrpcawyqzajfkn",
+      "stake_address": "stake1ux2436tfe25727kul3qtnyr7k72rvw6ep7h59ll53suwhzq05v5j9",
+      "base_matches_csl": true,
+      "stake_matches_csl": true,
+      "signature_matches_csl": true,
+      "signature_verifies_rfc8032": true
+    }
+  ],
+  "cip3_icarus": {
+    "phrase": "eight country switch draw meat scout mystery blade tip drift useless good keep usage title",
+    "expected_root_xprv_96B": "c065afd2832cd8b087c4d9ab7011f481ee1e0721e78ea5dd609f3ab3f156d245d176bd8fd4ec60b4731c3918a2a72a0226c0cd119ec35b47e4d55884667f552a23f7fdcd4a10c6cd2c7393ac61d877873e248f417634aa3d812af327ffe9d620",
+    "match": true
+  }
+}

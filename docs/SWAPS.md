@@ -1125,3 +1125,49 @@ generic Any messages with MsgTransfer first).
   other Cosmos chains Fluid already holds join in a later
   slice. Funded settlement on this rail is unproven until
   the first funded drill, like every rail before it.
+
+## Cardano — presence + 1Click ADA (2026-11-15)
+
+Cardano joins Fluid whole: the family itself (derive, hold,
+receive, send) and ADA as the seventh 1Click family, swappable
+in both directions. The implementation is hand-rolled from
+primitives the bundle already carries — CIP-1852 derivation
+(Icarus root + Khovratovich CKD + extended-key Ed25519
+signing), a minimal CBOR encoder and a min-UTxO-aware payment
+builder — verified byte-for-byte against
+cardano-serialization-lib during the probe (addresses,
+signatures, the official CIP-0003 vector). CSL/Mesh WASM was
+rejected on measured bundle weight (+~2.75 MB, +43%).
+
+- **Reads** are keyless Koios GETs (tip, epoch params, the
+  address_utxos array-literal GET form); a failed read shows
+  "couldn't load", never a fake zero. Native-token balances
+  display from the UTxO asset lists; token sends are not in
+  this slice, and neither are delegation/rewards.
+- **The rail** is 1Click, unmodified: the same two-pass fee
+  flow and echo verification as the six families before it.
+  Capture was probed live for ADA in both directions — the
+  fee-50 echo is the shipped transform (Fluid 25 / 1Click
+  25). The floor is 1Click's own 1.2 ADA out, read from its
+  refusal and named before the user commits. Cardano pairs
+  are slow-class by construction (the deposit must confirm
+  on Cardano before the solver leg starts), so their cards
+  floor at five minutes and never wear the fast badge.
+- **Broadcast is the one unverified link.** Koios POST —
+  including /submittx — never answered from the build
+  environment (45–240 s windows, while its GETs answer in
+  seconds and POSTs to other hosts work). Submit is built to
+  Koios's published spec (raw CBOR, application/cbor) with a
+  Blockfrost project-ID config seam as the fallback path;
+  the first funded Cardano send is its proof — the same
+  status every rail's funded settlement carries until its
+  first drill. Transaction construction and signing carry no
+  such caveat: they are byte-pinned against the CSL-verified
+  fixtures in the suite.
+- **Intra-Cardano DEX is deferred, plainly.** SteelSwap has
+  the right shape (keyless build, unsigned tx CBOR, a
+  first-class partner fee field) but its capture is
+  UNVERIFIED — its POSTs stall from this environment and no
+  partner id is registered. DexHunter was unreachable and
+  MinSwap's aggregator shows no partner surface; neither is
+  planned against until it can be probed.

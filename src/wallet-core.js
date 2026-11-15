@@ -5,7 +5,8 @@
 // leave the device unencrypted. One seed phrase = every chain below.
 import { ethers } from "ethers";
 import { HDKey } from "@scure/bip32";
-import { mnemonicToSeedSync } from "@scure/bip39";
+import { mnemonicToSeedSync, mnemonicToEntropy } from "@scure/bip39";
+import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
 import * as btc from "@scure/btc-signer";
 import { base58, base58check, base58xrp, base64, base32, bech32, bech32m, hex } from "@scure/base";
 import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess, defaultRegistryTypes } from "@cosmjs/stargate";
@@ -18,6 +19,7 @@ import { Any as ProtobufAny } from "cosmjs-types/google/protobuf/any";
 import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
 import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
 import { hmac } from "@noble/hashes/hmac.js";
+import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256, sha512, sha512_256 } from "@noble/hashes/sha2.js";
 import { keccak_256, sha3_256 } from "@noble/hashes/sha3.js";
@@ -801,10 +803,10 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
-  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", ADA: "ADAUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
   TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
-const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
+const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
 /* RED-TEAM 2026-11-06 (Finding C): getPrices() takes Binance's word alone
  * (CoinGecko only fills gaps and is never compared), yet the agent runtime
  * prices its USD spending CAPS from it — one wrong or malicious response
@@ -2010,6 +2012,552 @@ export async function broadcastBitcoinCashTx(hex, fallbackTxid) {
 export async function sendBitcoinCash(phrase, opts) {
   const plan = await planBitcoinCashSend(phrase, opts);
   return broadcastBitcoinCashTx(plan.hex, plan.txid);
+}
+
+// ---------- Cardano (CIP-1852 from the same phrase — hand-rolled, audit gap #3) ----------
+// Cardano joins Fluid with NO new dependency and NO WASM: the
+// derivation, signing and CBOR below are hand-rolled from the
+// primitives the bundle already carries (@noble/hashes,
+// @noble/curves, @scure/bip39, @scure/base), and were verified
+// byte-for-byte against cardano-serialization-lib during the
+// 2026-11-15 probe (research_notes/fluid-cardano-20261115/:
+// addresses AND signatures byte-identical to CSL, plus an
+// exact match on the official CIP-0003 Icarus test vector).
+// CSL itself would add ~2.75 MB of WASM (+43%) to a bundle
+// whose weight is already the wallet's known loading problem.
+//
+// Cardano derivation is NOT standard BIP32 and NOT SLIP-0010:
+// 1. Root (Icarus, CIP-0003): PBKDF2-HMAC-SHA512, password ""
+//    (no passphrase support — the same posture as the other
+//    families), salt = the BIP39 ENTROPY bytes (not the seed),
+//    4096 iterations, 96 bytes out, then the bit tweaks.
+// 2. CKD (Khovratovich BIP32-Ed25519): soft derivation exists
+//    and CIP-1852's roles need it; the left half accumulates
+//    as kL' = kL + 8 * ZL with ZL truncated to 28 bytes — the
+//    detail that decides whether addresses match every other
+//    Cardano wallet (both wrong variants fail against CSL).
+// 3. Signing is extended-key Ed25519: the scalar is the stored
+//    kL and the nonce prefix is kR — @noble/curves' sign()
+//    (RFC 8032 seed signing) cannot be used.
+// Path: m/1852'/1815'/0'/role/index — role 0 = payment,
+// 2 = stake. The wallet uses ONE base address (payment 0/0 +
+// stake 2/0) for receive, change and sends, the scalar-family
+// pattern (LTC/DOGE/BCH derive one address too). Delegation,
+// rewards and native-token SENDS are out of this slice;
+// native-token balances display (in the Cardano sheet) from
+// the UTxO asset lists.
+//
+// DATA is Koios (api.koios.rest), keyless, GET only: tip,
+// epoch params and the address_utxos PostgREST array-literal
+// GET form — all probed live 2026-11-15. Koios POST never
+// answered from the build environment (45–240 s windows), so
+// SUBMIT is the one unverified link in this family: it is
+// built to Koios's published spec (POST /submittx, raw CBOR
+// body, application/cbor — the same shape as Blockfrost's
+// /tx/submit) with a Blockfrost project-ID config seam as
+// the fallback path, and the first funded Cardano send is
+// its proof — the same status every rail's funded settlement
+// carries until its first drill (docs/SWAPS.md says so).
+export const CARDANO_EXPLORER = "https://cardanoscan.io";
+const KOIOS_API = "https://api.koios.rest/api/v1";
+/** Build-time config: a Blockfrost project ID for the submit
+ *  fallback (and nothing else — reads stay on keyless Koios).
+ *  Empty until the operator registers one (a free ID covers
+ *  /tx/submit): the ONECLICK_JWT / SKIP_AFFILIATE precedent. */
+export const CARDANO_BLOCKFROST_PROJECT_ID = "";
+export function cardanoSubmitConfig({ projectId = CARDANO_BLOCKFROST_PROJECT_ID } = {}) {
+  const p = typeof projectId === "string" ? projectId.trim() : "";
+  return { projectId: p || null };
+}
+
+const adaLeInt = (b) => b.reduce((a, x, i) => a + (BigInt(x) << BigInt(8 * i)), 0n);
+const adaIntLe = (n, len = 32) => {
+  const out = new Uint8Array(len);
+  let v = n;
+  for (let i = 0; i < len; i++) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  return out;
+};
+const ADA_ED_L = ed25519.Point.Fn.ORDER;
+const ADA_MOD_2_256 = 2n ** 256n;
+const ADA_HARDENED = 0x80000000;
+
+/** The Icarus master key (CIP-0003) from BIP39 entropy:
+ *  96 bytes = kL(32) || kR(32) || chainCode(32), bit-tweaked.
+ *  Exported for the CIP-0003 test-vector pin. */
+export function cardanoMasterKeyFromEntropy(entropy) {
+  const data = pbkdf2(sha512, new Uint8Array(0), entropy, { c: 4096, dkLen: 96 });
+  data[0] &= 0xf8;
+  data[31] &= 0x1f;
+  data[31] |= 0x40;
+  return data;
+}
+const adaSplitNode = (xprv) => ({ kL: xprv.slice(0, 32), kR: xprv.slice(32, 64), c: xprv.slice(64, 96) });
+function adaPubFromKL(kL) {
+  const a = adaLeInt(kL) % ADA_ED_L;
+  return ed25519.Point.BASE.multiply(a).toBytes();
+}
+/** Khovratovich CKD: hardened derives over the 64-byte
+ *  extended key (prefix 0x00/0x01), soft over the parent
+ *  public key (0x02/0x03); kL accumulates 8 * ZL with ZL
+ *  truncated to its first 28 bytes. */
+function adaCkdPriv(node, index) {
+  const idx = new Uint8Array(4);
+  new DataView(idx.buffer).setUint32(0, index, true);
+  let zData, cData;
+  if (index >= ADA_HARDENED) {
+    zData = new Uint8Array([0x00, ...node.kL, ...node.kR, ...idx]);
+    cData = new Uint8Array([0x01, ...node.kL, ...node.kR, ...idx]);
+  } else {
+    const A = adaPubFromKL(node.kL);
+    zData = new Uint8Array([0x02, ...A, ...idx]);
+    cData = new Uint8Array([0x03, ...A, ...idx]);
+  }
+  const Z = hmac(sha512, node.c, zData);
+  const C = hmac(sha512, node.c, cData);
+  const kLp = adaIntLe((adaLeInt(Z.slice(0, 28)) * 8n + adaLeInt(node.kL)) % ADA_MOD_2_256);
+  const kRp = adaIntLe((adaLeInt(Z.slice(32, 64)) + adaLeInt(node.kR)) % ADA_MOD_2_256);
+  return { kL: kLp, kR: kRp, c: C.slice(32, 64) };
+}
+/** Extended-key Ed25519 signing (NOT RFC 8032 seed signing):
+ *  r = SHA512(kR || M) mod L, S = r + SHA512(R || A || M) * kL.
+ *  Exported so the suite can pin the CSL-verified signature. */
+export function cardanoSignExtended(node, msg) {
+  const A = adaPubFromKL(node.kL);
+  const a = adaLeInt(node.kL) % ADA_ED_L;
+  const r = adaLeInt(sha512(new Uint8Array([...node.kR, ...msg]))) % ADA_ED_L;
+  const R = ed25519.Point.BASE.multiply(r).toBytes();
+  const h = adaLeInt(sha512(new Uint8Array([...R, ...A, ...msg]))) % ADA_ED_L;
+  const S = (r + h * a) % ADA_ED_L;
+  return new Uint8Array([...R, ...adaIntLe(S)]);
+}
+function cardanoAccountNode(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const entropy = mnemonicToEntropy(clean, bip39EnglishWordlist);
+  const root = adaSplitNode(cardanoMasterKeyFromEntropy(entropy));
+  return [1852 + ADA_HARDENED, 1815 + ADA_HARDENED, ADA_HARDENED].reduce(adaCkdPriv, root);
+}
+/** The payment key node (role 0, index 0) — exported for the
+ *  signature pin; the address/signing paths derive it here. */
+export function cardanoPaymentNode(phrase) {
+  const node = [0, 0].reduce(adaCkdPriv, cardanoAccountNode(phrase));
+  return { ...node, publicKey: adaPubFromKL(node.kL) };
+}
+function cardanoStakeNode(phrase) {
+  const node = [2, 0].reduce(adaCkdPriv, cardanoAccountNode(phrase));
+  return { ...node, publicKey: adaPubFromKL(node.kL) };
+}
+function adaBaseAddress(payPub, stakePub) {
+  const payHash = blake2b(payPub, { dkLen: 28 });
+  const stakeHash = blake2b(stakePub, { dkLen: 28 });
+  const raw = new Uint8Array([0x01, ...payHash, ...stakeHash]); // header 0x01 = base key/key, mainnet
+  return bech32.encode("addr", bech32.toWords(raw), 1023);
+}
+function adaStakeAddress(stakePub) {
+  const stakeHash = blake2b(stakePub, { dkLen: 28 });
+  const raw = new Uint8Array([0xe1, ...stakeHash]); // header 0xE1 = reward key, mainnet
+  return bech32.encode("stake", bech32.toWords(raw), 1023);
+}
+function cardanoKeys(phrase) {
+  const pay = cardanoPaymentNode(phrase);
+  const stake = cardanoStakeNode(phrase);
+  return {
+    paymentNode: pay, stakeNode: stake,
+    address: adaBaseAddress(pay.publicKey, stake.publicKey),
+    stakeAddress: adaStakeAddress(stake.publicKey),
+  };
+}
+export function cardanoAddress(phrase) { return cardanoKeys(phrase).address; }
+export function cardanoStakeAddress(phrase) { return cardanoKeys(phrase).stakeAddress; }
+/** Decode a Shelley address to its raw bytes (throws on any
+ *  malformed input — wrong hrp, bad checksum, Byron form). */
+export function cardanoAddressToBytes(address) {
+  const s = String(address || "").trim();
+  const dec = bech32.decode(s, 1023);
+  if (dec.prefix !== "addr") throw new Error("That is not a Cardano payment address.");
+  const raw = bech32.fromWords(dec.words);
+  if (!raw.length || (raw[0] & 0x0f) !== 1) throw new Error("That address is not a Cardano mainnet address.");
+  const type = raw[0] >> 4;
+  if (type > 7) throw new Error("That is not a Shelley address.");
+  if (raw.length < 29) throw new Error("That address is too short to be a Cardano address.");
+  return Uint8Array.from(raw);
+}
+export function isValidCardanoAddress(address) {
+  try { cardanoAddressToBytes(address); return true; } catch { return false; }
+}
+
+// ----- minimal CBOR (the payment-tx subset) -----
+// Major types 0 (uint), 2 (bytes), 3 (text), 4 (array),
+// 5 (map), 6 (tag — only 258, the Conway set tag, is used),
+// 7 (true/false/null). Integers encode shortest-form, the
+// canonical shape the ledger's own serialisers produce.
+class CborSet {
+  constructor(items) { this.items = items; }
+}
+function adaCborHead(major, n) {
+  const m = major << 5;
+  if (n < 24) return Uint8Array.of(m | n);
+  if (n < 256) return Uint8Array.of(m | 24, n);
+  if (n < 65536) return Uint8Array.of(m | 25, (n >> 8) & 0xff, n & 0xff);
+  if (n < 4294967296) {
+    return Uint8Array.of(m | 26, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+  }
+  const out = new Uint8Array(9);
+  out[0] = m | 27;
+  let v = BigInt(n);
+  for (let i = 8; i >= 1; i--) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  return out;
+}
+const adaCat = (parts) => {
+  const len = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+export function cborEncode(value) {
+  if (value instanceof CborSet) return adaCat([adaCborHead(6, 258), cborEncode(value.items)]);
+  if (typeof value === "bigint") {
+    if (value < 0n || value > 0xffffffffffffffffn) throw new Error("CBOR: integer out of range.");
+    return adaCborHead(0, value <= 0xffffffffn ? Number(value) : value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 0) throw new Error("CBOR: only non-negative integers are supported.");
+    return adaCborHead(0, value);
+  }
+  if (value instanceof Uint8Array) return adaCat([adaCborHead(2, value.length), value]);
+  if (typeof value === "string") {
+    const bytes = new TextEncoder().encode(value);
+    return adaCat([adaCborHead(3, bytes.length), bytes]);
+  }
+  if (Array.isArray(value)) return adaCat([adaCborHead(4, value.length), ...value.map(cborEncode)]);
+  if (value instanceof Map) {
+    const parts = [adaCborHead(5, value.size)];
+    for (const [k, v] of value) { parts.push(cborEncode(k), cborEncode(v)); }
+    return adaCat(parts);
+  }
+  if (value === true) return Uint8Array.of(0xf5);
+  if (value === false) return Uint8Array.of(0xf4);
+  if (value === null) return Uint8Array.of(0xf6);
+  throw new Error("CBOR: unsupported value.");
+}
+
+// ----- Koios reads (keyless GET; pure parsers, strict shapes) -----
+// A garbled reply THROWS in every parser below: a balance is a
+// real value, a true zero, or a failure the UI renders as
+// "couldn't load" — never a coerced number (the family rule).
+export function parseKoiosTip(json) {
+  const t = Array.isArray(json) ? json[0] : null;
+  const absSlot = Number(t?.abs_slot), blockHeight = Number(t?.block_height), epochNo = Number(t?.epoch_no);
+  if (!t || !Number.isFinite(absSlot) || !Number.isFinite(blockHeight) || !Number.isFinite(epochNo))
+    throw new Error("Koios tip lookup failed.");
+  return { absSlot, blockHeight, epochNo };
+}
+export function parseKoiosEpochParams(json) {
+  const p = Array.isArray(json) ? json[0] : null;
+  const minFeeA = Number(p?.min_fee_a), minFeeB = Number(p?.min_fee_b), coinsPerUtxoSize = Number(p?.coins_per_utxo_size);
+  if (!p || !Number.isFinite(minFeeA) || !Number.isFinite(minFeeB) || !Number.isFinite(coinsPerUtxoSize)
+    || minFeeA <= 0 || minFeeB <= 0 || coinsPerUtxoSize <= 0)
+    throw new Error("Koios epoch-params lookup failed.");
+  return { minFeeA, minFeeB, coinsPerUtxoSize };
+}
+/** One Koios address_utxos body -> the wallet's UTxO shape.
+ *  Lovelace and asset quantities stay STRINGS (base units are
+ *  exact; a meme-token quantity can exceed 2^53). */
+export function parseKoiosUtxos(json) {
+  if (!Array.isArray(json)) throw new Error("Koios UTxO lookup failed.");
+  return json.map((u) => {
+    const txHash = String(u?.tx_hash || "");
+    const index = Number(u?.tx_index);
+    const lovelace = String(u?.value ?? "");
+    if (!/^[0-9a-fA-F]{64}$/.test(txHash) || !Number.isInteger(index) || index < 0 || !/^\d+$/.test(lovelace))
+      throw new Error("Koios UTxO lookup failed.");
+    const assets = (Array.isArray(u?.asset_list) ? u.asset_list : []).map((a) => {
+      const policyId = String(a?.policy_id || ""), assetName = String(a?.asset_name || ""), quantity = String(a?.quantity ?? "");
+      if (!/^[0-9a-fA-F]{56}$/.test(policyId) || !/^\d+$/.test(quantity)) throw new Error("Koios UTxO lookup failed.");
+      return {
+        policyId: policyId.toLowerCase(), assetName: assetName.toLowerCase(),
+        fingerprint: typeof a?.fingerprint === "string" ? a.fingerprint : null,
+        decimals: Number.isFinite(Number(a?.decimals)) && a?.decimals != null ? Number(a.decimals) : 0,
+        quantity,
+      };
+    });
+    return { txHash: txHash.toLowerCase(), index, address: String(u?.address || ""), lovelace, assets };
+  });
+}
+async function koiosGet(path, { fetchImpl = null } = {}) {
+  const doFetch = fetchImpl || fetch;
+  const res = await doFetch(`${KOIOS_API}${path}`, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`Koios lookup failed (HTTP ${res.status}).`);
+  return res.json();
+}
+export async function getCardanoTip(opts = {}) { return parseKoiosTip(await koiosGet("/tip", opts)); }
+export async function getCardanoEpochParams(epochNo, opts = {}) {
+  return parseKoiosEpochParams(await koiosGet(`/epoch_params?_epoch_no=${encodeURIComponent(epochNo)}`, opts));
+}
+export async function getCardanoUtxos(address, opts = {}) {
+  const q = `?_addresses=${encodeURIComponent("{" + address + "}")}&_extended=true`;
+  return parseKoiosUtxos(await koiosGet(`/address_utxos${q}`, opts));
+}
+/** The account read behind the balance row and the sheet:
+ *  the ADA total plus every native token the UTxOs carry
+ *  (display rows — token sends are out of this slice). A
+ *  token's display name is its asset name when that decodes
+ *  to printable text, else its asset fingerprint. */
+export async function getCardanoAccount(address, opts = {}) {
+  const utxos = await getCardanoUtxos(address, opts);
+  let lovelace = 0n;
+  const byAsset = new Map();
+  for (const u of utxos) {
+    lovelace += BigInt(u.lovelace);
+    for (const a of u.assets) {
+      const id = a.policyId + a.assetName;
+      const cur = byAsset.get(id) || { ...a, quantity: 0n };
+      cur.quantity += BigInt(a.quantity);
+      byAsset.set(id, cur);
+    }
+  }
+  const tokens = [...byAsset.values()].map((a) => {
+    let name = null;
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(hex.decode(a.assetName || "00"));
+      if (text && [...text].every(ch => ch >= " " && ch <= "~")) name = text;
+    } catch { /* non-text asset name — the fingerprint names it */ }
+    return {
+      id: a.policyId + "." + a.assetName,
+      symbol: name || a.fingerprint || "asset",
+      name: name || a.fingerprint || "Cardano token",
+      fingerprint: a.fingerprint,
+      decimals: a.decimals,
+      quantity: a.quantity.toString(),
+      amount: Number(a.quantity) / (10 ** a.decimals),
+      verified: false,
+    };
+  }).sort((x, y) => x.symbol.localeCompare(y.symbol));
+  return { address, lovelace: lovelace.toString(), ada: Number(lovelace) / 1e6, tokens, utxos };
+}
+/** The scalar balance read (human ADA) — throws on failure,
+ *  like every family's reader. */
+export async function getCardanoBalance(address, opts = {}) {
+  return (await getCardanoAccount(address, opts)).ada;
+}
+/** The balance in lovelace (BigInt) — the milestone credit
+ *  watch's read; null on failure comes from the caller's
+ *  catch, never from a coerced zero here. */
+export async function getCardanoBalanceLovelace(address, opts = {}) {
+  return BigInt((await getCardanoAccount(address, opts)).lovelace);
+}
+
+// ----- payment builder -----
+/** The ledger's fee formula over the live params. Pure. */
+export function cardanoFeeForTxSize(sizeBytes, params) {
+  return params.minFeeA * sizeBytes + params.minFeeB;
+}
+/** The min-UTxO rule: every output must carry at least
+ *  coinsPerUtxoSize * (160 + its serialised size) lovelace.
+ *  Pure; the builder applies it to the outputs it actually
+ *  serialises. */
+export function cardanoMinUtxoLovelace(serializedOutputBytes, params) {
+  return params.coinsPerUtxoSize * (160 + serializedOutputBytes);
+}
+function adaCollectAssets(picked) {
+  const assets = new Map(); // policyId hex -> Map(assetName hex -> BigInt qty)
+  for (const u of picked) for (const a of u.assets) {
+    if (!assets.has(a.policyId)) assets.set(a.policyId, new Map());
+    const inner = assets.get(a.policyId);
+    inner.set(a.assetName, (inner.get(a.assetName) || 0n) + BigInt(a.quantity));
+  }
+  return assets;
+}
+function adaValueOf(coinLovelace, assets) {
+  if (!assets || !assets.size) return coinLovelace;
+  const byPolicy = new Map();
+  for (const policyId of [...assets.keys()].sort()) {
+    const inner = new Map();
+    for (const name of [...assets.get(policyId).keys()].sort()) inner.set(hex.decode(name), assets.get(policyId).get(name));
+    byPolicy.set(hex.decode(policyId), inner);
+  }
+  return [coinLovelace, byPolicy];
+}
+function adaOutputBytes(addressBytes, coinLovelace, assets) {
+  return cborEncode([addressBytes, adaValueOf(coinLovelace, assets)]);
+}
+/** Build + sign a plain ADA payment (the builder the send
+ *  sheet reviews and the 1Click deposit leg rides). Pure
+ *  given its inputs — utxos are parseKoiosUtxos rows, params
+ *  are parseKoiosEpochParams output, ttlSlot an absolute
+ *  slot. Coin selection prefers ADA-only UTxOs (largest
+ *  first) so token-bearing inputs are spent only when the
+ *  amount forces it; every selected input's assets ride
+ *  into the change output untouched. The fee is computed
+ *  from the serialised size of the very transaction being
+ *  signed (iterated to a fixed point: a build whose measured
+ *  size prices back to its own fee field). */
+export function buildCardanoPaymentTx({ paymentNode, paymentPub, utxos, to, amountLovelace, changeAddress, params, ttlSlot }) {
+  const toBytes = cardanoAddressToBytes(to);
+  const changeBytes = cardanoAddressToBytes(changeAddress);
+  const amount = BigInt(amountLovelace);
+  if (amount <= 0n) throw new Error("Enter an amount.");
+  const payMin = cardanoMinUtxoLovelace(adaOutputBytes(toBytes, amount, null).length, params);
+  if (amount < BigInt(payMin)) {
+    throw new Error(`Cardano outputs must carry at least ${swapRawToAmount(String(payMin), 6)} ADA (the network's min-UTxO rule) — increase the amount.`);
+  }
+  const sorted = [...(utxos || [])].sort((a, b) => {
+    const aBare = a.assets.length === 0 ? 0 : 1, bBare = b.assets.length === 0 ? 0 : 1;
+    if (aBare !== bBare) return aBare - bBare;
+    const d = BigInt(b.lovelace) - BigInt(a.lovelace);
+    return d > 0n ? 1 : d < 0n ? -1 : 0;
+  });
+  const assemble = (picked, fee, changeCoin) => {
+    const assets = adaCollectAssets(picked);
+    const inputs = [...picked].sort((a, b) => a.txHash === b.txHash ? a.index - b.index : (a.txHash < b.txHash ? -1 : 1))
+      .map(u => [hex.decode(u.txHash), u.index]);
+    const outputs = [[toBytes, adaValueOf(amount, null)]];
+    if (changeCoin !== null) outputs.push([changeBytes, adaValueOf(changeCoin, assets)]);
+    const body = new Map([[0, new CborSet(inputs)], [1, outputs], [2, fee], [3, ttlSlot]]);
+    const bodyBytes = cborEncode(body);
+    const txHashBytes = blake2b(bodyBytes, { dkLen: 32 });
+    const sig = cardanoSignExtended(paymentNode, txHashBytes);
+    const witnessSet = new Map([[0, [[paymentPub, sig]]]]);
+    const txBytes = cborEncode([body, witnessSet, true, null]);
+    return { txBytes, txHash: hex.encode(txHashBytes) };
+  };
+  const picked = [];
+  let sum = 0n;
+  let result = null;
+  let foldRemainder = null;
+  for (let i = 0; i <= sorted.length && !result; i++) {
+    if (i > 0) { picked.push(sorted[i - 1]); sum += BigInt(sorted[i - 1].lovelace); }
+    if (!picked.length) continue;
+    const assets = adaCollectAssets(picked);
+    // With change: iterate the fee to a fixed point — the fee
+    // depends on the serialised size, which depends on the
+    // fee's own CBOR width and on the change amount's width.
+    // A probe built with fee F whose measured size prices
+    // back to exactly F IS the final transaction.
+    let fee = 1000000n;
+    for (let pass = 0; pass < 4 && !result; pass++) {
+      const change = sum - amount - fee;
+      if (change <= 0n) break;
+      const probe = assemble(picked, fee, change);
+      const realFee = BigInt(cardanoFeeForTxSize(probe.txBytes.length, params));
+      if (realFee !== fee) { fee = realFee; continue; }
+      const changeMin = BigInt(cardanoMinUtxoLovelace(adaOutputBytes(changeBytes, change, assets).length, params));
+      if (change >= changeMin) result = { ...probe, feeLovelace: fee, changeLovelace: change };
+    }
+    if (result) break;
+    // Without change: the remainder folds into the fee. Only
+    // for asset-free picks (folding must never burn tokens),
+    // only when the folded fee still covers the final size,
+    // and only when the remainder is in the fee's own
+    // neighbourhood (the send-everything case) — a remainder
+    // many times the real fee means the change fell just
+    // under its minimum, and silently folding it would
+    // overpay the network at the user's expense; that case
+    // is refused below with the way out named.
+    if (!assets.size) {
+      let fee2 = 1000000n;
+      for (let pass = 0; pass < 4 && !result; pass++) {
+        const probe = assemble(picked, fee2, null);
+        const realFee = BigInt(cardanoFeeForTxSize(probe.txBytes.length, params));
+        if (realFee !== fee2) { fee2 = realFee; continue; }
+        if (sum - amount >= realFee) {
+          if (sum - amount <= realFee * 2n) {
+            const built = assemble(picked, sum - amount, null);
+            if (sum - amount >= BigInt(cardanoFeeForTxSize(built.txBytes.length, params)))
+              result = { ...built, feeLovelace: sum - amount, changeLovelace: 0n };
+          } else {
+            foldRemainder = sum - amount - realFee;
+          }
+        }
+      }
+    }
+  }
+  if (!result && foldRemainder != null) {
+    const minAda = swapRawToAmount(String(cardanoMinUtxoLovelace(adaOutputBytes(changeBytes, 1000000n, null).length, params)), 6);
+    throw new Error(`That amount leaves ${swapRawToAmount(foldRemainder.toString(), 6)} ADA of change — below Cardano's ~${minAda} ADA minimum for a change output — and folding it into the fee would overpay the network. Send a little less so the change clears the minimum, or send the full balance.`);
+  }
+  if (!result) throw new Error("Not enough confirmed ADA to cover the amount plus the network fee (allowing for the network's minimum-change rule).");
+  return {
+    cborHex: hex.encode(result.txBytes),
+    txHash: result.txHash,
+    feeLovelace: result.feeLovelace.toString(),
+    feeAda: Number(result.feeLovelace) / 1e6,
+    amountLovelace: amount.toString(),
+    changeLovelace: result.changeLovelace.toString(),
+    inputsUsed: picked.length,
+  };
+}
+export function formatCardanoSendIntent({ amount, to, feeAda, feeUsd, note }) {
+  return `Send ${amount} ADA to ${to} on Cardano. Network fee about ${feeAda} ADA${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
+}
+/** Build + sign an ADA payment WITHOUT submitting, so the
+ *  review sheet shows the EXACT fee (it depends on the
+ *  selected inputs and live params). Confirming submits
+ *  these exact bytes. Reads: tip -> params for its epoch,
+ *  plus the account's UTxOs — all keyless Koios GETs. */
+export async function planCardanoSend(phrase, { to, amountAda = null, amountLovelace = null, fetchImpl = null } = {}) {
+  if (!isValidCardanoAddress(to)) throw new Error("That is not a valid Cardano address.");
+  const keys = cardanoKeys(phrase);
+  const amount = amountLovelace != null ? BigInt(amountLovelace)
+    : BigInt(Math.round(Number(amountAda) * 1e6));
+  const tip = await getCardanoTip({ fetchImpl });
+  const [params, utxos] = await Promise.all([
+    getCardanoEpochParams(tip.epochNo, { fetchImpl }),
+    getCardanoUtxos(keys.address, { fetchImpl }),
+  ]);
+  const built = buildCardanoPaymentTx({
+    paymentNode: keys.paymentNode, paymentPub: keys.paymentNode.publicKey,
+    utxos, to, amountLovelace: amount, changeAddress: keys.address,
+    params, ttlSlot: tip.absSlot + 7200,
+  });
+  return { ...built, to, from: keys.address };
+}
+/** Submit a signed Cardano transaction. PRIMARY: Koios
+ *  /submittx (raw CBOR, application/cbor — Koios's published
+ *  spec; the response is the transaction id). FALLBACK, only
+ *  when the operator has configured a Blockfrost project ID:
+ *  Blockfrost /tx/submit, the same body shape. Broadcast is
+ *  UNVERIFIED from the build environment (Koios POST never
+ *  answered there) — the first funded send is its proof.
+ *  Returns the transaction hash. */
+export async function submitCardanoTx(cborHex, { fetchImpl = null, projectId = undefined, txHash = null } = {}) {
+  const doFetch = fetchImpl || fetch;
+  const cfg = cardanoSubmitConfig({ projectId });
+  const bytes = hex.decode(cborHex);
+  const asHash = (v) => (typeof v === "string" && /^[0-9a-fA-F]{64}$/.test(v.trim()) ? v.trim().toLowerCase() : null);
+  let koiosError = null;
+  try {
+    const res = await doFetch(`${KOIOS_API}/submittx`, {
+      method: "POST",
+      headers: { "Content-Type": "application/cbor" },
+      body: bytes,
+      signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => null);
+      return asHash(d) || txHash || (() => { throw new Error("Koios accepted the transaction but returned no hash."); })();
+    }
+    koiosError = new Error(`Koios rejected the transaction (HTTP ${res.status}): ${(await res.text().catch(() => "")).slice(0, 200)}`);
+  } catch (e) { koiosError = e; }
+  if (cfg.projectId) {
+    const res = await doFetch("https://cardano-mainnet.blockfrost.io/api/v0/tx/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/cbor", project_id: cfg.projectId },
+      body: bytes,
+      signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => null);
+      return asHash(d) || txHash || (() => { throw new Error("Blockfrost accepted the transaction but returned no hash."); })();
+    }
+    throw new Error("Cardano network rejected the transaction: " + (await res.text().catch(() => "")).slice(0, 200));
+  }
+  throw koiosError || new Error("Cardano submit failed.");
+}
+/** Build, sign and submit an ADA payment. Returns the tx hash. */
+export async function sendCardano(phrase, opts = {}) {
+  const plan = await planCardanoSend(phrase, opts);
+  return submitCardanoTx(plan.cborHex, { txHash: plan.txHash, fetchImpl: opts.fetchImpl || null });
 }
 
 // ---------- Tron (same secp256k1 key as the EVM account) ----------
@@ -3240,6 +3788,7 @@ export const RECEIVE_NETWORKS = [
   { id: "evm", name: "EVM networks", sub: "one address · every EVM network",
     aliases: ["evm", "eth", "ethereum", "bsc", "bnb", "bnb chain", "binance smart chain", "base", "polygon", "matic", "arbitrum", "optimism", "avalanche", "avax"] },
   { id: "bitcoin", name: "Bitcoin", aliases: ["btc", "bitcoin", "taproot"] },
+  { id: "cardano", name: "Cardano", aliases: ["ada", "cardano"] },
   { id: "lightning", name: "Bitcoin Lightning", sub: "via your own Lightning wallet",
     aliases: ["lightning", "ln", "lnurl", "webln", "sats"] },
   { id: "tron", name: "Tron", aliases: ["trx", "tron", "trc20"] },
@@ -6741,6 +7290,10 @@ export const NOBLE_SWAP_CHAIN_ID = 20000000000013;
 export const CELESTIA_SWAP_CHAIN_ID = 20000000000014;
 export const INJECTIVE_SWAP_CHAIN_ID = 20000000000015;
 export const DYDX_SWAP_CHAIN_ID = 20000000000016;
+/** Cardano's sentinel swap chain id (audit gap #3,
+ *  2026-11-15): the 1Click table's seventh family; ADA
+ *  itself is the only Cardano asset this slice. */
+export const CARDANO_SWAP_CHAIN_ID = 20000000000017;
 /** The six 1Click families' native coins' "addresses" in the
  *  swap universe (mirroring Bitcoin's "btc" / DOT's "dot"):
  *  native coins have no contract, so routes name them by
@@ -6751,6 +7304,7 @@ export const LITECOIN_SWAP_NATIVE_TOKEN = "ltc";
 export const DOGECOIN_SWAP_NATIVE_TOKEN = "doge";
 export const BITCOINCASH_SWAP_NATIVE_TOKEN = "bch";
 export const APTOS_SWAP_NATIVE_TOKEN = "apt";
+export const CARDANO_SWAP_NATIVE_TOKEN = "ada";
 /** Native GRAM's "address" in the swap universe: Relay names
  *  TON's native coin by the friendly zero address (its sole
  *  TON currency, live-probed 2026-11-14). The coin displays
@@ -6776,6 +7330,7 @@ export function swapChainOf(chainKey) {
   if (chainKey === "celestia") return { chainId: CELESTIA_SWAP_CHAIN_ID, name: "Celestia" };
   if (chainKey === "injective") return { chainId: INJECTIVE_SWAP_CHAIN_ID, name: "Injective" };
   if (chainKey === "dydx") return { chainId: DYDX_SWAP_CHAIN_ID, name: "dYdX" };
+  if (chainKey === "cardano") return { chainId: CARDANO_SWAP_CHAIN_ID, name: "Cardano" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -7296,6 +7851,9 @@ export const ONECLICK_FEE_RECIPIENT = "";
  *  partners.near-intents.org, when the operator has one.
  *  Empty = keyless operation (the launch posture). */
 export const ONECLICK_JWT = "";
+/** The duration floor (seconds) parseOneClickQuote applies
+ *  to any pair touching Cardano — see the comment there. */
+export const CARDANO_ONECLICK_MIN_DURATION_SEC = 300;
 /** Resolve the effective 1Click configuration (the seam the
  *  fee pass reads through, chainflipBrokerConfig's pattern):
  *  a 64-hex recipient collects; anything else runs fee-free
@@ -7310,7 +7868,9 @@ export function oneClickConfig({ feeRecipient = ONECLICK_FEE_RECIPIENT, jwt = ON
 /** The 1Click asset table: swap-space (chainKey, token
  *  address) -> the protocol's asset id, verified entry by
  *  entry against the live catalogue snapshot of 2026-11-14
- *  (fixtures/tokens-2026-11-14.json in the probe notes).
+ *  (fixtures/tokens-2026-11-14.json in the probe notes; the
+ *  Cardano row was verified the same way on 2026-11-15,
+ *  research_notes/fluid-cardano-20261115/).
  *  `native` marks the chain's own coin; `stable` marks the
  *  USDC/USDT class the 1 bp fee floor applies to (same-symbol
  *  pairs). Hub chains (EVM networks, Solana, Sui, Tron,
@@ -7319,7 +7879,7 @@ export function oneClickConfig({ feeRecipient = ONECLICK_FEE_RECIPIENT, jwt = ON
  *  an ORIGIN additionally needs a plain-transfer send, which
  *  oneClickDepositSend carries for every chain listed. */
 const ONECLICK_ASSETS = [
-  // The six families.
+  // The six families, plus Cardano (audit gap #3).
   { chainKey: "near", address: NEAR_SWAP_NATIVE_TOKEN, asset: "nep141:wrap.near", symbol: "NEAR", decimals: 24, native: true },
   { chainKey: "near", address: "wrap.near", asset: "nep141:wrap.near", symbol: "wNEAR", decimals: 24 },
   { chainKey: "near", address: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", asset: "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", symbol: "USDC", decimals: 6, stable: true },
@@ -7328,6 +7888,7 @@ const ONECLICK_ASSETS = [
   { chainKey: "litecoin", address: LITECOIN_SWAP_NATIVE_TOKEN, asset: "nep141:ltc.omft.near", symbol: "LTC", decimals: 8, native: true },
   { chainKey: "dogecoin", address: DOGECOIN_SWAP_NATIVE_TOKEN, asset: "nep141:doge.omft.near", symbol: "DOGE", decimals: 8, native: true },
   { chainKey: "bitcoincash", address: BITCOINCASH_SWAP_NATIVE_TOKEN, asset: "nep141:bch.omft.near", symbol: "BCH", decimals: 8, native: true },
+  { chainKey: "cardano", address: CARDANO_SWAP_NATIVE_TOKEN, asset: "nep141:cardano.omft.near", symbol: "ADA", decimals: 6, native: true },
   { chainKey: "aptos", address: APTOS_SWAP_NATIVE_TOKEN, asset: "nep141:aptos.omft.near", symbol: "APT", decimals: 8, native: true },
   { chainKey: "aptos", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", asset: "nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near", symbol: "USDC", decimals: 6, stable: true },
   { chainKey: "aptos", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", asset: "nep141:aptos-88cb7619440a914fe6400149a12b443c3ac21d59.omft.near", symbol: "USDT", decimals: 6, stable: true },
@@ -7527,7 +8088,17 @@ export function parseOneClickQuote(json, ctx, fee = {}) {
     fromAmountUSD: Number.isFinite(amountInUsd) ? amountInUsd : null,
     gasCostUSD: 0,
     routeFeeUsd,
-    executionDuration: Number(q.timeEstimate) || 0,
+    // Cardano legs are slow-class BY CONSTRUCTION: the
+    // deposit must confirm on Cardano (20-second blocks,
+    // the bridge's own confirmation policy) before the
+    // solver leg starts, and the API's timeEstimate prices
+    // only the solver leg (it quoted 29 s for ADA -> USDC
+    // in the 2026-11-15 probe). Any pair touching Cardano
+    // floors at five minutes so the card never wears the
+    // fast badge and the slow disclosure always shows.
+    executionDuration: (ctx.fromEntry.chainKey === "cardano" || ctx.toEntry.chainKey === "cardano")
+      ? Math.max(Number(q.timeEstimate) || 0, CARDANO_ONECLICK_MIN_DURATION_SEC)
+      : (Number(q.timeEstimate) || 0),
     steps: [],
     platformFeeRaw: collecting ? ((amountOutRaw * BigInt(fluidBps)) / 10000n).toString() : "0",
     platformFeeUsd: collecting ? Number(fee.platformFeeUsd) || 0 : 0,
@@ -7772,6 +8343,7 @@ function oneClickDepositAddressOk(chainKey, address) {
     case "litecoin": return isValidLitecoinAddress(address);
     case "dogecoin": return isValidDogeAddress(address);
     case "bitcoincash": return isValidBchAddress(address);
+    case "cardano": return isValidCardanoAddress(address);
     case "aptos": return isValidAptosAddress(address);
     case "bitcoin": return isValidBitcoinAddress(address);
     case "solana": return isValidSolanaAddress(address);
@@ -7809,6 +8381,9 @@ async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTa
     case "litecoin": return hashOf(await sendLitecoin(phrase, { to, amountLtc: Number(human) }));
     case "dogecoin": return hashOf(await sendDogecoin(phrase, { to, amountDoge: Number(human) }));
     case "bitcoincash": return hashOf(await sendBitcoinCash(phrase, { to, amountBch: Number(human) }));
+    // Cardano: the quoted amount rides as exact lovelace
+    // (amountRaw IS lovelace at 6 decimals) — no float path.
+    case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));
     case "aptos": return hashOf(await sendAptos(phrase, { to, amount: human, token }));
     case "bitcoin": return hashOf(await sendBitcoin(phrase, { to, amountBtc: Number(human) }));
     case "solana": return hashOf(await sendSolana(phrase, { to, amount: Number(human), token }));
@@ -19596,6 +20171,7 @@ export function destChainName(chainKey) {
   if (chainKey === "litecoin") return "Litecoin";
   if (chainKey === "dogecoin") return "Dogecoin";
   if (chainKey === "bitcoincash") return "Bitcoin Cash";
+  if (chainKey === "cardano") return "Cardano";
   if (chainKey === "aptos") return "Aptos";
   if (chainKey === "cosmoshub") return "Cosmos Hub";
   if (chainKey === "osmosis") return "Osmosis";
@@ -19620,6 +20196,7 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "litecoin") return a.toLowerCase() === LITECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "dogecoin") return a.toLowerCase() === DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return a.toLowerCase() === BITCOINCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "cardano") return a.toLowerCase() === CARDANO_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return a.toLowerCase() === APTOS_SWAP_NATIVE_TOKEN;
   const skipC = skipChainOf(chainKey);
   if (skipC) return a === skipC.denom;
@@ -19638,6 +20215,7 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "litecoin") return LITECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "dogecoin") return DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return BITCOINCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "cardano") return CARDANO_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
   const skipC2 = skipChainOf(chainKey);
   if (skipC2) return skipC2.denom;
@@ -19699,6 +20277,7 @@ export async function readDestNativeRaw(chainKey, address) {
     if (chainKey === "litecoin") return BigInt(Math.round((await getLitecoinBalance(address)) * 1e8));
     if (chainKey === "dogecoin") return BigInt(Math.round((await getDogecoinBalance(address)) * 1e8));
     if (chainKey === "bitcoincash") return BigInt(Math.round((await getBitcoinCashBalance(address)) * 1e8));
+    if (chainKey === "cardano") return getCardanoBalanceLovelace(address);
     if (chainKey === "aptos") return BigInt(await aptosAssetBalanceRaw(address, null));
     // Cosmos slice-1 natives (Skip rail, 2026-11-15): the
     // chain's own bank read by its native denom.
@@ -20208,6 +20787,7 @@ export function tokenSymbolOn(chainKey, tokenAddress) {
   if (chainKey === "litecoin") return "LTC";
   if (chainKey === "dogecoin") return "DOGE";
   if (chainKey === "bitcoincash") return "BCH";
+  if (chainKey === "cardano") return "ADA";
   if (chainKey === "near") {
     if (tokenAddress == null || String(tokenAddress).toLowerCase() === NEAR_SWAP_NATIVE_TOKEN) return "NEAR";
     const t = NEAR_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
@@ -20269,6 +20849,7 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "litecoin") return isValidLitecoinAddress(a) ? a : null;
   if (chainKey === "dogecoin") return isValidDogeAddress(a) ? a : null;
   if (chainKey === "bitcoincash") return isValidBchAddress(a) ? a : null;
+  if (chainKey === "cardano") return isValidCardanoAddress(a) ? a : null;
   if (chainKey === "aptos") { try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
   if (skipChainOf(chainKey)) return isValidCosmosAddress(a, chainKey) ? a : null;
   return a;
@@ -20311,6 +20892,7 @@ export function swapOwnAddressFor(chainKey, own) {
     case "litecoin": return isValidLitecoinAddress(own.litecoin || "") ? own.litecoin : null;
     case "dogecoin": return isValidDogeAddress(own.dogecoin || "") ? own.dogecoin : null;
     case "bitcoincash": return isValidBchAddress(own.bitcoincash || "") ? own.bitcoincash : null;
+    case "cardano": return isValidCardanoAddress(own.cardano || "") ? own.cardano : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     // The Cosmos slice-1 chains (Skip rail, 2026-11-15): the
