@@ -66,7 +66,7 @@ import { withDeadline, dotApi } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
-import { CARDANO_SWAP_CHAIN_ID, CARDANO_SWAP_NATIVE_TOKEN, CARDANO_EXPLORER, CARDANO_BLOCKFROST_PROJECT_ID, CARDANO_ONECLICK_MIN_DURATION_SEC, cardanoAddress, cardanoStakeAddress, cardanoPaymentNode, cardanoMasterKeyFromEntropy, cardanoSignExtended, cardanoAddressToBytes, isValidCardanoAddress, cborEncode, parseKoiosTip, parseKoiosEpochParams, parseKoiosUtxos, getCardanoAccount, getCardanoBalance, getCardanoBalanceLovelace, cardanoFeeForTxSize, cardanoMinUtxoLovelace, buildCardanoPaymentTx, planCardanoSend, submitCardanoTx, cardanoSubmitConfig, formatCardanoSendIntent } from "../src/wallet-core.js";
+import { CARDANO_SWAP_CHAIN_ID, CARDANO_SWAP_NATIVE_TOKEN, CARDANO_EXPLORER, CARDANO_BLOCKFROST_PROJECT_ID, CARDANO_ONECLICK_MIN_DURATION_SEC, CARDANO_KOIOS_READ_BASES, cardanoAddress, cardanoStakeAddress, cardanoPaymentNode, cardanoMasterKeyFromEntropy, cardanoSignExtended, cardanoAddressToBytes, isValidCardanoAddress, cborEncode, parseKoiosTip, parseKoiosEpochParams, parseKoiosUtxos, getCardanoTip, getCardanoAccount, getCardanoBalance, getCardanoBalanceLovelace, cardanoFeeForTxSize, cardanoMinUtxoLovelace, buildCardanoPaymentTx, planCardanoSend, submitCardanoTx, cardanoSubmitConfig, formatCardanoSendIntent } from "../src/wallet-core.js";
 import { SUNSWAP_V2_ROUTER, SUNSWAP_V2_FACTORY, SUNSWAP_WTRX, SUNSWAP_FEE_RECEIVER, SUNSWAP_SLIPPAGE_BPS, SUNSWAP_ROUTER_ABI, sunswapTokenOf, sunswapSupportsPair, sunswapCandidatePaths, parseSunswapAmountsOut, parseSunswapQuote, getSunswapSwapRoute, buildSunswapSwapCallData, checkSunswapSwapBounds, executeSunswapSwapRoute } from "../src/wallet-core.js";
 import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
@@ -17831,6 +17831,71 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
       coreSrc120.includes('case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));')
       && coreSrc120.includes('asset: "nep141:cardano.omft.near"'));
+  }
+}
+
+// 121. Cardano read-path repair (2026-11-15): Koios's GET
+// responses carry no Access-Control-Allow-Origin on any
+// host, so the shipped §120 read path was dark in every
+// browser (the live walk measured it; curl probes could
+// not see it). Reads now rotate over CARDANO_KOIOS_READ_
+// BASES — Fluid's read-only CORS bridge over Koios first
+// (tools/koios-proxy/worker.js), then the direct Koios
+// hosts. The fixtures below were captured IN-PAGE from
+// the live Fluid origin through the bridge — including
+// the first real populated address_utxos body (research
+// UNVERIFIED #6, now closed for the read path).
+{
+  const fixture121 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const jsonRes121 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body, text: async () => (typeof body === "string" ? body : JSON.stringify(body ?? "")) });
+
+  ok("cardano reads: the rotation is the CORS bridge first, then the direct Koios hosts in order",
+    CARDANO_KOIOS_READ_BASES.length === 3
+    && CARDANO_KOIOS_READ_BASES[0] === "https://fluid-koios-proxy.kanugideontownsville.workers.dev/api/v1"
+    && CARDANO_KOIOS_READ_BASES[1] === "https://api.koios.rest/api/v1"
+    && CARDANO_KOIOS_READ_BASES[2] === "https://eu-api.koios.rest/api/v1");
+  {
+    const tip = parseKoiosTip(fixture121("koios-proxy-tip.json"));
+    const params = parseKoiosEpochParams(fixture121("koios-proxy-epoch-params.json"));
+    ok("cardano reads: tip and epoch params parse from the bodies captured through the bridge",
+      tip.absSlot === 203146689 && tip.blockHeight === 14202344 && tip.epochNo === 667
+      && params.minFeeA === 44 && params.minFeeB === 155381 && params.coinsPerUtxoSize === 4310);
+    ok("cardano reads: the bridge's empty UTxO body parses to an empty set (a true zero)",
+      parseKoiosUtxos(fixture121("koios-proxy-address-utxos-empty.json")).length === 0);
+    const pop = parseKoiosUtxos(fixture121("koios-proxy-address-utxos-funded1.json"));
+    ok("cardano reads: the first real populated UTxO body parses — 7 rows, exact lovelace strings, the asset carried through",
+      pop.length === 7 && pop[0].txHash === "9b8b0e3544e9adc23a2e24df4365a8adcf671f4fe65fee3e52503a486cc2f026" && pop[0].index === 0 && pop[0].lovelace === "20429400"
+      && pop.some(u => u.assets.some(a => a.policyId === "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad" && a.quantity === "4363195" && a.fingerprint === "asset12ffdj8kk2w485sr7a5ekmjjdyecz8ps2cm5zed")));
+  }
+  {
+    // Rotation: a dead first base falls through to the
+    // next with the same path; every base dead throws.
+    const hits = [];
+    const stubFall = async (url) => {
+      const u = String(url); hits.push(u);
+      if (u.startsWith(CARDANO_KOIOS_READ_BASES[0])) throw new Error("bridge down");
+      return jsonRes121(fixture121("koios-proxy-tip.json"));
+    };
+    const tip = await getCardanoTip({ fetchImpl: stubFall });
+    ok("cardano reads: a failing bridge falls through to the next base with the same path",
+      tip.blockHeight === 14202344 && hits.length === 2 && hits[0] === CARDANO_KOIOS_READ_BASES[0] + "/tip" && hits[1] === CARDANO_KOIOS_READ_BASES[1] + "/tip");
+    const hits500 = [];
+    const stub500 = async (url) => {
+      const u = String(url); hits500.push(u);
+      if (u.startsWith(CARDANO_KOIOS_READ_BASES[0])) return jsonRes121(null, false, 500);
+      return jsonRes121(fixture121("koios-proxy-tip.json"));
+    };
+    const tip2 = await getCardanoTip({ fetchImpl: stub500 });
+    ok("cardano reads: an HTTP error on the bridge also rotates (no error body is ever parsed as data)",
+      tip2.absSlot === 203146689 && hits500.length === 2);
+    let allErr = null;
+    try { await getCardanoTip({ fetchImpl: async () => { throw new Error("all down"); } }); } catch (e) { allErr = e; }
+    ok("cardano reads: every base failing throws — the read is a failure, never a fabricated zero",
+      !!allErr && /all down/.test(allErr.message));
+    const stubAcct121 = async () => jsonRes121(fixture121("koios-proxy-address-utxos-funded1.json"));
+    const acct = await getCardanoAccount("addr1q8m86q7jrk2zpvyrw36z7pcyw3rxlprus2nuv26e4645hguaxu4vu9jgkzf2duqwhxjtllwfvncwfjc7d28cft08er0s8zg99f", { fetchImpl: stubAcct121 });
+    ok("cardano reads: the account over the real populated body sums to the exact lovelace total with the token aggregated",
+      acct.lovelace === "247033422" && acct.ada === 247.033422 && acct.tokens.length === 1 && acct.tokens[0].quantity === "4363195");
   }
 }
 

@@ -1144,6 +1144,19 @@ rejected on measured bundle weight (+~2.75 MB, +43%).
   "couldn't load", never a fake zero. Native-token balances
   display from the UTxO asset lists; token sends are not in
   this slice, and neither are delegation/rewards.
+  **Read-path repair (2026-11-15):** Koios's GET responses
+  carry no `Access-Control-Allow-Origin` header on any host,
+  so browsers could never read them — the family showed
+  "couldn't load" for every real user while curl probes
+  passed (the live walk caught it; no other keyless
+  CORS-clean Cardano read source exists). Reads now rotate:
+  first Fluid's own read-only CORS bridge — a minimal
+  Cloudflare Worker (`tools/koios-proxy/worker.js`,
+  infrastructure that forwards exactly these three GET
+  paths to Koios and returns the bodies verbatim with CORS
+  headers attached) — then the direct Koios hosts, which
+  answer the day Koios fixes its headers. Every base
+  failing still throws: "couldn't load", never a fake zero.
 - **The rail** is 1Click, unmodified: the same two-pass fee
   flow and echo verification as the six families before it.
   Capture was probed live for ADA in both directions — the

@@ -2047,19 +2047,49 @@ export async function sendBitcoinCash(phrase, opts) {
 // native-token balances display (in the Cardano sheet) from
 // the UTxO asset lists.
 //
-// DATA is Koios (api.koios.rest), keyless, GET only: tip,
-// epoch params and the address_utxos PostgREST array-literal
-// GET form — all probed live 2026-11-15. Koios POST never
-// answered from the build environment (45–240 s windows), so
-// SUBMIT is the one unverified link in this family: it is
-// built to Koios's published spec (POST /submittx, raw CBOR
-// body, application/cbor — the same shape as Blockfrost's
+// DATA is Koios, keyless, GET only: tip, epoch params and
+// the address_utxos PostgREST array-literal GET form — all
+// probed live 2026-11-15. Koios POST never answered from
+// the build environment (45–240 s windows), so SUBMIT is
+// the one unverified link in this family: it is built to
+// Koios's published spec (POST /submittx, raw CBOR body,
+// application/cbor — the same shape as Blockfrost's
 // /tx/submit) with a Blockfrost project-ID config seam as
 // the fallback path, and the first funded Cardano send is
-// its proof — the same status every rail's funded settlement
-// carries until its first drill (docs/SWAPS.md says so).
+// its proof — the same status every rail's funded
+// settlement carries until its first drill (docs/SWAPS.md
+// says so).
+//
+// READ PATH REPAIR (2026-11-15): Koios's GET responses
+// carry NO Access-Control-Allow-Origin header on any of
+// its hosts (api / eu-api / us-api — only its OPTIONS
+// preflights carry one), so a browser can never read them:
+// the shipped family showed "couldn't load" for every real
+// user while curl probes passed. No other keyless
+// CORS-clean Cardano read source exists (Yoroi's backend
+// serves a CORS-clean tip but its UTxO read is a POST that
+// never answered from here; Blockfrost and CardanoScan are
+// key-gated; Dandelion is unreachable from this network;
+// Blockchair is stats-only and IP-limited). Reads
+// therefore rotate over CARDANO_KOIOS_READ_BASES: FIRST
+// Fluid's own read-only CORS bridge (a minimal Cloudflare
+// Worker — tools/koios-proxy/worker.js — that forwards
+// exactly these three GET paths to api.koios.rest and
+// returns the bodies verbatim with CORS headers attached;
+// infrastructure, documented as such, worst failure is
+// liveness), THEN the direct Koios hosts, which answer the
+// day Koios fixes its headers and in any non-browser
+// context. Every base failing THROWS — the UI shows
+// "couldn't load", never a fake zero (the family rule).
 export const CARDANO_EXPLORER = "https://cardanoscan.io";
 const KOIOS_API = "https://api.koios.rest/api/v1";
+/** The Cardano read rotation, in order: Fluid's CORS
+ *  bridge over Koios, then the direct Koios hosts. */
+export const CARDANO_KOIOS_READ_BASES = [
+  "https://fluid-koios-proxy.kanugideontownsville.workers.dev/api/v1",
+  "https://api.koios.rest/api/v1",
+  "https://eu-api.koios.rest/api/v1",
+];
 /** Build-time config: a Blockfrost project ID for the submit
  *  fallback (and nothing else — reads stay on keyless Koios).
  *  Empty until the operator registers one (a free ID covers
@@ -2284,11 +2314,21 @@ export function parseKoiosUtxos(json) {
     return { txHash: txHash.toLowerCase(), index, address: String(u?.address || ""), lovelace, assets };
   });
 }
+/** One Koios read over the CARDANO_KOIOS_READ_BASES
+ *  rotation: the first base that answers wins; every base
+ *  failing throws the last error, so a dead read path is a
+ *  "couldn't load" in the UI, never a number. */
 async function koiosGet(path, { fetchImpl = null } = {}) {
   const doFetch = fetchImpl || fetch;
-  const res = await doFetch(`${KOIOS_API}${path}`, { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`Koios lookup failed (HTTP ${res.status}).`);
-  return res.json();
+  let lastErr = null;
+  for (const base of CARDANO_KOIOS_READ_BASES) {
+    try {
+      const res = await doFetch(`${base}${path}`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) throw new Error(`Koios lookup failed (HTTP ${res.status}).`);
+      return await res.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("Koios lookup failed.");
 }
 export async function getCardanoTip(opts = {}) { return parseKoiosTip(await koiosGet("/tip", opts)); }
 export async function getCardanoEpochParams(epochNo, opts = {}) {
