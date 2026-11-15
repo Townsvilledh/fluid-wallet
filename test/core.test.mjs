@@ -18255,4 +18255,132 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && readFileSync(new URL("../scripts/verify-release.mjs", import.meta.url), "utf8").includes("SIGNATURE INVALID"));
 }
 
+// ---------- Gap #6: HyperEVM (999) built-in admission, Relay + Across (2026-11-15) ----------
+// Research: research_notes/fluid-hyperevm-20261115/probe-notes.md.
+// Chain 999 is invisible to discovery because its upstream data is
+// POISONED: chainid.network's registry still lists the id as
+// "Wanchain Testnet" (the previous occupant) and DefiLlama's
+// "Hyperliquid L1" row carries chainId null — the gate is CORRECT
+// to refuse it, so the fix is a hand-verified built-in, never a
+// gate loosening. Every pin below is a fact verified in-page from
+// the production origin on build day.
+{
+  const { relayDepositoryFor, RELAY_DEPOSITORY } = await import("../src/wallet-core.js");
+  const fx6 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const ACCT6 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const HYPE_USDC = "0xb88339CB7199b77E23DB6E890353E22632Ba630f";
+  const HYPE_USDT0 = "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb";
+  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const he = NETWORKS.hyperevm;
+  ok("gap6: HyperEVM admission entry — key, chain, symbol, explorer, RPC rotation (official first; it stalls from some egresses)",
+    he && he.chainId === 999 && he.name === "HyperEVM" && he.symbol === "HYPE" && he.priceSym === "HYPE"
+    && he.explorer === "https://hyperevmscan.io" && he.rpc === "https://rpc.hyperliquid.xyz/evm"
+    && he.rpcFallback === "https://hyperliquid.drpc.org"
+    && JSON.stringify(evmRpcUrls("hyperevm")) === JSON.stringify(["https://rpc.hyperliquid.xyz/evm", "https://hyperliquid.drpc.org", "https://hyperliquid-rpc.publicnode.com"]));
+  ok("gap6: pinned tokens are the Circle-native USDC and the USD₮0 (OFT) contract, both 6 dp",
+    he.tokens.length === 2
+    && he.tokens[0].symbol === "USDC" && he.tokens[0].address === HYPE_USDC && he.tokens[0].decimals === 6
+    && he.tokens[1].symbol === "USDT" && he.tokens[1].address === HYPE_USDT0 && he.tokens[1].decimals === 6);
+  ok("gap6: CoinGecko token-list slug for chain 999 (the list is live — 934 tokens at probe)",
+    COINGECKO_TOKEN_LIST_SLUGS[999] === "hyperevm");
+  ok("gap6: swapChainOf resolves the built-in",
+    swapChainOf("hyperevm")?.chainId === 999 && swapChainOf("hyperevm")?.name === "HyperEVM");
+  // No discovered duplicate can ever sit beside the built-in —
+  // including one resurrected from a stale localStorage cache:
+  // applyDiscovered (which loadStoredChains also routes through)
+  // drops any entry whose chainId a built-in owns, and
+  // registerNetworks can never overwrite a built-in key.
+  ok("gap6: registerNetworks can never overwrite the hyperevm built-in",
+    (() => {
+      registerNetworks({ hyperevm: { name: "Fake Chain", chainId: 1, symbol: "FAKE", rpc: "https://example.invalid", explorer: "", tokens: [] } });
+      return NETWORKS.hyperevm.name === "HyperEVM" && NETWORKS.hyperevm.chainId === 999;
+    })());
+  {
+    const appSrc6 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("gap6: discovery drops any chainId a built-in owns — a cached c999 included (BUILTIN_CHAIN_IDS derives from NETWORKS; the cache load routes through the same skip)",
+      appSrc6.includes("const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));")
+      && appSrc6.includes("BUILTIN_CHAIN_IDS.has(d.chainId)) continue;")
+      && appSrc6.includes("applyDiscovered(chainsCache.chains)"));
+  }
+  // HYPE pricing: CoinGecko is the only configured source (no
+  // Binance pair is wired) — the behavioural pin proves the
+  // CG_IDS wiring prices the native; an unpriced HYPE would be a
+  // failed build.
+  {
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return { ok: true, status: 200, json: async () => [] };
+      if (u.includes("api.coingecko.com")) return { ok: true, status: 200, json: async () => (u.includes("hyperliquid") ? { hyperliquid: { usd: 65.44 } } : {}) };
+      throw new Error("unexpected fetch in the §123 price stub: " + u);
+    };
+    try {
+      resetPricesCache();
+      const prices = await getPrices();
+      ok("gap6: HYPE prices through the CoinGecko id wiring (CG_IDS.HYPE = \"hyperliquid\") — the native never ships unpriced",
+        prices.HYPE === 65.44);
+    } finally { globalThis.fetch = real; resetPricesCache(); }
+  }
+  // Relay: 999's depository in Relay's own live chains table IS
+  // Fluid's pinned canonical constant (code proven on-chain
+  // there), so the H-B pinning/bounds-check covers HyperEVM with
+  // no new constants — pinned here against regression.
+  ok("gap6: Relay resolves 999 and its depository is the pinned canonical constant",
+    relayChainOf("hyperevm")?.chainId === 999 && relayDepositoryFor(999) === RELAY_DEPOSITORY);
+  ok("gap6: Relay pair support — out, in and intra",
+    relaySupportsPair("hyperevm", "base") === true && relaySupportsPair("base", "hyperevm") === true
+    && relaySupportsPair("hyperevm", "hyperevm") === true);
+  const rOut6 = parseRelayQuote(fx6("relay-hyperevm-hype-to-base-usdc.json"),
+    { fromChainKey: "hyperevm", toChainKey: "base", fromAmount: "10000000000000000000", fromAddress: ACCT6 });
+  ok("gap6: Relay HYPE -> Base USDC (real build-day quote) collects exactly the 50 bps dial",
+    rOut6?.platformFeeCollecting === true && rOut6.platformFeeRaw === "50000000000000000"
+    && rOut6.toAmount === "639485076" && rOut6.toToken.symbol === "USDC");
+  ok("gap6: Relay OUT steps pass the H-B bounds check — the deposit targets the pinned depository",
+    relayExecutableSteps(rOut6).length === 1
+    && relayExecutableSteps(rOut6).every(s => s.items.every(it => checkRelayStepBounds(rOut6, s, it, ACCT6).ok)));
+  const rIn6 = parseRelayQuote(fx6("relay-hyperevm-base-usdc-to-hype.json"),
+    { fromChainKey: "base", toChainKey: "hyperevm", fromAmount: "20000000", fromAddress: ACCT6 });
+  ok("gap6: Relay Base USDC -> HYPE (real build-day quote) collects; every step passes the bounds check",
+    rIn6?.platformFeeCollecting === true && rIn6.platformFeeRaw === "100000"
+    && rIn6.toAmount === "305672265061921642" && rIn6.toToken.symbol === "HYPE"
+    && relayExecutableSteps(rIn6).length === 2
+    && relayExecutableSteps(rIn6).every(s => s.items.every(it => checkRelayStepBounds(rIn6, s, it, ACCT6).ok)));
+  const rIntra6 = parseRelayQuote(fx6("relay-hyperevm-hype-to-usdc-intra.json"),
+    { fromChainKey: "hyperevm", toChainKey: "hyperevm", fromAmount: "10000000000000000000", fromAddress: ACCT6 });
+  ok("gap6: Relay intra HYPE -> USDC(999) collects at quote level (fees.app = the full dial)",
+    rIntra6?.platformFeeCollecting === true && rIntra6.platformFeeRaw === "50000000000000000"
+    && rIntra6.toAmount === "642328286");
+  ok("gap6: Relay intra's swap step is refused by the H-B depository pinning — the fleet-uniform same-chain behaviour (a Base -> Base quote refuses identically; Relay's same-chain router-step grammar is unpinned product-wide, so intra EXECUTION stays gated on every chain until that grammar is pinned)",
+    (() => { const s = relayExecutableSteps(rIntra6)[0]; return checkRelayStepBounds(rIntra6, s, s.items[0], ACCT6).ok === false; })());
+  // Across: wired ONLY because the build-day in-page probe (from
+  // the production origin, Fluid's own two-pass shape) echoed the
+  // app fee in BOTH directions — 99,965 raw out, 99,979 raw in on
+  // $20 — and the real quotes parse collecting and pass the
+  // deposit bounds against the pins taken from those same quotes.
+  // The fee-free probe bodies are the control: they parse as NOT
+  // collecting, so the echo pins are not vacuous.
+  ok("gap6: Across chain set + 999 pins (handler, message adapter, SpokePool — all read off the live fee-bearing probe quotes)",
+    ACROSS_CHAIN_IDS.has(999)
+    && ACROSS_HANDLERS[999] === "0x5E7840E06fAcCb6d1c3b5F5E0d1d3d07F2829bba"
+    && ACROSS_MESSAGE_ADAPTERS[999] === "0xBF75133b48b0a42AB9374027902E83C5E2949034"
+    && ACROSS_SPOKE_POOLS[999] === "0x35E63eA3eb0fb7A3bc543C71FB66412e1F6B0E04");
+  const aOutArgs6 = { fromChainKey: "hyperevm", toChainKey: "base", fromTokenAddress: HYPE_USDC, toTokenAddress: BASE_USDC, fromAmount: "20000000", fromAddress: ACCT6, toAddress: ACCT6 };
+  const aInArgs6 = { fromChainKey: "base", toChainKey: "hyperevm", fromTokenAddress: BASE_USDC, toTokenAddress: HYPE_USDC, fromAmount: "20000000", fromAddress: ACCT6, toAddress: ACCT6 };
+  ok("gap6: Across gate resolves USDC pairs both directions on 999 (and nothing same-chain)",
+    acrossSupportsPair(aOutArgs6)?.asset === "USDC" && acrossSupportsPair(aInArgs6)?.asset === "USDC"
+    && acrossSupportsPair({ ...aOutArgs6, toChainKey: "hyperevm" }) === null);
+  const aOut6 = parseAcrossQuote(fx6("across-hyperevm-usdc-out-fee.json"), aOutArgs6, acrossSupportsPair(aOutArgs6));
+  ok("gap6: Across OUT (999 -> Base) fee echo verified collecting on the real probe quote; executable in one step",
+    aOut6?.platformFeeCollecting === true && aOut6.platformFeeRaw === "99965"
+    && aOut6.toAmount === "19893154" && acrossExecutableSteps(aOut6).length === 1);
+  const aIn6 = parseAcrossQuote(fx6("across-hyperevm-usdc-in-fee.json"), aInArgs6, acrossSupportsPair(aInArgs6));
+  ok("gap6: Across IN (Base -> 999) fee echo verified collecting; the deposit passes the bounds check against the 999 handler pin",
+    aIn6?.platformFeeCollecting === true && aIn6.platformFeeRaw === "99979"
+    && aIn6.toAmount === "19895845" && checkAcrossDepositBounds(aIn6, ACCT6).ok === true);
+  const aOutFree6 = parseAcrossQuote(fx6("across-hyperevm-usdc-out-nofee.json"), aOutArgs6, acrossSupportsPair(aOutArgs6));
+  const aInFree6 = parseAcrossQuote(fx6("across-hyperevm-usdc-in-nofee.json"), aInArgs6, acrossSupportsPair(aInArgs6));
+  ok("gap6: Across control — the fee-free probe quotes parse as NOT collecting (the echo pins above are not vacuous)",
+    aOutFree6?.platformFeeCollecting === false && aInFree6?.platformFeeCollecting === false);
+}
+
 console.log(`\n${passed} checks passed`);

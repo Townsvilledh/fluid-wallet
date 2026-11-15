@@ -214,6 +214,35 @@ export const NETWORKS = {
     rpcFallback: "https://injectiveevm-rpc.polkachu.com",
     tokens: [USDC("0xa00C59fF5a080D2b954d0c75e46E22a0c371235a"), USDT("0x88f7F2b685F9692caf8c478f5BADF09eE9B1Cc13")],
   },
+  // HyperEVM (audit gap #6, 2026-11-15): Hyperliquid's EVM
+  // chain. A built-in because discovery can never admit it
+  // honestly: the chain-id registry's entry for 999 is still
+  // "Wanchain Testnet" (the id's previous occupant) and
+  // DefiLlama's Hyperliquid row carries chainId null, so the
+  // gate's testnet-name check and TVL floor both reject it —
+  // correctly, on poisoned data; admitting it through discovery
+  // would admit it under a false identity (research_notes/
+  // fluid-hyperevm-20261115). Key "hyperevm" matches Relay's
+  // chain name and the CoinGecko platform slug. Read endpoints
+  // probed IN-PAGE from the production origin: chainId 0x3e7,
+  // blocks flowing on all three; the official endpoint is
+  // stall-prone from some egresses, so rotation carries all
+  // three and falls through. USDC is Circle-native (CCTP).
+  // USDT is USD₮0 — Tether's LayerZero OFT form, the canonical
+  // USDT on HyperEVM; its contract name/symbol is "USD₮0",
+  // pinned here as the chain's USDT with the provenance named
+  // (no Tether-native HyperEVM deployment is pinned).
+  hyperevm: {
+    name: "HyperEVM", chainId: 999, symbol: "HYPE", priceSym: "HYPE",
+    rpc: "https://rpc.hyperliquid.xyz/evm", explorer: "https://hyperevmscan.io",
+    rpcs: [
+      "https://rpc.hyperliquid.xyz/evm",
+      "https://hyperliquid.drpc.org",
+      "https://hyperliquid-rpc.publicnode.com",
+    ],
+    rpcFallback: "https://hyperliquid.drpc.org",
+    tokens: [USDC("0xb88339CB7199b77E23DB6E890353E22632Ba630f"), USDT("0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb")],
+  },
   sepolia: {
     name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
     rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
@@ -858,7 +887,7 @@ const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLU
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", ADA: "ADAUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
   TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
-const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack" };
+const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack", HYPE: "hyperliquid" };
 /* RED-TEAM 2026-11-06 (Finding C): getPrices() takes Binance's word alone
  * (CoinGecko only fills gaps and is never compared), yet the agent runtime
  * prices its USD spending CAPS from it — one wrong or malicious response
@@ -10954,8 +10983,13 @@ export const ACROSS_APP_FEE_RECIPIENT = RELAY_APP_FEE_RECIPIENT;
  *  of Fluid's fifteen EVM networks. Scroll, Mantle, Gnosis, Celo,
  *  Fuse and B² have no Across routes — Relay keeps them. Arc
  *  (5042, a discovered chain) was added 2026-11-09 after a fresh
- *  Swap API re-probe quoted both directions at $5. */
-export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 8453, 42161, 43114, 59144, 5042]);
+ *  Swap API re-probe quoted both directions at $5. HyperEVM
+ *  (999) was added 2026-11-15 (gap #6) after an in-page probe
+ *  from the production origin verified the app-fee echo
+ *  COLLECTING in both directions on USDC pairs (the fee-bearing
+ *  quotes are pinned as test fixtures; the 999 handler, adapter
+ *  and SpokePool pins below come from those same quotes). */
+export const ACROSS_CHAIN_IDS = new Set([1, 10, 56, 137, 324, 999, 8453, 42161, 43114, 59144, 5042]);
 /** Canonical WETH per chain key, for the chains whose native coin
  *  IS ETH (Across quotes native routes against the WETH address).
  *  Polygon's wrapped native is WPOL, BSC's is WBNB and Avalanche's
@@ -10988,6 +11022,7 @@ export const ACROSS_HANDLERS = {
   324: "0x68d3806e57148d6c6793c78ebddbc272fe605dbf",
   43114: "0x9610954acdca5ff7905f051a040ce33fe613c60e",
   5042: "0xA07480456C4EbaD7626e4FdF4a180709E238547b", // Arc — live fee-bearing probe, 2026-11-09
+  999: "0x5E7840E06fAcCb6d1c3b5F5E0d1d3d07F2829bba", // HyperEVM — live fee-bearing probe, 2026-11-15 (gap #6): the IN quote's own deposit recipient
 };
 /** The message-adapter contract per destination chain id — the
  *  target of the composed message's final call (the alternate
@@ -11004,6 +11039,7 @@ export const ACROSS_MESSAGE_ADAPTERS = {
   324: "0x74a2966e23B61A360b1345eA359127aF325beC4C",
   43114: "0x25b15Fc38d6A2C13FEDdD9cb51f184F7Cf0D4C11",
   5042: "0x446Fe2Be6a8D90fA89F30f3d0A686aAFfe621237", // Arc — same live probe as the handler pin
+  999: "0xBF75133b48b0a42AB9374027902E83C5E2949034", // HyperEVM — the common adapter, named by the same live probe (gap #6)
 };
 /** Origin SpokePools, pinned where a live quote named them (the
  *  deposit transaction's target — and the response's own
@@ -11013,6 +11049,7 @@ export const ACROSS_SPOKE_POOLS = {
   8453: "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64",
   42161: "0xe35e9842fceaCA96570B734083f4a58e8F7C5f2A",
   5042: "0x9b4A302A548c7e313c2b74C461db7b84d3074A84", // Arc — the probe quote's own allowance spender
+  999: "0x35E63eA3eb0fb7A3bc543C71FB66412e1F6B0E04", // HyperEVM — the probe quote's own allowance spender (gap #6)
 };
 const ACROSS_DEPOSIT_ABI = ["function deposit(bytes32 depositor, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 destinationChainId, bytes32 exclusiveRelayer, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes message)"];
 const ACROSS_ERC20_TRANSFER = ["function transfer(address to, uint256 amount) returns (bool)"];
@@ -26075,6 +26112,9 @@ export const COINGECKO_TOKEN_LIST_SLUGS = {
   // real USDC contract and skips the denom strings, and the
   // built-in tokens[] pins remain the reliable stable path.
   1329: "sei-v2", 1776: "injective",
+  // HyperEVM (999) is CoinGecko's "hyperevm" platform (934
+  // tokens live-counted 2026-11-15, gap #6 research).
+  999: "hyperevm",
 };
 function cgTokenShape(t) {
   if (!t || !t.address || !t.symbol) return null;

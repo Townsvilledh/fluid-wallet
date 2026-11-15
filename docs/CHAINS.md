@@ -6,17 +6,20 @@ same seed. Everything listed here **ships**: balance, receive and send.
 
 ## Chain families
 
-- **EVM — 18 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
+- **EVM — 19 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
   OP Mainnet, Polygon, Avalanche, zkSync Era, Linea, Scroll, Mantle,
-  Gnosis, Celo, Fuse, B² Network, Sei EVM, Injective EVM, and Sepolia
-  (testnet). Networks the swap routers support beyond the built-ins
-  (for example **Arc**, chain 5042) are discovered and added
-  automatically after unlock. Sei EVM (chain 1329) is where SEI lives
+  Gnosis, Celo, Fuse, B² Network, Sei EVM, Injective EVM, HyperEVM,
+  and Sepolia (testnet). Networks the swap routers support beyond
+  the built-ins (for example **Arc**, chain 5042) are discovered and
+  added automatically after unlock. Sei EVM (chain 1329) is where SEI lives
   now — Sei's Cosmos network is retired (see Cosmos below).
   Injective EVM (chain 1776) is Injective's second face: its balance
   is unified with the Cosmos side (one account, one ledger — INJ or
   USDC landed on either face is already on both, and the wallet
-  counts it once).
+  counts it once). HyperEVM (chain 999, HYPE) is hand-verified
+  rather than discovered: the public registries still carry the
+  id's previous occupant, so discovery cannot admit it — see
+  `docs/SWAPS.md`.
 - **Bitcoin** — BIP84 native SegWit (bc1q…) and BIP86 Taproot (bc1p…).
   See `docs/BITCOIN-NATIVE.md`.
 - **Lightning** — Fluid's own in-browser node (LDK) from the same seed.

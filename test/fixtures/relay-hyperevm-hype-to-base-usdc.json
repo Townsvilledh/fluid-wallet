@@ -1,0 +1,371 @@
+{
+ "requestId": "0x179472910651510fdf430aca5f3fd9b00a029c0c16a7d5d953ee596a109bdc84",
+ "steps": [
+  {
+   "id": "deposit",
+   "action": "Confirm transaction in your wallet",
+   "description": "Depositing funds to the relayer to execute the swap for USDC",
+   "kind": "transaction",
+   "items": [
+    {
+     "status": "incomplete",
+     "data": {
+      "from": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+      "to": "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+      "data": "0x49290c1c0000000000000000000000009858effd232b4033e47d90003d41ec34ecaeda94b9ff15084fb4af9d47a529b0eb7e8714a3c07e7cf5ef56bbeb2b8e5fe50c65b4",
+      "value": "10000000000000000000",
+      "chainId": 999,
+      "gas": "32697",
+      "maxFeePerGas": "615000000",
+      "maxPriorityFeePerGas": "75000000"
+     },
+     "check": {
+      "endpoint": "/intents/status/v3?requestId=0x179472910651510fdf430aca5f3fd9b00a029c0c16a7d5d953ee596a109bdc84",
+      "method": "GET"
+     }
+    }
+   ],
+   "requestId": "0x179472910651510fdf430aca5f3fd9b00a029c0c16a7d5d953ee596a109bdc84",
+   "depositAddress": ""
+  }
+ ],
+ "fees": {
+  "gas": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "20108655000000",
+   "amountFormatted": "0.000020108655",
+   "amountUsd": "0.001302",
+   "minimumAmount": "20108655000000"
+  },
+  "relayer": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "40243684925326412",
+   "amountFormatted": "0.040243684925326412",
+   "amountUsd": "2.604858",
+   "minimumAmount": "40243684925326412"
+  },
+  "relayerGas": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "14933665464820",
+   "amountFormatted": "0.00001493366546482",
+   "amountUsd": "0.000967",
+   "minimumAmount": "14933665464820"
+  },
+  "relayerService": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "40228751259861592",
+   "amountFormatted": "0.040228751259861592",
+   "amountUsd": "2.603891",
+   "minimumAmount": "40228751259861592"
+  },
+  "app": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "50000000000000000",
+   "amountFormatted": "0.05",
+   "amountUsd": "3.236356",
+   "minimumAmount": "50000000000000000"
+  },
+  "subsidized": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "0",
+   "amountFormatted": "0.0",
+   "amountUsd": "0",
+   "minimumAmount": "0"
+  }
+ },
+ "details": {
+  "operation": "swap",
+  "sender": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+  "recipient": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+  "currencyIn": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "10000000000000000000",
+   "amountFormatted": "10.0",
+   "amountUsd": "647.271160",
+   "minimumAmount": "10000000000000000000"
+  },
+  "currencyOut": {
+   "currency": {
+    "chainId": 8453,
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "name": "USD Coin",
+    "decimals": 6,
+    "metadata": {
+     "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+     "verified": true
+    }
+   },
+   "amount": "639485076",
+   "amountFormatted": "639.485076",
+   "amountUsd": "639.238874",
+   "minimumAmount": "626695374"
+  },
+  "refundCurrency": {
+   "currency": {
+    "chainId": 999,
+    "address": "0x0000000000000000000000000000000000000000",
+    "symbol": "HYPE",
+    "name": "HYPE",
+    "decimals": 18,
+    "metadata": {
+     "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+     "verified": true
+    }
+   },
+   "amount": "10000000000000000000",
+   "amountFormatted": "10.0",
+   "amountUsd": "647.271160",
+   "minimumAmount": "10000000000000000000"
+  },
+  "totalImpact": {
+   "usd": "-8.032286",
+   "percent": "-1.24"
+  },
+  "swapImpact": {
+   "usd": "-2.191072",
+   "percent": "-0.34"
+  },
+  "expandedPriceImpact": {
+   "swap": {
+    "usd": "-3.803902"
+   },
+   "execution": {
+    "usd": "-0.02097"
+   },
+   "relay": {
+    "usd": "-0.971058"
+   },
+   "app": {
+    "usd": "-3.236356"
+   },
+   "sponsored": {
+    "usd": "0"
+   }
+  },
+  "rate": "63.948507600000006",
+  "slippageTolerance": {
+   "total": "200",
+   "origin": {
+    "usd": "0.000000",
+    "value": "0",
+    "percent": "0.00"
+   },
+   "destination": {
+    "usd": "12.784777",
+    "value": "12789702",
+    "percent": "2.00"
+   }
+  },
+  "timeEstimate": 1,
+  "userBalance": "0",
+  "isFixedRate": false,
+  "route": {
+   "origin": {
+    "inputCurrency": {
+     "currency": {
+      "chainId": 999,
+      "address": "0x0000000000000000000000000000000000000000",
+      "symbol": "HYPE",
+      "name": "HYPE",
+      "decimals": 18,
+      "metadata": {
+       "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+       "verified": true
+      }
+     },
+     "amount": "10000000000000000000",
+     "amountFormatted": "10.0",
+     "amountUsd": "647.271160",
+     "minimumAmount": "10000000000000000000"
+    },
+    "outputCurrency": {
+     "currency": {
+      "chainId": 999,
+      "address": "0x0000000000000000000000000000000000000000",
+      "symbol": "HYPE",
+      "name": "HYPE",
+      "decimals": 18,
+      "metadata": {
+       "logoURI": "https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg?1729431300",
+       "verified": true
+      }
+     },
+     "amount": "10000000000000000000",
+     "amountFormatted": "10.0",
+     "amountUsd": "647.271160",
+     "minimumAmount": "10000000000000000000"
+    },
+    "router": "relay"
+   },
+   "destination": {
+    "inputCurrency": {
+     "currency": {
+      "chainId": 8453,
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 6,
+      "metadata": {
+       "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+       "verified": true
+      }
+     },
+     "amount": "639485076",
+     "amountFormatted": "639.485076",
+     "amountUsd": "639.238874",
+     "minimumAmount": "626695374"
+    },
+    "outputCurrency": {
+     "currency": {
+      "chainId": 8453,
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 6,
+      "metadata": {
+       "logoURI": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694",
+       "verified": true
+      }
+     },
+     "amount": "639485076",
+     "amountFormatted": "639.485076",
+     "amountUsd": "639.238874",
+     "minimumAmount": "626695374"
+    },
+    "router": "relay"
+   }
+  }
+ },
+ "protocol": {
+  "v2": {
+   "orderId": "0xb9ff15084fb4af9d47a529b0eb7e8714a3c07e7cf5ef56bbeb2b8e5fe50c65b4",
+   "hubType": "onchain",
+   "orderData": {
+    "version": "v1",
+    "solverChainId": "base",
+    "solver": "0xf70da97812cb96acdf810712aa562db8dfa3dbef",
+    "salt": "0x10d5fb601f3c46d5dae17b82f1ab4e898fa6774159064beb5b77100319922035",
+    "inputs": [
+     {
+      "payment": {
+       "chainId": "hyperevm",
+       "currency": "0x0000000000000000000000000000000000000000",
+       "amount": "10000000000000000000",
+       "weight": "1"
+      },
+      "refunds": [
+       {
+        "chainId": "hyperevm",
+        "recipient": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+        "currency": "0x0000000000000000000000000000000000000000",
+        "minimumAmount": "0",
+        "deadline": 1795333906,
+        "extraData": "0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"
+       },
+       {
+        "chainId": "base",
+        "recipient": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+        "currency": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "minimumAmount": "0",
+        "deadline": 1795333906,
+        "extraData": "0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"
+       }
+      ]
+     }
+    ],
+    "output": {
+     "chainId": "base",
+     "payments": [
+      {
+       "recipient": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+       "currency": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+       "minimumAmount": "626695374",
+       "expectedAmount": "639485076"
+      }
+     ],
+     "calls": [],
+     "deadline": 1795333906,
+     "extraData": "0x0000000000000000000000000729e2a4716d9f7dd17858d5d504426d228697f7"
+    },
+    "fees": []
+   },
+   "paymentDetails": {
+    "chainId": "hyperevm",
+    "depository": "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+    "currency": "0x0000000000000000000000000000000000000000",
+    "amount": "10000000000000000000"
+   }
+  }
+ }
+}

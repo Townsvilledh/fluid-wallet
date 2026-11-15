@@ -712,9 +712,12 @@ silently degraded:
   responses pinned like every other rail's.
 - **Chain discovery** no longer has the aggregator's chain list as
   a third source: admission is registry + TVL only. One visible
-  consequence: HyperEVM (chain 999) drops out of discovery,
-  because the registry's entry for that reused id is stale and no
-  trustworthy source remains to correct it.
+  consequence at the time: HyperEVM (chain 999) dropped out of
+  discovery, because the registry's entry for that reused id is
+  stale. It is a hand-verified built-in since audit gap #6
+  (2026-11-15) — see the HyperEVM section below; the registry and
+  TVL data for the id remain poisoned, so discovery still cannot
+  admit it and the built-in is the only door.
 
 Per-pair reality for the Sui lanes (live-probed 2026-11-13):
 
@@ -1252,3 +1255,55 @@ native USDC and is unprobed, not claimed.
   Sei's legacy bridged USDT, and the direct venue APIs
   (DragonSwap / Sailor / Symphony / Pumex) — proven as
   OpenOcean's venues only.
+
+## HyperEVM (999) — audit gap #6 (2026-11-15)
+
+Chain 999 joins as a hand-verified built-in (`hyperevm`), because
+discovery cannot admit it: the chainid.network registry still
+lists the reused id as "Wanchain Testnet" and DefiLlama's
+Hyperliquid L1 row carries no chainId, so the admission gate —
+correctly — refuses the id on poisoned data. The gate was not
+loosened; the chain was verified by hand instead (research:
+`research_notes/fluid-hyperevm-20261115/probe-notes.md`, all
+probes in-page from the production origin). HYPE is the native,
+priced through CoinGecko (its only configured source — no
+Binance pair is wired, so agent spend caps on HYPE fail closed
+until a second source exists). Pinned tokens: Circle-native
+USDC and USD₮0 (Tether's LayerZero OFT form, the same shape as
+Sei's USDT0 pin — not a Tether-native deployment). RPC rotation
+carries three endpoints with the official RPC first; it stalls
+from some egresses, and rotation falls through on timeout.
+HyperEVM is the EVM environment only — HyperCore (the L1 order
+book) is a different environment and is never wired as this
+chain.
+
+- **Relay is the primary rail, collecting in every direction.**
+  HYPE out, USDC in and USDC out all quoted with the 50 bps App
+  Fee echoed in full on build day; Relay's own chains table
+  gives 999's depository as Fluid's already-pinned canonical
+  depository constant (code proven on-chain there), so the
+  security build's deposit pinning and bounds-check cover
+  HyperEVM with no new constants — pinned in the test suite
+  against regression.
+- **Across is wired as the second rail on the USDC pair,
+  collecting both directions.** The build-day probe (in-page
+  from the production origin, Fluid's own two-pass quote shape)
+  echoed the app fee on real quotes — 99,965 raw out and 99,979
+  raw in on $20 — and the quotes parse collecting and pass the
+  deposit bounds check. The handler, message adapter and
+  SpokePool pins for 999 were read off those same live quotes,
+  and fee-free control quotes pin the echo check as non-vacuous.
+- **Relay intra-chain quotes collect at quote level, but their
+  execution is refused by the depository pinning** — Relay
+  builds same-chain swaps as a router call, not a depository
+  deposit, and that step grammar is unpinned product-wide: a
+  Base → Base quote refuses identically. HyperEVM is in exactly
+  the fleet's position; intra execution waits on a pinned
+  router-step grammar, not on anything 999-specific.
+- **Not wired:** 1Click (its chain list carries "hypercore" —
+  the L1, not this chain) and Mayan (destination-only for 999
+  today; a possible future redundancy for USDC-in, not built).
+- **Unverified, named:** any funded 999 settlement (the first
+  funded deposit is the end-to-end proof, gated on Muse
+  earnings), HYPE pricing depth beyond CoinGecko, and USD₮0
+  liquidity at size.
