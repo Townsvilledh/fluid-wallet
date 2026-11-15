@@ -46,6 +46,7 @@ import {
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
   movePairForToken, movePairForRoute, estimateMoveGas, executeBridgeMove, moveDisclosureLines, loadBridgeMoveRecords, saveBridgeMoveRecord, bridgeMoveHistoryLine, bridgeMovePhase, moveClaimableAt,
   movePairById, probeBridgeMoveClaim, bridgeMoveChainPhase, estimateMoveClaimGas, executeBridgeMoveClaim,
+  executeCctpAptosSwapRoute, loadCctpAptosRecords, advanceCctpAptosRecords, cctpAptosHistoryLine, cctpAptosDisclosureLines, cctpAptosPhase,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
@@ -7527,6 +7528,7 @@ function swapRouteName(route) {
   if (route && route.provider === "skip") return "Skip";
   if (route && route.provider === "openocean") return "OpenOcean";
   if (route && route.provider === "soroswap") return "Soroswap";
+  if (route && route.provider === "cctp-aptos") return "Circle CCTP";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7876,6 +7878,7 @@ $("actSwap").onclick = () => {
     <div id="wMayanSwaps"></div>
     <div id="wOneClickSwaps"></div>
     <div id="wMoves"></div>
+    <div id="wCctpAptos"></div>
     <div id="wGasFallback"></div>
     <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
@@ -8512,6 +8515,20 @@ $("actSwap").onclick = () => {
     refreshMoveClaimStates(() => paintBridgeMoves());
   }
   paintBridgeMoves();
+  // CCTP-Aptos crossings in flight, same conventions: the
+  // persisted record is the whole state (the wait is Circle's
+  // attestation clock), rendered as text only. The driver
+  // advances them while the sheet is open; the unlock driver
+  // advances them otherwise.
+  function paintCctpAptosSwaps() {
+    const host = $("wCctpAptos"); if (!host) return;
+    const records = loadCctpAptosRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>CCTP moves to and from Aptos</h4>` + records.map(r => `<p class="tag" data-cctpaptos-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-cctpaptos-line]").forEach((el, i) => { el.textContent = cctpAptosHistoryLine(records[i]); });
+  }
+  paintCctpAptosSwaps();
+  advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).then(() => paintCctpAptosSwaps()).catch(() => {});
   // Gas-fallback two-step swaps, same conventions: the persisted
   // record is the recovery key; a record whose first leg landed
   // surfaces its line plus the one-tap "Complete the swap"
@@ -8913,7 +8930,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
@@ -9107,6 +9124,17 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "cctp-aptos" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // CCTP-Aptos takes Fluid's fee as an explicit skim
+          // transfer on the EVM side of the crossing (the
+          // crossing itself is exactly 1:1 and deducts
+          // nothing); core priced it under the fee law on a
+          // zero-cost route and the executability gate
+          // re-derived it from the route's own amounts —
+          // disclose exactly that figure (gap #10).
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -9120,6 +9148,7 @@ $("actSwap").onclick = () => {
         if (r.provider === "skip" && r.skip?.rail === "cctp-noble") $("wIntentText").textContent += ` This exit burns your Noble USDC and mints it on ${swapChainName(toKey)} through Circle's CCTP. The relay fee for this quote is ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid, and already inside the amount you receive above. The minted USDC lands at your own ${swapChainName(toKey)} address.`;
         if (r.provider === "skip" && r.skip?.rail !== "cctp-noble") $("wIntentText").textContent += " One signature on the chain you're sending from runs the whole swap. If the transfer ever times out, the network refunds it automatically to this same wallet — there is nothing to claim.";
         if (r.provider === "soroswap") $("wIntentText").textContent += " One signature runs the swap inside your own Stellar account. If your account first needs a trustline to hold an asset on the route, you'll sign that as its own separate step before the swap — each trustline locks 0.5 XLM as reserve, and it is never bundled into the swap itself.";
+        if (r.provider === "cctp-aptos") $("wIntentText").textContent += " " + cctpAptosDisclosureLines(r).join(" ");
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -9443,6 +9472,24 @@ $("actSwap").onclick = () => {
         srcExplorer = STELLAR_EXPLORER;
         srcLink = `${STELLAR_EXPLORER}/tx/${hashes[hashes.length - 1]}`;
         hashes = [hashes[hashes.length - 1]];
+      } else if (route.provider === "cctp-aptos") {
+        // CCTP-Aptos route (gap #10): core burns on the source
+        // family (EVM depositForBurn, bounds-checked, or
+        // Circle's pinned Aptos script), writes the crossing
+        // record at broadcast — the Activity entry is written
+        // through the onBroadcast hook, like the composed
+        // routes' — takes the inbound skim, and hands the
+        // attestation wait to the record + driver, which
+        // submit the mint with the user's own keys. The burn
+        // hash is hashes[0] for the record — an approval may
+        // precede the burn and a skim may follow it in the
+        // returned list, so history links the record's own
+        // burn hash, not a list position.
+        const caOut = await executeCctpAptosSwapRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, onBroadcast: (rec) => syncPendingSwapHistory("cctp-aptos", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) }) });
+        hashes = [caOut.record.burnTxHash || caOut.hashes[0]];
+        srcExplorer = swapSrcExplorerFor(fromKey);
+        if (fromKey === "aptos") srcLink = `${APTOS_EXPLORER}/transaction/${hashes[0]}`;
+        try { paintCctpAptosSwaps(); } catch { /* the list repaints on sheet open regardless */ }
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
@@ -9467,7 +9514,7 @@ $("actSwap").onclick = () => {
       // routes keep one entry the same way: written at
       // deposit broadcast through the executor's onDeposit
       // hook and updated in place as the polls land.
-      if (route.provider !== "milestone" && route.provider !== "gasfallback" && route.provider !== "oneclick" && route.provider !== "skip") {
+      if (route.provider !== "milestone" && route.provider !== "gasfallback" && route.provider !== "oneclick" && route.provider !== "skip" && route.provider !== "cctp-aptos") {
         const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
         h.unshift({ hash: hashes[0], amount, symbol: `${sanitizePersistedSymbol(fromTok.symbol)}→${sanitizePersistedSymbol(toTok.symbol)}`, to: destAddr, ...(srcLink ? { link: srcLink } : {}), explorer: srcExplorer, at: Date.now() });
         localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
@@ -9571,6 +9618,7 @@ function renderHistory() {
     };
     for (const r of loadMilestoneRecords(localStorage)) if (r.state !== "done") synthFor("milestone", r);
     for (const r of loadGasFallbackRecords(localStorage)) if (r.state === "awaiting-credit" || r.state === "leg2-due") synthFor("gasfallback", r);
+    for (const r of loadCctpAptosRecords(localStorage)) if (r.state !== "done") synthFor("cctp-aptos", r);
     // 1Click records (2026-11-14): a record whose deposit
     // broadcast but whose Activity entry is missing (an entry
     // evicted from the capped list, or a build that predates
@@ -10055,7 +10103,7 @@ $("unlockBtn").onclick = async () => {
     // polling while the wallet stays unlocked.
     pollSatoraSwapStatuses(localStorage).catch(() => {});
     resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {});
-    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) { pollSatoraSwapStatuses(localStorage).catch(() => {}); resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {}); } }, 60000);
+    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) { pollSatoraSwapStatuses(localStorage).catch(() => {}); resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {}); advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).catch(() => {}); } }, 60000);
     // Mayan swap polling resumes on unlock on the same terms
     // (source hashes are the recovery key).
     pollMayanSwapStatuses(localStorage).catch(() => {});
@@ -10064,6 +10112,10 @@ $("unlockBtn").onclick = async () => {
     // first leg becomes the sheet's "Complete the swap" action.
     advanceGasFallbackRecords(localStorage).catch(() => {});
     if (!gfbPollTimer) gfbPollTimer = setInterval(() => { if (wallet) advanceGasFallbackRecords(localStorage).catch(() => {}); }, 60000);
+    // CCTP-Aptos crossings advance on unlock + the same
+    // cadence: a landed attestation becomes the mint, claimed
+    // by the user's own keys (gap #10).
+    advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).catch(() => {});
     // One-move order (2026-11-14): unfinished compositions
     // resume BY THEMSELVES on unlock — the auto-driver
     // advances, verifies and signs their remaining legs
@@ -10275,6 +10327,15 @@ function releaseSwapRun(key) { swapRunsInFlight = Math.max(0, swapRunsInFlight -
  *  about where a composition stands. */
 function pendingSwapStepText(kind, record) {
   if (!record) return "";
+  if (kind === "cctp-aptos") {
+    // CCTP-Aptos records carry their phase, not a leg index —
+    // the step text is the phase in plain words.
+    const ph = cctpAptosPhase(record);
+    return ph === "attesting" ? "waiting for Circle's attestation"
+      : ph === "ready" ? "ready to claim"
+      : ph === "burning" ? "burning"
+      : "";
+  }
   if (kind === "gasfallback") {
     if (record.state === "done") return "";
     return (record.state === "leg2-due" || record.receivedRaw != null) ? "step 2 of 2" : "step 1 of 2";

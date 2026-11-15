@@ -22358,6 +22358,10 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
   }
   if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
   if (route.provider === "soroswap") return executeSoroswapSwapRoute(wallet, route, progress);
+  if (route.provider === "cctp-aptos") {
+    const out = await executeCctpAptosSwapRoute(wallet, route, progress, { storage, onApprove });
+    return out.hashes;
+  }
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** The gas-fallback leg-2 band (security audit WS2 F3,
@@ -25536,6 +25540,16 @@ async function getSwapRoutesDirect(args) {
   if (soroswapSupportsPair(planArgs)) {
     try { const ss = await getSoroswapSwapRoute(planArgs); if (ss) routes.push(ss); } catch { /* Soroswap is a candidate, never a single point of failure */ }
   }
+  // CCTP-Aptos (gap #10, 2026-11-15): Circle's own crossing
+  // between Aptos and the EVM domains, beside Soroswap in the
+  // same posture — a deterministic 1:1 quote (no server to
+  // fail), carrying its capture as the EVM-side skim. It
+  // competes with 1Click for Aptos pairs on merit: slower
+  // (~15–19 min attestation) but exactly 1:1 inside the
+  // crossing.
+  if (cctpAptosSupportsPair(planArgs)) {
+    try { const ca = await getCctpAptosSwapRoute(planArgs); if (ca) routes.push(ca); } catch { /* CCTP-Aptos is a candidate, never a single point of failure */ }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -26461,6 +26475,48 @@ export function swapRouteExecutable(route) {
       return { ok: false, reason: "This Stellar route's fee could not be verified against its quote — pick another route." };
     }
     return { ok: true, soroswap: true };
+  }
+  // CCTP-Aptos routes (audit gap #10, 2026-11-15): executable
+  // when the route carries its full deterministic plan — one
+  // side Aptos USDC, the other a table EVM domain's pinned
+  // native USDC, the burn/fee split re-deriving exactly from
+  // the route's own amounts (burn + skim == input inbound;
+  // the full input burns outbound), the mint recipient the
+  // destination-side address, and a fee state whose raw fee
+  // equals the fee law's own arithmetic on this amount (or an
+  // honestly-zero fee). The executor re-derives both own
+  // addresses from the wallet and re-checks the burn call
+  // field by field before signing, so the gate is structural,
+  // exactly like the lanes above.
+  if (route?.provider === "cctp-aptos") {
+    const c = route.cctpAptos;
+    const incomplete = "This CCTP route is incomplete — pick another route.";
+    const rawOk = (v) => typeof v === "string" && /^\d+$/.test(v);
+    if (!c || !rawOk(route.fromAmount) || !rawOk(route.toAmount) || !rawOk(c.burnAmountRaw) || !rawOk(c.feeRaw)
+      || String(c.feeRaw) !== String(route.platformFeeRaw || "0")
+      || (c.direction !== "in" && c.direction !== "out")
+      || CCTP_APTOS_EVM_DOMAINS[c.evmChainKey] == null
+      || Number(c.sourceDomain) !== (c.direction === "in" ? CCTP_APTOS_EVM_DOMAINS[c.evmChainKey] : CCTP_APTOS_DOMAIN)
+      || Number(c.destDomain) !== (c.direction === "in" ? CCTP_APTOS_DOMAIN : CCTP_APTOS_EVM_DOMAINS[c.evmChainKey]))
+      return { ok: false, reason: incomplete };
+    const amount = BigInt(route.fromAmount), burn = BigInt(c.burnAmountRaw), fee = BigInt(c.feeRaw);
+    if (c.direction === "in" && burn + fee !== amount) return { ok: false, reason: incomplete };
+    if (c.direction === "out" && burn !== amount) return { ok: false, reason: incomplete };
+    if (BigInt(route.toAmount) !== amount - fee) return { ok: false, reason: incomplete };
+    const aptosUsdc = APTOS_TOKENS.find(t => t.symbol === "USDC");
+    const evmUsdc = (NETWORKS[c.evmChainKey]?.tokens || []).find(t => t.symbol === "USDC");
+    if (!evmUsdc || String(c.burnToken).toLowerCase() !== String(c.direction === "in" ? evmUsdc.address : aptosUsdc.address).toLowerCase())
+      return { ok: false, reason: incomplete };
+    if (c.direction === "in" && !isValidAptosAddress(c.mintRecipient)) return { ok: false, reason: incomplete };
+    if (c.direction === "out" && !ethers.isAddress(c.mintRecipient)) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting === true || route.collecting === true) {
+      const expect = cctpAptosFeeFor(route.fromAmount, route.fromAmountUSD, c.evmChainKey);
+      if (!expect.collecting || expect.feeRaw !== String(c.feeRaw) || Number(route.platformFeeBps) !== expect.bps)
+        return { ok: false, reason: "This CCTP route's fee could not be verified against the fee law — pick another route." };
+    } else if (String(route.platformFeeRaw ?? "0") !== "0") {
+      return { ok: false, reason: "This CCTP route's fee could not be verified against the fee law — pick another route." };
+    }
+    return { ok: true, cctpAptos: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
@@ -29793,20 +29849,49 @@ function aptosTransferCall(token, to, rawAmount) {
     bcsArguments: [new AptosBcs().addr(token.address).done(), new AptosBcs().addr(to).done(), new AptosBcs().u64(rawAmount).done()],
   };
 }
+/** The raw-transaction frame every Aptos payload rides in:
+ *  sender, sequence number, the payload itself, then the gas /
+ *  expiry / chain tail. Shared by the entry-function builder
+ *  and the script builder (audit gap #10) so the frame exists
+ *  exactly once. */
+function aptosRawTxBytes(sender, sequenceNumber, writePayload, { maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId = APTOS_CHAIN_ID }) {
+  const b = new AptosBcs();
+  b.addr(sender); b.u64(sequenceNumber);
+  writePayload(b);
+  b.u64(maxGasAmount); b.u64(gasUnitPrice); b.u64(expirationTimestampSecs); b.u8(chainId);
+  return b.done();
+}
 /** Build the raw transaction BCS for a transfer. Exported for the
  *  tests, which pin its bytes against the SDK-validated vectors. */
 export function aptosBuildRawTransaction({ sender, sequenceNumber, to, amountRaw, token = null, maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId = APTOS_CHAIN_ID }) {
   const call = aptosTransferCall(token, to, amountRaw);
-  const b = new AptosBcs();
-  b.addr(sender); b.u64(sequenceNumber);
-  b.u8(2); // TransactionPayload variant: EntryFunction
-  b.addr(call.module[0]); b.str(call.module[1]); b.str(call.module[2]);
-  b.uleb(call.typeArguments.length);
-  for (const t of call.typeArguments) aptosWriteTypeTag(b, t);
-  b.uleb(call.bcsArguments.length);
-  for (const a of call.bcsArguments) b.bytes(a);
-  b.u64(maxGasAmount); b.u64(gasUnitPrice); b.u64(expirationTimestampSecs); b.u8(chainId);
-  return b.done();
+  return aptosRawTxBytes(sender, sequenceNumber, (b) => {
+    b.u8(2); // TransactionPayload variant: EntryFunction
+    b.addr(call.module[0]); b.str(call.module[1]); b.str(call.module[2]);
+    b.uleb(call.typeArguments.length);
+    for (const t of call.typeArguments) aptosWriteTypeTag(b, t);
+    b.uleb(call.bcsArguments.length);
+    for (const a of call.bcsArguments) b.bytes(a);
+  }, { maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId });
+}
+/** Build the raw transaction BCS for a SCRIPT payload
+ *  (TransactionPayload variant 3): the precompiled Move
+ *  bytecode, its type arguments, and its already-encoded
+ *  ScriptArguments (each argument is its variant byte + value,
+ *  written inline — a script argument carries no length
+ *  prefix of its own). This is the variant Circle's CCTP
+ *  scripts require (audit gap #10): Move's static dispatch
+ *  means receive/burn flows ship as scripts, not entry calls. */
+export function aptosBuildScriptTransaction({ sender, sequenceNumber, code, argumentsBcs = [], typeArguments = [], maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId = APTOS_CHAIN_ID }) {
+  if (!(code instanceof Uint8Array) || !code.length) throw new Error("A script transaction needs its bytecode.");
+  return aptosRawTxBytes(sender, sequenceNumber, (b) => {
+    b.u8(3); // TransactionPayload variant: Script
+    b.bytes(code);
+    b.uleb(typeArguments.length);
+    for (const t of typeArguments) aptosWriteTypeTag(b, t);
+    b.uleb(argumentsBcs.length);
+    for (const a of argumentsBcs) b.push(a);
+  }, { maxGasAmount, gasUnitPrice, expirationTimestampSecs, chainId });
 }
 /** The Aptos signing message: SHA3-256 of the domain separator
  *  "APTOS::RawTransaction", prepended to the raw transaction BCS. */
@@ -29946,6 +30031,720 @@ export async function sendAptos(phrase, { to, amount, token = null }) {
     if (tx && tx.success === false) throw new Error("Aptos rejected the transaction: " + (tx.vm_status || "execution failed"));
   }
   return { hash, pending: true };
+}
+
+/* ================= Aptos CCTP V2 (audit gap #10, 2026-11-15) =================
+ * Circle's CCTP V2 crossing between Aptos (domain 9) and the
+ * EVM domains Fluid serves. Research: research_notes/
+ * fluid-aptos-cctp-20261115 (verdict CAPTURE-GATED). The bare
+ * CCTP leg is exactly 1:1 with NO fee surface anywhere
+ * (standard transfers set maxFee 0; no affiliate parameter
+ * exists), so under the universal capture rule it ships ONLY
+ * as this composition: the crossing itself stays 1:1 and
+ * fee-free, and Fluid's fee — priced by the fee law on a
+ * zero-cost route, i.e. the flat cap rate — rides as an
+ * explicit skim transfer on the EVM side inside the same user
+ * confirmation (the Noble skim precedent): on the way IN it
+ * is a separate USDC transfer from the user's EVM account
+ * after the burn confirms (the burn amount is the swap amount
+ * minus the fee); on the way OUT it is taken from what the
+ * mint lands on the user's EVM account, SunSwap output-skim
+ * style. The skim is never inside the CCTP message and never
+ * touches custody: every step is signed by the user's own
+ * keys, and a skim that fails after the crossing landed is
+ * flagged on the record, never allowed to strand the user's
+ * money. V2 ONLY — CCTP V1 pauses 2026-12-01 and its Aptos
+ * packages are not used anywhere here.
+ *
+ * Speed honesty: standard attestation waits for source
+ * finality — about 15–19 minutes. This is a SLOW-class route,
+ * disclosed on the card, never badged fast. The Aptos mint is
+ * submitted by the user's own Aptos account and pays APT
+ * dust: a zero-APT (or not-yet-created) Aptos account cannot
+ * self-claim an inbound mint, the card says so, and the
+ * 1Click Aptos route (no claim step) competes beside it.
+ * Re-check trigger for a bare-route ship: Circle enabling
+ * Fast Transfer, the Forwarding Service, or hooks on
+ * domain 9 (all off today). */
+export const CCTP_APTOS_DOMAIN = 9;
+export const CCTP_V2_STANDARD_FINALITY = 2000;
+/** The EVM CCTP V2 domains Fluid serves with a pinned native
+ *  USDC (the NETWORKS token pin is the burn token — CCTP burns
+ *  only Circle's native issue). Domain ids are Circle's. */
+export const CCTP_APTOS_EVM_DOMAINS = { ethereum: 0, avalanche: 1, optimism: 2, arbitrum: 3, base: 6, polygon: 7, linea: 11 };
+/** Circle's TokenMessengerV2 / MessageTransmitterV2 — the same
+ *  pinned contracts the Satora CCTP sources use (byte-identical
+ *  to Circle's current contract-address page). */
+export const CCTP_V2_TOKEN_MESSENGER = SATORA_CCTP_TOKEN_MESSENGER_V2;
+export const CCTP_V2_MESSAGE_TRANSMITTER = SATORA_CCTP_MESSAGE_TRANSMITTER_V2;
+/** Where the skim lands: the DripBot EVM fee wallet (the same
+ *  address the fee split settles to). */
+export const CCTP_APTOS_FEE_ADDRESS = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+/** Slow class, stated as Circle's own standard-attestation
+ *  figure for Ethereum/Base-class sources (~15–19 min). */
+export const CCTP_APTOS_DURATION_SEC = 19 * 60;
+export const CCTP_APTOS_STORAGE_KEY = "fluid_cctp_aptos_v1";
+/* Circle's precompiled Move scripts (V2, mainnet), from
+ * circlefin/aptos-cctp typescript/example/precompiled-move-
+ * scripts/mainnet/v2 — embedded as base64 and PINNED BY
+ * SHA-256: the builders refuse any bytes whose hash differs
+ * from the pin, so a tampered or swapped script can never be
+ * signed. deposit_for_burn.mv (552 bytes) withdraws USDC from
+ * the sender's primary fungible store and calls
+ * token_messenger_minter's burn handler — no approval tx.
+ * receive_message.mv (385 bytes) runs receive_message ->
+ * prepare_mint -> mint in one transaction. */
+export const CCTP_APTOS_BURN_SCRIPT_SHA256 = "8447c14c4f7d1edcc0bed97f46bb8db2cc67663cf8a948b2b4f25a0c7eb5744c";
+export const CCTP_APTOS_RECEIVE_SCRIPT_SHA256 = "8b3dc2a420857b428be2e13ac098a5ca4d273f97b5d8837977a2c04c3aaebe67";
+const CCTP_APTOS_BURN_SCRIPT_B64 = "oRzrCwkAAAoIAQAKAgoSAxwiBD4EBUI/B4EBsAEIsQKAARCxAx8BAwEEAQcCCgMMAAILAAEGBwEAAQAJAAADCwAAAQUDBAEIAQEBAggFBgEIAQEBAwEICQABAQEEDQkBAAEBAQACAQIIBgwDDgUFBQMOAAEIAAEFAQsBAQkAAwYMCwEBCQADAQgCAQIIBgwIAg4FBQMOCgICCAMIAgMLAQEIAAgCCAMIPFNFTEY+XzAQZGVwb3NpdF9mb3JfYnVybghNZXRhZGF0YQ5mdW5naWJsZV9hc3NldAZvYmplY3QRYWRkcmVzc190b19vYmplY3QGT2JqZWN0FnByaW1hcnlfZnVuZ2libGVfc3RvcmUId2l0aGRyYXcNRnVuZ2libGVBc3NldBZ0b2tlbl9tZXNzZW5nZXJfbWludGVyC0J1cm5SZWNlaXB0B2hhbmRsZXIEYnVybv//////////////////////////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFVHjJ4F5PDC/FYDRHk9RcejQaMPUXDpbIK4kC/2tma+CuWP4qii4FdLodb2FoaAdXy00bwj1ufz4lTx3aAc1ryFGNvbXBpbGF0aW9uX21ldGFkYXRhCQADMi4wAzIuMwAAAQoTCwU4AAwICgALCAsBOAEMCQsACwkLAgsDCwQLBgsHQAcAAAAAAAAAABECEQMC";
+const CCTP_APTOS_RECEIVE_SCRIPT_B64 = "oRzrCwkAAAoHAQAGAgYIAw4YBSYXBz1yCK8BgAEQrwIfAQICBAMHAAMAAAEGAAAAAQIDAAEBAQEFAwQAAQEBAggEAQABAQEDBgwKAgoCAAMGDAYKAgYKAgEIAAEIAQg8U0VMRj5fMw9yZWNlaXZlX21lc3NhZ2UTbWVzc2FnZV90cmFuc21pdHRlcgdSZWNlaXB0FnRva2VuX21lc3Nlbmdlcl9taW50ZXIMcHJlcGFyZV9taW50C01pbnRSZWNlaXB0B2hhbmRsZXIEbWludP//////////////////////////////////////////Gz9tdJy4NUUSAvmhky5JAUJm9+PVFhGpp2PRVstL2vZVHjJ4F5PDC/FYDRHk9RcejQaMPUXDpbIK4kC/2tma+CuWP4qii4FdLodb2FoaAdXy00bwj1ufz4lTx3aAc1ryFGNvbXBpbGF0aW9uX21ldGFkYXRhCQADMi4wAzIuMwAAAQEHCwAOAQ4CEQARARECAg==";
+const CCTP_APTOS_SCRIPT_PINS = {
+  burn: { b64: CCTP_APTOS_BURN_SCRIPT_B64, sha256: CCTP_APTOS_BURN_SCRIPT_SHA256 },
+  receive: { b64: CCTP_APTOS_RECEIVE_SCRIPT_B64, sha256: CCTP_APTOS_RECEIVE_SCRIPT_SHA256 },
+};
+/** Pure pin check: do these bytes hash to the pinned SHA-256
+ *  for this script kind? Exported for the tests' tamper pin. */
+export function verifyCctpAptosScriptBytes(bytes, kind) {
+  const pin = CCTP_APTOS_SCRIPT_PINS[kind];
+  if (!pin || !(bytes instanceof Uint8Array) || !bytes.length) return false;
+  return hex.encode(sha256(bytes)) === pin.sha256;
+}
+/** The pinned script bytes for "burn" | "receive", verified
+ *  against the hash pin on EVERY call — a mismatch refuses
+ *  (throws), it never signs unverified bytecode. */
+export function cctpAptosScriptBytes(kind) {
+  const pin = CCTP_APTOS_SCRIPT_PINS[kind];
+  if (!pin) throw new Error("Unknown CCTP script: " + kind);
+  const bytes = base64.decode(pin.b64);
+  if (!verifyCctpAptosScriptBytes(bytes, kind))
+    throw new Error("Fluid refused a CCTP script whose bytes do not match its pinned hash — nothing was signed.");
+  return bytes;
+}
+/* ----- Script arguments: the two spellings of one call -----
+ * Each encoder returns { bcs, json }: the BCS ScriptArgument
+ * (variant byte + value, inline) the signer covers, and the
+ * JSON spelling the node accepts for simulate + submit —
+ * exactly the dual-rendering discipline of aptosTransferCall.
+ * ScriptArgument variants: u64 = 1, address = 3,
+ * u8-vector = 4, u32 = 7. */
+function aptosScriptArgU64(v) {
+  const b = new AptosBcs(); b.u8(1); b.u64(v);
+  return { bcs: b.done(), json: { type: "u64", value: String(BigInt(v)) } };
+}
+function aptosScriptArgU32(v) {
+  const b = new AptosBcs(); b.u8(7);
+  const x = new Uint8Array(4); new DataView(x.buffer).setUint32(0, Number(v) >>> 0, true); b.push(x);
+  return { bcs: b.done(), json: { type: "u32", value: Number(v) } };
+}
+function aptosScriptArgAddress(a) {
+  const norm = normalizeAptosAddress(a);
+  if (!norm) throw new Error("That is not a valid Aptos-format address for a CCTP script argument.");
+  const b = new AptosBcs(); b.u8(3); b.addr(norm);
+  return { bcs: b.done(), json: { type: "address", value: norm } };
+}
+function aptosScriptArgU8Vector(bytes) {
+  const b = new AptosBcs(); b.u8(4); b.bytes(bytes);
+  return { bcs: b.done(), json: { type: "vector<u8>", value: "0x" + hex.encode(bytes) } };
+}
+/** The deposit_for_burn script call, in Circle's own argument
+ *  order (their V2 example): amount, destination domain, mint
+ *  recipient, destination caller (zero — anyone may relay the
+ *  receive), burn token (the USDC metadata object), maxFee 0,
+ *  finality threshold 2000 (standard). The script withdraws
+ *  from the sender's primary store itself — no approval tx. */
+export function cctpAptosBurnScriptCall({ amountRaw, destDomain, mintRecipient, burnToken } = {}) {
+  const args = [
+    aptosScriptArgU64(amountRaw),
+    aptosScriptArgU32(destDomain),
+    aptosScriptArgAddress(mintRecipient),
+    aptosScriptArgAddress("0x0"),
+    aptosScriptArgAddress(burnToken),
+    aptosScriptArgU64(0n),
+    aptosScriptArgU32(CCTP_V2_STANDARD_FINALITY),
+  ];
+  return { code: cctpAptosScriptBytes("burn"), bcsArguments: args.map(a => a.bcs), jsonArguments: args.map(a => a.json) };
+}
+/** The receive_message script call: the Iris message bytes and
+ *  the attestation, in that order. */
+export function cctpAptosReceiveScriptCall({ message, attestation } = {}) {
+  const msgBytes = ethers.getBytes(String(message));
+  const attBytes = ethers.getBytes(String(attestation));
+  const args = [aptosScriptArgU8Vector(msgBytes), aptosScriptArgU8Vector(attBytes)];
+  return { code: cctpAptosScriptBytes("receive"), bcsArguments: args.map(a => a.bcs), jsonArguments: args.map(a => a.json) };
+}
+/** The JSON transaction body for a script payload (simulate +
+ *  submit share it; only the signature differs). */
+function aptosScriptTxJson({ sender, sequenceNumber, call, maxGasAmount, gasUnitPrice, expirationTimestampSecs, signature, publicKey }) {
+  return {
+    sender, sequence_number: String(sequenceNumber),
+    max_gas_amount: String(maxGasAmount), gas_unit_price: String(gasUnitPrice),
+    expiration_timestamp_secs: String(expirationTimestampSecs),
+    payload: { type: "script_payload", code: { type: "hex", value: "0x" + hex.encode(call.code) }, type_arguments: [], arguments: call.jsonArguments },
+    signature: { type: "ed25519_signature", public_key: publicKey, signature },
+  };
+}
+/** Plan a script submission: account existence, sequence, the
+ *  node's own simulation of THIS exact script call (dummy
+ *  signature), and the gas it implies — the sendAptos plan
+ *  discipline, for script payloads. */
+async function aptosScriptPlan(fromAddress, { call, publicKey }) {
+  const from = normalizeAptosAddress(fromAddress);
+  if (!(await aptosAccountExists(from))) return { exists: false };
+  const acct = await aptosRest(`/accounts/${from}`);
+  if (!acct.ok || !acct.data) throw new Error("Aptos account lookup failed (HTTP " + acct.status + ").");
+  if (!publicKey) throw new Error("Aptos planning needs the sender's public key.");
+  const sequenceNumber = String(acct.data.sequence_number ?? "0");
+  const gasRes = await aptosRest("/estimate_gas_price");
+  const gasUnitPrice = BigInt((gasRes.data && gasRes.data.gas_estimate) ?? 100);
+  const expirationTimestampSecs = Math.floor(Date.now() / 1000) + 600;
+  const sim = await aptosRest("/transactions/simulate", { method: "POST", body: aptosScriptTxJson({
+    sender: from, sequenceNumber, call,
+    maxGasAmount: 20000n, gasUnitPrice, expirationTimestampSecs,
+    signature: APTOS_DUMMY_SIGNATURE, publicKey,
+  }) });
+  const s0 = Array.isArray(sim.data) ? sim.data[0] : null;
+  if (!s0) throw new Error("Aptos simulation didn't answer (HTTP " + sim.status + ").");
+  const gasUsed = BigInt(s0.gas_used || 0);
+  const maxGasAmount = gasUsed * 3n / 2n + 100n;
+  return {
+    exists: true, sequenceNumber, gasUnitPrice: gasUnitPrice.toString(),
+    maxGasAmount: maxGasAmount.toString(), expirationTimestampSecs,
+    estimatedFeeOctas: (gasUsed * gasUnitPrice).toString(),
+    simSuccess: !!s0.success, simStatus: String(s0.vm_status || ""),
+  };
+}
+/** Build, sign (locally) and submit one CCTP script call.
+ *  Mirrors sendAptos: simulate first, enforce the worst-case
+ *  APT fee against the actual balance, sign the local BCS,
+ *  submit the JSON form, poll for the committed result. */
+async function aptosSubmitCctpScript(phrase, call, { kindLabel = "CCTP script" } = {}) {
+  const from = aptosAddressFromPhrase(phrase);
+  const plan = await aptosScriptPlan(from, { call, publicKey: aptosPublicKeyFromPhrase(phrase) });
+  if (!plan.exists) {
+    const err = new Error("Your Aptos account doesn't exist on-chain yet — an account is created when it first receives APT. Receive some APT at this address first.");
+    err.aptosNoAccount = true;
+    throw err;
+  }
+  if (!plan.simSuccess) throw new Error("The network says this " + kindLabel + " would fail: " + (plan.simStatus || "simulation failed"));
+  const feeWorst = BigInt(plan.maxGasAmount) * BigInt(plan.gasUnitPrice);
+  const aptRaw = BigInt(await aptosAptBalanceRaw(from));
+  if (feeWorst > aptRaw) {
+    const err = new Error("Not enough APT to pay the network fee for this " + kindLabel + ".");
+    err.aptosNoGas = true;
+    throw err;
+  }
+  const raw = aptosBuildScriptTransaction({
+    sender: from, sequenceNumber: BigInt(plan.sequenceNumber), code: call.code, argumentsBcs: call.bcsArguments,
+    maxGasAmount: BigInt(plan.maxGasAmount), gasUnitPrice: BigInt(plan.gasUnitPrice),
+    expirationTimestampSecs: BigInt(plan.expirationTimestampSecs), chainId: APTOS_CHAIN_ID,
+  });
+  const signed = aptosSignRawTransaction(phrase, raw);
+  const sub = await aptosRest("/transactions", { method: "POST", body: aptosScriptTxJson({
+    sender: from, sequenceNumber: plan.sequenceNumber, call,
+    maxGasAmount: BigInt(plan.maxGasAmount), gasUnitPrice: BigInt(plan.gasUnitPrice),
+    expirationTimestampSecs: plan.expirationTimestampSecs,
+    signature: signed.signature, publicKey: signed.publicKey,
+  }) });
+  if (!(sub.status === 202 || sub.status === 200) || !sub.data || !sub.data.hash) {
+    const why = (sub.data && sub.data.message) || ("HTTP " + sub.status);
+    throw new Error("Aptos rejected the transaction: " + why);
+  }
+  const hash = sub.data.hash;
+  for (let i = 0; i < 15; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const chk = await aptosRest(`/transactions/by_hash/${hash}`);
+    const tx = chk.data;
+    if (tx && tx.success === true) return { hash };
+    if (tx && tx.success === false) throw new Error("Aptos rejected the transaction: " + (tx.vm_status || "execution failed"));
+  }
+  return { hash, pending: true };
+}
+/* ----- The EVM side: generalised CCTP V2 burn + message -----
+ * The Satora builders pin Arbitrum + Fast finality for their
+ * own lanes; these are the same grammar generalised to any
+ * destination domain at the standard finality, with the same
+ * inspect-before-sign discipline. */
+const CCTP_V2_EVM_INTERFACE = new ethers.Interface([
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
+  "function receiveMessage(bytes message, bytes attestation) returns (bool success)",
+]);
+/** A bytes32 mint recipient from either spelling: an Aptos
+ *  address is already 32 bytes; an EVM address left-pads. */
+export function cctpBytes32Recipient(address) {
+  const s = String(address || "").toLowerCase();
+  if (/^0x[0-9a-f]{64}$/.test(s)) return s;
+  return ethers.zeroPadValue(s, 32).toLowerCase();
+}
+export function buildCctpV2Burn({ amountRaw, destDomain, mintRecipient, burnToken, destinationCaller, maxFeeRaw = 0n, finalityThreshold = CCTP_V2_STANDARD_FINALITY } = {}) {
+  const data = CCTP_V2_EVM_INTERFACE.encodeFunctionData("depositForBurn", [
+    BigInt(amountRaw), Number(destDomain), cctpBytes32Recipient(mintRecipient),
+    String(burnToken), cctpBytes32Recipient(destinationCaller),
+    BigInt(maxFeeRaw), Number(finalityThreshold),
+  ]);
+  return { to: CCTP_V2_TOKEN_MESSENGER, data };
+}
+/** Bounds-check a CCTP V2 burn call field by field — the
+ *  Satora check generalised: pinned TokenMessengerV2 target,
+ *  exact amount, exact destination domain, the mint recipient
+ *  exactly the expected bytes32, the pinned native USDC, the
+ *  authorised destination caller, fee cap 0 and the standard
+ *  finality threshold. Anything else is refused. */
+export function checkCctpV2Burn(call, { amountRaw, destDomain, mintRecipient, burnToken, destinationCaller, maxFeeRaw = 0n, finalityThreshold = CCTP_V2_STANDARD_FINALITY } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this CCTP burn: " + m });
+  if (!call || String(call.to || "").toLowerCase() !== CCTP_V2_TOKEN_MESSENGER.toLowerCase())
+    return refuse("the burn does not target Circle's pinned TokenMessenger contract.");
+  let d;
+  try { d = CCTP_V2_EVM_INTERFACE.decodeFunctionData("depositForBurn", call.data); }
+  catch { return refuse("the burn call does not decode as a CCTP depositForBurn."); }
+  if (d[0] !== BigInt(amountRaw)) return refuse("the burn amount differs from the quoted amount.");
+  if (Number(d[1]) !== Number(destDomain)) return refuse("the burn is addressed to a different CCTP domain than quoted.");
+  if (String(d[2]).toLowerCase() !== cctpBytes32Recipient(mintRecipient)) return refuse("the burn would mint to a different recipient than your own wallet.");
+  if (String(d[3]).toLowerCase() !== String(burnToken).toLowerCase()) return refuse("the burn token is not the pinned native USDC.");
+  if (String(d[4]).toLowerCase() !== cctpBytes32Recipient(destinationCaller)) return refuse("the burn names a different destination caller than authorised.");
+  if (d[5] !== BigInt(maxFeeRaw)) return refuse("the burn's fee cap differs from the quote's.");
+  if (Number(d[6]) !== Number(finalityThreshold)) return refuse("the burn does not use the standard finality the quote priced.");
+  return { ok: true };
+}
+/** Verify a CCTP V2 message names THIS crossing before its
+ *  receive is submitted — checkSatoraCctpMessage generalised
+ *  beyond Arbitrum: header fields only (source domain,
+ *  destination domain, the mint recipient exactly the expected
+ *  bytes32, the destination caller exactly the authorised
+ *  one). Circle's attestation already makes a forged message
+ *  unmintable; this pin means a confused or hostile relay
+ *  answer can never make Fluid submit somebody else's
+ *  crossing. */
+export function checkCctpV2Message(messageHex, { sourceDomain, destDomain, mintRecipient, destinationCaller } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this CCTP message: " + m });
+  if (typeof messageHex !== "string" || !/^0x[0-9a-fA-F]+$/.test(messageHex)) return refuse("the message was unreadable.");
+  let bytes;
+  try { bytes = ethers.getBytes(messageHex); } catch { return refuse("the message was unreadable."); }
+  if (bytes.length < 124) return refuse("the message is too short to be a CCTP v2 message.");
+  const u32 = (off) => new DataView(bytes.buffer, bytes.byteOffset + off, 4).getUint32(0, false);
+  if (Number(sourceDomain) >= 0 && u32(4) !== Number(sourceDomain)) return refuse("the message comes from a different source domain than the burn.");
+  if (Number(destDomain) >= 0 && u32(8) !== Number(destDomain)) return refuse("the message is addressed to a different destination domain than the burn.");
+  const word = (off) => "0x" + hexOf(bytes.slice(off, off + 32));
+  if (mintRecipient != null && word(52) !== cctpBytes32Recipient(mintRecipient)) return refuse("the message would mint to a different recipient than your own wallet.");
+  if (destinationCaller != null && word(84) !== cctpBytes32Recipient(destinationCaller)) return refuse("the message names a different destination caller than the burn authorised.");
+  return { ok: true };
+}
+/** The route's pair, or null: USDC on Aptos against USDC on
+ *  one of the table's EVM domains — the pinned native issue on
+ *  each side, nothing else (CCTP carries Circle's native USDC
+ *  only; the LayerZero-bridged Aptos USDC is a different asset
+ *  and never matches). Pure. */
+export function cctpAptosSupportsPair(args) {
+  if (!args) return null;
+  const aptosUsdc = APTOS_TOKENS.find(t => t.symbol === "USDC");
+  const isAptosUsdc = (a) => typeof a === "string" && a.toLowerCase() === aptosUsdc.address.toLowerCase();
+  const evmUsdcOf = (key) => {
+    if (CCTP_APTOS_EVM_DOMAINS[key] == null) return null;
+    const t = (NETWORKS[key]?.tokens || []).find(x => x.symbol === "USDC");
+    return t ? { address: t.address, decimals: t.decimals ?? 6 } : null;
+  };
+  if (args.fromChainKey === "aptos" && isAptosUsdc(args.fromTokenAddress)) {
+    const evm = evmUsdcOf(args.toChainKey);
+    if (evm && typeof args.toTokenAddress === "string" && args.toTokenAddress.toLowerCase() === evm.address.toLowerCase())
+      return { direction: "out", evmChainKey: args.toChainKey, domain: CCTP_APTOS_EVM_DOMAINS[args.toChainKey], evmUsdc: evm };
+    return null;
+  }
+  if (args.toChainKey === "aptos" && isAptosUsdc(args.toTokenAddress)) {
+    const evm = evmUsdcOf(args.fromChainKey);
+    if (evm && typeof args.fromTokenAddress === "string" && args.fromTokenAddress.toLowerCase() === evm.address.toLowerCase())
+      return { direction: "in", evmChainKey: args.fromChainKey, domain: CCTP_APTOS_EVM_DOMAINS[args.fromChainKey], evmUsdc: evm };
+    return null;
+  }
+  return null;
+}
+/** The skim arithmetic, one place for both directions (the
+ *  tests pin it here): the fee law on a zero-cost route —
+ *  CCTP's in-route value loss is exactly 0, so
+ *  platformFeeBpsForRoute's degenerate case prices the flat
+ *  cap rate; the raw fee is platformFeeOn's floor, so fee +
+ *  net == amount EXACTLY and rounding can never create or
+ *  destroy value. Pure. */
+export function cctpAptosFeeFor(amountRaw, amountUsd, destChainKey) {
+  const bps = platformFeeBpsForRoute(0, amountUsd, destChainKey);
+  const feeRaw = platformFeeOn(amountRaw, bps);
+  return { feeRaw: feeRaw.toString(), bps, collecting: feeRaw > 0n };
+}
+/** The CCTP-Aptos route: deterministic — no server quote
+ *  exists or is needed. The crossing is exactly 1:1, so the
+ *  amount that lands is the amount burned; the only deduction
+ *  anywhere is Fluid's skim, taken on the EVM side (in: the
+ *  burn is amount − fee; out: the fee leaves what the mint
+ *  lands), so toAmount == amount − fee in both directions and
+ *  the card's arithmetic is the execution's arithmetic. */
+export async function getCctpAptosSwapRoute(args) {
+  const pair = cctpAptosSupportsPair(args);
+  if (!pair) return null;
+  const amount = BigInt(args.fromAmount);
+  if (amount <= 0n) return null;
+  const aptosUsdc = APTOS_TOKENS.find(t => t.symbol === "USDC");
+  // The crossing settles to the user's OWN addresses on both
+  // families — a quote addressed anywhere else is not offered.
+  const from = typeof args.fromAddress === "string" ? args.fromAddress : "";
+  const to = typeof args.toAddress === "string" ? args.toAddress : "";
+  const aptosAddr = pair.direction === "in" ? to : from;
+  const evmAddr = pair.direction === "in" ? from : to;
+  if (!isValidAptosAddress(aptosAddr) || !ethers.isAddress(evmAddr)) return null;
+  let usdcUsd = 1;
+  try { const p = await getPrices(); const v = Number(p?.USDC); if (Number.isFinite(v) && v > 0) usdcUsd = v; } catch { /* the pinned stable's $1 seed stands */ }
+  const amountUsd = Number(ethers.formatUnits(amount, 6)) * usdcUsd;
+  const fee = cctpAptosFeeFor(amount, amountUsd, pair.evmChainKey);
+  const feeRaw = BigInt(fee.feeRaw);
+  const netRaw = amount - feeRaw;
+  if (netRaw <= 0n) return null;
+  const burnRaw = pair.direction === "in" ? netRaw : amount;
+  const evmChain = NETWORKS[pair.evmChainKey];
+  return {
+    provider: "cctp-aptos",
+    id: `cctp-aptos-${pair.direction}-${pair.evmChainKey}-${amount.toString()}`,
+    fromChainKey: args.fromChainKey, toChainKey: args.toChainKey,
+    fromChainId: pair.direction === "in" ? evmChain.chainId : APTOS_SWAP_CHAIN_ID,
+    toChainId: pair.direction === "in" ? APTOS_SWAP_CHAIN_ID : evmChain.chainId,
+    fromToken: pair.direction === "in"
+      ? { address: pair.evmUsdc.address, symbol: "USDC", decimals: 6 }
+      : { address: aptosUsdc.address, symbol: "USDC", decimals: 6 },
+    toToken: pair.direction === "in"
+      ? { address: aptosUsdc.address, symbol: "USDC", decimals: 6 }
+      : { address: pair.evmUsdc.address, symbol: "USDC", decimals: 6 },
+    fromAmount: amount.toString(),
+    toAmount: netRaw.toString(),
+    toAmountMin: netRaw.toString(),
+    fromAmountUSD: amountUsd, toAmountUSD: Number(ethers.formatUnits(netRaw, 6)) * usdcUsd,
+    gasCostUSD: 0,
+    routeFeeUsd: 0,
+    steps: [],
+    platformFeeRaw: fee.feeRaw, platformFeeBps: fee.bps,
+    platformFeeUsd: Number(ethers.formatUnits(feeRaw, 6)) * usdcUsd,
+    collecting: fee.collecting,
+    platformFeeCollecting: fee.collecting,
+    executionDuration: CCTP_APTOS_DURATION_SEC,
+    cctpAptos: {
+      direction: pair.direction, evmChainKey: pair.evmChainKey,
+      sourceDomain: pair.direction === "in" ? pair.domain : CCTP_APTOS_DOMAIN,
+      destDomain: pair.direction === "in" ? CCTP_APTOS_DOMAIN : pair.domain,
+      burnAmountRaw: burnRaw.toString(), feeRaw: fee.feeRaw,
+      mintRecipient: pair.direction === "in" ? normalizeAptosAddress(aptosAddr) : evmAddr,
+      evmAddress: evmAddr, aptosAddress: normalizeAptosAddress(aptosAddr),
+      burnToken: pair.direction === "in" ? pair.evmUsdc.address : aptosUsdc.address,
+    },
+  };
+}
+/** The card + confirmation lines for a CCTP-Aptos route, in
+ *  one place (the swap sheet renders them; the tests pin
+ *  them): the slow class, the 1:1 truth, where the fee is
+ *  taken, and — inbound — the APT-dust claim fact with the
+ *  1Click alternative named. Pure. */
+export function cctpAptosDisclosureLines(route) {
+  const c = route?.cctpAptos;
+  if (!c) return [];
+  const feeTxt = route.platformFeeCollecting && BigInt(route.platformFeeRaw || "0") > 0n
+    ? ` Fluid's fee of ${ethers.formatUnits(BigInt(route.platformFeeRaw), 6)} USDC is taken on ${destChainName(c.evmChainKey)} as its own transfer inside this same confirmation — the CCTP crossing itself deducts nothing.`
+    : " No Fluid fee is charged on this route.";
+  if (c.direction === "in") {
+    return [
+      `Slow route: Circle's attestation takes about 15–19 minutes, then your USDC is minted on Aptos exactly 1:1.${feeTxt}`,
+      "The mint is claimed by your own Aptos account and needs a little APT for its network fee. If your Aptos account holds no APT, this route cannot finish its claim — the 1Click route beside it needs no claim step.",
+    ];
+  }
+  return [
+    `Slow route: Circle's attestation takes about 15–19 minutes, then your USDC is minted on ${destChainName(c.evmChainKey)} exactly 1:1.${feeTxt}`,
+  ];
+}
+
+/* ----- CCTP-Aptos records: persistence + resume -----
+ * A burn whose attestation or mint is still pending persists
+ * here (the bridge-move discipline): the record carries the
+ * full claim payload (burn hash, then the Iris message +
+ * attestation), funds are never in Fluid's custody at any
+ * point, and the mint stays claimable by the user's own keys
+ * at any time — the driver below simply does it for them
+ * while the app is open and unlocked. */
+export function loadCctpAptosRecords(storage) {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(CCTP_APTOS_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter(r => r && r.id) : [];
+  } catch { return []; }
+}
+export function saveCctpAptosRecord(storage, record) {
+  if (!storage || !record?.id) return record;
+  const list = loadCctpAptosRecords(storage);
+  const i = list.findIndex(r => r.id === record.id);
+  const stamped = { ...record, updatedAt: Date.now() };
+  if (i >= 0) list[i] = stamped; else list.unshift(stamped);
+  try { storage.setItem(CCTP_APTOS_STORAGE_KEY, JSON.stringify(list.slice(0, 25))); } catch { /* storage full/blocked: the record lives in memory for this run */ }
+  return stamped;
+}
+function removeCctpAptosRecord(storage, id) {
+  if (!storage || !id) return;
+  const list = loadCctpAptosRecords(storage).filter(r => r.id !== id);
+  try { storage.setItem(CCTP_APTOS_STORAGE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+}
+/** The record's phase, from the record alone: burning (no
+ *  burn hash yet), attesting (burned, waiting on Circle),
+ *  ready (attestation in hand, mint not yet submitted),
+ *  done. Pure. */
+export function cctpAptosPhase(record) {
+  if (!record) return "done";
+  if (record.state === "done") return "done";
+  if (record.mintTxHash) return "ready";
+  if (record.attestation) return "ready";
+  if (record.burnTxHash) return "attesting";
+  return "burning";
+}
+/** The one-line rendering of a CCTP-Aptos record (swap sheet
+ *  panel + history step text): where the money is, in plain
+ *  words, at every phase — including the two honest stalls
+ *  (an inbound mint waiting on APT dust, a skim that didn't
+ *  land). Pure. */
+export function cctpAptosHistoryLine(record) {
+  if (!record) return "";
+  const net = ethers.formatUnits(BigInt(record.amountRaw || "0") - BigInt(record.feeRaw || "0"), 6);
+  const evmName = destChainName(record.evmChainKey);
+  const dir = record.direction === "in" ? `${evmName} → Aptos` : `Aptos → ${evmName}`;
+  const phase = cctpAptosPhase(record);
+  if (phase === "done") return `CCTP move complete — ${net} USDC · ${dir}`;
+  if (record.direction === "in" && phase === "ready" && !record.aptosHasGas)
+    return `CCTP move in progress — ${net} USDC · ${dir} · waiting: your Aptos account needs a little APT to claim the mint`;
+  if (phase === "ready") return `CCTP move in progress — ${net} USDC · ${dir} · attested, mint ready to submit`;
+  if (phase === "attesting") return `CCTP move in progress — ${net} USDC · ${dir} · waiting for Circle's attestation (~15–19 min)`;
+  return `CCTP move in progress — ${net} USDC · ${dir} · burning`;
+}
+const CCTP_ZERO_BYTES32 = "0x" + "00".repeat(32);
+const CCTP_ERC20_ABI = [
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+  "function transfer(address,uint256) returns (bool)",
+  "function balanceOf(address) view returns (uint256)",
+];
+/** The EVM-side skim for a record whose crossing has burned
+ *  (in) or minted (out): one plain USDC transfer of the exact
+ *  quoted fee to the pinned fee address, from the user's own
+ *  EVM account. A failure is flagged on the record
+ *  (feeSkimFailed) and retried by the driver — it never
+ *  blocks or unwinds the user's crossing. */
+async function cctpAptosRunSkim(wallet, record, storage, onProgress) {
+  if (BigInt(record.feeRaw || "0") <= 0n || record.skimTxHash) return record;
+  try {
+    const signer = wallet.connect(providerFor(record.evmChainKey));
+    const usdc = (NETWORKS[record.evmChainKey]?.tokens || []).find(t => t.symbol === "USDC");
+    const token = new ethers.Contract(usdc.address, CCTP_ERC20_ABI, signer);
+    onProgress(`Taking Fluid's fee of ${ethers.formatUnits(BigInt(record.feeRaw), 6)} USDC on ${destChainName(record.evmChainKey)}…`);
+    const tx = await token.transfer(CCTP_APTOS_FEE_ADDRESS, BigInt(record.feeRaw));
+    record.skimTxHash = tx.hash;
+    const rc = await tx.wait().catch(() => null);
+    if (!rc || Number(rc.status) !== 1) throw new Error("the fee transfer did not confirm");
+    record.feeSkimFailed = false;
+  } catch {
+    record.feeSkimFailed = true;
+  }
+  if (storage) saveCctpAptosRecord(storage, record);
+  return record;
+}
+/** Advance ONE CCTP-Aptos record as far as it can go right
+ *  now: retry a pending skim, poll Iris for the attestation
+ *  (verifying the message names this crossing before storing
+ *  it), then submit the mint with the user's own keys on the
+ *  destination family. Every failure leaves the record in an
+ *  honest state for the next pass — nothing here can move the
+ *  user's money anywhere but to the user's own addresses. */
+export async function advanceCctpAptosRecord(wallet, record, { storage = null, onProgress = () => {} } = {}) {
+  if (!record || record.state === "done" || !record.burnTxHash) return record;
+  const phrase = wallet?.mnemonic?.phrase;
+  // Inbound skim retry (the burn already landed; the fee is a
+  // separate source-side transfer).
+  if (record.direction === "in") await cctpAptosRunSkim(wallet, record, storage, onProgress);
+  if (!record.attestation) {
+    let att = null;
+    try { att = await fetchSatoraCctpAttestation(record.sourceDomain, record.burnTxHash); } catch { att = null; }
+    if (!att) { if (storage) saveCctpAptosRecord(storage, record); return record; }
+    const chk = checkCctpV2Message(att.message, {
+      sourceDomain: record.sourceDomain, destDomain: record.destDomain,
+      mintRecipient: record.mintRecipient, destinationCaller: CCTP_ZERO_BYTES32,
+    });
+    if (!chk.ok) { if (storage) saveCctpAptosRecord(storage, record); return record; } // a message that fails the pin is never stored, never submitted
+    record.message = att.message;
+    record.attestation = att.attestation;
+    record.state = "ready";
+    if (storage) saveCctpAptosRecord(storage, record);
+  }
+  if (record.direction === "in") {
+    // The mint is submitted by the user's own Aptos account —
+    // it needs APT dust. With none, the record waits honestly
+    // (the history line says why) until APT arrives.
+    const aptosAddress = aptosAddressFromPhrase(phrase);
+    let aptRaw = 0n;
+    try { aptRaw = BigInt(await aptosAptBalanceRaw(aptosAddress)); } catch { aptRaw = 0n; }
+    record.aptosHasGas = aptRaw > 0n;
+    if (!record.aptosHasGas) { if (storage) saveCctpAptosRecord(storage, record); return record; }
+    onProgress("Claiming your USDC mint on Aptos…");
+    const call = cctpAptosReceiveScriptCall({ message: record.message, attestation: record.attestation });
+    const out = await aptosSubmitCctpScript(phrase, call, { kindLabel: "CCTP mint claim" });
+    record.mintTxHash = out.hash;
+    record.state = "done";
+    if (storage) saveCctpAptosRecord(storage, record);
+    return record;
+  }
+  // Outbound: the EVM receive, then the output skim.
+  if (!record.mintTxHash) {
+    const signer = wallet.connect(providerFor(record.evmChainKey));
+    const call = {
+      to: CCTP_V2_MESSAGE_TRANSMITTER,
+      data: CCTP_V2_EVM_INTERFACE.encodeFunctionData("receiveMessage", [String(record.message), String(record.attestation)]),
+    };
+    onProgress(`Minting your USDC on ${destChainName(record.evmChainKey)}…`);
+    try {
+      const tx = await signer.sendTransaction({ to: call.to, data: call.data, value: 0n });
+      const rc = await tx.wait().catch(() => null);
+      if (!rc || Number(rc.status) !== 1) throw new Error("the mint did not confirm");
+      record.mintTxHash = tx.hash;
+    } catch (e) {
+      // Already minted (e.g. the app closed after the mint
+      // landed but before the record saved): the balance is
+      // the oracle — if the destination balance rose by the
+      // burn amount, the mint is real and only the skim is
+      // left.
+      let minted = false;
+      try {
+        const usdc = (NETWORKS[record.evmChainKey]?.tokens || []).find(t => t.symbol === "USDC");
+        const token = new ethers.Contract(usdc.address, CCTP_ERC20_ABI, providerFor(record.evmChainKey));
+        const bal = await token.balanceOf(wallet.address);
+        minted = record.destPreBalanceRaw != null && bal - BigInt(record.destPreBalanceRaw) >= BigInt(record.burnAmountRaw);
+      } catch { minted = false; }
+      if (!minted) throw e;
+      record.mintTxHash = record.mintTxHash || "already-minted";
+    }
+    if (storage) saveCctpAptosRecord(storage, record);
+  }
+  await cctpAptosRunSkim(wallet, record, storage, onProgress);
+  if (BigInt(record.feeRaw || "0") <= 0n || record.skimTxHash) {
+    record.state = "done";
+    if (storage) saveCctpAptosRecord(storage, record);
+  }
+  return record;
+}
+/** One driver pass over every unfinished CCTP-Aptos record
+ *  (unlock + interval + sheet open, like the other families'
+ *  drivers): each record advances independently; one bad
+ *  record never blocks the others. */
+export async function advanceCctpAptosRecords(wallet, { storage = null, onProgress = () => {}, onRecord = null } = {}) {
+  if (!wallet || !storage) return [];
+  const out = [];
+  for (const rec of loadCctpAptosRecords(storage)) {
+    if (rec.state === "done") continue;
+    try {
+      const r = await advanceCctpAptosRecord(wallet, rec, { storage, onProgress });
+      out.push(r);
+      if (onRecord) { try { onRecord(r); } catch { /* a paint hook never blocks the driver */ } }
+    } catch { /* the record keeps its state; the next pass retries */ }
+  }
+  return out;
+}
+/** Execute a quoted CCTP-Aptos route: burn on the source
+ *  family (EVM depositForBurn, bounds-checked field by field;
+ *  or Circle's pinned Aptos script), persist the record at
+ *  broadcast, take the inbound skim once the burn confirms,
+ *  then hand over to the same advance step the driver runs —
+ *  the attestation wait (~15–19 min) almost always outlives
+ *  this call, and the record + driver finish the mint. */
+export async function executeCctpAptosSwapRoute(wallet, route, onProgress = () => {}, { storage = null, onApprove = null, onBroadcast = null } = {}) {
+  const c = route?.cctpAptos;
+  if (!route || route.provider !== "cctp-aptos" || !c) throw new Error("That isn't a CCTP route — search again.");
+  const phrase = wallet?.mnemonic?.phrase;
+  const aptosAddress = aptosAddressFromPhrase(phrase);
+  if (!phrase || String(wallet.address).toLowerCase() !== String(c.evmAddress).toLowerCase()
+    || normalizeAptosAddress(c.aptosAddress) !== aptosAddress)
+    throw new Error("That CCTP quote was made for different addresses than this wallet's — search again.");
+  const aptosUsdc = APTOS_TOKENS.find(t => t.symbol === "USDC");
+  const record = {
+    id: `cctpaptos-${Date.now()}-${c.direction}-${c.evmChainKey}`,
+    direction: c.direction, evmChainKey: c.evmChainKey,
+    fromChainKey: route.fromChainKey, toChainKey: route.toChainKey,
+    fromSymbol: "USDC", toSymbol: "USDC",
+    amountRaw: String(route.fromAmount), burnAmountRaw: String(c.burnAmountRaw), feeRaw: String(c.feeRaw),
+    sourceDomain: c.sourceDomain, destDomain: c.destDomain,
+    mintRecipient: c.mintRecipient, aptosAddress, evmAddress: wallet.address,
+    state: "burning", burnTxHash: null, mintTxHash: null, skimTxHash: null,
+    feeSkimFailed: false, message: null, attestation: null, destPreBalanceRaw: null,
+    createdAt: Date.now(),
+  };
+  const hashes = [];
+  if (c.direction === "in") {
+    try { record.destPreBalanceRaw = String(await aptosAssetBalanceRaw(aptosAddress, aptosUsdc)); } catch { record.destPreBalanceRaw = null; }
+    if (storage) saveCctpAptosRecord(storage, record);
+    const signer = wallet.connect(providerFor(c.evmChainKey));
+    const token = new ethers.Contract(c.burnToken, CCTP_ERC20_ABI, signer);
+    const burnAmount = BigInt(c.burnAmountRaw);
+    const allowance = await token.allowance(wallet.address, CCTP_V2_TOKEN_MESSENGER);
+    if (allowance < burnAmount) {
+      onProgress("Approving exactly the burn amount for Circle's transfer contract…");
+      if (onApprove) onApprove({ chainKey: c.evmChainKey, token: c.burnToken, tokenSymbol: "USDC", spender: CCTP_V2_TOKEN_MESSENGER, amount: c.burnAmountRaw, decimals: 6, at: Date.now() });
+      const atx = await token.approve(CCTP_V2_TOKEN_MESSENGER, burnAmount);
+      hashes.push(atx.hash);
+      const arc = await atx.wait().catch(() => null);
+      if (!arc || Number(arc.status) !== 1) { removeCctpAptosRecord(storage, record.id); throw new Error("The approval for the crossing did not confirm — nothing was burned."); }
+      record.approveTxHash = atx.hash;
+    }
+    const call = buildCctpV2Burn({
+      amountRaw: burnAmount, destDomain: CCTP_APTOS_DOMAIN, mintRecipient: aptosAddress,
+      burnToken: c.burnToken, destinationCaller: CCTP_ZERO_BYTES32,
+    });
+    const check = checkCctpV2Burn(call, {
+      amountRaw: burnAmount, destDomain: CCTP_APTOS_DOMAIN, mintRecipient: aptosAddress,
+      burnToken: c.burnToken, destinationCaller: CCTP_ZERO_BYTES32,
+    });
+    if (!check.ok) { removeCctpAptosRecord(storage, record.id); throw new Error(check.reason); }
+    onProgress(`Burning your USDC on ${destChainName(c.evmChainKey)} for the crossing…`);
+    const net = NETWORKS[c.evmChainKey];
+    const populated = await signer.populateTransaction({ to: call.to, data: call.data, value: 0n, chainId: net.chainId });
+    const signed = await signer.signTransaction(populated);
+    record.burnTxHash = ethers.keccak256(signed);
+    record.hashes = [record.burnTxHash];
+    record.state = "attesting";
+    if (storage) saveCctpAptosRecord(storage, record); // BEFORE broadcast — the recovery key
+    if (onBroadcast) { try { onBroadcast(record); } catch { /* history never blocks the crossing */ } }
+    try {
+      await signer.provider.broadcastTransaction(signed);
+    } catch (e) {
+      let known = false;
+      try { known = !!(await signer.provider.getTransaction(record.burnTxHash)); } catch { /* unknown is the answer we need */ }
+      if (!known) { removeCctpAptosRecord(storage, record.id); throw e; }
+    }
+    const rc = await signer.provider.waitForTransaction(record.burnTxHash).catch(() => null);
+    if (rc && Number(rc.status) !== 1) { removeCctpAptosRecord(storage, record.id); throw new Error("The burn transaction failed on-chain — nothing was burned."); }
+    hashes.push(record.burnTxHash);
+    await cctpAptosRunSkim(wallet, record, storage, onProgress);
+    if (record.skimTxHash) hashes.push(record.skimTxHash);
+  } else {
+    try {
+      const usdc = (NETWORKS[c.evmChainKey]?.tokens || []).find(t => t.symbol === "USDC");
+      const token = new ethers.Contract(usdc.address, CCTP_ERC20_ABI, providerFor(c.evmChainKey));
+      record.destPreBalanceRaw = String(await token.balanceOf(wallet.address));
+    } catch { record.destPreBalanceRaw = null; }
+    onProgress("Burning your USDC on Aptos for the crossing…");
+    const call = cctpAptosBurnScriptCall({
+      amountRaw: BigInt(c.burnAmountRaw), destDomain: c.destDomain,
+      mintRecipient: wallet.address, burnToken: aptosUsdc.address,
+    });
+    const out = await aptosSubmitCctpScript(phrase, call, { kindLabel: "CCTP burn" });
+    record.burnTxHash = out.hash;
+    record.hashes = [out.hash];
+    record.state = "attesting";
+    if (storage) saveCctpAptosRecord(storage, record);
+    if (onBroadcast) { try { onBroadcast(record); } catch { /* history never blocks the crossing */ } }
+    hashes.push(out.hash);
+  }
+  // One advance pass now (a fast attestation occasionally
+  // lands inside it); the record + driver carry it from here.
+  try { await advanceCctpAptosRecord(wallet, record, { storage, onProgress }); } catch { /* the record keeps its state */ }
+  const fresh = storage ? (loadCctpAptosRecords(storage).find(r => r.id === record.id) || record) : record;
+  if (fresh.state !== "done")
+    onProgress("Burn confirmed ✓ — Circle's attestation takes about 15–19 minutes. Fluid will finish the mint automatically while the app is open; the crossing is recorded and claimable by your own keys at any time.");
+  return { hashes, record: fresh };
 }
 
 /* ================= Home asset-list ordering (owner request, 2026-11-08) =================

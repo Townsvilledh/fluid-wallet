@@ -55,7 +55,12 @@ same seed. Everything listed here **ships**: balance, receive and send.
   swaps INTO Stellar ride 1Click (XLM as a destination).
   Stellar as a cross-chain SOURCE is an honest no-route —
   see `docs/SWAPS.md` (gap #9).
-- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub), Aptos,
+- **Aptos** — full send/receive/balance. USDC crosses
+  natively to and from the CCTP V2 EVM domains over Circle's
+  own bridge (domain 9; slow class ~15–19 min; the inbound
+  mint is claimed by the user's own account and needs a
+  little APT) — see `docs/SWAPS.md` (gap #10).
+- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub),
   Stacks** — full send/receive/balance.
 
 ## Tokens

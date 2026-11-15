@@ -1739,3 +1739,87 @@ cross-chain SOURCE stays an honest no-route (below).
   structurally, so the sheet presents the honest no-route
   rather than a quote that can only fail at execution; the
   executor's memo guard remains as defence in depth.
+
+## Aptos CCTP V2 — the native USDC crossing (audit gap #10, 2026-11-15)
+
+USDC moves between Aptos and the EVM chains over Circle's
+own CCTP V2 — the one rail that is exactly 1:1, because it
+IS the issuer's bridge: burn native USDC on the source,
+Circle attests, mint native USDC on the destination. V2
+only (V1 pauses 2026-12-01; nothing V1 was built). Aptos is
+CCTP **domain 9**; the EVM side covers every chain where
+Fluid pins native USDC and CCTP V2 lives — Ethereum (0),
+Avalanche (1), Optimism (2), Arbitrum (3), Base (6),
+Polygon (7), Linea (11). Solana (5) and Sui (8) are a
+second slice: both already have their own swap rails, and
+their CCTP receive patterns differ from the EVM one reused
+here. Only Circle's native Aptos USDC (the fungible-asset
+metadata object) crosses — the LayerZero-bridged Aptos USDC
+is a different asset and never matches.
+
+- **The shape.** The Aptos side runs on Circle's own
+  precompiled Move **scripts** (`deposit_for_burn.mv`
+  outbound, `receive_message.mv` inbound, from
+  circlefin/aptos-cctp's published mainnet V2 set): the
+  wallet builds a Script-payload transaction — a payload
+  variant the Aptos builder gained for this slice — and
+  both scripts are pinned by SHA-256 in the source; a
+  script whose hash differs from its pin refuses, and the
+  pins are fixture-tested against Circle's published bytes.
+  Outbound needs **no approval transaction** (the script
+  withdraws from the sender's primary fungible store). The
+  EVM side reuses the in-tree CCTP machinery: the V2
+  `depositForBurn` burn against the pinned TokenMessengerV2,
+  field-checked before signing like every Satora-CCTP call,
+  and the generalised message pin on the way back. The
+  attestation is Circle's Iris API — keyless GET polling,
+  transport already proven in-page from the production
+  origin; the in-tree Satora poller does the waiting.
+- **Capture — the composition, per direction.** Native
+  CCTP has NO fee surface (no hook, no fee recipient, no
+  spread), so under the universal rule the route ships only
+  as the skim composition, following the Noble precedent:
+  Fluid's fee — the fee law on a zero-cost route, the flat
+  cap rate (50 bps today), fee + net == amount exactly — is
+  an explicit USDC transfer on the EVM side of the crossing,
+  inside the same user confirmation, to the DripBot EVM fee
+  wallet. **Inbound (EVM → Aptos): collecting** — the burn
+  is amount − fee and the fee transfer follows the confirmed
+  burn. **Outbound (Aptos → EVM): collecting** — the full
+  amount burns on Aptos and the fee is skimmed from what the
+  mint lands on the destination chain (the SunSwap
+  output-skim shape), after the mint confirms. A skim that
+  fails after the crossing lands is flagged on the record
+  and retried by the driver; it never blocks or reverses
+  the user's crossing. Below the fee law's floor the route
+  is honestly fee-free (collecting=false), exactly like the
+  Cosmos precedent.
+- **Slow class, disclosed.** A standard transfer waits for
+  source-chain finality before Circle attests: **~15–19
+  minutes** end to end. The card says so and is never badged
+  fast; the 1Click Aptos route stays untouched beside it as
+  the fast alternative.
+- **The APT-dust claim.** The inbound mint is submitted by
+  the user's OWN Aptos account (the receive script) and
+  pays APT dust — **a zero-APT account cannot self-claim**.
+  The card says so before confirming, and the pending record
+  waits honestly in that state until the account holds a
+  little APT (or the user takes the 1Click route instead).
+  Records persist under `fluid_cctp_aptos_v1` and resume on
+  unlock and on the minute tick, like the bridge-move
+  records: funds are never in Fluid's custody, and the
+  attested message + attestation persisted on the record
+  are everything the mint needs.
+- **Re-check trigger.** Circle's Fast Transfer, the
+  Forwarding Service and hooks are all unavailable on
+  domain 9 today (probed 2026-11-15). If Circle enables
+  any of them for Aptos, re-probe: a hook or forwarder
+  would let the crossing carry its own fee and drop the
+  skim composition — and Fast Transfer would retire the
+  slow-class disclosure.
+- **Unproven.** No funded burn has run: settlement proof
+  stays gated on Muse earnings, like every funded proof
+  in this programme. The quote side is deterministic (1:1
+  minus the disclosed skim), the scripts are Circle's own
+  bytes pinned by hash, and every calldata/script/message
+  the executor signs is bounds-checked in §130 of the suite.

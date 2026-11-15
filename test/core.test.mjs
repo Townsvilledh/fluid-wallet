@@ -84,6 +84,7 @@ import { mnemonicToEntropy as scureMnemonicToEntropy } from "@scure/bip39";
 import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
 import { zcashAddress, isValidZcashAddress, dashAddress, isValidDashAddress, buildSignedDashTx, DASH_DUST_SAT, DASH_MIN_OUTPUT, parseBlockchairDashboard, zecTxidFromRaw, zecSighash, buildZecTransparentTx, zecFeeZats, zecLogicalActions, ZEC_CONSENSUS_BRANCH_ID, ZCASH_SWAP_CHAIN_ID, DASH_SWAP_CHAIN_ID, ZCASH_SWAP_NATIVE_TOKEN, DASH_SWAP_NATIVE_TOKEN, formatDashSendIntent, formatZcashSendIntent } from "../src/wallet-core.js";
 import { STELLAR_SWAP_CHAIN_ID, STELLAR_SWAP_NATIVE_TOKEN, STELLAR_SWAP_ASSETS, stellarSwapAssetFor, stellarSacAddress, SOROSWAP_API, SOROSWAP_API_KEY, SOROSWAP_PARTNER_BPS, soroswapConfig, SOROSWAP_AGGREGATOR_CONTRACT, SOROSWAP_PROTOCOLS, SOROSWAP_SLIPPAGE_BPS, SOROSWAP_MAX_TX_FEE_STROOPS, soroswapSupportsPair, parseSoroswapQuote, getSoroswapSwapRoute, checkSoroswapSwapBounds, checkSoroswapTrustlineBounds, executeSoroswapSwapRoute } from "../src/wallet-core.js";
+import { CCTP_APTOS_DOMAIN, CCTP_V2_STANDARD_FINALITY, CCTP_APTOS_EVM_DOMAINS, CCTP_V2_TOKEN_MESSENGER, CCTP_V2_MESSAGE_TRANSMITTER, CCTP_APTOS_FEE_ADDRESS, CCTP_APTOS_DURATION_SEC, CCTP_APTOS_STORAGE_KEY, CCTP_APTOS_BURN_SCRIPT_SHA256, CCTP_APTOS_RECEIVE_SCRIPT_SHA256, verifyCctpAptosScriptBytes, cctpAptosScriptBytes, cctpAptosBurnScriptCall, cctpAptosReceiveScriptCall, buildCctpV2Burn, checkCctpV2Burn, checkCctpV2Message, cctpAptosSupportsPair, cctpAptosFeeFor, getCctpAptosSwapRoute, cctpAptosDisclosureLines, loadCctpAptosRecords, saveCctpAptosRecord, cctpAptosPhase, cctpAptosHistoryLine, aptosBuildScriptTransaction } from "../src/wallet-core.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -16482,7 +16483,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec, { explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"gasfallback\", rec, { amount, fromSymbol: fromTok.symbol, toSymbol: toTok.symbol, explorer: swapSrcExplorerFor(fromKey) })")
     && appSrc114.includes("onLegBroadcast: (rec) => syncPendingSwapHistory(\"milestone\", rec)")
-    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\" && route.provider !== \"oneclick\" && route.provider !== \"skip\")"));
+    && appSrc114.includes("if (route.provider !== \"milestone\" && route.provider !== \"gasfallback\" && route.provider !== \"oneclick\" && route.provider !== \"skip\" && route.provider !== \"cctp-aptos\")"));
   ok("ac app: Activity consults the record stores — an unrepresented unfinished record is synthesised into the rendered list",
     appSrc114.includes("for (const r of loadMilestoneRecords(localStorage)) if (r.state !== \"done\") synthFor(\"milestone\", r);")
     && appSrc114.includes("for (const r of loadGasFallbackRecords(localStorage)) if (r.state === \"awaiting-credit\" || r.state === \"leg2-due\") synthFor(\"gasfallback\", r);"));
@@ -19756,6 +19757,189 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("gap9 core: the capture gate is stated in the source — collecting ships false until activation + a proven echo",
     coreSrc129.includes("export const SOROSWAP_API_KEY = \"\"") && coreSrc129.includes("export const SOROSWAP_PARTNER_BPS = 0")
     && coreSrc129.includes("Activation is PENDING") && coreSrc129.includes("NEVER re-simulate"));
+}
+
+// 130. Aptos CCTP V2 (audit gap #10, 2026-11-15): Circle's
+// own crossing between Aptos (domain 9) and the EVM domains,
+// shipped as the capture-carrying composition — the crossing
+// is exactly 1:1 with no fee surface, so Fluid's fee rides as
+// an explicit skim transfer on the EVM side (in: burn is
+// amount − fee; out: the fee leaves what the mint lands),
+// priced by the fee law on a zero-cost route (the flat cap
+// rate). EVIDENCE CLASSES, stated plainly: the two Move
+// scripts are Circle's own published mainnet V2 bytecode
+// (circlefin/aptos-cctp, fetched 2026-11-15 — the fixture
+// carries their bytes + hashes); the argument layouts are
+// Circle's V2 example's; everything else is pinned on
+// in-test constructions and stubbed transports. NO funded
+// burn has run — settlement proof stays gated on Muse
+// earnings, exactly as the research states.
+{
+  const ABANDON130 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture130 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const coreSrc130 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc130 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const APTOS130 = aptosAddressFromPhrase(ABANDON130);
+  const EVM130 = "0x1111111111111111111111111111111111111111";
+  const APTOS_USDC130 = APTOS_TOKENS.find(t => t.symbol === "USDC").address;
+  const BASE_USDC130 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const LZ_USDC130 = "0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDC";
+  const fx130 = fixture130("cctp-aptos-scripts.json");
+  const burnBytes130 = new Uint8Array(Buffer.from(fx130.burn.base64, "base64"));
+  const recvBytes130 = new Uint8Array(Buffer.from(fx130.receive.base64, "base64"));
+
+  // The pinned scripts: Circle's bytes, Circle's hashes.
+  ok("gap10 scripts: the embedded burn script IS Circle's published mainnet V2 bytecode (bytes + sha256 pin)",
+    Buffer.from(cctpAptosScriptBytes("burn")).equals(Buffer.from(burnBytes130))
+    && CCTP_APTOS_BURN_SCRIPT_SHA256 === fx130.burn.sha256 && fx130.burn.bytes === 552
+    && verifyCctpAptosScriptBytes(burnBytes130, "burn") === true);
+  ok("gap10 scripts: the embedded receive script IS Circle's published mainnet V2 bytecode (bytes + sha256 pin)",
+    Buffer.from(cctpAptosScriptBytes("receive")).equals(Buffer.from(recvBytes130))
+    && CCTP_APTOS_RECEIVE_SCRIPT_SHA256 === fx130.receive.sha256 && fx130.receive.bytes === 385
+    && verifyCctpAptosScriptBytes(recvBytes130, "receive") === true);
+  ok("gap10 scripts: a tampered script fails the pin (and the cross-applied pin fails too)",
+    (() => { const t = new Uint8Array(burnBytes130); t[100] ^= 0xff; return verifyCctpAptosScriptBytes(t, "burn") === false; })()
+    && verifyCctpAptosScriptBytes(burnBytes130, "receive") === false
+    && verifyCctpAptosScriptBytes(new Uint8Array(0), "burn") === false);
+
+  // Script argument layouts (Circle's V2 example order).
+  const burnCall130 = cctpAptosBurnScriptCall({ amountRaw: 20000000n, destDomain: 6, mintRecipient: EVM130, burnToken: APTOS_USDC130 });
+  ok("gap10 burn call: seven script arguments in Circle's order, BCS + JSON spellings of one call",
+    burnCall130.bcsArguments.length === 7 && burnCall130.jsonArguments.map(a => a.type).join(",") === "u64,u32,address,address,address,u64,u32"
+    && burnCall130.bcsArguments[0][0] === 1 && Buffer.from(burnCall130.bcsArguments[0].slice(1)).equals(Buffer.from([0x00, 0x2d, 0x31, 0x01, 0, 0, 0, 0])) // u64 20000000 LE (0x01312d00)
+    && burnCall130.bcsArguments[1][0] === 7 && burnCall130.bcsArguments[1][1] === 6 // u32 domain 6
+    && burnCall130.bcsArguments[2][0] === 3 && Buffer.from(burnCall130.bcsArguments[2].slice(1)).equals(Buffer.from("000000000000000000000000" + EVM130.slice(2).toLowerCase(), "hex"))
+    && burnCall130.bcsArguments[3].every((v, i) => i === 0 ? v === 3 : v === 0) // destination caller = zero address
+    && burnCall130.bcsArguments[5].every((v, i) => i === 0 ? v === 1 : v === 0) // maxFee u64 = 0
+    && burnCall130.bcsArguments[6][0] === 7 && burnCall130.bcsArguments[6][1] === 2000 % 256 && burnCall130.bcsArguments[6][2] === Math.floor(2000 / 256) // finality 2000
+    && burnCall130.jsonArguments[0].value === "20000000" && burnCall130.jsonArguments[6].value === 2000);
+  const recvCall130 = cctpAptosReceiveScriptCall({ message: "0x" + "ab".repeat(200), attestation: "0x" + "cd".repeat(65) });
+  ok("gap10 receive call: two u8-vector arguments (message, attestation), BCS + JSON spellings",
+    recvCall130.bcsArguments.length === 2 && recvCall130.bcsArguments.every(a => a[0] === 4)
+    && recvCall130.bcsArguments[0].length === 1 + 2 + 200 && recvCall130.bcsArguments[1].length === 1 + 1 + 65
+    && recvCall130.jsonArguments.map(a => a.type).join(",") === "vector<u8>,vector<u8>"
+    && recvCall130.jsonArguments[0].value === "0x" + "ab".repeat(200));
+
+  // The Script payload variant in the raw transaction frame.
+  const rawScript130 = aptosBuildScriptTransaction({
+    sender: APTOS130, sequenceNumber: 7n, code: burnCall130.code, argumentsBcs: burnCall130.bcsArguments,
+    maxGasAmount: 1000n, gasUnitPrice: 100n, expirationTimestampSecs: 1700000000n,
+  });
+  ok("gap10 script tx: payload variant 3, ULEB code length, code bytes verbatim, zero type args, arg count",
+    rawScript130[40] === 3
+    && rawScript130[41] === 0xa8 && rawScript130[42] === 0x04 // ULEB(552)
+    && Buffer.from(rawScript130.slice(43, 43 + 552)).equals(Buffer.from(burnBytes130))
+    && rawScript130[43 + 552] === 0 && rawScript130[43 + 553] === 7);
+
+  // Domain routing: the pair table.
+  ok("gap10 domains: Aptos is CCTP domain 9; the EVM table is Circle's V2 domains with pinned native USDC",
+    CCTP_APTOS_DOMAIN === 9 && CCTP_V2_STANDARD_FINALITY === 2000
+    && CCTP_APTOS_EVM_DOMAINS.ethereum === 0 && CCTP_APTOS_EVM_DOMAINS.avalanche === 1 && CCTP_APTOS_EVM_DOMAINS.optimism === 2
+    && CCTP_APTOS_EVM_DOMAINS.arbitrum === 3 && CCTP_APTOS_EVM_DOMAINS.base === 6 && CCTP_APTOS_EVM_DOMAINS.polygon === 7
+    && CCTP_APTOS_EVM_DOMAINS.linea === 11 && CCTP_APTOS_EVM_DOMAINS.bsc === undefined);
+  ok("gap10 supports: USDC <-> USDC across the table both directions; everything else refuses",
+    cctpAptosSupportsPair({ fromChainKey: "base", fromTokenAddress: BASE_USDC130, toChainKey: "aptos", toTokenAddress: APTOS_USDC130 })?.direction === "in"
+    && cctpAptosSupportsPair({ fromChainKey: "aptos", fromTokenAddress: APTOS_USDC130, toChainKey: "base", toTokenAddress: BASE_USDC130 })?.direction === "out"
+    && cctpAptosSupportsPair({ fromChainKey: "base", fromTokenAddress: BASE_USDC130, toChainKey: "aptos", toTokenAddress: LZ_USDC130 }) === null // bridged lzUSDC is not the CCTP asset
+    && cctpAptosSupportsPair({ fromChainKey: "bsc", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", toChainKey: "aptos", toTokenAddress: APTOS_USDC130 }) === null // BSC is not a CCTP domain here
+    && cctpAptosSupportsPair({ fromChainKey: "aptos", fromTokenAddress: APTOS_TOKENS.find(t => t.symbol === "USDT").address, toChainKey: "base", toTokenAddress: BASE_USDC130 }) === null
+    && cctpAptosSupportsPair({ fromChainKey: "aptos", fromTokenAddress: APTOS_USDC130, toChainKey: "aptos", toTokenAddress: APTOS_USDC130 }) === null);
+
+  // The skim arithmetic (the fee law on a zero-cost route).
+  ok("gap10 fee: the law prices the flat cap rate on a zero-cost route; fee + net == amount exactly",
+    cctpAptosFeeFor("20000000", 20, "base").feeRaw === "100000" && cctpAptosFeeFor("20000000", 20, "base").bps === 50
+    && cctpAptosFeeFor("5000000", 5, "base").feeRaw === "25000"
+    && cctpAptosFeeFor("100", 0.0001, "base").feeRaw === "0" && cctpAptosFeeFor("100", 0.0001, "base").collecting === false
+    && [1n, 199n, 200n, 123456789n].every(a => { const f = cctpAptosFeeFor(a.toString(), Number(a) / 1e6, "base"); return BigInt(f.feeRaw) + (a - BigInt(f.feeRaw)) === a; }));
+
+  // The deterministic quote + the executability gate.
+  const realFetch130 = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("offline in tests"); };
+  let routeIn130, routeOut130;
+  try {
+    routeIn130 = await getCctpAptosSwapRoute({ fromChainKey: "base", fromTokenAddress: BASE_USDC130, toChainKey: "aptos", toTokenAddress: APTOS_USDC130, fromAmount: "20000000", fromAddress: EVM130, toAddress: APTOS130 });
+    routeOut130 = await getCctpAptosSwapRoute({ fromChainKey: "aptos", fromTokenAddress: APTOS_USDC130, toChainKey: "base", toTokenAddress: BASE_USDC130, fromAmount: "20000000", fromAddress: APTOS130, toAddress: EVM130 });
+  } finally { globalThis.fetch = realFetch130; }
+  ok("gap10 quote IN: burn is amount − fee, lands amount − fee, collecting, slow class, domains 6 -> 9",
+    !!routeIn130 && routeIn130.provider === "cctp-aptos" && routeIn130.cctpAptos.burnAmountRaw === "19900000"
+    && routeIn130.toAmount === "19900000" && routeIn130.platformFeeRaw === "100000" && routeIn130.collecting === true
+    && routeIn130.cctpAptos.sourceDomain === 6 && routeIn130.cctpAptos.destDomain === 9
+    && routeIn130.executionDuration === CCTP_APTOS_DURATION_SEC && swapRouteExecutable(routeIn130).ok === true);
+  ok("gap10 quote OUT: the full amount burns, lands amount − fee (the skim leaves the mint), domains 9 -> 6",
+    !!routeOut130 && routeOut130.cctpAptos.burnAmountRaw === "20000000" && routeOut130.toAmount === "19900000"
+    && routeOut130.cctpAptos.sourceDomain === 9 && routeOut130.cctpAptos.destDomain === 6
+    && swapRouteExecutable(routeOut130).ok === true);
+  ok("gap10 gate: a tampered fee or split refuses at the executability gate",
+    swapRouteExecutable({ ...routeIn130, platformFeeRaw: "99999", cctpAptos: { ...routeIn130.cctpAptos, feeRaw: "99999" } }).ok === false
+    && swapRouteExecutable({ ...routeIn130, cctpAptos: { ...routeIn130.cctpAptos, burnAmountRaw: "19800000" } }).ok === false
+    && swapRouteExecutable({ ...routeOut130, toAmount: "20000000" }).ok === false
+    && swapRouteExecutable({ ...routeIn130, cctpAptos: { ...routeIn130.cctpAptos, destDomain: 3 } }).ok === false);
+
+  // The EVM burn grammar: build + bounds-check roundtrip.
+  const burn130 = buildCctpV2Burn({ amountRaw: 19900000n, destDomain: 9, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) });
+  ok("gap10 evm burn: targets the pinned TokenMessengerV2 and passes its own bounds check",
+    burn130.to === CCTP_V2_TOKEN_MESSENGER && CCTP_V2_TOKEN_MESSENGER === "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d"
+    && CCTP_V2_MESSAGE_TRANSMITTER === "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64"
+    && checkCctpV2Burn(burn130, { amountRaw: 19900000n, destDomain: 9, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) }).ok === true);
+  ok("gap10 evm burn: the bounds check refuses a changed amount, domain, recipient, token or finality",
+    checkCctpV2Burn(burn130, { amountRaw: 19800000n, destDomain: 9, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Burn(burn130, { amountRaw: 19900000n, destDomain: 3, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Burn(burn130, { amountRaw: 19900000n, destDomain: 9, mintRecipient: EVM130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Burn(burn130, { amountRaw: 19900000n, destDomain: 9, mintRecipient: APTOS130, burnToken: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Burn(buildCctpV2Burn({ amountRaw: 19900000n, destDomain: 9, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32), finalityThreshold: 1000 }), { amountRaw: 19900000n, destDomain: 9, mintRecipient: APTOS130, burnToken: BASE_USDC130, destinationCaller: "0x" + "00".repeat(32) }).ok === false);
+
+  // The message pin.
+  const msg130 = (() => {
+    const b = new Uint8Array(124 + 224);
+    const dv = new DataView(b.buffer);
+    dv.setUint32(0, 2); dv.setUint32(4, 6); dv.setUint32(8, 9);
+    b.set(Buffer.from(APTOS130.slice(2), "hex"), 52);
+    return "0x" + Buffer.from(b).toString("hex");
+  })();
+  ok("gap10 message: a message naming this crossing passes; a wrong domain or recipient refuses",
+    checkCctpV2Message(msg130, { sourceDomain: 6, destDomain: 9, mintRecipient: APTOS130, destinationCaller: "0x" + "00".repeat(32) }).ok === true
+    && checkCctpV2Message(msg130, { sourceDomain: 3, destDomain: 9, mintRecipient: APTOS130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Message(msg130, { sourceDomain: 6, destDomain: 3, mintRecipient: APTOS130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Message(msg130, { sourceDomain: 6, destDomain: 9, mintRecipient: EVM130, destinationCaller: "0x" + "00".repeat(32) }).ok === false
+    && checkCctpV2Message("0x1234", { sourceDomain: 6, destDomain: 9 }).ok === false);
+
+  // Disclosures: slow class + the APT-dust truth, on the card's own lines.
+  ok("gap10 disclosure: slow class is >= 15 minutes and the lines name the attestation wait",
+    CCTP_APTOS_DURATION_SEC >= 900 && cctpAptosDisclosureLines(routeIn130)[0].includes("15–19 minutes")
+    && cctpAptosDisclosureLines(routeOut130)[0].includes("15–19 minutes"));
+  ok("gap10 disclosure: inbound names the APT-dust claim and the 1Click alternative; the fee line names the skim chain",
+    cctpAptosDisclosureLines(routeIn130)[1].includes("no APT") && cctpAptosDisclosureLines(routeIn130)[1].includes("1Click")
+    && cctpAptosDisclosureLines(routeIn130)[0].includes("Base") && cctpAptosDisclosureLines(routeIn130)[0].includes("0.1 USDC")
+    && cctpAptosDisclosureLines(routeOut130).length === 1);
+
+  // Records: persistence, phases, honest lines.
+  const store130 = { _m: new Map(), getItem(k) { return this._m.has(k) ? this._m.get(k) : null; }, setItem(k, v) { this._m.set(k, String(v)); } };
+  const rec130 = {
+    id: "cctpaptos-test-1", direction: "in", evmChainKey: "base", fromChainKey: "base", toChainKey: "aptos",
+    amountRaw: "20000000", burnAmountRaw: "19900000", feeRaw: "100000", sourceDomain: 6, destDomain: 9,
+    state: "attesting", burnTxHash: "0xabc", mintTxHash: null, skimTxHash: "0xdef", attestation: null, aptosHasGas: true,
+  };
+  saveCctpAptosRecord(store130, rec130);
+  ok("gap10 records: save/load roundtrip under the family key; phases and lines are honest at each state",
+    CCTP_APTOS_STORAGE_KEY === "fluid_cctp_aptos_v1"
+    && loadCctpAptosRecords(store130).length === 1 && cctpAptosPhase(rec130) === "attesting"
+    && cctpAptosHistoryLine(rec130).includes("waiting for Circle's attestation")
+    && cctpAptosPhase({ ...rec130, attestation: "0x01", state: "ready" }) === "ready"
+    && cctpAptosHistoryLine({ ...rec130, attestation: "0x01", state: "ready", aptosHasGas: false }).includes("needs a little APT")
+    && cctpAptosHistoryLine({ ...rec130, state: "done" }).includes("complete")
+    && cctpAptosHistoryLine({ ...rec130, state: "done" }).includes("19.9 USDC"));
+
+  // Wiring pins (house style).
+  ok("gap10 wiring: the dispatcher quotes CCTP-Aptos as a candidate and the executor dispatches it",
+    coreSrc130.includes("cctpAptosSupportsPair(planArgs)") && coreSrc130.includes('route.provider === "cctp-aptos"')
+    && coreSrc130.includes("export async function executeCctpAptosSwapRoute"));
+  ok("gap10 app: the sheet names Circle CCTP, renders the disclosures, executes and advances the records",
+    appSrc130.includes('if (route && route.provider === "cctp-aptos") return "Circle CCTP";')
+    && appSrc130.includes("cctpAptosDisclosureLines(r).join(\" \")")
+    && appSrc130.includes('route.provider === "cctp-aptos"') && appSrc130.includes("executeCctpAptosSwapRoute(wallet, route")
+    && appSrc130.includes('id="wCctpAptos"') && appSrc130.includes("advanceCctpAptosRecords(wallet"));
+  ok("gap10 fee address: the skim lands at the DripBot EVM fee wallet",
+    CCTP_APTOS_FEE_ADDRESS === "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B");
 }
 
 console.log(`\n${passed} checks passed`);
