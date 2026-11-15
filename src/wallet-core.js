@@ -1025,7 +1025,13 @@ export async function mergeCgFallbackPrices(out, fetchImpl) {
  *  values a send against a cap uses getVerifiedPrice, which is
  *  deliberately never cached. A load that returns nothing but
  *  the stablecoin constants is not cached — a dead network must
- *  not pin empty prices for the whole TTL. */
+ *  not pin empty prices for the whole TTL. The constants are
+ *  the $1 seeds PLUS every built-in stable pin's symbol
+ *  (builtinStablePinSymbols — USDG joined them 2026-11-15),
+ *  so the test is "at least one LIVE price beyond the
+ *  constants", never a raw key count: a count would silently
+ *  start caching constants-only tables the day another
+ *  stable pin lands. */
 export const PRICES_TTL_MS = 30000;
 let pricesCache = null; // { at, table }
 let pricesInflight = null;
@@ -1035,7 +1041,8 @@ export async function getPrices() {
   pricesInflight = (async () => {
     try {
       const table = await fetchPricesFresh();
-      if (table && Object.keys(table).length > 3) pricesCache = { at: Date.now(), table };
+      const constants = new Set(["USDC", "USDT", "DAI", ...builtinStablePinSymbols()]);
+      if (table && Object.keys(table).some(s => !constants.has(s) && table[s] != null)) pricesCache = { at: Date.now(), table };
       return table;
     } finally { pricesInflight = null; }
   })();
@@ -1045,8 +1052,29 @@ export async function getPrices() {
  *  changing its price feed starts from a clean load). */
 export function resetPricesCache() { pricesCache = null; pricesInflight = null; }
 
+/** Symbols of the built-in networks' hand-verified token pins
+ *  carrying the fleet's `stable: true` marker — a built-in's
+ *  designated stable (Robinhood Chain's USDG is the first: it
+ *  has no Binance pair and no CG_IDS entry, so no feed ever
+ *  priced it and its home row fell into the collapsed
+ *  "unverified or unpriced" group — gap-#7 walk check 3,
+ *  2026-11-15). The display table prices these at $1 BY
+ *  CONSTRUCTION: the pin is the authority, so the rule is
+ *  pin-driven — any built-in stable pin on any chain prices
+ *  at $1, with no per-symbol list to drift. Display/estimate
+ *  table only (the getPrices contract); the verified-price
+ *  path behind send caps never reads this table. */
+export function builtinStablePinSymbols() {
+  const syms = new Set();
+  for (const net of BUILTIN_NETWORKS_SNAPSHOT) for (const t of net.tokens || []) if (t && t.stable === true && t.symbol) syms.add(t.symbol);
+  return [...syms];
+}
+
 async function fetchPricesFresh() {
   const out = { USDC: 1, USDT: 1, DAI: 1 };
+  // Built-in stable pins price at $1 in the display table
+  // (pin-driven — see builtinStablePinSymbols).
+  for (const sym of builtinStablePinSymbols()) out[sym] = 1;
   try {
     const syms = Object.values(PRICE_PAIRS).filter(Boolean);
     const url = "https://api.binance.com/api/v3/ticker/price?symbols=" + encodeURIComponent(JSON.stringify(syms));
@@ -1087,6 +1115,15 @@ async function fetchPricesFresh() {
   // prices[row.symbol] — without this alias a GRAM row would
   // render $0.00 over a real balance.
   if (out.TON != null) out.GRAM = out.TON;
+  // WETH alias (gap-#7 walk check 3): wrapped ETH is ETH 1:1
+  // by contract, so a WETH row prices at exactly the ETH
+  // price in the display table — without it a chain's
+  // canonical WETH pin (e.g. Robinhood Chain's) rendered
+  // unpriced and grouped as "unverified or unpriced". Set
+  // AFTER every source has run, from the table's own ETH
+  // price; if ETH itself never priced, WETH stays unpriced
+  // too (honest, never invented).
+  if (out.ETH != null) out.WETH = out.ETH;
   return out;
 }
 
@@ -29315,6 +29352,58 @@ export function moveMessageComplete(record) {
     && typeof record.message.data === "string" && typeof record.message.hash === "string";
 }
 
+/** The archive-capable Arbitrum endpoint in the Move L2
+ *  read rotation. The primary Arbitrum RPC (arbitrum-one-rpc.
+ *  publicnode.com) refuses eth_getTransactionReceipt with
+ *  "Archive requests require a personal token" — for old AND
+ *  recent receipts alike (proven in-page from the production
+ *  origin, LADYS claim walk check 3, 2026-11-15): that is the
+ *  free endpoint's stated unauthenticated-archive policy, not
+ *  this VM's traffic, so real users hit the same wall and a
+ *  pre-fix record could NEVER self-heal through it. arb1.
+ *  arbitrum.io serves those receipts (proven in the same
+ *  walk), so it stands in the rotation as the archive leg. */
+export const MOVE_L2_ARCHIVE_RPC = "https://arb1.arbitrum.io/rpc";
+
+/** The Move L2 read rotation for a chain: the primary
+ *  provider, the verified fallback when the chain carries
+ *  one, then the archive-capable endpoint — deduped by URL.
+ *  Every Move L2 READ (the repair-on-read receipt fetch, the
+ *  probe's confirmed-size header walk, the NodeInterface
+ *  proof call) runs over this rotation: a provider that
+ *  throws or returns null for a step falls through to the
+ *  next before the step is declared failed. Only when EVERY
+ *  provider fails does the step fail — the fail-safe is
+ *  exactly as before (repair leaves the record untouched,
+ *  the probe reports waiting/unreadable, no state flips on
+ *  a failed read, the clock alone never arms a claim). */
+export function moveL2Providers(networkKey = "arbitrum") {
+  const net = NETWORKS[networkKey];
+  if (!net) return [];
+  const out = [];
+  const seen = new Set();
+  const push = (provider, url) => {
+    if (!provider || !url || seen.has(url)) return;
+    seen.add(url);
+    out.push(provider);
+  };
+  push(providerFor(networkKey), net.rpc);
+  push(providerForFallback(networkKey), net.rpcFallback);
+  push(new ethers.JsonRpcProvider(MOVE_L2_ARCHIVE_RPC, net.chainId), MOVE_L2_ARCHIVE_RPC);
+  return out;
+}
+
+/** Resolve the provider list a Move read runs over: an
+ *  explicit list wins (deduped by identity); a single
+ *  explicit provider stands alone (the test-stub seam — one
+ *  stub's behaviour is then the whole story, exactly as
+ *  before); neither means the production rotation. */
+function resolveMoveL2Providers(single, list, networkKey) {
+  if (Array.isArray(list) && list.length) return [...new Set(list.filter(Boolean))];
+  if (single) return [single];
+  return moveL2Providers(networkKey);
+}
+
 /** REPAIR-ON-READ: a record whose claim payload is missing
  *  re-derives it from its own initiation tx hash — re-read
  *  the receipt, parse the CURRENT event, and verify the
@@ -29322,20 +29411,28 @@ export function moveMessageComplete(record) {
  *  trusting them. Nothing about a stale record is stranded:
  *  the hash was always sufficient. Persists the repaired
  *  record when storage is given; returns the (possibly
- *  unchanged) record either way. */
-export async function repairBridgeMoveRecord(record, l2Provider = null, { storage = null } = {}) {
+ *  unchanged) record either way. The receipt read runs over
+ *  the Move L2 rotation (see moveL2Providers): the primary
+ *  endpoint's archive wall must not strand a record another
+ *  endpoint can read. The item-hash gate is per-receipt and
+ *  unchanged — a re-parse that doesn't reproduce the hash is
+ *  discarded, never trusted, whichever provider served it. */
+export async function repairBridgeMoveRecord(record, l2Provider = null, { storage = null, l2Providers = null } = {}) {
   if (!record || moveMessageComplete(record)) return record;
-  const p = l2Provider || providerFor(record.fromChainKey || "arbitrum");
-  let receipt = null;
-  try { receipt = await p.getTransactionReceipt(record.txHash); } catch { receipt = null; }
-  if (!receipt) return record;
-  const parsed = parseMoveReceipt(receipt);
-  if (!parsed.message) return record;
-  const itemHash = calculateMoveItemHash(parsed.message);
-  if (!itemHash || itemHash.toLowerCase() !== String(parsed.message.hash).toLowerCase()) return record;
-  const repaired = { ...record, message: parsed.message, withdrawalId: record.withdrawalId ?? parsed.withdrawalId };
-  if (storage) saveBridgeMoveRecord(storage, repaired);
-  return repaired;
+  const providers = resolveMoveL2Providers(l2Provider, l2Providers, record.fromChainKey || "arbitrum");
+  for (const p of providers) {
+    let receipt = null;
+    try { receipt = await p.getTransactionReceipt(record.txHash); } catch { receipt = null; }
+    if (!receipt) continue;
+    const parsed = parseMoveReceipt(receipt);
+    if (!parsed.message) continue;
+    const itemHash = calculateMoveItemHash(parsed.message);
+    if (!itemHash || itemHash.toLowerCase() !== String(parsed.message.hash).toLowerCase()) continue;
+    const repaired = { ...record, message: parsed.message, withdrawalId: record.withdrawalId ?? parsed.withdrawalId };
+    if (storage) saveBridgeMoveRecord(storage, repaired);
+    return repaired;
+  }
+  return record;
 }
 
 /** Execute a Move's initiation: verify the live gateway pin,
@@ -29428,8 +29525,24 @@ function revertSelector(e) {
  *  assertion confirms, so a hit is the protocol's own word
  *  that the tree at that size is final. Returns
  *  { size, root } or null when no confirmed tree yet covers
- *  the position (still waiting, whatever the clock says). */
-export async function findConfirmedSendSize(position, l2Provider, l1Provider) {
+ *  the position (still waiting, whatever the clock says).
+ *  The walk runs over the Move L2 rotation: each provider
+ *  gets the full walk, and the first confirmed size any of
+ *  them finds wins — a provider whose header reads fail
+ *  (the walk reads deep history; archive-gated endpoints
+ *  refuse it) never vetoes the providers behind it. */
+export async function findConfirmedSendSize(position, l2Provider, l1Provider, l2Providers = null) {
+  const providers = resolveMoveL2Providers(l2Provider, l2Providers, "arbitrum");
+  for (const p of providers) {
+    const found = await findConfirmedSendSizeVia(position, p, l1Provider);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** The confirmed-size walk over ONE L2 provider (see
+ *  findConfirmedSendSize for the rotation contract). */
+async function findConfirmedSendSizeVia(position, l2Provider, l1Provider) {
   const pos = BigInt(position);
   const ob = new ethers.Interface(OUTBOX_ABI);
   let tip = null;
@@ -29468,15 +29581,27 @@ export async function findConfirmedSendSize(position, l2Provider, l1Provider) {
  *  must reproduce that root from the proof. Returns
  *  { proof, size, root, send }, or null when no confirmed
  *  size covers the message yet. */
-export async function fetchMoveClaimProof(record, { l2Provider = null, l1Provider = null, confirmed = null } = {}) {
+export async function fetchMoveClaimProof(record, { l2Provider = null, l2Providers = null, l1Provider = null, confirmed = null } = {}) {
   const msg = record?.message;
   if (!moveMessageComplete(record)) throw new Error("This move's claim data isn't readable yet — your tokens stay claimable; try again in a moment.");
-  const l2 = l2Provider || providerFor(record.fromChainKey || "arbitrum");
+  const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record.fromChainKey || "arbitrum");
   const l1 = l1Provider || providerFor(record.toChainKey || "ethereum");
-  const conf = confirmed || await findConfirmedSendSize(msg.position, l2, l1);
+  const conf = confirmed || await findConfirmedSendSize(msg.position, null, l1, l2s);
   if (!conf) return null;
   const ni = new ethers.Interface(NODE_INTERFACE_ABI);
-  const res = await ethCallView(l2, NODE_INTERFACE_ADDRESS, ni, "constructOutboxProof", [BigInt(conf.size), BigInt(msg.position)]);
+  // The proof call rotates over the Move L2 providers: a
+  // provider that THROWS falls through to the next, and only
+  // when every provider throws does the call fail. The
+  // assertions below run on the first answer actually
+  // obtained and refuse outright on a mismatch — a data
+  // refusal is not a transport failure, and the rotation
+  // never shops for a friendlier proof.
+  let res = null, callErr = null;
+  for (const l2 of l2s) {
+    try { res = await ethCallView(l2, NODE_INTERFACE_ADDRESS, ni, "constructOutboxProof", [BigInt(conf.size), BigInt(msg.position)]); callErr = null; break; }
+    catch (e) { callErr = e; }
+  }
+  if (res == null) throw callErr || new Error("the bridge proof couldn't be read from any endpoint");
   const [send, root, proof] = res;
   const refuse = (m) => new Error("Fluid refused this claim: " + m + " Your tokens stay claimable.");
   const itemHash = calculateMoveItemHash(msg);
@@ -29564,13 +29689,13 @@ export function checkClaimCalldata(record, pair, data) {
  *  Returns { state: "waiting" | "ready" | "claimed", record,
  *  proof?, size?, root?, reason? } — the record it returns
  *  is the repaired one when a repair was needed. */
-export async function probeBridgeMoveClaim(record, { l2Provider = null, l1Provider = null, storage = null } = {}) {
+export async function probeBridgeMoveClaim(record, { l2Provider = null, l2Providers = null, l1Provider = null, storage = null } = {}) {
   if (record?.status === "claimed") return { state: "claimed", record };
-  const l2 = l2Provider || providerFor(record?.fromChainKey || "arbitrum");
+  const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record?.fromChainKey || "arbitrum");
   const l1 = l1Provider || providerFor(record?.toChainKey || "ethereum");
   let rec = record;
   if (!moveMessageComplete(rec)) {
-    rec = await repairBridgeMoveRecord(rec, l2, { storage });
+    rec = await repairBridgeMoveRecord(rec, null, { storage, l2Providers: l2s });
     if (!moveMessageComplete(rec)) return { state: "waiting", reason: "unreadable", record: rec };
   }
   const ob = new ethers.Interface(OUTBOX_ABI);
@@ -29578,10 +29703,10 @@ export async function probeBridgeMoveClaim(record, { l2Provider = null, l1Provid
   try { spent = await ethCallView(l1, ARBITRUM_OUTBOX, ob, "isSpent", [BigInt(rec.message.position)]); }
   catch { return { state: "waiting", reason: "unreadable", record: rec }; }
   if (spent) return { state: "claimed", record: rec };
-  const confirmed = await findConfirmedSendSize(rec.message.position, l2, l1);
+  const confirmed = await findConfirmedSendSize(rec.message.position, null, l1, l2s);
   if (!confirmed) return { state: "waiting", reason: "unconfirmed", record: rec };
   let proofRes = null;
-  try { proofRes = await fetchMoveClaimProof(rec, { l2Provider: l2, l1Provider: l1, confirmed }); }
+  try { proofRes = await fetchMoveClaimProof(rec, { l1Provider: l1, confirmed, l2Providers: l2s }); }
   catch (e) { return { state: "waiting", reason: "proof", record: rec, error: e }; }
   if (!proofRes) return { state: "waiting", reason: "unconfirmed", record: rec };
   const pair = movePairById(rec.pairId);

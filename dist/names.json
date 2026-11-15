@@ -302,5 +302,37 @@
     "sol": "7XbKA4bieY5C1Rk9tvTMV64qw4a9RmmB7HVR32abGuSZ",
     "tron": "TEeFTZcYzJx73cboN7HfoX3K5j8UhQqPdo",
     "sui": "0x26c67fc4d812659e71244ce6f63456ee6be7b1fee0dc8ca87e213eb32bdb1778"
+  },
+  "verifyrh76615": {
+    "evm": "0xCE13D293Ac18b96F2a93BF24eBeDF5E93C9e04EF",
+    "btc": "bc1q4c8lvh0mryggx4wfrkgjmfzjvh9qhg2df37666",
+    "algo": "MMJB4Y6MJWFORUXMOXJP3YC2HBQQ43UXHMAHF5D57N6J4FI6LR4JDK74QM",
+    "sol": "5yXYodysqRX83dCxGqRcrEkzZfx5nbk9j7Cxk5sxufqp",
+    "tron": "TUkqwsXwZfaQCva475kgTWL3UeoudZmire",
+    "sui": "0x96958642671f1a0a659eb3f16489154e8c141b2802e8a56835424867dd3567fe"
+  },
+  "verifylc72409": {
+    "evm": "0x8cC1B65CF0279949972dddbb5d90C224419BD9cA",
+    "btc": "bc1qzupewj8hdk3jxd570vv40whjltlnrc6q42hds5",
+    "algo": "F5YYTMPUUU4LNNYP7QP6PA5BNMWYP5ZE4R2DUF2WYVNW5TOLPC4RZHYBEI",
+    "sol": "5uhwYPEx9t9Rj2Z8fStcN8ChwCxaUDHRbnmBWY2vTFky",
+    "tron": "TNoTfHXJKSF6m6jYNtp2PZmRjhQrwgiztx",
+    "sui": "0xbcae752345693e19c6d1c51959bb78aac13aae0e30edd14bcb5c48df216ce013"
+  },
+  "verifylw44461": {
+    "evm": "0x536197Ed82942Be2d2263d6148715458dBe634B8",
+    "btc": "bc1ql3ut46lajw2yvet4awqy93a77gvk3g0uamz50s",
+    "algo": "XS3RH7XYCMBE7M3YWMLBMRVNJOEVEUB2PBBFENDSGO3VS54ODNAES2J2QQ",
+    "sol": "7NFYXgs8Bihrz4qNbHH8VLcpNWE8jJfMZFgix22Qwtod",
+    "tron": "THa5ztoVq4PFH96DdoRDnugagTDtS5EWMR",
+    "sui": "0x2ada08b1e4533e8b773dc67a1c3b38e753dbbd76d9dd85f39dc61c192b0c6bd2"
+  },
+  "verifylw71013": {
+    "evm": "0xfF543B82fB1713d0a64c97b564d4b6C161dfdd04",
+    "btc": "bc1q2slfmsrjgfv53a7gteja4wkwy43was9c6a4fq9",
+    "algo": "BRKFSYCIHOGNWAVJ7I24ACZXKXY4QEXN3A7BIN23TR7GALGPSZ7AMVFGAU",
+    "sol": "EmkTQN9knSvsmn8v8D4i7vWLJcduJ2sW1ZKcRZP7mhWL",
+    "tron": "TZFGDYs6XeaTmAdDhReNaDniYQBHapJUUv",
+    "sui": "0x20bade0c1a484a305bd2ec51782c8db8a838f8f097fb94b017b18bbd82288721"
   }
 }

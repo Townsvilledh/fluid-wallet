@@ -1402,6 +1402,20 @@ endpoints with the official RPC first.
   assets; the CoinGecko scan surfaces held ones as scanned
   rows under the fleet's existing rules, and no curated
   stock-token pins are made.
+- **Display pricing (walk repair, 2026-11-15):** the
+  verification walk found the USDG and WETH pins grouped
+  under "Other tokens — Unverified or unpriced": no feed
+  prices USDG (no Binance pair, no CoinGecko id in the
+  table) and WETH had no symbol price, so the rows could
+  never carry a USD value. The display price table now
+  prices every built-in `stable: true` pin at $1 by
+  construction (pin-driven — any built-in's designated
+  stable, not a USDG special case) and prices WETH at
+  exactly the ETH price (wrapped ETH is 1:1 by contract).
+  Both pins now stand as priced, curated rows. Display
+  layer only — no swap pricing or route math reads these
+  aliases, and send-cap valuations keep using the separate
+  verified-price path.
 
 ## Canonical-bridge moves — the LADYS class (2026-11-15)
 
@@ -1485,6 +1499,23 @@ bridge is the true 1:1.
   re-derives the payload from its own initiation tx hash
   and verifies the re-parsed fields reproduce the event's
   item hash before trusting them.
+- **Move L2 reads rotate (walk repair, 2026-11-15).** The
+  claim verification walk found the self-heal above could
+  never complete through the primary Arbitrum RPC: that
+  endpoint refuses `eth_getTransactionReceipt` under its
+  stated unauthenticated-archive policy ("Archive requests
+  require a personal token"), for recent receipts as well
+  as old ones — a wall real users hit identically. Every
+  Move L2 read (the repair receipt fetch, the probe's
+  confirmed-size header walk, the NodeInterface proof
+  call) now rotates over the chain's primary provider, its
+  verified fallback when it has one, and an archive-capable
+  endpoint (`arb1.arbitrum.io`, proven against the walk's
+  fixture receipts), falling through on any throw or null.
+  The fail-safe is unchanged: only when every provider
+  fails does a read fail — the record stays untouched, the
+  probe reports waiting, and no claim is ever armed on a
+  failed read.
 - **State of the parts (2026-11-15):** initiation LIVE ·
   pending tracking + countdown LIVE · claim-readiness
   surfacing LIVE (probe-driven) · claim execution LIVE.

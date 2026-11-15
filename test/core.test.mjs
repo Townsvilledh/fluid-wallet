@@ -18949,4 +18949,190 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 }
 
+// ---------- §127. Walk-repair batch — Robinhood display pricing + Move L2 read rotation (2026-11-15) ----------
+// Two defects proven by the live walks of the builds they shipped
+// in. (1) Gap-#7 walk check 3: Robinhood Chain's pinned USDG and
+// WETH rows fell into the collapsed "Other tokens — Unverified or
+// unpriced" group because the DISPLAY price table never priced
+// them (getPrices seeded $1 only for USDC/USDT/DAI, CG_IDS has no
+// USDG, WETH had no symbol price). (2) LADYS claim walk check 3:
+// repair-on-read and the claim probe read Arbitrum through ONE
+// endpoint (arbitrum-one-rpc.publicnode.com) whose stated
+// unauthenticated-archive policy refuses eth_getTransactionReceipt
+// for old AND recent receipts — a pre-fix record could never
+// self-heal through it, for real users exactly as in the walk;
+// arb1.arbitrum.io serves those receipts (proven in-page).
+{
+  const {
+    builtinStablePinSymbols, splitHomeRows, MOVE_L2_ARCHIVE_RPC, moveL2Providers,
+    repairBridgeMoveRecord, findConfirmedSendSize, probeBridgeMoveClaim, bridgeMoveChainPhase,
+    parseMoveReceipt, calculateMoveItemHash, moveMessageComplete, BRIDGED_MOVE_PAIRS,
+    loadBridgeMoveRecords, NODE_INTERFACE_ADDRESS,
+  } = await import("../src/wallet-core.js");
+  const { ethers: eth127 } = await import("ethers");
+  // --- FIX 1: display pricing, pin-driven ---
+  ok("repair127: the stable-pin symbol set derives from the built-in pins themselves — today exactly USDG (Robinhood Chain's designated stable)",
+    JSON.stringify(builtinStablePinSymbols()) === JSON.stringify(["USDG"])
+    && NETWORKS.robinhood.tokens.some(t => t.symbol === "USDG" && t.stable === true));
+  {
+    const realFetch127 = globalThis.fetch;
+    resetPricesCache();
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return { ok: true, json: async () => [{ symbol: "BTCUSDT", price: "74414" }, { symbol: "ETHUSDT", price: "3000" }] };
+      if (u.includes("api.coingecko.com")) return { ok: true, json: async () => ({}) };
+      throw new Error("unexpected fetch " + u);
+    };
+    try {
+      const table = await getPrices();
+      ok("repair127: the display table prices a built-in stable pin at $1 by construction (USDG, which no feed lists)",
+        table.USDG === 1);
+      ok("repair127: WETH prices at exactly the ETH price in the display table (wrapped ETH is 1:1 by contract)",
+        table.ETH === 3000 && table.WETH === 3000);
+      // Row classification, the app's own seam: a non-native row
+      // is a main (curated) row iff it carries a USD value.
+      const valueOf = (prices) => (b) => { const p = prices[b.symbol]; return p != null && b.amount != null ? Number(b.amount) * p : null; };
+      const usdgRow = { symbol: "USDG", amount: "25", address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", decimals: 6 };
+      const wethRow = { symbol: "WETH", amount: "0.5", address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", decimals: 18 };
+      const sp = splitHomeRows([usdgRow, wethRow], valueOf(table), () => false);
+      ok("repair127: with the table's prices, the USDG and WETH rows classify as priced main rows (the walk's check-3 failure, closed)",
+        sp.main.length === 2 && sp.other.length === 0
+        && sp.main.find(x => x.b === usdgRow).v === 25 && sp.main.find(x => x.b === wethRow).v === 1500);
+      const memeRow = { symbol: "MEME", amount: "10", address: "0xabc", decimals: 18 };
+      ok("repair127: a genuinely unpriced token still groups as before — the fix prices the pins, it does not open the gates",
+        splitHomeRows([memeRow], valueOf(table), () => false).other.length === 1);
+    } finally { globalThis.fetch = realFetch127; }
+    // The cache invariant the seeding must not break: a load
+    // that priced NOTHING beyond the $1 constants (dead feeds)
+    // is served but never cached — the next caller re-reads.
+    resetPricesCache();
+    let binanceCalls127 = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("api.binance.com")) binanceCalls127++;
+      throw new Error("feeds down");
+    };
+    try {
+      const dead1 = await getPrices();
+      const dead2 = await getPrices();
+      ok("repair127: a constants-only load (now incl. the USDG pin) is NOT cached — a dead network never pins empty prices for the TTL",
+        dead1.USDG === 1 && dead2.USDG === 1 && binanceCalls127 === 2);
+    } finally { globalThis.fetch = realFetch127; resetPricesCache(); }
+  }
+  // --- FIX 2: Move L2 read rotation (the §126 fixture + stub seam) ---
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/ladys-move-claim-fixture.json", import.meta.url), "utf8"));
+  const USER127 = "0xcD54Cc88aC8bb4f437937b5DFa9C341570c6169b";
+  const parsedMsg127 = parseMoveReceipt({ logs: fx.logs }).message;
+  const fxRecord127 = {
+    id: "move-fixture127", kind: "bridge-move", pairId: "ladys-arbitrum-ethereum", bridge: "arbitrum-canonical",
+    symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
+    toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
+    amountRaw: "8168920020808455027", amount: "8168920020808455027",
+    from: USER127, to: USER127, txHash: fx.l2TxHash, l2Block: fx.receiptBlock,
+    initiatedAt: 1793515386000, claimableAt: 1793515386000 + 7 * 24 * 3600 * 1000,
+    status: "waiting", message: parsedMsg127, withdrawalId: "167389",
+  };
+  const OUTBOX_IFACE127 = new eth127.Interface([
+    "function isSpent(uint256 index) view returns (bool)",
+    "function roots(bytes32 root) view returns (uint256)",
+    "function calculateMerkleRoot(bytes32[] proof, uint256 index, bytes32 item) view returns (bytes32)",
+    "function executeTransaction(bytes32[] proof, uint256 index, address l2Sender, address to, uint256 l2Block, uint256 l1Block, uint256 l2Timestamp, uint256 value, bytes data)",
+  ]);
+  const NI_IFACE127 = new eth127.Interface(["function constructOutboxProof(uint64 size, uint64 leaf) view returns (bytes32 send, bytes32 root, bytes32[] proof)"]);
+  const FIN_IFACE127 = new eth127.Interface(["function finalizeInboundTransfer(address l1Token, address from, address to, uint256 amount, bytes data)"]);
+  const TIP127 = 530000000;
+  const HEADERS_READY127 = {
+    [TIP127]: { sendRoot: "0x" + "11".repeat(32), sendCount: "0x30d40" },
+    [TIP127 - 250000]: { sendRoot: fx.constructProof.root, sendCount: "0x28e9e" },
+  };
+  const l2Stub127 = ({ headers = HEADERS_READY127, receiptLogs = null, proofRes = null, proofThrows = false } = {}) => ({
+    getBlockNumber: async () => TIP127,
+    send: async (method, params) => {
+      if (method !== "eth_getBlockByNumber") throw new Error("unexpected send " + method);
+      const h = headers[parseInt(params[0], 16)];
+      if (!h) throw new Error("no header stub");
+      return h;
+    },
+    getTransactionReceipt: async () => (receiptLogs ? { logs: receiptLogs } : null),
+    call: async (tx) => {
+      if (String(tx.to).toLowerCase() !== NODE_INTERFACE_ADDRESS.toLowerCase()) throw new Error("unexpected L2 call target");
+      if (proofThrows) throw new Error("endpoint refused the proof call");
+      const pr = proofRes ?? fx.constructProof;
+      return NI_IFACE127.encodeFunctionResult("constructOutboxProof", [pr.send, pr.root, pr.proof]);
+    },
+  });
+  // The walk's wall, as a stub: every read throws the archive refusal.
+  const l2ArchiveRefusing127 = () => ({
+    getBlockNumber: async () => { throw new Error("Archive requests require a personal token"); },
+    send: async () => { throw new Error("Archive requests require a personal token"); },
+    getTransactionReceipt: async () => { throw new Error("Archive requests require a personal token"); },
+    call: async () => { throw new Error("Archive requests require a personal token"); },
+  });
+  const l1Stub127 = ({ spent = false } = {}) => ({
+    call: async (tx) => {
+      const sel = tx.data.slice(0, 10);
+      if (sel === OUTBOX_IFACE127.getFunction("isSpent").selector) return OUTBOX_IFACE127.encodeFunctionResult("isSpent", [spent]);
+      if (sel === OUTBOX_IFACE127.getFunction("roots").selector) {
+        const [root] = OUTBOX_IFACE127.decodeFunctionData("roots", tx.data);
+        return OUTBOX_IFACE127.encodeFunctionResult("roots", [String(root).toLowerCase() === String(fx.constructProof.root).toLowerCase() ? 167582n : 0n]);
+      }
+      if (sel === OUTBOX_IFACE127.getFunction("calculateMerkleRoot").selector) return OUTBOX_IFACE127.encodeFunctionResult("calculateMerkleRoot", [fx.constructProof.root]);
+      if (sel === OUTBOX_IFACE127.getFunction("executeTransaction").selector) return "0x";
+      throw new Error("unexpected L1 call " + sel);
+    },
+  });
+  ok("repair127: the Move L2 rotation is primary + the archive-capable endpoint for Arbitrum (no fallback configured there), deduped, archive leg named",
+    MOVE_L2_ARCHIVE_RPC === "https://arb1.arbitrum.io/rpc"
+    && JSON.stringify(moveL2Providers("arbitrum").map(p => p._getConnection().url)) === JSON.stringify(["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc"]));
+  {
+    const st = { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
+    const stale = { ...fxRecord127, message: null, withdrawalId: null };
+    const repaired = await repairBridgeMoveRecord(stale, null, { storage: st, l2Providers: [l2ArchiveRefusing127(), l2Stub127({ receiptLogs: fx.logs })] });
+    ok("repair127: repair falls through an archive-refusing provider to the next and self-heals the record (the walk's check-3 failure, closed)",
+      moveMessageComplete(repaired) && repaired.message.position === "167389"
+      && loadBridgeMoveRecords(st).find(r => r.id === stale.id)?.message?.position === "167389");
+    const tamperedLogs = fx.logs.map((l, i) => i === 3 ? { ...l, topics: [l.topics[0], l.topics[1], "0x" + "ff".repeat(32), l.topics[3]] } : l);
+    const healedPastTamper = await repairBridgeMoveRecord(stale, null, { l2Providers: [l2Stub127({ receiptLogs: tamperedLogs }), l2Stub127({ receiptLogs: fx.logs })] });
+    ok("repair127: a tampered re-parse from one provider is discarded by the item-hash gate — the rotation moves on and only a hash-true payload repairs",
+      moveMessageComplete(healedPastTamper) && healedPastTamper.message.hash === fx.itemHash);
+    const allDown = await repairBridgeMoveRecord(stale, null, { l2Providers: [l2ArchiveRefusing127(), l2Stub127({ receiptLogs: null })] });
+    ok("repair127: EVERY provider failing leaves the record exactly as it was — the self-heal fail-safe is unchanged",
+      allDown.message === null && allDown === stale);
+  }
+  {
+    const size = await findConfirmedSendSize("167389", null, l1Stub127({}), [l2ArchiveRefusing127(), l2Stub127({})]);
+    ok("repair127: the confirmed-size header walk falls through a refusing provider and lands on the confirmed tree",
+      size?.size === "167582" && size?.root === fx.constructProof.root);
+    const none = await findConfirmedSendSize("167389", null, l1Stub127({}), [l2ArchiveRefusing127(), l2ArchiveRefusing127()]);
+    ok("repair127: the header walk over only refusing providers returns null (waiting), never a fabricated confirmation",
+      none === null);
+  }
+  {
+    // Probe-level fall-through, on the §126 synthetic ready path.
+    const synthData = FIN_IFACE127.encodeFunctionData("finalizeInboundTransfer", [BRIDGED_MOVE_PAIRS[0].toToken, USER127, USER127, BigInt(fxRecord127.amountRaw), "0x"]);
+    const synthMsg = { ...parsedMsg127, data: synthData };
+    synthMsg.hash = calculateMoveItemHash(synthMsg);
+    synthMsg.uniqueId = BigInt(synthMsg.hash).toString();
+    const synthRecord = { ...fxRecord127, message: synthMsg };
+    const synthProof = { send: synthMsg.hash, root: fx.constructProof.root, proof: fx.constructProof.proof };
+    const readyWalk = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2Stub127({ proofRes: synthProof })] });
+    ok("repair127: the probe falls through a refusing provider for its header walk and still reaches READY on the healthy provider's evidence",
+      readyWalk.state === "ready" && readyWalk.size === "167582");
+    const readyProof = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2Stub127({ proofRes: synthProof, proofThrows: true }), l2Stub127({ proofRes: synthProof })] });
+    ok("repair127: the probe falls through a provider whose proof call throws — the proof step rotates like every other L2 read",
+      readyProof.state === "ready" && readyProof.proof.length === 18);
+    const downProbe = await probeBridgeMoveClaim(fxRecord127, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2ArchiveRefusing127()] });
+    const downPhase = await bridgeMoveChainPhase(fxRecord127, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2ArchiveRefusing127()], nowMs: fxRecord127.claimableAt + 1000 });
+    ok("repair127: with every L2 provider down the probe reports WAITING and the chain phase obeys it over a matured clock — no claim is ever armed on failed reads",
+      downProbe.state === "waiting" && downPhase.phase === "waiting" && downPhase.source === "probe");
+  }
+  {
+    const coreSrc127 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("repair127: wiring — the probe and the executor's probe run with NO explicit provider (the production rotation is the default path, not an opt-in)",
+      coreSrc127.includes("rec = await repairBridgeMoveRecord(rec, null, { storage, l2Providers: l2s })")
+      && coreSrc127.includes("const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record?.fromChainKey || \"arbitrum\")")
+      && coreSrc127.includes("await probeBridgeMoveClaim(record, { storage })"));
+  }
+}
+
 console.log(`\n${passed} checks passed`);
