@@ -18383,4 +18383,159 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     aOutFree6?.platformFeeCollecting === false && aInFree6?.platformFeeCollecting === false);
 }
 
+// ---------- §124. Canonical-bridge Move — LADYS Arbitrum → Ethereum (2026-11-15) ----------
+// The pair's true 1:1 is the Arbitrum canonical bridge, not
+// any swap (Relay priced the market swap at −86.55% impact
+// on ~$100). Gateway facts re-verified on-chain at build
+// time (research_notes/fluid-ladys-move-20261115/): the
+// router's getGateway(L1 LADYS) is the STANDARD L2 ERC20
+// Gateway, and the standard gateway escrows by burning via
+// bridgeBurn — NO approval leg exists (a zero-balance
+// eth_call of the exact initiation calldata reverts "ERC20:
+// burn amount exceeds balance", the burn's refusal).
+{
+  const {
+    BRIDGED_MOVE_PAIRS, movePairForToken, movePairForRoute,
+    ARBITRUM_GATEWAY_ROUTER, ARBITRUM_ERC20_GATEWAY, MOVE_WAIT_MS,
+    buildMoveCalldata, checkMoveCalldata, checkMoveGateway,
+    BRIDGE_MOVES_STORAGE_KEY, loadBridgeMoveRecords, saveBridgeMoveRecord,
+    moveClaimableAt, bridgeMovePhase, moveCountdownText, bridgeMoveHistoryLine,
+    parseMoveReceipt, moveDisclosureLines,
+  } = await import("../src/wallet-core.js");
+  const { ethers: eth124 } = await import("ethers");
+  const L1 = "0x12970E6868f88f6557B76120662c1B3E50A646bf";
+  const L2 = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+  const OWNER = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const pair = BRIDGED_MOVE_PAIRS[0];
+  ok("move: the pair table holds exactly the LADYS entry — bridged form on Arbitrum, original on Ethereum, canonical bridge",
+    BRIDGED_MOVE_PAIRS.length === 1 && pair.symbol === "LADYS" && pair.decimals === 18
+    && pair.fromChainKey === "arbitrum" && pair.fromToken === L2
+    && pair.toChainKey === "ethereum" && pair.toToken === L1
+    && pair.bridge === "arbitrum-canonical");
+  ok("move: gateway pins are the on-chain-verified router + standard gateway",
+    ARBITRUM_GATEWAY_ROUTER === "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933"
+    && ARBITRUM_ERC20_GATEWAY === "0x09e9222E96E7B4AE2a407B98d48e330053351EEe");
+  ok("move: pair lookup by held token matches case-insensitively and refuses everything else",
+    movePairForToken("arbitrum", L2.toLowerCase())?.id === pair.id
+    && movePairForToken("arbitrum", L1) === null
+    && movePairForToken("ethereum", L1) === null
+    && movePairForToken("arbitrum", null) === null);
+  ok("move: pair lookup by exact route matches; the reversed route and a wrong destination token refuse",
+    movePairForRoute("arbitrum", L2, "ethereum", L1)?.id === pair.id
+    && movePairForRoute("ethereum", L1, "arbitrum", L2) === null
+    && movePairForRoute("arbitrum", L2, "ethereum", L2) === null);
+  const amt = "100000000000000000000"; // 100 LADYS
+  const data = buildMoveCalldata(pair, OWNER, amt);
+  {
+    const dec = new eth124.Interface(["function outboundTransfer(address l1Token, address to, uint256 amount, bytes data) payable returns (bytes)"]).decodeFunctionData("outboundTransfer", data);
+    ok("move: the initiation calldata names the pinned L1 token, the user's own address, the exact amount and EMPTY extra data",
+      dec[0] === L1 && dec[1] === OWNER && dec[2] === 100000000000000000000n && dec[3] === "0x");
+  }
+  ok("move: the bounds check accepts the built calldata",
+    checkMoveCalldata(pair, data, { to: OWNER, amountRaw: amt }).ok === true);
+  ok("move: the bounds check refuses a wrong recipient, a wrong amount and non-empty extra data",
+    checkMoveCalldata(pair, data, { to: "0x000000000000000000000000000000000000dEaD", amountRaw: amt }).ok === false
+    && checkMoveCalldata(pair, data, { to: OWNER, amountRaw: "1" }).ok === false
+    && (() => {
+      const tampered = new eth124.Interface(["function outboundTransfer(address,address,uint256,bytes) payable returns (bytes)"])
+        .encodeFunctionData("outboundTransfer", [L1, OWNER, BigInt(amt), "0x1234"]);
+      return checkMoveCalldata(pair, tampered, { to: OWNER, amountRaw: amt }).ok === false;
+    })()
+    && checkMoveCalldata(pair, "0xdeadbeef", { to: OWNER, amountRaw: amt }).ok === false);
+  ok("move: the gateway pin check accepts the verified gateway in any case and refuses a re-pointed one",
+    checkMoveGateway(pair, ARBITRUM_ERC20_GATEWAY.toLowerCase()).ok === true
+    && checkMoveGateway(pair, "0x0000000000000000000000000000000000000000").ok === false
+    && checkMoveGateway(pair, ARBITRUM_GATEWAY_ROUTER).ok === false);
+  const T0 = 1763000000000;
+  const rec = {
+    id: "move-0123456789abcdef", kind: "bridge-move", pairId: pair.id, bridge: pair.bridge,
+    symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: L2, toChainKey: "ethereum", toToken: L1,
+    amountRaw: amt, amount: "100", from: OWNER, to: OWNER,
+    txHash: "0x" + "ab".repeat(32), l2Block: 123, initiatedAt: T0, claimableAt: T0 + MOVE_WAIT_MS,
+    status: "waiting", message: null, withdrawalId: null,
+  };
+  {
+    const st = { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
+    saveBridgeMoveRecord(st, rec);
+    const loaded = loadBridgeMoveRecords(st);
+    ok("move: the record store round-trips a record under its own key and filters invalid entries",
+      loaded.length === 1 && loaded[0].id === rec.id && !!st._m[BRIDGE_MOVES_STORAGE_KEY]
+      && (() => { st._m[BRIDGE_MOVES_STORAGE_KEY] = JSON.stringify([{ id: 7 }, rec]); return loadBridgeMoveRecords(st).length === 1; })());
+    saveBridgeMoveRecord(st, { ...rec, status: "claimed" });
+    ok("move: saving the same id upserts (a claim state replaces, never duplicates)",
+      loadBridgeMoveRecords(st).length === 1 && loadBridgeMoveRecords(st)[0].status === "claimed");
+  }
+  ok("move: claimable-at is initiation + the 7-day challenge period, exactly",
+    MOVE_WAIT_MS === 7 * 24 * 3600 * 1000 && moveClaimableAt(rec) === T0 + MOVE_WAIT_MS);
+  ok("move: the phase is waiting until the wait matures, ready at maturity, and claimed overrides at any time",
+    bridgeMovePhase(rec, T0).phase === "waiting"
+    && bridgeMovePhase(rec, T0 + MOVE_WAIT_MS - 1).phase === "waiting"
+    && bridgeMovePhase(rec, T0 + MOVE_WAIT_MS).phase === "ready"
+    && bridgeMovePhase({ ...rec, status: "claimed" }, T0).phase === "claimed");
+  ok("move: the countdown speaks in days/hours, then hours/minutes",
+    moveCountdownText(rec, T0 + 3600000) === "6 days 23 hours left"
+    && moveCountdownText(rec, T0 + 6 * 86400000 + 12 * 3600000) === "12 hours 0 min left"
+    && moveCountdownText(rec, T0 + MOVE_WAIT_MS) === "ready to claim");
+  {
+    const waiting = bridgeMoveHistoryLine(rec, T0 + 3600000);
+    const ready = bridgeMoveHistoryLine(rec, T0 + MOVE_WAIT_MS);
+    const claimed = bridgeMoveHistoryLine({ ...rec, status: "claimed" }, T0);
+    ok("move: the surface line carries the brief's sentence — in progress, claimable date, the unshortenable wait; then Ready to claim; then complete",
+      waiting.startsWith("Move in progress — 100 LADYS to Ethereum, claimable ~") && waiting.includes("can't be shortened")
+      && ready.startsWith("Ready to claim — 100 LADYS")
+      && claimed === "Move complete — 100 LADYS claimed on Ethereum.");
+  }
+  {
+    // The receipt parse: logs encoded exactly as ArbSys and
+    // the gateway emit them on a real initiation receipt.
+    const arbIface = new eth124.Interface(["event L2ToL1Tx(address caller, address indexed destination, uint256 indexed uniqueId, uint256 indexed batchNumber, uint256 indexInBatch, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data)"]);
+    const l2ToL1 = arbIface.encodeEventLog("L2ToL1Tx", [OWNER, "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC", 42n, 7n, 3n, 900n, 18000n, 1763000n, 0n, "0x1234"]);
+    const gwIface = new eth124.Interface(["event WithdrawalInitiated(address l1Token, address from, address to, uint256 exitId, uint256 exitNum, uint256 amount)"]);
+    const wi = gwIface.encodeEventLog("WithdrawalInitiated", [L1, OWNER, OWNER, 55n, 0n, BigInt(amt)]);
+    const parsed = parseMoveReceipt({ logs: [
+      { address: "0x0000000000000000000000000000000000000064", topics: l2ToL1.topics, data: l2ToL1.data },
+      { address: ARBITRUM_ERC20_GATEWAY, topics: wi.topics, data: wi.data },
+      { address: L2, topics: [], data: "0x" },
+    ] });
+    ok("move: the receipt parse extracts the full L2ToL1 claim payload (unique id, batch, index, blocks, message data) and the withdrawal id",
+      parsed.withdrawalId === "55" && parsed.message?.uniqueId === "42" && parsed.message?.batchNumber === "7"
+      && parsed.message?.indexInBatch === "3" && parsed.message?.caller === OWNER
+      && parsed.message?.destination === "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC" && parsed.message?.data === "0x1234");
+    ok("move: an unreadable receipt parses to nulls — the record stands on its hash",
+      (() => { const p = parseMoveReceipt({ logs: [] }); return p.message === null && p.withdrawalId === null; })());
+  }
+  {
+    const lines = moveDisclosureLines(pair, { gasText: "0.00012", ethBalanceZero: false });
+    const linesWarn = moveDisclosureLines(pair, { gasText: "0.00012", ethBalanceZero: true });
+    ok("move: the confirm disclosures state the 1:1 truth, the ~7-day protocol wait, the Arbitrum gas and the claim's Ethereum gas — in that order",
+      lines.length === 4 && lines[0].includes("1:1") && lines[1].includes("7-day") && lines[1].includes("cannot be shortened")
+      && lines[2].includes("0.00012") && lines[2].includes("no fee") && lines[3].includes("Claiming later needs"));
+    ok("move: a zero Ethereum ETH balance adds the plain warning — and the reassurance that the tokens stay claimable",
+      linesWarn.length === 5 && linesWarn[4].includes("no ETH on Ethereum") && linesWarn[4].includes("stays claimable"));
+  }
+  {
+    const entry = { msKind: "move", msState: "in-progress", claimableAt: T0 + MOVE_WAIT_MS, hash: rec.txHash, amount: "5", symbol: "LADYS", explorer: "https://arbiscan.io" };
+    const w = formatHistoryEntry(entry);
+    const r = formatHistoryEntry({ ...entry, msState: "ready-to-claim" });
+    const c = formatHistoryEntry({ ...entry, msState: "claimed" });
+    ok("move: Activity renders the move sentence (never the generic Sent shape) in all three states",
+      w.includes("Move in progress — 5 LADYS to Ethereum, claimable ~") && !w.includes("Sent ")
+      && r.includes("Ready to claim — 5 LADYS on Ethereum")
+      && c.includes("Move complete — 5 LADYS claimed on Ethereum"));
+  }
+  {
+    const appSrc124 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const swapsSrc124 = readFileSync(new URL("../docs/SWAPS.md", import.meta.url), "utf8");
+    ok("move: the app wires both entry points — the token-page action and the swap sheet presenting the Move for the exact pair BEFORE any market route search",
+      appSrc124.includes('id="tdMove"') && appSrc124.includes("function openMoveSheet(")
+      && appSrc124.includes('id="wMoves"')
+      && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") > 0
+      && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") < appSrc124.indexOf("getSwapRoutes(swapArgs)"));
+    ok("move: the docs carry the Move section with its live-vs-follow-up split stated plainly",
+      swapsSrc124.includes("Canonical-bridge moves") && swapsSrc124.includes("claim EXECUTION (Outbox execute with")
+      && swapsSrc124.includes("is the immediate follow-up") && swapsSrc124.includes("initiation LIVE"));
+  }
+}
+
 console.log(`\n${passed} checks passed`);

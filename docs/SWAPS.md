@@ -1307,3 +1307,65 @@ chain.
   funded deposit is the end-to-end proof, gated on Muse
   earnings), HYPE pricing depth beyond CoinGecko, and USD₮0
   liquidity at size.
+
+## Canonical-bridge moves — the LADYS class (2026-11-15)
+
+A Move is not a swap, and it never travels through a swap
+rail. Some tokens exist on an L2 only as the canonical
+bridged form of an L1 token — the L2 contract was deployed
+by the chain's own token bridge and is redeemable 1:1
+against the L1 escrow. Selling the bridged form into a
+market swap hands the user the L2 market price: for LADYS
+(Arbitrum → Ethereum) that was measured at −86.55% impact
+on ~$100 and −96.06% on ~$1,000 (2026-11-14 probe), because
+the two forms trade at different prices. The canonical
+bridge is the true 1:1.
+
+- **The pair table is the only source of Moves**
+  (`BRIDGED_MOVE_PAIRS` in wallet-core): token, origin
+  chain, bridged chain, bridge type. LADYS is the first and
+  only entry — Arbitrum `0x3b60…70E4E` ↔ Ethereum
+  `0x1297…646bf`, 18 decimals, bridge `arbitrum-canonical`.
+  A pair joins only with its own on-chain gateway
+  verification, never by analogy.
+- **The route (verified on-chain at build time):** the L2
+  GatewayRouter (`0x5288…4F933`) resolves LADYS to the
+  STANDARD L2 ERC20 Gateway (`0x09e9…51EEe` — re-read live
+  before every initiation and refused if it ever changes).
+  The standard gateway escrows by burning the L2 token
+  through its gateway-only `bridgeBurn`, so the initiation
+  is ONE call — `outboundTransfer(l1Token, to, amount,
+  "0x")` to the router, carrying no native value and empty
+  extra data (the gateway enforces both) — and there is NO
+  approval leg. The built calldata is decoded and
+  bounds-checked before signing (pinned L1 token, recipient
+  = the user's own Ethereum address, exact amount, empty
+  data), and the call is simulated before broadcast.
+- **The wait is the protocol's:** about 7 days (Arbitrum's
+  challenge period), shown up front on the confirm screen
+  with the Arbitrum-side gas estimate and the claim's
+  Ethereum-gas need (with a warning when the wallet holds
+  no ETH on Ethereum). The pending-move record is written
+  at broadcast, persists across lock/close, and shows the
+  countdown on the token page, in the swap sheet and in
+  Activity ("Move in progress — LADYS to Ethereum,
+  claimable ~<date>"), flipping to "Ready to claim" when
+  the wait matures. The record carries the initiation
+  receipt's full ArbSys `L2ToL1Tx` event — every field the
+  L1 Outbox execution consumes.
+- **State of the parts (2026-11-15):** initiation LIVE ·
+  pending tracking + countdown LIVE · claim-readiness
+  surfacing LIVE · claim EXECUTION (Outbox execute with
+  proof) is the immediate follow-up, landing well inside
+  the first moves' 7-day window; until it lands, a ready
+  move names the honest alternative (Arbitrum's official
+  bridge, same wallet). Nothing about a move is claimable
+  by anyone but the user's own key, before or after.
+- **Fee: none.** A canonical withdrawal is neither a swap
+  nor a ramp and has no capture surface; the only cost is
+  the Arbitrum network fee for the initiation (and, at
+  claim time, Ethereum's).
+- **Entry points:** the LADYS (Arbitrum) token page's
+  "Move to Ethereum" action, and the swap screen — where
+  the exact ARB LADYS → ETH LADYS pair presents the Move
+  instead of any market quote.

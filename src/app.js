@@ -42,6 +42,7 @@ import {
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
+  movePairForToken, movePairForRoute, estimateMoveGas, executeBridgeMove, moveDisclosureLines, loadBridgeMoveRecords, bridgeMoveHistoryLine, bridgeMovePhase, moveClaimableAt,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
@@ -2385,6 +2386,10 @@ const tdPriceText = (p) => p == null ? null : (p >= 0.01 ? usd(p) : "$" + Number
 function evmDetailDesc(b) {
   const net = NETWORKS[networkKey];
   const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
+  // Canonical-bridge Move (2026-11-15): a held token that is
+  // the bridged form of an L1 token (the pair table is the
+  // only source) gains the Move action beside Send/Swap.
+  const mvPair = b.address ? movePairForToken(networkKey, b.address) : null;
   return {
     family: "evm", row: b, chainLabel: net.name,
     identLabel: b.address ? "Contract address" : null, ident: b.address || null,
@@ -2394,6 +2399,8 @@ function evmDetailDesc(b) {
       : { cgId: cgIdForSymbol(net.priceSym || b.symbol) },
     send: () => openEvmSendSheet({ address: b.address || null }),
     swap: () => { pendingSwapFrom = { netKey: networkKey, address: b.address || null }; $("actSwap").click(); },
+    movePair: mvPair,
+    move: mvPair ? () => openMoveSheet(mvPair, b) : null,
   };
 }
 function solanaDetailDesc(b) {
@@ -2449,15 +2456,20 @@ function openTokenDetail(d) {
       <p class="seed" style="word-break:break-all">${esc(d.ident)}</p>
       <button class="btn ghost" id="tdCopyIdent">Copy ${esc(String(d.identLabel).toLowerCase())}</button>`
     : `<p class="tag" style="margin-top:10px">This is the network's native asset — it has no contract address.</p>`}
+    <div id="tdMoves"></div>
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn" id="tdSend" style="flex:1">Send</button>
       ${d.swap ? `<button class="btn" id="tdSwap" style="flex:1">Swap</button>` : ""}
+      ${d.move ? `<button class="btn" id="tdMove" style="flex:1">Move to ${esc(NETWORKS[d.movePair.toChainKey]?.name || "Ethereum")}</button>` : ""}
     </div>`);
   const copyBtn = $("tdCopyIdent");
   if (copyBtn) copyBtn.onclick = () => { copyText(d.ident, copyBtn); toast("Address copied"); };
   $("tdSend").onclick = () => d.send();
   const swapBtn = $("tdSwap");
   if (swapBtn && d.swap) swapBtn.onclick = () => d.swap();
+  const moveBtn = $("tdMove");
+  if (moveBtn && d.move) moveBtn.onclick = () => d.move();
+  if (d.movePair) paintTokenMoves(d.movePair);
   if (hasExtrasRoute) {
     fetchTokenMarketExtras(d.extras).then(x => {
       if (seq !== tokenDetailSeq || !$("tdChart")) return; // a different sheet owns the screen now
@@ -2476,6 +2488,127 @@ function openTokenDetail(d) {
       if (seq === tokenDetailSeq && $("tdChart")) $("tdChart").innerHTML = "";
     });
   }
+}
+
+// ---------- canonical-bridge Move (LADYS class, 2026-11-15) ----------
+// A Move is its own action, never a swap: the token page of a
+// bridged-form token offers it, the swap screen presents it
+// for the exact pair instead of a market quote, and its
+// pending records (with the countdown / Ready to claim) show
+// on the token page, in the swap sheet and in Activity. The
+// claim EXECUTION is the follow-up landing inside the first
+// moves' 7-day window — until then a ready move carries the
+// honest alternative (Arbitrum's official bridge, same
+// wallet) rather than a dead button.
+function paintTokenMoves(pair) {
+  const host = $("tdMoves"); if (!host) return;
+  const records = loadBridgeMoveRecords(localStorage)
+    .filter(r => r.pairId === pair.id && String(r.fromToken).toLowerCase() === String(pair.fromToken).toLowerCase());
+  if (!records.length) { host.innerHTML = ""; return; }
+  host.innerHTML = records.map(r => `<p class="tag" data-td-move="${esc(r.id)}" style="margin:10px 0 2px"></p>`).join("");
+  host.querySelectorAll("[data-td-move]").forEach((el, i) => {
+    const r = records[i];
+    el.textContent = bridgeMoveHistoryLine(r);
+    if (bridgeMovePhase(r).phase === "ready") {
+      const note = document.createElement("span");
+      note.className = "tag";
+      note.textContent = " Claiming from inside Fluid lands in the next update, well inside your window — or claim it now on Arbitrum's official bridge (bridge.arbitrum.io) with this same wallet.";
+      el.appendChild(note);
+    }
+  });
+}
+
+/** The Activity entry for a move, written AT BROADCAST and
+ *  keyed by the record id; renderHistory refreshes its state
+ *  from the record store, so it is written exactly once. */
+function writeMoveHistoryEntry(record) {
+  try {
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    if (h.some(x => x && x.msId === record.id)) return;
+    h.unshift({
+      msId: record.id, msKind: "move", msState: "in-progress",
+      claimableAt: record.claimableAt,
+      hash: record.txHash, amount: record.amount, symbol: sanitizePersistedSymbol(record.symbol || ""),
+      to: record.to, explorer: NETWORKS[record.fromChainKey]?.explorer || NETWORKS.arbitrum.explorer,
+      at: record.initiatedAt || Date.now(),
+    });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+    markActivityDot();
+  } catch { /* history is a record, never a blocker */ }
+}
+
+let pendingMove = null;
+function openMoveSheet(pair, row = null, presetAmount = "") {
+  pendingMove = null;
+  const fromName = NETWORKS[pair.fromChainKey]?.name || pair.fromChainKey;
+  const destName = NETWORKS[pair.toChainKey]?.name || "Ethereum";
+  openSheet(`<h3>Move ${esc(pair.symbol)} to ${esc(destName)}</h3>
+    <p class="tag">This ${esc(pair.symbol)} is the canonical bridged form of ${esc(pair.symbol)} on ${esc(destName)}. The bridge redeems it <b>1:1</b> — a swap would price the two differently and hand you the cheaper side. The move takes about 7 days (Arbitrum's challenge period) and costs only the Arbitrum network fee; Fluid adds no fee.</p>
+    <input id="mvAmt" inputmode="decimal" data-autofocus placeholder="Amount" value="${esc(String(presetAmount || ""))}">
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
+      <p class="tag" id="mvBal" style="flex:1;margin:0">${row && row.amount != null ? `Balance: ${fmt(row.amount)} ${esc(pair.symbol)}` : ""}</p>
+      <button class="btn ghost" id="mvMax" style="margin:0;padding:4px 12px">MAX</button>
+    </div>
+    <button class="btn" id="mvReview">Review move</button>
+    <div id="mvIntent" class="hidden">
+      <p class="seed" id="mvIntentText"></p>
+      <div id="mvNotes"></div>
+      <button class="btn" id="mvConfirm">Confirm &amp; move</button>
+    </div>
+    <p class="msg err" id="mvMsg"></p>`);
+  const tokenArg = { address: pair.fromToken, decimals: pair.decimals, symbol: pair.symbol };
+  $("mvMax").onclick = async () => {
+    try {
+      const exact = await getEvmTokenBalance(wallet, pair.fromChainKey, tokenArg);
+      $("mvAmt").value = exact;
+      const balEl = $("mvBal"); if (balEl) balEl.textContent = `Balance: ${fmt(Number(exact))} ${pair.symbol}`;
+    } catch { msg("mvMsg", "Your balance couldn't load right now — try again in a moment."); }
+  };
+  $("mvReview").onclick = async () => {
+    const amount = $("mvAmt").value.trim();
+    if (!amount || Number(amount) <= 0) return msg("mvMsg", "Enter an amount.");
+    let amountRaw;
+    try { amountRaw = ethers.parseUnits(amount, pair.decimals); } catch { return msg("mvMsg", "That amount isn't valid."); }
+    try {
+      msg("mvMsg", "Pricing this move…", true);
+      const balText = await getEvmTokenBalance(wallet, pair.fromChainKey, tokenArg);
+      const balEl = $("mvBal"); if (balEl) balEl.textContent = `Balance: ${fmt(Number(balText))} ${pair.symbol}`;
+      if (Number(amount) > Number(balText)) return msg("mvMsg", `Not enough ${pair.symbol} on ${fromName} (you have ${fmt(Number(balText))}).`);
+      const est = await estimateMoveGas(wallet, pair, amountRaw);
+      let ethZero = false;
+      try { ethZero = Number(await getEvmTokenBalance(wallet, pair.toChainKey, null)) === 0; } catch { ethZero = false; }
+      pendingMove = { pair, amount, amountRaw: amountRaw.toString(), gasText: est.gasNativeText };
+      $("mvIntentText").textContent = `Move ${amount} ${pair.symbol} from ${fromName} to ${destName} (1:1). The same ${amount} ${pair.symbol} becomes claimable in your own ${destName} wallet — the same address as this one — after the ~7-day wait.`;
+      const notes = $("mvNotes");
+      notes.innerHTML = "";
+      for (const line of moveDisclosureLines(pair, { gasText: est.gasNativeText, ethBalanceZero: ethZero })) {
+        const p = document.createElement("p");
+        p.className = "tag";
+        p.textContent = line;
+        notes.appendChild(p);
+      }
+      show("mvIntent");
+      msg("mvMsg", "");
+    } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("mvMsg", humanizeTxError(e)); }
+  };
+  $("mvConfirm").onclick = async () => {
+    if (!pendingMove) return;
+    const btn = $("mvConfirm");
+    const { pair: p, amount, amountRaw, gasText } = pendingMove;
+    try {
+      setSendBusy(btn, true);
+      msg("mvMsg", "Starting the move…", true);
+      const record = await executeBridgeMove(wallet, p, amountRaw, { storage: localStorage, onProgress: (t) => msg("mvMsg", t, true) });
+      writeMoveHistoryEntry(record);
+      pendingMove = null;
+      showTxSuccess({ verb: "Move started", amount, symbol: p.symbol,
+        logoHtml: tokenLogoHtml({ symbol: p.symbol, address: p.fromToken }, "evm"),
+        to: record.to, familyName: `${fromName} → ${destName}`,
+        feeText: `≈ ${fmtFixed(Number(gasText))} ETH network fee · no Fluid fee`,
+        explorerUrl: historyTxUrl({ hash: record.txHash, explorer: NETWORKS[p.fromChainKey].explorer }), txid: record.txHash, pending: false });
+      rescanAfterActivity();
+    } catch (e) { sendFailed(btn, "mvMsg", e, "Move failed: "); }
+  };
 }
 
 // ---------- custom token add (by contract address, read from chain) ----------
@@ -7376,6 +7509,7 @@ $("actSwap").onclick = () => {
     <div id="wSatoraSwaps"></div>
     <div id="wMayanSwaps"></div>
     <div id="wOneClickSwaps"></div>
+    <div id="wMoves"></div>
     <div id="wGasFallback"></div>
     <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
@@ -8000,6 +8134,17 @@ $("actSwap").onclick = () => {
   }
   paintOneClickSwaps();
   pollOneClickSwapStatuses(localStorage).then(() => paintOneClickSwaps()).catch(() => {});
+  // Canonical-bridge moves in flight / ready, same conventions:
+  // the persisted record is the whole state (the wait is the
+  // protocol's clock), rendered as text only.
+  function paintBridgeMoves() {
+    const host = $("wMoves"); if (!host) return;
+    const records = loadBridgeMoveRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>Bridge moves</h4>` + records.map(r => `<p class="tag" data-move-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-move-line]").forEach((el, i) => { el.textContent = bridgeMoveHistoryLine(records[i]); });
+  }
+  paintBridgeMoves();
   // Gas-fallback two-step swaps, same conventions: the persisted
   // record is the recovery key; a record whose first leg landed
   // surfaces its line plus the one-tap "Complete the swap"
@@ -8235,6 +8380,23 @@ $("actSwap").onclick = () => {
     if (!fromTok || !toTok || !amount || Number(amount) <= 0) return msg("wMsg", "Pick both tokens and enter an amount to swap.");
     if (fromKey === toKey && fromTok.address.toLowerCase() === toTok.address.toLowerCase())
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
+    // Canonical-bridge Move (2026-11-15): for an exact
+    // bridged-form pair (today: LADYS Arbitrum → LADYS
+    // Ethereum) the pair's true 1:1 is the canonical bridge,
+    // and a market swap — which prices the two forms
+    // differently — is the loss, not a route. The sheet
+    // presents the Move INSTEAD of searching market quotes.
+    const mvPair = movePairForRoute(fromKey, fromTok.address, toKey, toTok.address);
+    if (mvPair) {
+      msg("wMsg", "");
+      $("wList").innerHTML = `<div class="netitem" style="cursor:default">
+          <span><b>Move to ${esc(NETWORKS[mvPair.toChainKey]?.name || "Ethereum")} — 1:1</b><br>
+          <small style="color:var(--dim)">${esc(mvPair.symbol)} on ${esc(NETWORKS[mvPair.fromChainKey]?.name || "")} is the canonical bridged form of ${esc(mvPair.symbol)} on ${esc(NETWORKS[mvPair.toChainKey]?.name || "")}: the bridge redeems it 1:1, so a market swap (which prices the two forms differently) is never the right tool here. The move takes about 7 days — Arbitrum's challenge period — and costs only the Arbitrum network fee. Fluid adds no fee.</small></span>
+        </div>
+        <button class="btn" id="wMoveBtn" style="margin:8px 0">Move to ${esc(NETWORKS[mvPair.toChainKey]?.name || "Ethereum")}</button>`;
+      $("wMoveBtn").onclick = () => openMoveSheet(mvPair, null, amount);
+      return;
+    }
     try {
       // Route-preview decision (2026-11-14, walk defect D2): the
       // search is balance-free discovery — no balance pre-flight
@@ -9032,6 +9194,28 @@ function renderHistory() {
         symbol: `${sanitizePersistedSymbol(r.fromSymbol || "")}→${sanitizePersistedSymbol(r.toSymbol || "")}`,
         to: r.recipient || "",
         at: r.createdAt || Date.now(),
+      });
+    }
+    // Bridge moves (2026-11-15): the stored entry's state is
+    // refreshed HERE from the record store — a wait that has
+    // matured reads "ready-to-claim" without the stored entry
+    // ever being rewritten — and a record whose entry was
+    // evicted from the capped list is synthesised like the
+    // other record stores above.
+    const moveById = new Map(loadBridgeMoveRecords(localStorage).map(r => [r.id, r]));
+    const moveStateOf = (r) => { const ph = bridgeMovePhase(r); return ph.phase === "ready" ? "ready-to-claim" : ph.phase; };
+    for (const x of h) {
+      if (x?.msKind === "move" && moveById.has(x.msId)) x.msState = moveStateOf(moveById.get(x.msId));
+    }
+    for (const r of moveById.values()) {
+      if (represented.has("id:" + r.id) || represented.has("hash:" + r.txHash)) continue;
+      synth.push({
+        msId: r.id, msKind: "move", msState: moveStateOf(r),
+        claimableAt: r.claimableAt || moveClaimableAt(r),
+        hash: r.txHash, amount: r.amount != null ? r.amount : null,
+        symbol: sanitizePersistedSymbol(r.symbol || ""),
+        to: r.to || "", explorer: NETWORKS[r.fromChainKey]?.explorer || NETWORKS.arbitrum.explorer,
+        at: r.initiatedAt || Date.now(),
       });
     }
     if (synth.length) h = [...synth, ...h].sort((a, b) => (Number(b?.at) || 0) - (Number(a?.at) || 0));

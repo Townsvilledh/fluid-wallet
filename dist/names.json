@@ -246,5 +246,13 @@
     "sol": "5PrqpYEwr4hmcDnEaBE7YDRzQNPR24fNtMv1Vvb5yy7T",
     "tron": "TNC1BWcoCGqmXGhPXBDVXFkwDBdoqRra78",
     "sui": "0xcca6d8bf46805e9af3dc60c2a5d67bb34211d414fce2399c6f976764e103de29"
+  },
+  "verifyhype19934": {
+    "evm": "0x544675914917e787c9F12412Ae29A9D2642de38d",
+    "btc": "bc1qf4emchx980xpdsc0qk9jwva52melqwd4symuwx",
+    "algo": "V7HQN5EBQUS3TYDPFPPKZHIXHUKGICAX27A46IYSSB3SBO7LQ5LDUNODMM",
+    "sol": "FxWGM5HoXe5bN9oTw55QRfDuwFUJrrUnnNZBEJfoEVAW",
+    "tron": "THepAmSuwn5TcSFuP8uNCXqVGPw8TviDJy",
+    "sui": "0xeb29d665ccab805239eb39be91e84d2ec01a8aa4eeb2cbf918178f1b29aca7d2"
   }
 }

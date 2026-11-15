@@ -28843,6 +28843,351 @@ export function sortHomeRows(items, amountOf, valueOf) {
   }).map(([x]) => x);
 }
 
+/* ================= Canonical-bridge moves (LADYS class, 2026-11-15) =================
+ * A MOVE is not a swap. Some tokens exist on an L2 only as the
+ * canonical bridged form of an L1 token (the L2 contract was
+ * deployed by the chain's own token bridge and burns 1:1
+ * against L1 escrow). Selling such a token into a swap hands
+ * the user the L2 market price — for LADYS on Arbitrum that
+ * was measured at −86.55% impact on ~$100 (2026-11-14 probe):
+ * the swap is the loss. The canonical bridge is the true 1:1:
+ * the L2 gateway burns the bridged form and, after the
+ * chain's challenge period, the L1 gateway releases the same
+ * amount of the original token. Gas only, no market, no Fluid
+ * fee (a canonical withdrawal is neither a swap nor a ramp
+ * and carries no capture surface).
+ *
+ * The Arbitrum route, verified on-chain at build time
+ * (research_notes/fluid-ladys-move-20261115/): the L2
+ * GatewayRouter's getGateway(L1 LADYS) returns the STANDARD
+ * L2 ERC20 Gateway (pinned below), and the standard gateway's
+ * outboundTransfer escrows by BURNING the L2 token through
+ * the token's gateway-only bridgeBurn — there is NO ERC-20
+ * approval leg in this route (proven two ways: the deployed
+ * contracts' source, and a zero-balance eth_call of the exact
+ * initiation calldata reverting "ERC20: burn amount exceeds
+ * balance" — the burn's refusal, not an allowance refusal).
+ * The initiation is therefore ONE call carrying NO native
+ * value and EMPTY extra data (the gateway enforces both:
+ * "NO_VALUE" / "EXTRA_DATA_DISABLED"). The claim side is the
+ * L1 Outbox executing the L2→L1 message after the ~7-day
+ * challenge period; the initiation receipt's ArbSys
+ * L2ToL1Tx event carries every field that execution needs,
+ * and the move record persists all of them. */
+
+export const ARBITRUM_GATEWAY_ROUTER = "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933";
+export const ARBITRUM_ERC20_GATEWAY = "0x09e9222E96E7B4AE2a407B98d48e330053351EEe";
+export const ARBSYS_ADDRESS = "0x0000000000000000000000000000000000000064";
+/** The Arbitrum challenge period, as the honest user-facing
+ *  figure: a withdrawal becomes claimable roughly seven days
+ *  after initiation (the L1 assertion confirming its batch
+ *  must outlive the dispute window). Always shown with a "~":
+ *  it is protocol timing, not a Fluid promise. */
+export const MOVE_WAIT_MS = 7 * 24 * 3600 * 1000;
+
+/** The bridged-form pair table — the ONLY source of Move
+ *  actions in the app. An entry states: this token, held on
+ *  the origin chain, is the canonical bridged form of that
+ *  token on the destination chain, and the named bridge
+ *  redeems it 1:1. LADYS is the first and only entry (added
+ *  2026-11-15, gateway verified on-chain); a new pair joins
+ *  only with its own on-chain gateway verification, never by
+ *  analogy. */
+export const BRIDGED_MOVE_PAIRS = [
+  {
+    id: "ladys-arbitrum-ethereum", symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
+    toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
+    bridge: "arbitrum-canonical",
+  },
+];
+
+/** The Move pair for a token held on a chain, or null. */
+export function movePairForToken(chainKey, tokenAddress) {
+  if (!chainKey || !tokenAddress) return null;
+  const a = String(tokenAddress).toLowerCase();
+  return BRIDGED_MOVE_PAIRS.find(p => p.fromChainKey === chainKey && p.fromToken.toLowerCase() === a) || null;
+}
+
+/** The Move pair for an exact swap-sheet route (origin token
+ *  AND destination token), or null. The swap screen shows the
+ *  Move for this pair instead of any market quote. */
+export function movePairForRoute(fromChainKey, fromTokenAddress, toChainKey, toTokenAddress) {
+  if (!fromTokenAddress || !toTokenAddress) return null;
+  const f = String(fromTokenAddress).toLowerCase(), t = String(toTokenAddress).toLowerCase();
+  return BRIDGED_MOVE_PAIRS.find(p => p.fromChainKey === fromChainKey && p.toChainKey === toChainKey
+    && p.fromToken.toLowerCase() === f && p.toToken.toLowerCase() === t) || null;
+}
+
+const GATEWAY_ROUTER_ABI = [
+  "function outboundTransfer(address l1Token, address to, uint256 amount, bytes data) payable returns (bytes)",
+  "function getGateway(address l1Token) view returns (address)",
+];
+const ARBSYS_ABI = [
+  "event L2ToL1Tx(address caller, address indexed destination, uint256 indexed uniqueId, uint256 indexed batchNumber, uint256 indexInBatch, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data)",
+];
+const ERC20_GATEWAY_EVENTS_ABI = [
+  "event WithdrawalInitiated(address l1Token, address from, address to, uint256 exitId, uint256 exitNum, uint256 amount)",
+];
+
+/** The exact initiation calldata for a Move: the router's
+ *  outboundTransfer naming the pair's L1 token, the user's
+ *  own destination address, the exact raw amount, and EMPTY
+ *  extra data (the standard gateway refuses anything else). */
+export function buildMoveCalldata(pair, to, amountRaw) {
+  return new ethers.Interface(GATEWAY_ROUTER_ABI)
+    .encodeFunctionData("outboundTransfer", [pair.toToken, to, BigInt(amountRaw), "0x"]);
+}
+
+/** Inspect-before-sign for a Move (the checkRelayStepBounds
+ *  discipline): decode the initiation calldata and verify
+ *  every field against the pair and the confirmed intent —
+ *  the L1 token is the pair's pinned original, the recipient
+ *  is the user's OWN destination-chain address, the amount
+ *  is exactly the confirmed amount, and the extra data is
+ *  empty. Anything else refuses before a signature exists. */
+export function checkMoveCalldata(pair, data, { to, amountRaw } = {}) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this move: " + m });
+  if (!pair) return refuse("the pair is not a known bridged-form pair.");
+  if (typeof data !== "string" || !/^0x[0-9a-fA-F]+$/.test(data))
+    return refuse("the bridge call carried calldata Fluid couldn't inspect.");
+  let decoded = null;
+  try { decoded = new ethers.Interface(GATEWAY_ROUTER_ABI).decodeFunctionData("outboundTransfer", data); }
+  catch { return refuse("the bridge call did not decode as a canonical-bridge withdrawal."); }
+  const [l1Token, dest, amount, extra] = decoded;
+  if (String(l1Token).toLowerCase() !== String(pair.toToken).toLowerCase())
+    return refuse("the withdrawal named a different Ethereum token than the pair's original.");
+  if (!to || String(dest).toLowerCase() !== String(to).toLowerCase())
+    return refuse("the withdrawal's recipient is not your own Ethereum address.");
+  let want = null;
+  try { want = BigInt(amountRaw); } catch { want = null; }
+  if (want == null || amount == null || BigInt(amount) !== want)
+    return refuse("the withdrawal's amount did not match the amount you confirmed.");
+  if (extra !== "0x") return refuse("the withdrawal carried extra data the standard gateway does not accept.");
+  return { ok: true };
+}
+
+/** The gateway pin check (pure): the router's live answer
+ *  for a pair must be the pinned standard gateway. A
+ *  re-pointed gateway is a different trust shape than the
+ *  one this build verified, so any other answer refuses. */
+export function checkMoveGateway(pair, gatewayAddress) {
+  if (!pair || pair.bridge !== "arbitrum-canonical") return { ok: false, reason: "Fluid refused this move: the pair's bridge is not one Fluid has verified." };
+  if (!gatewayAddress || String(gatewayAddress).toLowerCase() !== ARBITRUM_ERC20_GATEWAY.toLowerCase())
+    return { ok: false, reason: "Fluid refused this move: the bridge router no longer points at the standard gateway Fluid verified for this token." };
+  return { ok: true };
+}
+
+/** Read the router's gateway for a pair from the chain. */
+export async function fetchMoveGateway(pair, provider = null) {
+  const p = provider || providerFor(pair.fromChainKey);
+  const router = new ethers.Contract(ARBITRUM_GATEWAY_ROUTER, GATEWAY_ROUTER_ABI, p);
+  return router.getGateway(pair.toToken);
+}
+
+/** The Arbitrum-side gas estimate for the initiation call,
+ *  in native ETH text — estimated against the exact calldata
+ *  from the user's own address, so an unholdable amount fails
+ *  here (the burn's refusal) before any confirm screen arms. */
+export async function estimateMoveGas(wallet, pair, amountRaw) {
+  const provider = providerFor(pair.fromChainKey);
+  const data = buildMoveCalldata(pair, wallet.address, amountRaw);
+  const gas = await provider.estimateGas({ from: wallet.address, to: ARBITRUM_GATEWAY_ROUTER, data, value: 0n });
+  const feeData = await provider.getFeeData();
+  const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+  return { gasLimit: gas.toString(), gasNativeText: ethers.formatEther(gas * gasPrice) };
+}
+
+/** The confirm screen's disclosure lines, in order — plain
+ *  language, every material fact BEFORE signing: the 1:1
+ *  truth, the ~7-day protocol wait, the Arbitrum-side gas,
+ *  and the claim's Ethereum gas need (with the zero-balance
+ *  warning when the wallet holds no ETH on Ethereum). */
+export function moveDisclosureLines(pair, { gasText = null, ethBalanceZero = false } = {}) {
+  const destName = NETWORKS[pair.toChainKey]?.name || "Ethereum";
+  const lines = [
+    `1:1 — the same amount of ${pair.symbol} lands on ${destName}. This is the canonical bridge, not a swap: no market price is involved.`,
+    `About a 7-day wait — Arbitrum's challenge period is enforced by the protocol and cannot be shortened, by Fluid or anyone else.`,
+    gasText
+      ? `Network fee on Arbitrum: about ${gasText} ETH, paid from your Arbitrum ETH. Fluid adds no fee to a move.`
+      : `The only cost is the Arbitrum network fee, paid from your Arbitrum ETH. Fluid adds no fee to a move.`,
+    `Claiming later needs a small amount of ETH on ${destName} for its network fee — the ${pair.symbol} itself is released by the claim.`,
+  ];
+  if (ethBalanceZero) lines.push(`⚠ Your wallet currently holds no ETH on ${destName} — you will need a little there before the claim can be made. The ${pair.symbol} stays claimable by you in the meantime; the wait changes nothing about that.`);
+  return lines;
+}
+
+/* ---------- Move records ---------- */
+
+export const BRIDGE_MOVES_STORAGE_KEY = "fluid_bridge_moves_v1";
+function validBridgeMoveRecord(r) {
+  return !!r && typeof r.id === "string" && typeof r.txHash === "string"
+    && typeof r.pairId === "string" && typeof r.amountRaw === "string"
+    && Number.isFinite(r.initiatedAt);
+}
+export function loadBridgeMoveRecords(storage) {
+  try {
+    const raw = storage?.getItem(BRIDGE_MOVES_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter(validBridgeMoveRecord) : [];
+  } catch { return []; }
+}
+export function saveBridgeMoveRecord(storage, record) {
+  if (!storage || !validBridgeMoveRecord(record)) return;
+  try {
+    const arr = loadBridgeMoveRecords(storage).filter(r => r.id !== record.id);
+    arr.unshift(record);
+    storage.setItem(BRIDGE_MOVES_STORAGE_KEY, JSON.stringify(arr.slice(0, 50)));
+  } catch { /* storage unavailable/full — tracking degrades, the move itself is on-chain */ }
+}
+
+/** When a move becomes claimable: initiation + the challenge
+ *  period. An estimate (hence the "~" everywhere it shows) —
+ *  the protocol's own clock, not a Fluid schedule. */
+export function moveClaimableAt(record) {
+  return (Number(record?.initiatedAt) || 0) + MOVE_WAIT_MS;
+}
+
+/** A move's phase at a moment: claimed (the record says the
+ *  claim landed), ready (the wait has matured — the claim
+ *  can be made), or waiting, with the time left in words. */
+export function bridgeMovePhase(record, nowMs = Date.now()) {
+  if (record?.status === "claimed") return { phase: "claimed", label: "Claimed on Ethereum", claimableAt: moveClaimableAt(record), msLeft: 0 };
+  const claimableAt = moveClaimableAt(record);
+  const msLeft = claimableAt - nowMs;
+  if (msLeft <= 0) return { phase: "ready", label: "Ready to claim", claimableAt, msLeft: 0 };
+  return { phase: "waiting", label: "Move in progress", claimableAt, msLeft };
+}
+
+/** The wait remaining, in words ("6 days 3 hours left"). */
+export function moveCountdownText(record, nowMs = Date.now()) {
+  const { phase, msLeft } = bridgeMovePhase(record, nowMs);
+  if (phase === "claimed") return "claimed";
+  if (phase === "ready") return "ready to claim";
+  const days = Math.floor(msLeft / 86400000);
+  const hours = Math.floor((msLeft % 86400000) / 3600000);
+  const mins = Math.floor((msLeft % 3600000) / 60000);
+  if (days > 0) return `${days} day${days === 1 ? "" : "s"} ${hours} hour${hours === 1 ? "" : "s"} left`;
+  if (hours > 0) return `${hours} hour${hours === 1 ? "" : "s"} ${mins} min left`;
+  if (mins > 0) return `${mins} min left`;
+  return "under a minute left";
+}
+
+/** A move amount in human text with formatUnits' trailing
+ *  ".0" trimmed ("100", not "100.0"; "100.5" stays "100.5"). */
+export function moveAmountText(raw, decimals) {
+  const s = swapRawToAmount(raw, decimals ?? 18);
+  return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
+}
+
+/** One plain-text line for a move record (token page, swap
+ *  sheet panel) — the Activity sentence lives in
+ *  formatHistoryEntry's move branch; this is the fuller
+ *  surface line with the countdown. Text only. */
+export function bridgeMoveHistoryLine(record, nowMs = Date.now()) {
+  const ph = bridgeMovePhase(record, nowMs);
+  const amt = `${moveAmountText(record.amountRaw, record.decimals ?? 18)} ${record.symbol}`;
+  const destName = NETWORKS[record.toChainKey]?.name || "Ethereum";
+  const date = new Date(ph.claimableAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  if (ph.phase === "claimed") return `Move complete — ${amt} claimed on ${destName}.`;
+  if (ph.phase === "ready") return `Ready to claim — ${amt} can now be claimed on ${destName}. Claiming needs a little ETH on ${destName} for its network fee.`;
+  return `Move in progress — ${amt} to ${destName}, claimable ~${date} (${moveCountdownText(record, nowMs)}). The wait is Arbitrum's challenge period — it can't be shortened.`;
+}
+
+/** Extract the claim payload from an initiation receipt:
+ *  the ArbSys L2ToL1Tx event (every field the L1 Outbox
+ *  execution consumes, with the proof derivable from the
+ *  batch number + index) and the gateway's
+ *  WithdrawalInitiated id. Returns nulls when a log is
+ *  absent — the record still stands on the tx hash, from
+ *  which the whole event set can be re-read. */
+export function parseMoveReceipt(receipt) {
+  const out = { message: null, withdrawalId: null };
+  if (!receipt || !Array.isArray(receipt.logs)) return out;
+  const arbIface = new ethers.Interface(ARBSYS_ABI);
+  const gwIface = new ethers.Interface(ERC20_GATEWAY_EVENTS_ABI);
+  for (const log of receipt.logs) {
+    try {
+      if (String(log.address).toLowerCase() === ARBSYS_ADDRESS.toLowerCase() && !out.message) {
+        const p = arbIface.parseLog(log);
+        if (p && p.name === "L2ToL1Tx") {
+          out.message = {
+            caller: p.args.caller, destination: p.args.destination,
+            uniqueId: p.args.uniqueId.toString(), batchNumber: p.args.batchNumber.toString(),
+            indexInBatch: p.args.indexInBatch.toString(), arbBlockNum: p.args.arbBlockNum.toString(),
+            ethBlockNum: p.args.ethBlockNum.toString(), timestamp: p.args.timestamp.toString(),
+            callvalue: p.args.callvalue.toString(), data: p.args.data,
+          };
+        }
+      } else if (String(log.address).toLowerCase() === ARBITRUM_ERC20_GATEWAY.toLowerCase() && out.withdrawalId == null) {
+        const p = gwIface.parseLog(log);
+        if (p && p.name === "WithdrawalInitiated") out.withdrawalId = p.args.exitId.toString();
+      }
+    } catch { /* a foreign log — not one of ours */ }
+  }
+  return out;
+}
+
+/** Execute a Move's initiation: verify the live gateway pin,
+ *  verify the on-chain balance covers the amount, build +
+ *  bounds-check the exact calldata, simulate it, broadcast,
+ *  settle against the chain, then persist the pending-move
+ *  record carrying everything the later claim needs. There
+ *  is NO approval step (the standard gateway burns; see the
+ *  section header) and NO Fluid fee. The destination is the
+ *  user's own address on the destination chain — the same
+ *  seed's address, so the claimed tokens land in the same
+ *  wallet. */
+export async function executeBridgeMove(wallet, pair, amountRaw, { storage = null, onProgress = () => {} } = {}) {
+  if (!pair || pair.bridge !== "arbitrum-canonical") throw new Error("That pair is not a canonical-bridge move Fluid has verified.");
+  const fromKey = pair.fromChainKey;
+  const provider = providerFor(fromKey);
+  const signer = wallet.connect(provider);
+  const owner = wallet.address;
+  onProgress("Checking the bridge…");
+  const gateway = await fetchMoveGateway(pair, provider).catch(() => null);
+  const pin = checkMoveGateway(pair, gateway);
+  if (!pin.ok) throw new Error(pin.reason);
+  const token = new ethers.Contract(pair.fromToken, ["function balanceOf(address) view returns (uint256)"], provider);
+  const bal = await token.balanceOf(owner).catch(() => null);
+  const want = (() => { try { return BigInt(amountRaw); } catch { return null; } })();
+  if (want == null || want <= 0n) throw new Error("Enter an amount to move.");
+  if (bal == null) throw new Error(`Your ${pair.symbol} balance on ${NETWORKS[fromKey]?.name || fromKey} couldn't be read right now — try again in a moment.`);
+  if (bal < want) throw new Error(`Not enough ${pair.symbol} on ${NETWORKS[fromKey]?.name || fromKey} (you have ${ethers.formatUnits(bal, pair.decimals)}).`);
+  const data = buildMoveCalldata(pair, owner, want);
+  const bounds = checkMoveCalldata(pair, data, { to: owner, amountRaw: want });
+  if (!bounds.ok) throw new Error(bounds.reason);
+  onProgress("Simulating the move…");
+  await simulateEvmStepOrThrow(fromKey, provider, { to: ARBITRUM_GATEWAY_ROUTER, data, value: 0n }, owner);
+  onProgress("Broadcasting the move on Arbitrum…");
+  const tx = await signer.sendTransaction({ to: ARBITRUM_GATEWAY_ROUTER, data, value: 0n });
+  // The record is written from the broadcast hash even if
+  // the receipt read is slow: the move exists on-chain from
+  // this moment, and the claim payload re-reads from the
+  // hash. Settlement still resolves from the chain (defect-A
+  // discipline) before the record is finalised.
+  const outcome = await resolveBroadcastOutcome([providerFor(fromKey), providerForFallback(fromKey)], tx.hash);
+  if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — your tokens are back in your wallet; only the network fee was spent.");
+  const parsed = outcome.receipt ? parseMoveReceipt(outcome.receipt) : { message: null, withdrawalId: null };
+  const initiatedAt = Date.now();
+  const record = {
+    id: "move-" + String(tx.hash).slice(2, 18),
+    kind: "bridge-move", pairId: pair.id, bridge: pair.bridge,
+    symbol: pair.symbol, name: pair.name, decimals: pair.decimals,
+    fromChainKey: pair.fromChainKey, fromToken: pair.fromToken,
+    toChainKey: pair.toChainKey, toToken: pair.toToken,
+    amountRaw: want.toString(), amount: moveAmountText(want, pair.decimals),
+    from: owner, to: owner,
+    txHash: tx.hash,
+    l2Block: outcome.receipt ? Number(outcome.receipt.blockNumber) : null,
+    initiatedAt, claimableAt: initiatedAt + MOVE_WAIT_MS,
+    status: "waiting",
+    message: parsed.message, withdrawalId: parsed.withdrawalId,
+  };
+  if (storage) saveBridgeMoveRecord(storage, record);
+  return record;
+}
+
 /* ================= Persisted-metadata safety (security audit 2026-11-06, C1) =================
  * Token symbols/names come from ERC-20 metadata and token lists — attacker-
  * controlled strings. Fluid PERSISTS some of them (send history
@@ -28891,6 +29236,21 @@ export function historyTxUrl(x) {
 export function formatHistoryEntry(x) {
   const url = historyTxUrl(x);
   const view = url ? ` · <a target="_blank" rel="noopener" href="${escapeHtml(url)}">view ↗</a>` : "";
+  // Canonical-bridge moves carry their own sentence (the
+  // generic "Sent … →" shape would lie about what happened:
+  // nothing was sent to anyone — the bridged form was burned
+  // and the original becomes claimable after the wait). The
+  // state rides the entry and is refreshed at render from
+  // the move record store, so a matured wait reads as ready
+  // without any stored entry being rewritten.
+  if (x?.msKind === "move") {
+    const amt = `${escapeHtml(x?.amount)} ${escapeHtml(x?.symbol)}`;
+    if (x?.msState === "claimed") return `<div class="hist">Move complete — ${amt} claimed on Ethereum${view}</div>`;
+    if (x?.msState === "ready-to-claim") return `<div class="hist">Ready to claim — ${amt} on Ethereum · claim it from the token page${view}</div>`;
+    const d = x?.claimableAt ? new Date(Number(x.claimableAt)) : null;
+    const when = d && Number.isFinite(d.getTime()) ? `, claimable ~${escapeHtml(d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}` : "";
+    return `<div class="hist">Move in progress — ${amt} to Ethereum${when}${view}</div>`;
+  }
   // Composed swaps carry their live state on the entry
   // (auto-continuation addendum, 2026-11-14): written at
   // first-leg broadcast and updated as legs land, so an
