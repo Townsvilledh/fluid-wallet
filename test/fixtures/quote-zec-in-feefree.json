@@ -1,0 +1,64 @@
+{
+ "status": 201,
+ "request": {
+  "dry": false,
+  "depositMode": "SIMPLE",
+  "swapType": "EXACT_INPUT",
+  "slippageTolerance": 100,
+  "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "depositType": "ORIGIN_CHAIN",
+  "destinationAsset": "nep141:zec.omft.near",
+  "amount": "20000000",
+  "refundTo": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+  "refundType": "ORIGIN_CHAIN",
+  "recipient": "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b",
+  "recipientType": "DESTINATION_CHAIN",
+  "deadline": "2026-11-15T14:35:48.000Z"
+ },
+ "response": {
+  "quote": {
+   "amountIn": "20000000",
+   "amountInFormatted": "20.0",
+   "amountInUsd": "19.994720000000",
+   "minAmountIn": "20000000",
+   "amountOut": "2136026",
+   "amountOutFormatted": "0.02136026",
+   "amountOutUsd": "19.673440267800",
+   "minAmountOut": "2114665",
+   "timeEstimate": 150,
+   "refundFee": "2400",
+   "withdrawFee": "32000",
+   "deadline": "2026-11-18T14:35:48.000Z",
+   "timeWhenInactive": "2026-11-18T14:35:48.000Z",
+   "depositAddress": "0x46C6a6F34f4Dd3Fe0b20a536A3c9D93a0Df539f2"
+  },
+  "quoteRequest": {
+   "dry": false,
+   "depositMode": "SIMPLE",
+   "swapType": "EXACT_INPUT",
+   "slippageTolerance": 100,
+   "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+   "depositType": "ORIGIN_CHAIN",
+   "destinationAsset": "nep141:zec.omft.near",
+   "amount": "20000000",
+   "refundTo": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+   "refundType": "ORIGIN_CHAIN",
+   "recipient": "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b",
+   "recipientType": "DESTINATION_CHAIN",
+   "deadline": "2026-11-15T14:35:48.000Z",
+   "confidentiality": "public",
+   "quoteWaitingTimeMs": 0,
+   "insured": false,
+   "appFees": [
+    {
+     "recipient": "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd",
+     "fee": 20,
+     "limitOrderId": null
+    }
+   ]
+  },
+  "signature": "ed25519:3YX3NELc6dXpbYN8TADTASuwUcaKjDmkZyLmCKFSGhDDKp4KYcduD3o5rHvDi8NFPuenAKMvRrLZn191i9MXbBG4",
+  "timestamp": "2026-11-15T12:35:52.787Z",
+  "correlationId": "79bbf032-919d-4eb8-8401-c5a01b346653"
+ }
+}

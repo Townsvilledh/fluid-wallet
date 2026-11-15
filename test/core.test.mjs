@@ -82,6 +82,7 @@ import { decode as xrplCodecDecode, encodeForSigning as xrplCodecEncodeForSignin
 import { sr25519PairFromSeed as dotSrPairFromSeed, encodeAddress as dotEncodeAddress, sr25519Verify as dotSrVerify } from "@polkadot/util-crypto";
 import { mnemonicToEntropy as scureMnemonicToEntropy } from "@scure/bip39";
 import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
+import { zcashAddress, isValidZcashAddress, dashAddress, isValidDashAddress, buildSignedDashTx, DASH_DUST_SAT, DASH_MIN_OUTPUT, parseBlockchairDashboard, zecTxidFromRaw, zecSighash, buildZecTransparentTx, zecFeeZats, zecLogicalActions, ZEC_CONSENSUS_BRANCH_ID, ZCASH_SWAP_CHAIN_ID, DASH_SWAP_CHAIN_ID, ZCASH_SWAP_NATIVE_TOKEN, DASH_SWAP_NATIVE_TOKEN, formatDashSendIntent, formatZcashSendIntent } from "../src/wallet-core.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -2172,12 +2173,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 {
   const ids = q => filterReceiveNetworks(q).map(m => m.id);
   const TOP_IDS = ["evm", "bitcoin", "lightning", "tron", "solana", "sui", "stellar", "ton", "near",
-    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash", "cardano"];
-  ok("receive: one entry per network (18 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 25);
+    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
+  ok("receive: one entry per network (20 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 27);
   ok("receive: ids unique", new Set(RECEIVE_NETWORKS.map(m => m.id)).size === RECEIVE_NETWORKS.length);
   ok("receive: every panel id covered", TOP_IDS.every(id => RECEIVE_NETWORKS.some(m => m.id === id))
     && COSMOS_CHAINS.every(c => RECEIVE_NETWORKS.some(m => m.id === c.key)));
-  ok("receive: blank query lists everything", ids("") .length === 25 && ids("   ").length === 25);
+  ok("receive: blank query lists everything", ids("") .length === 27 && ids("   ").length === 27);
   ok("receive: btc → Bitcoin only (not Bitcoin Cash)", JSON.stringify(ids("btc")) === '["bitcoin"]');
   ok("receive: ln → Lightning only", JSON.stringify(ids("ln")) === '["lightning"]');
   ok("receive: lightning → Lightning only", JSON.stringify(ids("lightning")) === '["lightning"]');
@@ -3787,7 +3788,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && !idxSrc.includes("Every blockchain family —") && !idxSrc.includes("💧"));
   ok("ui-p2: home zero state exists, wired to Buy/Receive, and gated on loaded emptiness",
     idxSrc.includes('id="homeZero"') && idxSrc.includes('id="homeBuy"') && idxSrc.includes('id="homeReceive"')
-    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal')
+    && appSrc.includes('hz.classList.toggle("hidden"') && appSrc.includes('famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal')
     && appSrc.includes("hzBuy.onclick") && appSrc.includes("hzRcv.onclick"));
   ok("brand-kyc: no-KYC claims attach to Fluid itself — unqualified 'no KYC, global' gone from index.html",
     !idxSrc.includes("no KYC, global") && idxSrc.includes("Fluid never KYCs you")
@@ -5119,7 +5120,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcBtc.includes("m.bitcoin = (btcLoadFailed || !famLoaded.has(\"bitcoin\")) ? null : (btcBal + btcTrBal) * (prices.BTC || 0);")
     && appSrcBtc.includes("let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)"));
   ok("btc load-failed: home-zero card stays hidden while Bitcoin is unknown",
-    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal"));
+    appSrcBtc.includes("!evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal"));
   ok("btc load-failed: sheet header shows couldn't-load per account",
     appSrcBtc.includes('btcLoadFailed ? "Balance couldn\'t load"')
     && appSrcBtc.includes('btcSegwitFailed ? "couldn\'t load"')
@@ -6482,7 +6483,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11460,7 +11461,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12901,7 +12902,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13248,7 +13249,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17092,7 +17093,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17838,14 +17839,14 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appSrc120 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     const coreSrc120 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("cardano app: the family is on the home list, loads its Koios balance, and the sheet, receive panel and send route all open it",
-      appSrc120.includes('"bitcoincash", "cardano"]') && appSrc120.includes("adaAddr = cardanoAddress(w.mnemonic.phrase)")
+      appSrc120.includes('"bitcoincash", "cardano", "zcash", "dash"]') && appSrc120.includes("adaAddr = cardanoAddress(w.mnemonic.phrase)")
       && appSrc120.includes("getCardanoBalance(adaAddr)") && appSrc120.includes("function openCardanoSheet()")
       && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
       && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
     ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
-      appSrc120.includes('"injective", "dydx", "cardano"]') && appSrc120.includes('if (netKey === "cardano")')
+      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash"]') && appSrc120.includes('if (netKey === "cardano")')
       && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
-      && appSrc120.includes("cardano: adaAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr"));
+      && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr"));
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
       coreSrc120.includes('case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));')
       && coreSrc120.includes('asset: "nep141:cardano.omft.near"'));
@@ -19133,6 +19134,346 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && coreSrc127.includes("const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record?.fromChainKey || \"arbitrum\")")
       && coreSrc127.includes("await probeBridgeMoveClaim(record, { storage })"));
   }
+}
+
+// 128. Zcash + Dash (audit gap #8, 2026-11-15): two
+// Bitcoin-family presences on the DOGE/LTC pattern with 1Click
+// swaps. DASH is the DOGE clone (BIP44 coin 5, single-byte
+// prefixes, BlockCypher primary reads). ZCASH is transparent-
+// only (BIP44 coin 133, two-byte t1 envelope, Blockchair reads)
+// with the build's one genuinely new component: a ZIP-225 v5
+// transaction builder with the ZIP-244 sighash and ZIP-317
+// fees, PROVEN against a real post-NU7 mainnet transaction —
+// its txid reproduces from raw hex and both of its real
+// signatures verify over this code's sighash (the BCH evidence
+// standard). Fixtures are the research probe's live captures
+// (research_notes/fluid-zcash-dash-20261115) plus the mainnet
+// transaction capture. DASH-in above ~$1 has no 1Click
+// liquidity today: the "No liquidity available" state must
+// read as no-route, never an error (the integration fix).
+{
+  const ABANDON128 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture128 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const coreSrc128 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc128 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const EVM128 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const USDC_BASE_128 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const FEE_RECIPIENT_128 = "abababababababababababababababababababababababababababababababab";
+  const jsonRes128 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const memStorage128 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+  const clone128 = (x) => JSON.parse(JSON.stringify(x));
+
+  // Derivation vectors (cross-checked in scratch against a
+  // hand-rolled base58check over noble hash160 — an independent
+  // encoder — before pinning).
+  ok("zcash: address vector (BIP44 coin 133, two-byte t1 envelope)", zcashAddress(ABANDON128) === "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F");
+  ok("dash: address vector (BIP44 coin 5)", dashAddress(ABANDON128) === "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5");
+  ok("zcash: own t1 validates; the research's synthetic t1 (accepted by 1Click live) validates",
+    isValidZcashAddress("t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F") && isValidZcashAddress("t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b"));
+  {
+    // A t3 (P2SH, prefix 0x1cbd) address built on the bare
+    // primitives validates; shielded/unified forms refuse.
+    const { base58check } = await import("@scure/base");
+    const { sha256: sha256B } = await import("@noble/hashes/sha2.js");
+    const sha256BytesT = (b) => { const h = sha256B(b); return h; };
+    const codec = base58check(sha256BytesT);
+    const t3 = codec.encode(new Uint8Array([0x1c, 0xbd, ...new Uint8Array(20).fill(9)]));
+    ok("zcash: t3 P2SH validates", isValidZcashAddress(t3) && t3.startsWith("t3"));
+    ok("zcash: shielded + unified + cross-chain forms refused honestly",
+      !isValidZcashAddress("zs1z7rejlpsa98s2rrrfkwmaxu53e4ue0ulcrw0h4x5g8jl04tak0d3mm47vdtahatqrlkngh9sly")
+      && !isValidZcashAddress("u1qpatw6wpygwgvxw6y6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6g6")
+      && !isValidZcashAddress("XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5")
+      && !isValidZcashAddress("DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC")
+      && !isValidZcashAddress(""));
+  }
+  ok("dash: own X validates; a 1Click deposit X validates; cross-chain forms refused",
+    isValidDashAddress("XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5") && isValidDashAddress("XhiFwyzPeiJQ8yM3Wv4y4gn2XXwX9KQqWv")
+    && !isValidDashAddress("t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F") && !isValidDashAddress("DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC")
+    && !isValidDashAddress("1BoatSLRHtKNngkdXEeobR76b53LETtpyT"));
+  ok("dash: dust is Bitcoin-class 546 satoshis", DASH_DUST_SAT === 546 && DASH_MIN_OUTPUT === 0.00000546);
+
+  // The shared Blockchair parser: the saved HTTP-430 blacklist
+  // body is a FAILED read (throws), never a zero; a well-formed
+  // dashboard yields balance + UTXOs.
+  {
+    let threw430 = false;
+    try { parseBlockchairDashboard(fixture128("blockchair-zec-dashboard-empty.json")); } catch { threw430 = true; }
+    ok("blockchair: the saved 430 blacklist body throws — a failed read, never a fake zero", threw430);
+    const body = { context: { code: 200 }, data: { "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F": {
+      address: { type: "pubkeyhash", balance: 123456789, transaction_count: 3 },
+      utxo: [{ transaction_hash: "aa".repeat(32), index: 1, value: 100000000, block_id: 3575000 },
+             { transaction_hash: "bb".repeat(32), index: 0, value: 23456789, block_id: -1 }],
+    } } };
+    const parsed = parseBlockchairDashboard(body);
+    ok("blockchair: a dashboard parses to balance + UTXOs (mempool rows keep blockId -1 for the confirmed filter)",
+      parsed.balanceSat === 123456789 && parsed.utxos.length === 2 && parsed.utxos[0].valueSat === 100000000 && parsed.utxos[1].blockId === -1);
+    let threwNull = false;
+    try { parseBlockchairDashboard({ context: { code: 200 }, data: null }); } catch { threwNull = true; }
+    ok("blockchair: a null-data body throws", threwNull);
+  }
+
+  // DASH builder: the DOGE legacy construction with Dash
+  // parameters, byte-pinned on a fabricated prev transaction.
+  {
+    const DASH_NET = { bech32: "dash", pubKeyHash: 0x4c, scriptHash: 0x10, wif: 0xcc };
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON128));
+    const child = root.derive("m/44'/5'/0'/0/0");
+    const pay = btcSigner.p2pkh(child.publicKey, DASH_NET);
+    const prev = new btcSigner.Transaction();
+    prev.addInput({ txid: new Uint8Array(32).fill(7), index: 0xffffffff });
+    prev.addOutputAddress(pay.address, 200000000n, DASH_NET);
+    ok("dash: fabricated prev txid (signing fixture)", prev.id === "836497008a7c8cfef0edf908c1f7de7fe0f264788594332033ba0b707c5b3789");
+    const built = buildSignedDashTx({
+      privateKey: child.privateKey,
+      utxos: [{ txid: prev.id, index: 0, valueSat: 200000000, txHex: prev.hex }],
+      to: "XhiFwyzPeiJQ8yM3Wv4y4gn2XXwX9KQqWv", amountSat: 100000000, feeSat: 10000,
+      changeAddress: pay.address,
+    });
+    ok("dash: signed tx byte-pinned (DOGE builder construction, Dash parameters)",
+      built.hex === "010000000189375b7c700bba33203394857864f2e07fdef7c108f9edf0fe8c7c8a00976483000000006a473044022001322f736d4983d56226188cc5e02d75b2c67a04ea2d2c221e5a76779e0f725502207c6efcce8a2ae64b9ada9bfa007820bd4aed6e65b2271b5afa959b97b2e95c610121026fa9a6f213b6ba86447965f6b4821264aaadd7521f049f00db9c43a770ea7405ffffffff0200e1f505000000001976a9144d0d6d70941a770e05dc557f4afd90a63c01b18b88acf0b9f505000000001976a9148a4f58c222cd5544c527bc66925652baa70b5e8088ac00000000"
+      && built.txid === "59936dc1e4a2fae1d622f9d498050f50091424f88bc97badffefbce547003324"
+      && built.feeSat === 10000 && built.changeSat === 99990000);
+    const folded = buildSignedDashTx({
+      privateKey: child.privateKey,
+      utxos: [{ txid: prev.id, index: 0, valueSat: 200000000, txHex: prev.hex }],
+      to: pay.address, amountSat: 199989600, feeSat: 10000, changeAddress: pay.address,
+    });
+    ok("dash: sub-dust change (400 sat) folds into the fee", folded.changeSat === 0 && folded.feeSat === 10400);
+    let refused = false;
+    try {
+      buildSignedDashTx({ privateKey: child.privateKey, utxos: [{ txid: prev.id, index: 0, valueSat: 200000000, txHex: prev.hex }],
+        to: pay.address, amountSat: DASH_DUST_SAT - 1, feeSat: 1000, changeAddress: pay.address });
+    } catch { refused = true; }
+    ok("dash: sub-dust amount refused", refused);
+    const dashIntent = formatDashSendIntent({ amount: "1.5", to: "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5", feeDash: "0.0001" });
+    ok("dash: intent is human-readable", dashIntent.includes("Send 1.5 DASH") && dashIntent.includes("on Dash") && dashIntent.includes("Confirm?"));
+  }
+
+  // ZEC sends: the proof standard. The branch ID is pinned to
+  // ZIP 259's NU7 value AND read out of the real transaction's
+  // own header; the txid reproduces; the real signatures verify.
+  ok("zec: the consensus branch ID pin is NU7's (ZIP 259)", ZEC_CONSENSUS_BRANCH_ID === 0x77190ad9);
+  ok("zec: ZIP-317 fee — 10,000-zat floor, 5,000 per logical action",
+    zecFeeZats(1, 2) === 10000 && zecFeeZats(1, 1) === 10000 && zecFeeZats(2, 2) === 10000
+    && zecFeeZats(3, 2) === 15000 && zecFeeZats(10, 2) === 50000 && zecLogicalActions(0, 0) === 2);
+  {
+    const fx = fixture128("zec-mainnet-v5-tx.json");
+    ok("zec: the fixture header carries the NU7 branch ID (d90a1977 little-endian)",
+      fx.hex.slice(16, 24) === "d90a1977" && fx.branchId === "0x77190ad9");
+    ok("zec: TXID REPRODUCTION — a real post-NU7 mainnet v5 txid recomputes from its raw hex",
+      zecTxidFromRaw(fx.hex) === "1138a133e1d7c84ac957549b0cea56d6ab69db210eb9fb82fd939c385a7deb1b");
+    // Parse the fixture + its prevs and verify BOTH real
+    // signatures over this code's ZIP-244 sighash.
+    const parseV5 = (hexStr) => {
+      const buf = Buffer.from(hexStr, "hex");
+      let off = 0;
+      const u32 = () => { const v = buf.readUInt32LE(off); off += 4; return v; };
+      const varint = () => { const b = buf[off++]; if (b < 0xfd) return b; if (b === 0xfd) { const v = buf.readUInt16LE(off); off += 2; return v; } throw new Error("varint"); };
+      const take = (n) => { const b = buf.subarray(off, off + n); off += n; return b; };
+      const version = u32(), groupId = u32(), branchId = u32(), locktime = u32(), expiryHeight = u32();
+      const inputs = [];
+      const nIn = varint();
+      for (let i = 0; i < nIn; i++) { const prevHash = take(32); const vout = u32(); const sl = varint(); const script = take(sl); const sequence = u32(); inputs.push({ txid: Buffer.from(prevHash).reverse().toString("hex"), vout, scriptSig: script, sequence }); }
+      const outputs = [];
+      const nOut = varint();
+      for (let i = 0; i < nOut; i++) { const value = buf.readBigInt64LE(off); off += 8; const sl = varint(); const script = take(sl); outputs.push({ valueSat: Number(value), script: Uint8Array.from(script) }); }
+      return { branchId, locktime, expiryHeight, inputs, outputs };
+    };
+    const real = parseV5(fx.hex);
+    const prevs = fx.prevs.map(p => parseV5(p.hex));
+    const fields = {
+      branchId: real.branchId, locktime: real.locktime, expiryHeight: real.expiryHeight,
+      inputs: real.inputs.map((inp, i) => ({ txid: inp.txid, vout: inp.vout, sequence: inp.sequence,
+        valueSat: prevs[i].outputs[inp.vout].valueSat, scriptPubKey: prevs[i].outputs[inp.vout].script })),
+      outputs: real.outputs,
+    };
+    let allVerify = true;
+    for (let i = 0; i < real.inputs.length; i++) {
+      const ss = real.inputs[i].scriptSig;
+      const sigLen = ss[0];
+      const sigWithType = ss.subarray(1, 1 + sigLen);
+      const der = sigWithType.subarray(0, sigWithType.length - 1);
+      const pub = ss.subarray(1 + sigLen + 1, 1 + sigLen + 1 + ss[1 + sigLen]);
+      let verified = false;
+      try { verified = secp256k1.verify(secp256k1.Signature.fromBytes(der, "der").toBytes("compact"), zecSighash(fields, i), pub, { prehash: false }); } catch { verified = false; }
+      if (!verified || sigWithType[sigWithType.length - 1] !== 1) allVerify = false;
+    }
+    ok("zec: both REAL mainnet signatures verify over this code's ZIP-244 sighash (SIGHASH_ALL)", allVerify);
+    // The pure builder: deterministic bytes for a fabricated
+    // spend of the fixture's first output, and its txid
+    // round-trips through the independent parse path.
+    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(ABANDON128));
+    const child = root.derive("m/44'/133'/0'/0/0");
+    const pub = secp256k1.getPublicKey(child.privateKey, true);
+    const h160 = nobleRipemd160(nobleSha256(pub));
+    const ownScript = Uint8Array.from([0x76, 0xa9, 0x14, ...h160, 0x88, 0xac]);
+    const built = buildZecTransparentTx({
+      privateKey: child.privateKey, pubKey: pub,
+      inputs: [{ txid: fx.txid, vout: 0, valueSat: 100000000, scriptPubKey: ownScript }],
+      outputs: [{ address: "t1W9ufAf4uvpwoHxSyvGHgtfACYK4iPfMz5", valueSat: 50000000 },
+                { address: "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F", valueSat: 49990000 }],
+      expiryHeight: 3575900,
+    });
+    ok("zec: the builder's bytes are byte-pinned and its txid round-trips the parse path",
+      built.hex === "050000800a27a726d90a1977000000005c903600011beb7d5a389c93fd82fbb90e21db69abd656ea0c9b5457c94ac8d7e133a13811000000006b483045022100f03e39f8d5f0e8e8a9843061f2590a8d8a8ca2bc88f9a4ca2c9828b21a34ae0802200cfa82a7bb43509fd75cf6e72f7136022dfc12e6143e64858b976f29619f851f012103db98d8f87716269ed31879aef19bdadbc869a9ea67729e36332d023b916cbcc9ffffffff0280f0fa02000000001976a91486b6e6716683e76b369a97449dc578f6dfd584c088ac70c9fa02000000001976a9149564d9fed247986b15a2f57d0b3b032eeb28476c88ac000000"
+      && built.txid === "19cb0de5bad2e6d51e54b7d307460e91407a084d9fd9c7aa638fdb15c61ece0b"
+      && zecTxidFromRaw(built.hex) === built.txid && built.hex.endsWith("000000"));
+    const zecIntent = formatZcashSendIntent({ amount: "0.5", to: "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F", feeZec: "0.0001" });
+    ok("zec: intent is human-readable", zecIntent.includes("Send 0.5 ZEC") && zecIntent.includes("on Zcash") && zecIntent.includes("Confirm?"));
+  }
+
+  // 1Click wiring: the table against the LIVE catalogue
+  // capture, the sentinels, and the quote fixtures.
+  {
+    const catalogue = fixture128("tokens-live.json");
+    const catZec = catalogue.find(t => t.assetId === "nep141:zec.omft.near");
+    const catDash = catalogue.find(t => t.assetId === "nep141:dash.omft.near");
+    const tabZec = oneClickAssetFor("zcash", null), tabDash = oneClickAssetFor("dash", null);
+    ok("oneclick gap8: the table's ZEC/DASH rows match 1Click's live catalogue (asset id, blockchain, 8 decimals)",
+      !!catZec && !!catDash && tabZec.asset === catZec.assetId && tabDash.asset === catDash.assetId
+      && tabZec.decimals === catZec.decimals && tabDash.decimals === catDash.decimals
+      && catZec.blockchain === "zec" && catDash.blockchain === "dash" && tabZec.native === true && tabDash.native === true);
+    ok("oneclick gap8: swap sentinels registered (chain ids 18/19, native tokens zec/dash)",
+      swapChainOf("zcash")?.chainId === ZCASH_SWAP_CHAIN_ID && ZCASH_SWAP_CHAIN_ID === 20000000000018
+      && swapChainOf("dash")?.chainId === DASH_SWAP_CHAIN_ID && DASH_SWAP_CHAIN_ID === 20000000000019
+      && destNativeTokenAddress("zcash") === ZCASH_SWAP_NATIVE_TOKEN && destNativeTokenAddress("dash") === DASH_SWAP_NATIVE_TOKEN
+      && isDestNativeToken("zcash", "zec") && isDestNativeToken("dash", "dash")
+      && destChainName("zcash") === "Zcash" && destChainName("dash") === "Dash"
+      && oneClickSupportsPair({ fromChainKey: "zcash", fromTokenAddress: null, toChainKey: "base", toTokenAddress: USDC_BASE_128 }) !== null
+      && oneClickSupportsPair({ fromChainKey: "base", fromTokenAddress: USDC_BASE_128, toChainKey: "dash", toTokenAddress: null }) !== null);
+    ok("oneclick gap8: each family's destination resolves to the wallet's own address on that family",
+      swapOwnAddressFor("zcash", { zcash: zcashAddress(ABANDON128) }) === "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F"
+      && swapOwnAddressFor("dash", { dash: dashAddress(ABANDON128) }) === "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5"
+      && swapOwnAddressFor("zcash", { zcash: dashAddress(ABANDON128) }) === null
+      && swapAddressBookEntry({ dash: zcashAddress(ABANDON128) }, "dash") === null);
+    // Fee echo on the live captures: F=50 split 25/25.
+    const vZecOut = verifyOneClickFeeEcho(fixture128("quote-zec-out-fee.json").response, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_128);
+    const vZecIn = verifyOneClickFeeEcho(fixture128("quote-zec-in-fee.json").response, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_128);
+    const vDashOut = verifyOneClickFeeEcho(fixture128("quote-dash-out-fee.json").response, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT_128);
+    ok("oneclick gap8: the live fee-50 quotes verify the 25/25 echo (ZEC both directions, DASH out)",
+      vZecOut.ok === true && vZecIn.ok === true && vDashOut.ok === true);
+    ok("oneclick gap8: the live fee-free quotes carry exactly 1Click's standing 20 bps",
+      verifyOneClickFeeEcho(fixture128("quote-zec-out-feefree.json").response, { expectedTotalBps: 20, expectedFluidBps: 0 }, FEE_RECIPIENT_128).ok === true
+      && verifyOneClickFeeEcho(fixture128("quote-dash-in-tiny.json").response, { expectedTotalBps: 20, expectedFluidBps: 0 }, FEE_RECIPIENT_128).ok === true);
+    // Parse pins: deposit addresses + the API's own estimates
+    // (ZEC-out 457 s is the SLOW class — it flows through as
+    // the estimate, disclosed, never floored down or badged).
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_128);
+    const rZecOut = parseOneClickQuote(fixture128("quote-zec-out-fee.json").response,
+      { fromEntry: tabZec, toEntry: usdcBase, amountRaw: "2200000", refundTo: "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b", recipient: EVM128 }, {});
+    ok("oneclick gap8 parse: ZEC -> USDC carries the t1 deposit address and the 457 s slow-class estimate",
+      rZecOut.oneclick.depositAddress === "t1W9ufAf4uvpwoHxSyvGHgtfACYK4iPfMz5" && rZecOut.executionDuration === 457
+      && rZecOut.toAmount === "20130192" && rZecOut.oneclick.depositMemo === null);
+    const rZecIn = parseOneClickQuote(fixture128("quote-zec-in-fee.json").response,
+      { fromEntry: usdcBase, toEntry: tabZec, amountRaw: "20000000", refundTo: EVM128, recipient: "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b" }, {});
+    ok("oneclick gap8 parse: USDC -> ZEC estimates 150 s and pays the t1 recipient",
+      rZecIn.executionDuration === 150 && rZecIn.toAmount === "2129867" && rZecIn.oneclick.recipient === "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b");
+    const rDashOut = parseOneClickQuote(fixture128("quote-dash-out-fee.json").response,
+      { fromEntry: tabDash, toEntry: usdcBase, amountRaw: "50000000", refundTo: "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5", recipient: EVM128 }, {});
+    ok("oneclick gap8 parse: DASH -> USDC carries the X deposit address and the 129 s estimate",
+      rDashOut.oneclick.depositAddress === "XhiFwyzPeiJQ8yM3Wv4y4gn2XXwX9KQqWv" && rDashOut.executionDuration === 129);
+    const rDashInTiny = parseOneClickQuote(fixture128("quote-dash-in-tiny.json").response,
+      { fromEntry: usdcBase, toEntry: tabDash, amountRaw: "1000000", refundTo: EVM128, recipient: "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5" }, {});
+    ok("oneclick gap8 parse: the $1 DASH-in quote that cleared carries 0.02503729 DASH out at 177 s",
+      rDashInTiny.toAmount === "2503729" && rDashInTiny.executionDuration === 177);
+    ok("oneclick gap8: tokenSymbolOn names the new families' natives",
+      tokenSymbolOn("zcash", "zec") === "ZEC" && tokenSymbolOn("dash", "dash") === "DASH");
+  }
+
+  // Route search over the probe's captures: the two-pass
+  // capture for ZEC-out, the FIX-B floor for the tiny quotes,
+  // and the DASH-in liquidity state as honest no-route.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_128);
+    const zecArgs = { fromChainKey: "zcash", toChainKey: "base", fromTokenAddress: "zec", toTokenAddress: USDC_BASE_128, fromAmount: "2200000", fromAddress: "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b", toAddress: EVM128 };
+    const nofee = fixture128("quote-zec-out-feefree.json").response, fee = fixture128("quote-zec-out-fee.json").response;
+    const bodies = [];
+    const twoPass = async (url, opts) => { const b = JSON.parse(opts.body); bodies.push(b); return jsonRes128(Array.isArray(b.appFees) && b.appFees.length ? fee : nofee); };
+    const route = await getOneClickSwapRoute(zecArgs, { feeRecipient: FEE_RECIPIENT_128, fetchImpl: twoPass });
+    ok("oneclick gap8 capture: ZEC-out two-pass verifies and collects 25 bps at the 457 s estimate",
+      bodies.length === 2 && route.platformFeeCollecting === true && route.platformFeeBps === 25
+      && route.oneclick.feeVerified === true && route.executionDuration === 457);
+    const free = await getOneClickSwapRoute(zecArgs, { fetchImpl: async () => jsonRes128(nofee) });
+    ok("oneclick gap8 capture: with no recipient configured (the shipped state) the ZEC route ships fee-free",
+      free.platformFeeCollecting === false && free.provider === "oneclick");
+    // Floors: the tiny-quote bodies are 1Click's own minimums.
+    const floorFetch = (msg) => async () => jsonRes128({ message: msg }, false, 400);
+    let floorErr = null;
+    try { await getOneClickSwapRoute({ ...zecArgs, fromAmount: "100000" }, { fetchImpl: floorFetch(fixture128("quote-zec-out-tiny.json").response.message) }); } catch (e) { floorErr = e; }
+    ok("oneclick gap8 floor: ZEC-out below 0.00132 ZEC surfaces 1Click's own floor (FIX-B), not a search error",
+      !!floorErr && floorErr.oneclickTerminal === true && floorErr.oneclickBelowFloor?.minRaw === "132000");
+    let dashFloorErr = null;
+    const dashArgs = { fromChainKey: "dash", toChainKey: "base", fromTokenAddress: "dash", toTokenAddress: USDC_BASE_128, fromAmount: "1000000", fromAddress: "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5", toAddress: EVM128 };
+    try { await getOneClickSwapRoute(dashArgs, { fetchImpl: floorFetch(fixture128("quote-dash-out-tiny.json").response.message) }); } catch (e) { dashFloorErr = e; }
+    ok("oneclick gap8 floor: DASH-out below 0.011 DASH surfaces 1Click's own floor",
+      !!dashFloorErr && dashFloorErr.oneclickBelowFloor?.minRaw === "1100000");
+    // THE INTEGRATION FIX: "No liquidity available" (the live
+    // DASH-in $20 answer, fee and fee-free alike) is no-route.
+    const noLiq = async () => jsonRes128(fixture128("quote-dash-in-fee.json").response, false, 400);
+    const dashInArgs = { fromChainKey: "base", toChainKey: "dash", fromTokenAddress: USDC_BASE_128, toTokenAddress: "dash", fromAmount: "20000000", fromAddress: EVM128, toAddress: "XoJA8qE3N2Y3jMLEtZ3vcN42qseZ8LvFf5" };
+    const noRoute = await getOneClickSwapRoute(dashInArgs, { fetchImpl: noLiq });
+    ok("oneclick gap8: 'No liquidity available' reads as NO-ROUTE (null), never a thrown route-search error",
+      noRoute === null);
+    ok("oneclick gap8: core carries the no-liquidity pattern in the quote fetch",
+      coreSrc128.includes("no liquidity available"));
+  }
+
+  // The executor seam for a Zcash-origin swap: the record is
+  // saved BEFORE the send, the deposit is a plain transfer of
+  // exactly the quoted amount to the quote's t1 address, and a
+  // deposit address that fails the family's own validation
+  // refuses pre-broadcast.
+  {
+    const usdcBase = oneClickAssetFor("base", USDC_BASE_128);
+    const route = parseOneClickQuote(fixture128("quote-zec-out-fee.json").response,
+      { fromEntry: oneClickAssetFor("zcash", "zec"), toEntry: usdcBase, amountRaw: "2200000", refundTo: "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b", recipient: EVM128 }, {});
+    const storage = memStorage128();
+    const seen = [];
+    let atSend = null;
+    const out = await executeOneClickSwapRoute({}, route, () => {}, {
+      storage,
+      sendImpl: async (w, p) => { seen.push(p); atSend = loadOneClickSwapRecords(storage)[0] || null; return { hash: "ef".repeat(32) }; },
+      submitImpl: async () => true,
+    });
+    ok("oneclick gap8 exec: the ZEC deposit is a plain transfer of exactly 0.022 ZEC to the quote's t1 address, record saved first",
+      seen[0].to === "t1W9ufAf4uvpwoHxSyvGHgtfACYK4iPfMz5" && seen[0].amountRaw === "2200000" && seen[0].token == null
+      && !!atSend && atSend.depositTxHash == null && out.record.depositTxHash === out.hashes[0]);
+    let sent = 0;
+    const countingSend = async () => { sent++; return { hash: "ef".repeat(32) }; };
+    const shielded = clone128(route); shielded.oneclick.depositAddress = "zs1z7rejlpsa98s2rrrfkwmaxu53e4ue0ulcrw0h4x5g8jl04tak0d3mm47vdtahatqrlkngh9sly";
+    let threwShielded = null;
+    try { await executeOneClickSwapRoute({}, shielded, () => {}, { storage: memStorage128(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwShielded = e; }
+    const wrongFam = clone128(route); wrongFam.oneclick.depositAddress = "XhiFwyzPeiJQ8yM3Wv4y4gn2XXwX9KQqWv";
+    let threwWrongFam = null;
+    try { await executeOneClickSwapRoute({}, wrongFam, () => {}, { storage: memStorage128(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwWrongFam = e; }
+    ok("oneclick gap8 exec: a shielded or wrong-family deposit address refuses pre-broadcast — nothing is sent",
+      !!threwShielded && /failed Fluid's own address check/.test(threwShielded.message)
+      && !!threwWrongFam && /failed Fluid's own address check/.test(threwWrongFam.message) && sent === 0);
+    ok("oneclick gap8 exec: core's deposit send dispatches ZEC/DASH to the family builders",
+      coreSrc128.includes('case "zcash": return hashOf(await sendZcash(phrase, { to, amountZec: Number(human) }));')
+      && coreSrc128.includes('case "dash": return hashOf(await sendDash(phrase, { to, amountDash: Number(human) }));'));
+  }
+
+  // App wiring pins (house style).
+  ok("gap8 app: home list, state, cache, totals and alerts carry both families",
+    appSrc128.includes('"bitcoincash", "cardano", "zcash", "dash"]') && appSrc128.includes("let zecAddr = null, zecBal = 0, zecLoadFailed = false")
+    && appSrc128.includes("let dashAddr = null, dashBal = 0, dashLoadFailed = false")
+    && appSrc128.includes("if (isNum(sc.zecBal))") && appSrc128.includes('if (liveOkFams.has("dash")) scalars.dashBal = dashBal')
+    && appSrc128.includes("m.zcash = (zecLoadFailed") && appSrc128.includes("m.dash = (dashLoadFailed")
+    && appSrc128.includes('"Zcash balances couldn\'t be loaded right now."') && appSrc128.includes('"Dash balances couldn\'t be loaded right now."'));
+  ok("gap8 app: home rows, sheets, receive panels and send dispatch open both families",
+    appSrc128.includes('data-zec="1"') && appSrc128.includes('data-dash="1"')
+    && appSrc128.includes("function openZecSheet()") && appSrc128.includes("function openDashSheet()")
+    && appSrc128.includes('id="qrZec"') && appSrc128.includes('id="qrDash"')
+    && appSrc128.includes('if (viewKey === "zcash") return openZecSheet();') && appSrc128.includes('if (viewKey === "dash") return openDashSheet();'));
+  ok("gap8 app: the swap sheet lists, prices, and threads both families (addrOf, book, explorers)",
+    appSrc128.includes('if (netKey === "zcash")') && appSrc128.includes('if (netKey === "dash")')
+    && appSrc128.includes('if (chainKey === "zcash") return await getZcashBalance(zecAddr);')
+    && appSrc128.includes('if (chainKey === "dash") return await getDashBalance(dashAddr);')
+    && appSrc128.includes("zcash: zecAddr, dash: dashAddr")
+    && appSrc128.includes('k === "zcash" ? "https://blockchair.com/zcash"') && appSrc128.includes('k === "dash" ? "https://blockchair.com/dash"'));
+  ok("gap8 core: the branch-ID maintenance pin is named and commented as recurring",
+    coreSrc128.includes("ZEC_CONSENSUS_BRANCH_ID = 0x77190ad9") && coreSrc128.includes("RECURRING MAINTENANCE PIN"));
 }
 
 console.log(`\n${passed} checks passed`);

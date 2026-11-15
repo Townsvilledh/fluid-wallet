@@ -30,6 +30,18 @@ same seed. Everything listed here **ships**: balance, receive and send.
   See `docs/LIGHTNING.md`.
 - **Solana, Tron, Sui** — full send/receive plus swap routing.
 - **Litecoin, Dogecoin, Bitcoin Cash** — UTXO family, full function.
+- **Zcash** — transparent only (t1/t3): derive, hold, receive and
+  send from the same phrase (BIP44 coin 133). Sends are v5
+  transactions (ZIP 225/244/317) built and signed on-device;
+  shielded and unified addresses are not supported yet and are
+  refused honestly. Reads ride Blockchair's dashboard (a failed
+  read is "couldn't load", never a fake zero). ZEC is a 1Click
+  swap family both directions — see `docs/SWAPS.md` (gap #8).
+- **Dash** — UTXO family, full function (BIP44 coin 5, legacy
+  P2PKH on the Dogecoin builder machinery; BlockCypher reads
+  with a Blockchair fallback). DASH is a 1Click swap family;
+  swaps INTO Dash currently have no liquidity above ~$1 and
+  present as no-route — see `docs/SWAPS.md` (gap #8).
 - **Cosmos** — seven networks. Sei's entry is the retired Cosmos
   form, labelled **legacy** everywhere it renders (home row, chain
   sheet, receive): SIP-3 shut its Cosmos side down (IBC closed in

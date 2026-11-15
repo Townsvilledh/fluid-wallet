@@ -1,0 +1,75 @@
+{
+ "status": 201,
+ "request": {
+  "dry": false,
+  "depositMode": "SIMPLE",
+  "swapType": "EXACT_INPUT",
+  "slippageTolerance": 100,
+  "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "depositType": "ORIGIN_CHAIN",
+  "destinationAsset": "nep141:zec.omft.near",
+  "amount": "20000000",
+  "refundTo": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+  "refundType": "ORIGIN_CHAIN",
+  "recipient": "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b",
+  "recipientType": "DESTINATION_CHAIN",
+  "deadline": "2026-11-15T14:35:48.000Z",
+  "appFees": [
+   {
+    "recipient": "abababababababababababababababababababababababababababababababab",
+    "fee": 50
+   }
+  ]
+ },
+ "response": {
+  "quote": {
+   "amountIn": "20000000",
+   "amountInFormatted": "20.0",
+   "amountInUsd": "19.994640000000",
+   "minAmountIn": "20000000",
+   "amountOut": "2129867",
+   "amountOutFormatted": "0.02129867",
+   "amountOutUsd": "19.627150378400",
+   "minAmountOut": "2108568",
+   "timeEstimate": 150,
+   "refundFee": "2400",
+   "withdrawFee": "32000",
+   "deadline": "2026-11-18T14:35:48.000Z",
+   "timeWhenInactive": "2026-11-18T14:35:48.000Z",
+   "depositAddress": "0x3e40D1E535Db630EFC82a88F45F5909596Eb0611"
+  },
+  "quoteRequest": {
+   "dry": false,
+   "depositMode": "SIMPLE",
+   "swapType": "EXACT_INPUT",
+   "slippageTolerance": 100,
+   "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+   "depositType": "ORIGIN_CHAIN",
+   "destinationAsset": "nep141:zec.omft.near",
+   "amount": "20000000",
+   "refundTo": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+   "refundType": "ORIGIN_CHAIN",
+   "recipient": "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b",
+   "recipientType": "DESTINATION_CHAIN",
+   "deadline": "2026-11-15T14:35:48.000Z",
+   "confidentiality": "public",
+   "quoteWaitingTimeMs": 0,
+   "appFees": [
+    {
+     "recipient": "abababababababababababababababababababababababababababababababab",
+     "fee": 25,
+     "limitOrderId": null
+    },
+    {
+     "recipient": "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd",
+     "fee": 25,
+     "limitOrderId": null
+    }
+   ],
+   "insured": false
+  },
+  "signature": "ed25519:39Fk39hnrW4T8c1iwdJNaP4taB2qrgGXSHrYsWFjGiy9a7QEWPDS45cLCDzwKoHYiFupQiNRes893LVNzHu9V4tu",
+  "timestamp": "2026-11-15T12:36:03.382Z",
+  "correlationId": "e9611c20-333d-4047-aab3-520a54cdc191"
+ }
+}

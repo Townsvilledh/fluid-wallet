@@ -15,6 +15,8 @@ import {
   planDogecoinSend, broadcastDogeTx, formatDogeSendIntent,
   bitcoinCashAddress, getBitcoinCashBalance, planBitcoinCashSend, broadcastBitcoinCashTx, isValidBchAddress, formatBitcoinCashSendIntent,
   cardanoAddress, cardanoStakeAddress, getCardanoBalance, getCardanoAccount, planCardanoSend, submitCardanoTx, isValidCardanoAddress, formatCardanoSendIntent, CARDANO_EXPLORER, CARDANO_SWAP_NATIVE_TOKEN,
+  zcashAddress, getZcashBalance, planZcashSend, broadcastZcashTx, isValidZcashAddress, formatZcashSendIntent, ZCASH_EXPLORER, ZCASH_SWAP_NATIVE_TOKEN,
+  dashAddress, getDashBalance, planDashSend, broadcastDashTx, isValidDashAddress, formatDashSendIntent, DASH_EXPLORER, DASH_SWAP_NATIVE_TOKEN, DASH_MIN_OUTPUT,
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
@@ -134,7 +136,7 @@ const liveOkFams = new Set();
 let cacheWriteNeeded = false;
 const markLiveOk = (k) => { if (!liveOkFams.has(k)) { liveOkFams.add(k); cacheWriteNeeded = true; } };
 const HOME_FAMILIES = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
-  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano"];
+  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
 function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
 const viewMeta = () => RECEIVE_NETWORKS.find(m => m.id === viewKey) || null;
 const isCosmosView = () => COSMOS_CHAINS.some(c => c.key === viewKey);
@@ -144,7 +146,7 @@ const BUILTIN_NETWORK_KEYS = Object.keys(NETWORKS);
 const BUILTIN_CHAIN_IDS = new Set(Object.values(NETWORKS).map(n => n.chainId));
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#2775ca", USDT: "#26a17b",
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
-  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", ADA: "#0033ad", XLM: "#3b5bdb",
+  LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", ADA: "#0033ad", ZEC: "#f4b728", DASH: "#008de4", XLM: "#3b5bdb",
   TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
   ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a" };
 // P2-1: the display formatters live in wallet-core (dustDisplayFloor &
@@ -170,6 +172,8 @@ let ltcAddr = null, ltcBal = 0, ltcLoadFailed = false;
 let dogeAddr = null, dogeBal = 0, dogeLoadFailed = false;
 let bchAddr = null, bchBal = 0, bchLoadFailed = false;
 let adaAddr = null, adaBal = 0, adaLoadFailed = false;
+let zecAddr = null, zecBal = 0, zecLoadFailed = false;
+let dashAddr = null, dashBal = 0, dashLoadFailed = false;
 let cosmosAddrs = {}, cosmosRows = [];
 
 // ---------- universal tokens: shared presentation state ----------
@@ -561,7 +565,7 @@ document.addEventListener("error", (e) => {
 // Chain badges (§4.5): a symbol living on more than one network gets
 // the network's own icon at its logo's corner in the All view.
 let dupSymbols = new Set();
-const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH", cardano: "ADA",
+const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH", cardano: "ADA", zcash: "ZEC", dash: "DASH",
   tron: "TRX", solana: "SOL", sui: "SUI", stellar: "XLM", ton: "TON", near: "NEAR",
   algorand: "ALGO", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
 function badgeHtml(b, famKey) {
@@ -736,6 +740,8 @@ function hydrateBalanceCache(w) {
   if (isNum(sc.dogeBal)) { dogeBal = sc.dogeBal; famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
   if (isNum(sc.bchBal)) { bchBal = sc.bchBal; famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
   if (isNum(sc.adaBal)) { adaBal = sc.adaBal; famLoaded.add("cardano"); hydratedFams.add("cardano"); }
+  if (isNum(sc.zecBal)) { zecBal = sc.zecBal; famLoaded.add("zcash"); hydratedFams.add("zcash"); }
+  if (isNum(sc.dashBal)) { dashBal = sc.dashBal; famLoaded.add("dash"); hydratedFams.add("dash"); }
   cachePaint = hydratedFams.size > 0;
   if (cachePaint) paintAssets();
 }
@@ -780,6 +786,8 @@ function persistBalanceCache() {
     if (liveOkFams.has("dogecoin")) scalars.dogeBal = dogeBal;
     if (liveOkFams.has("bitcoincash")) scalars.bchBal = bchBal;
     if (liveOkFams.has("cardano")) scalars.adaBal = adaBal;
+    if (liveOkFams.has("zcash")) scalars.zecBal = zecBal;
+    if (liveOkFams.has("dash")) scalars.dashBal = dashBal;
     // Phantom-balance fix (2026-11-12): only CURATED rows are
     // persisted. Scanned/custom rows are session reads — persisting
     // them let a stale scan result (a token the wallet no longer
@@ -1112,6 +1120,13 @@ async function renderMain() {
   // hand-rolled in core; the balance is the Koios UTxO sum.
   adaAddr = cardanoAddress(w.mnemonic.phrase);
   getCardanoBalance(adaAddr).then(b => { adaBal = b; adaLoadFailed = false; markLiveOk("cardano"); markLoaded("cardano"); paintAssets(); }).catch(() => { adaLoadFailed = true; markLoaded("cardano"); paintAssets(); });
+  // Zcash + Dash (audit gap #8): BIP44 coins 133 / 5 from the
+  // same phrase; Zcash reads ride Blockchair's dashboard, Dash
+  // reads BlockCypher with a Blockchair fallback (wallet-core).
+  zecAddr = zcashAddress(w.mnemonic.phrase);
+  getZcashBalance(zecAddr).then(b => { zecBal = b; zecLoadFailed = false; markLiveOk("zcash"); markLoaded("zcash"); paintAssets(); }).catch(() => { zecLoadFailed = true; markLoaded("zcash"); paintAssets(); });
+  dashAddr = dashAddress(w.mnemonic.phrase);
+  getDashBalance(dashAddr).then(b => { dashBal = b; dashLoadFailed = false; markLiveOk("dash"); markLoaded("dash"); paintAssets(); }).catch(() => { dashLoadFailed = true; markLoaded("dash"); paintAssets(); });
   // Cosmos (Phase 3a): seven chains — six share one account's bytes
   // under their bech32 prefixes; Injective derives at coin type 60
   // (the Keplr path). Rows start as "unavailable"
@@ -1210,7 +1225,8 @@ function heroTotal() {
   // "couldn't load".
   let t = (btcLoadFailed ? 0 : btcBal + btcTrBal) * (prices.BTC || 0)
     + (ltcLoadFailed ? 0 : ltcBal) * (prices.LTC || 0) + (dogeLoadFailed ? 0 : dogeBal) * (prices.DOGE || 0) + (bchLoadFailed ? 0 : bchBal) * (prices.BCH || 0)
-    + (adaLoadFailed ? 0 : adaBal) * (prices.ADA || 0);
+    + (adaLoadFailed ? 0 : adaBal) * (prices.ADA || 0)
+    + (zecLoadFailed ? 0 : zecBal) * (prices.ZEC || 0) + (dashLoadFailed ? 0 : dashBal) * (prices.DASH || 0);
   for (const b of balances) {
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
     if (p != null) t += Number(b.amount) * p;
@@ -1311,6 +1327,8 @@ function familyUsdTotals() {
   m.dogecoin = (dogeLoadFailed || !famLoaded.has("dogecoin")) ? null : dogeBal * (prices.DOGE || 0);
   m.bitcoincash = (bchLoadFailed || !famLoaded.has("bitcoincash")) ? null : bchBal * (prices.BCH || 0);
   m.cardano = (adaLoadFailed || !famLoaded.has("cardano")) ? null : adaBal * (prices.ADA || 0);
+  m.zcash = (zecLoadFailed || !famLoaded.has("zcash")) ? null : zecBal * (prices.ZEC || 0);
+  m.dash = (dashLoadFailed || !famLoaded.has("dash")) ? null : dashBal * (prices.DASH || 0);
   const net = NETWORKS[networkKey];
   m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
   m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
@@ -1372,7 +1390,7 @@ function countUnpricedInView() {
   let n = 0;
   const btcTotal = Number(btcBal) + Number(btcTrBal);
   if (!btcLoadFailed && btcTotal > 0 && prices.BTC == null) n++;
-  for (const [bal, sym] of [[ltcBal, "LTC"], [dogeBal, "DOGE"], [bchBal, "BCH"], [adaBal, "ADA"]]) {
+  for (const [bal, sym] of [[ltcBal, "LTC"], [dogeBal, "DOGE"], [bchBal, "BCH"], [adaBal, "ADA"], [zecBal, "ZEC"], [dashBal, "DASH"]]) {
     if (Number(bal) > 0 && prices[sym] == null) n++;
   }
   n += countUnpricedHoldings(unpricedHoldingGroups());
@@ -1394,7 +1412,7 @@ function viewAddress() {
   const byKey = {
     bitcoin: btcAddr, tron: tronAddr, solana: solAddr, sui: suiAddr, stellar: stellarAddr,
     ton: tonAddr, near: nearAddr, algorand: algoAddr, xrpl: xrpAddr, polkadot: dotAddr,
-    aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr,
+    aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr,
   };
   if (viewKey === "lightning") return { text: "Your own Lightning node", copy: null };
   const a = isCosmosView() ? cosmosAddrs[viewKey] : byKey[viewKey];
@@ -1421,7 +1439,7 @@ function balancesUnloadedInView() {
   const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
   if (viewKey === "all") {
     return evmLoadFailed || rowNull(balances)
-      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed || adaLoadFailed
+      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed || adaLoadFailed || zecLoadFailed || dashLoadFailed
       || tronLoadFailed || rowNull(tronBalances)
       || stellarLoadFailed || rowNull(stellarBalances)
       || tonLoadFailed || tonScanFailed || rowNull(tonBalances)
@@ -1441,6 +1459,8 @@ function balancesUnloadedInView() {
     case "dogecoin": return dogeLoadFailed;
     case "bitcoincash": return bchLoadFailed;
     case "cardano": return adaLoadFailed;
+    case "zcash": return zecLoadFailed;
+    case "dash": return dashLoadFailed;
     case "tron": return tronLoadFailed || rowNull(tronBalances);
     case "stellar": return stellarLoadFailed || rowNull(stellarBalances);
     case "ton": return tonLoadFailed || tonScanFailed || rowNull(tonBalances);
@@ -1585,6 +1605,8 @@ function familyAlertMap() {
   if (dogeLoadFailed) m.dogecoin = "Dogecoin balances couldn't be loaded right now.";
   if (bchLoadFailed) m.bitcoincash = "Bitcoin Cash balances couldn't be loaded right now.";
   if (adaLoadFailed) m.cardano = "Cardano balances couldn't be loaded right now.";
+  if (zecLoadFailed) m.zcash = "Zcash balances couldn't be loaded right now.";
+  if (dashLoadFailed) m.dash = "Dash balances couldn't be loaded right now.";
   if (btcLoadFailed) m.bitcoin = "Bitcoin balances couldn't be loaded right now.";
   if (familyScanFailed.solana) m.solana = "Full token scan isn't available from the free public Solana endpoints right now — showing main Solana tokens only. Your main tokens above are up to date; the full scan needs an endpoint that serves indexed token lookups, which the free ones currently refuse.";
   if (familyScanFailed.sui) m.sui = "Full token scan unavailable — showing main Sui tokens only.";
@@ -1862,6 +1884,14 @@ function paintAssets() {
       <span class="logowrap">${tokenLogoHtml({ symbol: "ADA" }, "cardano")}${badgeHtml({ symbol: "ADA" }, "cardano")}</span>
       <span class="grow"><b class="rname">Cardano</b><small>ADA · Shelley</small></span>
       <span class="amt">${scalarAmtHtml(adaLoadFailed, adaBal, prices.ADA)}</span></div>` : skeletonRowsHtml(1)]);
+  grp("zcash", "", [famLoaded.has("zcash") ? `<div class="row" data-zec="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "ZEC" }, "zcash")}${badgeHtml({ symbol: "ZEC" }, "zcash")}</span>
+      <span class="grow"><b class="rname">Zcash</b><small>ZEC · Transparent</small></span>
+      <span class="amt">${scalarAmtHtml(zecLoadFailed, zecBal, prices.ZEC)}</span></div>` : skeletonRowsHtml(1)]);
+  grp("dash", "", [famLoaded.has("dash") ? `<div class="row" data-dash="1">
+      <span class="logowrap">${tokenLogoHtml({ symbol: "DASH" }, "dash")}${badgeHtml({ symbol: "DASH" }, "dash")}</span>
+      <span class="grow"><b class="rname">Dash</b><small>DASH · Legacy</small></span>
+      <span class="amt">${scalarAmtHtml(dashLoadFailed, dashBal, prices.DASH)}</span></div>` : skeletonRowsHtml(1)]);
   // Render per viewKey (§4.5): each family is its OWN card with a
   // header (name + subtotal + alert) in the All view; a scoped view
   // renders its single group without the header. The seven Cosmos
@@ -1885,7 +1915,7 @@ function paintAssets() {
     const btcT = Number(btcBal) + Number(btcTrBal);
     if (!btcLoadFailed && btcT > 0 && prices.BTC == null)
       unpricedNativeByKey.bitcoin = { amount: fmt(btcT), sym: "BTC" };
-    for (const [bal, sym, key] of [[ltcBal, "LTC", "litecoin"], [dogeBal, "DOGE", "dogecoin"], [bchBal, "BCH", "bitcoincash"], [adaBal, "ADA", "cardano"]])
+    for (const [bal, sym, key] of [[ltcBal, "LTC", "litecoin"], [dogeBal, "DOGE", "dogecoin"], [bchBal, "BCH", "bitcoincash"], [adaBal, "ADA", "cardano"], [zecBal, "ZEC", "zcash"], [dashBal, "DASH", "dash"]])
       if (Number(bal) > 0 && prices[sym] == null) unpricedNativeByKey[key] = { amount: fmt(bal, 8), sym };
     for (const [key, rows, sym0, flag] of [
       ["tron", tronBalances, "TRX", tronLoadFailed], ["solana", solBalances, "SOL", false],
@@ -1920,7 +1950,7 @@ function paintAssets() {
     near: anyHeld(nearBalances), algorand: anyHeld(algoBalances), xrpl: anyHeld(xrpBalances),
     polkadot: anyHeld(dotBalances), aptos: anyHeld(aptosBalances), stacks: anyHeld(stacksBalances),
     litecoin: Number(ltcBal) > 0, dogecoin: Number(dogeBal) > 0, bitcoincash: Number(bchBal) > 0,
-    cardano: Number(adaBal) > 0,
+    cardano: Number(adaBal) > 0, zcash: Number(zecBal) > 0, dash: Number(dashBal) > 0,
     cosmos: cosmosRows.some(r => Number(r.amount) > 0),
   };
   // Home ordering (owner request, 2026-11-08): what you hold comes
@@ -1934,7 +1964,7 @@ function paintAssets() {
   // holds anything and at least one read came back unavailable.
   const famFailed = {
     bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,
-    dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, cardano: adaLoadFailed, tron: tronLoadFailed,
+    dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, cardano: adaLoadFailed, zcash: zecLoadFailed, dash: dashLoadFailed, tron: tronLoadFailed,
     stellar: stellarLoadFailed, ton: tonLoadFailed, near: nearLoadFailed,
     algorand: algoLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
     aptos: aptosLoadFailed, stacks: stacksLoadFailed || stacksScanFailed,
@@ -2006,11 +2036,11 @@ function paintAssets() {
   // once balances have actually loaded with nothing anywhere.
   const hz = $("homeZero");
   if (hz) {
-    const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal) > 0
+    const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal + zecBal + dashBal) > 0
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !anyBal && scopedTotal() === 0));
+    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal && scopedTotal() === 0));
   }
   // Address chips copy WITHOUT opening the row's destination —
   // the two taps are unambiguous (chip = copy, row = detail).
@@ -2028,6 +2058,8 @@ function paintAssets() {
   const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
   const bchEl = document.querySelector("[data-bch]"); if (bchEl) bchEl.onclick = openBchSheet;
   const adaEl = document.querySelector("[data-ada]"); if (adaEl) adaEl.onclick = openCardanoSheet;
+  const zecEl = document.querySelector("[data-zec]"); if (zecEl) zecEl.onclick = openZecSheet;
+  const dashEl = document.querySelector("[data-dash]"); if (dashEl) dashEl.onclick = openDashSheet;
   const lnEl = document.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
@@ -2939,6 +2971,13 @@ $("actReceive").onclick = () => {
     cardano: `<p class="tag">Cardano address (ADA and Cardano native tokens):</p>
       <img class="qr" id="qrAda"><p class="mono">${adaAddr}</p>
       <button class="btn ghost" id="cpAda">Copy Cardano address</button>`,
+    zcash: `<p class="tag">Zcash address (transparent — t1):</p>
+      <img class="qr" id="qrZec"><p class="mono">${zecAddr}</p>
+      <button class="btn ghost" id="cpZec">Copy Zcash address</button>
+      <p class="tag">Transparent addresses only — this wallet cannot receive shielded (zs…) or unified (ua…) payments.</p>`,
+    dash: `<p class="tag">Dash address:</p>
+      <img class="qr" id="qrDash"><p class="mono">${dashAddr}</p>
+      <button class="btn ghost" id="cpDash">Copy Dash address</button>`,
   };
   // Cosmos: seven prefixes (six over one shared account, Injective on the
   // Keplr path) — one panel per chain, as the family's own sheets show.
@@ -3026,6 +3065,8 @@ $("actReceive").onclick = () => {
     dogecoin: () => { qr("qrDoge", dogeAddr); $("cpDoge").onclick = () => copyText(dogeAddr, $("cpDoge")); },
     bitcoincash: () => { qr("qrBch", bchAddr); $("cpBch").onclick = () => copyText(bchAddr, $("cpBch")); },
     cardano: () => { qr("qrAda", adaAddr); $("cpAda").onclick = () => copyText(adaAddr, $("cpAda")); },
+    zcash: () => { qr("qrZec", zecAddr); $("cpZec").onclick = () => copyText(zecAddr, $("cpZec")); },
+    dash: () => { qr("qrDash", dashAddr); $("cpDash").onclick = () => copyText(dashAddr, $("cpDash")); },
   };
   for (const c of COSMOS_CHAINS) {
     binds[c.key] = () => {
@@ -3096,6 +3137,8 @@ $("actSend").onclick = () => {
   if (viewKey === "dogecoin") return openDogeSheet();
   if (viewKey === "bitcoincash") return openBchSheet();
   if (viewKey === "cardano") return openCardanoSheet();
+  if (viewKey === "zcash") return openZecSheet();
+  if (viewKey === "dash") return openDashSheet();
   if (isCosmosView()) { const row = cosmosRows.find(r => r.key === viewKey); if (row) return openCosmosSheet(row); return openEvmSendSheet(); }
   const nativeOf = (rows) => rows.find(b => !b.address && !b.contract) || rows[0];
   if (viewKey === "tron") return openTronSheet(nativeOf(tronBalances));
@@ -4875,6 +4918,143 @@ function openDogeSheet() {
         feeText: `${done.plan.feeDoge.toFixed(8)} DOGE`,
         explorerUrl: historyTxUrl({ link: `https://blockchair.com/dogecoin/transaction/${txid}` }), txid, pending: true });
     } catch (e) { sendFailed(btn, "gMsg", e); }
+  };
+}
+
+// ---------- Zcash sheet ----------
+// Receive (QR + copy) and send in the established review →
+// intent sentence → confirm pattern. The transaction is built
+// and signed on this device by core's ZIP-225/ZIP-244 builder
+// (v5 transparent-only; NU7 retired v4) and relayed through
+// Blockchair's push endpoint — a path whose preflight passed
+// in research but whose broadcast is unverified until a first
+// funded send, which the sheet copy states plainly.
+function openZecSheet() {
+  let pendingZec = null;
+  openSheet(`<h3>Zcash</h3>
+    <p><b>${zecLoadFailed ? "Balance couldn't load" : fmt(zecBal, 8) + " ZEC"}</b>${zecLoadFailed ? "" : ` · ${usd(zecBal * (prices.ZEC || 0))}`}</p>
+    <img class="qr" id="qrZec2"><p class="mono">${zecAddr}</p>
+    <button class="btn ghost" id="cpZec2">Copy address</button>
+    <hr style="border-color:var(--line)">
+    <h3>Send ZEC</h3>
+    <input id="zTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient t1… address" autocapitalize="none">
+    <input id="zAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="zReview">Review send</button>
+    <div id="zIntent" class="hidden">
+      <p class="seed" id="zIntentText"></p>
+      <button class="btn" id="zConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="zMsg"></p>
+    <p class="tag">Transparent (t1) addresses only — shielded and unified addresses aren't supported yet. Built and signed on this device as a Zcash v5 transaction; the network fee is Zcash's flat ZIP-317 fee (0.0001 ZEC for a typical send), shown exactly before you confirm. Relayed through Blockchair — a new relay path, so check the explorer link after your first send. Sends are final.</p>`);
+  qr("qrZec2", zecAddr);
+  $("cpZec2").onclick = () => copyText(zecAddr, $("cpZec2"));
+  $("zReview").onclick = async () => {
+    const to = $("zTo").value.trim(), amount = $("zAmt").value.trim();
+    if (!isValidZcashAddress(to)) return msg("zMsg", "That is not a valid Zcash transparent address.");
+    if (!amount || Number(amount) <= 0) return msg("zMsg", "Enter an amount.");
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (zecLoadFailed) return msg("zMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
+    if (Number(amount) > zecBal) return msg("zMsg", "Amount is more than your balance.");
+    try {
+      // Build now, show the EXACT fee, relay the same bytes on
+      // confirm (audit H1).
+      msg("zMsg", "Checking the network fee…", true);
+      const plan = await planZcashSend(wallet.mnemonic.phrase, { to, amountZec: Number(amount) });
+      pendingZec = { to, amount, plan };
+      $("zIntentText").textContent = formatZcashSendIntent({
+        amount, to, feeZec: plan.feeZec.toFixed(8), feeUsd: usd(plan.feeZec * (prices.ZEC || 0)),
+      });
+      setBalanceAfter($("zIntentText"), { balance: zecBal, amount, fee: plan.feeZec, symbol: "ZEC", decimals: 8 });
+      show("zIntent"); msg("zMsg", "");
+    } catch (e) { msg("zMsg", "Could not check the fee: " + e.message); }
+  };
+  $("zConfirm").onclick = async () => {
+    if (!pendingZec) return;
+    const btn = $("zConfirm");
+    try {
+      setSendBusy(btn, true);
+      msg("zMsg", "Broadcasting the transaction you reviewed…", true);
+      const txid = await broadcastZcashTx(pendingZec.plan.hex);
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingZec.amount, symbol: "ZEC", to: pendingZec.to,
+        link: `${ZCASH_EXPLORER}/transaction/${txid}`, explorer: ZCASH_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingZec; pendingZec = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "ZEC",
+        logoHtml: tokenLogoHtml({ symbol: "ZEC" }, "zcash"), to: done.to, familyName: "Zcash",
+        feeText: `${done.plan.feeZec.toFixed(8)} ZEC`,
+        explorerUrl: historyTxUrl({ link: `${ZCASH_EXPLORER}/transaction/${txid}` }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "zMsg", e); }
+  };
+}
+
+// ---------- Dash sheet ----------
+// Receive (QR + copy) and send in the established review →
+// intent sentence → confirm pattern. The transaction is built
+// and signed locally by core's legacy builder (the Dogecoin
+// machinery with Dash parameters) and relayed RAW through
+// BlockCypher's push (Blockchair fallback).
+function openDashSheet() {
+  let pendingDash = null;
+  openSheet(`<h3>Dash</h3>
+    <p><b>${dashLoadFailed ? "Balance couldn't load" : fmt(dashBal, 8) + " DASH"}</b>${dashLoadFailed ? "" : ` · ${usd(dashBal * (prices.DASH || 0))}`}</p>
+    <img class="qr" id="qrDash2"><p class="mono">${dashAddr}</p>
+    <button class="btn ghost" id="cpDash2">Copy address</button>
+    <hr style="border-color:var(--line)">
+    <h3>Send DASH</h3>
+    <input id="dTo" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Recipient X… address" autocapitalize="none">
+    <input id="dAmt" inputmode="decimal" placeholder="Amount">
+    <button class="btn" id="dReview">Review send</button>
+    <div id="dIntent" class="hidden">
+      <p class="seed" id="dIntentText"></p>
+      <button class="btn" id="dConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="dMsg"></p>
+    <p class="tag">Built and signed on this device, then broadcast exactly as signed through a public relay — no server ever builds your transaction. The fee rate is cross-checked against two independent sources and capped, like Bitcoin's. Sends are final.</p>`);
+  qr("qrDash2", dashAddr);
+  $("cpDash2").onclick = () => copyText(dashAddr, $("cpDash2"));
+  $("dReview").onclick = async () => {
+    const to = $("dTo").value.trim(), amount = $("dAmt").value.trim();
+    if (!isValidDashAddress(to)) return msg("dMsg", "That is not a valid Dash address.");
+    if (!amount || Number(amount) <= 0) return msg("dMsg", "Enter an amount.");
+    if (Number(amount) < DASH_MIN_OUTPUT) return msg("dMsg", `Dash's minimum spendable output is ${DASH_MIN_OUTPUT} DASH — send at least that much.`);
+    // A failed load is UNKNOWN, not zero: the stale 0 balance must
+    // never answer "Amount is more than your balance." (EVM precedent).
+    if (dashLoadFailed) return msg("dMsg", "Balance couldn't load right now — tap More → Refresh and try again.");
+    if (Number(amount) > dashBal) return msg("dMsg", "Amount is more than your balance.");
+    try {
+      // Build now, show the EXACT fee, relay the same bytes on
+      // confirm (audit H1).
+      msg("dMsg", "Checking the network fee…", true);
+      const plan = await planDashSend(wallet.mnemonic.phrase, { to, amountDash: Number(amount) });
+      pendingDash = { to, amount, plan };
+      $("dIntentText").textContent = formatDashSendIntent({
+        amount, to, feeDash: plan.feeDash.toFixed(8), feeUsd: usd(plan.feeDash * (prices.DASH || 0)),
+        note: feeRateNote(plan.rateInfo),
+      });
+      setBalanceAfter($("dIntentText"), { balance: dashBal, amount, fee: plan.feeDash, symbol: "DASH", decimals: 8 });
+      show("dIntent"); msg("dMsg", "");
+    } catch (e) { msg("dMsg", "Could not check the fee: " + e.message); }
+  };
+  $("dConfirm").onclick = async () => {
+    if (!pendingDash) return;
+    const btn = $("dConfirm");
+    try {
+      setSendBusy(btn, true);
+      msg("dMsg", "Broadcasting the transaction you reviewed…", true);
+      await broadcastDashTx(pendingDash.plan.hex);
+      const txid = pendingDash.plan.txid;
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txid, amount: pendingDash.amount, symbol: "DASH", to: pendingDash.to,
+        link: `${DASH_EXPLORER}/transaction/${txid}`, explorer: DASH_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingDash; pendingDash = null;
+      showTxSuccess({ verb: "Broadcast", amount: done.amount, symbol: "DASH",
+        logoHtml: tokenLogoHtml({ symbol: "DASH" }, "dash"), to: done.to, familyName: "Dash",
+        feeText: `${done.plan.feeDash.toFixed(8)} DASH`,
+        explorerUrl: historyTxUrl({ link: `${DASH_EXPLORER}/transaction/${txid}` }), txid, pending: true });
+    } catch (e) { sendFailed(btn, "dMsg", e); }
   };
 }
 
@@ -7291,6 +7471,16 @@ function swapTokenList(netKey) {
     // only swap-universe asset in this build.
     return [{ symbol: "ADA", address: CARDANO_SWAP_NATIVE_TOKEN, decimals: 6, native: true }];
   }
+  if (netKey === "zcash") {
+    // Zcash (1Click, audit gap #8): ZEC is the family's only
+    // swap-universe asset in this build (transparent only).
+    return [{ symbol: "ZEC", address: ZCASH_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
+  }
+  if (netKey === "dash") {
+    // Dash (1Click, audit gap #8): DASH is the family's only
+    // swap-universe asset in this build.
+    return [{ symbol: "DASH", address: DASH_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
+  }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
     // the curated FA stables.
@@ -7534,6 +7724,8 @@ async function swapBalanceOf(chainKey, tok) {
     if (chainKey === "dogecoin") return await getDogecoinBalance(dogeAddr);
     if (chainKey === "bitcoincash") return await getBitcoinCashBalance(bchAddr);
     if (chainKey === "cardano") return await getCardanoBalance(adaAddr);
+    if (chainKey === "zcash") return await getZcashBalance(zecAddr);
+    if (chainKey === "dash") return await getDashBalance(dashAddr);
     if (chainKey === "aptos") {
       // Aptos balance for the EXECUTION gate: the native APT
       // row or the picked FA's row of the account read, with
@@ -7582,7 +7774,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7599,12 +7791,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "aptos"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano and Aptos — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "aptos"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash and Aptos — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7680,7 +7872,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -8568,7 +8760,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -9166,6 +9358,8 @@ $("actSwap").onclick = () => {
         else if (fromKey === "dogecoin") srcLink = `https://blockchair.com/dogecoin/transaction/${hashes[0]}`;
         else if (fromKey === "bitcoincash") srcLink = `https://blockchair.com/bitcoin-cash/transaction/${hashes[0]}`;
         else if (fromKey === "cardano") srcLink = `${CARDANO_EXPLORER}/transaction/${hashes[0]}`;
+        else if (fromKey === "zcash") srcLink = `https://blockchair.com/zcash/transaction/${hashes[0]}`;
+        else if (fromKey === "dash") srcLink = `https://blockchair.com/dash/transaction/${hashes[0]}`;
         else if (fromKey === "tron") srcLink = `${TRON_EXPLORER}/#/transaction/${hashes[0]}`;
         else if (fromKey === "sui") srcLink = `${SUI_EXPLORER}/mainnet/tx/${hashes[0]}`;
         try { paintOneClickSwaps(); } catch { /* the list repaints on sheet open regardless */ }
@@ -9272,7 +9466,7 @@ function historyDayLabel(at) {
 }
 const HISTORY_FAMILY_BY_HOST = [
   ["litecoinspace.org", "Litecoin"], ["blockchair.com/dogecoin", "Dogecoin"],
-  ["blockchair.com/bitcoin-cash", "Bitcoin Cash"], ["cardanoscan.io", "Cardano"], ["mempool.space", "Bitcoin"],
+  ["blockchair.com/bitcoin-cash", "Bitcoin Cash"], ["cardanoscan.io", "Cardano"], ["blockchair.com/zcash", "Zcash"], ["blockchair.com/dash", "Dash"], ["mempool.space", "Bitcoin"],
   ["blockstream.info", "Bitcoin"], ["tronscan.org", "Tron"], ["solscan.io", "Solana"],
   ["suiscan.xyz", "Sui"], ["stellar.expert", "Stellar"], ["tonviewer.io", "TON"],
   ["nearblocks.io", "NEAR"], ["perawallet", "Algorand"], ["xrpscan.com", "XRP Ledger"],
@@ -10003,7 +10197,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a
@@ -10188,6 +10382,8 @@ function driverOwnAddresses() {
     dogecoin: safe(() => dogecoinAddress(phrase)),
     bitcoincash: safe(() => bitcoinCashAddress(phrase)),
     cardano: safe(() => cardanoAddress(phrase)),
+    zcash: safe(() => zcashAddress(phrase)),
+    dash: safe(() => dashAddress(phrase)),
     aptos: safe(() => aptosAddressFromPhrase(phrase)),
     arkade: arkSession?.address || null,
     cosmoshub: cosmosAddrs.cosmoshub || null, osmosis: cosmosAddrs.osmosis || null, noble: cosmosAddrs.noble || null,

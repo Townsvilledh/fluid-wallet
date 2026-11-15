@@ -1,0 +1,24 @@
+{
+ "status": 400,
+ "request": {
+  "dry": false,
+  "depositMode": "SIMPLE",
+  "swapType": "EXACT_INPUT",
+  "slippageTolerance": 100,
+  "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "depositType": "ORIGIN_CHAIN",
+  "destinationAsset": "nep141:dash.omft.near",
+  "amount": "20000000",
+  "refundTo": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+  "refundType": "ORIGIN_CHAIN",
+  "recipient": "XtWu15CGFa6VkuMrwaofE6fp4iTH5CyBGQ",
+  "recipientType": "DESTINATION_CHAIN",
+  "deadline": "2026-11-15T14:35:48.000Z"
+ },
+ "response": {
+  "message": "No liquidity available",
+  "correlationId": "22011da2-8b9c-4f60-92a8-c7734bafd816",
+  "timestamp": "2026-11-15T12:35:59.448Z",
+  "path": "/v0/quote"
+ }
+}

@@ -1531,3 +1531,83 @@ bridge is the true 1:1.
   "Move to Ethereum" action, and the swap screen — where
   the exact ARB LADYS → ETH LADYS pair presents the Move
   instead of any market quote.
+
+## Zcash + Dash — presence + 1Click swaps (audit gap #8, 2026-11-15)
+
+Zcash and Dash join Fluid whole: each family derives, holds,
+receives and sends from the same phrase, and each native coin
+is a 1Click family (the eighth and ninth), swappable in both
+directions wherever 1Click has liquidity. Dash is the
+Dogecoin shape with Dash parameters; Zcash carries the
+build's one genuinely new component, a version-5 transaction
+builder.
+
+- **Dash (BIP44 coin 5).** Legacy P2PKH (X… addresses) on the
+  existing legacy builder machinery — standard v1
+  transactions, Bitcoin-class 546-satoshi dust. DIP2 special
+  transactions are provider traffic and never used; neither
+  is InstantSend. Reads are BlockCypher primary (its balance
+  shape is the in-tree parser's, its chain endpoint carries
+  the fee stats) with the shared Blockchair dashboard parser
+  as fallback; the fee rate is cross-checked two-source and
+  ceiling-clamped like Litecoin's. Broadcast is BlockCypher's
+  raw push, Blockchair's push as fallback.
+- **Zcash (BIP44 coin 133), transparent only.** t1 addresses
+  are base58check over a TWO-byte prefix (0x1cb8), hand-rolled
+  on the in-tree primitive (@scure's p2pkh cannot encode
+  two-byte prefixes). Shielded (zs…) and unified (ua…)
+  addresses are refused honestly — this build holds no
+  shielded keys. Reads ride Blockchair's address dashboard
+  (the only keyless CORS-clean source the research found):
+  one call returns balance + UTXOs, and its keyless tier's
+  HTTP 430 IP-blacklist body is a FAILED read — "couldn't
+  load", never a fake zero. A keyed/proxied read path (the
+  Koios pattern) is the hardening item if the keyless tier
+  proves too tight in production.
+- **Zcash sends are v5 transactions (ZIP 225).** NU7 (ZIP
+  259, activated 2026-11-06) retired version 4 outright, so
+  sends are built as transparent-only v5 transactions signed
+  with the ZIP-244 sighash and priced by ZIP-317 (5,000 zats
+  per logical action, 10,000-zat minimum — a flat ~0.0001 ZEC
+  for a typical send, not a per-vbyte market), with the
+  ZIP-203 expiry height at tip + 120. PROVEN before shipping
+  to the BCH standard: the code reproduces a real post-NU7
+  mainnet v5 transaction's txid from its raw hex
+  (1138a133…, block 3,575,780), and both of that
+  transaction's real signatures verify over this code's
+  sighash — both pinned in the suite (§128). Broadcast rides
+  Blockchair's push endpoint, whose preflight passed in
+  research; the broadcast itself is UNVERIFIED until a first
+  funded send — the send sheet says so.
+- **MAINTENANCE PIN — the consensus branch ID.**
+  `ZEC_CONSENSUS_BRANCH_ID` in wallet-core is NU7's
+  `0x77190ad9` (ZIP 259). Zcash signatures and txids commit
+  to this value, and it changes at EVERY network upgrade:
+  when the next upgrade activates, this constant must be
+  updated from its deployment ZIP or every Zcash send fails
+  network-wide. NU8 is already sketched for late January
+  2027 — this is a recurring calendar item, not a one-off.
+- **The rail** is 1Click, unmodified — the same two-pass fee
+  flow and echo verification as the families before it.
+  Capture was probed live: the fee-50 echo verifies for ZEC
+  in both directions and for DASH out (Fluid 25 / 1Click
+  25). Production collecting stays **false** fleet-wide
+  until the operator sets `ONECLICK_FEE_RECIPIENT` — the
+  same standing operator item as LTC/DOGE/BCH/ADA; the
+  mechanism ships proven and the display says collecting is
+  off, exactly as the existing families do.
+- **Floors and speeds are 1Click's own, named before the
+  user commits.** ZEC out: floor 0.00132 ZEC (~$1.22) at a
+  ~457 s estimate — SLOW CLASS, disclosed as slow, never
+  badged fast. ZEC in: floor ~$1.24 at ~150 s. DASH out:
+  floor 0.011 DASH (~$0.42) at ~129 s. **DASH in currently
+  has no liquidity above ~$1** (only a $1 quote cleared at
+  the probe; $5/$10/$20 all answered "No liquidity
+  available") — a solver-inventory state that may refill.
+  The pair is wired anyway and presents as an honest
+  no-route at larger sizes.
+- **Integration fix shipped with this gap:** 1Click's
+  "No liquidity available" answer used to surface as a
+  thrown route-search ERROR; it is now part of the no-route
+  pattern in the quote fetch, so thin liquidity reads as
+  no-route on every 1Click pair, not just DASH-in.

@@ -937,10 +937,10 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
 const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLUSDT",
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
-  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", ADA: "ADAUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
+  LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", ADA: "ADAUSDT", ZEC: "ZECUSDT", DASH: "DASHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
   TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
-const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack", HYPE: "hyperliquid" };
+const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", ZEC: "zcash", DASH: "dash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack", HYPE: "hyperliquid" };
 /* RED-TEAM 2026-11-06 (Finding C): getPrices() takes Binance's word alone
  * (CoinGecko only fills gaps and is never compared), yet the agent runtime
  * prices its USD spending CAPS from it — one wrong or malicious response
@@ -1965,6 +1965,552 @@ export async function sendDogecoin(phrase, opts) {
   const plan = await planDogecoinSend(phrase, opts);
   const route = await broadcastDogeTx(plan.hex);
   return { txid: plan.txid, feeDoge: plan.feeDoge, route };
+}
+
+// ---------- Blockchair reads (shared: Zcash primary, Dash fallback) ----------
+// Blockchair is the one keyless API found that answers from a
+// browser Origin for both chains (research 2026-11-15, gap #8: its
+// address dashboard returns balance + UTXOs + transaction list in
+// ONE call for Zcash, where every other keyless source is dead,
+// CORS-blocked or 403s). Its keyless tier rate-limits hard — the
+// research VM was IP-blacklisted (HTTP 430, context.code 430,
+// data: null) after ~10 rapid requests — so EVERY failure shape
+// here throws: a 430 / null-data / garbled body is a FAILED read
+// ("couldn't load"), never a zero balance.
+export function parseBlockchairDashboard(d) {
+  if (!d || typeof d !== "object") throw new Error("Blockchair returned no data.");
+  if (d.context != null && Number(d.context.code) !== 200) {
+    throw new Error(`Blockchair read failed (code ${d.context.code}).`);
+  }
+  if (d.data == null || typeof d.data !== "object") throw new Error("Blockchair returned no data.");
+  const entry = Object.values(d.data)[0];
+  const a = entry && typeof entry === "object" ? entry.address : null;
+  if (!a || typeof a !== "object") throw new Error("Blockchair returned an unexpected shape.");
+  const balanceSat = Number(a.balance);
+  if (!Number.isFinite(balanceSat)) throw new Error("Blockchair balance is not a number.");
+  const utxos = (Array.isArray(entry.utxo) ? entry.utxo : []).map(u => ({
+    txid: String(u?.transaction_hash || ""),
+    vout: Number(u?.index),
+    valueSat: Number(u?.value),
+    blockId: u?.block_id == null ? null : Number(u.block_id),
+  })).filter(u => /^[0-9a-f]{64}$/i.test(u.txid) && Number.isFinite(u.vout) && u.vout >= 0 && Number.isFinite(u.valueSat) && u.valueSat > 0);
+  return { balanceSat, utxos, transactionCount: Number(a.transaction_count) || 0 };
+}
+async function fetchBlockchairDashboard(chain, address) {
+  const res = await fetch(`https://api.blockchair.com/${chain}/dashboards/address/${encodeURIComponent(address)}`,
+    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+  const d = await res.json().catch(() => null);
+  if (!res.ok || !d || d.data == null) throw new Error(`Blockchair ${chain} read failed (HTTP ${res.status}).`);
+  return parseBlockchairDashboard(d);
+}
+async function fetchBlockchairRawTxHex(chain, txid) {
+  const res = await fetch(`https://api.blockchair.com/${chain}/raw/transaction/${encodeURIComponent(txid)}`,
+    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+  const d = await res.json().catch(() => null);
+  const hexTx = d?.data?.[txid]?.raw_transaction;
+  if (!res.ok || typeof hexTx !== "string" || !hexTx) throw new Error(`Blockchair raw transaction read failed (HTTP ${res.status}).`);
+  return hexTx;
+}
+/** Blockchair raw-push broadcast (form-encoded `data` field).
+ *  Returns the txid the API reports. */
+async function blockchairPushTx(chain, txHex) {
+  const res = await fetch(`https://api.blockchair.com/${chain}/push/transaction`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `data=${encodeURIComponent(txHex)}`,
+    signal: AbortSignal.timeout(30000),
+  });
+  const d = await res.json().catch(() => null);
+  if (!res.ok || typeof d?.data !== "string" || !d.data) {
+    throw new Error(`Blockchair broadcast failed (HTTP ${res.status})${d?.context?.error_message ? ": " + String(d.context.error_message).slice(0, 160) : ""}.`);
+  }
+  return d.data;
+}
+
+// ---------- Dash (same seed, BIP44 coin type 5, legacy P2PKH) ----------
+// Dash is the Dogecoin shape with Dash parameters: standard v1
+// transactions, legacy sighash, single-byte base58 prefixes
+// (P2PKH 0x4c "X…", P2SH 0x10 "7…", WIF 0xcc) — so the DOGE
+// builder machinery carries over unchanged. DIP2 special (v3)
+// transactions are masternode/provider traffic only; plain
+// payments never use them, and InstantSend is not required.
+// Reads: BlockCypher PRIMARY (its balance shape is exactly
+// parseBlockcypherBalance's, its chain endpoint carries the fee
+// stats, and its full-address endpoint + includeHex tx reads
+// give the legacy builder everything it needs from one source),
+// Blockchair dashboard as fallback. Relays: BlockCypher raw
+// push, then Blockchair push.
+export const DASH_EXPLORER = "https://blockchair.com/dash";
+const DASH_NETWORK = { bech32: "dash", pubKeyHash: 0x4c, scriptHash: 0x10, wif: 0xcc };
+function dashKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/44'/5'/${account}'/0/0`);
+  const pay = btc.p2pkh(child.publicKey, DASH_NETWORK);
+  return { child, address: pay.address, script: pay.script };
+}
+export function dashAddress(phrase, account = 0) { return dashKeys(phrase, account).address; }
+export function isValidDashAddress(address) {
+  try {
+    const raw = base58check(sha256Bytes).decode(String(address).trim());
+    return raw.length === 21 && (raw[0] === 0x4c || raw[0] === 0x10); // P2PKH (X…) or P2SH (7…)
+  } catch { return false; }
+}
+// Dash dust is Bitcoin-class: 546 satoshis (Dash Core's dust
+// threshold for a P2PKH output at the default relay fee).
+export const DASH_DUST_SAT = 546;
+export const DASH_MIN_OUTPUT = DASH_DUST_SAT / 1e8;
+export async function getDashBalance(address) {
+  try {
+    return await blockcypherBalance("dash", address);
+  } catch {
+    // Fallback: the shared Blockchair dashboard parser. Both
+    // sources failing THROWS (the Blockchair call is the last
+    // expression), so the UI shows "couldn't load", never zero.
+    const dash = await fetchBlockchairDashboard("dash", address);
+    return dash.balanceSat / 1e8;
+  }
+}
+/* Dash fee rate, cross-checked like Litecoin's (audit H1):
+ * BlockCypher's medium_fee_per_kb against Blockchair's suggested
+ * fee, resolved + ceiling-clamped. The ceiling is generous —
+ * Dash fees are tiny (the live medium was ~0.19 sat/vB at the
+ * 2026-11-15 probe) — it exists to refuse a poisoned quote, not
+ * to price the send. */
+export const DASH_FEE_CEILING_SATVB = 1000;
+export async function getDashFeeRateInfo() {
+  const [primary, secondary] = await Promise.all([
+    _feeGrab(async () => { const r = await fetch("https://api.blockcypher.com/v1/dash/main"); const d = await r.json(); return Number(d.medium_fee_per_kb) / 1000; }),
+    _feeGrab(async () => { const r = await fetch("https://api.blockchair.com/dash/stats"); const d = await r.json(); return Number(d?.data?.suggested_transaction_fee_per_byte_sat); }),
+  ]);
+  return resolveFeeRate({ primary, secondary, ceiling: DASH_FEE_CEILING_SATVB, fallback: 10 });
+}
+/** PURE builder (unit-testable offline): the DOGE legacy builder
+ *  with Dash's network parameters and Bitcoin-class dust. utxos
+ *  carry { txid, index, valueSat, txHex } — the full previous
+ *  transaction hex, as legacy signing requires. Change below
+ *  dust folds into the fee. Returns { hex, txid, feeSat,
+ *  changeSat }. */
+export function buildSignedDashTx({ privateKey, utxos, to, amountSat, feeSat, changeAddress }) {
+  if (!(amountSat >= DASH_DUST_SAT)) {
+    throw new Error(`Dash's minimum spendable output is ${DASH_MIN_OUTPUT} DASH — send at least that much.`);
+  }
+  const total = utxos.reduce((s, u) => s + u.valueSat, 0);
+  let change = total - amountSat - feeSat;
+  if (change < 0) throw new Error("Not enough confirmed DASH to cover the amount plus network fee.");
+  let actualFee = feeSat;
+  if (change > 0 && change < DASH_DUST_SAT) { actualFee += change; change = 0; }
+  const tx = new btc.Transaction({ version: 1 }); // Dash's standard payment version
+  for (const u of utxos) {
+    tx.addInput({ txid: u.txid, index: u.index, nonWitnessUtxo: hex.decode(u.txHex), sighashType: btc.SigHash.ALL });
+  }
+  tx.addOutputAddress(to, BigInt(amountSat), DASH_NETWORK);
+  if (change > 0) tx.addOutputAddress(changeAddress, BigInt(change), DASH_NETWORK);
+  tx.sign(privateKey);
+  tx.finalize();
+  return { hex: tx.hex, txid: tx.id, feeSat: actualFee, changeSat: change };
+}
+/** Dash UTXOs with the prev-transaction hex the legacy builder
+ *  needs: BlockCypher's full-address read (unspent txrefs) +
+ *  per-tx includeHex reads; the Blockchair dashboard + raw-tx
+ *  endpoints as the fallback pair. Confirmed only. */
+async function fetchDashUtxos(address) {
+  try {
+    const res = await fetch(`https://api.blockcypher.com/v1/dash/main/addrs/${encodeURIComponent(address)}?unspentOnly=true&includeScript=true`,
+      { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`BlockCypher DASH read failed (HTTP ${res.status}).`);
+    const d = await res.json();
+    if (!Array.isArray(d?.txrefs) && !Array.isArray(d?.unconfirmed_txrefs)) throw new Error("BlockCypher returned no UTXO data.");
+    const refs = [...(d.txrefs || []), ...(d.unconfirmed_txrefs || [])]
+      .filter(t => t && t.spent === false && (t.confirmations ?? 0) >= 1 && t.tx_hash && Number.isFinite(Number(t.value)));
+    const utxos = [];
+    for (const t of refs) {
+      const txRes = await fetch(`https://api.blockcypher.com/v1/dash/main/txs/${encodeURIComponent(String(t.tx_hash))}?includeHex=true`,
+        { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+      if (!txRes.ok) throw new Error(`BlockCypher DASH transaction read failed (HTTP ${txRes.status}).`);
+      const td = await txRes.json();
+      if (typeof td?.hex !== "string" || !td.hex) throw new Error("BlockCypher returned no transaction hex.");
+      utxos.push({ txid: String(t.tx_hash), index: Number(t.tx_output_n), valueSat: Number(t.value), txHex: td.hex });
+    }
+    return utxos;
+  } catch {
+    const dash = await fetchBlockchairDashboard("dash", address);
+    const utxos = [];
+    for (const u of dash.utxos) {
+      if (!(u.blockId > 0)) continue; // confirmed only
+      const txHex = await fetchBlockchairRawTxHex("dash", u.txid);
+      utxos.push({ txid: u.txid, index: u.vout, valueSat: u.valueSat, txHex });
+    }
+    return utxos;
+  }
+}
+const DASH_RELAYS = [
+  { name: "BlockCypher", url: "https://api.blockcypher.com/v1/dash/main/txs/push", body: (txHex) => ({ tx: txHex }) },
+];
+/** Relay a signed Dash transaction: BlockCypher's raw push
+ *  first, Blockchair's push as fallback. Returns the accepting
+ *  relay's name; throws with every answer when none accepts. */
+export async function broadcastDashTx(txHex) {
+  const errors = [];
+  for (const relay of DASH_RELAYS) {
+    try {
+      const res = await fetch(relay.url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(relay.body(txHex)), signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) return relay.name;
+      errors.push(`${relay.name}: ${(await res.text().catch(() => "")).trim().slice(0, 160) || "HTTP " + res.status}`);
+    } catch (e) { errors.push(`${relay.name}: ${e.message}`); }
+  }
+  try { await blockchairPushTx("dash", txHex); return "Blockchair"; }
+  catch (e) { errors.push(`Blockchair: ${e.message}`); }
+  throw new Error("Dash relays rejected the transaction — " + errors.join(" · "));
+}
+export function formatDashSendIntent({ amount, to, feeDash, feeUsd, note }) {
+  return `Send ${amount} DASH to ${to} on Dash. Network fee about ${feeDash} DASH${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
+}
+/** Build + sign a DASH payment WITHOUT broadcasting, so the
+ *  review sheet shows the EXACT fee; confirming relays these
+ *  exact bytes (audit H1 pattern, as LTC/DOGE). */
+export async function planDashSend(phrase, { to, amountDash }) {
+  const { child, address } = dashKeys(phrase);
+  if (!isValidDashAddress(to)) throw new Error("That is not a valid Dash address.");
+  const amountSat = Math.round(Number(amountDash) * 1e8);
+  if (!(amountSat >= DASH_DUST_SAT)) {
+    throw new Error(`Dash's minimum spendable output is ${DASH_MIN_OUTPUT} DASH — send at least that much.`);
+  }
+  const rateInfo = await getDashFeeRateInfo();
+  const utxos = (await fetchDashUtxos(address)).sort((a, b) => b.valueSat - a.valueSat);
+  if (!utxos.length) throw new Error("No confirmed DASH available to spend yet.");
+  const picked = []; let sum = 0, feeSat = 0;
+  for (const u of utxos) {
+    picked.push(u); sum += u.valueSat;
+    feeSat = Math.ceil(rateInfo.rate * dogeTxSize(picked.length, 2));
+    if (sum >= amountSat + feeSat) break;
+  }
+  if (sum < amountSat + feeSat) throw new Error("Not enough confirmed DASH to cover the amount plus network fee.");
+  const built = buildSignedDashTx({ privateKey: child.privateKey, utxos: picked, to, amountSat, feeSat, changeAddress: address });
+  return { hex: built.hex, txid: built.txid, feeDash: built.feeSat / 1e8, feeSat: built.feeSat, rateInfo, from: address };
+}
+/** Build, sign and broadcast a DASH payment (plan + raw relay).
+ *  Returns { txid, feeDash, route }. */
+export async function sendDash(phrase, opts) {
+  const plan = await planDashSend(phrase, opts);
+  const route = await broadcastDashTx(plan.hex);
+  return { txid: plan.txid, feeDash: plan.feeDash, route };
+}
+
+// ---------- Zcash (same seed, BIP44 coin type 133, transparent only) ----------
+// Transparent (t1) addresses only: shielded zs / unified ua
+// addresses are refused honestly by the validator — Fluid holds
+// no shielded keys in this build. A t1 address is base58check
+// over a TWO-BYTE prefix (0x1cb8 P2PKH, 0x1cbd P2SH), which
+// @scure/btc-signer's p2pkh cannot encode (it takes a one-byte
+// prefix), so the envelope is hand-rolled on the in-tree
+// base58check primitive; the scriptPubKey bytes are
+// Bitcoin-identical. Reads ride the shared Blockchair dashboard
+// (the only keyless CORS-clean source found, research
+// 2026-11-15) — balance + UTXOs in one call.
+//
+// SENDS are the one genuinely new builder in this build. Since
+// NU7 (ZIP 259, activated 2026-11-06 at height 3,543,405),
+// version-4 transactions are invalid (ZIP 2003): transparent
+// sends are VERSION-5 transactions (ZIP 225) signed with the
+// ZIP-244 sighash and priced by ZIP-317 (5,000 zats per logical
+// action, 2-action minimum — NOT a per-vbyte market). Expiry
+// height follows ZIP 203 (tip + ~120 blocks ≈ 50 minutes at
+// NU7's 25-second target spacing).
+// PROVEN before shipping (2026-11-15, scratch + pinned tests):
+// this code reproduces the txid of a real post-NU7 mainnet v5
+// transaction (1138a133…, block 3,575,780) from its raw hex, and
+// both of that transaction's real signatures verify over this
+// code's ZIP-244 sighash — the same evidence standard as BCH.
+// Broadcast rides Blockchair's push endpoint; its preflight
+// passed in research but the broadcast itself is UNVERIFIED
+// until a first funded send lands — the sheet copy says so.
+export const ZCASH_EXPLORER = "https://blockchair.com/zcash";
+/* RECURRING MAINTENANCE PIN: the NU7 consensus branch ID
+ * (ZIP 259; Zebra 7.0.0's mainnet constants carry the same
+ * value, and it is read directly out of a live NU7 transaction
+ * header in the pinned test). Signatures and txids commit to
+ * this value — when the NEXT network upgrade activates, this
+ * constant MUST be updated to the new branch ID from its
+ * deployment ZIP or every Zcash send fails network-wide. */
+export const ZEC_CONSENSUS_BRANCH_ID = 0x77190ad9; // NU7 (ZIP 259)
+export const ZEC_VERSION_GROUP_ID = 0x26a7270a; // ZIP 225, transaction v5
+export const ZEC_TX_EXPIRY_DELTA = 120; // blocks (ZIP 203 guidance)
+export const ZEC_DUST_ZATS = 546;
+const ZEC_P2PKH_PREFIX = 0x1cb8, ZEC_P2SH_PREFIX = 0x1cbd;
+// Lazy: sha256Bytes is initialised later in this module, so the
+// codec is built on first use, not at module load.
+let _zecB58Check = null;
+function zecB58Check() { if (!_zecB58Check) _zecB58Check = base58check(sha256Bytes); return _zecB58Check; }
+function zecEncodeAddress(prefix, hash160Bytes) {
+  const body = new Uint8Array(22);
+  body[0] = (prefix >> 8) & 0xff; body[1] = prefix & 0xff;
+  body.set(hash160Bytes, 2);
+  return zecB58Check().encode(body);
+}
+function zecDecodeAddress(address) {
+  const raw = zecB58Check().decode(String(address ?? "").trim());
+  if (raw.length !== 22) throw new Error("That is not a valid Zcash address.");
+  const prefix = (raw[0] << 8) | raw[1];
+  if (prefix !== ZEC_P2PKH_PREFIX && prefix !== ZEC_P2SH_PREFIX) throw new Error("That is not a valid Zcash address.");
+  return { prefix, hash: raw.slice(2) };
+}
+function zecKeys(phrase, account = 0) {
+  const seed = mnemonicToSeedSync(phrase.trim().toLowerCase().replace(/\s+/g, " "));
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/44'/133'/${account}'/0/0`);
+  if (!child.privateKey) throw new Error("Zcash key derivation failed.");
+  const pub = secp256k1.getPublicKey(child.privateKey, true);
+  const hash = ripemd160(sha256(pub));
+  const script = Uint8Array.from([0x76, 0xa9, 0x14, ...hash, 0x88, 0xac]); // OP_DUP OP_HASH160 <h160> OP_EQUALVERIFY OP_CHECKSIG
+  return { child, privateKey: child.privateKey, pub, address: zecEncodeAddress(ZEC_P2PKH_PREFIX, hash), script };
+}
+export function zcashAddress(phrase, account = 0) { return zecKeys(phrase, account).address; }
+export function isValidZcashAddress(address) {
+  const s = String(address ?? "").trim();
+  if (!s) return false;
+  // Shielded (zs1…), unified (u1…) and legacy Sprout (zc…)
+  // addresses are refused honestly: this build is transparent-only.
+  if (/^(zs|ua|u1|zc)/i.test(s)) return false;
+  try { zecDecodeAddress(s); return true; } catch { return false; }
+}
+/** The scriptPubKey bytes for a validated t1/t3 address. */
+function zecScriptForAddress(address) {
+  const { prefix, hash } = zecDecodeAddress(address);
+  return prefix === ZEC_P2PKH_PREFIX
+    ? Uint8Array.from([0x76, 0xa9, 0x14, ...hash, 0x88, 0xac])
+    : Uint8Array.from([0xa9, 0x14, ...hash, 0x87]); // OP_HASH160 <h160> OP_EQUAL
+}
+export async function getZcashBalance(address) {
+  const dash = await fetchBlockchairDashboard("zcash", address);
+  return dash.balanceSat / 1e8;
+}
+async function fetchZcashTipHeight() {
+  const res = await fetch("https://api.blockchair.com/zcash/stats",
+    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+  const d = await res.json().catch(() => null);
+  const tip = Number(d?.data?.best_block_height ?? d?.data?.blocks);
+  if (!res.ok || !Number.isFinite(tip) || tip <= 0) throw new Error(`Blockchair Zcash stats read failed (HTTP ${res.status}).`);
+  return tip;
+}
+/* ZIP-317 fee: 5,000 zats per logical action, where logical
+ * actions = max(ceil(transparent input bytes / 150),
+ * ceil(transparent output bytes / 34)) and never below the
+ * 2-action grace — a 10,000-zat floor every send pays. A
+ * P2PKH input's signed size is ~149 bytes, an output's 34. */
+export function zecLogicalActions(nInputs, nOutputs) {
+  return Math.max(2, Math.ceil((nInputs * 149) / 150), Math.ceil((nOutputs * 34) / 34));
+}
+export function zecFeeZats(nInputs, nOutputs) {
+  return 5000 * zecLogicalActions(nInputs, nOutputs);
+}
+// --- ZIP-244 digest tree (transparent-only) ---
+// Every digest is BLAKE2b-256 with a 16-byte personalization.
+// GOTCHA (found by the txid reproduction, 2026-11-15):
+// @noble/hashes v2 names the option `personalization`, NOT
+// `person` — passing `person` is silently ignored and every
+// digest comes out unpersonalized.
+function zecBlake(person, data) {
+  const p = new Uint8Array(16);
+  if (typeof person === "string") p.set(Uint8Array.from([...person].map(c => c.charCodeAt(0))));
+  else p.set(person);
+  return blake2b(data, { dkLen: 32, personalization: p });
+}
+const zecU32le = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); return b; };
+const zecI64le = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigInt64(0, BigInt(v), true); return b; };
+const zecCat = (...parts) => { const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+const zecCompactSize = (n) => n < 0xfd ? Uint8Array.from([n])
+  : n <= 0xffff ? Uint8Array.from([0xfd, n & 0xff, (n >> 8) & 0xff])
+  : (() => { const b = new Uint8Array(5); b[0] = 0xfe; new DataView(b.buffer).setUint32(1, n >>> 0, true); return b; })();
+const ZEC_EMPTY_SAPLING_DIGEST = () => zecBlake("ZTxIdSaplingHash", new Uint8Array(0));
+const ZEC_EMPTY_ORCHARD_DIGEST = () => zecBlake("ZTxIdOrchardHash", new Uint8Array(0));
+function zecHeaderDigest({ branchId, locktime, expiryHeight }) {
+  // ZIP 244 T.1: version (with the overwinter flag) ||
+  // version group id || CONSENSUS BRANCH ID || lock_time ||
+  // expiry_height, personalization "ZTxIdHeadersHash".
+  return zecBlake("ZTxIdHeadersHash", zecCat(
+    zecU32le(0x80000005), zecU32le(ZEC_VERSION_GROUP_ID), zecU32le(branchId), zecU32le(locktime), zecU32le(expiryHeight)));
+}
+function zecPrevoutsDigest(inputs) {
+  return zecBlake("ZTxIdPrevoutHash", zecCat(...inputs.map(i => zecCat(Uint8Array.from(Buffer.from(i.txid, "hex")).reverse(), zecU32le(i.vout)))));
+}
+function zecSequenceDigest(inputs) {
+  return zecBlake("ZTxIdSequencHash", zecCat(...inputs.map(i => zecU32le(i.sequence ?? 0xffffffff))));
+}
+function zecOutputsDigest(outputs) {
+  return zecBlake("ZTxIdOutputsHash", zecCat(...outputs.map(o => zecCat(zecI64le(o.valueSat), zecCompactSize(o.script.length), o.script))));
+}
+function zecTransparentDigest(inputs, outputs) {
+  return zecBlake("ZTxIdTranspaHash", zecCat(zecPrevoutsDigest(inputs), zecSequenceDigest(inputs), zecOutputsDigest(outputs)));
+}
+function zecTxidDigest(fields) {
+  const topPerson = zecCat(Uint8Array.from([...("ZcashTxHash_")].map(c => c.charCodeAt(0))), zecU32le(fields.branchId));
+  return zecBlake(topPerson, zecCat(
+    zecHeaderDigest(fields), zecTransparentDigest(fields.inputs, fields.outputs),
+    ZEC_EMPTY_SAPLING_DIGEST(), ZEC_EMPTY_ORCHARD_DIGEST()));
+}
+/** The ZIP-244 signature digest for one transparent input
+ *  (SIGHASH_ALL — the only type Fluid produces). Commits to
+ *  every input's prevout, amount and scriptPubKey, so a signer
+ *  can never be lied to about the fee (ZIP 244 S.2c/S.2d). */
+export function zecSighash(fields, inputIndex) {
+  const inputs = fields.inputs, outputs = fields.outputs;
+  const amountsDigest = zecBlake("ZTxTrAmountsHash", zecCat(...inputs.map(i => zecI64le(i.valueSat))));
+  const scriptsDigest = zecBlake("ZTxTrScriptsHash", zecCat(...inputs.map(i => zecCat(zecCompactSize(i.scriptPubKey.length), i.scriptPubKey))));
+  const inp = inputs[inputIndex];
+  const txinDigest = zecBlake("Zcash___TxInHash", zecCat(
+    Uint8Array.from(Buffer.from(inp.txid, "hex")).reverse(), zecU32le(inp.vout),
+    zecI64le(inp.valueSat), zecCompactSize(inp.scriptPubKey.length), inp.scriptPubKey,
+    zecU32le(inp.sequence ?? 0xffffffff)));
+  const transparentSigDigest = zecBlake("ZTxIdTranspaHash", zecCat(
+    Uint8Array.from([0x01]), // SIGHASH_ALL
+    zecPrevoutsDigest(inputs), amountsDigest, scriptsDigest,
+    zecSequenceDigest(inputs), zecOutputsDigest(outputs), txinDigest));
+  const topPerson = zecCat(Uint8Array.from([...("ZcashTxHash_")].map(c => c.charCodeAt(0))), zecU32le(fields.branchId));
+  return zecBlake(topPerson, zecCat(
+    zecHeaderDigest(fields), transparentSigDigest, ZEC_EMPTY_SAPLING_DIGEST(), ZEC_EMPTY_ORCHARD_DIGEST()));
+}
+function zecDerEncode(compact) {
+  const derInt = (b) => { let i = 0; while (i < b.length - 1 && b[i] === 0 && !(b[i + 1] & 0x80)) i++; const t = b.slice(i); return (t[0] & 0x80) ? Uint8Array.from([0, ...t]) : t; };
+  const r = derInt(compact.slice(0, 32)), s = derInt(compact.slice(32, 64));
+  const body = Uint8Array.from([0x02, r.length, ...r, 0x02, s.length, ...s]);
+  return Uint8Array.from([0x30, body.length, ...body]);
+}
+const zecPush = (data) => data.length < 0x4c ? zecCat(Uint8Array.from([data.length]), data)
+  : data.length <= 0xff ? zecCat(Uint8Array.from([0x4c, data.length]), data)
+  : zecCat(Uint8Array.from([0x4d, data.length & 0xff, (data.length >> 8) & 0xff]), data);
+/** PURE builder (unit-testable offline): assemble + sign a
+ *  transparent-only Zcash v5 transaction. inputs carry
+ *  { txid (display hex), vout, valueSat, scriptPubKey } — the
+ *  prevout's amount and script, which ZIP-244 commits to (no
+ *  prev-transaction hex is needed, unlike the legacy builders).
+ *  outputs carry { address, valueSat }. Returns { hex, txid }.
+ *  The fee is implicit (inputs − outputs) and must already
+ *  satisfy ZIP-317 — planZcashSend computes it. */
+export function buildZecTransparentTx({ privateKey, pubKey, inputs, outputs, expiryHeight, branchId = ZEC_CONSENSUS_BRANCH_ID, locktime = 0 }) {
+  if (!Array.isArray(inputs) || !inputs.length) throw new Error("No Zcash inputs to spend.");
+  if (!Array.isArray(outputs) || !outputs.length) throw new Error("No Zcash outputs to create.");
+  const totalIn = inputs.reduce((s, i) => s + i.valueSat, 0);
+  const totalOut = outputs.reduce((s, o) => s + o.valueSat, 0);
+  if (totalIn <= totalOut) throw new Error("Not enough ZEC to cover the amount plus network fee.");
+  const fields = {
+    branchId, locktime, expiryHeight,
+    inputs: inputs.map(i => ({ ...i, sequence: 0xffffffff })),
+    outputs: outputs.map(o => ({ valueSat: o.valueSat, script: zecScriptForAddress(o.address) })),
+  };
+  const scriptSigs = fields.inputs.map((inp, idx) => {
+    const digest = zecSighash(fields, idx);
+    // The digest IS the message (BCH gotcha): prehash must be off.
+    const compact = secp256k1.sign(digest, privateKey, { lowS: true, prehash: false });
+    const sigWithType = zecCat(zecDerEncode(compact), Uint8Array.from([0x01])); // SIGHASH_ALL
+    return zecCat(zecPush(sigWithType), zecPush(pubKey));
+  });
+  const raw = zecCat(
+    zecU32le(0x80000005), zecU32le(ZEC_VERSION_GROUP_ID), zecU32le(branchId), zecU32le(locktime), zecU32le(expiryHeight),
+    zecCompactSize(fields.inputs.length),
+    ...fields.inputs.map((inp, i) => zecCat(
+      Uint8Array.from(Buffer.from(inp.txid, "hex")).reverse(), zecU32le(inp.vout),
+      zecCompactSize(scriptSigs[i].length), scriptSigs[i], zecU32le(inp.sequence))),
+    zecCompactSize(fields.outputs.length),
+    ...fields.outputs.map(o => zecCat(zecI64le(o.valueSat), zecCompactSize(o.script.length), o.script)),
+    // ZIP 225 empty bundles: nSaplingSpends, nSaplingOutputs,
+    // nOrchardActions — three zero CompactSizes, nothing else
+    // (value balances / anchors / proofs exist only when the
+    // corresponding bundle is non-empty).
+    Uint8Array.from([0, 0, 0]),
+  );
+  const txid = Buffer.from(zecTxidDigest(fields)).reverse().toString("hex");
+  return { hex: Buffer.from(raw).toString("hex"), txid };
+}
+/** Parse a serialized v5 transaction and compute its ZIP-244
+ *  txid — the reproduction path the pinned test runs against a
+ *  real mainnet transaction. Transparent-only: a transaction
+ *  carrying Sapling/Orchard components throws (Fluid never
+ *  builds them, and half-parsing one would be a lie). */
+export function zecTxidFromRaw(rawHex) {
+  const buf = Buffer.from(String(rawHex || "").trim(), "hex");
+  if (!buf.length) throw new Error("Empty transaction.");
+  let off = 0;
+  const u32 = () => { const v = buf.readUInt32LE(off); off += 4; return v; };
+  const varint = () => { const b = buf[off++]; if (b < 0xfd) return b; if (b === 0xfd) { const v = buf.readUInt16LE(off); off += 2; return v; } if (b === 0xfe) { const v = buf.readUInt32LE(off); off += 4; return v; } const v = Number(buf.readBigUInt64LE(off)); off += 8; return v; };
+  const take = (n) => { const b = buf.subarray(off, off + n); off += n; return b; };
+  const version = u32();
+  if (version !== 0x80000005) throw new Error("Not a version-5 Zcash transaction.");
+  const groupId = u32();
+  if (groupId !== ZEC_VERSION_GROUP_ID) throw new Error("Unexpected Zcash version group.");
+  const branchId = u32(), locktime = u32(), expiryHeight = u32();
+  const inputs = [];
+  const nIn = varint();
+  for (let i = 0; i < nIn; i++) {
+    const prevHash = take(32); const vout = u32(); const sl = varint(); off += sl; const sequence = u32();
+    inputs.push({ txid: Buffer.from(prevHash).reverse().toString("hex"), vout, sequence });
+  }
+  const outputs = [];
+  const nOut = varint();
+  for (let i = 0; i < nOut; i++) {
+    const value = buf.readBigInt64LE(off); off += 8;
+    const sl = varint(); const script = take(sl);
+    outputs.push({ valueSat: Number(value), script: Uint8Array.from(script) });
+  }
+  const nSaplingSpends = varint(), nSaplingOutputs = varint(), nOrchardActions = varint();
+  if (nSaplingSpends || nSaplingOutputs || nOrchardActions) {
+    throw new Error("Shielded components are out of scope for this parser.");
+  }
+  return Buffer.from(zecTxidDigest({ branchId, locktime, expiryHeight, inputs, outputs })).reverse().toString("hex");
+}
+export function formatZcashSendIntent({ amount, to, feeZec, feeUsd, note }) {
+  return `Send ${amount} ZEC to ${to} on Zcash. Network fee about ${feeZec} ZEC${feeUsd ? ` (${feeUsd})` : ""}.${note ? ` Note: ${note}.` : ""} Confirm?`;
+}
+/** Relay a signed Zcash v5 transaction through Blockchair's
+ *  push endpoint (preflight-verified in research; the broadcast
+ *  itself is unverified until a first funded send — see the
+ *  section note). Returns the txid Blockchair reports. */
+export async function broadcastZcashTx(txHex) {
+  return blockchairPushTx("zcash", txHex);
+}
+/** Build + sign a ZEC payment WITHOUT broadcasting, so the
+ *  review sheet shows the EXACT ZIP-317 fee; confirming relays
+ *  these exact bytes (audit H1 pattern). UTXOs come from the
+ *  Blockchair dashboard (confirmed only, largest first); the
+ *  expiry height is the live tip + ZEC_TX_EXPIRY_DELTA. */
+export async function planZcashSend(phrase, { to, amountZec, account = 0 }) {
+  const { privateKey, pub, address, script } = zecKeys(phrase, account);
+  if (!isValidZcashAddress(to)) throw new Error("That is not a valid Zcash transparent address.");
+  const amountZats = Math.round(Number(amountZec) * 1e8);
+  if (!(amountZats > 0)) throw new Error("Enter an amount.");
+  if (amountZats < ZEC_DUST_ZATS) throw new Error("That amount is below Zcash's dust limit (0.00000546 ZEC).");
+  const [dash, tip] = await Promise.all([fetchBlockchairDashboard("zcash", address), fetchZcashTipHeight()]);
+  const utxos = dash.utxos.filter(u => u.blockId > 0).sort((a, b) => b.valueSat - a.valueSat);
+  if (!utxos.length) throw new Error("No confirmed ZEC available to spend yet.");
+  const picked = []; let sum = 0, feeZats = 0;
+  for (const u of utxos) {
+    picked.push(u); sum += u.valueSat;
+    feeZats = zecFeeZats(picked.length, 2);
+    if (sum >= amountZats + feeZats) break;
+  }
+  if (sum < amountZats + feeZats) throw new Error("Not enough confirmed ZEC to cover the amount plus network fee.");
+  let change = sum - amountZats - feeZats;
+  const outputs = [{ address: to, valueSat: amountZats }];
+  if (change >= ZEC_DUST_ZATS) outputs.push({ address, valueSat: change });
+  else change = 0; // sub-dust change folds into the fee (still ≥ the ZIP-317 minimum for the built shape)
+  const built = buildZecTransparentTx({
+    privateKey, pubKey: pub,
+    inputs: picked.map(u => ({ txid: u.txid, vout: u.vout, valueSat: u.valueSat, scriptPubKey: script })),
+    outputs,
+    expiryHeight: tip + ZEC_TX_EXPIRY_DELTA,
+  });
+  const actualFee = sum - outputs.reduce((s, o) => s + o.valueSat, 0);
+  return { hex: built.hex, txid: built.txid, feeZats: actualFee, feeZec: actualFee / 1e8, expiryHeight: tip + ZEC_TX_EXPIRY_DELTA, from: address };
+}
+/** Build, sign and broadcast a ZEC payment. Returns
+ *  { txid, feeZec }. */
+export async function sendZcash(phrase, opts) {
+  const plan = await planZcashSend(phrase, opts);
+  const txid = await broadcastZcashTx(plan.hex);
+  return { txid: txid || plan.txid, feeZec: plan.feeZec };
 }
 
 // ---------- Bitcoin Cash (same seed, BIP44 coin type 145, CashAddr) ----------
@@ -4026,6 +4572,8 @@ export const RECEIVE_NETWORKS = [
   { id: "litecoin", name: "Litecoin", aliases: ["ltc", "litecoin"] },
   { id: "dogecoin", name: "Dogecoin", aliases: ["doge", "dogecoin"] },
   { id: "bitcoincash", name: "Bitcoin Cash", aliases: ["bch", "bitcoin cash", "bitcoincash"] },
+  { id: "zcash", name: "Zcash", aliases: ["zec", "zcash"] },
+  { id: "dash", name: "Dash", aliases: ["dash"] },
   ...COSMOS_CHAINS.map(c => ({
     id: c.key, name: c.name, sub: c.legacy ? "Cosmos · legacy" : "Cosmos",
     aliases: [c.symbol.toLowerCase(), c.name.toLowerCase(), "cosmos", ...(COSMOS_RECEIVE_ALIASES[c.key] || [])],
@@ -7515,6 +8063,11 @@ export const DYDX_SWAP_CHAIN_ID = 20000000000016;
  *  2026-11-15): the 1Click table's seventh family; ADA
  *  itself is the only Cardano asset this slice. */
 export const CARDANO_SWAP_CHAIN_ID = 20000000000017;
+/** Zcash + Dash sentinel swap chain ids (audit gap #8,
+ *  2026-11-15): the 1Click table's eighth and ninth families;
+ *  each family's native coin is its only asset this slice. */
+export const ZCASH_SWAP_CHAIN_ID = 20000000000018;
+export const DASH_SWAP_CHAIN_ID = 20000000000019;
 /** The six 1Click families' native coins' "addresses" in the
  *  swap universe (mirroring Bitcoin's "btc" / DOT's "dot"):
  *  native coins have no contract, so routes name them by
@@ -7526,6 +8079,8 @@ export const DOGECOIN_SWAP_NATIVE_TOKEN = "doge";
 export const BITCOINCASH_SWAP_NATIVE_TOKEN = "bch";
 export const APTOS_SWAP_NATIVE_TOKEN = "apt";
 export const CARDANO_SWAP_NATIVE_TOKEN = "ada";
+export const ZCASH_SWAP_NATIVE_TOKEN = "zec";
+export const DASH_SWAP_NATIVE_TOKEN = "dash";
 /** Native GRAM's "address" in the swap universe: Relay names
  *  TON's native coin by the friendly zero address (its sole
  *  TON currency, live-probed 2026-11-14). The coin displays
@@ -7552,6 +8107,8 @@ export function swapChainOf(chainKey) {
   if (chainKey === "injective") return { chainId: INJECTIVE_SWAP_CHAIN_ID, name: "Injective" };
   if (chainKey === "dydx") return { chainId: DYDX_SWAP_CHAIN_ID, name: "dYdX" };
   if (chainKey === "cardano") return { chainId: CARDANO_SWAP_CHAIN_ID, name: "Cardano" };
+  if (chainKey === "zcash") return { chainId: ZCASH_SWAP_CHAIN_ID, name: "Zcash" };
+  if (chainKey === "dash") return { chainId: DASH_SWAP_CHAIN_ID, name: "Dash" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -8137,6 +8694,11 @@ const ONECLICK_ASSETS = [
   { chainKey: "dogecoin", address: DOGECOIN_SWAP_NATIVE_TOKEN, asset: "nep141:doge.omft.near", symbol: "DOGE", decimals: 8, native: true },
   { chainKey: "bitcoincash", address: BITCOINCASH_SWAP_NATIVE_TOKEN, asset: "nep141:bch.omft.near", symbol: "BCH", decimals: 8, native: true },
   { chainKey: "cardano", address: CARDANO_SWAP_NATIVE_TOKEN, asset: "nep141:cardano.omft.near", symbol: "ADA", decimals: 6, native: true },
+  // Zcash + Dash (audit gap #8, 2026-11-15): asset ids and
+  // decimals read off 1Click's live token catalogue in the
+  // research probe; both chains are transparent/native-only.
+  { chainKey: "zcash", address: ZCASH_SWAP_NATIVE_TOKEN, asset: "nep141:zec.omft.near", symbol: "ZEC", decimals: 8, native: true },
+  { chainKey: "dash", address: DASH_SWAP_NATIVE_TOKEN, asset: "nep141:dash.omft.near", symbol: "DASH", decimals: 8, native: true },
   { chainKey: "aptos", address: APTOS_SWAP_NATIVE_TOKEN, asset: "nep141:aptos.omft.near", symbol: "APT", decimals: 8, native: true },
   { chainKey: "aptos", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", asset: "nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near", symbol: "USDC", decimals: 6, stable: true },
   { chainKey: "aptos", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", asset: "nep141:aptos-88cb7619440a914fe6400149a12b443c3ac21d59.omft.near", symbol: "USDT", decimals: 6, stable: true },
@@ -8288,7 +8850,12 @@ async function fetchOneClickQuote(ctx, { feeRequest = null, feeRecipient = null,
       e.oneclickBelowFloor = { asset: ctx.fromEntry.symbol, minRaw: floor[1], minHuman: human };
       throw e;
     }
-    if (/quoting for this pair is not available|failed to get quote/i.test(message)) return null;
+    // "No liquidity available" is a NO-ROUTE state, not a search
+    // failure (gap #8 research, 2026-11-15: DASH-in above ~$1
+    // answers exactly this — thin solver inventory, which may
+    // refill). It reads as an honest no-route everywhere 1Click
+    // is used, never as a user-facing error card.
+    if (/quoting for this pair is not available|failed to get quote|no liquidity available/i.test(message)) return null;
     throw new Error(`1Click route search failed (HTTP ${res.status}).`);
   }
   const q = data?.quote;
@@ -8592,6 +9159,8 @@ function oneClickDepositAddressOk(chainKey, address) {
     case "dogecoin": return isValidDogeAddress(address);
     case "bitcoincash": return isValidBchAddress(address);
     case "cardano": return isValidCardanoAddress(address);
+    case "zcash": return isValidZcashAddress(address);
+    case "dash": return isValidDashAddress(address);
     case "aptos": return isValidAptosAddress(address);
     case "bitcoin": return isValidBitcoinAddress(address);
     case "solana": return isValidSolanaAddress(address);
@@ -8632,6 +9201,8 @@ async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTa
     // Cardano: the quoted amount rides as exact lovelace
     // (amountRaw IS lovelace at 6 decimals) — no float path.
     case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));
+    case "zcash": return hashOf(await sendZcash(phrase, { to, amountZec: Number(human) }));
+    case "dash": return hashOf(await sendDash(phrase, { to, amountDash: Number(human) }));
     case "aptos": return hashOf(await sendAptos(phrase, { to, amount: human, token }));
     case "bitcoin": return hashOf(await sendBitcoin(phrase, { to, amountBtc: Number(human) }));
     case "solana": return hashOf(await sendSolana(phrase, { to, amount: Number(human), token }));
@@ -20848,6 +21419,8 @@ export function destChainName(chainKey) {
   if (chainKey === "dogecoin") return "Dogecoin";
   if (chainKey === "bitcoincash") return "Bitcoin Cash";
   if (chainKey === "cardano") return "Cardano";
+  if (chainKey === "zcash") return "Zcash";
+  if (chainKey === "dash") return "Dash";
   if (chainKey === "aptos") return "Aptos";
   if (chainKey === "cosmoshub") return "Cosmos Hub";
   if (chainKey === "osmosis") return "Osmosis";
@@ -20873,6 +21446,8 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "dogecoin") return a.toLowerCase() === DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return a.toLowerCase() === BITCOINCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "cardano") return a.toLowerCase() === CARDANO_SWAP_NATIVE_TOKEN;
+  if (chainKey === "zcash") return a.toLowerCase() === ZCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "dash") return a.toLowerCase() === DASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return a.toLowerCase() === APTOS_SWAP_NATIVE_TOKEN;
   const skipC = skipChainOf(chainKey);
   if (skipC) return a === skipC.denom;
@@ -20892,6 +21467,8 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "dogecoin") return DOGECOIN_SWAP_NATIVE_TOKEN;
   if (chainKey === "bitcoincash") return BITCOINCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "cardano") return CARDANO_SWAP_NATIVE_TOKEN;
+  if (chainKey === "zcash") return ZCASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "dash") return DASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
   const skipC2 = skipChainOf(chainKey);
   if (skipC2) return skipC2.denom;
@@ -20954,6 +21531,8 @@ export async function readDestNativeRaw(chainKey, address) {
     if (chainKey === "dogecoin") return BigInt(Math.round((await getDogecoinBalance(address)) * 1e8));
     if (chainKey === "bitcoincash") return BigInt(Math.round((await getBitcoinCashBalance(address)) * 1e8));
     if (chainKey === "cardano") return getCardanoBalanceLovelace(address);
+    if (chainKey === "zcash") return BigInt(Math.round((await getZcashBalance(address)) * 1e8));
+    if (chainKey === "dash") return BigInt(Math.round((await getDashBalance(address)) * 1e8));
     if (chainKey === "aptos") return BigInt(await aptosAssetBalanceRaw(address, null));
     // Cosmos slice-1 natives (Skip rail, 2026-11-15): the
     // chain's own bank read by its native denom.
@@ -21505,6 +22084,8 @@ export function tokenSymbolOn(chainKey, tokenAddress) {
   if (chainKey === "dogecoin") return "DOGE";
   if (chainKey === "bitcoincash") return "BCH";
   if (chainKey === "cardano") return "ADA";
+  if (chainKey === "zcash") return "ZEC";
+  if (chainKey === "dash") return "DASH";
   if (chainKey === "near") {
     if (tokenAddress == null || String(tokenAddress).toLowerCase() === NEAR_SWAP_NATIVE_TOKEN) return "NEAR";
     const t = NEAR_TOKENS.find(x => String(x.address).toLowerCase() === String(tokenAddress).toLowerCase());
@@ -21567,6 +22148,8 @@ export function swapAddressBookEntry(book, chainKey) {
   if (chainKey === "dogecoin") return isValidDogeAddress(a) ? a : null;
   if (chainKey === "bitcoincash") return isValidBchAddress(a) ? a : null;
   if (chainKey === "cardano") return isValidCardanoAddress(a) ? a : null;
+  if (chainKey === "zcash") return isValidZcashAddress(a) ? a : null;
+  if (chainKey === "dash") return isValidDashAddress(a) ? a : null;
   if (chainKey === "aptos") { try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
   if (skipChainOf(chainKey)) return isValidCosmosAddress(a, chainKey) ? a : null;
   return a;
@@ -21610,6 +22193,8 @@ export function swapOwnAddressFor(chainKey, own) {
     case "dogecoin": return isValidDogeAddress(own.dogecoin || "") ? own.dogecoin : null;
     case "bitcoincash": return isValidBchAddress(own.bitcoincash || "") ? own.bitcoincash : null;
     case "cardano": return isValidCardanoAddress(own.cardano || "") ? own.cardano : null;
+    case "zcash": return isValidZcashAddress(own.zcash || "") ? own.zcash : null;
+    case "dash": return isValidDashAddress(own.dash || "") ? own.dash : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     // The Cosmos slice-1 chains (Skip rail, 2026-11-15): the
@@ -22936,7 +23521,7 @@ function milestoneLegTokenDecimals(record, legIndex, side) {
     if (chainKey === "near") return tokenAddress == null || String(tokenAddress).toLowerCase() === NEAR_SWAP_NATIVE_TOKEN ? 24
       : (NEAR_TOKENS.find(t => String(t.address).toLowerCase() === String(tokenAddress).toLowerCase())?.decimals ?? 6);
     if (chainKey === "xrpl") return 6;
-    if (chainKey === "litecoin" || chainKey === "dogecoin" || chainKey === "bitcoincash") return 8;
+    if (chainKey === "litecoin" || chainKey === "dogecoin" || chainKey === "bitcoincash" || chainKey === "zcash" || chainKey === "dash") return 8;
     if (chainKey === "aptos") return tokenAddress == null || String(tokenAddress).toLowerCase() === APTOS_SWAP_NATIVE_TOKEN ? 8
       : (APTOS_TOKENS.find(t => String(t.address).toLowerCase() === String(tokenAddress).toLowerCase())?.decimals ?? 6);
     const skc = skipChainOf(chainKey);
@@ -28861,7 +29446,7 @@ export function dropLegacyBalanceCache(storage) {
   } catch { return false; }
 }
 const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks"];
-const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal"];
+const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal", "zecBal", "dashBal"];
 
 /** Serialise a balance snapshot for the cache. `snap` is the app's
  *  plain-data balance state: { evmNetwork, evmRows, rows: {family:
