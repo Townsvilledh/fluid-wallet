@@ -28967,11 +28967,47 @@ export function sortHomeRows(items, amountOf, valueOf) {
  * L1 Outbox executing the L2→L1 message after the ~7-day
  * challenge period; the initiation receipt's ArbSys
  * L2ToL1Tx event carries every field that execution needs,
- * and the move record persists all of them. */
+ * and the move record persists all of them.
+ *
+ * CLAIM EXECUTION (2026-11-15 follow-up, research
+ * research_notes/fluid-ladys-claim-20261115/ — every mechanic
+ * verified against the deployed contracts and real
+ * transactions): executing the message IS the whole claim —
+ * the message's destination is the L1 ERC20 Gateway and its
+ * data is finalizeInboundTransfer, which releases the token.
+ * Two shipped assumptions were stale and are repaired here:
+ * (1) the ArbOS L2ToL1Tx event CHANGED SHAPE (BoLD era) —
+ * batchNumber/indexInBatch no longer exist; the global send
+ * index is now `position` (topic 3), and the item hash is a
+ * named field (topic 2). The classic-ABI parser matched no
+ * real log, so real records carried message: null; they
+ * self-heal by re-deriving the payload from the record's
+ * txHash (repair-on-read, integrity-checked against the
+ * event's own item hash). (2) The gateway's
+ * WithdrawalInitiated event indexes (from, to, exitId) —
+ * the shipped all-in-data ABI decoded garbage from real
+ * receipts. Readiness for a claim is PROBED on-chain (the
+ * Outbox's isSpent, a confirmed send root covering the
+ * position, a NodeInterface proof whose send/root reproduce
+ * the confirmed root, and an eth_call simulation of the
+ * exact claim), never read off the wall clock: the +7d
+ * claimableAt stays the displayed estimate only. */
 
 export const ARBITRUM_GATEWAY_ROUTER = "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933";
 export const ARBITRUM_ERC20_GATEWAY = "0x09e9222E96E7B4AE2a407B98d48e330053351EEe";
 export const ARBSYS_ADDRESS = "0x0000000000000000000000000000000000000064";
+/** The L1 side of the claim, pinned (claim research
+ *  2026-11-15, verified three ways — Arbitrum docs, the
+ *  official SDK's network table, and live calls): the
+ *  current Outbox ("Outbox 4", a proxy — the ADDRESS is the
+ *  pin; Bridge.activeOutbox() returns 0x0 on the current
+ *  bridge, so it is never discovered that way), the L1 ERC20
+ *  Gateway a standard withdrawal's message is addressed to,
+ *  and the NodeInterface precompile that builds outbox
+ *  proofs. */
+export const ARBITRUM_OUTBOX = "0x0B9857ae2D4A3DBe74ffE1d7DF045bb7F96E4840";
+export const ARBITRUM_L1_ERC20_GATEWAY = "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC";
+export const NODE_INTERFACE_ADDRESS = "0x00000000000000000000000000000000000000C8";
 /** The Arbitrum challenge period, as the honest user-facing
  *  figure: a withdrawal becomes claimable roughly seven days
  *  after initiation (the L1 assertion confirming its batch
@@ -29018,10 +29054,31 @@ const GATEWAY_ROUTER_ABI = [
   "function getGateway(address l1Token) view returns (address)",
 ];
 const ARBSYS_ABI = [
-  "event L2ToL1Tx(address caller, address indexed destination, uint256 indexed uniqueId, uint256 indexed batchNumber, uint256 indexInBatch, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data)",
+  // The CURRENT ArbOS event shape (BoLD era, SDK 4.1 ABI;
+  // topic0 0x3e7aafa7…). The classic shape's batchNumber /
+  // indexInBatch fields no longer exist — the global send
+  // index is `position`, and the item hash is explicit.
+  "event L2ToL1Tx(address caller, address indexed destination, uint256 indexed hash, uint256 indexed position, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data)",
 ];
 const ERC20_GATEWAY_EVENTS_ABI = [
-  "event WithdrawalInitiated(address l1Token, address from, address to, uint256 exitId, uint256 exitNum, uint256 amount)",
+  // (from, to, exitId) are INDEXED in the deployed event
+  // (verified against a real receipt, 2026-11-15); the
+  // all-in-data layout the first build shipped decoded
+  // garbage from real logs.
+  "event WithdrawalInitiated(address l1Token, address indexed from, address indexed to, uint256 indexed exitId, uint256 exitNum, uint256 amount)",
+];
+const OUTBOX_ABI = [
+  "function executeTransaction(bytes32[] proof, uint256 index, address l2Sender, address to, uint256 l2Block, uint256 l1Block, uint256 l2Timestamp, uint256 value, bytes data)",
+  "function isSpent(uint256 index) view returns (bool)",
+  "function roots(bytes32 root) view returns (uint256)",
+  "function calculateItemHash(address l2Sender, address to, uint256 l2Block, uint256 l1Block, uint256 l2Timestamp, uint256 value, bytes data) view returns (bytes32)",
+  "function calculateMerkleRoot(bytes32[] proof, uint256 index, bytes32 item) view returns (bytes32)",
+];
+const NODE_INTERFACE_ABI = [
+  // The uint64 typing is load-bearing: the selector differs
+  // from a uint256-typed signature, and a uint256-typed call
+  // reverts bare against the precompile.
+  "function constructOutboxProof(uint64 size, uint64 leaf) view returns (bytes32 send, bytes32 root, bytes32[] proof)",
 ];
 
 /** The exact initiation calldata for a Move: the router's
@@ -29190,11 +29247,12 @@ export function bridgeMoveHistoryLine(record, nowMs = Date.now()) {
 
 /** Extract the claim payload from an initiation receipt:
  *  the ArbSys L2ToL1Tx event (every field the L1 Outbox
- *  execution consumes, with the proof derivable from the
- *  batch number + index) and the gateway's
- *  WithdrawalInitiated id. Returns nulls when a log is
- *  absent — the record still stands on the tx hash, from
- *  which the whole event set can be re-read. */
+ *  execution consumes — the proof is built from the
+ *  message's `position`, the global send index) and the
+ *  gateway's WithdrawalInitiated id. Returns nulls when a
+ *  log is absent — the record still stands on the tx hash,
+ *  from which the whole event set can be re-read (see
+ *  repairBridgeMoveRecord). */
 export function parseMoveReceipt(receipt) {
   const out = { message: null, withdrawalId: null };
   if (!receipt || !Array.isArray(receipt.logs)) return out;
@@ -29205,10 +29263,16 @@ export function parseMoveReceipt(receipt) {
       if (String(log.address).toLowerCase() === ARBSYS_ADDRESS.toLowerCase() && !out.message) {
         const p = arbIface.parseLog(log);
         if (p && p.name === "L2ToL1Tx") {
+          // The indexed `hash` arrives as a uint256; render
+          // it as the bytes32 it is. `uniqueId` keeps the
+          // old record slot's meaning — under the current
+          // event shape the unique id IS the item hash.
+          const hashHex = "0x" + BigInt(p.args.hash).toString(16).padStart(64, "0");
           out.message = {
             caller: p.args.caller, destination: p.args.destination,
-            uniqueId: p.args.uniqueId.toString(), batchNumber: p.args.batchNumber.toString(),
-            indexInBatch: p.args.indexInBatch.toString(), arbBlockNum: p.args.arbBlockNum.toString(),
+            hash: hashHex, uniqueId: BigInt(p.args.hash).toString(),
+            position: p.args.position.toString(),
+            arbBlockNum: p.args.arbBlockNum.toString(),
             ethBlockNum: p.args.ethBlockNum.toString(), timestamp: p.args.timestamp.toString(),
             callvalue: p.args.callvalue.toString(), data: p.args.data,
           };
@@ -29220,6 +29284,58 @@ export function parseMoveReceipt(receipt) {
     } catch { /* a foreign log — not one of ours */ }
   }
   return out;
+}
+
+/** The message's item hash, computed locally exactly as the
+ *  Outbox's calculateItemHash does (keccak256 over the
+ *  packed fields with the message data raw — verified
+ *  byte-equal against the Outbox on a real message,
+ *  2026-11-15). The event's own `hash` field IS this value,
+ *  so a re-parsed payload whose fields don't reproduce it
+ *  is not this message. */
+export function calculateMoveItemHash(message) {
+  if (!message) return null;
+  try {
+    const u256 = (v) => ethers.zeroPadValue(ethers.toBeHex(BigInt(v)), 32);
+    return ethers.keccak256(ethers.concat([
+      ethers.getAddress(message.caller), ethers.getAddress(message.destination),
+      u256(message.arbBlockNum), u256(message.ethBlockNum),
+      u256(message.timestamp), u256(message.callvalue),
+      message.data,
+    ]));
+  } catch { return null; }
+}
+
+/** A record carries a usable claim payload when its message
+ *  was parsed under the CURRENT event shape (position
+ *  present). Records written by the first build — whose
+ *  classic-ABI parser matched no real log — carry null. */
+export function moveMessageComplete(record) {
+  return !!record?.message && record.message.position != null
+    && typeof record.message.data === "string" && typeof record.message.hash === "string";
+}
+
+/** REPAIR-ON-READ: a record whose claim payload is missing
+ *  re-derives it from its own initiation tx hash — re-read
+ *  the receipt, parse the CURRENT event, and verify the
+ *  re-parsed fields reproduce the event's item hash before
+ *  trusting them. Nothing about a stale record is stranded:
+ *  the hash was always sufficient. Persists the repaired
+ *  record when storage is given; returns the (possibly
+ *  unchanged) record either way. */
+export async function repairBridgeMoveRecord(record, l2Provider = null, { storage = null } = {}) {
+  if (!record || moveMessageComplete(record)) return record;
+  const p = l2Provider || providerFor(record.fromChainKey || "arbitrum");
+  let receipt = null;
+  try { receipt = await p.getTransactionReceipt(record.txHash); } catch { receipt = null; }
+  if (!receipt) return record;
+  const parsed = parseMoveReceipt(receipt);
+  if (!parsed.message) return record;
+  const itemHash = calculateMoveItemHash(parsed.message);
+  if (!itemHash || itemHash.toLowerCase() !== String(parsed.message.hash).toLowerCase()) return record;
+  const repaired = { ...record, message: parsed.message, withdrawalId: record.withdrawalId ?? parsed.withdrawalId };
+  if (storage) saveBridgeMoveRecord(storage, repaired);
+  return repaired;
 }
 
 /** Execute a Move's initiation: verify the live gateway pin,
@@ -29280,6 +29396,301 @@ export async function executeBridgeMove(wallet, pair, amountRaw, { storage = nul
   };
   if (storage) saveBridgeMoveRecord(storage, record);
   return record;
+}
+
+/** The Move pair for a stored record, or null. */
+export function movePairById(pairId) {
+  return BRIDGED_MOVE_PAIRS.find(p => p.id === pairId) || null;
+}
+
+/* ---------- Move claims (L1 Outbox execution) ---------- */
+
+/** One view call through a provider's raw eth_call seam —
+ *  the same seam the test stubs implement. */
+async function ethCallView(provider, to, iface, fn, args, from = undefined) {
+  const data = iface.encodeFunctionData(fn, args);
+  const out = await provider.call(from ? { to, data, from } : { to, data });
+  const res = iface.decodeFunctionResult(fn, out);
+  return res.length === 1 ? res[0] : res;
+}
+
+const ALREADY_SPENT_SELECTOR = ethers.keccak256(ethers.toUtf8Bytes("AlreadySpent(uint256)")).slice(0, 10).toLowerCase();
+const UNKNOWN_ROOT_SELECTOR = ethers.keccak256(ethers.toUtf8Bytes("UnknownRoot(bytes32)")).slice(0, 10).toLowerCase();
+function revertSelector(e) {
+  const d = e?.data ?? e?.info?.error?.data ?? null;
+  return typeof d === "string" && d.length >= 10 ? d.slice(0, 10).toLowerCase() : null;
+}
+
+/** Find a CONFIRMED send size covering `position`: walk L2
+ *  block headers back from the tip (headers carry sendRoot
+ *  + sendCount) and test each root against the L1 Outbox's
+ *  roots() — a root is written there only when the rollup's
+ *  assertion confirms, so a hit is the protocol's own word
+ *  that the tree at that size is final. Returns
+ *  { size, root } or null when no confirmed tree yet covers
+ *  the position (still waiting, whatever the clock says). */
+export async function findConfirmedSendSize(position, l2Provider, l1Provider) {
+  const pos = BigInt(position);
+  const ob = new ethers.Interface(OUTBOX_ABI);
+  let tip = null;
+  try { tip = await l2Provider.getBlockNumber(); } catch { return null; }
+  const BACK_STEPS = [0, 250000, 750000, 1500000, 2500000, 4000000, 6000000, 9000000, 13000000, 18000000, 26000000];
+  const tested = new Set();
+  for (const back of BACK_STEPS) {
+    const n = Number(tip) - back;
+    if (n < 0) break;
+    let hdr = null;
+    try { hdr = await l2Provider.send("eth_getBlockByNumber", ["0x" + n.toString(16), false]); } catch { hdr = null; }
+    if (!hdr || !hdr.sendRoot || hdr.sendCount == null) continue;
+    let size = null;
+    try { size = BigInt(hdr.sendCount); } catch { continue; }
+    // Walking back only shrinks the tree: once a header's
+    // size no longer covers the position, no older header
+    // can either — the confirmed frontier is behind it.
+    if (size <= pos) return null;
+    const root = String(hdr.sendRoot).toLowerCase();
+    if (tested.has(root)) continue;
+    tested.add(root);
+    let confirmedAt = 0n;
+    try { confirmedAt = BigInt(await ethCallView(l1Provider, ARBITRUM_OUTBOX, ob, "roots", [hdr.sendRoot])); } catch { confirmedAt = 0n; }
+    if (confirmedAt !== 0n) return { size: size.toString(), root: String(hdr.sendRoot) };
+  }
+  return null;
+}
+
+/** Build + verify the outbox proof for a record's message
+ *  at a confirmed size (NodeInterface.constructOutboxProof,
+ *  uint64-typed). Every assertion the research proved is
+ *  enforced before the proof is trusted: the returned send
+ *  must equal the message's item hash (computed locally AND
+ *  carried by the event), the returned root must equal the
+ *  confirmed root, and the Outbox's own calculateMerkleRoot
+ *  must reproduce that root from the proof. Returns
+ *  { proof, size, root, send }, or null when no confirmed
+ *  size covers the message yet. */
+export async function fetchMoveClaimProof(record, { l2Provider = null, l1Provider = null, confirmed = null } = {}) {
+  const msg = record?.message;
+  if (!moveMessageComplete(record)) throw new Error("This move's claim data isn't readable yet — your tokens stay claimable; try again in a moment.");
+  const l2 = l2Provider || providerFor(record.fromChainKey || "arbitrum");
+  const l1 = l1Provider || providerFor(record.toChainKey || "ethereum");
+  const conf = confirmed || await findConfirmedSendSize(msg.position, l2, l1);
+  if (!conf) return null;
+  const ni = new ethers.Interface(NODE_INTERFACE_ABI);
+  const res = await ethCallView(l2, NODE_INTERFACE_ADDRESS, ni, "constructOutboxProof", [BigInt(conf.size), BigInt(msg.position)]);
+  const [send, root, proof] = res;
+  const refuse = (m) => new Error("Fluid refused this claim: " + m + " Your tokens stay claimable.");
+  const itemHash = calculateMoveItemHash(msg);
+  if (!itemHash || String(send).toLowerCase() !== itemHash.toLowerCase() || String(send).toLowerCase() !== String(msg.hash).toLowerCase())
+    throw refuse("the bridge proof didn't match this move's record.");
+  if (String(root).toLowerCase() !== String(conf.root).toLowerCase())
+    throw refuse("the bridge proof's root didn't match the confirmed root.");
+  const ob = new ethers.Interface(OUTBOX_ABI);
+  const reproduced = await ethCallView(l1, ARBITRUM_OUTBOX, ob, "calculateMerkleRoot", [[...proof], BigInt(msg.position), itemHash]);
+  if (String(reproduced).toLowerCase() !== String(conf.root).toLowerCase())
+    throw refuse("the bridge proof didn't reproduce the confirmed root.");
+  return { proof: [...proof].map(String), size: String(conf.size), root: String(conf.root), send: String(send) };
+}
+
+/** The exact claim calldata: the Outbox's executeTransaction
+ *  fed entirely from the record's persisted message. */
+export function buildClaimCalldata(record, proof) {
+  const msg = record.message;
+  return new ethers.Interface(OUTBOX_ABI).encodeFunctionData("executeTransaction", [
+    proof, BigInt(msg.position), msg.caller, msg.destination,
+    BigInt(msg.arbBlockNum), BigInt(msg.ethBlockNum), BigInt(msg.timestamp), BigInt(msg.callvalue),
+    msg.data,
+  ]);
+}
+
+/** Inspect-before-sign for a claim (the checkMoveCalldata
+ *  discipline): decode the executeTransaction calldata and
+ *  verify every field against the record and the verified
+ *  pair — the index is the record's position; the L2 sender
+ *  is the STANDARD L2 GATEWAY (for a gateway withdrawal the
+ *  message's sender is the gateway contract, not the user —
+ *  proven by every real claim); the destination is the
+ *  pinned L1 gateway; the message fields equal the record's;
+ *  and the payload decodes as finalizeInboundTransfer
+ *  releasing the pair's pinned L1 token, from the user, to
+ *  the user, in exactly the moved amount. */
+export function checkClaimCalldata(record, pair, data) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this claim: " + m });
+  if (!pair || pair.bridge !== "arbitrum-canonical") return refuse("the move's pair is not a canonical-bridge move Fluid has verified.");
+  const msg = record?.message;
+  if (!moveMessageComplete(record)) return refuse("the move's claim data is missing.");
+  if (typeof data !== "string" || !/^0x[0-9a-fA-F]+$/.test(data))
+    return refuse("the claim call carried calldata Fluid couldn't inspect.");
+  let dec = null;
+  try { dec = new ethers.Interface(OUTBOX_ABI).decodeFunctionData("executeTransaction", data); }
+  catch { return refuse("the claim call did not decode as an Outbox execution."); }
+  const [, index, l2Sender, to, l2Block, l1Block, l2Timestamp, value, msgData] = dec;
+  if (BigInt(index) !== BigInt(msg.position))
+    return refuse("the claim's index is not this move's position in the bridge queue.");
+  if (String(l2Sender).toLowerCase() !== ARBITRUM_ERC20_GATEWAY.toLowerCase()
+    || String(msg.caller).toLowerCase() !== ARBITRUM_ERC20_GATEWAY.toLowerCase())
+    return refuse("the claim's L2 sender is not the standard gateway that made this move.");
+  if (String(to).toLowerCase() !== ARBITRUM_L1_ERC20_GATEWAY.toLowerCase()
+    || String(msg.destination).toLowerCase() !== ARBITRUM_L1_ERC20_GATEWAY.toLowerCase())
+    return refuse("the claim's destination is not the L1 gateway Fluid verified.");
+  if (BigInt(l2Block) !== BigInt(msg.arbBlockNum) || BigInt(l1Block) !== BigInt(msg.ethBlockNum)
+    || BigInt(l2Timestamp) !== BigInt(msg.timestamp) || BigInt(value) !== BigInt(msg.callvalue))
+    return refuse("the claim's message fields do not match this move's record.");
+  let fin = null;
+  try {
+    fin = new ethers.Interface(["function finalizeInboundTransfer(address l1Token, address from, address to, uint256 amount, bytes data)"])
+      .decodeFunctionData("finalizeInboundTransfer", msgData);
+  } catch { return refuse("the claim's payload did not decode as the gateway's finalise call."); }
+  if (String(fin[0]).toLowerCase() !== String(pair.toToken).toLowerCase())
+    return refuse("the claim would release a different token than this move's original.");
+  if (String(fin[1]).toLowerCase() !== String(record.to).toLowerCase())
+    return refuse("the claim's source account is not yours.");
+  if (String(fin[2]).toLowerCase() !== String(record.to).toLowerCase())
+    return refuse("the claim would release the tokens to someone else.");
+  let want = null;
+  try { want = BigInt(record.amountRaw); } catch { want = null; }
+  if (want == null || BigInt(fin[3]) !== want)
+    return refuse("the claim's amount did not match the amount you moved.");
+  return { ok: true };
+}
+
+/** READINESS BY PROBE — the authority for whether a move
+ *  can be claimed, in the research's exact order:
+ *  (1) Outbox.isSpent → claimed; (2) a confirmed send size
+ *  covering the position → else waiting; (3) the proof,
+ *  with its root + item-hash assertions; (4) an eth_call of
+ *  the fully built executeTransaction from the user's own
+ *  L1 address — success is executable, an AlreadySpent
+ *  revert is claimed, anything else is still waiting.
+ *  Returns { state: "waiting" | "ready" | "claimed", record,
+ *  proof?, size?, root?, reason? } — the record it returns
+ *  is the repaired one when a repair was needed. */
+export async function probeBridgeMoveClaim(record, { l2Provider = null, l1Provider = null, storage = null } = {}) {
+  if (record?.status === "claimed") return { state: "claimed", record };
+  const l2 = l2Provider || providerFor(record?.fromChainKey || "arbitrum");
+  const l1 = l1Provider || providerFor(record?.toChainKey || "ethereum");
+  let rec = record;
+  if (!moveMessageComplete(rec)) {
+    rec = await repairBridgeMoveRecord(rec, l2, { storage });
+    if (!moveMessageComplete(rec)) return { state: "waiting", reason: "unreadable", record: rec };
+  }
+  const ob = new ethers.Interface(OUTBOX_ABI);
+  let spent = false;
+  try { spent = await ethCallView(l1, ARBITRUM_OUTBOX, ob, "isSpent", [BigInt(rec.message.position)]); }
+  catch { return { state: "waiting", reason: "unreadable", record: rec }; }
+  if (spent) return { state: "claimed", record: rec };
+  const confirmed = await findConfirmedSendSize(rec.message.position, l2, l1);
+  if (!confirmed) return { state: "waiting", reason: "unconfirmed", record: rec };
+  let proofRes = null;
+  try { proofRes = await fetchMoveClaimProof(rec, { l2Provider: l2, l1Provider: l1, confirmed }); }
+  catch (e) { return { state: "waiting", reason: "proof", record: rec, error: e }; }
+  if (!proofRes) return { state: "waiting", reason: "unconfirmed", record: rec };
+  const pair = movePairById(rec.pairId);
+  const data = buildClaimCalldata(rec, proofRes.proof);
+  const bounds = checkClaimCalldata(rec, pair, data);
+  if (!bounds.ok) return { state: "waiting", reason: "bounds", record: rec, error: new Error(bounds.reason) };
+  try {
+    await l1.call({ to: ARBITRUM_OUTBOX, data, from: rec.to });
+    return { state: "ready", record: rec, proof: proofRes.proof, size: proofRes.size, root: proofRes.root };
+  } catch (e) {
+    const sel = revertSelector(e);
+    if (sel === ALREADY_SPENT_SELECTOR) return { state: "claimed", record: rec };
+    return { state: "waiting", reason: sel === UNKNOWN_ROOT_SELECTOR ? "unconfirmed" : "simulation", record: rec, error: e };
+  }
+}
+
+/** The probe-backed phase, layered over the wall-clock
+ *  bridgeMovePhase: the clock's claimableAt stays the
+ *  displayed estimate, but ready/claimed here mean the
+ *  PROTOCOL says so (a probe ran), not that a date passed.
+ *  A clock-ready move the probe finds unconfirmed reports
+ *  waiting; a probe-ready move reports ready even if the
+ *  estimate hasn't quite elapsed. */
+export async function bridgeMoveChainPhase(record, opts = {}) {
+  const clock = bridgeMovePhase(record, opts.nowMs);
+  if (clock.phase === "claimed") return { ...clock, source: "record" };
+  const probe = await probeBridgeMoveClaim(record, opts);
+  if (probe.state === "claimed") return { phase: "claimed", label: "Claimed on Ethereum", claimableAt: clock.claimableAt, msLeft: 0, source: "probe", probe };
+  if (probe.state === "ready") return { phase: "ready", label: "Ready to claim", claimableAt: clock.claimableAt, msLeft: 0, source: "probe", probe };
+  return { ...clock, phase: "waiting", source: "probe", probe };
+}
+
+/** The Ethereum-side gas estimate for a claim, computed
+ *  LIVE against the exact claim calldata from the user's
+ *  own address (the estimateMoveGas pattern — never a
+ *  hard-coded figure; sampled real claims ran 152,899–
+ *  180,655 gas, but the number shown is always this call's
+ *  own estimate). Throws when the claim isn't executable —
+ *  estimateGas reverts exactly when the simulation would. */
+export async function estimateMoveClaimGas(wallet, record, proof, provider = null) {
+  const p = provider || providerFor(record.toChainKey || "ethereum");
+  const data = buildClaimCalldata(record, proof);
+  const gas = await p.estimateGas({ from: wallet.address, to: ARBITRUM_OUTBOX, data, value: 0n });
+  const feeData = await p.getFeeData();
+  const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+  const cost = gas * gasPrice;
+  return { gasLimit: gas.toString(), gasCostWei: cost.toString(), gasNativeText: ethers.formatEther(cost) };
+}
+
+/** Execute a Move's claim on Ethereum: probe (repairing the
+ *  record first if its payload is stale) → bounds-check the
+ *  exact calldata → live gas estimate + the wallet's ETH
+ *  balance checked against it → simulate → broadcast with
+ *  0 ETH (the Outbox call is not payable) → settle against
+ *  the chain. The record is marked claimed ONLY on a
+ *  successful L1 receipt (the initiation's
+ *  resolveBroadcastOutcome discipline); a reverted claim
+ *  leaves the record ready and retryable. A move the probe
+ *  finds already spent (claimed via any other front-end,
+ *  e.g. the official bridge) reconciles to claimed without
+ *  broadcasting anything. */
+export async function executeBridgeMoveClaim(wallet, record, { storage = null, onProgress = () => {} } = {}) {
+  const pair = movePairById(record?.pairId);
+  if (!pair || pair.bridge !== "arbitrum-canonical") throw new Error("That move's pair is not a canonical-bridge move Fluid has verified.");
+  const owner = wallet.address;
+  if (String(record.to).toLowerCase() !== owner.toLowerCase()) throw new Error("This move belongs to a different wallet address.");
+  const l1Key = record.toChainKey || pair.toChainKey;
+  const l1 = providerFor(l1Key);
+  onProgress("Checking this move on Ethereum…");
+  const probe = await probeBridgeMoveClaim(record, { storage });
+  if (probe.state === "claimed") {
+    const claimed = { ...probe.record, status: "claimed" };
+    if (storage) saveBridgeMoveRecord(storage, claimed);
+    return { record: claimed, alreadyClaimed: true };
+  }
+  if (probe.state !== "ready") throw new Error("This move isn't confirmed on Ethereum yet — the wait is the protocol's, and your tokens stay claimable. Try again later.");
+  const rec = probe.record;
+  const data = buildClaimCalldata(rec, probe.proof);
+  const bounds = checkClaimCalldata(rec, pair, data);
+  if (!bounds.ok) throw new Error(bounds.reason);
+  onProgress("Pricing the claim…");
+  const est = await estimateMoveClaimGas(wallet, rec, probe.proof);
+  const bal = await l1.getBalance(owner).catch(() => null);
+  if (bal == null) throw new Error("Your Ethereum ETH balance couldn't be read right now — try again in a moment.");
+  if (bal < BigInt(est.gasCostWei))
+    throw new Error(`Claiming needs about ${est.gasNativeText} ETH on Ethereum for its network fee, and this wallet holds ${ethers.formatEther(bal)} ETH there. Add a little ETH on Ethereum and try again — your ${pair.symbol} stays claimable meanwhile.`);
+  onProgress("Simulating the claim…");
+  try {
+    await l1.call({ to: ARBITRUM_OUTBOX, data, from: owner });
+  } catch (e) {
+    if (revertSelector(e) === ALREADY_SPENT_SELECTOR) {
+      const claimed = { ...rec, status: "claimed" };
+      if (storage) saveBridgeMoveRecord(storage, claimed);
+      return { record: claimed, alreadyClaimed: true };
+    }
+    throw new Error("The claim simulation failed, so nothing was signed — your tokens stay claimable. Try again in a moment.");
+  }
+  onProgress("Broadcasting the claim on Ethereum…");
+  const signer = wallet.connect(l1);
+  const tx = await signer.sendTransaction({ to: ARBITRUM_OUTBOX, data, value: 0n });
+  if (storage) saveBridgeMoveRecord(storage, { ...rec, claimTxHash: tx.hash });
+  const outcome = await resolveBroadcastOutcome([providerFor(l1Key), providerForFallback(l1Key)], tx.hash);
+  if (outcome.state === "reverted") {
+    if (storage) saveBridgeMoveRecord(storage, rec);
+    throw new Error("The claim was sent but the network rejected it — your tokens stay claimable and only the network fee was spent. Try again.");
+  }
+  const claimed = { ...rec, status: "claimed", claimTxHash: tx.hash, claimedAt: Date.now() };
+  if (storage) saveBridgeMoveRecord(storage, claimed);
+  return { record: claimed, claimTxHash: tx.hash };
 }
 
 /* ================= Persisted-metadata safety (security audit 2026-11-06, C1) =================

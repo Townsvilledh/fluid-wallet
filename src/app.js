@@ -42,7 +42,8 @@ import {
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
-  movePairForToken, movePairForRoute, estimateMoveGas, executeBridgeMove, moveDisclosureLines, loadBridgeMoveRecords, bridgeMoveHistoryLine, bridgeMovePhase, moveClaimableAt,
+  movePairForToken, movePairForRoute, estimateMoveGas, executeBridgeMove, moveDisclosureLines, loadBridgeMoveRecords, saveBridgeMoveRecord, bridgeMoveHistoryLine, bridgeMovePhase, moveClaimableAt,
+  movePairById, probeBridgeMoveClaim, bridgeMoveChainPhase, estimateMoveClaimGas, executeBridgeMoveClaim,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
@@ -2495,11 +2496,74 @@ function openTokenDetail(d) {
 // bridged-form token offers it, the swap screen presents it
 // for the exact pair instead of a market quote, and its
 // pending records (with the countdown / Ready to claim) show
-// on the token page, in the swap sheet and in Activity. The
-// claim EXECUTION is the follow-up landing inside the first
-// moves' 7-day window — until then a ready move carries the
-// honest alternative (Arbitrum's official bridge, same
-// wallet) rather than a dead button.
+// on the token page, in the swap sheet and in Activity. Claim
+// EXECUTION is live (the follow-up landed the same day): the
+// wall clock only ESTIMATES readiness — the Outbox probe in
+// wallet-core is the authority, and the Claim button below
+// activates only on probe success. Arbitrum's official
+// bridge stays named as the alternative it always was.
+// Probe results cache briefly so the three surfaces don't
+// each pay the probe's chain reads on every paint.
+const moveProbeStates = new Map(); // record id -> { state, at }
+const moveProbesInFlight = new Set();
+async function refreshMoveClaimStates(repaint) {
+  let changed = false;
+  for (const r of loadBridgeMoveRecords(localStorage)) {
+    if (r.status === "claimed") continue;
+    const clock = bridgeMovePhase(r);
+    // Nowhere near maturity the clock is enough; the probe's
+    // reads are spent only once confirmation is plausible.
+    if (clock.phase === "waiting" && clock.msLeft > 24 * 3600 * 1000) continue;
+    const cached = moveProbeStates.get(r.id);
+    if (cached && Date.now() - cached.at < 60000) continue;
+    if (moveProbesInFlight.has(r.id)) continue;
+    moveProbesInFlight.add(r.id);
+    try {
+      const probe = await probeBridgeMoveClaim(r, { storage: localStorage });
+      const prev = moveProbeStates.get(r.id)?.state;
+      moveProbeStates.set(r.id, { state: probe.state, at: Date.now() });
+      if (probe.state === "claimed") {
+        // Reconcile: claimed through any other front-end —
+        // the record flips without us broadcasting anything.
+        saveBridgeMoveRecord(localStorage, { ...probe.record, status: "claimed", claimedExternally: true });
+        changed = true;
+      } else if (probe.state !== prev) changed = true;
+    } catch { /* best-effort — the clock line already renders */ }
+    finally { moveProbesInFlight.delete(r.id); }
+  }
+  if (changed && typeof repaint === "function") repaint();
+}
+
+/** The claim affordance on one move line: a Claim button
+ *  once the PROBE says ready (never on the clock alone),
+ *  a checking note while a clock-matured move awaits the
+ *  probe's verdict, nothing before that. */
+function attachMoveClaimUi(el, r) {
+  if (r.status === "claimed") return;
+  const st = moveProbeStates.get(r.id)?.state;
+  if (st === "claimed") return;
+  if (st !== "ready") {
+    if (bridgeMovePhase(r).phase === "ready") {
+      const note = document.createElement("span");
+      note.className = "tag";
+      note.textContent = " Checking the bridge's own confirmation before the claim can be made…";
+      el.appendChild(note);
+    }
+    return;
+  }
+  const btn = document.createElement("button");
+  btn.className = "btn";
+  btn.style.margin = "8px 0 2px";
+  btn.textContent = `Claim on ${NETWORKS[r.toChainKey]?.name || "Ethereum"}`;
+  btn.onclick = () => openMoveClaimSheet(r.id);
+  el.appendChild(document.createElement("br"));
+  el.appendChild(btn);
+  const note = document.createElement("span");
+  note.className = "tag";
+  note.textContent = " Or claim on Arbitrum's official bridge (bridge.arbitrum.io) with this same wallet.";
+  el.appendChild(note);
+}
+
 function paintTokenMoves(pair) {
   const host = $("tdMoves"); if (!host) return;
   const records = loadBridgeMoveRecords(localStorage)
@@ -2509,13 +2573,9 @@ function paintTokenMoves(pair) {
   host.querySelectorAll("[data-td-move]").forEach((el, i) => {
     const r = records[i];
     el.textContent = bridgeMoveHistoryLine(r);
-    if (bridgeMovePhase(r).phase === "ready") {
-      const note = document.createElement("span");
-      note.className = "tag";
-      note.textContent = " Claiming from inside Fluid lands in the next update, well inside your window — or claim it now on Arbitrum's official bridge (bridge.arbitrum.io) with this same wallet.";
-      el.appendChild(note);
-    }
+    attachMoveClaimUi(el, r);
   });
+  refreshMoveClaimStates(() => paintTokenMoves(pair));
 }
 
 /** The Activity entry for a move, written AT BROADCAST and
@@ -2608,6 +2668,92 @@ function openMoveSheet(pair, row = null, presetAmount = "") {
         explorerUrl: historyTxUrl({ hash: record.txHash, explorer: NETWORKS[p.fromChainKey].explorer }), txid: record.txHash, pending: false });
       rescanAfterActivity();
     } catch (e) { sendFailed(btn, "mvMsg", e, "Move failed: "); }
+  };
+}
+
+// ---------- Move claim sheet (L1 Outbox execution, 2026-11-15) ----------
+// The probe runs first and gates everything: not confirmed
+// on-chain → no confirm button, just the honest state; ready
+// → the confirm carries the LIVE-estimated Ethereum gas and
+// the wallet's ETH balance checked against it. Execution
+// re-probes inside wallet-core before signing, so a stale
+// sheet can never sign a claim the protocol hasn't confirmed.
+let pendingClaim = null;
+async function openMoveClaimSheet(recordId) {
+  const record0 = loadBridgeMoveRecords(localStorage).find(r => r.id === recordId);
+  if (!record0) return;
+  pendingClaim = null;
+  const destName = NETWORKS[record0.toChainKey]?.name || "Ethereum";
+  const amtText = record0.amount != null ? String(record0.amount) : "";
+  openSheet(`<h3>Claim ${esc(record0.symbol || "")} on ${esc(destName)}</h3>
+    <p class="tag">This completes your move: the ${esc(record0.symbol || "")} you moved is released by Arbitrum's bridge to this same wallet on ${esc(destName)} — the same address. One Ethereum transaction; Fluid adds no fee.</p>
+    <p class="tag" id="mcStatus">Checking this move on Ethereum…</p>
+    <div id="mcIntent" class="hidden">
+      <p class="seed" id="mcIntentText"></p>
+      <div id="mcNotes"></div>
+      <button class="btn" id="mcConfirm">Confirm &amp; claim</button>
+    </div>
+    <p class="msg err" id="mcMsg"></p>`);
+  try {
+    const probe = await probeBridgeMoveClaim(record0, { storage: localStorage });
+    moveProbeStates.set(record0.id, { state: probe.state, at: Date.now() });
+    const statusEl = $("mcStatus");
+    if (!statusEl) return; // the sheet was closed while probing
+    if (probe.state === "claimed") {
+      saveBridgeMoveRecord(localStorage, { ...probe.record, status: "claimed", claimedExternally: true });
+      statusEl.textContent = `This move has already been claimed — the ${record0.symbol || "tokens"} are in this wallet on ${destName}.`;
+      return;
+    }
+    if (probe.state !== "ready") {
+      statusEl.textContent = "This move isn't confirmed on Ethereum yet — Arbitrum's challenge period is still running its course on-chain, whatever the estimate says. Your tokens stay claimable; check again later. Arbitrum's official bridge (bridge.arbitrum.io) reads the same state.";
+      return;
+    }
+    const est = await estimateMoveClaimGas(wallet, probe.record, probe.proof);
+    let bal = null;
+    try { bal = Number(await getEvmTokenBalance(wallet, record0.toChainKey, null)); } catch { bal = null; }
+    const cost = Number(est.gasNativeText);
+    pendingClaim = { record: probe.record };
+    $("mcIntentText").textContent = `Claim ${amtText} ${record0.symbol} on ${destName} (1:1 — exactly the amount you moved). The tokens land in this wallet, at this same address, on ${destName}.`;
+    const notes = $("mcNotes");
+    notes.innerHTML = "";
+    const gasLine = document.createElement("p");
+    gasLine.className = "tag";
+    gasLine.textContent = `Network fee on ${destName}: about ${est.gasNativeText} ETH — estimated live for this exact claim — paid from your ${destName} ETH. Fluid adds no fee.`;
+    notes.appendChild(gasLine);
+    if (bal != null && Number.isFinite(bal) && Number.isFinite(cost) && bal < cost) {
+      const warn = document.createElement("p");
+      warn.className = "tag";
+      warn.textContent = `⚠ This wallet holds ${bal} ETH on ${destName} — less than the estimated fee. Add a little ETH on ${destName} before claiming; your ${record0.symbol} stays claimable meanwhile.`;
+      notes.appendChild(warn);
+      $("mcConfirm").disabled = true;
+    }
+    statusEl.textContent = "The bridge has confirmed this move — it is ready to claim.";
+    show("mcIntent");
+  } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("mcMsg", humanizeTxError(e)); }
+  const confirmBtn = $("mcConfirm");
+  if (confirmBtn) confirmBtn.onclick = async () => {
+    if (!pendingClaim) return;
+    const btn = $("mcConfirm");
+    try {
+      setSendBusy(btn, true);
+      msg("mcMsg", "Claiming…", true);
+      const result = await executeBridgeMoveClaim(wallet, pendingClaim.record, { storage: localStorage, onProgress: (t) => msg("mcMsg", t, true) });
+      pendingClaim = null;
+      moveProbeStates.set(result.record.id, { state: "claimed", at: Date.now() });
+      if (result.alreadyClaimed) {
+        msg("mcMsg", "");
+        $("mcStatus").textContent = `This move has already been claimed — the ${result.record.symbol || "tokens"} are in this wallet on ${destName}.`;
+        show("mcIntent", false);
+        rescanAfterActivity();
+        return;
+      }
+      showTxSuccess({ verb: "Move complete", amount: amtText, symbol: result.record.symbol,
+        logoHtml: tokenLogoHtml({ symbol: result.record.symbol, address: result.record.fromToken }, "evm"),
+        to: result.record.to, familyName: `${NETWORKS[result.record.fromChainKey]?.name || "Arbitrum"} → ${destName}`,
+        feeText: "no Fluid fee",
+        explorerUrl: historyTxUrl({ hash: result.claimTxHash, explorer: NETWORKS[result.record.toChainKey]?.explorer }), txid: result.claimTxHash, pending: false });
+      rescanAfterActivity();
+    } catch (e) { sendFailed(btn, "mcMsg", e, "Claim failed: "); }
   };
 }
 
@@ -8142,7 +8288,8 @@ $("actSwap").onclick = () => {
     const records = loadBridgeMoveRecords(localStorage);
     if (!records.length) { host.innerHTML = ""; return; }
     host.innerHTML = `<h4>Bridge moves</h4>` + records.map(r => `<p class="tag" data-move-line="${esc(r.id)}"></p>`).join("");
-    host.querySelectorAll("[data-move-line]").forEach((el, i) => { el.textContent = bridgeMoveHistoryLine(records[i]); });
+    host.querySelectorAll("[data-move-line]").forEach((el, i) => { el.textContent = bridgeMoveHistoryLine(records[i]); attachMoveClaimUi(el, records[i]); });
+    refreshMoveClaimStates(() => paintBridgeMoves());
   }
   paintBridgeMoves();
   // Gas-fallback two-step swaps, same conventions: the persisted
@@ -9203,7 +9350,17 @@ function renderHistory() {
     // evicted from the capped list is synthesised like the
     // other record stores above.
     const moveById = new Map(loadBridgeMoveRecords(localStorage).map(r => [r.id, r]));
-    const moveStateOf = (r) => { const ph = bridgeMovePhase(r); return ph.phase === "ready" ? "ready-to-claim" : ph.phase; };
+    const moveStateOf = (r) => {
+      if (r.status === "claimed") return "claimed";
+      const st = moveProbeStates.get(r.id)?.state;
+      if (st === "claimed") return "claimed";
+      if (st === "ready") return "ready-to-claim";
+      const ph = bridgeMovePhase(r);
+      // The probe is the authority: a clock-matured move the
+      // probe hasn't confirmed stays in progress here too.
+      if (st === "waiting" && ph.phase === "ready") return "in-progress";
+      return ph.phase === "ready" ? "ready-to-claim" : ph.phase;
+    };
     for (const x of h) {
       if (x?.msKind === "move" && moveById.has(x.msId)) x.msState = moveStateOf(moveById.get(x.msId));
     }
@@ -9258,6 +9415,10 @@ function renderHistory() {
     const url = historyTxUrl(x);
     if (url) row.onclick = (e) => { if (e.target.closest("a")) return; window.open(url, "_blank", "noopener"); };
   });
+  // Move records near maturity get their probe-backed state
+  // refreshed (and a claim made elsewhere reconciled) — the
+  // refresh repaints only when a state actually changed.
+  refreshMoveClaimStates(() => renderHistory());
 }
 
 // ---------- scan ----------

@@ -1444,17 +1444,53 @@ bridge is the true 1:1.
   at broadcast, persists across lock/close, and shows the
   countdown on the token page, in the swap sheet and in
   Activity ("Move in progress — LADYS to Ethereum,
-  claimable ~<date>"), flipping to "Ready to claim" when
-  the wait matures. The record carries the initiation
+  claimable ~<date>"). The record carries the initiation
   receipt's full ArbSys `L2ToL1Tx` event — every field the
   L1 Outbox execution consumes.
+- **Readiness is probed, not clocked.** The +7-day date is
+  an estimate and stays labelled with a "~". Whether a
+  move can actually be claimed is decided by an on-chain
+  probe (run lazily when a move surface renders): the
+  Outbox's `isSpent` (already claimed — including claims
+  made through any other front-end, which reconcile the
+  record to claimed), a confirmed send root covering the
+  message's `position` (found by walking L2 block headers'
+  `sendRoot`/`sendCount` against the Outbox's `roots()`),
+  a NodeInterface `constructOutboxProof` whose send/root
+  reproduce the confirmed root (with the Outbox's own
+  `calculateMerkleRoot` as a third check), and finally an
+  `eth_call` of the exact claim — success is the only
+  thing that lights the Claim button.
+- **The claim itself** is one Ethereum transaction:
+  `Outbox.executeTransaction` (pinned Outbox
+  `0x0B98…4840`, non-payable, 0 ETH) whose payload is the
+  gateway's `finalizeInboundTransfer` — executing the
+  message IS the whole claim; the L1 gateway releases the
+  token. The calldata is built entirely from the record
+  and bounds-checked before signing (position, the
+  standard gateway as L2 sender, the pinned L1 gateway as
+  destination, the pair's L1 token, from the user, to the
+  user, the exact moved amount). The claim sheet shows
+  the Ethereum gas estimated live for that exact claim
+  (real claims sampled at 152,899–180,655 gas) and checks
+  the wallet's ETH balance against it. The record is
+  marked claimed only on a successful L1 receipt; a
+  reverted claim leaves it ready and retryable.
+- **Self-healing records.** The first build's receipt
+  parser used the classic `L2ToL1Tx` ABI, but ArbOS
+  changed the event's shape (the global send index is now
+  `position`; `batchNumber`/`indexInBatch` no longer
+  exist), so records written by that build carry no claim
+  payload. Nothing is stranded: on read, such a record
+  re-derives the payload from its own initiation tx hash
+  and verifies the re-parsed fields reproduce the event's
+  item hash before trusting them.
 - **State of the parts (2026-11-15):** initiation LIVE ·
   pending tracking + countdown LIVE · claim-readiness
-  surfacing LIVE · claim EXECUTION (Outbox execute with
-  proof) is the immediate follow-up, landing well inside
-  the first moves' 7-day window; until it lands, a ready
-  move names the honest alternative (Arbitrum's official
-  bridge, same wallet). Nothing about a move is claimable
+  surfacing LIVE (probe-driven) · claim execution LIVE.
+  Arbitrum's official bridge (bridge.arbitrum.io, same
+  wallet) remains named in-app as an alternative way to
+  make the same claim. Nothing about a move is claimable
   by anyone but the user's own key, before or after.
 - **Fee: none.** A canonical withdrawal is neither a swap
   nor a ramp and has no capture surface; the only cost is

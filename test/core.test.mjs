@@ -18487,21 +18487,25 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && claimed === "Move complete — 100 LADYS claimed on Ethereum.");
   }
   {
-    // The receipt parse: logs encoded exactly as ArbSys and
-    // the gateway emit them on a real initiation receipt.
-    const arbIface = new eth124.Interface(["event L2ToL1Tx(address caller, address indexed destination, uint256 indexed uniqueId, uint256 indexed batchNumber, uint256 indexInBatch, uint256 arbBlockNum, uint256 ethBlockNum, uint256 timestamp, uint256 callvalue, bytes data)"]);
-    const l2ToL1 = arbIface.encodeEventLog("L2ToL1Tx", [OWNER, "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC", 42n, 7n, 3n, 900n, 18000n, 1763000n, 0n, "0x1234"]);
-    const gwIface = new eth124.Interface(["event WithdrawalInitiated(address l1Token, address from, address to, uint256 exitId, uint256 exitNum, uint256 amount)"]);
-    const wi = gwIface.encodeEventLog("WithdrawalInitiated", [L1, OWNER, OWNER, 55n, 0n, BigInt(amt)]);
-    const parsed = parseMoveReceipt({ logs: [
-      { address: "0x0000000000000000000000000000000000000064", topics: l2ToL1.topics, data: l2ToL1.data },
-      { address: ARBITRUM_ERC20_GATEWAY, topics: wi.topics, data: wi.data },
-      { address: L2, topics: [], data: "0x" },
-    ] });
-    ok("move: the receipt parse extracts the full L2ToL1 claim payload (unique id, batch, index, blocks, message data) and the withdrawal id",
-      parsed.withdrawalId === "55" && parsed.message?.uniqueId === "42" && parsed.message?.batchNumber === "7"
-      && parsed.message?.indexInBatch === "3" && parsed.message?.caller === OWNER
-      && parsed.message?.destination === "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC" && parsed.message?.data === "0x1234");
+    // The receipt parse, pinned against a REAL initiation
+    // receipt (fixture captured from Arbitrum One, 2026-11-15
+    // — a real standard-gateway withdrawal through the same
+    // contracts; §126 carries the claim side of this same
+    // message). The current ArbOS event shape carries the
+    // global send index as `position` and the item hash as a
+    // named field; the classic batch fields no longer exist,
+    // and the gateway's WithdrawalInitiated indexes its
+    // (from, to, exitId) — both repairs landed with §126.
+    const fx124 = JSON.parse(readFileSync(new URL("./fixtures/ladys-move-claim-fixture.json", import.meta.url), "utf8"));
+    const parsed = parseMoveReceipt({ logs: fx124.logs });
+    ok("move: the receipt parse extracts the CURRENT L2ToL1 claim payload from a real receipt — position (the Outbox index), item hash, gateway caller/destination, blocks, message data — and the withdrawal id",
+      parsed.message?.position === "167389" && parsed.message?.hash === fx124.itemHash
+      && parsed.message?.caller === "0x09e9222E96E7B4AE2a407B98d48e330053351EEe"
+      && parsed.message?.destination === "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC"
+      && parsed.message?.arbBlockNum === "520204916" && parsed.message?.ethBlockNum === "26318198"
+      && parsed.message?.timestamp === "1793515386" && parsed.message?.callvalue === "0"
+      && parsed.message?.data === fx124.claimArgs.data
+      && parsed.withdrawalId === "167389");
     ok("move: an unreadable receipt parses to nulls — the record stands on its hash",
       (() => { const p = parseMoveReceipt({ logs: [] }); return p.message === null && p.withdrawalId === null; })());
   }
@@ -18532,9 +18536,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc124.includes('id="wMoves"')
       && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") > 0
       && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") < appSrc124.indexOf("getSwapRoutes(swapArgs)"));
-    ok("move: the docs carry the Move section with its live-vs-follow-up split stated plainly",
-      swapsSrc124.includes("Canonical-bridge moves") && swapsSrc124.includes("claim EXECUTION (Outbox execute with")
-      && swapsSrc124.includes("is the immediate follow-up") && swapsSrc124.includes("initiation LIVE"));
+    ok("move: the docs carry the Move section with every part's state stated plainly — initiation, tracking, probe-driven readiness and claim execution all LIVE",
+      swapsSrc124.includes("Canonical-bridge moves") && swapsSrc124.includes("claim execution LIVE")
+      && swapsSrc124.includes("initiation LIVE") && swapsSrc124.includes("Readiness is probed, not clocked"));
   }
 }
 
@@ -18710,6 +18714,239 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     fx7("across-robinhood-weth-out-nofee.json").fees.total.details.app.amount === "0"
     && fx7("across-robinhood-weth-in-nofee.json").fees.total.details.app.amount === "0"
     && aOutFree7 === null && aInFree7 === null);
+}
+
+// ---------- §126. LADYS Move CLAIM EXECUTION — L1 Outbox execute + parser repair (2026-11-15) ----------
+// Research: research_notes/fluid-ladys-claim-20261115/probe-notes.md —
+// every mechanic verified against the deployed contracts and
+// REAL transactions. The fixture (test/fixtures/ladys-move-claim-
+// fixture.json) is one real standard-gateway withdrawal and its
+// real L1 claim, captured from chain: initiation tx 0x241a86…,
+// claim tx 0xbc05fc…. The claim pins below therefore run against
+// reality, not against the build's own encoding of it. Two
+// shipped assumptions the research found stale are repaired and
+// pinned here: the ArbOS L2ToL1Tx event changed shape (position
+// replaced batchNumber/indexInBatch — §124's parser matched no
+// real log), and WithdrawalInitiated indexes (from, to, exitId).
+{
+  const {
+    ARBITRUM_OUTBOX, ARBITRUM_L1_ERC20_GATEWAY, NODE_INTERFACE_ADDRESS, ARBITRUM_ERC20_GATEWAY,
+    calculateMoveItemHash, moveMessageComplete, repairBridgeMoveRecord,
+    findConfirmedSendSize, fetchMoveClaimProof, buildClaimCalldata, checkClaimCalldata,
+    probeBridgeMoveClaim, bridgeMoveChainPhase, estimateMoveClaimGas,
+    parseMoveReceipt, BRIDGED_MOVE_PAIRS, loadBridgeMoveRecords, saveBridgeMoveRecord,
+  } = await import("../src/wallet-core.js");
+  const { ethers: eth126 } = await import("ethers");
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/ladys-move-claim-fixture.json", import.meta.url), "utf8"));
+  const USER = "0xcD54Cc88aC8bb4f437937b5DFa9C341570c6169b";
+  const STRANGER = "0x000000000000000000000000000000000000dEaD";
+  const L2_GW = "0x09e9222E96E7B4AE2a407B98d48e330053351EEe";
+  const L1_GW = "0xa3A7B6F88361F48403514059F1F16C8E78d60EeC";
+  const parsedMsg = parseMoveReceipt({ logs: fx.logs }).message;
+  const fxRecord = {
+    id: "move-fixture126", kind: "bridge-move", pairId: "ladys-arbitrum-ethereum", bridge: "arbitrum-canonical",
+    symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
+    toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
+    amountRaw: "8168920020808455027", amount: "8168920020808455027",
+    from: USER, to: USER, txHash: fx.l2TxHash, l2Block: fx.receiptBlock,
+    initiatedAt: 1793515386000, claimableAt: 1793515386000 + 7 * 24 * 3600 * 1000,
+    status: "waiting", message: parsedMsg, withdrawalId: "167389",
+  };
+  // The fixture's real token (the mechanics are the pair's; the
+  // token differs) — the happy-path bounds pin runs the REAL
+  // claim input against a pair naming the fixture's own token.
+  const pairFx = { ...BRIDGED_MOVE_PAIRS[0], toToken: "0x808507121B80c02388fAd14726482e061B8da827" };
+  const OUTBOX_IFACE = new eth126.Interface([
+    "function executeTransaction(bytes32[] proof, uint256 index, address l2Sender, address to, uint256 l2Block, uint256 l1Block, uint256 l2Timestamp, uint256 value, bytes data)",
+    "function isSpent(uint256 index) view returns (bool)",
+    "function roots(bytes32 root) view returns (uint256)",
+    "function calculateMerkleRoot(bytes32[] proof, uint256 index, bytes32 item) view returns (bytes32)",
+  ]);
+  const NI_IFACE = new eth126.Interface(["function constructOutboxProof(uint64 size, uint64 leaf) view returns (bytes32 send, bytes32 root, bytes32[] proof)"]);
+  const FIN_IFACE = new eth126.Interface(["function finalizeInboundTransfer(address l1Token, address from, address to, uint256 amount, bytes data)"]);
+
+  ok("claim: the L1 pins are the verified Outbox 4, the L1 ERC20 Gateway and the NodeInterface precompile",
+    ARBITRUM_OUTBOX === "0x0B9857ae2D4A3DBe74ffE1d7DF045bb7F96E4840"
+    && ARBITRUM_L1_ERC20_GATEWAY === L1_GW
+    && NODE_INTERFACE_ADDRESS === "0x00000000000000000000000000000000000000C8");
+  ok("claim: the local item hash reproduces the Outbox's calculateItemHash on the real message — and equals the event's own hash field",
+    calculateMoveItemHash(parsedMsg) === fx.itemHash && parsedMsg.hash === fx.itemHash
+    && calculateMoveItemHash({ ...parsedMsg, callvalue: "1" }) !== fx.itemHash);
+  ok("claim: calldata built from the record + the real claim's proof reproduces the REAL claim transaction's input byte-for-byte",
+    buildClaimCalldata(fxRecord, fx.claimArgs.proof).toLowerCase() === fx.claimTxInput.toLowerCase());
+  ok("claim: the bounds check accepts the real claim (gateway sender, L1 gateway destination, the fixture pair's token, user → user, exact amount)",
+    checkClaimCalldata(fxRecord, pairFx, fx.claimTxInput).ok === true);
+  {
+    const A = fx.claimArgs;
+    const rebuild = (over = {}, inner = null) => OUTBOX_IFACE.encodeFunctionData("executeTransaction", [
+      over.proof ?? A.proof, over.index ?? BigInt(A.index), over.l2Sender ?? A.l2Sender, over.to ?? A.to,
+      over.l2Block ?? BigInt(A.l2Block), over.l1Block ?? BigInt(A.l1Block), over.l2Timestamp ?? BigInt(A.l2Timestamp),
+      over.value ?? BigInt(A.value), inner ?? A.data]);
+    const innerWith = (o = {}) => {
+      const d = FIN_IFACE.decodeFunctionData("finalizeInboundTransfer", A.data);
+      return FIN_IFACE.encodeFunctionData("finalizeInboundTransfer", [o.l1Token ?? d[0], o.from ?? d[1], o.to ?? d[2], o.amount ?? d[3], d[4]]);
+    };
+    ok("claim: the bounds check refuses a wrong index, a non-gateway L2 sender and a non-gateway destination",
+      checkClaimCalldata(fxRecord, pairFx, rebuild({ index: BigInt(A.index) + 1n })).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({ l2Sender: USER })).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({ to: USER })).ok === false);
+    ok("claim: the bounds check refuses drifted message fields (block, timestamp, value)",
+      checkClaimCalldata(fxRecord, pairFx, rebuild({ l2Block: BigInt(A.l2Block) + 1n })).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({ l2Timestamp: BigInt(A.l2Timestamp) + 1n })).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({ value: 1n })).ok === false);
+    ok("claim: the bounds check refuses a tampered release — wrong token, a stranger as recipient, a changed amount — and undecodable calldata",
+      checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ l1Token: BRIDGED_MOVE_PAIRS[0].toToken }))).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ to: STRANGER }))).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ from: STRANGER }))).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ amount: BigInt(fxRecord.amountRaw) + 1n }))).ok === false
+      && checkClaimCalldata(fxRecord, pairFx, "0xdeadbeef").ok === false
+      && checkClaimCalldata(fxRecord, BRIDGED_MOVE_PAIRS[0], fx.claimTxInput).ok === false);
+  }
+  // --- stub providers (the raw call/send seam the core reads through) ---
+  const TIP = 530000000;
+  const HEADERS_READY = {
+    [TIP]: { sendRoot: "0x" + "11".repeat(32), sendCount: "0x30d40" },
+    [TIP - 250000]: { sendRoot: fx.constructProof.root, sendCount: "0x28e9e" },
+  };
+  const HEADERS_WAITING = {
+    [TIP]: { sendRoot: "0x" + "11".repeat(32), sendCount: "0x30d40" },
+    [TIP - 250000]: { sendRoot: "0x" + "22".repeat(32), sendCount: "0x28c78" },
+  };
+  const l2Stub126 = ({ headers = HEADERS_READY, receiptLogs = null, proofRes = null } = {}) => {
+    const seen = { proofCalldata: null };
+    return {
+      seen,
+      getBlockNumber: async () => TIP,
+      send: async (method, params) => {
+        if (method !== "eth_getBlockByNumber") throw new Error("unexpected send " + method);
+        const h = headers[parseInt(params[0], 16)];
+        if (!h) throw new Error("no header stub");
+        return h;
+      },
+      getTransactionReceipt: async () => (receiptLogs ? { logs: receiptLogs } : null),
+      call: async (tx) => {
+        if (String(tx.to).toLowerCase() !== NODE_INTERFACE_ADDRESS.toLowerCase()) throw new Error("unexpected L2 call target");
+        seen.proofCalldata = tx.data;
+        const pr = proofRes ?? fx.constructProof;
+        return NI_IFACE.encodeFunctionResult("constructOutboxProof", [pr.send, pr.root, pr.proof]);
+      },
+    };
+  };
+  const l1Stub126 = ({ spent = false, confirmedRoot = fx.constructProof.root, sim = "ok" } = {}) => ({
+    call: async (tx) => {
+      const sel = tx.data.slice(0, 10);
+      if (sel === OUTBOX_IFACE.getFunction("isSpent").selector) return OUTBOX_IFACE.encodeFunctionResult("isSpent", [spent]);
+      if (sel === OUTBOX_IFACE.getFunction("roots").selector) {
+        const [root] = OUTBOX_IFACE.decodeFunctionData("roots", tx.data);
+        return OUTBOX_IFACE.encodeFunctionResult("roots", [confirmedRoot && String(root).toLowerCase() === String(confirmedRoot).toLowerCase() ? 167582n : 0n]);
+      }
+      if (sel === OUTBOX_IFACE.getFunction("calculateMerkleRoot").selector) return OUTBOX_IFACE.encodeFunctionResult("calculateMerkleRoot", [fx.constructProof.root]);
+      if (sel === OUTBOX_IFACE.getFunction("executeTransaction").selector) {
+        if (sim === "ok") return "0x";
+        const e = new Error("execution reverted"); e.data = fx.alreadySpentRevertData; throw e;
+      }
+      throw new Error("unexpected L1 call " + sel);
+    },
+  });
+  {
+    // Repair-on-read: a pre-fix record (message: null — every
+    // real record the stale parser ever wrote) re-derives its
+    // payload from its tx hash and persists the repair.
+    const st = { _m: {}, getItem(k) { return this._m[k] ?? null; }, setItem(k, v) { this._m[k] = v; } };
+    const stale = { ...fxRecord, message: null, withdrawalId: null };
+    const repaired = await repairBridgeMoveRecord(stale, l2Stub126({ receiptLogs: fx.logs }), { storage: st });
+    ok("claim: repair-on-read re-derives a stale record's payload from its tx hash (position + item hash) and persists the repair",
+      moveMessageComplete(repaired) && repaired.message.position === "167389" && repaired.message.hash === fx.itemHash
+      && repaired.withdrawalId === "167389"
+      && loadBridgeMoveRecords(st).find(r => r.id === stale.id)?.message?.position === "167389");
+    const tamperedLogs = fx.logs.map((l, i) => i === 3 ? { ...l, topics: [l.topics[0], l.topics[1], "0x" + "ff".repeat(32), l.topics[3]] } : l);
+    const refused = await repairBridgeMoveRecord(stale, l2Stub126({ receiptLogs: tamperedLogs }));
+    ok("claim: repair refuses a re-parse whose fields don't reproduce the event's item hash — the record stays unrepaired, never half-trusted",
+      refused.message === null);
+    const noReceipt = await repairBridgeMoveRecord(stale, l2Stub126({ receiptLogs: null }));
+    ok("claim: repair with an unreadable receipt leaves the record untouched (the hash can be re-read later)",
+      noReceipt.message === null);
+  }
+  {
+    const size = await findConfirmedSendSize("167389", l2Stub126({}), l1Stub126({}));
+    ok("claim: the confirmed-size walk skips the tip's unconfirmed root and lands on the confirmed tree covering the position",
+      size?.size === "167582" && size?.root === fx.constructProof.root);
+    const none = await findConfirmedSendSize("167389", l2Stub126({ headers: HEADERS_WAITING }), l1Stub126({ confirmedRoot: null }));
+    ok("claim: no confirmed tree covering the position → null (still waiting, whatever the clock says)",
+      none === null);
+  }
+  {
+    const l2 = l2Stub126({});
+    const res = await fetchMoveClaimProof(fxRecord, { l2Provider: l2, l1Provider: l1Stub126({}), confirmed: { size: "167582", root: fx.constructProof.root } });
+    ok("claim: the proof fetch returns the verified proof — send == item hash, root == confirmed root, 18 proof nodes as in the real claim",
+      res.proof.length === 18 && res.send === fx.itemHash && res.root === fx.constructProof.root && res.size === "167582");
+    ok("claim: the proof call is UINT64-typed — its selector is the uint64 signature's, not the uint256 one that reverts against the precompile",
+      l2.seen.proofCalldata.slice(0, 10) === NI_IFACE.getFunction("constructOutboxProof").selector
+      && NI_IFACE.getFunction("constructOutboxProof").selector === "0x42696350"
+      && NI_IFACE.getFunction("constructOutboxProof").selector !== "0x188b7cee");
+    let threw = false;
+    try {
+      await fetchMoveClaimProof(fxRecord, { l2Provider: l2Stub126({ proofRes: { ...fx.constructProof, send: "0x" + "00".repeat(32) } }), l1Provider: l1Stub126({}), confirmed: { size: "167582", root: fx.constructProof.root } });
+    } catch { threw = true; }
+    ok("claim: a proof whose send doesn't reproduce the message's item hash is refused, never trusted", threw === true);
+  }
+  {
+    // The probe's ready path bounds-checks the built claim
+    // against the record's OWN pair — the real fixture's
+    // payload names the fixture's token, not LADYS, so the
+    // state-machine pins run on a self-consistent synthetic
+    // message (same gateway fields, LADYS payload) whose
+    // proof stub answers with its own item hash. Reality
+    // itself is pinned above: real receipt, real proof,
+    // real claim input, byte-for-byte.
+    const synthData = FIN_IFACE.encodeFunctionData("finalizeInboundTransfer", [BRIDGED_MOVE_PAIRS[0].toToken, USER, USER, BigInt(fxRecord.amountRaw), "0x"]);
+    const synthMsg = { ...parsedMsg, data: synthData };
+    synthMsg.hash = calculateMoveItemHash(synthMsg);
+    synthMsg.uniqueId = BigInt(synthMsg.hash).toString();
+    const synthRecord = { ...fxRecord, message: synthMsg };
+    const l2Synth = () => l2Stub126({ proofRes: { send: synthMsg.hash, root: fx.constructProof.root, proof: fx.constructProof.proof } });
+    const ready = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}) });
+    ok("claim: the probe reports READY only after isSpent, a confirmed root, the asserted proof and a successful simulation of the exact claim",
+      ready.state === "ready" && ready.proof.length === 18 && ready.size === "167582");
+    const spentProbe = await probeBridgeMoveClaim(fxRecord, { l2Provider: l2Stub126({}), l1Provider: l1Stub126({ spent: true }) });
+    ok("claim: the probe reports CLAIMED when the Outbox says the position is spent (whoever claimed it)",
+      spentProbe.state === "claimed");
+    const waitingProbe = await probeBridgeMoveClaim(fxRecord, { l2Provider: l2Stub126({ headers: HEADERS_WAITING }), l1Provider: l1Stub126({ confirmedRoot: null }) });
+    ok("claim: the probe reports WAITING (unconfirmed) when no confirmed tree covers the position",
+      waitingProbe.state === "waiting" && waitingProbe.reason === "unconfirmed");
+    const spentSim = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({ sim: "spent" }) });
+    ok("claim: an AlreadySpent simulation revert discriminates to CLAIMED — the probe never offers a claim for a spent message",
+      spentSim.state === "claimed");
+    const chainWaiting = await bridgeMoveChainPhase(fxRecord, { l2Provider: l2Stub126({ headers: HEADERS_WAITING }), l1Provider: l1Stub126({ confirmedRoot: null }), nowMs: fxRecord.claimableAt + 1000 });
+    ok("claim: the chain phase obeys the PROBE over the clock — a clock-matured move the probe finds unconfirmed stays waiting",
+      chainWaiting.phase === "waiting" && chainWaiting.source === "probe");
+    const chainReady = await bridgeMoveChainPhase(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}), nowMs: fxRecord.initiatedAt + 1000 });
+    ok("claim: the chain phase reports ready on probe success even before the +7d estimate elapses",
+      chainReady.phase === "ready" && chainReady.source === "probe");
+  }
+  {
+    // The gas disclosure is a LIVE estimate: the stub prices
+    // the exact claim at the real claim's gasUsed (173,093)
+    // and the shown figure moves with the stub's gas price.
+    const gasStub = (gwei) => ({
+      estimateGas: async () => 173093n,
+      getFeeData: async () => ({ maxFeePerGas: BigInt(gwei) * 1000000000n, gasPrice: null }),
+    });
+    const est20 = await estimateMoveClaimGas({ address: USER }, fxRecord, fx.claimArgs.proof, gasStub(20));
+    const est5 = await estimateMoveClaimGas({ address: USER }, fxRecord, fx.claimArgs.proof, gasStub(5));
+    ok("claim: the gas disclosure is estimated live for the exact claim (real-claim gas class) and tracks the live gas price — never a hard-coded figure",
+      est20.gasLimit === "173093" && est20.gasNativeText === eth126.formatEther(173093n * 20000000000n)
+      && est5.gasNativeText === eth126.formatEther(173093n * 5000000000n) && est5.gasNativeText !== est20.gasNativeText);
+  }
+  {
+    const appSrc126 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("claim: the app wires the probe-gated Claim button on both move surfaces and the claim sheet through executeBridgeMoveClaim",
+      appSrc126.includes("function attachMoveClaimUi(") && appSrc126.includes("function openMoveClaimSheet(")
+      && appSrc126.includes("executeBridgeMoveClaim(wallet, pendingClaim.record")
+      && appSrc126.includes("refreshMoveClaimStates(() => paintBridgeMoves())")
+      && appSrc126.includes("refreshMoveClaimStates(() => renderHistory())"));
+  }
 }
 
 console.log(`\n${passed} checks passed`);
