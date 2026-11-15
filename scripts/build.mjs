@@ -2,7 +2,20 @@
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { verifyLightningProvenance } from "./lightning-provenance.mjs";
 mkdirSync("dist", { recursive: true });
+// Lightning WASM provenance (security audit F-4.1, 2026-11-15):
+// the WASM copied into dist below must match the committed
+// provenance record — its own bytes AND the lightning/ source
+// tree it was built from. A mismatch fails the build here, so
+// dist can never silently carry a WASM that does not
+// correspond to its recorded source (the in-bundle LN_WASM_PIN
+// alone proved only consistency with whatever bytes shipped).
+{
+  const v = verifyLightningProvenance();
+  if (!v.ok) { console.error("✗ Lightning provenance: " + v.reason); process.exit(1); }
+  console.log("✓ Lightning WASM matches its committed provenance record (source " + v.record.sourceSha256.slice(0, 12) + "…)");
+}
 // Lightning node chunk FIRST: built separately and loaded lazily by
 // app.js only when the Lightning panel opens. The WASM binary ships
 // beside it under the exact name the chunk's init() resolves via
@@ -58,6 +71,11 @@ copyFileSync("public/.well-known/funding-manifest-urls", "dist/.well-known/fundi
 // relies on Jekyll processing.
 writeFileSync("dist/.nojekyll", "");
 copyFileSync("public/robots.txt", "dist/robots.txt");
+// Release public key (audit F-5.1, 2026-11-15): served beside
+// the signed checksums so anyone can verify a release with
+// scripts/verify-release.mjs. The private key never enters
+// the repo — it lives only on the publishing machine.
+copyFileSync("public/release-pubkey.pem", "dist/release-pubkey.pem");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
 copyFileSync("public/og-image.png", "dist/og-image.png");
 // Social card lives at a NEW filename (og-card.png, 2026-11-11): X and
@@ -92,4 +110,17 @@ const single = html
   .replace('<script src="app.bundle.js"></script>', () => "<script>" + inlinedJs + "</script>")
   .replace("script-src 'self'", `script-src 'self' 'sha256-${singleFileHash}'`);
 writeFileSync("dist/fluid-wallet.html", single);
+// Release checksums (audit F-5.1, 2026-11-15): sha256 of the
+// release artifacts in sha256sum format. The publish step
+// signs this exact file with the Ed25519 release key and
+// serves checksums.txt.sig beside it — THAT is the single-
+// file build's authentication story (the inlined CSP hash is
+// self-referential and authenticates nothing on its own).
+// Verify with scripts/verify-release.mjs.
+{
+  const files = ["index.html", "app.bundle.js", "fluid-wallet.html", "recovery.html",
+    "fluid_lightning_bg.wasm", "lightning.chunk.js", "release-pubkey.pem"];
+  const lines = files.map((f) => createHash("sha256").update(readFileSync("dist/" + f)).digest("hex") + "  " + f);
+  writeFileSync("dist/checksums.txt", lines.join("\n") + "\n");
+}
 console.log("built dist/{index.html, app.bundle.js, recovery.html, fluid-wallet.html}", (single.length / 1024).toFixed(0) + "KB single file");

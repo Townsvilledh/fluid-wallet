@@ -628,9 +628,15 @@ export function formatSendIntent({ amount, symbol, to, networkKey, feeNative, na
  *  records, agent descriptors AND their spend log, the discovered-chain
  *  cache, custom tokens, the token-list cache, the ramp country. The
  *  wipe filters a storage key list through this pure helper so the set
- *  is unit-tested; foreign keys (other apps on the origin) survive. */
+ *  is unit-tested; foreign keys (other apps on the origin) survive.
+ *  Two Lightning stores do NOT carry the fluid_ prefix and escaped
+ *  the wipe until the 2026-11-15 audit (M2): the LDK node's
+ *  encrypted KV (fluidln.v1.<network>.* — lightning-node.js) and
+ *  the NWC bridge state (fluid.lnBridge.v1.* — ln-nwc-bridge.js).
+ *  Both prefixes are the wallet's own and go too. */
 export function fluidStorageKeysToWipe(keys) {
-  return [...(keys || [])].filter(k => typeof k === "string" && k.startsWith("fluid_"));
+  return [...(keys || [])].filter(k => typeof k === "string"
+    && (k.startsWith("fluid_") || k.startsWith("fluidln.") || k.startsWith("fluid.lnBridge.")));
 }
 
 /* ---------- user-facing error language (2026-11-12 repair) ----------
@@ -7494,6 +7500,33 @@ export const RELAY_TON_CHAIN_ID = 224235520;
  *  quote naming any other recipient is refused at the bounds
  *  check, before anything is signed (see checkRelayTonStepBounds). */
 export const RELAY_TON_DEPOSITORY = "EQCrdGsDTqA2t6xRR4N6V4J705F7w_VQbUdHnofsh-8lVIPs";
+/** Relay's EVM depositories (security audit H-B, 2026-11-15):
+ *  the ONLY contracts a Relay EVM deposit step may target and
+ *  the ONLY spender a Relay approval may name — pinned here as
+ *  constants, never taken from the quote response (before this,
+ *  the approval's spender was pinned only to the deposit step's
+ *  own `to` from the same response, so a hostile or corrupted
+ *  response verified against itself). Relay deploys one
+ *  canonical depository (CREATE2, same address on most chains);
+ *  a few chains carry the alternate deployment — among Fluid's
+ *  chains: Cronos, Metis, Mantle and Linea (Relay's depository
+ *  table, generated from the Relay Chains API; the Chains API
+ *  exposes the same value per chain as protocol.v2.depository).
+ *  A Relay-served chain missing from this table resolves null
+ *  and the bounds check fails closed — a new depository is a
+ *  deliberate code change here, never a response value. */
+export const RELAY_DEPOSITORY = "0x4cd00e387622c35bddb9b4c962c136462338bc31";
+export const RELAY_DEPOSITORY_ALT = "0x59916da825d2d2ec1bf878d71c88826f6633ecca";
+const RELAY_DEPOSITORY_ALT_CHAINS = new Set([25, 1088, 5000, 59144]);
+export function relayDepositoryFor(chainId) {
+  const id = Number(chainId);
+  if (!RELAY_EVM_CHAIN_IDS.has(id)) return null;
+  return RELAY_DEPOSITORY_ALT_CHAINS.has(id) ? RELAY_DEPOSITORY_ALT : RELAY_DEPOSITORY;
+}
+const RELAY_DEPOSITORY_ABI = [
+  "function depositErc20(address depositor, address token, uint256 amount, bytes32 id)",
+  "function depositNative(address depositor, bytes32 id)",
+];
 /** The one Relay App Fees claim address: the DripBot collection
  *  wallet's EVM address. Relay requires an EVM recipient even for
  *  non-EVM chains and settles all app fees to it in USDC, off-chain. */
@@ -17098,6 +17131,48 @@ export async function getJupiterSwapRoute(args) {
   final.platformFeeBps = bps;
   return final;
 }
+/** Parse the address list out of a Solana address lookup
+ *  table account's data (the base64 getAccountInfo returns):
+ *  the list begins after the 56-byte table metadata. Returns
+ *  base58 addresses, or null when the bytes do not parse.
+ *  Pure — the same grammar mayanLookupTableAccount reads. */
+export function parseSolanaLookupTableAddresses(rawBase64) {
+  if (typeof rawBase64 !== "string" || !rawBase64) return null;
+  let bytes;
+  try { bytes = base64.decode(rawBase64); } catch { return null; }
+  if (bytes.length < 56 || (bytes.length - 56) % 32 !== 0) return null;
+  const out = [];
+  for (let off = 56; off + 32 <= bytes.length; off += 32)
+    out.push(new SolPublicKey(bytes.slice(off, off + 32)).toBase58());
+  return out;
+}
+/** The lookup tables a Jupiter /build response DECLARES,
+ *  verified against the tables as the chain holds them
+ *  (security audit H-C, 2026-11-15). A v0 message resolves its
+ *  account indices THROUGH these tables, so a declared list
+ *  that differs from the chain's — in length or at any index —
+ *  silently re-points the transaction's accounts; the response
+ *  may never be its own witness. `chainTables` maps table
+ *  address -> the address list parsed from chain state (a
+ *  missing/null entry = unreadable = refusal). Pure. */
+export function verifyJupiterLookupTables(declared, chainTables) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this route: " + m + " Pick another route." });
+  for (const [lut, addresses] of Object.entries(declared || {})) {
+    const chain = chainTables ? chainTables[lut] : null;
+    if (!Array.isArray(chain)) return refuse("a lookup table in the Jupiter response could not be read from the chain to verify it.");
+    const want = Array.isArray(addresses) ? addresses.map(String) : [];
+    if (chain.length !== want.length || chain.some((a, i) => a !== want[i]))
+      return refuse("a lookup table in the Jupiter response does not match the table on the chain.");
+  }
+  return { ok: true };
+}
+/** One lookup table's addresses, read from chain state. */
+async function jupiterLookupTableAddresses(address) {
+  const info = await solanaRpc("getAccountInfo", [address, { encoding: "base64" }]);
+  const parsed = parseSolanaLookupTableAddresses(info?.value?.data?.[0]);
+  if (!parsed) throw new Error("Jupiter: a lookup table account could not be read from the chain.");
+  return parsed;
+}
 function jupiterInstructionToWeb3(ix) {
   return new SolTxInstruction({
     programId: new SolPublicKey(ix.programId),
@@ -17132,13 +17207,27 @@ export async function executeJupiterSwapRoute(phrase, route, onProgress = () => 
     ...(j.instructions.otherInstructions || []),
   ];
   const instructions = rawIxs.map(jupiterInstructionToWeb3);
-  const lutAccounts = Object.entries(j.addressesByLookupTableAddress || {}).map(([lut, addresses]) => new SolAddressLookupTableAccount({
+  // H-C (2026-11-15): the lookup tables are read from CHAIN
+  // state and the response's declared lists must match them
+  // exactly before anything compiles — before this, the v0
+  // message compiled against table objects built from the
+  // response's own addressesByLookupTableAddress map, so the
+  // response chose what its own account indices meant (the
+  // Mayan path has fetched its tables from the chain all
+  // along). An unreadable table refuses the swap: unverified
+  // tables are never compiled against.
+  const declaredLuts = j.addressesByLookupTableAddress || {};
+  const chainLuts = {};
+  for (const lut of Object.keys(declaredLuts)) chainLuts[lut] = await jupiterLookupTableAddresses(lut);
+  const lutCheck = verifyJupiterLookupTables(declaredLuts, chainLuts);
+  if (!lutCheck.ok) throw new Error(lutCheck.reason);
+  const lutAccounts = Object.entries(chainLuts).map(([lut, addresses]) => new SolAddressLookupTableAccount({
     key: new SolPublicKey(lut),
     state: {
       deactivationSlot: (2n ** 64n) - 1n, // the on-chain sentinel for "not deactivated"
       lastExtendedSlot: 0,
       lastExtendedSlotStartIndex: 0,
-      addresses: (addresses || []).map(a => new SolPublicKey(a)),
+      addresses: addresses.map(a => new SolPublicKey(a)),
     },
   }));
   let blockhash = j.blockhash;
@@ -21006,6 +21095,29 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
   if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
   throw new Error("That route can't be executed — search again and pick another route.");
 }
+/** The gas-fallback leg-2 band (security audit WS2 F3,
+ *  2026-11-15): leg 2 was preview-quoted when the user
+ *  confirmed the composite; at execution the fresh quote must
+ *  still return at least 90% of that preview, rescaled by how
+ *  much actually arrived versus the preview's input (the
+ *  milestone legs' expectation rescales the same way). A
+ *  record carrying no stored preview (written before the
+ *  field existed), or a quote carrying no amount, cannot be
+ *  judged and passes unjudged — a figure a record does not
+ *  carry cannot convict it. Pure. */
+export function gasFallbackLeg2BandCheck(record, leg2Raw, quotedRaw) {
+  if (record?.expectedLeg2Raw == null || record?.leg2PreviewFromRaw == null || quotedRaw == null)
+    return { ok: true, judged: false };
+  let expected, quoted;
+  try {
+    const prevOut = BigInt(record.expectedLeg2Raw), prevIn = BigInt(record.leg2PreviewFromRaw), actualIn = BigInt(leg2Raw);
+    if (prevIn <= 0n) return { ok: true, judged: false };
+    expected = (prevOut * actualIn) / prevIn;
+    quoted = BigInt(quotedRaw);
+  } catch { return { ok: true, judged: false }; }
+  if (expected <= 0n) return { ok: true, judged: false };
+  return { ok: quoted * 10n >= expected * 9n, judged: true, expected: expected.toString(), quoted: quoted.toString() };
+}
 /** Run a gas-fallback record's second leg from what ACTUALLY
  *  arrived: fresh same-chain route search for (received −
  *  reserve), executed immediately. On any failure the record
@@ -21027,6 +21139,18 @@ async function runGasFallbackLeg2(wallet, record, progress, { storage = null, on
     });
     const r2 = routes && firstExecutableRoute(routes);
     if (!r2) throw new Error("No route for the second leg yet.");
+    // The ≥90% band (security audit WS2 F3, 2026-11-15):
+    // before this, leg 2 executed at whatever price the fresh
+    // search happened to return — the milestone legs' band
+    // discipline now applies here too (gasFallbackLeg2BandCheck).
+    {
+      const band = gasFallbackLeg2BandCheck(record, leg2Raw, r2.toAmount);
+      if (!band.ok) {
+        const err = new Error(`Your ${record.nativeSymbol} arrived on ${destChainName(record.toChainKey)}, but the swap into ${record.toSymbol || "your asset"} would now return under 90% of what this swap was planned to return, so Fluid didn't run it. The ${record.nativeSymbol} is in your wallet and movable — Fluid will keep retrying while the app is open, or tap "Complete the swap" when the price is back.`);
+        err.gasFallbackBand = true;
+        throw err;
+      }
+    }
     const leg2Hashes = await dispatchSwapExecution(wallet, r2, progress, { onApprove, onApproveMayan });
     record.state = "done";
     record.leg2Hash = leg2Hashes[0];
@@ -21035,7 +21159,7 @@ async function runGasFallbackLeg2(wallet, record, progress, { storage = null, on
   } catch (e) {
     record.state = "leg2-due";
     if (storage) saveGasFallbackRecord(storage, record);
-    const err = new Error(`Your ${record.nativeSymbol} arrived on ${destChainName(record.toChainKey)}, but the swap into ${record.toSymbol || "your asset"} didn't complete. The ${record.nativeSymbol} is in your wallet and movable — open the swap sheet and tap "Complete the swap" to finish.`);
+    const err = new Error(e?.gasFallbackBand ? e.message : `Your ${record.nativeSymbol} arrived on ${destChainName(record.toChainKey)}, but the swap into ${record.toSymbol || "your asset"} didn't complete. The ${record.nativeSymbol} is in your wallet and movable — open the swap sheet and tap "Complete the swap" to finish.`);
     err.gasFallbackLeg2Due = true;
     err.recordId = record.id;
     throw err;
@@ -21065,6 +21189,11 @@ export async function executeGasFallbackRoute(wallet, route, progress = () => {}
     nativeSymbol: plan.symbol, nativeDecimals: plan.decimals,
     reserveRaw: route.gasReserve.raw, reserveHuman: plan.shortfallHuman,
     expectedNativeRaw: leg1.toAmount != null ? String(leg1.toAmount) : null,
+    // The leg-2 preview the user confirmed (audit WS2 F3,
+    // 2026-11-15): leg 2 is later judged against it under the
+    // ≥90% band — see runGasFallbackLeg2.
+    expectedLeg2Raw: route.legs.leg2Preview?.toAmount != null ? String(route.legs.leg2Preview.toAmount) : null,
+    leg2PreviewFromRaw: route.legs.leg2Preview?.fromAmount != null ? String(route.legs.leg2Preview.fromAmount) : null,
     preNativeRaw: pre != null ? pre.toString() : null,
     leg1Provider: leg1.provider || null,
   });
@@ -22795,6 +22924,50 @@ export function milestoneLegVerification(leg, route) {
   }
   return { ok: true };
 }
+/** Chain-aware address equality for the driver binding
+ *  below: hex-shaped families (EVM, Sui, Aptos) compare
+ *  case-insensitively; every other family's address is
+ *  case-significant (bech32 / base58) and compares exactly. */
+function swapAddressEq(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || !a || !b) return false;
+  if (/^0x[0-9a-fA-F]+$/.test(a) && /^0x[0-9a-fA-F]+$/.test(b)) return a.toLowerCase() === b.toLowerCase();
+  return a === b;
+}
+/** The auto-driver's destination binding (security audit WS2
+ *  F2 = WS3 F-2.1, 2026-11-15): a stored record is only a CLAIM
+ *  about where its legs send. Before the unattended driver
+ *  signs any leg of a milestone record, every leg's
+ *  destination is re-derived against the unlocked wallet's
+ *  own per-chain addresses (`own` — the swapOwnAddressFor
+ *  address set) and a leg not addressed to this wallet refuses
+ *  the drive: the record parks, unsigned. A human completing
+ *  the same record from the sheet is a different checkpoint
+ *  and is not bound here — a composition whose final
+ *  destination is an external address the user chose stays
+ *  completable by hand; it just never auto-signs. A family
+ *  the resolver cannot re-derive (a Lightning endpoint, an
+ *  unbooted Arkade session) cannot convict a leg — those legs
+ *  run through their own paths. Pure. */
+export function milestoneRecordDestinationCheck(record, own) {
+  const legs = Array.isArray(record?.legs) ? record.legs : [];
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    const mine = swapOwnAddressFor(leg?.toChainKey, own);
+    if (!mine) continue;
+    if (!swapAddressEq(leg.toAddress, mine))
+      return { ok: false, legIndex: i, chainKey: leg.toChainKey, final: i === legs.length - 1 };
+  }
+  return { ok: true };
+}
+/** The gas-fallback twin of the binding above: leg 2's
+ *  destination (record.destAddress on record.toChainKey) must
+ *  re-derive to the wallet's own address before the driver
+ *  runs it unattended. Pure. */
+export function gasFallbackRecordDestinationCheck(record, own) {
+  const mine = swapOwnAddressFor(record?.toChainKey, own);
+  if (!mine) return { ok: true };
+  return swapAddressEq(record?.destAddress, mine) ? { ok: true } : { ok: false, chainKey: record?.toChainKey };
+}
 /** Run a milestone record forward from its current leg: each
  *  leg is quoted FRESH from what actually arrived (the first
  *  leg of a fresh execution may reuse the reviewed route),
@@ -22809,7 +22982,7 @@ export function milestoneLegVerification(leg, route) {
  *  claim (arkadeClaimPayout — completes an intermediate
  *  Arkade leg), and the booted session's address
  *  (arkadeAddress — re-resolves the search-time marker). */
-async function runMilestoneForward(wallet, record, progress, { storage = null, onApprove = null, onApproveMayan = null, payInvoice = null, firstRoute = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null } = {}) {
+async function runMilestoneForward(wallet, record, progress, { storage = null, onApprove = null, onApproveMayan = null, payInvoice = null, firstRoute = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null, shouldStop = null } = {}) {
   // Activity-truth hook (auto-continuation addendum,
   // 2026-11-14): the app is told the moment a leg broadcasts
   // (and when the record lands done), so a composed swap has
@@ -22852,6 +23025,22 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
   while (record.currentLeg < record.legs.length) {
     const i = record.currentLeg;
     const leg = record.legs[i];
+    // Pause on lock (security audit WS2 F6, 2026-11-15): the
+    // app reports through shouldStop when the wallet has
+    // locked since this run started. The runner holds its own
+    // captured wallet reference, so without this check an
+    // in-flight composition kept signing behind the lock
+    // screen. The record parks leg-due BEFORE the next
+    // signature; the funds sit in the user's own wallet on the
+    // previous leg's chain, and unlock resumes the drive.
+    if (typeof shouldStop === "function" && shouldStop()) {
+      record.state = "leg-due";
+      if (storage) saveMilestoneRecord(storage, record);
+      const err = new Error(`Fluid locked while this swap was finishing, so it paused before its next step. Your ${leg.fromSymbol || "funds"} is in your wallet on ${destChainName(leg.fromChainKey)} — unlock and it will finish by itself while the app is open, or tap "Complete the swap".`);
+      err.milestoneLegDue = true;
+      err.recordId = record.id;
+      throw err;
+    }
     // Cheapest-entry (2026-11-14): a leg that passes through
     // Arkade may carry the deferred session marker from
     // search time — re-resolve it to the booted session's
@@ -23135,7 +23324,7 @@ async function runMilestoneForward(wallet, record, progress, { storage = null, o
  *  leg follows from what actually arrived. If a credit
  *  outlasts the in-flow window the result is { pending: true }
  *  — the advancer + the sheet's completion button carry it. */
-export async function executeMilestoneRoute(wallet, route, progress = () => {}, { storage = null, onApprove = null, onApproveMayan = null, payInvoice = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null } = {}) {
+export async function executeMilestoneRoute(wallet, route, progress = () => {}, { storage = null, onApprove = null, onApproveMayan = null, payInvoice = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null, shouldStop = null } = {}) {
   if (!route || route.provider !== "milestone" || !route.milestone?.legs?.length)
     throw new Error("That route is not a milestone route.");
   const record = newMilestoneRecord({
@@ -23145,7 +23334,7 @@ export async function executeMilestoneRoute(wallet, route, progress = () => {}, 
     fromSymbol: route.fromToken?.symbol || null, toSymbol: route.toToken?.symbol || null,
     fromDecimals: route.fromToken?.decimals ?? null,
   });
-  const out = await runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast, firstRoute: route.milestoneLegRoutes?.[0] || null });
+  const out = await runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast, shouldStop, firstRoute: route.milestoneLegRoutes?.[0] || null });
   if (!record.id && out.hashes?.[0]) { record.id = out.hashes[0]; if (storage) saveMilestoneRecord(storage, record); }
   return out;
 }
@@ -23312,7 +23501,7 @@ export async function advanceMilestoneRecords(storage, { arkadeClaimPayout = nul
 /** The one-tap completion behind the swap sheet's button:
  *  continue a record from its current leg (re-checking a
  *  pending credit first when the advancer hasn't seen it). */
-export async function completeMilestoneSwap(wallet, recordId, progress = () => {}, { storage, onApprove = null, onApproveMayan = null, payInvoice = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null } = {}) {
+export async function completeMilestoneSwap(wallet, recordId, progress = () => {}, { storage, onApprove = null, onApproveMayan = null, payInvoice = null, fundVhtlc = null, arkadeOffboard = null, arkadeClaimPayout = null, arkadeAddress = null, onLegBroadcast = null, shouldStop = null } = {}) {
   const record = loadMilestoneRecords(storage).find(r => r.id === recordId);
   if (!record) throw new Error("That swap record is gone.");
   if (record.state === "done") return { record, done: true };
@@ -23325,9 +23514,9 @@ export async function completeMilestoneSwap(wallet, recordId, progress = () => {
     const fresh = loadMilestoneRecords(storage).find(r => r.id === recordId);
     if (!fresh || fresh.state === "awaiting-credit")
       throw new Error("The last step hasn't landed yet — try again in a few minutes.");
-    return runMilestoneForward(wallet, fresh, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast });
+    return runMilestoneForward(wallet, fresh, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast, shouldStop });
   }
-  return runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast });
+  return runMilestoneForward(wallet, record, progress, { storage, onApprove, onApproveMayan, payInvoice, fundVhtlc, arkadeOffboard, arkadeClaimPayout, arkadeAddress, onLegBroadcast, shouldStop });
 }
 
 /** The source walk — Satora, Jupiter, Across, Relay.
@@ -24431,11 +24620,14 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
  *   - it must be FROM the user's own address, on the route's origin
  *     chain, with hex calldata;
  *   - an approve step must call approve() on the FROM-TOKEN contract
- *     itself, naming the deposit step's contract as spender, for
- *     EXACTLY the route's fromAmount — an unlimited or inflated
- *     approval is refused, always;
- *   - a non-approve step must never target the token being sold
- *     (the audit M1 lesson) and must carry value only when the sold
+ *     itself, naming Relay's PINNED depository contract for the
+ *     chain as spender, for EXACTLY the route's fromAmount — an
+ *     unlimited or inflated approval is refused, always;
+ *   - a non-approve step must target that same pinned depository,
+ *     its calldata must decode as the depository's deposit call
+ *     naming the user as depositor (and, for a token swap, the
+ *     sold token and the exact amount), it must never target the
+ *     token being sold, and it must carry value only when the sold
  *     asset is the chain's native coin — and then exactly fromAmount. */
 export function checkRelayStepBounds(route, step, item, owner) {
   const refuse = (m) => ({ ok: false, reason: "Fluid refused this route: " + m + " Pick another route." });
@@ -24463,8 +24655,17 @@ export function checkRelayStepBounds(route, step, item, owner) {
       .filter(s => s && s.id !== "approve")
       .flatMap(s => (s.items || []).map(it => it?.data?.to))
       .find(t => typeof t === "string" && t);
-    if (!depositTo || String(spender || "").toLowerCase() !== String(depositTo).toLowerCase())
-      return refuse("a Relay approval was addressed to an unexpected spender, not the swap's deposit contract.");
+    // H-B (2026-11-15): the spender is pinned to Relay's
+    // depository CONSTANT for the source chain — not merely to
+    // the deposit step's own `to` from the same response (the
+    // old check, under which a response verified against
+    // itself). The deposit target must be that same constant.
+    const depository = relayDepositoryFor(route?.relay?.originChainId);
+    if (!depository) return refuse("Fluid has no pinned Relay depository for the swap's source chain.");
+    if (String(spender || "").toLowerCase() !== depository)
+      return refuse("a Relay approval was addressed to an unexpected spender, not Relay's pinned depository contract.");
+    if (!depositTo || String(depositTo).toLowerCase() !== depository)
+      return refuse("the Relay route's deposit step does not target Relay's pinned depository contract.");
     let want = null;
     try { want = BigInt(route.fromAmount); } catch { want = null; }
     if (want == null || amount == null || BigInt(amount) !== want)
@@ -24482,6 +24683,37 @@ export function checkRelayStepBounds(route, step, item, owner) {
       return refuse("a Relay step's value did not match the exact amount being swapped.");
   } else if (value !== 0n) {
     return refuse("a Relay step carried native value on a token swap.");
+  }
+  // H-B (2026-11-15): the deposit step itself — target pinned
+  // to the depository constant, and the calldata DECODED and
+  // checked field by field (the discipline every other rail
+  // already had): a token deposit must be depositErc20 naming
+  // the user as depositor, the sold token, and exactly the
+  // swapped amount; a native deposit must be depositNative
+  // naming the user. The trailing bytes32 order id is Relay's
+  // own and is not Fluid's to pin.
+  const depository = relayDepositoryFor(route?.relay?.originChainId);
+  if (!depository) return refuse("Fluid has no pinned Relay depository for the swap's source chain.");
+  if (String(data.to).toLowerCase() !== depository)
+    return refuse("a Relay step did not target Relay's pinned depository contract.");
+  let depFn = null, depArgs = null;
+  try {
+    const parsed = new ethers.Interface(RELAY_DEPOSITORY_ABI).parseTransaction({ data: data.data });
+    depFn = parsed?.name || null; depArgs = parsed?.args || null;
+  } catch { depFn = null; depArgs = null; }
+  if (!depFn || !depArgs) return refuse("a Relay deposit step's calldata did not decode as a Relay depository call.");
+  if (String(depArgs[0] || "").toLowerCase() !== String(owner).toLowerCase())
+    return refuse("a Relay deposit named a depositor that is not you.");
+  if (isNative) {
+    if (depFn !== "depositNative") return refuse("a Relay native-coin deposit did not use the depository's native deposit function.");
+  } else {
+    if (depFn !== "depositErc20") return refuse("a Relay token deposit did not use the depository's token deposit function.");
+    if (String(depArgs[1] || "").toLowerCase() !== String(fromToken.address).toLowerCase())
+      return refuse("a Relay deposit named a different token than the one being swapped.");
+    let want = null;
+    try { want = BigInt(route.fromAmount); } catch { want = null; }
+    if (want == null || depArgs[2] == null || BigInt(depArgs[2]) !== want)
+      return refuse("a Relay deposit's amount did not match the exact amount being swapped.");
   }
   return { ok: true };
 }

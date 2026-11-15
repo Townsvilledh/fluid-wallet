@@ -43,7 +43,7 @@ import {
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
   executeMayanSwapRoute, loadMayanSwapRecords, saveMayanSwapRecord, pollMayanSwapStatuses, mayanSwapHistoryLine, mayanSwapPhase, formatMayanRefundNote,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
-  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs,
+  executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
@@ -71,6 +71,21 @@ import {
 } from "./ln-nwc-bridge.js";
 
 const $ = (id) => document.getElementById(id);
+// Framing protection (security audit F-4.2, 2026-11-15): the
+// wallet must never run inside someone else's frame — a framed
+// wallet is a clickjacking surface, and the header defences
+// that would normally apply (X-Frame-Options, CSP
+// frame-ancestors) cannot be delivered on GitHub Pages: Pages
+// sends no custom headers, dist/_headers is inert there, and
+// frame-ancestors is ignored in a <meta> CSP by spec. So the
+// app refuses itself: try to break out to the top, and if it
+// is still framed, initialise nothing and say why, in plain
+// text. No legitimate embedding of the wallet exists.
+if (window.top !== window.self) {
+  try { window.top.location = window.location.href; } catch { /* a sandboxed frame can refuse the navigation — the refusal below still stands */ }
+  if (document.body) document.body.innerHTML = '<main style="font-family:system-ui,sans-serif;background:#070606;color:#f5f0e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center"><div><h1 style="color:#f7931a">Fluid does not run inside a frame</h1><p>Open <b>fluidwallet.dpdns.org</b> directly in your browser — never inside another site or app.</p></div></main>';
+  throw new Error("Fluid does not run inside a frame.");
+}
 const VAULT_KEY = "fluid_vault_v1";
 const NAME_CLAIM_KEY = "fluid_name_claim"; // the device-held signed name claim + its publish state
 const HISTORY_KEY = "fluid_history_v1";
@@ -8055,7 +8070,8 @@ $("actSwap").onclick = () => {
             // this tap is the user action that loads it.
             const touchesArkade = (r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
             if (touchesArkade) { try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ } }
-            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec) });
+            const epoch = lockEpoch; // pause-on-lock (audit WS2 F6): a lock mid-run parks the composition before its next signature
+            await completeMilestoneSwap(wallet, r.id, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec), shouldStop: () => lockEpoch !== epoch });
             msg("wMsg", "Swap complete ✓");
             rescanAfterActivity();
           } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("wMsg", humanizeTxError(e)); rescanAfterActivity(); }
@@ -8648,7 +8664,8 @@ $("actSwap").onclick = () => {
         if ((route.milestone?.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade")) {
           try { await arkEnsureSession(); } catch { /* the runner parks the Arkade leg with the reason */ }
         }
-        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec, { explorer: swapSrcExplorerFor(fromKey) }) });
+        const epoch = lockEpoch; // pause-on-lock (audit WS2 F6)
+        const out = await executeMilestoneRoute(wallet, route, (t) => msg("wMsg", t, true), { storage: localStorage, onApprove: recordEvmApproval, payInvoice: payLnSwapInvoice, ...milestoneArkadeInjections(), arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec, { explorer: swapSrcExplorerFor(fromKey) }), shouldStop: () => lockEpoch !== epoch });
         hashes = out.hashes;
         srcExplorer = fromKey === "lightning" ? "" : fromKey === "bitcoin" ? "https://mempool.space" : fromKey === "solana" ? SOLANA_EXPLORER : fromKey === "tron" ? TRON_EXPLORER : fromKey === "sui" ? SUI_EXPLORER : NETWORKS[fromKey].explorer;
         if (fromKey === "solana") srcLink = `${SOLANA_EXPLORER}/tx/${hashes[0]}`;
@@ -9308,6 +9325,10 @@ $("createBtn").onclick = async () => {
   const finishCreate = async (backupConfirmed) => {
     if (backupConfirmed) { try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ } }
     wallet = await unlockVault(v.keystore, pw);
+    // H-A (2026-11-15): the ceremony is complete — the seed
+    // words, the quiz's word options and the create passwords
+    // leave the page now, not at some later lock.
+    clearSensitiveFields();
     if (pendingName) {
       const claimed = pendingName; pendingName = null;
       localStorage.setItem("fluid_name", claimed);
@@ -9371,6 +9392,9 @@ $("importBtn").onclick = async () => {
     localStorage.removeItem(BACKUP_STATE_KEY);
     nameAdoptTried = false;
     wallet = await unlockVault(v.keystore, pw);
+    // H-A (2026-11-15): the imported phrase and the password
+    // have been consumed — neither stays in the form.
+    clearSensitiveFields();
     if (wantName) {
       // Claim durability (agent kit, 2026-11-09): record the owed
       // claim BEFORE any await that could be interrupted — the same
@@ -9426,6 +9450,9 @@ $("unlockBtn").onclick = async () => {
         localStorage.setItem(VAULT_KEY, await reencryptVault(wallet, $("unlockPw").value));
       }
     } catch { /* the old vault still works; the upgrade retries next unlock */ }
+    // H-A (2026-11-15): the password has been consumed (and
+    // reused for the KDF upgrade above) — it leaves the field.
+    $("unlockPw").value = "";
     refreshGate();
     // Satora swap polling resumes on unlock: persisted swap ids are
     // the recovery key, so any swap left in flight by a reload or a
@@ -9790,6 +9817,38 @@ function swapSheetIsOpen() {
   const r = $("sheetRoot");
   return !!(r && !r.classList.contains("hidden") && document.getElementById("wMsg"));
 }
+/** The unlocked wallet's own per-chain address set, in the
+ *  shape core's swapOwnAddressFor resolves — the auto-driver's
+ *  destination binding (audit WS2 F2 = WS3 F-2.1, 2026-11-15)
+ *  re-derives every due record's destinations against exactly
+ *  this set before signing anything. Derived fresh from the
+ *  phrase on each pass that has due records; never persisted.
+ *  A family whose derivation throws resolves null, and a null
+ *  family cannot convict a leg (the core check's doctrine). */
+function driverOwnAddresses() {
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) return {};
+  const safe = (fn) => { try { return fn(); } catch { return null; } };
+  return {
+    evm: wallet.address,
+    tron: safe(() => tronAddressFromPhrase(phrase)),
+    solana: safe(() => solanaAddressFromPhrase(phrase)),
+    sui: safe(() => suiAddressFromPhrase(phrase)),
+    bitcoin: safe(() => bitcoinAddress(phrase)),
+    polkadot: safe(() => dotAddressFromPhrase(phrase)),
+    ton: safe(() => tonAddressFromPhrase(phrase)),
+    near: safe(() => nearAddressFromPhrase(phrase)),
+    xrpl: safe(() => xrplAddressFromPhrase(phrase)),
+    litecoin: safe(() => litecoinAddress(phrase)),
+    dogecoin: safe(() => dogecoinAddress(phrase)),
+    bitcoincash: safe(() => bitcoinCashAddress(phrase)),
+    cardano: safe(() => cardanoAddress(phrase)),
+    aptos: safe(() => aptosAddressFromPhrase(phrase)),
+    arkade: arkSession?.address || null,
+    cosmoshub: cosmosAddrs.cosmoshub || null, osmosis: cosmosAddrs.osmosis || null, noble: cosmosAddrs.noble || null,
+    celestia: cosmosAddrs.celestia || null, injective: cosmosAddrs.injective || null, dydx: cosmosAddrs.dydx || null,
+  };
+}
 async function drivePendingSwaps() {
   if (!wallet || pendingDriveBusy || swapRunsInFlight > 0 || swapSheetIsOpen()) return;
   pendingDriveBusy = true;
@@ -9817,10 +9876,33 @@ async function drivePendingSwaps() {
     for (const r of msAll) syncPendingSwapHistory("milestone", r);
     for (const r of gfAll) syncPendingSwapHistory("gasfallback", r);
     const due = (kind, r) => now - (pendingDriveLastTry.get(kind + ":" + r.id) || 0) >= milestoneRetryDelayMs(pendingDriveFailures.get(kind + ":" + r.id) || 0) && !swapRunsByRecord.has(kind + ":" + r.id);
-    const msDue = msAll.filter(r => milestoneNeedsAction(r) && due("milestone", r)
+    let msDue = msAll.filter(r => milestoneNeedsAction(r) && due("milestone", r)
       && !(r.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade"));
-    const gfDue = gfAll.filter(r => gasFallbackNeedsAction(r) && due("gasfallback", r));
+    let gfDue = gfAll.filter(r => gasFallbackNeedsAction(r) && due("gasfallback", r));
     if (!msDue.length && !gfDue.length) return;
+    // Driver destination binding (security audit WS2 F2 =
+    // WS3 F-2.1, 2026-11-15): a stored record is only a claim
+    // about where its legs send — before this unattended
+    // driver signs any leg, every due record's destinations
+    // are re-derived against the unlocked wallet's OWN
+    // addresses. A record with a leg addressed anywhere else
+    // is never driven: it stays for the user's own tap on
+    // "Complete the swap" (a human checkpoint), with the
+    // reason on its home row.
+    {
+      const own = driverOwnAddresses();
+      const msOk = [], gfOk = [];
+      for (const r of msDue) {
+        if (milestoneRecordDestinationCheck(r, own).ok) msOk.push(r);
+        else { droveAny = true; homeMilestoneNotes.set(r.id, "Fluid won't finish this swap unattended — a step in it isn't addressed to this wallet. Tap “Complete the swap” to review and finish it yourself."); }
+      }
+      for (const r of gfDue) {
+        if (gasFallbackRecordDestinationCheck(r, own).ok) gfOk.push(r);
+        else { droveAny = true; homeGfbNotes.set(r.id, "Fluid won't finish this swap unattended — its destination isn't this wallet's address. Tap “Complete the swap” to review and finish it yourself."); }
+      }
+      msDue = msOk; gfDue = gfOk;
+      if (!msDue.length && !gfDue.length) return;
+    }
     droveAny = true;
     homeMilestoneBusy = true;
     try {
@@ -9903,7 +9985,11 @@ function kickPendingSwapDriver() {
 async function resumeMilestoneRecord(record, status = () => {}) {
   const touchesArkade = (record.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade");
   if (touchesArkade) { $("actSwap").click(); return { viaSheet: true }; }
-  return completeMilestoneSwap(wallet, record.id, status, { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec) });
+  // Pause-on-lock (audit WS2 F6): the run captures the lock
+  // generation; if the wallet locks mid-composition, the
+  // runner parks before its next signature.
+  const epoch = lockEpoch;
+  return completeMilestoneSwap(wallet, record.id, status, { storage: localStorage, onApprove: recordEvmApprovalGfb, payInvoice: payLnSwapInvoice, arkadeAddress: arkSession?.address || null, onLegBroadcast: (rec) => syncPendingSwapHistory("milestone", rec), shouldStop: () => lockEpoch !== epoch });
 }
 
 let homeMilestonePaintSeq = 0;
@@ -10763,7 +10849,34 @@ $("refreshBtn").onclick = async () => {
     delete btn.dataset.busy;
   }
 };
+/** Lock hygiene (security audit H-A, 2026-11-15): the seed
+ *  phrase and every password/phrase field must leave the PAGE
+ *  when the wallet locks — and after the ceremonies that put
+ *  them there finish. Before this, lockWallet nulled only the
+ *  in-memory wallet: a created wallet's seed stayed rendered in
+ *  #seedOut and the typed unlock password stayed in #unlockPw
+ *  behind the lock screen, readable by anything that can read
+ *  the DOM. lockWallet owns this cleanup so EVERY lock path —
+ *  the lock buttons, the idle auto-lock, the hidden-tab
+ *  auto-lock — gets it. The ceremony completions call it too
+ *  (finishCreate / import / unlock below). */
+function clearSensitiveFields() {
+  const seedOut = $("seedOut"); if (seedOut) seedOut.textContent = "";
+  show("seedBox", false);
+  const quizBox = $("seedQuizBox"); if (quizBox) { quizBox.innerHTML = ""; show("seedQuizBox", false); }
+  const reveal = $("seedRevealOut"); if (reveal) reveal.textContent = "";
+  for (const id of ["unlockPw", "createPw", "createPw2", "importPhrase", "seedPw"]) {
+    const el = $(id); if (el) el.value = "";
+  }
+}
+/** Lock generation (security audit WS2 F6, 2026-11-15): bumped
+ *  by every lockWallet() call. The milestone runner captures
+ *  the generation when a completion starts and refuses to sign
+ *  the NEXT leg once it has moved — a composition in flight
+ *  pauses at the lock instead of signing on behind it. */
+let lockEpoch = 0;
 function lockWallet() {
+  lockEpoch++;
   // A lock must never leave a composed sheet painted over the
   // lock screen (audit P1-14): the sheet overlay outlives the
   // gate paint, so a recipient + amount stayed legible above the
@@ -10774,6 +10887,15 @@ function lockWallet() {
   const sheetRoot = $("sheetRoot");
   if (sheetRoot && !sheetRoot.classList.contains("hidden")) { lockClosedSheet = true; closeSheet(true); }
   lnBridgeStopResponder(); // a locked wallet answers no bridge invoice requests
+  // Lightning teardown on lock (security audit M1, 2026-11-15):
+  // the LDK node and its session must not stay live while the
+  // wallet is locked — stop the loops, drop the app session,
+  // and shut the node module down (peer sockets closed, the
+  // storage key and node dropped). It re-boots from the phrase
+  // on the next unlock, like the network-switch path above.
+  if (lnSession) { lnSession.stopLoops(); lnSession = null; }
+  try { lnChunk?.shutdownLightning?.(); } catch { /* teardown must never block a lock */ }
+  clearSensitiveFields(); // H-A: seed + password fields leave the page on every lock
   wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate();
 }
 $("lockBtn").onclick = lockWallet;
@@ -10950,6 +11072,12 @@ $("wipeBtn").onclick = () => {
     <button class="btn ghost" id="wipeCancel">Keep my wallet</button>`);
   $("wipeCancel").onclick = () => closeSheet();
   $("wipeGo").onclick = () => {
+    // Stop the Lightning node FIRST (audit M1/M2, 2026-11-15):
+    // a live node would re-write its encrypted KV as fast as
+    // the wipe removes it.
+    if (lnSession) { lnSession.stopLoops(); lnSession = null; }
+    try { lnChunk?.shutdownLightning?.(); } catch { /* the wipe proceeds regardless */ }
+    lnBridgeStopResponder();
     // Full wipe (audit L3): EVERY fluid_* key goes — vault, name,
     // history, approval records, agents + spend log, chain cache,
     // custom tokens, caches. Nothing of the removed wallet survives.
@@ -11035,9 +11163,10 @@ renderAgents();
 function askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday }) {
   return new Promise((resolve) => {
     const settle = (v) => { sheetCloseHook = null; closeSheet(); resolve(v); };
-    const policyLine = price
-      ? `✅ <b>Policy check passed</b> — value ≈ ${usd(usdAmt)}; caps $${a.policy.perTxCapUsd} per transfer and $${a.policy.dailyCapUsd} per day (this agent has spent ${usd(spentToday)} today).`
-      : `⚠️ <b>Price unknown</b> — the dollar policy caps could not be checked for this transfer. Check the amount and destination extra carefully.`;
+    // The price is guaranteed present here (requestTransfer
+    // fails closed without one, audit M3) — the caps were
+    // genuinely checked before this sheet opened.
+    const policyLine = `✅ <b>Policy check passed</b> — value ≈ ${usd(usdAmt)}; caps $${a.policy.perTxCapUsd} per transfer and $${a.policy.dailyCapUsd} per day (this agent has spent ${usd(spentToday)} today).`;
     openSheet(`<h3>Agent transfer request</h3>
       <p class="tag">An agent is asking to spend from its own agent wallet. Nothing moves unless you tap Approve.</p>
       <p><b>Agent:</b> ${esc(a.name)} <span class="tag">(agent #${a.index})</span></p>
@@ -11080,13 +11209,22 @@ window.FluidAgent = {
     const amt = Number(amount);
     if (!ethersIsAddress(to)) throw new Error("Invalid destination address.");
     const price = prices[net.symbol] || 0;
-    const usdAmt = price ? amt * price : 0;
-    const gate = checkAgentPolicy(a.policy, price ? usdAmt : 0.0001, agentSpentToday(a.index));
-    if (price && !gate.ok) throw new Error("Policy blocked: " + gate.reason);
+    // Caps fail CLOSED (security audit M3, 2026-11-15): the
+    // policy is denominated in dollars, so when the price feed
+    // has no price for the asset the caps cannot be checked at
+    // all — the request is refused outright. Before this, the
+    // gate was called with a dummy $0.0001 (which passes any
+    // cap), the sheet merely disclosed "price unknown", and
+    // the spend was never recorded — a price outage silently
+    // disabled both the caps and the daily ledger.
+    if (!price) throw new Error("Price unavailable — Fluid can't check this transfer against the agent's dollar caps right now, so it won't proceed. Try again once prices are loading.");
+    const usdAmt = amt * price;
+    const gate = checkAgentPolicy(a.policy, usdAmt, agentSpentToday(a.index));
+    if (!gate.ok) throw new Error("Policy blocked: " + gate.reason);
     const ok = await askAgentApproval({ a, net, to, amt, usdAmt, price, spentToday: agentSpentToday(a.index) });
     if (!ok) throw new Error("Owner declined.");
     const tx = await sendFromAgent(wallet.mnemonic.phrase, a.index, netKey, to, amt);
-    if (price) recordAgentSpend(a.index, usdAmt);
+    recordAgentSpend(a.index, usdAmt);
     const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
     h.unshift({ hash: tx.hash, amount: String(amt), symbol: net.symbol, to, explorer: net.explorer, at: Date.now(), agent: a.name });
     localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));

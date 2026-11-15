@@ -142,7 +142,7 @@ globalThis.FluidLnHost = {
       try { sock.node.socket_data(connId, new Uint8Array(ev.data)); } catch { /* node gone */ }
       drainSocket(connId);
     };
-    ws.onclose = () => { active.sockets.delete(connId); try { sock.node.socket_closed(connId); } catch { /* node gone */ } if (active.onSocketClosed) { try { active.onSocketClosed(connId); } catch { /* session gone */ } } };
+    ws.onclose = () => { active?.sockets.delete(connId); try { sock.node.socket_closed(connId); } catch { /* node gone */ } if (active?.onSocketClosed) { try { active.onSocketClosed(connId); } catch { /* session gone */ } } };
     ws.onerror = () => { try { ws.close(); } catch { /* already closing */ } };
   },
   wsNotify(connId) { drainSocket(connId); },
@@ -491,6 +491,26 @@ export async function bootLightning({ phrase, network = "bitcoin", wsProxy = "",
   };
   active.onSocketClosed = (connId) => session._socketClosed(connId);
   return session;
+}
+
+/** Full Lightning teardown (security audit M1, 2026-11-15): stop
+ *  the booted node entirely — close every peer socket and drop
+ *  the module's active session, so the HKDF-derived storage key
+ *  and the live LDK node do not stay resident while the wallet
+ *  is locked (or after a wipe). The session's own timers are the
+ *  caller's to stop (session.stopLoops()); the encrypted KV on
+ *  disk is untouched and re-opens from the phrase at the next
+ *  bootLightning. Safe to call when nothing is booted. */
+export function shutdownLightning() {
+  if (!active) return;
+  const a = active;
+  active = null;
+  try {
+    for (const sock of a.sockets?.values() || []) { try { sock.ws.close(); } catch { /* already closing */ } }
+  } catch { /* socket teardown must never throw into a lock */ }
+  try { a.sockets?.clear(); } catch { /* as above */ }
+  a.node = null;
+  a.storageKey = null;
 }
 
 // ---------------------------------------------------------------------------

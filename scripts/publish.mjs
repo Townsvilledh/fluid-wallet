@@ -38,9 +38,10 @@
 //   (no commit, no worktree, no push).
 //   --message sets the main commit subject (default: "release: <stamp>").
 import { execFileSync } from "node:child_process";
-import { readFileSync, copyFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, copyFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
+import { createHash, createPrivateKey, sign as edSign } from "node:crypto";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const WORKTREE = "/tmp/fluid-gh-pages";
@@ -49,7 +50,8 @@ const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "fluid-wallet
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js", "walletconnect.chunk.js", "arkade.chunk.js",
   "fonts/inter-var.woff2", "fonts/space-grotesk-var.woff2", "favicon.png",
   "fluid-agent.json", ".well-known/fluid-agent.json", ".nojekyll",
-  "funding.json", ".well-known/funding-manifest-urls"];
+  "funding.json", ".well-known/funding-manifest-urls",
+  "checksums.txt", "release-pubkey.pem"];
 const SSH = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/config" };
 // Directories whose NEW (untracked) files belong in a release commit.
 // Tracked changes are staged repo-wide by `git add -u` regardless.
@@ -190,6 +192,23 @@ try {
     process.exit(1);
   }
   console.log("✓ copied bundle hash matches the fresh build");
+  // Release signature (audit F-5.1, 2026-11-15): sign the
+  // build's checksums.txt with the Ed25519 release key and
+  // serve the signature as checksums.txt.sig. The key lives
+  // OUTSIDE the repo (~/.fluid-release/release-key.pem, or
+  // $FLUID_RELEASE_KEY) and the signature is generated here —
+  // never in build.mjs — because CI rebuilds dist without the
+  // key and must produce byte-identical output. A missing key
+  // publishes unsigned with a loud warning, never silently.
+  const keyPath = process.env.FLUID_RELEASE_KEY || join(homedir(), ".fluid-release", "release-key.pem");
+  if (existsSync(keyPath)) {
+    const key = createPrivateKey(readFileSync(keyPath, "utf8"));
+    const sig = edSign(null, readFileSync(join(WORKTREE, "checksums.txt")), key);
+    writeFileSync(join(WORKTREE, "checksums.txt.sig"), sig.toString("base64") + "\n");
+    console.log("✓ checksums.txt signed with the release key (checksums.txt.sig)");
+  } else {
+    console.error(`⚠ RELEASE KEY NOT FOUND at ${keyPath} — publishing UNSIGNED checksums. The served release will carry no checksums.txt.sig.`);
+  }
   run("git", ["-C", WORKTREE, "add", "-A"]);
   const status = execFileSync("git", ["-C", WORKTREE, "status", "--porcelain"], { encoding: "utf8" });
   if (!status.trim()) {

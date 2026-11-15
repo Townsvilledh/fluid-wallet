@@ -3890,8 +3890,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // Defect 4: the green "Wallet created…" message survived onto the
   // lock/unlock screen because locking never cleared onboardMsg.
+  // (The slice window grew with lockWallet itself: the 2026-11-15
+  // security build added the lock epoch, the Lightning teardown
+  // and the H-A field clearing to the same function.)
   const lockAt = appSrc.indexOf("function lockWallet()");
-  const lockSlice = appSrc.slice(lockAt, lockAt + 1200);
+  const lockSlice = appSrc.slice(lockAt, lockAt + 2600);
   ok("qa4: locking clears the transient onboarding message",
     lockSlice.includes('msg("onboardMsg", "")'));
   // Audit P1-14 (2026-11-10): the same function dismisses any open
@@ -3956,7 +3959,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && gateSlice.includes('show("restoreBackBtn", restoreMode && !wallet && hasVault)'));
   ok("lockfix: restore mode ends on unlock and on lock — no stale detour",
     gateSlice.includes("if (wallet) restoreMode = false;")
-    && appSrc.slice(appSrc.indexOf("function lockWallet()"), appSrc.indexOf("function lockWallet()") + 1200).includes("restoreMode = false;"));
+    && appSrc.slice(appSrc.indexOf("function lockWallet()"), appSrc.indexOf("function lockWallet()") + 2600).includes("restoreMode = false;"));
   const restoreAt = appSrc.indexOf('$("lockRestoreBtn").onclick');
   const restoreSlice = appSrc.slice(restoreAt, restoreAt + 2600);
   ok("lockfix: recovery handler routes through the shared gate only",
@@ -5428,11 +5431,15 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       checkRelayStepBounds(foreign, foreign.relay.steps[1], foreign.relay.steps[1].items[0], RUSER).ok === false
       && checkRelayStepBounds(rroute, rroute.relay.steps[0], rroute.relay.steps[0].items[0], "0x0000000000000000000000000000000000000001").ok === false);
     // Native-coin route: the single deposit step must carry exactly
-    // the swapped amount as value — no more, no less.
+    // the swapped amount as value — no more, no less. Its calldata
+    // is a genuine depositNative naming the user (the H-B decode
+    // requires the depository's native function for a native swap).
     const native = clone();
     native.fromToken = { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18, chainId: 8453 };
     native.relay.steps = [native.relay.steps[1]];
     native.relay.steps[0].items[0].data.value = "5000000";
+    native.relay.steps[0].items[0].data.data = new ethers.Interface(["function depositNative(address depositor, bytes32 id)"])
+      .encodeFunctionData("depositNative", [RUSER, "0xeec44d2440310e29e71d76ffbd114ab3ee3e5bd7427703a17ac10abcac44395d"]);
     const nativeShort = structuredClone(native);
     nativeShort.relay.steps[0].items[0].data.value = "4999999";
     ok("relay: native step value must equal the exact swap amount",
@@ -7113,6 +7120,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const u = String(url);
       if (u.includes("publicnode") || u.includes("api.mainnet-beta.solana.com")) {
         const body = JSON.parse(opts.body);
+        if (body.method === "getAccountInfo") {
+          // H-C (2026-11-15): the executor now reads the lookup
+          // table from chain state and verifies the response's
+          // declared list against it — the stub serves the
+          // account the fixture's declared list describes.
+          const lutBytes = Buffer.concat([Buffer.alloc(56), ...[USER_J8, WSOL_J8, USDC_J8].map(a => new SolPublicKey(a).toBuffer())]);
+          return jsonResJ8({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: { data: [lutBytes.toString("base64"), "base64"], executable: false, lamports: 1, owner: "AddressLookupTab1e1111111111111111111111111", rentEpoch: 0 } } });
+        }
         if (body.method === "getLatestBlockhash") return jsonResJ8({ jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: { blockhash: freshBhJ8, lastValidBlockHeight: 999 } } });
         if (body.method === "sendTransaction") { sentPayloadJ8 = body.params[0]; return jsonResJ8({ jsonrpc: "2.0", id: 1, result: "FixtureJupiterSignature" }); }
         throw new Error("unexpected rpc in jupiter exec stub: " + body.method);
@@ -18070,6 +18085,174 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       Array.isArray(toks1776) && toks1776.length === 1 && toks1776[0].symbol === "USDC"
       && toks1776[0].address.toLowerCase() === INJ_USDC.toLowerCase());
   } finally { globalThis.fetch = realFetch5; }
+}
+
+// ---------- §122. Security build (2026-11-15 — the 2026-11-14
+// audit's fix order) ----------
+// H-A lock hygiene, H-B Relay depository pinning, H-C Jupiter
+// lookup-table verification, the driver pack (destination
+// binding / gas-fallback band / pause-on-lock), the lifecycle
+// pack (Lightning teardown / wipe completeness / agent caps
+// fail closed) and the provenance pack (WASM provenance,
+// framing refusal, signed release checksums). Every pin here
+// fails without its fix.
+{
+  const { relayDepositoryFor, RELAY_DEPOSITORY, RELAY_DEPOSITORY_ALT, parseSolanaLookupTableAddresses,
+    verifyJupiterLookupTables, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
+    gasFallbackLeg2BandCheck, fluidStorageKeysToWipe } = await import("../src/wallet-core.js");
+  const coreSrc122 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc122 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const lnSrc122 = readFileSync(new URL("../src/lightning-node.js", import.meta.url), "utf8");
+
+  // --- H-B: Relay depository pinning ---
+  ok("sec H-B: depository map — canonical on Base/Arbitrum, alternate on Linea/Mantle/Cronos, null off-Relay",
+    relayDepositoryFor(8453) === RELAY_DEPOSITORY && relayDepositoryFor(42161) === RELAY_DEPOSITORY
+    && relayDepositoryFor(59144) === RELAY_DEPOSITORY_ALT && relayDepositoryFor(5000) === RELAY_DEPOSITORY_ALT
+    && relayDepositoryFor(25) === RELAY_DEPOSITORY_ALT
+    && relayDepositoryFor(122) === null && relayDepositoryFor(11155111) === null);
+  const U122 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const USDC122 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const ATK122 = "0x000000000000000000000000000000000000dEaD";
+  const depIface122 = new ethers.Interface(["function depositErc20(address depositor, address token, uint256 amount, bytes32 id)", "function depositNative(address depositor, bytes32 id)"]);
+  const apprIface122 = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+  const ID122 = "0x" + "22".repeat(32);
+  const relayRoute122 = (chainId, depTo, depData, spender = RELAY_DEPOSITORY, value = "0") => ({
+    provider: "relay", fromAmount: "5000000",
+    fromToken: { address: USDC122, symbol: "USDC", decimals: 6, chainId },
+    relay: { originChainId: chainId, steps: [
+      { id: "approve", kind: "transaction", items: [{ data: { from: U122, to: USDC122, data: apprIface122.encodeFunctionData("approve", [spender, 5000000n]), value: "0", chainId } }] },
+      { id: "deposit", kind: "transaction", items: [{ data: { from: U122, to: depTo, data: depData, value, chainId } }] },
+    ] },
+  });
+  const depCall122 = (depositor = U122, token = USDC122, amount = 5000000n) => depIface122.encodeFunctionData("depositErc20", [depositor, token, amount, ID122]);
+  const bounds122 = (r, i) => checkRelayStepBounds(r, r.relay.steps[i], r.relay.steps[i].items[0], U122);
+  const good122 = relayRoute122(8453, RELAY_DEPOSITORY, depCall122());
+  ok("sec H-B: a well-formed deposit to the pinned depository passes both steps",
+    bounds122(good122, 0).ok === true && bounds122(good122, 1).ok === true);
+  ok("sec H-B: a deposit to an attacker contract is refused even with well-formed calldata",
+    bounds122(relayRoute122(8453, ATK122, depCall122(), ATK122), 1).ok === false
+    && /pinned depository/.test(bounds122(relayRoute122(8453, ATK122, depCall122(), ATK122), 1).reason));
+  ok("sec H-B: an approval naming an attacker spender is refused",
+    bounds122(relayRoute122(8453, RELAY_DEPOSITORY, depCall122(), ATK122), 0).ok === false);
+  ok("sec H-B: deposit calldata naming another depositor, token or amount is refused",
+    bounds122(relayRoute122(8453, RELAY_DEPOSITORY, depCall122(ATK122)), 1).ok === false
+    && bounds122(relayRoute122(8453, RELAY_DEPOSITORY, depCall122(U122, ATK122)), 1).ok === false
+    && bounds122(relayRoute122(8453, RELAY_DEPOSITORY, depCall122(U122, USDC122, 4999999n)), 1).ok === false);
+  ok("sec H-B: Linea deposits must use the alternate depository — the canonical address is refused there",
+    bounds122(relayRoute122(59144, RELAY_DEPOSITORY, depCall122(), RELAY_DEPOSITORY), 1).ok === false
+    && bounds122(relayRoute122(59144, RELAY_DEPOSITORY_ALT, depCall122(), RELAY_DEPOSITORY_ALT), 1).ok === true);
+  const native122 = relayRoute122(8453, RELAY_DEPOSITORY, depIface122.encodeFunctionData("depositNative", [U122, ID122]), RELAY_DEPOSITORY, "5000000");
+  native122.fromToken = { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18, chainId: 8453 };
+  native122.relay.steps = [native122.relay.steps[1]];
+  const nativeVariant122 = (data) => { const r = relayRoute122(8453, RELAY_DEPOSITORY, data, RELAY_DEPOSITORY, "5000000"); r.fromToken = native122.fromToken; r.relay.steps = [r.relay.steps[1]]; return r; };
+  ok("sec H-B: a native deposit via depositNative naming the user passes; a foreign depositor or the token function refuses",
+    bounds122(native122, 0).ok === true
+    && bounds122(nativeVariant122(depIface122.encodeFunctionData("depositNative", [ATK122, ID122])), 0).ok === false
+    && bounds122(nativeVariant122(depCall122()), 0).ok === false);
+
+  // --- H-C: Jupiter lookup tables verified against the chain ---
+  const kp122a = SolKeypair.generate().publicKey, kp122b = SolKeypair.generate().publicKey, kp122c = SolKeypair.generate().publicKey;
+  const lutB64122 = Buffer.concat([Buffer.alloc(56), kp122a.toBuffer(), kp122b.toBuffer(), kp122c.toBuffer()]).toString("base64");
+  ok("sec H-C: lookup-table account bytes parse to the address list after the 56-byte metadata",
+    JSON.stringify(parseSolanaLookupTableAddresses(lutB64122)) === JSON.stringify([kp122a.toBase58(), kp122b.toBase58(), kp122c.toBase58()])
+    && parseSolanaLookupTableAddresses(Buffer.alloc(55).toString("base64")) === null
+    && parseSolanaLookupTableAddresses("not base64!!") === null
+    && parseSolanaLookupTableAddresses(null) === null);
+  const LUT122 = "AddressLookupTab1e1111111111111111111111111";
+  const declared122 = { [LUT122]: [kp122a.toBase58(), kp122b.toBase58(), kp122c.toBase58()] };
+  const chain122 = { [LUT122]: parseSolanaLookupTableAddresses(lutB64122) };
+  ok("sec H-C: declared tables matching the chain pass; swapped index, truncation and unreadable tables refuse",
+    verifyJupiterLookupTables(declared122, chain122).ok === true
+    && verifyJupiterLookupTables(declared122, { [LUT122]: [kp122b.toBase58(), kp122a.toBase58(), kp122c.toBase58()] }).ok === false
+    && verifyJupiterLookupTables(declared122, { [LUT122]: [kp122a.toBase58()] }).ok === false
+    && verifyJupiterLookupTables(declared122, {}).ok === false
+    && verifyJupiterLookupTables({}, {}).ok === true);
+  ok("sec H-C: the executor verifies tables from chain state before compiling the v0 message",
+    coreSrc122.indexOf("verifyJupiterLookupTables(declaredLuts, chainLuts)", coreSrc122.indexOf("executeJupiterSwapRoute")) > -1
+    && coreSrc122.indexOf("verifyJupiterLookupTables(declaredLuts, chainLuts)", coreSrc122.indexOf("executeJupiterSwapRoute")) < coreSrc122.indexOf("compileToV0Message", coreSrc122.indexOf("executeJupiterSwapRoute")));
+
+  // --- Driver pack (a): destination binding ---
+  const own122 = { evm: U122, solana: kp122a.toBase58() };
+  const msRec122 = (legs) => ({ id: "x", state: "leg-due", legs });
+  const leg122 = (toChainKey, toAddress) => ({ fromChainKey: "base", toChainKey, fromTokenAddress: USDC122, toTokenAddress: USDC122, toAddress, fromAmount: "1", expectedToAmount: "1" });
+  ok("sec driver: a record whose legs all land on the wallet's own addresses passes (EVM case-insensitive)",
+    milestoneRecordDestinationCheck(msRec122([leg122("base", U122.toLowerCase()), leg122("arbitrum", U122)]), own122).ok === true
+    && milestoneRecordDestinationCheck(msRec122([leg122("solana", kp122a.toBase58())]), own122).ok === true);
+  ok("sec driver: an intermediate leg addressed elsewhere refuses the drive",
+    (() => { const c = milestoneRecordDestinationCheck(msRec122([leg122("base", ATK122), leg122("arbitrum", U122)]), own122); return c.ok === false && c.legIndex === 0 && c.final === false; })());
+  ok("sec driver: a final leg addressed elsewhere refuses the drive (manual completion stays possible)",
+    (() => { const c = milestoneRecordDestinationCheck(msRec122([leg122("base", U122), leg122("arbitrum", ATK122)]), own122); return c.ok === false && c.legIndex === 1 && c.final === true; })());
+  ok("sec driver: families the resolver cannot re-derive cannot convict a leg",
+    milestoneRecordDestinationCheck(msRec122([leg122("lightning", "lnbc1example")]), own122).ok === true);
+  ok("sec driver: gas-fallback destination binding — own passes, foreign refuses",
+    gasFallbackRecordDestinationCheck({ toChainKey: "base", destAddress: U122.toLowerCase() }, own122).ok === true
+    && gasFallbackRecordDestinationCheck({ toChainKey: "base", destAddress: ATK122 }, own122).ok === false);
+  ok("sec driver: the app gates both record kinds through the binding before driving",
+    appSrc122.includes("milestoneRecordDestinationCheck(r, own)") && appSrc122.includes("gasFallbackRecordDestinationCheck(r, own)")
+    && appSrc122.includes("driverOwnAddresses()"));
+
+  // --- Driver pack (b): gas-fallback leg-2 band ---
+  ok("sec driver: leg-2 band — at/above 90% of the rescaled preview passes, below refuses, unstored preview unjudged",
+    gasFallbackLeg2BandCheck({ expectedLeg2Raw: "1000", leg2PreviewFromRaw: "500" }, "500", "900").ok === true
+    && gasFallbackLeg2BandCheck({ expectedLeg2Raw: "1000", leg2PreviewFromRaw: "500" }, "500", "899").ok === false
+    && gasFallbackLeg2BandCheck({ expectedLeg2Raw: "1000", leg2PreviewFromRaw: "500" }, "250", "450").ok === true
+    && gasFallbackLeg2BandCheck({ expectedLeg2Raw: "1000", leg2PreviewFromRaw: "500" }, "250", "449").ok === false
+    && gasFallbackLeg2BandCheck({}, "500", "1").judged === false
+    && gasFallbackLeg2BandCheck({ expectedLeg2Raw: "1000", leg2PreviewFromRaw: "500" }, "500", null).judged === false);
+  ok("sec driver: leg-2 band is enforced in the runner and the preview is stored at record creation",
+    coreSrc122.includes("gasFallbackLeg2BandCheck(record, leg2Raw, r2.toAmount)") && coreSrc122.includes("expectedLeg2Raw: route.legs.leg2Preview"));
+
+  // --- Driver pack (c): pause on lock ---
+  ok("sec driver: the milestone runner parks before the next signature when the app reports a lock",
+    coreSrc122.includes("Fluid locked while this swap was finishing")
+    && appSrc122.includes("shouldStop: () => lockEpoch !== epoch")
+    && appSrc122.indexOf("lockEpoch++") > appSrc122.indexOf("function lockWallet()"));
+
+  // --- H-A: lock hygiene ---
+  ok("sec H-A: lockWallet clears the sensitive fields and bumps the lock epoch",
+    appSrc122.indexOf("clearSensitiveFields(); // H-A", appSrc122.indexOf("function lockWallet()")) > appSrc122.indexOf("function lockWallet()")
+    && appSrc122.includes('const seedOut = $("seedOut"); if (seedOut) seedOut.textContent = "";')
+    && appSrc122.includes('show("seedBox", false)'));
+  ok("sec H-A: the ceremonies clear the fields after use (create finish, import, unlock)",
+    (appSrc122.match(/clearSensitiveFields\(\);/g) || []).length >= 3
+    && appSrc122.includes('$("unlockPw").value = "";'));
+
+  // --- Lifecycle (a): Lightning teardown on lock ---
+  ok("sec lifecycle: the node module exports a full shutdown and lock + wipe both call it",
+    lnSrc122.includes("export function shutdownLightning()") && lnSrc122.includes("a.storageKey = null")
+    && (appSrc122.match(/lnChunk\?\.shutdownLightning\?\.\(\)/g) || []).length >= 2);
+
+  // --- Lifecycle (b): wipe completeness ---
+  ok("sec lifecycle: the wipe takes the Lightning KV + bridge prefixes and spares foreign keys",
+    JSON.stringify(fluidStorageKeysToWipe(["fluidln.v1.bitcoin.node", "fluid.lnBridge.v1.state", "fluid_vault_v1", "other.app", "fluidx"]))
+    === JSON.stringify(["fluidln.v1.bitcoin.node", "fluid.lnBridge.v1.state", "fluid_vault_v1"]));
+
+  // --- Lifecycle (c): agent caps fail closed ---
+  ok("sec lifecycle: agent transfers refuse when the price is missing — no dummy value reaches the policy gate",
+    appSrc122.includes("Price unavailable — Fluid can't check this transfer against the agent's dollar caps")
+    && !appSrc122.includes("price ? usdAmt : 0.0001")
+    && appSrc122.includes("const gate = checkAgentPolicy(a.policy, usdAmt, agentSpentToday(a.index));"));
+
+  // --- Provenance (a): the WASM inside the build guarantee ---
+  const provMod122 = await import("../scripts/lightning-provenance.mjs");
+  ok("sec provenance: the committed WASM record verifies against the artifact + source tree",
+    provMod122.verifyLightningProvenance().ok === true);
+  const buildSrc122 = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  ok("sec provenance: the build verifies the WASM record and writes release checksums",
+    buildSrc122.includes("verifyLightningProvenance()") && buildSrc122.includes('"dist/checksums.txt"'));
+
+  // --- Provenance (b): framing refusal ---
+  ok("sec provenance: the app refuses to initialise inside a frame, before any wallet state loads",
+    appSrc122.includes("window.top !== window.self") && appSrc122.includes("Fluid does not run inside a frame")
+    && appSrc122.indexOf("window.top !== window.self") < appSrc122.indexOf('const VAULT_KEY = "fluid_vault_v1";'));
+
+  // --- Provenance (c): the signed-checksums story ---
+  const pubPem122 = readFileSync(new URL("../public/release-pubkey.pem", import.meta.url), "utf8");
+  const publishSrc122 = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  ok("sec provenance: a release keypair is committed (public half) and publish signs the checksums for the served site",
+    pubPem122.includes("BEGIN PUBLIC KEY")
+    && publishSrc122.includes("checksums.txt.sig") && publishSrc122.includes('join(WORKTREE, "checksums.txt")')
+    && readFileSync(new URL("../scripts/verify-release.mjs", import.meta.url), "utf8").includes("SIGNATURE INVALID"));
 }
 
 console.log(`\n${passed} checks passed`);

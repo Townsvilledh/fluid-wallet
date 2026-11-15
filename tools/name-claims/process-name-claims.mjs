@@ -4,7 +4,8 @@
 // The app publishes a signed name claim as a Nostr kind-30078 event
 // (see buildSignedNameClaim in src/wallet-core.js). This processor
 // reads recent claim events from the same public relays and, for
-// each claim in created_at order:
+// each claim in ARRIVAL order (the order this processor first
+// observed it — see decideClaims; security audit H-D, 2026-11-15):
 //   1. verifies the Nostr event's own Schnorr signature;
 //   2. verifies the claim inside it with the app's own rules
 //      (verifyNameClaim: name format + every address sanitized +
@@ -148,8 +149,10 @@ export function nameUpdateMerge(existing, entry) {
 
 /** Pure decision pass — the FCFS heart, unit-tested in
  *  process.test.mjs. `events` are raw Nostr events; `registry` is
- *  the parsed names.json; `state` carries { processed, winners }
- *  from prior runs. Returns { decisions, winners, updates } where
+ *  the parsed names.json; `state` carries { processed, winners,
+ *  seen } from prior runs (seen = the arrival sequence stamps
+ *  main() records — the FCFS order, see decideClaims). Returns
+ *  { decisions, winners, updates } where
  *  winners are [{ name, entry }] in claim order, capped, and
  *  updates are same-owner merges into already-published entries
  *  (never capped — they are not new names). Decisions for events
@@ -207,9 +210,28 @@ export async function fetchClaimsPaged(queryFn, filter, pageSize = RELAY_PAGE_SI
 export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RUN, retired = null) {
   const processed = (state && state.processed) || {};
   const priorWinners = (state && state.winners) || {};
+  // FCFS by ARRIVAL, not by the claimant-written created_at
+  // (security audit H-D, 2026-11-15): created_at is chosen by
+  // the signer, so under the old order a bot that saw an honest
+  // claim could copy the name, backdate its own event inside
+  // the scan overlap, and win the name. main() stamps every
+  // fetched event with a persistent arrival sequence number
+  // (state.seen) in observation order before deciding; that
+  // sequence is the order here whenever both events carry one.
+  // Events with no arrival record (a state loss, or the legacy
+  // unit fixtures) fall back to created_at order — and every
+  // decision records which basis decided it (seq + basis), so
+  // the log never pretends an arrival order it did not have.
+  const seen = (state && state.seen) || {};
+  const seqOf = (e) => { const s = seen[e.id]; return s && typeof s.seq === "number" ? s.seq : null; };
   const sorted = [...(events || [])]
     .filter((e) => e && typeof e.id === "string" && !processed[e.id])
-    .sort((a, b) => (a.created_at - b.created_at) || String(a.id).localeCompare(String(b.id)));
+    .sort((a, b) => {
+      const sa = seqOf(a), sb = seqOf(b);
+      if (sa != null && sb != null && sa !== sb) return sa - sb;
+      if ((sa != null) !== (sb != null)) return sa != null ? -1 : 1;
+      return (a.created_at - b.created_at) || String(a.id).localeCompare(String(b.id));
+    });
   const decisions = [];
   const winners = [];
   const updates = [];
@@ -221,7 +243,7 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
     // it is never re-verified), but flagged ours=false so the log
     // stays a record of Fluid claim attempts only.
     let ours = false;
-    const decide = (decision, name, reason) => decisions.push({ eventId: event.id, name: name || null, decision, reason: reason || "", created_at: event.created_at || 0, ours });
+    const decide = (decision, name, reason) => decisions.push({ eventId: event.id, name: name || null, decision, reason: reason || "", created_at: event.created_at || 0, seq: seqOf(event), basis: seqOf(event) != null ? "arrival" : "created_at", ours });
     if (event.kind !== NAME_CLAIM_KIND) { decide("rejected", null, "wrong kind"); continue; }
     if (!verifyNostrEventSignature(event)) { decide("rejected", null, "bad nostr signature"); continue; }
     let claim;
@@ -249,7 +271,7 @@ export function decideClaims(events, registry, state, cap = MAX_NEW_NAMES_PER_RU
       continue;
     }
     if (wonThisRun.has(name) || priorWinners[name]) { decide("rejected", name, "name won by an earlier valid claim"); continue; }
-    if (winners.length >= cap) { decisions.push({ eventId: event.id, name, decision: "deferred", reason: `per-run cap of ${cap} reached`, created_at: event.created_at || 0, deferred: true }); continue; }
+    if (winners.length >= cap) { decisions.push({ eventId: event.id, name, decision: "deferred", reason: `per-run cap of ${cap} reached`, created_at: event.created_at || 0, seq: seqOf(event), basis: seqOf(event) != null ? "arrival" : "created_at", deferred: true }); continue; }
     wonThisRun.add(name);
     winners.push({ name, entry: check.entry, eventId: event.id });
     decide("winner", name, "");
@@ -362,6 +384,23 @@ async function main() {
   }
   const events = [...byId.values()];
 
+  // Arrival stamps (H-D): every event this run fetched gets the
+  // next persistent sequence number if it has never been seen —
+  // in merged observation order (relays answer newest-first, so
+  // within a scan an honest claim is observed ahead of a
+  // backdated copy of it, and across runs the stamp is exact
+  // first-observation order). Stamps are assigned for ALL
+  // fetched events, including ones the per-run cap later
+  // defers, so a deferred honest claim keeps its place ahead
+  // of anything that arrives after it. Persisted with the state
+  // write below (dry runs stamp in memory only).
+  state.seen = state.seen && typeof state.seen === "object" ? state.seen : {};
+  let nextSeq = typeof state.seenSeq === "number" ? state.seenSeq : 0;
+  for (const ev of events) {
+    if (!state.seen[ev.id]) state.seen[ev.id] = { seq: ++nextSeq, at: now };
+  }
+  state.seenSeq = nextSeq;
+
   const retired = loadRetiredNames();
   const registry = JSON.parse(readFileSync(NAMES_PATH, "utf8"));
   // Self-heal: a retired name that reappears in the registry (a
@@ -419,6 +458,9 @@ async function main() {
   // on other apps' kind-30078 traffic.
   const cutoff = now - 14 * 24 * 3600;
   for (const [id, rec] of Object.entries(state.processed)) if (!rec.at || rec.at < cutoff) delete state.processed[id];
+  // Arrival stamps prune on the same horizon: an event older
+  // than the query window can never be fetched again.
+  if (state.seen) for (const [id, rec] of Object.entries(state.seen)) if (!rec.at || rec.at < cutoff) delete state.seen[id];
   for (const w of winners) state.winners[w.name] = w.eventId;
   state.lastQuerySince = now - 3600; // 1h overlap; the processed set dedupes
   state.lastRunAt = now;

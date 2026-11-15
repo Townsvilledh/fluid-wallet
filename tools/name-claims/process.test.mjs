@@ -352,4 +352,27 @@ ok("merge: ln replaceable, silent fields preserved, foreign evm refused",
   ok("retired: no retired set supplied — behaviour unchanged", noSet.winners.length === 1);
 }
 
+// 22. FCFS by ARRIVAL (security audit H-D, 2026-11-15): the
+//     order is the processor's persistent arrival sequence
+//     (state.seen, stamped by main() in observation order), NOT
+//     the claimant-written created_at. A backdated copy —
+//     created_at EARLIER than the honest claim but observed
+//     LATER — loses. Without seen stamps the legacy created_at
+//     order stands (test 6's contract), and every decision
+//     records which basis decided it.
+{
+  const honest = await claimEvent(PHRASE_A, walletA, "arrival1", 2000);
+  const backdated = await claimEvent(PHRASE_B, walletB, "arrival1", 1000); // earlier created_at, published later
+  const state = { processed: {}, winners: {}, seen: { [honest.id]: { seq: 1, at: 2000 }, [backdated.id]: { seq: 2, at: 2001 } }, seenSeq: 2 };
+  const { decisions, winners } = decideClaims([backdated, honest], reg(), state);
+  ok("arrival: first-observed claim wins even with a LATER created_at", winners.length === 1 && winners[0].entry.evm === walletA.address);
+  const loser = decisions.find((d) => d.eventId === backdated.id);
+  ok("arrival: backdated copy refused as the later claim", !!loser && loser.decision === "rejected" && /earlier valid claim/.test(loser.reason));
+  ok("arrival: decisions record the arrival basis + sequence",
+    decisions.every((d) => d.basis === "arrival") && decisions.find((d) => d.eventId === honest.id).seq === 1 && loser.seq === 2);
+  const legacy = decideClaims([honest, backdated], reg(), emptyState());
+  ok("arrival: no seen stamps — created_at order stands (the backdate wins, which is why the stamps exist)",
+    legacy.winners.length === 1 && legacy.winners[0].entry.evm === walletB.address && legacy.decisions[0].basis === "created_at");
+}
+
 console.log(`\n${passed} processor checks passed`);
