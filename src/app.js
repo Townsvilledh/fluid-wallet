@@ -28,7 +28,7 @@ import {
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
-  SKIP_ASSETS, skipChainOf, executeSkipSwapRoute,
+  SKIP_ASSETS, skipChainOf, executeSkipSwapRoute, executeOpenOceanSwapRoute,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, rankPickerTokens, pickerListState, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
@@ -36,7 +36,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -1243,8 +1243,14 @@ function heroTotal() {
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
+  // Injective is ONE account on two faces (gap #5, 2026-11-15):
+  // when Injective EVM is the active network and its native INJ
+  // row is counted above, the Cosmos row's INJ is the same
+  // coins — counting both would double the user's INJ.
+  const injOnEvm = injectiveCountedOnEvmSide(networkKey, balances);
   for (const r of cosmosRows) {
     if (r.amount == null) continue; // unavailable is not zero — it is unknown, and stays out of the total
+    if (injOnEvm && r.key === "injective") continue; // the same INJ, already counted on its EVM face
     const p = prices[r.symbol] ?? null;
     if (p != null) t += Number(r.amount) * p;
   }
@@ -1810,7 +1816,7 @@ function paintAssets() {
     const p = prices[r.symbol];
     const rowHtml = (r.amount == null && !famLoaded.has("cosmos")) ? skeletonRowsHtml(1) : `<div class="row" data-cosmos="${r.key}">
         <span class="logowrap">${tokenLogoHtml({ symbol: r.symbol }, r.key)}</span>
-        <span class="grow"><b class="rname">${esc(r.name)}</b><small>${esc(r.symbol)} · Cosmos</small></span>
+        <span class="grow"><b class="rname">${esc(r.name)}${r.legacy ? " (legacy)" : ""}</b><small>${esc(r.symbol)} · Cosmos</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>couldn't load</small>`
           : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "price unavailable" : usd(0))}</small>`}</span></div>`;
@@ -2643,11 +2649,13 @@ $("actReceive").onclick = () => {
   // Cosmos: seven prefixes (six over one shared account, Injective on the
   // Keplr path) — one panel per chain, as the family's own sheets show.
   for (const c of COSMOS_CHAINS) {
-    panels[c.key] = `<p class="tag">${c.name} address (${c.symbol}):</p>
+    panels[c.key] = `<p class="tag">${c.name}${c.legacy ? " (legacy)" : ""} address (${c.symbol}):</p>
       <img class="qr" id="qrCosmos_${c.key}"><p class="mono">${cosmosAddrs[c.key]}</p>
       <button class="btn ghost" data-cpcosmos="${c.key}">Copy ${c.name} address</button>
-      <p class="tag">${c.key === "injective"
-        ? "Injective uses the standard Keplr path, so this address matches Keplr/Leap for the same phrase. Send each coin only on its own chain."
+      <p class="tag">${c.legacy
+        ? "Sei's retired Cosmos form — most SEI now lives on Sei EVM."
+        : c.key === "injective"
+        ? "Injective uses the standard Keplr path, so this address matches Keplr/Leap for the same phrase. Its balance is unified with Injective EVM — the same account in its 0x form. Send each coin only on its own chain."
         : "One Cosmos account on six chains — only the prefix differs; this is its " + c.name + " form. Send each coin only on its own chain."}</p>`;
   }
   const binds = {
@@ -4622,8 +4630,19 @@ function openCosmosSheet(row) {
        </div>
        <p class="msg err" id="kMsg"></p>
        <p class="tag">Fees are paid in ${chain.symbol} at ${chain.name}'s going gas price and are estimated live before you confirm. Sends are final.</p>`;
-  openSheet(`<h3>${chain.name}</h3>
+  // Gap #5 presentation notes (2026-11-15): a legacy chain
+  // (Sei's retired Cosmos form) shows its retirement note; the
+  // Injective sheet states the unified-account truth — its
+  // Cosmos and EVM faces are one account, so a Skip leg landing
+  // here has already landed on Injective EVM too.
+  const chainNote = chain.legacy && chain.legacyNote
+    ? `<p class="tag">${esc(chain.legacyNote)}</p>`
+    : chain.key === "injective"
+      ? `<p class="tag">One account, two faces: Injective keeps a single unified balance across its Cosmos and EVM sides — the INJ here is the same INJ you see on Injective EVM, counted once in your total. A swap or transfer that lands on Injective has already landed on both sides; there is nothing to move between them.</p>`
+      : "";
+  openSheet(`<h3>${chain.name}${chain.legacy ? " (legacy)" : ""}</h3>
     ${balLine}
+    ${chainNote}
     <img class="qr" id="qrCosmos"><p class="mono">${chain.address}</p>
     <button class="btn ghost" id="cpCosmos">Copy address</button>
     <p class="tag">One seed phrase controls all seven Cosmos addresses. Six chains share one account — only the prefix changes (${COSMOS_CHAINS.map(c => c.prefix + "1…").join(", ")}); Injective uses the standard Keplr path (coin type 60), so its address matches Keplr/Leap for the same phrase.</p>
@@ -4631,7 +4650,9 @@ function openCosmosSheet(row) {
     <hr style="border-color:var(--line)">
     ${sendBlock}
     <hr style="border-color:var(--line)">
-    <p class="tag">Swaps from Cosmos chains aren't available yet — Fluid can send on ${chain.name}, but swapping cross-chain isn't wired.</p>`);
+    ${chain.legacy
+      ? `<p class="tag">This network is retired — SEI trades on Sei EVM. Sends still run while the chain does, but nothing new arrives here.</p>`
+      : `<p class="tag">Swaps from Cosmos chains aren't available yet — Fluid can send on ${chain.name}, but swapping cross-chain isn't wired.</p>`}`);
   qr("qrCosmos", chain.address);
   $("cpCosmos").onclick = () => copyText(chain.address, $("cpCosmos"));
   if (tokens && tokens.length) {
@@ -7009,6 +7030,7 @@ function swapRouteName(route) {
   if (route && route.provider === "chainflip") return "Chainflip";
   if (route && route.provider === "oneclick") return "1Click";
   if (route && route.provider === "skip") return "Skip";
+  if (route && route.provider === "openocean") return "OpenOcean";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -8516,6 +8538,18 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "openocean" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // OpenOcean takes the fee out of the swap's OUTPUT
+          // inside the built transaction; core measured the
+          // exact delta between the fee-free and fee builds
+          // and echo-verified it against the dialled rate
+          // before this route could be picked (platformFeeUsd
+          // is that measured delta) — disclose exactly that
+          // figure, like Jupiter's (its fee also comes out of
+          // the output).
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -8824,10 +8858,20 @@ $("actSwap").onclick = () => {
         srcExplorer = swapSrcExplorerFor(fromKey);
         srcLink = `${srcExplorer}/tx/${hashes[0]}`;
         try { paintMilestoneSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "openocean") {
+        // OpenOcean route (Sei EVM / Injective EVM same-chain,
+        // gap #5): core bounds-checks the quoted build (pinned
+        // exchange, exact value, this wallet's build, the
+        // verified fee echo), takes its own exact-amount
+        // approval when a token goes in, simulates, then signs
+        // with the wallet's EVM key.
+        hashes = await executeOpenOceanSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+        srcExplorer = NETWORKS[fromKey].explorer;
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
-        // jupiter, cetus, mayan, gasfallback, oneclick). Anything
+        // jupiter, cetus, mayan, gasfallback, oneclick, skip,
+        // openocean). Anything
         // else is a shape Fluid cannot sign — refuse plainly
         // rather than guess.
         throw new Error("That route can't be executed — search again and pick another route.");

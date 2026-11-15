@@ -168,6 +168,52 @@ export const NETWORKS = {
     rpc: "https://rpc.bsquared.network", explorer: "https://explorer.bsquared.network",
     tokens: [],
   },
+  // Sei EVM (audit gap #5, 2026-11-15): the chain Sei lives on
+  // now — its Cosmos side (pacific-1, the "sei" family entry) is
+  // retired and labelled legacy. Fresh key "seievm": the plain
+  // "sei" key is the Cosmos family's and stays so. Read endpoints
+  // probed IN-PAGE from the production origin (research_notes/
+  // fluid-sei-injective-evm-20261115): three keyless endpoints
+  // across three operators, chainId 0x531 with blocks flowing
+  // (BlockPI's Sei host is dead and not carried). USDC is
+  // Circle-native (CCTP). USDT is USDT0 — Tether's LayerZero OFT
+  // form, the canonical USDT on Sei; its contract symbol is
+  // "USDT0", pinned here as the chain's USDT with the provenance
+  // named (the Kava-bridged IBC USDT 0xb75d0b03… is NOT pinned).
+  seievm: {
+    name: "Sei EVM", chainId: 1329, symbol: "SEI", priceSym: "SEI",
+    rpc: "https://evm-rpc.sei-apis.com", explorer: "https://seiscan.io",
+    rpcs: [
+      "https://evm-rpc.sei-apis.com",
+      "https://sei-evm-rpc.publicnode.com",
+      "https://sei.drpc.org",
+    ],
+    rpcFallback: "https://sei-evm-rpc.publicnode.com",
+    tokens: [USDC("0xe15fc38f6d8c56af07bbcbe3baf5708a2bf42392"), USDT("0x9151434b16b9763660705744891fa906f660ecc5")],
+  },
+  // Injective EVM (audit gap #5, 2026-11-15): Injective's EVM
+  // face. Fresh key "injectiveevm": the plain "injective" key is
+  // the Cosmos family's (the Skip sentinel). The two faces are
+  // ONE account — Injective's MultiVM balance is unified (the
+  // same 20 account bytes, coin type 60; bank `inj` wei read
+  // identically via eth_getBalance, and the native USDC's bank
+  // `erc20:<contract>` denom balance equals its ERC-20 balance,
+  // both two-sided-proven in the gap-#5 research). Read endpoints
+  // probed in-page like Sei's: chainId 0x6f0, blocks flowing
+  // (evm-rpc.injective.network timed out and is not carried).
+  // USDC is Circle-native (CCTP); USDT is the Peggy-bridged
+  // Tether contract (Blockscout-verified).
+  injectiveevm: {
+    name: "Injective EVM", chainId: 1776, symbol: "INJ", priceSym: "INJ",
+    rpc: "https://sentry.evm-rpc.injective.network", explorer: "https://blockscout.injective.network",
+    rpcs: [
+      "https://sentry.evm-rpc.injective.network",
+      "https://injectiveevm-rpc.polkachu.com",
+      "https://injective-evm-rpc.publicnode.com",
+    ],
+    rpcFallback: "https://injectiveevm-rpc.polkachu.com",
+    tokens: [USDC("0xa00C59fF5a080D2b954d0c75e46E22a0c371235a"), USDT("0x88f7F2b685F9692caf8c478f5BADF09eE9B1Cc13")],
+  },
   sepolia: {
     name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
     rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
@@ -3779,7 +3825,17 @@ export const COSMOS_CHAINS = [
   // above) — every other chain in this table derives at the default 118.
   { key: "injective", name: "Injective", chainId: "injective-1", prefix: "inj", denom: "inj", symbol: "INJ", decimals: 18, gasPrice: "160000000inj", coinType: 60,
     rest: "https://rest.cosmos.directory/injective", restFallbacks: ["https://injective-api.polkachu.com", "https://lcd.injective.network"], rpc: "https://rpc.cosmos.directory/injective", explorer: "https://www.mintscan.io/injective" },
-  { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei",
+  // Sei's Cosmos network is RETIRED (audit gap #5, 2026-11-15):
+  // SIP-3 disabled IBC in both directions and the Cosmos side
+  // was shut down (outbound closed 2026-07-31); SEI lives on
+  // Sei EVM now (the "seievm" NETWORKS entry). The chain still
+  // answers reads and a MsgSend simulation still executes its
+  // bank path (probed 2026-11-15 — the simulation failed only
+  // on the test account's funds), so sends stay enabled under
+  // the legacy label; nothing new should arrive here. Every
+  // surface renders the legacy flag from this entry.
+  { key: "sei", name: "Sei", chainId: "pacific-1", prefix: "sei", denom: "usei", symbol: "SEI", decimals: 6, gasPrice: "0.02usei", legacy: true,
+    legacyNote: "Sei's Cosmos network is retired — its Cosmos side was shut down (IBC closed in 2026) and SEI now lives on Sei EVM. This address is the old Cosmos form.",
     rest: "https://rest.cosmos.directory/sei", restFallbacks: ["https://rest.sei-apis.com", "https://sei-api.polkachu.com"], rpc: "https://rpc.sei-apis.com", explorer: "https://www.mintscan.io/sei" },
   { key: "dydx", name: "dYdX", chainId: "dydx-mainnet-1", prefix: "dydx", denom: "adydx", symbol: "DYDX", decimals: 18, gasPrice: "12500000000adydx",
     rest: "https://rest.cosmos.directory/dydx", restFallbacks: ["https://dydx-api.polkachu.com", "https://dydx-rest.publicnode.com"], rpc: "https://rpc.cosmos.directory/dydx", explorer: "https://www.mintscan.io/dydx" },
@@ -3846,7 +3902,7 @@ export const RECEIVE_NETWORKS = [
   { id: "dogecoin", name: "Dogecoin", aliases: ["doge", "dogecoin"] },
   { id: "bitcoincash", name: "Bitcoin Cash", aliases: ["bch", "bitcoin cash", "bitcoincash"] },
   ...COSMOS_CHAINS.map(c => ({
-    id: c.key, name: c.name, sub: "Cosmos",
+    id: c.key, name: c.name, sub: c.legacy ? "Cosmos · legacy" : "Cosmos",
     aliases: [c.symbol.toLowerCase(), c.name.toLowerCase(), "cosmos", ...(COSMOS_RECEIVE_ALIASES[c.key] || [])],
   })),
 ];
@@ -9739,6 +9795,360 @@ export async function executeRelayTonSwapRoute(wallet, route, onProgress = () =>
   });
   onProgress("GRAM deposit sent ✓");
   return [hash];
+}
+
+/* ---------- OpenOcean (Sei EVM + Injective EVM same-chain, 2026-11-15) ----------
+ * Audit gap #5's swap rail: OpenOcean is the ONLY aggregator
+ * that quotes Sei EVM (1329) or Injective EVM (1776) — Relay,
+ * Across, 1Click, Mayan, Squid and KyberSwap were all probed
+ * NONE for both chains (research_notes/
+ * fluid-sei-injective-evm-20261115). It is a plain keyless REST
+ * API whose /swap endpoint returns the executable build itself
+ * ({ to, data, value, outAmount, minOutAmount, estimatedGas })
+ * — the build IS the quote artefact, Relay-steps-style, so
+ * Fluid quotes from builds and never executes an uninspected
+ * payload. CORS is open (Access-Control-Allow-Origin: *,
+ * probed from the production origin 2026-11-15), so no proxy
+ * is needed. Routes are INTRA-chain only this slice; the
+ * venues behind it are DragonSwap on Sei and Pumex on
+ * Injective (proven as venues, not integrated directly).
+ *
+ * NATIVE LEGS: /swap accepts the zero-address sentinel for
+ * the chain's native coin on both chains, both directions
+ * (probed live 2026-11-15: the build names the pinned
+ * exchange, carries value = the amount, and OpenOcean wraps
+ * internally). /quote 500s on the sentinel — moot here,
+ * because Fluid quotes from /swap builds. No manual
+ * wrap/unwrap steps exist in this rail.
+ *
+ * FEES: the referrer is the DripBot EVM collection address
+ * (the same recipient Relay uses) and `referrerFee` is a
+ * PERCENT of the trade taken out of the output inside the
+ * built transaction. A/B-probed at sane sizes with zero drift
+ * between repeated builds: on 1329 the output falls by
+ * exactly the dial (0.620% at a 0.625 dial, 0.99998% at 1.0 —
+ * fixtures oo-ab-* and the build-day probes); on 1776 the
+ * echo is PER-ROUTE — WINJ→USDT echoes the full dial
+ * (0.99879% at 1.0) while the WINJ↔USDC routes echo only a
+ * fraction (0.196% / 0.477% at 1.0), because the fee rides
+ * only part of a split route. So the echo is verified PER
+ * QUOTE, the Skip/1Click discipline: build fee-free, price
+ * the fee law's target bps, rebuild at the dial grossed up
+ * for OpenOcean's documented 20% share (dial = target / 0.8),
+ * and ship the fee build ONLY when the measured output delta
+ * matches the dial within tolerance. Any other outcome —
+ * partial echo, overcharge, a failed second build — ships
+ * the fee-free build with collecting=false: never an
+ * unverified charge. The NET share (docs say OpenOcean keeps
+ * 20% of the fee) is UNVERIFIED until a funded settlement;
+ * docs/SWAPS.md carries it as proven-charge / unproven-net,
+ * and the route's disclosed fee is the MEASURED gross delta
+ * (what actually leaves the user's trade), never the assumed
+ * net. */
+export const OPENOCEAN_API = "https://open-api.openocean.finance/v4";
+/** The chains this rail serves: chainId -> NETWORKS key. */
+export const OPENOCEAN_CHAINS = { 1329: "seievm", 1776: "injectiveevm" };
+/** OpenOcean's exchange contract per chain, pinned from quoted
+ *  builds (both chains quoted the same contract in every probe,
+ *  fee and fee-free, native and ERC-20 legs). A build naming
+ *  any other `to` is refused — never signed. */
+export const OPENOCEAN_EXCHANGE = {
+  1329: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+  1776: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+};
+/** The chains' live eth_gasPrice at probe time (Sei ≈ 55 gwei,
+ *  Injective 0.16 gwei). This is only the API's own gas-estimate
+ *  input — the executor prices gas from the chain itself and
+ *  never trusts this figure. */
+const OPENOCEAN_GAS_PRICE = { 1329: "55000000000", 1776: "160000000" };
+/** The house slippage for OpenOcean builds: 1% — the API folds
+ *  it into the build's minOutAmount, which the route carries
+ *  as its floor verbatim. */
+export const OPENOCEAN_SLIPPAGE = 1;
+
+export function openOceanSupportsPair(args) {
+  if (!args || args.fromChainKey !== args.toChainKey) return null;
+  const chainId = NETWORKS[args.fromChainKey]?.chainId;
+  if (!chainId || OPENOCEAN_CHAINS[chainId] !== args.fromChainKey) return null;
+  if (!args.fromTokenAddress || !args.toTokenAddress) return null;
+  if (String(args.fromTokenAddress).toLowerCase() === String(args.toTokenAddress).toLowerCase()) return null;
+  return { chainId, chainKey: args.fromChainKey };
+}
+
+/** The referrerFee dial (in PERCENT units, the API's own) for a
+ *  fee-law target in bps, grossed up for OpenOcean's documented
+ *  20% share: dial = target / 0.8, so a 50 bps net target dials
+ *  0.625. Pure. */
+export function openOceanDialForBps(targetBps) {
+  const t = Number(targetBps);
+  if (!Number.isFinite(t) || t <= 0) return 0;
+  return Math.round((t / 100 / 0.8) * 10000) / 10000;
+}
+
+/** The per-quote fee echo, pure: the fee build's output must
+ *  fall below the fee-free build's output by the dialled
+ *  fraction, within tolerance (0.90×–1.02× the dial — the
+ *  probed full-echo routes land at 0.99×–1.00×; the probed
+ *  partial-echo routes land at 0.20×–0.48× and fail, as they
+ *  must). A delta above the dial is an overcharge and fails
+ *  too. Raw amounts are integer strings; the comparison runs
+ *  on the fraction so size never matters. */
+export function openOceanFeeEchoOk(freeOutRaw, feeOutRaw, dialPct) {
+  let free, fee;
+  try { free = BigInt(freeOutRaw); fee = BigInt(feeOutRaw); } catch { return false; }
+  if (free <= 0n || fee < 0n || fee >= free) return false;
+  const dial = Number(dialPct) / 100;
+  if (!Number.isFinite(dial) || dial <= 0) return false;
+  const measured = Number(free - fee) / Number(free);
+  return measured >= dial * 0.9 && measured <= dial * 1.02;
+}
+
+/** Validate one /swap build against everything the quote asked
+ *  for — the exchange pin, the exact input, a real output, a
+ *  sane value. Pure; returns the normalised build or null. */
+export function parseOpenOceanSwap(data, { chainId, fromAmountRaw, nativeInput }) {
+  if (!data || typeof data !== "object") return null;
+  const exchange = OPENOCEAN_EXCHANGE[chainId];
+  if (!exchange || String(data.to || "").toLowerCase() !== exchange.toLowerCase()) return null;
+  if (String(data.inAmount ?? "") !== String(fromAmountRaw)) return null;
+  let out, minOut;
+  try { out = BigInt(data.outAmount); minOut = BigInt(data.minOutAmount); } catch { return null; }
+  if (out <= 0n || minOut <= 0n || minOut > out) return null;
+  if (typeof data.data !== "string" || !/^0x[0-9a-fA-F]{8,}$/.test(data.data)) return null;
+  const value = String(data.value ?? "0");
+  if (!/^\d+$/.test(value)) return null;
+  if (nativeInput ? value !== String(fromAmountRaw) : value !== "0") return null;
+  const gas = Number(data.estimatedGas);
+  return {
+    to: exchange, data: data.data, value,
+    outAmount: out.toString(), minOutAmount: minOut.toString(),
+    estimatedGas: Number.isFinite(gas) && gas > 0 ? Math.floor(gas) : null,
+  };
+}
+
+async function fetchOpenOceanSwap(chainId, { inToken, outToken, amountHuman, account, dialPct = 0 }, fetchImpl = null) {
+  const impl = fetchImpl || fetch;
+  const qs = new URLSearchParams({
+    inTokenAddress: inToken, outTokenAddress: outToken, amount: String(amountHuman),
+    gasPrice: OPENOCEAN_GAS_PRICE[chainId], slippage: String(OPENOCEAN_SLIPPAGE), account,
+  });
+  if (dialPct > 0) { qs.set("referrer", RELAY_APP_FEE_RECIPIENT); qs.set("referrerFee", String(dialPct)); }
+  try {
+    const res = await impl(`${OPENOCEAN_API}/${chainId}/swap?${qs.toString()}`, { signal: AbortSignal.timeout(30000) });
+    if (!res || !res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (!body || Number(body.code) !== 200 || !body.data) return null;
+    return body.data;
+  } catch { return null; }
+}
+
+/** Token metadata for one side of an OpenOcean pair, resolved
+ *  from the chain's own table first (native sentinel, then the
+ *  pinned tokens) and CoinGecko's chain list second — the same
+ *  sources the swap picker itself uses, so the route names a
+ *  token exactly as the rest of the wallet does. */
+async function openOceanTokenMeta(chainKey, address) {
+  const net = NETWORKS[chainKey];
+  const a = String(address || "");
+  if (a.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase())
+    return { address: NATIVE_TOKEN_ADDRESS, symbol: net.symbol, name: net.name, decimals: 18, native: true };
+  const pinned = (net.tokens || []).find(t => t.address.toLowerCase() === a.toLowerCase());
+  if (pinned) return { address: pinned.address, symbol: pinned.symbol, name: pinned.symbol, decimals: pinned.decimals ?? 18, native: false };
+  const listed = await fetchChainToken(net.chainId, a).catch(() => null);
+  if (listed && Number.isFinite(Number(listed.decimals)))
+    return { address: a, symbol: listed.symbol, name: listed.name || listed.symbol, decimals: Number(listed.decimals), native: false };
+  return null;
+}
+
+/** Raw smallest units -> the API's human amount string. The
+ *  API multiplies by the in-token's decimals itself (probed:
+ *  amount=100 at 18 decimals builds inAmount 1e20), so the
+ *  raw figure must be converted exactly — formatUnits, with
+ *  the trailing-zero noise trimmed. */
+function openOceanHumanAmount(raw, decimals) {
+  const s = ethers.formatUnits(BigInt(raw), decimals);
+  return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
+}
+
+/** OpenOcean's route for a Sei EVM / Injective EVM same-chain
+ *  swap, priced under the fee law — the two-pass discipline:
+ *  pass 1 builds fee-free (its shortfall prices the law's
+ *  target), pass 2 rebuilds at the grossed-up dial and the
+ *  output delta is ECHO-VERIFIED before the fee build may
+ *  ship. Any failure of pass 2 or of the echo ships pass 1's
+ *  build with collecting=false. Returns null when the pair is
+ *  unsupported or unquotable. `args.fromAmount` is RAW units
+ *  (the direct-search convention). */
+export async function getOpenOceanSwapRoute(args, { fetchImpl = null, prices: pricesOpt = undefined } = {}) {
+  const sup = openOceanSupportsPair(args);
+  if (!sup) return null;
+  const { chainId, chainKey } = sup;
+  const fromAddress = typeof args.fromAddress === "string" && /^0x[0-9a-fA-F]{40}$/.test(args.fromAddress) ? args.fromAddress : null;
+  if (!fromAddress) return null;
+  const amountRaw = String(args.fromAmount || "");
+  if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n) return null;
+  const fromMeta = await openOceanTokenMeta(chainKey, args.fromTokenAddress);
+  const toMeta = await openOceanTokenMeta(chainKey, args.toTokenAddress);
+  if (!fromMeta || !toMeta) return null;
+  const amountHuman = openOceanHumanAmount(amountRaw, fromMeta.decimals);
+  const freeData = await fetchOpenOceanSwap(chainId, {
+    inToken: fromMeta.address, outToken: toMeta.address, amountHuman, account: fromAddress,
+  }, fetchImpl);
+  if (!freeData) return null;
+  const freeBuild = parseOpenOceanSwap(freeData, { chainId, fromAmountRaw: amountRaw, nativeInput: fromMeta.native });
+  if (!freeBuild) return null;
+  // USD values are priced from the WALLET's verified price
+  // table, never from the API's own `usd` fields: those were
+  // probed unreliable (the native-leg SEI price read 0.0639
+  // while the same build's output implied 0.0386 — a phantom
+  // 40% "shortfall" that would zero the fee against the
+  // total-cost ceiling and misstate the route's cost) and are
+  // absent entirely on 1776 builds. The API field survives
+  // only as a fallback for a token the table does not price.
+  const prices = pricesOpt !== undefined ? pricesOpt : await getPrices().catch(() => null);
+  const netOo = NETWORKS[chainKey];
+  const unitOf = (meta, apiUsd) => {
+    if (prices) {
+      if (meta.native && Number(prices[netOo.priceSym]) > 0) return Number(prices[netOo.priceSym]);
+      if (Number(prices[meta.symbol]) > 0) return Number(prices[meta.symbol]);
+      if (meta.symbol === "W" + netOo.symbol && Number(prices[netOo.priceSym]) > 0) return Number(prices[netOo.priceSym]);
+    }
+    const a = Number(apiUsd);
+    return Number.isFinite(a) && a > 0 ? a : null;
+  };
+  const unitIn = unitOf(fromMeta, freeData.inToken?.usd), unitOut = unitOf(toMeta, freeData.outToken?.usd);
+  const usdOf = (raw, decimals, unit) => (Number.isFinite(unit) && unit > 0)
+    ? Number(ethers.formatUnits(BigInt(raw), decimals)) * unit : null;
+  const fromAmountUSD = usdOf(amountRaw, fromMeta.decimals, unitIn);
+  const freeOutUSD = usdOf(freeBuild.outAmount, toMeta.decimals, unitOut);
+  const nativeUnit = fromMeta.native ? unitIn : (toMeta.native ? unitOut : null);
+  const gasCostUSD = (freeBuild.estimatedGas && Number.isFinite(nativeUnit) && nativeUnit > 0)
+    ? freeBuild.estimatedGas * Number(OPENOCEAN_GAS_PRICE[chainId]) / 1e18 * nativeUnit : 0;
+  const routeFeeUsd = routeCostUsd(gasCostUSD || null, (fromAmountUSD != null && freeOutUSD != null) ? fromAmountUSD - freeOutUSD : NaN);
+  const base = {
+    provider: "openocean",
+    id: `openocean:${chainId}:${fromMeta.address}:${toMeta.address}:${amountRaw}`,
+    fromChainKey: chainKey, toChainKey: chainKey,
+    fromChainId: chainId, toChainId: chainId,
+    fromAmount: amountRaw,
+    fromToken: { address: fromMeta.address, symbol: fromMeta.symbol, name: fromMeta.name, decimals: fromMeta.decimals, chainId },
+    toToken: { address: toMeta.address, symbol: toMeta.symbol, name: toMeta.name, decimals: toMeta.decimals, chainId },
+    gasCostUSD, routeFeeUsd,
+    executionDuration: 20,
+    steps: [],
+  };
+  const ship = (build, feeFields, feeEcho) => ({
+    ...base,
+    toAmount: build.outAmount, toAmountMin: build.minOutAmount,
+    toAmountUSD: usdOf(build.outAmount, toMeta.decimals, unitOut),
+    fromAmountUSD,
+    ...feeFields,
+    openocean: {
+      chainId, chainKey, exchange: build.to, account: fromAddress,
+      nativeInput: fromMeta.native, estimatedGas: build.estimatedGas,
+      tx: { to: build.to, data: build.data, value: build.value },
+      feeEcho,
+    },
+  });
+  const noFee = { platformFeeRaw: "0", platformFeeUsd: 0, platformFeeBps: 0, platformFeeCollecting: false };
+  const target = PLATFORM_FEE_COLLECTION_ENABLED ? platformFeeBpsForRoute(routeFeeUsd, fromAmountUSD, chainKey) : 0;
+  const dialPct = openOceanDialForBps(target);
+  if (dialPct <= 0) return ship(freeBuild, noFee, null);
+  const feeData = await fetchOpenOceanSwap(chainId, {
+    inToken: fromMeta.address, outToken: toMeta.address, amountHuman, account: fromAddress, dialPct,
+  }, fetchImpl);
+  const feeBuild = feeData ? parseOpenOceanSwap(feeData, { chainId, fromAmountRaw: amountRaw, nativeInput: fromMeta.native }) : null;
+  if (!feeBuild || !openOceanFeeEchoOk(freeBuild.outAmount, feeBuild.outAmount, dialPct)) {
+    // The echo failed (or the fee build did): the fee-free
+    // build ships and the route states plainly that it does
+    // not collect — never an unverified charge.
+    const measured = feeBuild ? Number(BigInt(freeBuild.outAmount) - BigInt(feeBuild.outAmount)) / Number(freeBuild.outAmount) : null;
+    return ship(freeBuild, noFee, { ok: false, dialPct, measuredFrac: measured });
+  }
+  const deltaRaw = BigInt(freeBuild.outAmount) - BigInt(feeBuild.outAmount);
+  const measuredFrac = Number(deltaRaw) / Number(freeBuild.outAmount);
+  const feeUsd = freeOutUSD != null ? measuredFrac * freeOutUSD
+    : (fromAmountUSD != null ? measuredFrac * fromAmountUSD : 0);
+  return ship(feeBuild, {
+    platformFeeRaw: deltaRaw.toString(),
+    platformFeeUsd: feeUsd,
+    platformFeeBps: Math.round(measuredFrac * 10000),
+    platformFeeCollecting: true,
+  }, { ok: true, dialPct, measuredFrac, targetBps: target });
+}
+
+/** The bounds check for an OpenOcean swap, run by the executor
+ *  on the QUOTED build before anything is signed: the route is
+ *  an OpenOcean route, on one of its two chains, same-chain,
+ *  built for this wallet, and its transaction pays the pinned
+ *  exchange contract with exactly the value the quote stated
+ *  (the full amount for a native input, zero otherwise). The
+ *  calldata itself is the aggregator's — the house rule for
+ *  aggregator payloads (the Cetus/Across posture): the target,
+ *  the value and the amounts are pinned and checked; the
+ *  internals are the venue's. Pure. */
+export function checkOpenOceanSwapBounds(route, owner) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const F = "This OpenOcean route can't be signed: ";
+  const oo = route?.openocean;
+  if (route?.provider !== "openocean" || !oo) return refuse(F + "this is not an OpenOcean route. Pick another route.");
+  const chainId = Number(route.fromChainId);
+  if (!OPENOCEAN_CHAINS[chainId] || OPENOCEAN_CHAINS[chainId] !== route.fromChainKey) return refuse(F + "its chain is not one OpenOcean serves here. Pick another route.");
+  if (Number(route.toChainId) !== chainId || route.toChainKey !== route.fromChainKey) return refuse(F + "it is not a same-chain route. Pick another route.");
+  if (!oo.tx || String(oo.tx.to || "").toLowerCase() !== OPENOCEAN_EXCHANGE[chainId].toLowerCase())
+    return refuse(F + "its transaction does not pay OpenOcean's pinned exchange contract. Pick another route.");
+  if (typeof oo.tx.data !== "string" || !/^0x[0-9a-fA-F]{8,}$/.test(oo.tx.data)) return refuse(F + "its transaction carries no swap calldata. Pick another route.");
+  if (!owner || String(oo.account || "").toLowerCase() !== String(owner).toLowerCase())
+    return refuse(F + "it was not quoted for this wallet. Search again.");
+  const value = String(oo.tx.value ?? "");
+  if (!/^\d+$/.test(value)) return refuse(F + "its transaction value is unreadable. Pick another route.");
+  if (oo.nativeInput === true ? value !== String(route.fromAmount) : value !== "0")
+    return refuse(F + "its transaction value does not match the quoted amount. Pick another route.");
+  if (route.platformFeeCollecting && oo.feeEcho?.ok !== true)
+    return refuse(F + "its fee could not be verified against its quote. Pick another route.");
+  return { ok: true };
+}
+
+/** Execute an OpenOcean route: the Across executor's shape —
+ *  gate, bounds check, an EXACT-amount approval to the pinned
+ *  exchange when the input is an ERC-20 the exchange may not
+ *  yet spend, a simulation of the swap exactly as it will be
+ *  broadcast, then the swap itself, settled against the chain
+ *  (defect A: the chain decides the outcome, never a node's
+ *  mood). The API's gas estimate rides with headroom; the fee
+ *  data is the chain's own. */
+export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
+  const fromKey = OPENOCEAN_CHAINS[Number(route?.fromChainId)];
+  if (!fromKey) throw new Error("OpenOcean swap source chain is not a Fluid network.");
+  const { ok, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const bounds = checkOpenOceanSwapBounds(route, wallet.address);
+  if (!bounds.ok) throw new Error(bounds.reason);
+  const provider = providerFor(fromKey);
+  const signer = wallet.connect(provider);
+  const oo = route.openocean;
+  const approvalHashes = [];
+  if (oo.nativeInput !== true) {
+    const need = BigInt(route.fromAmount);
+    const c = new ethers.Contract(route.fromToken.address, SWAP_ERC20, signer);
+    if ((await c.allowance(wallet.address, oo.tx.to)) < need) {
+      onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
+      const atx = await c.approve(oo.tx.to, need);
+      approvalHashes.push(atx.hash);
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, oo.tx.to)) >= need);
+      try {
+        onApprove({ chainKey: fromKey, token: route.fromToken.address, tokenSymbol: route.fromToken?.symbol || null, spender: oo.tx.to, amount: need.toString(), decimals: route.fromToken?.decimals ?? null, at: Date.now() });
+      } catch { /* recording an approval must never break a swap */ }
+    }
+  }
+  onProgress("Signing the OpenOcean swap…");
+  const txReq = { to: oo.tx.to, data: oo.tx.data, value: BigInt(oo.tx.value || "0") };
+  if (oo.estimatedGas) { try { txReq.gasLimit = (BigInt(oo.estimatedGas) * 13n) / 10n; } catch { /* let the node estimate */ } }
+  await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
+  const swapTx = await signer.sendTransaction(txReq);
+  onProgress("Swap sent — waiting for it to mine…");
+  await settleBroadcastOrThrow(fromKey, swapTx.hash);
+  return [swapTx.hash, ...approvalHashes];
 }
 
 /* ---------- SunSwap (Tron same-chain, direct port) ----------
@@ -20593,6 +21003,7 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     const out = await executeSkipSwapRoute(wallet, route, progress, {});
     return [out.hash];
   }
+  if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** Run a gas-fallback record's second leg from what ACTUALLY
@@ -20957,6 +21368,20 @@ export function swapOwnAddressFor(chainKey, own) {
  *  (Solana, Sui) and partially-failed families did not.
  *  Rows with a loaded amount but no live price contribute
  *  nothing (priced-sum semantics, unchanged). Pure. */
+/** Injective's unified account (gap #5, 2026-11-15): the
+ *  Injective Cosmos row and the Injective EVM row are ONE
+ *  account — the same coins on one ledger, read through two
+ *  faces (MultiVM; two-sided-proven in the gap-#5 research).
+ *  When the wallet's active EVM network is Injective EVM and
+ *  its native INJ row is among the counted EVM rows, the
+ *  Cosmos row's INJ must NOT be counted a second time in any
+ *  combined total. Pure — the app passes its active network
+ *  key and its EVM balance rows. */
+export function injectiveCountedOnEvmSide(networkKey, evmRows) {
+  return networkKey === "injectiveevm" && Array.isArray(evmRows)
+    && evmRows.some(b => b && !b.address && b.amount != null);
+}
+
 export function familyRowsTotalUsd(rows, priceFor) {
   if (!Array.isArray(rows) || typeof priceFor !== "function") return null;
   let total = 0;
@@ -23638,6 +24063,11 @@ async function getSwapRoutesDirect(args) {
   if (skipSupportsPair(planArgs)) {
     try { const sk = await getSkipSwapRoute(planArgs); if (sk) routes.push(sk); } catch { /* Skip is a candidate, never a single point of failure */ }
   }
+  // OpenOcean (gap #5, 2026-11-15): the Sei EVM / Injective
+  // EVM same-chain candidate, beside Skip in the same posture.
+  if (openOceanSupportsPair(planArgs)) {
+    try { const oo = await getOpenOceanSwapRoute(planArgs); if (oo) routes.push(oo); } catch { /* OpenOcean is a candidate, never a single point of failure */ }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -24277,7 +24707,7 @@ const SWAP_ERC20 = [
  *  gasfallback branch consults this set so it never blesses a
  *  composite whose first leg the executor would refuse at
  *  dispatch time. Keep the two in step. */
-const GAS_FALLBACK_LEG_PROVIDERS = new Set(["relay", "across", "mayan", "jupiter", "cetus", "sunswap", "oneclick"]);
+const GAS_FALLBACK_LEG_PROVIDERS = new Set(["relay", "across", "mayan", "jupiter", "cetus", "sunswap", "oneclick", "openocean"]);
 
 export function swapRouteExecutable(route) {
   // Satora routes (Bitcoin / Lightning destinations): executable
@@ -24465,6 +24895,27 @@ export function swapRouteExecutable(route) {
     if (route.platformFeeCollecting && !sk.feeEcho)
       return { ok: false, reason: "This Skip route's fee could not be verified against its quote — pick another route." };
     return { ok: true, skip: true };
+  }
+  // OpenOcean routes (Sei EVM + Injective EVM same-chain,
+  // 2026-11-15): executable when the route carries its quoted
+  // build for one of the rail's two chains — the executor
+  // re-runs the full bounds check (checkOpenOceanSwapBounds:
+  // pinned exchange, exact value, this wallet's build) before
+  // signing, so the gate is structural, exactly like the
+  // lanes above. A route claiming to collect must carry its
+  // verified fee echo.
+  if (route?.provider === "openocean") {
+    const oo = route.openocean;
+    const incomplete = "This OpenOcean route is incomplete — pick another route.";
+    if (!oo || !oo.tx || !oo.tx.data) return { ok: false, reason: incomplete };
+    if (!OPENOCEAN_CHAINS[Number(route.fromChainId)] || OPENOCEAN_CHAINS[Number(route.fromChainId)] !== route.fromChainKey)
+      return { ok: false, reason: incomplete };
+    if (Number(route.toChainId) !== Number(route.fromChainId) || route.toChainKey !== route.fromChainKey)
+      return { ok: false, reason: incomplete };
+    if (!route.fromAmount || !route.toAmount) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting && oo.feeEcho?.ok !== true)
+      return { ok: false, reason: "This OpenOcean route's fee could not be verified against its quote — pick another route." };
+    return { ok: true, openocean: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
@@ -25384,6 +25835,14 @@ export const COINGECKO_TOKEN_LIST_SLUGS = {
   5000: "mantle", 8453: "base", 42161: "arbitrum-one", 42220: "celo",
   43114: "avalanche", 534352: "scroll", 57073: "ink", 59144: "linea",
   80094: "berachain", 81457: "blast", 34443: "mode", 167000: "taiko",
+  // Sei EVM (1329) is CoinGecko's "sei-v2" platform — the old
+  // "sei-network" platform is the deprecating Cosmos side and
+  // must not be wired. Injective's list (1776) is denom-flavoured
+  // (factory/…, peggy…, ibc/… strings as "addresses"):
+  // fetchStableTokens' exact-symbol + isAddress filter takes the
+  // real USDC contract and skips the denom strings, and the
+  // built-in tokens[] pins remain the reliable stable path.
+  1329: "sei-v2", 1776: "injective",
 };
 function cgTokenShape(t) {
   if (!t || !t.address || !t.symbol) return null;

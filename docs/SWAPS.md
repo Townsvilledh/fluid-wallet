@@ -1121,10 +1121,11 @@ generic Any messages with MsgTransfer first).
   the keyless API would not quote Base USDC from this
   network ("Source token not found"), so those pairs keep
   the routes they already had and make no new claim. Kujira
-  is not added (a legacy THORChain remnant). Sei and the
-  other Cosmos chains Fluid already holds join in a later
-  slice. Funded settlement on this rail is unproven until
-  the first funded drill, like every rail before it.
+  is not added (a legacy THORChain remnant). Sei does not
+  join this rail: its Cosmos network is retired (see the
+  gap-#5 section below) — SEI swaps live on Sei EVM via
+  OpenOcean. Funded settlement on this rail is unproven
+  until the first funded drill, like every rail before it.
 
 ## Cardano — presence + 1Click ADA (2026-11-15)
 
@@ -1184,3 +1185,70 @@ rejected on measured bundle weight (+~2.75 MB, +43%).
   partner id is registered. DexHunter was unreachable and
   MinSwap's aggregator shows no partner surface; neither is
   planned against until it can be probed.
+
+## Sei EVM + Injective EVM via OpenOcean — audit gap #5 (2026-11-15)
+
+Both chains join as built-in EVM networks (`seievm` 1329,
+`injectiveevm` 1776 — fresh keys, because the plain keys are
+the Cosmos families'), with pinned Circle-native USDC on both,
+USDT0 as Sei's USDT and the Peggy USDT on Injective, and
+three-endpoint RPC rotation probed in-page from the production
+origin. No cross-chain rail Fluid uses quotes either chain
+(Relay, Across, 1Click, Mayan, Squid and KyberSwap all probed
+NONE), so their pairs stay honestly unserved beyond composition
+through other legs; CCTP is a plausible future door into their
+native USDC and is unprobed, not claimed.
+
+- **OpenOcean is the intra-chain rail** (DragonSwap on Sei,
+  Pumex on Injective, behind the aggregator). Its `/swap`
+  endpoint returns the executable build itself; Fluid quotes
+  from builds, bounds-checks the build before signing (the
+  exchange contract is pinned per chain — both chains quoted
+  `0x6352a56caadC4F1E25CD6c75970Fa768A3304e64` in every probe —
+  the exact value, and this wallet as the build's account),
+  takes its own exact-amount approval, simulates, then signs.
+  Native legs quote through the zero-address sentinel, which
+  `/swap` accepts on both chains (the build carries the amount
+  as its value and OpenOcean wraps internally).
+- **The fee: proven charge, unproven net.** The `referrerFee`
+  dial takes a percentage out of the trade's output inside the
+  built transaction, paid to the DripBot EVM collection
+  address. A/B probes at sane sizes (zero drift) proved the
+  CHARGE: on Sei the output falls by exactly the dial (0.620%
+  at a 0.625 dial; 0.99998% at 1.0). On Injective the echo is
+  per-route: WINJ→USDT echoes the full dial (0.99879% at 1.0)
+  while the WINJ↔USDC routes echo only a fraction (0.196% /
+  0.477% at 1.0), because the fee rides only part of a split
+  route. So every quote is echo-verified per route: the fee
+  build ships only when its measured output delta matches the
+  dial (grossed up for OpenOcean's documented 20% share —
+  dial = law target / 0.8); otherwise the fee-free build ships
+  with the route stating it does not collect. What Fluid NETS
+  is documented-not-settled: OpenOcean's docs say they keep
+  20% of the referrer fee, but no funded settlement has
+  reached the collection address yet, so the net share carries
+  the same unproven status as any rail's funded proof. The
+  fee disclosed on the confirmation is the measured gross
+  delta — what actually leaves the user's trade.
+- **Injective is one account.** Its Cosmos and EVM faces share
+  one unified balance (proven two-sided: a bank `inj` wei read
+  identically over EVM, and the native USDC's bank
+  `erc20:<contract>` balance exactly equal to its ERC-20
+  balance). A Skip leg landing INJ or USDC on Injective has
+  already landed it on Injective EVM — no bridge, no wait, no
+  second fee. The wallet presents the two faces as one account:
+  INJ is counted once in totals, and there is no
+  transfer-between-them UI because there is nothing to
+  transfer.
+- **Sei's Cosmos form is labelled legacy** (home row, chain
+  sheet, receive picker and panel): the network is retired —
+  SIP-3 closed IBC in 2026 — and SEI trades on Sei EVM. A
+  MsgSend simulation against pacific-1 still executes the
+  chain's bank path (probed 2026-11-15; it failed only on the
+  test account's funds), so sends stay enabled under the
+  legacy label rather than being silently removed.
+- **Unverified, named:** a funded OpenOcean settlement (and
+  with it the net fee share landing), USDT0's depth against
+  Sei's legacy bridged USDT, and the direct venue APIs
+  (DragonSwap / Sailor / Symphony / Pumex) — proven as
+  OpenOcean's venues only.

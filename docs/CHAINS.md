@@ -6,18 +6,29 @@ same seed. Everything listed here **ships**: balance, receive and send.
 
 ## Chain families
 
-- **EVM — 15 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
+- **EVM — 18 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
   OP Mainnet, Polygon, Avalanche, zkSync Era, Linea, Scroll, Mantle,
-  Gnosis, Celo, Fuse, and Sepolia (testnet). Networks the swap routers
-  support beyond the built-ins (for example **Arc**, chain 5042) are
-  discovered and added automatically after unlock.
+  Gnosis, Celo, Fuse, B² Network, Sei EVM, Injective EVM, and Sepolia
+  (testnet). Networks the swap routers support beyond the built-ins
+  (for example **Arc**, chain 5042) are discovered and added
+  automatically after unlock. Sei EVM (chain 1329) is where SEI lives
+  now — Sei's Cosmos network is retired (see Cosmos below).
+  Injective EVM (chain 1776) is Injective's second face: its balance
+  is unified with the Cosmos side (one account, one ledger — INJ or
+  USDC landed on either face is already on both, and the wallet
+  counts it once).
 - **Bitcoin** — BIP84 native SegWit (bc1q…) and BIP86 Taproot (bc1p…).
   See `docs/BITCOIN-NATIVE.md`.
 - **Lightning** — Fluid's own in-browser node (LDK) from the same seed.
   See `docs/LIGHTNING.md`.
 - **Solana, Tron, Sui** — full send/receive plus swap routing.
 - **Litecoin, Dogecoin, Bitcoin Cash** — UTXO family, full function.
-- **Cosmos** — seven networks.
+- **Cosmos** — seven networks. Sei's entry is the retired Cosmos
+  form, labelled **legacy** everywhere it renders (home row, chain
+  sheet, receive): SIP-3 shut its Cosmos side down (IBC closed in
+  2026) and SEI now lives on Sei EVM. Its reads still answer and
+  sends still run while the chain does, but nothing new arrives
+  there.
 - **Stellar, TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub), Aptos,
   Stacks** — full send/receive/balance.
 
@@ -57,7 +68,8 @@ displaying $0.00 while their endpoints were down.
   probed fallbacks (Polkachu for all seven; Osmosis' own LCD,
   Noble's api.noble.xyz, Injective's LCD, Sei's rest.sei-apis.com
   and dYdX's publicnode where probed) — one directory outage no
-  longer darks the family.
+  longer darks the family. (Sei's entry in that list is its
+  retired Cosmos network, kept readable under its legacy label.)
 - **EVM scans** race a 20 s settle for first paint, but the read
   keeps rotating behind it: each endpoint attempt is capped at
   30 s (a hung endpoint can no longer eat the scan), and a read

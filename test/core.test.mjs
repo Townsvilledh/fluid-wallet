@@ -36,6 +36,7 @@ import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed2551
 import { Transaction as SuiTx105 } from "@mysten/sui/transactions";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { cosmosAddress, cosmosAddresses, cosmosChain, COSMOS_CHAINS, isValidCosmosAddress, formatCosmosSendIntent, buildInjectiveSignedTx, buildInjectiveSignedTxForMsgs, INJECTIVE_PUBKEY_TYPE, injectiveAddressBytes } from "../src/wallet-core.js";
+import { OPENOCEAN_CHAINS, OPENOCEAN_EXCHANGE, openOceanSupportsPair, openOceanDialForBps, openOceanFeeEchoOk, parseOpenOceanSwap, getOpenOceanSwapRoute, checkOpenOceanSwapBounds, injectiveCountedOnEvmSide } from "../src/wallet-core.js";
 import { SKIP_API, SKIP_AFFILIATE_ADDRESSES, SKIP_ATOM_ON_OSMOSIS_DENOM, SKIP_ASSETS, SKIP_CCTP_DOMAINS, SKIP_CCTP_FEE_PAYMENT_ADDRESS, COSMOSHUB_SWAP_CHAIN_ID, OSMOSIS_SWAP_CHAIN_ID, NOBLE_SWAP_CHAIN_ID, CELESTIA_SWAP_CHAIN_ID, INJECTIVE_SWAP_CHAIN_ID, DYDX_SWAP_CHAIN_ID, skipChainOf, skipAsset, skipAffiliateAddress, skipSplitFor, skipFeeRequest, skipRouteRequest, skipMsgsRequest, skipChainPrefixes, skipAccountBytesOfAddress, skipDeriveAddressForChain, skipAddressList, skipFindSwapAndAction, verifySkipFeeEcho, skipTimeoutAtFromMsgs, encodeMsgDepositForBurnWithCaller, decodeMsgDepositForBurnWithCaller, MsgDepositForBurnWithCallerType, verifySkipCctpMsgs, skipMsgToEncodeObject, skipCosmosRegistry, readCosmosDenomRaw, fetchSkipTxStatus, skipLegTimeoutVerdict, pollSkipLegOutcome, getSqsQuote, skipSupportsPair, getSkipSwapRoute, executeSkipSwapRoute } from "../src/wallet-core.js";
 import * as btcSigner from "@scure/btc-signer";
 import { ethers } from "ethers";
@@ -10890,9 +10891,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const core = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("repair: sendFailed humanizes — the raw shortMessage passthrough is gone from it",
     app.includes("showSheetError(prefix + humanizeTxError(e))") && !app.includes("showSheetError(prefix + ((e && (e.shortMessage"));
-  ok("repair: the EVM executor simulates before broadcasting (Relay; the second call site was the removed LI.FI executor)",
-    (core.match(/simulateEvmStepOrThrow\(fromKey, provider, txReq, wallet\.address\)/g) || []).length === 1
-    && core.indexOf("simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address)") > core.indexOf("export async function executeRelaySwapRoute"));
+  ok("repair: the EVM executors simulate before broadcasting (Relay; OpenOcean joined as the second call site in gap #5, 2026-11-15)",
+    (() => { const sites = [...core.matchAll(/simulateEvmStepOrThrow\(fromKey, provider, txReq, wallet\.address\)/g)].map(m => m.index);
+      return sites.length === 2
+        && sites.some(i => i > core.indexOf("export async function executeRelaySwapRoute"))
+        && sites.some(i => i > core.indexOf("export async function executeOpenOceanSwapRoute")); })());
   ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist)",
     app.includes("rows: balances.filter(b => !b.scanned && !b.custom)"));
   ok("repair: a failed scan or missing token list reconciles scanned rows DOWN",
@@ -17899,5 +17902,174 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 }
 
+
+// ---------- Gap #5: Sei EVM + Injective EVM admission, OpenOcean, Sei legacy (2026-11-15) ----------
+{
+  const fx5 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const ACCT5 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const SEI_USDC = "0xe15fc38f6d8c56af07bbcbe3baf5708a2bf42392";
+  const SEI_USDT0 = "0x9151434b16b9763660705744891fa906f660ecc5";
+  const INJ_USDC = "0xa00C59fF5a080D2b954d0c75e46E22a0c371235a";
+  const INJ_USDT = "0x88f7F2b685F9692caf8c478f5BADF09eE9B1Cc13";
+  const OO_EXCHANGE = "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64";
+
+  // Admission: the two built-ins, under fresh keys.
+  const seiEvm = NETWORKS.seievm, injEvm = NETWORKS.injectiveevm;
+  ok("gap5: Sei EVM entry (chain, symbol, explorer, rotation)",
+    seiEvm?.chainId === 1329 && seiEvm.symbol === "SEI" && seiEvm.priceSym === "SEI" && seiEvm.name === "Sei EVM"
+    && seiEvm.explorer === "https://seiscan.io" && seiEvm.rpc === "https://evm-rpc.sei-apis.com"
+    && seiEvm.rpcFallback === "https://sei-evm-rpc.publicnode.com"
+    && JSON.stringify(seiEvm.rpcs) === JSON.stringify(["https://evm-rpc.sei-apis.com", "https://sei-evm-rpc.publicnode.com", "https://sei.drpc.org"]));
+  ok("gap5: Injective EVM entry (chain, symbol, explorer, rotation)",
+    injEvm?.chainId === 1776 && injEvm.symbol === "INJ" && injEvm.priceSym === "INJ" && injEvm.name === "Injective EVM"
+    && injEvm.explorer === "https://blockscout.injective.network" && injEvm.rpc === "https://sentry.evm-rpc.injective.network"
+    && injEvm.rpcFallback === "https://injectiveevm-rpc.polkachu.com"
+    && JSON.stringify(injEvm.rpcs) === JSON.stringify(["https://sentry.evm-rpc.injective.network", "https://injectiveevm-rpc.polkachu.com", "https://injective-evm-rpc.publicnode.com"]));
+  ok("gap5: pinned tokens are the Circle / Blockscout-verified contracts",
+    seiEvm.tokens[0].address === SEI_USDC && seiEvm.tokens[0].symbol === "USDC"
+    && seiEvm.tokens[1].address === SEI_USDT0 && seiEvm.tokens[1].symbol === "USDT"
+    && injEvm.tokens[0].address === INJ_USDC && injEvm.tokens[0].symbol === "USDC"
+    && injEvm.tokens[1].address === INJ_USDT && injEvm.tokens[1].symbol === "USDT");
+  ok("gap5: RPC rotation reads the probed endpoint lists",
+    JSON.stringify(evmRpcUrls("seievm")) === JSON.stringify(seiEvm.rpcs)
+    && JSON.stringify(evmRpcUrls("injectiveevm")) === JSON.stringify(injEvm.rpcs));
+  ok("gap5: CoinGecko slugs (sei-v2, not the deprecating sei-network)",
+    COINGECKO_TOKEN_LIST_SLUGS[1329] === "sei-v2" && COINGECKO_TOKEN_LIST_SLUGS[1776] === "injective");
+
+  // The key-collision trap: fresh keys resolve to the EVM chains;
+  // the Cosmos keys keep their exact old meanings.
+  ok("gap5: swapChainOf resolves the fresh keys to the EVM chains",
+    swapChainOf("seievm")?.chainId === 1329 && swapChainOf("seievm")?.name === "Sei EVM"
+    && swapChainOf("injectiveevm")?.chainId === 1776 && swapChainOf("injectiveevm")?.name === "Injective EVM");
+  ok("gap5: the Cosmos keys are untouched (injective stays the Skip sentinel, sei stays unswappable)",
+    swapChainOf("injective")?.chainId !== 1776 && swapChainOf("sei") === null);
+
+  // Rail gates: every other rail refuses pairs touching 1329/1776.
+  const argsSeiOo = { fromChainKey: "seievm", toChainKey: "seievm", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: SEI_USDC, fromAmount: "100000000000000000000", fromAddress: ACCT5, toAddress: ACCT5 };
+  const argsInjOo = { fromChainKey: "injectiveevm", toChainKey: "injectiveevm", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: INJ_USDC, fromAmount: "10000000000000000000", fromAddress: ACCT5, toAddress: ACCT5 };
+  ok("gap5: Relay / Across / Mayan / 1Click / Skip all refuse the new chains",
+    relaySupportsPair("seievm", "seievm") === false && relaySupportsPair("seievm", "base") === false && relaySupportsPair("base", "injectiveevm") === false
+    && !acrossSupportsPair(argsSeiOo) && !acrossSupportsPair(argsInjOo)
+    && mayanSupportsPair(argsSeiOo) === false && mayanSupportsPair(argsInjOo) === false
+    && !oneClickSupportsPair(argsSeiOo) && !oneClickSupportsPair(argsInjOo)
+    && skipSupportsPair(argsSeiOo) === null && skipSupportsPair(argsInjOo) === null);
+
+  // OpenOcean gates + the fee dial.
+  ok("gap5: OpenOcean serves exactly the two same-chain pairs",
+    openOceanSupportsPair(argsSeiOo)?.chainId === 1329 && openOceanSupportsPair(argsInjOo)?.chainId === 1776
+    && openOceanSupportsPair({ ...argsSeiOo, toChainKey: "injectiveevm" }) === null
+    && openOceanSupportsPair({ fromChainKey: "base", toChainKey: "base", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: SEI_USDC }) === null
+    && openOceanSupportsPair({ ...argsSeiOo, toTokenAddress: NATIVE_TOKEN_ADDRESS }) === null);
+  ok("gap5: the dial grosses the law target up for the documented 20% share",
+    openOceanDialForBps(50) === 0.625 && openOceanDialForBps(25) === 0.3125 && openOceanDialForBps(0) === 0);
+  ok("gap5: the pinned exchange is the contract every probe quoted, on both chains",
+    OPENOCEAN_EXCHANGE[1329] === OO_EXCHANGE && OPENOCEAN_EXCHANGE[1776] === OO_EXCHANGE
+    && OPENOCEAN_CHAINS[1329] === "seievm" && OPENOCEAN_CHAINS[1776] === "injectiveevm");
+
+  // The fee echo as a pure check, on the REAL A/B fixtures.
+  const abNone = fx5("oo-ab-none.json").data, ab05 = fx5("oo-ab-0.5.json").data, ab10 = fx5("oo-ab-1.0.json").data;
+  ok("gap5: echo — the research A/B on 1329 matches the dial at 0.5 and 1.0",
+    openOceanFeeEchoOk(abNone.outAmount, ab05.outAmount, 0.5) === true
+    && openOceanFeeEchoOk(abNone.outAmount, ab10.outAmount, 1.0) === true);
+  const s2None = fx5("openocean-sei2-none.json").data, s2Fee = fx5("openocean-sei2-fee0625.json").data;
+  ok("gap5: echo — the build-day 1329 pair matches at the shipped 0.625 dial",
+    openOceanFeeEchoOk(s2None.outAmount, s2Fee.outAmount, 0.625) === true);
+  const i2None = fx5("openocean-inj2-none.json").data, i2Fee0625 = fx5("openocean-inj2-fee0625.json").data, i2Fee10 = fx5("openocean-inj2-fee10.json").data;
+  ok("gap5: echo — 1776's WINJ->USDC route echoes only a fraction and FAILS the echo at both dials",
+    openOceanFeeEchoOk(i2None.outAmount, i2Fee0625.outAmount, 0.625) === false
+    && openOceanFeeEchoOk(i2None.outAmount, i2Fee10.outAmount, 1.0) === false);
+  ok("gap5: echo — an overcharge and a no-op both fail",
+    openOceanFeeEchoOk("3863461", "3800000", 0.625) === false && openOceanFeeEchoOk("1000", "1000", 0.625) === false);
+
+  // Build parsing: the pinned exchange or nothing.
+  const parsedAb = parseOpenOceanSwap(abNone, { chainId: 1329, fromAmountRaw: "100000000000000000000", nativeInput: false });
+  ok("gap5: parse — the research swap build normalises (exchange, output, zero value)",
+    !!parsedAb && parsedAb.to === OO_EXCHANGE && parsedAb.outAmount === "3854195" && parsedAb.value === "0" && parsedAb.estimatedGas === 740988);
+  ok("gap5: parse — a build naming another contract, or another amount, is refused",
+    parseOpenOceanSwap({ ...abNone, to: "0x0000000000000000000000000000000000000001" }, { chainId: 1329, fromAmountRaw: "100000000000000000000", nativeInput: false }) === null
+    && parseOpenOceanSwap(abNone, { chainId: 1329, fromAmountRaw: "999", nativeInput: false }) === null);
+  const natNone = fx5("openocean-sei-native-none.json").data;
+  ok("gap5: parse — a native build carries the full amount as its value, and only as a native input",
+    (() => { const p = parseOpenOceanSwap(natNone, { chainId: 1329, fromAmountRaw: "100000000000000000000", nativeInput: true });
+      return !!p && p.value === "100000000000000000000"; })()
+    && parseOpenOceanSwap(natNone, { chainId: 1329, fromAmountRaw: "100000000000000000000", nativeInput: false }) === null);
+
+  // The route flow against stubbed builds: a smart stub applies
+  // exactly the dialled fraction (full echo), a partial stub
+  // applies a fifth of it (the 1776 USDC behaviour), a hostile
+  // stub renames the exchange on the fee build.
+  const jsonRes5 = (body) => ({ ok: true, status: 200, json: async () => body });
+  const mkOoStub = (freeData, mode) => async (url) => {
+    const u = String(url);
+    if (!u.includes("/swap?")) return jsonRes5({ code: 404 });
+    const feeM = /[?&]referrerFee=([0-9.]+)/.exec(u);
+    if (!feeM) return jsonRes5({ code: 200, data: freeData });
+    if (mode === "wrongTo") return jsonRes5({ code: 200, data: { ...freeData, to: "0x0000000000000000000000000000000000000001" } });
+    const frac = Number(feeM[1]) / 100 * (mode === "partial" ? 0.2 : 1);
+    const out = BigInt(freeData.outAmount);
+    const feeOut = out - (out * BigInt(Math.round(frac * 1e6))) / 1000000n;
+    return jsonRes5({ code: 200, data: { ...freeData, outAmount: feeOut.toString(), minOutAmount: feeOut.toString() } });
+  };
+  const routeSeiFull = await getOpenOceanSwapRoute(argsSeiOo, { fetchImpl: mkOoStub(natNone, "full"), prices: { SEI: 0.0386, USDC: 1 } });
+  ok("gap5: route — a full echo ships the fee build, collecting, with the measured delta as the fee",
+    !!routeSeiFull && routeSeiFull.provider === "openocean" && routeSeiFull.platformFeeCollecting === true
+    && routeSeiFull.openocean.feeEcho.ok === true && routeSeiFull.toAmount !== natNone.outAmount
+    && routeSeiFull.platformFeeRaw === (BigInt(natNone.outAmount) - BigInt(routeSeiFull.toAmount)).toString()
+    && Number(routeSeiFull.platformFeeUsd) > 0);
+  ok("gap5: route — the collecting route is executable and bounds-clean for its owner only",
+    swapRouteExecutable(routeSeiFull).ok === true && checkOpenOceanSwapBounds(routeSeiFull, ACCT5).ok === true
+    && checkOpenOceanSwapBounds(routeSeiFull, "0x0000000000000000000000000000000000000001").ok === false
+    && checkOpenOceanSwapBounds({ ...routeSeiFull, openocean: { ...routeSeiFull.openocean, tx: { ...routeSeiFull.openocean.tx, to: "0x0000000000000000000000000000000000000001" } } }, ACCT5).ok === false);
+  const injFreeNative = { ...i2None, value: "10000000000000000000" }; // the native-in form of the 1776 build (value = the amount)
+  const routeInjPartial = await getOpenOceanSwapRoute(argsInjOo, { fetchImpl: mkOoStub(injFreeNative, "partial"), prices: { INJ: 3.1167, USDC: 1 } });
+  ok("gap5: route — a partial echo (the 1776 USDC behaviour) ships the FEE-FREE build, collecting=false",
+    !!routeInjPartial && routeInjPartial.platformFeeCollecting === false && routeInjPartial.platformFeeRaw === "0"
+    && routeInjPartial.toAmount === i2None.outAmount && routeInjPartial.openocean.feeEcho.ok === false
+    && swapRouteExecutable(routeInjPartial).ok === true);
+  const routeSeiWrongTo = await getOpenOceanSwapRoute(argsSeiOo, { fetchImpl: mkOoStub(natNone, "wrongTo"), prices: { SEI: 0.0386, USDC: 1 } });
+  ok("gap5: route — a fee build naming another exchange falls back to the fee-free build",
+    !!routeSeiWrongTo && routeSeiWrongTo.platformFeeCollecting === false && routeSeiWrongTo.toAmount === natNone.outAmount);
+  ok("gap5: gate — a route claiming to collect without a verified echo is not executable",
+    swapRouteExecutable({ ...routeSeiFull, openocean: { ...routeSeiFull.openocean, feeEcho: null } }).ok === false);
+
+  // Injective's unified account: counted once.
+  ok("gap5: injectiveCountedOnEvmSide — the EVM face counts INJ only on Injective EVM with a native row present",
+    injectiveCountedOnEvmSide("injectiveevm", [{ amount: "1.5" }]) === true
+    && injectiveCountedOnEvmSide("injectiveevm", [{ address: INJ_USDC, amount: "3" }]) === false
+    && injectiveCountedOnEvmSide("injectiveevm", [{ amount: null }]) === false
+    && injectiveCountedOnEvmSide("injectiveevm", []) === false
+    && injectiveCountedOnEvmSide("base", [{ amount: "1.5" }]) === false);
+
+  // Sei-legacy labelling: the flag, the note, the picker sub,
+  // and the rendered surfaces (app source pins, house style).
+  const seiCosmos = COSMOS_CHAINS.find(c => c.key === "sei");
+  ok("gap5: labelling — the pacific-1 entry carries legacy + the retirement note; the other six carry neither",
+    seiCosmos.legacy === true && /retired/.test(seiCosmos.legacyNote) && /Sei EVM/.test(seiCosmos.legacyNote)
+    && COSMOS_CHAINS.filter(c => c.key !== "sei").every(c => c.legacy !== true && !c.legacyNote));
+  ok("gap5: labelling — the receive picker shows Sei as Cosmos · legacy, Injective unchanged",
+    RECEIVE_NETWORKS.find(n => n.id === "sei")?.sub === "Cosmos · legacy"
+    && RECEIVE_NETWORKS.find(n => n.id === "injective")?.sub === "Cosmos"
+    && RECEIVE_NETWORKS.find(n => n.id === "sei")?.name === "Sei");
+  const appSrc5 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("gap5: labelling — the home row, sheet and receive surfaces render the legacy marker and notes",
+    appSrc5.includes('r.legacy ? " (legacy)" : ""') && appSrc5.includes('chain.legacy ? " (legacy)" : ""')
+    && appSrc5.includes("Sei's retired Cosmos form — most SEI now lives on Sei EVM.")
+    && appSrc5.includes("This network is retired — SEI trades on Sei EVM.")
+    && appSrc5.includes("One account, two faces")
+    && appSrc5.includes('route.provider === "openocean") return "OpenOcean"')
+    && appSrc5.includes("injectiveCountedOnEvmSide(networkKey, balances)"));
+
+  // The denom-flavoured CoinGecko list: USDC only survives the
+  // address filter (USDT's entry is a peggy denom string).
+  const realFetch5 = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => String(url).includes("tokens.coingecko.com/injective/")
+      ? jsonRes5(fx5("cg-list-injective.json")) : jsonRes5({ tokens: [] });
+    const toks1776 = await fetchStableTokens(1776);
+    ok("gap5: fetchStableTokens(1776) against the saved CoinGecko fixture returns USDC only",
+      Array.isArray(toks1776) && toks1776.length === 1 && toks1776[0].symbol === "USDC"
+      && toks1776[0].address.toLowerCase() === INJ_USDC.toLowerCase());
+  } finally { globalThis.fetch = realFetch5; }
+}
 
 console.log(`\n${passed} checks passed`);
