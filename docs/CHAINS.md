@@ -48,7 +48,14 @@ same seed. Everything listed here **ships**: balance, receive and send.
   2026) and SEI now lives on Sei EVM. Its reads still answer and
   sends still run while the chain does, but nothing new arrives
   there.
-- **Stellar, TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub), Aptos,
+- **Stellar** — full send/receive/balance. XLM is a swap asset
+  both ways: intra-chain swaps ride the Soroswap Aggregator
+  (XLM ↔ USDC; the surface needs a build-time API key — with
+  none configured it is honestly absent), and cross-chain
+  swaps INTO Stellar ride 1Click (XLM as a destination).
+  Stellar as a cross-chain SOURCE is an honest no-route —
+  see `docs/SWAPS.md` (gap #9).
+- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub), Aptos,
   Stacks** — full send/receive/balance.
 
 ## Tokens

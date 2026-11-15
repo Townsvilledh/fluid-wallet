@@ -1611,3 +1611,131 @@ builder.
   thrown route-search ERROR; it is now part of the no-route
   pattern in the quote fetch, so thin liquidity reads as
   no-route on every 1Click pair, not just DASH-in.
+
+## Stellar swaps — Soroswap intra-chain + 1Click in (audit gap #9, 2026-11-15)
+
+Stellar gains both swap directions this slice, on two
+different rails: swaps WITHIN Stellar (XLM ↔ USDC) ride the
+Soroswap Aggregator, and swaps INTO Stellar from other
+chains ride 1Click with XLM as a destination. Stellar as a
+cross-chain SOURCE stays an honest no-route (below).
+
+- **The Soroswap shape.** A REST port in the OpenOcean
+  mould: `POST /quote` (assets as SAC contract addresses —
+  XLM is `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA`,
+  Circle's USDC is `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` —
+  amounts as integer strings in stroops, 7 decimals) →
+  `POST /quote/build` with the unchanged quote → the user
+  signs the returned envelope → `POST /send`. The aggregator
+  routes across Soroswap AMM, Phoenix, Aquarius, Comet,
+  Sushi and the SDEX order book behind one pinned contract
+  (`CARVQXFP4JF5ELLXUMQ6DALR346YVGBMQOHB4ENA7SSVXAYABXLBDDC4`),
+  so this one port is the whole Stellar DEX surface;
+  SDEX-direct and Aquarius-direct were rejected in research
+  (zero capture; Aquarius is already a venue inside the
+  aggregator). The build simulates server-side and the
+  envelope is submitted **exactly as built — never
+  re-simulated** (the API forbids it, and the build's
+  simulation is what priced the route). A built envelope
+  lives 180 s on Soroban routes, so the executor builds
+  immediately before signing; a stale build (a 409, or a
+  sequence that no longer matches the account) refuses with
+  "search again", never a silent re-price.
+- **Inspect-before-sign.** Nothing is signed on trust: the
+  executor decodes the built envelope and pins it before the
+  Stellar key touches it — sourced by the user's own
+  account, exactly one operation, a real expiry inside the
+  quote's lifetime, a network fee no larger than any Stellar
+  fee can honestly be (cap 1 XLM), and then the operation
+  itself: either an invoke of the pinned aggregator contract
+  (`swap_exact_in` / `swap_exact_out` carrying the owner's
+  address, both assets' SAC ids and the quoted input amount
+  among its arguments), or an SDEX path payment pinned to
+  the same fields (destination = the owner, the quoted
+  amounts, a minimum no lower than the quote's threshold).
+  Anything else refuses unsigned.
+- **Trustlines are their own step.** `/quote/build` can
+  answer **428** with a ready-to-sign changeTrust envelope
+  for the asset the account cannot yet hold — which can be
+  an intermediate route asset, so the step names its asset
+  from the response, never an assumption. The executor
+  bounds-checks that envelope on its own (exactly one
+  changeTrust, adding exactly that asset), presents it as a
+  separate, clearly-labelled signing step BEFORE the swap,
+  and only then builds the swap. Each trustline locks
+  +0.5 XLM under the existing reserve model. A trustline
+  envelope is never smuggled inside the swap envelope, and
+  the bounds checker refuses a swap-shaped envelope
+  presented as a trustline (and vice versa).
+- **The key posture.** Every Soroswap endpoint needs an API
+  key (`Authorization: Bearer sk_…`); there is no keyless
+  tier (live proof: a keyless call answers 401
+  MISSING_CREDENTIAL). `SOROSWAP_API_KEY` is build-time
+  config, the `ONECLICK_JWT` posture: **while no key is
+  configured the surface is honestly ABSENT** — no route is
+  offered, no dead button, no error card. One embedded key
+  is one fleet-wide rate bucket (Free plan: 1 request per
+  second) — Soroswap itself warns against frontend keys;
+  that is the accepted launch posture, stated here rather
+  than hidden. Live POST verification from the build VM was
+  environment-blocked (POSTs to api.soroswap.finance hang
+  from its egress while GETs answer), so the port is pinned
+  on the API's documented shapes plus the research's live
+  GET/SDEX evidence; the first-user walk re-checks POSTs
+  in-page from the production origin.
+- **Capture — the gate, stated plainly.** The partner fee
+  (25–300 bps, set on the Soroswap ACCOUNT, never per-quote)
+  is taken from the input token and echoes in quotes as
+  `platformFee {feeBps, feeAmount}` **only once Soroswap
+  manually activates the account as a partner**. Activation
+  is **PENDING** (a console signup and the activation email
+  are operator-side steps), so this surface ships
+  **collecting=false, honestly displayed** — the shipped
+  configuration carries no partner rate
+  (`SOROSWAP_PARTNER_BPS = 0`). The echo verification is
+  wired from day one: with a rate configured, a quote
+  collects only when its echoed `platformFee` matches the
+  configured rate and the exact fee arithmetic
+  (`floor(amountIn × bps / 10000)`, ±1 stroop); a quote
+  carrying a `platformFee` while no rate is configured is
+  an unverified charge and **refuses**, as does any
+  mismatch. When collecting, the disclosed figure is the
+  gross partner rate — the whole fee leaves the user's
+  input in the open; Fluid's share (about half, per
+  Soroswap's docs — unverified) arrives as Soroswap's
+  monthly USDC settlement and is never an extra charge on
+  the user. The switch is config + a proven live echo,
+  never copy claiming collecting when it is not (the
+  Cosmos/1Click precedent).
+- **The swap table** is XLM and Circle's USDC — the only
+  verified Stellar asset (the `STELLAR_USDC` rule) —
+  addressed exactly as their balance rows are (the `xlm`
+  sentinel; `USDC:<issuer>`). Other trustline assets a user
+  holds stay send/receive only this slice: the sheet never
+  offers a swap it cannot route. There is no practical
+  floor (the SDEX probe quoted 0.1 XLM); speed is the fast
+  class by construction (~15 s estimated end-to-end — an
+  estimate, not a measurement; the walk re-measures).
+- **1Click INTO Stellar is live.** The re-probe overturned
+  half of the 1Click section's original verdict: the
+  catalogue's XLM (a `nep245:` HOT-omni asset id, 7
+  decimals — not the `nep141:` shape of the other families)
+  now quotes as a destination (live captures: USDC on Base
+  $5 → 34.9064438 XLM, $20 → 142.9257757 XLM, ~52 s
+  estimate, 1.1 XLM withdraw fee inside the quote). It is
+  wired through the ordinary 1Click machinery — same
+  two-pass fee flow and echo verification as every family —
+  and its capture posture is the fleet-wide one:
+  **collecting=false until the operator sets
+  `ONECLICK_FEE_RECIPIENT`**, displayed exactly as the other
+  1Click families display it.
+- **Stellar OUT via 1Click stays an honest no-route**, for
+  two independent reasons, either of which is enough: the
+  rail refuses Stellar-origin quotes outright ("Quoting for
+  this pair is not available" — probed live, including with
+  `depositMode=MEMO` set correctly), and its deposits would
+  need a MEMO that Fluid's `sendStellar` cannot carry. The
+  pair support check therefore excludes a Stellar origin
+  structurally, so the sheet presents the honest no-route
+  rather than a quote that can only fail at execution; the
+  executor's memo guard remains as defence in depth.

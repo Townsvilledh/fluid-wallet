@@ -42,7 +42,7 @@ import * as btcSigner from "@scure/btc-signer";
 import { ethers } from "ethers";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { stellarAddressFromPhrase, stellarAddressFromSeed, stellarSeedFromSeed, isValidStellarAddress, strKeyDecodeEd25519, crc16Xmodem, xlmToStroops, stroopsToXlm, stellarMinBalanceXlm, stellarMinBalanceStroops, formatStellarSendIntent, STELLAR_USDC, STELLAR_USDC_ISSUER } from "../src/wallet-core.js";
-import { Keypair as StellarKeypair, StrKey as StellarStrKey } from "@stellar/stellar-sdk/base";
+import { Keypair as StellarKeypair, StrKey as StellarStrKey, TransactionBuilder as StellarTxBuilder129, Account as StellarAccount129, Networks as StellarNetworks129, Asset as StellarAsset129, Operation as StellarOperation129, Contract as StellarContract129, Address as StellarAddress129, nativeToScVal as stellarNativeToScVal129 } from "@stellar/stellar-sdk/base";
 import { chunkArray, parseDexScreenerPairs, chainTokenVerified, cosmosDenomDisplay, suiCoinFallbackSymbol,
   shortAddrLabel, tronDecodeAbiString, formatTokenAmount, dexChainIdForEvmChain, SOLANA_TOKEN2022_PROGRAM,
   MULTICALL3_ADDRESS } from "../src/wallet-core.js";
@@ -83,6 +83,7 @@ import { sr25519PairFromSeed as dotSrPairFromSeed, encodeAddress as dotEncodeAdd
 import { mnemonicToEntropy as scureMnemonicToEntropy } from "@scure/bip39";
 import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
 import { zcashAddress, isValidZcashAddress, dashAddress, isValidDashAddress, buildSignedDashTx, DASH_DUST_SAT, DASH_MIN_OUTPUT, parseBlockchairDashboard, zecTxidFromRaw, zecSighash, buildZecTransparentTx, zecFeeZats, zecLogicalActions, ZEC_CONSENSUS_BRANCH_ID, ZCASH_SWAP_CHAIN_ID, DASH_SWAP_CHAIN_ID, ZCASH_SWAP_NATIVE_TOKEN, DASH_SWAP_NATIVE_TOKEN, formatDashSendIntent, formatZcashSendIntent } from "../src/wallet-core.js";
+import { STELLAR_SWAP_CHAIN_ID, STELLAR_SWAP_NATIVE_TOKEN, STELLAR_SWAP_ASSETS, stellarSwapAssetFor, stellarSacAddress, SOROSWAP_API, SOROSWAP_API_KEY, SOROSWAP_PARTNER_BPS, soroswapConfig, SOROSWAP_AGGREGATOR_CONTRACT, SOROSWAP_PROTOCOLS, SOROSWAP_SLIPPAGE_BPS, SOROSWAP_MAX_TX_FEE_STROOPS, soroswapSupportsPair, parseSoroswapQuote, getSoroswapSwapRoute, checkSoroswapSwapBounds, checkSoroswapTrustlineBounds, executeSoroswapSwapRoute } from "../src/wallet-core.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -886,11 +887,17 @@ ok("platform fee collection enabled", PLATFORM_FEE_COLLECTION_ENABLED === true);
 // 1Click (the seventh family in that table), its destination prices under the
 // fee law's default ceiling, and its capture (the same §6 inverse transform +
 // echo verification, probed live for ADA both directions) is proven in §120.
-ok("swap universe is evm + tron + solana + sui + ton + the seven 1Click families + the six Cosmos slice-1 chains only", (() => {
+// Stellar joined 2026-11-15 WITH the same review (audit gap #9): its rails
+// are the Soroswap Aggregator (intra-chain; partner-fee echo verification,
+// collecting=false until Soroswap activates the account — §129) and 1Click
+// as a DESTINATION only (the fleet capture posture; Stellar as an origin is
+// refused by the rail and needs MEMO deposits sendStellar cannot carry).
+// Its destination prices under the fee law's default ceiling.
+ok("swap universe is evm + tron + solana + sui + ton + the seven 1Click families + the six Cosmos slice-1 chains + stellar only", (() => {
   const evmOk = Object.keys(NETWORKS).every(k => swapChainOf(k) !== null);
   const famOk = ["tron", "solana", "sui", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cardano",
-    "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano"].every(k => swapChainOf(k) !== null);
-  const notSwappable = ["bitcoin", "stellar", "algorand", "sei"].every(k => swapChainOf(k) === null);
+    "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "stellar"].every(k => swapChainOf(k) !== null);
+  const notSwappable = ["bitcoin", "algorand", "sei"].every(k => swapChainOf(k) === null);
   return evmOk && famOk && notSwappable && BITCOIN_SWAP_CHAIN_ID === 20000000000001
     && platformFeeEcosystemOf("ton") === "ton";
 })());
@@ -1893,7 +1900,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // LI.FI's public chain list (fetched live 2026-11-06: 70 chains —
   // EVM/SVM/UTXO/MVM/TVM) contains NO Stellar chain, so there is
   // deliberately no swap registration for the family.
-  ok("stellar: no swap chain registered", swapChainOf("stellar") === null);
+  ok("stellar: swap chain registered (gap #9)", swapChainOf("stellar")?.chainId === STELLAR_SWAP_CHAIN_ID && swapChainOf("stellar")?.name === "Stellar");
 }
 
 // 34. Phase 4 — payments-grade families: TON, NEAR, Algorand,
@@ -6483,7 +6490,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11461,7 +11468,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12902,7 +12909,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13249,7 +13256,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17093,7 +17100,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17844,9 +17851,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
       && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
     ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
-      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash"]') && appSrc120.includes('if (netKey === "cardano")')
+      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrc120.includes('if (netKey === "cardano")')
       && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
-      && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr"));
+      && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr"));
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
       coreSrc120.includes('case "cardano": return hashOf(await sendCardano(phrase, { to, amountLovelace: BigInt(amountRaw) }));')
       && coreSrc120.includes('asset: "nep141:cardano.omft.near"'));
@@ -19474,6 +19481,281 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && appSrc128.includes('k === "zcash" ? "https://blockchair.com/zcash"') && appSrc128.includes('k === "dash" ? "https://blockchair.com/dash"'));
   ok("gap8 core: the branch-ID maintenance pin is named and commented as recurring",
     coreSrc128.includes("ZEC_CONSENSUS_BRANCH_ID = 0x77190ad9") && coreSrc128.includes("RECURRING MAINTENANCE PIN"));
+}
+
+// 129. Stellar swaps (audit gap #9, 2026-11-15): intra-chain
+// swaps via the Soroswap Aggregator API (a keyed REST port:
+// /quote -> /quote/build -> sign the envelope -> /send) plus
+// XLM as a 1Click DESTINATION. EVIDENCE CLASSES, stated
+// plainly: the 1Click fixtures are the research probe's LIVE
+// captures (research_notes/fluid-stellar-soroswap-20261115);
+// the Soroswap quote fixtures are DOCUMENTED-SHAPE
+// constructions — no live Soroswap quote exists, because
+// every endpoint needs an API key this build does not have
+// (the research's live proof is the 401 MISSING_CREDENTIAL
+// answer), and their amounts are the probe's live SDEX
+// quotes (36 XLM -> 4.9665713 USDC; 20 USDC -> 144.5749350
+// XLM). The XDR bounds pins run on synthetic envelopes built
+// with the bundled SDK in-test. POSTs to
+// api.soroswap.finance hang from this VM's egress, so no
+// live POST is faked anywhere in this section: the adapter
+// and executor are pinned through injected fetch stubs.
+{
+  const ABANDON129 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture129 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const coreSrc129 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc129 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const jsonRes129 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const clone129 = (x) => JSON.parse(JSON.stringify(x));
+  const OWNER129 = stellarAddressFromPhrase(ABANDON129);
+  const XLM_SAC129 = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+  const USDC_SAC129 = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+  const USDC_ROW129 = "USDC:" + STELLAR_USDC_ISSUER;
+  const KEY129 = { apiKey: "sk_test_gap9" };
+
+  // Registry + config posture.
+  ok("gap9 registry: Stellar joins the swap universe under its sentinel ids",
+    STELLAR_SWAP_CHAIN_ID === 20000000000020 && STELLAR_SWAP_NATIVE_TOKEN === "xlm"
+    && swapChainOf("stellar")?.chainId === STELLAR_SWAP_CHAIN_ID && destChainName("stellar") === "Stellar"
+    && isDestNativeToken("stellar", "xlm") === true && isDestNativeToken("stellar", USDC_ROW129) === false
+    && destNativeTokenAddress("stellar") === "xlm"
+    && swapOwnAddressFor("stellar", { stellar: OWNER129 }) === OWNER129
+    && swapOwnAddressFor("stellar", { stellar: "not-an-address" }) === null);
+  ok("gap9 config: shipped posture is no key + no partner rate (the surface is absent, capture off)",
+    SOROSWAP_API_KEY === "" && SOROSWAP_PARTNER_BPS === 0
+    && soroswapConfig().apiKey === null && soroswapConfig().partnerBps === 0
+    && soroswapConfig({ apiKey: " sk_x " }).apiKey === "sk_x"
+    && soroswapConfig({ partnerBps: 24 }).partnerBps === 0 && soroswapConfig({ partnerBps: 25 }).partnerBps === 25
+    && soroswapConfig({ partnerBps: 300 }).partnerBps === 300 && soroswapConfig({ partnerBps: 301 }).partnerBps === 0);
+  ok("gap9 assets: the swap table is XLM + Circle USDC, addressed exactly as the balance rows are",
+    STELLAR_SWAP_ASSETS.length === 2
+    && stellarSwapAssetFor("xlm")?.native === true && stellarSwapAssetFor(null)?.symbol === "XLM"
+    && stellarSwapAssetFor(USDC_ROW129)?.symbol === "USDC" && stellarSwapAssetFor(USDC_ROW129)?.decimals === 7
+    && stellarSwapAssetFor("EURC:" + STELLAR_USDC_ISSUER) === null && stellarSwapAssetFor("garbage") === null);
+  ok("gap9 sac: the SDK-derived SAC ids equal the research's pinned contract ids",
+    stellarSacAddress(stellarSwapAssetFor("xlm")) === XLM_SAC129
+    && stellarSacAddress(stellarSwapAssetFor(USDC_ROW129)) === USDC_SAC129
+    && SOROSWAP_AGGREGATOR_CONTRACT === "CARVQXFP4JF5ELLXUMQ6DALR346YVGBMQOHB4ENA7SSVXAYABXLBDDC4");
+  ok("gap9 supports: no key configured = no pair (honest absence); with a key, distinct Stellar assets only",
+    soroswapSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "stellar", toTokenAddress: USDC_ROW129 }) === null
+    && soroswapSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "stellar", toTokenAddress: USDC_ROW129 }, soroswapConfig(KEY129))?.to.symbol === "USDC"
+    && soroswapSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "stellar", toTokenAddress: "xlm" }, soroswapConfig(KEY129)) === null
+    && soroswapSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "base", toTokenAddress: USDC_ROW129 }, soroswapConfig(KEY129)) === null
+    && soroswapSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "XXX:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", toChainKey: "stellar", toTokenAddress: "xlm" }, soroswapConfig(KEY129)) === null);
+
+  // Quote parsing + the capture echo rule (documented-shape
+  // fixtures; see the section header for the evidence class).
+  const qXlmUsdc129 = fixture129("soroswap-quote-xlm-usdc-nofee.json");
+  const qUsdcXlm129 = fixture129("soroswap-quote-usdc-xlm-nofee.json");
+  const ctx129 = { fromEntry: stellarSwapAssetFor("xlm"), toEntry: stellarSwapAssetFor(USDC_ROW129), amountRaw: "360000000", priceInUsd: 0.14, priceOutUsd: 1 };
+  const route129 = parseSoroswapQuote(qXlmUsdc129, ctx129);
+  ok("gap9 quote parse (documented-shape fixture): amounts, threshold, USD from the wallet table, collecting=false",
+    !!route129 && route129.provider === "soroswap" && route129.fromAmount === "360000000" && route129.toAmount === "49665713"
+    && route129.toAmountMin === "49417384" && route129.collecting === false && route129.platformFeeCollecting === false
+    && route129.platformFeeRaw === "0" && route129.platformFeeUsd === 0
+    && Math.abs(route129.fromAmountUSD - 5.04) < 1e-9 && Math.abs(route129.toAmountUSD - 4.9665713) < 1e-9
+    && route129.soroswap.assetInSac === XLM_SAC129 && route129.soroswap.assetOutSac === USDC_SAC129
+    && route129.executionDuration === 15 && swapRouteExecutable(route129).ok === true);
+  ok("gap9 quote parse: the reverse documented-shape fixture parses (USDC in, XLM out)",
+    (() => { const r = parseSoroswapQuote(qUsdcXlm129, { fromEntry: stellarSwapAssetFor(USDC_ROW129), toEntry: stellarSwapAssetFor("xlm"), amountRaw: "200000000", priceInUsd: 1, priceOutUsd: 0.14 });
+      return !!r && r.toAmount === "1445749350" && r.collecting === false; })());
+  ok("gap9 quote parse: drifted amounts, an over-output threshold and unknown platforms refuse",
+    parseSoroswapQuote({ ...qXlmUsdc129, amountIn: "359999999" }, ctx129) === null
+    && parseSoroswapQuote({ ...qXlmUsdc129, amountOut: "0" }, ctx129) === null
+    && parseSoroswapQuote({ ...qXlmUsdc129, otherAmountThreshold: "49665714" }, ctx129) === null
+    && parseSoroswapQuote({ ...qXlmUsdc129, platform: "phoenix" }, ctx129) === null
+    && parseSoroswapQuote({ ...qXlmUsdc129, tradeType: "EXACT_OUT" }, ctx129) === null
+    && parseSoroswapQuote(null, ctx129) === null);
+  ok("gap9 echo rule: a platformFee with NO configured partner rate is an unverified charge — the quote refuses",
+    parseSoroswapQuote({ ...qXlmUsdc129, platformFee: { feeBps: 25, feeAmount: "900000" } }, ctx129) === null);
+  ok("gap9 echo rule: a matching echo at the configured rate collects (fee from the input, gross bps)",
+    (() => { const r = parseSoroswapQuote({ ...qXlmUsdc129, platformFee: { feeBps: 25, feeAmount: "900000" } }, { ...ctx129, partnerBps: 25 });
+      return !!r && r.collecting === true && r.platformFeeCollecting === true && r.platformFeeRaw === "900000"
+        && r.platformFeeBps === 25 && Math.abs(r.platformFeeUsd - 0.0126) < 1e-9 && swapRouteExecutable(r).ok === true; })());
+  ok("gap9 echo rule: mismatched bps or amount refuses; a missing echo at a configured rate refuses",
+    parseSoroswapQuote({ ...qXlmUsdc129, platformFee: { feeBps: 50, feeAmount: "1800000" } }, { ...ctx129, partnerBps: 25 }) === null
+    && parseSoroswapQuote({ ...qXlmUsdc129, platformFee: { feeBps: 25, feeAmount: "900100" } }, { ...ctx129, partnerBps: 25 }) === null
+    && parseSoroswapQuote(qXlmUsdc129, { ...ctx129, partnerBps: 25 }) === null);
+  ok("gap9 gate: a collecting route whose fee arithmetic does not re-derive is refused at the gate",
+    (() => { const r = parseSoroswapQuote({ ...qXlmUsdc129, platformFee: { feeBps: 25, feeAmount: "900000" } }, { ...ctx129, partnerBps: 25 });
+      const tampered = { ...r, platformFeeRaw: "450000" };
+      const free = { ...route129, platformFeeRaw: "5" };
+      return swapRouteExecutable(tampered).ok === false && swapRouteExecutable(free).ok === false
+        && swapRouteExecutable({ ...route129, soroswap: null }).ok === false; })());
+
+  // The adapter over a stubbed fetch (no live POST — see the
+  // section header): request shape + response discipline.
+  {
+    let seenUrl = "", seenBody = null, seenAuth = "";
+    const stubQuote = async (url, init) => { seenUrl = String(url); seenBody = JSON.parse(init.body); seenAuth = init.headers.Authorization; return jsonRes129(clone129(qXlmUsdc129), true, 201); };
+    const args129 = { fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "stellar", toTokenAddress: USDC_ROW129, fromAmount: "360000000", fromAddress: OWNER129, toAddress: OWNER129 };
+    // The adapter reads the wallet price table through the
+    // global fetch — pin it dead for this block so the test
+    // stays hermetic (prices null, the route still parses).
+    const realFetch129 = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error("offline in tests"); };
+    let r = null;
+    try { r = await getSoroswapSwapRoute(args129, { soroswap: KEY129, fetchImpl: stubQuote }); } finally { globalThis.fetch = realFetch129; }
+    ok("gap9 adapter: POSTs the documented quote shape to /quote?network=mainnet with the bearer key",
+      seenUrl === SOROSWAP_API + "/quote?network=mainnet" && seenAuth === "Bearer sk_test_gap9"
+      && seenBody.assetIn === XLM_SAC129 && seenBody.assetOut === USDC_SAC129 && seenBody.amount === "360000000"
+      && seenBody.tradeType === "EXACT_IN" && seenBody.slippageBps === SOROSWAP_SLIPPAGE_BPS
+      && JSON.stringify(seenBody.protocols) === JSON.stringify(SOROSWAP_PROTOCOLS)
+      && !!r && r.provider === "soroswap" && r.collecting === false);
+    const noKey = await getSoroswapSwapRoute(args129, { fetchImpl: stubQuote });
+    const otherDest = await getSoroswapSwapRoute({ ...args129, toAddress: "GD24VM7QW7WMWXHSHQTXDLVDPYYYU57IF2DFEVZ6ALUATVFJSBPGXGBR" }, { soroswap: KEY129, fetchImpl: stubQuote });
+    ok("gap9 adapter: absent without a key, and a quote addressed away from the owner is never offered",
+      noKey === null && otherDest === null);
+  }
+
+  // Bounds pins on synthetic SDK-built envelopes (the
+  // inspect-before-sign contract): the aggregator invoke,
+  // both SDEX path-payment shapes, and every refusal class.
+  const USDC_ASSET129 = new StellarAsset129("USDC", STELLAR_USDC_ISSUER);
+  const buildTx129 = (ops, { source = OWNER129, seq = "100", fee = "100", timeout = 300 } = {}) => {
+    const tb = new StellarTxBuilder129(new StellarAccount129(source, seq), { fee, networkPassphrase: StellarNetworks129.PUBLIC });
+    for (const op of ops) tb.addOperation(op);
+    return tb.setTimeout(timeout).build().toXDR();
+  };
+  const aggCall129 = (contract, fn, args) => new StellarContract129(contract).call(fn, ...args);
+  const sacArg129 = (sac) => stellarNativeToScVal129(sac, { type: "address" });
+  const i128Arg129 = (n) => stellarNativeToScVal129(BigInt(n), { type: "i128" });
+  const ownerArg129 = () => new StellarAddress129(OWNER129).toScVal();
+  const goodInvoke129 = buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "swap_exact_in",
+    [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(360000000), i128Arg129(49417384), ownerArg129()])]);
+  ok("gap9 bounds: a pinned aggregator swap_exact_in paying the owner for the quoted amount passes",
+    checkSoroswapSwapBounds(route129, goodInvoke129, OWNER129).ok === true);
+  ok("gap9 bounds: wrong contract, wrong function, wrong recipient and wrong amount each refuse",
+    checkSoroswapSwapBounds(route129, buildTx129([aggCall129(USDC_SAC129, "swap_exact_in", [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(360000000), ownerArg129()])]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "transfer", [sacArg129(XLM_SAC129), i128Arg129(360000000), ownerArg129()])]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "swap_exact_in", [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(360000000), new StellarAddress129("GD24VM7QW7WMWXHSHQTXDLVDPYYYU57IF2DFEVZ6ALUATVFJSBPGXGBR").toScVal()])]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "swap_exact_in", [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(359999999), ownerArg129()])]), OWNER129).ok === false);
+  const goodSend129 = buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destMin: "4.9417384", path: [] })]);
+  const goodRecv129 = buildTx129([StellarOperation129.pathPaymentStrictReceive({ sendAsset: StellarAsset129.native(), sendMax: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destAmount: "4.9665713", path: [] })]);
+  ok("gap9 bounds: both SDEX path-payment shapes pass when pinned to the quote",
+    checkSoroswapSwapBounds(route129, goodSend129, OWNER129).ok === true
+    && checkSoroswapSwapBounds(route129, goodRecv129, OWNER129).ok === true);
+  ok("gap9 bounds: path payments to someone else, under the quoted minimum, or of the wrong asset refuse",
+    checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: "GD24VM7QW7WMWXHSHQTXDLVDPYYYU57IF2DFEVZ6ALUATVFJSBPGXGBR", destAsset: USDC_ASSET129, destMin: "4.9417384", path: [] })]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destMin: "4.9000000", path: [] })]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: USDC_ASSET129, sendAmount: "36.0000000", destination: OWNER129, destAsset: StellarAsset129.native(), destMin: "4.9417384", path: [] })]), OWNER129).ok === false);
+  ok("gap9 bounds: envelope pins refuse — foreign source, a second operation, no expiry, an absurd fee, garbage XDR",
+    checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destMin: "4.9417384", path: [] })], { source: "GD24VM7QW7WMWXHSHQTXDLVDPYYYU57IF2DFEVZ6ALUATVFJSBPGXGBR" }), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destMin: "4.9417384", path: [] }), StellarOperation129.changeTrust({ asset: USDC_ASSET129 })]), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, buildTx129([StellarOperation129.pathPaymentStrictSend({ sendAsset: StellarAsset129.native(), sendAmount: "36.0000000", destination: OWNER129, destAsset: USDC_ASSET129, destMin: "4.9417384", path: [] })], { fee: "20000000" }), OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, "AAAA-not-an-envelope", OWNER129).ok === false
+    && checkSoroswapSwapBounds(route129, goodInvoke129, "GD24VM7QW7WMWXHSHQTXDLVDPYYYU57IF2DFEVZ6ALUATVFJSBPGXGBR").ok === false);
+
+  // The trustline step's own bounds (428 shape): exactly one
+  // changeTrust ADDING the named asset.
+  const goodTrust129 = buildTx129([StellarOperation129.changeTrust({ asset: USDC_ASSET129 })]);
+  ok("gap9 trustline bounds: the named changeTrust passes; a different asset, a removal and a swap envelope refuse",
+    checkSoroswapTrustlineBounds(goodTrust129, OWNER129, { assetCode: "USDC", assetIssuer: STELLAR_USDC_ISSUER }).ok === true
+    && checkSoroswapTrustlineBounds(goodTrust129, OWNER129, { assetCode: "EURC", assetIssuer: STELLAR_USDC_ISSUER }).ok === false
+    && checkSoroswapTrustlineBounds(buildTx129([StellarOperation129.changeTrust({ asset: USDC_ASSET129, limit: "0" })]), OWNER129, { assetCode: "USDC", assetIssuer: STELLAR_USDC_ISSUER }).ok === false
+    && checkSoroswapTrustlineBounds(goodInvoke129, OWNER129, { assetCode: "USDC", assetIssuer: STELLAR_USDC_ISSUER }).ok === false);
+
+  // The executor end-to-end over stubs (quote/build/send +
+  // Horizon): the happy path signs the envelope as built,
+  // the 428 path runs the trustline as its own step first,
+  // and a stale sequence refuses before /send is called.
+  {
+    const swapXdr129 = buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "swap_exact_in",
+      [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(360000000), i128Arg129(49417384), ownerArg129()])], { seq: "100" });
+    const horizonAccount129 = { account_id: OWNER129, sequence: "100", subentry_count: 1, balances: [{ asset_type: "native", balance: "100.0000000" }] };
+    const mkFetch129 = (buildAnswers) => {
+      const state = { builds: 0, sends: 0, horizonPosts: 0 };
+      const f = async (url, init) => {
+        const u = String(url);
+        if (u.includes("api.soroswap.finance/quote/build")) { const a = buildAnswers[Math.min(state.builds, buildAnswers.length - 1)]; state.builds++; return a; }
+        if (u.includes("api.soroswap.finance/send")) { state.sends++; return jsonRes129({ txHash: "swap-hash-129", success: true }, true, 201); }
+        if (u.includes("horizon") && u.includes("/accounts/")) return jsonRes129(horizonAccount129);
+        if (u.includes("horizon") && u.includes("/transactions")) { state.horizonPosts++; return jsonRes129({ hash: "trust-hash-129" }); }
+        throw new Error("unexpected fetch in gap9 executor test: " + u);
+      };
+      return { f, state };
+    };
+    const wallet129 = { phrase: ABANDON129 };
+    // The executor's Horizon account read rides the GLOBAL
+    // fetch (the family reader), so each scenario's router is
+    // installed globally as well as passed as the API stub.
+    const realFetch129b = globalThis.fetch;
+    const happy = mkFetch129([jsonRes129({ xdr: swapXdr129 }, true, 201)]);
+    globalThis.fetch = happy.f;
+    const hashesHappy = await executeSoroswapSwapRoute(wallet129, route129, () => {}, { soroswap: KEY129, fetchImpl: happy.f });
+    ok("gap9 exec: the happy path builds once, signs the envelope as built and returns the swap hash",
+      JSON.stringify(hashesHappy) === JSON.stringify(["swap-hash-129"]) && happy.state.builds === 1 && happy.state.sends === 1);
+    const trustXdr129 = buildTx129([StellarOperation129.changeTrust({ asset: USDC_ASSET129 })], { seq: "100" });
+    const withTrust = mkFetch129([
+      jsonRes129({ action: "CREATE_TRUSTLINE", actionData: { xdr: trustXdr129, assetCode: "USDC", assetIssuer: STELLAR_USDC_ISSUER, signer: OWNER129 } }, false, 428),
+      jsonRes129({ xdr: swapXdr129 }, true, 201),
+    ]);
+    globalThis.fetch = withTrust.f;
+    const hashesTrust = await executeSoroswapSwapRoute(wallet129, route129, () => {}, { soroswap: KEY129, fetchImpl: withTrust.f });
+    ok("gap9 exec: a 428 runs the trustline as its own signed step BEFORE the swap, then rebuilds",
+      JSON.stringify(hashesTrust) === JSON.stringify(["trust-hash-129", "swap-hash-129"])
+      && withTrust.state.horizonPosts === 1 && withTrust.state.builds === 2 && withTrust.state.sends === 1);
+    const stale = mkFetch129([jsonRes129({ xdr: buildTx129([aggCall129(SOROSWAP_AGGREGATOR_CONTRACT, "swap_exact_in", [sacArg129(XLM_SAC129), sacArg129(USDC_SAC129), i128Arg129(360000000), ownerArg129()])], { seq: "99" }) }, true, 201)]);
+    globalThis.fetch = stale.f;
+    let staleThrew = null;
+    try { await executeSoroswapSwapRoute(wallet129, route129, () => {}, { soroswap: KEY129, fetchImpl: stale.f }); } catch (e) { staleThrew = e; }
+    ok("gap9 exec: a build spending a stale sequence refuses before anything is sent",
+      !!staleThrew && /went stale/.test(staleThrew.message) && stale.state.sends === 0);
+    let noKeyThrew = null;
+    try { await executeSoroswapSwapRoute(wallet129, route129, () => {}, { fetchImpl: happy.f }); } catch (e) { noKeyThrew = e; }
+    globalThis.fetch = realFetch129b;
+    ok("gap9 exec: without a configured key the executor refuses (the surface is absent)",
+      !!noKeyThrew && /aren't available/.test(noKeyThrew.message));
+  }
+
+  // 1Click Stellar-IN (live-capture fixtures): XLM is a
+  // destination through the ordinary machinery; a Stellar
+  // ORIGIN is excluded structurally, and the rail's own
+  // refusal fixture reads as no-route.
+  const ocIn5129 = fixture129("oneclick-usdc5-stellar-in.json");
+  const ocIn20129 = fixture129("oneclick-usdc20-stellar-in.json");
+  ok("gap9 1click: the asset row is the catalogue's nep245 XLM id at 7 decimals, destination-only",
+    oneClickAssetFor("stellar", "xlm")?.asset === "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz"
+    && oneClickAssetFor("stellar", "xlm")?.decimals === 7
+    && !!oneClickSupportsPair({ fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toChainKey: "stellar", toTokenAddress: "xlm" })
+    && oneClickSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null);
+  ok("gap9 1click parse (live captures): $5 -> 34.9064438 XLM and $20 -> 142.9257757 XLM at the API's 52 s estimate",
+    (() => { const ctx = { fromEntry: oneClickAssetFor("base", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), toEntry: oneClickAssetFor("stellar", "xlm"), amountRaw: "5000000", refundTo: "0x1111111111111111111111111111111111111111", recipient: OWNER129 };
+      const r5 = parseOneClickQuote(ocIn5129, ctx, { collecting: false });
+      const r20 = parseOneClickQuote(ocIn20129, { ...ctx, amountRaw: "20000000" }, { collecting: false });
+      return !!r5 && r5.toAmount === "349064438" && r5.executionDuration === 52 && r5.platformFeeCollecting === false
+        && !!r20 && r20.toAmount === "1429257757"; })());
+  {
+    // A non-dry quote for the same pair (the dry fixture plus
+    // the deposit fields a live non-dry answer carries)
+    // executes its quote body with the Stellar recipient and
+    // no memo anywhere; the rail's refusal fixture (correct
+    // MEMO mode, still refused) parses as no-route.
+    const liveQuote129 = clone129(ocIn5129);
+    liveQuote129.quote.depositAddress = "GATX3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    liveQuote129.quote.deadline = "2026-11-16T00:00:00.000Z";
+    const stubIn = async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.destinationAsset !== oneClickAssetFor("stellar", "xlm").asset) return jsonRes129(fixture129("oneclick-xlm-out-refusal.json"), false, 400);
+      return jsonRes129(liveQuote129);
+    };
+    const rIn = await getOneClickSwapRoute({ fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toChainKey: "stellar", toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: "0x1111111111111111111111111111111111111111", toAddress: OWNER129 }, { fetchImpl: stubIn });
+    ok("gap9 1click: a live-shaped IN quote routes to the owner's Stellar address, fee-free in the shipped config",
+      !!rIn && rIn.toChainKey === "stellar" && rIn.oneclick.recipient === OWNER129 && rIn.platformFeeCollecting === false);
+  }
+
+  // App wiring pins (house style).
+  ok("gap9 app: the swap sheet lists Stellar (XLM sentinel + USDC row), threads its address, and names Soroswap",
+    appSrc129.includes('if (netKey === "stellar")') && appSrc129.includes('"USDC:" + STELLAR_USDC_ISSUER')
+    && appSrc129.includes('"cardano", "zcash", "dash", "stellar"]') && appSrc129.includes("stellar: stellarAddr")
+    && appSrc129.includes('if (route && route.provider === "soroswap") return "Soroswap";')
+    && appSrc129.includes('if (chainKey === "stellar") {'));
+  ok("gap9 app: execution dispatches Soroswap routes to the core executor with the stellar.expert link",
+    appSrc129.includes('route.provider === "soroswap"') && appSrc129.includes("executeSoroswapSwapRoute(wallet, route")
+    && appSrc129.includes("srcExplorer = STELLAR_EXPLORER") && appSrc129.includes("k === \"stellar\" ? STELLAR_EXPLORER"));
+  ok("gap9 core: the capture gate is stated in the source — collecting ships false until activation + a proven echo",
+    coreSrc129.includes("export const SOROSWAP_API_KEY = \"\"") && coreSrc129.includes("export const SOROSWAP_PARTNER_BPS = 0")
+    && coreSrc129.includes("Activation is PENDING") && coreSrc129.includes("NEVER re-simulate"));
 }
 
 console.log(`\n${passed} checks passed`);

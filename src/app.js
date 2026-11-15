@@ -20,7 +20,7 @@ import {
   tronAddressFromPhrase, getTronBalances, getTronAllTokens, getTronTokenBalance, sendTron, isValidTronAddress, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_NATIVE_TOKEN,
   solanaAddressFromPhrase, getSolanaBalances, getSolanaAllTokens, getSolanaTokenBalance, sendSolana, isValidSolanaAddress, formatSolanaSendIntent, solanaSendPlan, SOLANA_TOKENS, SOLANA_EXPLORER, SOLANA_SWAP_NATIVE_TOKEN, swapChainOf,
   suiAddressFromPhrase, getSuiBalances, getSuiAllBalances, getSuiTokenBalance, sendSui, isValidSuiAddress, formatSuiSendIntent, SUI_TOKENS, SUI_COIN_TYPE, SUI_EXPLORER, SUI_SWAP_NATIVE_TOKEN,
-  stellarAddressFromPhrase, getStellarAccount, sendStellar, isValidStellarAddress, formatStellarSendIntent, stellarSendPlan, STELLAR_EXPLORER,
+  stellarAddressFromPhrase, getStellarAccount, sendStellar, isValidStellarAddress, formatStellarSendIntent, stellarSendPlan, STELLAR_EXPLORER, STELLAR_USDC_ISSUER, STELLAR_SWAP_NATIVE_TOKEN,
   tonAddressFromPhrase, getTonAccount, sendTon, isValidTonAddress, formatTonSendIntent, tonSendPlan, TON_EXPLORER, TON_USDT,
   nearAddressFromPhrase, getNearAccount, sendNear, isValidNearAddress, formatNearSendIntent, nearSendPlan, NEAR_EXPLORER, NEAR_TOKENS,
   algoAddressFromPhrase, getAlgorandAccount, sendAlgorand, isValidAlgorandAddress, formatAlgoSendIntent, algoSendPlan, ALGO_EXPLORER, ALGO_USDC,
@@ -30,7 +30,7 @@ import {
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
-  SKIP_ASSETS, skipChainOf, executeSkipSwapRoute, executeOpenOceanSwapRoute,
+  SKIP_ASSETS, skipChainOf, executeSkipSwapRoute, executeOpenOceanSwapRoute, executeSoroswapSwapRoute,
   RECEIVE_NETWORKS, filterReceiveNetworks, receiveNetworkMatches, rankPickerTokens, pickerListState, cosmosSendSelection,
   FLUID_DOMAIN, validateFluidName, normalizeFluidName, buildNameEntry, resolveFluidName, resolveChainRecipient, fetchNameRegistry, findNameForAddresses, lightningInvoiceForAddress, lightningTargetForNameEntry,
   buildSeedQuiz, seedQuizResults, seedQuizPassed, fetchServedBuildStamp, staleBuildAction,
@@ -7481,6 +7481,17 @@ function swapTokenList(netKey) {
     // swap-universe asset in this build.
     return [{ symbol: "DASH", address: DASH_SWAP_NATIVE_TOKEN, decimals: 8, native: true }];
   }
+  if (netKey === "stellar") {
+    // Stellar (Soroswap intra-chain + 1Click IN, audit gap
+    // #9): XLM by its sentinel, plus Circle's USDC — the only
+    // verified Stellar asset (see core's STELLAR_USDC rule),
+    // addressed exactly as its balance row is ("USDC:ISSUER").
+    // Other trustline assets a user holds stay send/receive
+    // only this slice: they are not in the swap table, so the
+    // sheet never offers a swap it cannot route.
+    return [{ symbol: "XLM", address: STELLAR_SWAP_NATIVE_TOKEN, decimals: 7, native: true },
+            { symbol: "USDC", address: "USDC:" + STELLAR_USDC_ISSUER, decimals: 7, native: false }];
+  }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
     // the curated FA stables.
@@ -7515,6 +7526,7 @@ function swapRouteName(route) {
   if (route && route.provider === "oneclick") return "1Click";
   if (route && route.provider === "skip") return "Skip";
   if (route && route.provider === "openocean") return "OpenOcean";
+  if (route && route.provider === "soroswap") return "Soroswap";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7726,6 +7738,22 @@ async function swapBalanceOf(chainKey, tok) {
     if (chainKey === "cardano") return await getCardanoBalance(adaAddr);
     if (chainKey === "zcash") return await getZcashBalance(zecAddr);
     if (chainKey === "dash") return await getDashBalance(dashAddr);
+    if (chainKey === "stellar") {
+      // Stellar balance for the EXECUTION gate (gap #9): the
+      // native XLM row (balances[0] by construction in core's
+      // getStellarAccount) or the picked asset's trustline
+      // row, addressed exactly as the swap list addresses it
+      // ("CODE:ISSUER"). Same null discipline as NEAR's: a
+      // failed account read throws into the catch → null; a
+      // row whose amount is null is a failed read → null; no
+      // trustline row at all means the account cannot hold
+      // the asset: a true zero.
+      const acct = await getStellarAccount(stellarAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
     if (chainKey === "aptos") {
       // Aptos balance for the EXECUTION gate: the native APT
       // row or the picked FA's row of the account read, with
@@ -7774,7 +7802,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7791,12 +7819,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "aptos"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash and Aptos — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar and Aptos — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7872,7 +7900,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -8760,7 +8788,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -9067,6 +9095,18 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if (r.provider === "soroswap" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Soroswap takes the partner fee out of the swap's
+          // INPUT, stated in the quote's own platformFee echo;
+          // core verified that echo against the account's
+          // configured rate before this route could be picked
+          // (gap #9 — the route ships collecting=false until
+          // Soroswap activates the account and a live echo is
+          // proven, so this branch is dormant until then) —
+          // disclose exactly that figure, like 1Click's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         }
         $("wIntentText").textContent = formatSwapIntent({
           fromAmount: amount, fromSymbol: fromTok.symbol, fromNetKey: fromKey,
@@ -9079,6 +9119,7 @@ $("actSwap").onclick = () => {
         if (r.provider === "oneclick") $("wIntentText").textContent += " You send the deposit yourself to 1Click's address for this quote — it is a plain transfer of the exact amount above. If 1Click cannot complete the swap, it refunds your deposit to this same wallet minus the refund fee the quote stated up front.";
         if (r.provider === "skip" && r.skip?.rail === "cctp-noble") $("wIntentText").textContent += ` This exit burns your Noble USDC and mints it on ${swapChainName(toKey)} through Circle's CCTP. The relay fee for this quote is ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid, and already inside the amount you receive above. The minted USDC lands at your own ${swapChainName(toKey)} address.`;
         if (r.provider === "skip" && r.skip?.rail !== "cctp-noble") $("wIntentText").textContent += " One signature on the chain you're sending from runs the whole swap. If the transfer ever times out, the network refunds it automatically to this same wallet — there is nothing to claim.";
+        if (r.provider === "soroswap") $("wIntentText").textContent += " One signature runs the swap inside your own Stellar account. If your account first needs a trustline to hold an asset on the route, you'll sign that as its own separate step before the swap — each trustline locks 0.5 XLM as reserve, and it is never bundled into the swap itself.";
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -9387,6 +9428,21 @@ $("actSwap").onclick = () => {
         // with the wallet's EVM key.
         hashes = await executeOpenOceanSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
         srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "soroswap") {
+        // Soroswap route (Stellar same-chain, gap #9): core
+        // builds the swap with the aggregator API, runs the
+        // 428 trustline step as its own bounds-checked
+        // signing when one is needed, bounds-checks the swap
+        // envelope (pinned aggregator contract, own address,
+        // quoted amounts), then signs the envelope with the
+        // wallet's Stellar key and submits through the API.
+        // hashes[0] is the trustline's hash when that step
+        // ran — the swap's own hash is the LAST one, and the
+        // history/success link points at the swap.
+        hashes = await executeSoroswapSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+        srcExplorer = STELLAR_EXPLORER;
+        srcLink = `${STELLAR_EXPLORER}/tx/${hashes[hashes.length - 1]}`;
+        hashes = [hashes[hashes.length - 1]];
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
@@ -10197,7 +10253,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "stellar" ? STELLAR_EXPLORER : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a

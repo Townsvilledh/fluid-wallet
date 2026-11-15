@@ -43,6 +43,7 @@ import {
   Keypair as StellarKeypair, Account as StellarAccount,
   TransactionBuilder as StellarTxBuilder, Operation as StellarOperation,
   Asset as StellarAsset, Networks as StellarNetworks,
+  Address as StellarAddress, scValToNative as stellarScValToNative,
 } from "@stellar/stellar-sdk/base";
 import {
   Address as TonAddress, beginCell as tonBeginCell, Cell as TonCell, storeMessage as tonStoreMessage,
@@ -8068,6 +8069,13 @@ export const CARDANO_SWAP_CHAIN_ID = 20000000000017;
  *  each family's native coin is its only asset this slice. */
 export const ZCASH_SWAP_CHAIN_ID = 20000000000018;
 export const DASH_SWAP_CHAIN_ID = 20000000000019;
+/** Stellar's synthetic swap chain id (audit gap #9, 2026-11-15):
+ *  Stellar intra-chain swaps ride the Soroswap Aggregator port
+ *  below, and XLM as a cross-chain DESTINATION rides the 1Click
+ *  port. Like the other non-EVM families the id only ever
+ *  names the family inside the swap universe; Stellar itself
+ *  has no EVM chain id. */
+export const STELLAR_SWAP_CHAIN_ID = 20000000000020;
 /** The six 1Click families' native coins' "addresses" in the
  *  swap universe (mirroring Bitcoin's "btc" / DOT's "dot"):
  *  native coins have no contract, so routes name them by
@@ -8081,6 +8089,7 @@ export const APTOS_SWAP_NATIVE_TOKEN = "apt";
 export const CARDANO_SWAP_NATIVE_TOKEN = "ada";
 export const ZCASH_SWAP_NATIVE_TOKEN = "zec";
 export const DASH_SWAP_NATIVE_TOKEN = "dash";
+export const STELLAR_SWAP_NATIVE_TOKEN = "xlm";
 /** Native GRAM's "address" in the swap universe: Relay names
  *  TON's native coin by the friendly zero address (its sole
  *  TON currency, live-probed 2026-11-14). The coin displays
@@ -8109,6 +8118,7 @@ export function swapChainOf(chainKey) {
   if (chainKey === "cardano") return { chainId: CARDANO_SWAP_CHAIN_ID, name: "Cardano" };
   if (chainKey === "zcash") return { chainId: ZCASH_SWAP_CHAIN_ID, name: "Zcash" };
   if (chainKey === "dash") return { chainId: DASH_SWAP_CHAIN_ID, name: "Dash" };
+  if (chainKey === "stellar") return { chainId: STELLAR_SWAP_CHAIN_ID, name: "Stellar" };
   const n = NETWORKS[chainKey];
   return n ? { chainId: n.chainId, name: n.name } : null;
 }
@@ -8629,14 +8639,25 @@ export async function getRelaySwapRoute(args) {
  * is live, the fee is honestly zero, never assumed (the
  * Chainflip broker precedent, CHAINFLIP_BROKER_ACCOUNT).
  *
- * NOT WIRED, by probe evidence: Stellar via 1Click (the
- * catalogue lists XLM/USDC but every pair refuses quoting, and
- * Stellar deposits would need MEMO-mode deposits Fluid's
- * sendStellar cannot carry) and TON via 1Click (quotes fail;
- * Relay remains TON's rail). If a quote for a wired family
- * ever returns a depositMemo its send cannot carry, the
- * executor refuses BEFORE broadcast with the reason named —
- * the guard is built now, ahead of the case existing.
+ * Stellar via 1Click (audit gap #9, 2026-11-15): the
+ * re-probe overturned half of this section's original verdict
+ * — INTO Stellar now quotes (USDC on Base $5 -> 34.9064438
+ * XLM, $20 -> 142.9257757 XLM, ~52 s estimate, fixtures in
+ * research_notes/fluid-stellar-soroswap-20261115/), so XLM is
+ * wired as a DESTINATION below through the ordinary machinery
+ * (the delivery needs no memo on Fluid's side — the solver
+ * network pays the user's own Stellar address). Stellar as an
+ * ORIGIN still refuses at the rail ("Quoting for this pair is
+ * not available", even with depositMode=MEMO set correctly)
+ * AND its deposits would need MEMO-mode deposits Fluid's
+ * sendStellar cannot carry, so oneClickSupportsPair excludes
+ * a Stellar origin explicitly: the pair is an honest
+ * no-route, and the executor's memo guard below remains as
+ * defence in depth. TON via 1Click stays NOT WIRED (quotes
+ * fail; Relay remains TON's rail). If a quote for a wired
+ * family ever returns a depositMemo its send cannot carry,
+ * the executor refuses BEFORE broadcast with the reason
+ * named — the guard is built now, ahead of the case existing.
  *
  * FLOORS are read from the rail's own refusals (the FIX-B
  * rule): XRP carries a hard 2 XRP bridge floor the API states
@@ -8699,6 +8720,14 @@ const ONECLICK_ASSETS = [
   // research probe; both chains are transparent/native-only.
   { chainKey: "zcash", address: ZCASH_SWAP_NATIVE_TOKEN, asset: "nep141:zec.omft.near", symbol: "ZEC", decimals: 8, native: true },
   { chainKey: "dash", address: DASH_SWAP_NATIVE_TOKEN, asset: "nep141:dash.omft.near", symbol: "DASH", decimals: 8, native: true },
+  // Stellar (audit gap #9, 2026-11-15): DESTINATION ONLY —
+  // oneClickSupportsPair excludes a Stellar origin (see the
+  // header). The asset id is a nep245 HOT-omni id, NOT the
+  // nep141:xlm.omft.near shape the other families use — read
+  // off 1Click's live token catalogue in the gap-#9 research
+  // probe and pinned by the live $5/$20 IN-quote fixtures;
+  // 7 decimals, like every classic Stellar asset.
+  { chainKey: "stellar", address: STELLAR_SWAP_NATIVE_TOKEN, asset: "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz", symbol: "XLM", decimals: 7, native: true },
   { chainKey: "aptos", address: APTOS_SWAP_NATIVE_TOKEN, asset: "nep141:aptos.omft.near", symbol: "APT", decimals: 8, native: true },
   { chainKey: "aptos", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", asset: "nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near", symbol: "USDC", decimals: 6, stable: true },
   { chainKey: "aptos", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", asset: "nep141:aptos-88cb7619440a914fe6400149a12b443c3ac21d59.omft.near", symbol: "USDT", decimals: 6, stable: true },
@@ -8754,6 +8783,13 @@ export function oneClickSupportsPair(args) {
   const to = oneClickAssetFor(args.toChainKey, args.toTokenAddress);
   if (!from || !to) return null;
   if (from.asset === to.asset) return null;
+  // Stellar is DESTINATION-ONLY on this rail (audit gap #9,
+  // 2026-11-15): the rail refuses Stellar-origin quotes
+  // outright, and its deposits would need a MEMO Fluid's
+  // sendStellar cannot carry — so a Stellar origin is no
+  // pair at all here, an honest no-route rather than a quote
+  // that can only fail at execution.
+  if (from.chainKey === "stellar") return null;
   return { from, to };
 }
 /** The exact inverse of 1Click's measured fee split (probe
@@ -10872,6 +10908,506 @@ export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () =
   onProgress("Swap sent — waiting for it to mine…");
   await settleBroadcastOrThrow(fromKey, swapTx.hash);
   return [swapTx.hash, ...approvalHashes];
+}
+
+/* ---------- Soroswap Aggregator (Stellar same-chain, direct port) ----------
+ * Stellar intra-chain swaps (audit gap #9, 2026-11-15) ride
+ * the Soroswap Aggregator API — a REST port in the OpenOcean
+ * shape, researched live in
+ * research_notes/fluid-stellar-soroswap-20261115/ (probe notes
+ * + fixtures). The aggregator routes across Soroswap AMM,
+ * Phoenix, Aquarius, Comet, Sushi and the SDEX order book
+ * behind one contract (SOROSWAP_AGGREGATOR_CONTRACT, v3),
+ * which is why this one port covers the whole Stellar DEX
+ * surface; SDEX-direct and Aquarius-direct were rejected in
+ * the research (zero capture, and Aquarius is already a venue
+ * inside this aggregator).
+ *
+ * FLOW (the API's own shape): POST /quote (assets as SAC
+ * contract addresses, amount an integer string in the
+ * smallest unit) -> POST /quote/build with the UNCHANGED
+ * quote and the user's address -> the API returns an unsigned
+ * envelope it has ALREADY simulated server-side -> Fluid
+ * bounds-checks the decoded envelope, the user signs the
+ * ENVELOPE (never the auth entries), POST /send submits it.
+ * NEVER re-simulate a built XDR (the API forbids it, and the
+ * build's simulation is what priced the route). A built XDR
+ * is valid 180 s on Soroban routes (~1 h on SDEX) — the
+ * executor builds immediately before signing, and a stale
+ * build (409, or a sequence that no longer matches the
+ * account) refuses with "search again", never a re-price
+ * behind the user's back.
+ *
+ * KEY POSTURE (the ONECLICK_JWT pattern): every endpoint
+ * needs `Authorization: Bearer sk_...`; there is no keyless
+ * tier (live proof: GET /asset-list without a key answers
+ * 401 MISSING_CREDENTIAL). SOROSWAP_API_KEY is build-time
+ * config; while it is empty the surface is honestly ABSENT —
+ * soroswapSupportsPair returns null, no route is offered, no
+ * dead button or error card exists. One embedded key is one
+ * fleet-wide rate bucket (Free plan: 1 req/s, burst 5) —
+ * Soroswap itself warns against frontend keys; that is the
+ * operator's accepted posture for launch, exactly as with
+ * the 1Click JWT.
+ *
+ * TRUSTLINES are a separate, clearly-labelled signing step,
+ * never smuggled inside the swap envelope: /quote/build can
+ * answer 428 with a ready-to-sign changeTrust XDR for the
+ * asset the account cannot yet hold (which can be an
+ * INTERMEDIATE route asset — the executor reads assetCode /
+ * assetIssuer from the response, never assumes the output).
+ * The executor bounds-checks that envelope on its own (one
+ * changeTrust, for exactly that asset, sourced by the user),
+ * the user signs it as its own step, and only then is the
+ * swap built. Each trustline locks +0.5 XLM of reserve under
+ * the existing Stellar reserve model.
+ *
+ * CAPTURE — the gate, stated plainly: the partner fee
+ * (25–300 bps, set on the ACCOUNT, never per-quote — feeBps
+ * in a /quote body is accepted and IGNORED) echoes in quotes
+ * as platformFee {feeBps, feeAmount}, taken from the INPUT
+ * token, ONLY once Soroswap manually ACTIVATES the account
+ * as a partner. Activation is PENDING (signup + the
+ * dev@paltalabs.io email are operator-side steps outside
+ * this build), so this port ships collecting=false, honestly
+ * displayed: SOROSWAP_PARTNER_BPS stays 0, and the echo
+ * verification is wired from day one — with a partner rate
+ * configured, a quote collects ONLY when its echoed
+ * platformFee matches the configured rate and amount exactly
+ * (feeAmount = floor(amountIn x bps / 10000), the fee taken
+ * from the input); a quote carrying a platformFee while NO
+ * rate is configured is an unverified charge and REFUSES, as
+ * does any mismatch (the Cosmos/1Click precedent: mechanism
+ * ready, the switch is config + a proven live echo, never
+ * copy claiming collecting when it is not). When collecting,
+ * platformFeeBps is the GROSS partner rate — unlike 1Click
+ * there is no second skim: the whole fee leaves the user's
+ * input in the open, and Fluid's share (~50% per the docs,
+ * UNVERIFIED) arrives later as Soroswap's monthly USDC
+ * settlement to the partner payout wallet; it is not an
+ * extra charge on the user. /quote/build answers 409 if the
+ * partner fee changed since the quote — the executor maps
+ * that to "search again".
+ *
+ * AMOUNTS: every classic Stellar asset has 7 decimals;
+ * quote amounts are integer strings in stroops (the smallest
+ * unit). USD figures come from the wallet's own price table,
+ * never the API's fields (the fee-law rule). Speed is the
+ * fast class by construction (quote ~1.5 s measured on SDEX,
+ * submit ~5 s finality) — executionDuration 15 s is an
+ * ESTIMATE, not a measurement; the walk re-measures. */
+export const SOROSWAP_API = "https://api.soroswap.finance";
+/** Build-time config: the Soroswap API key (sk_...) from
+ *  console.soroswap.finance. Empty = the surface is absent
+ *  (see the header): no key, no Stellar swap routes. */
+export const SOROSWAP_API_KEY = "";
+/** Build-time config: the partner rate (bps) Soroswap has
+ *  ACTIVATED on the API account, mirrored here so quotes can
+ *  be echo-verified. 0 = no partner rate is in force: quotes
+ *  must then carry NO platformFee, and routes ship
+ *  collecting=false. Set this (25–300) only once activation
+ *  AND a live matching echo are proven. */
+export const SOROSWAP_PARTNER_BPS = 0;
+/** Resolve the effective Soroswap configuration (the
+ *  oneClickConfig seam pattern): a non-empty key enables the
+ *  surface; the partner rate is honoured only inside the
+ *  API's own 25–300 bps band. */
+export function soroswapConfig({ apiKey = SOROSWAP_API_KEY, partnerBps = SOROSWAP_PARTNER_BPS } = {}) {
+  const bps = Math.floor(Number(partnerBps) || 0);
+  return {
+    apiKey: typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : null,
+    partnerBps: bps >= 25 && bps <= 300 ? bps : 0,
+  };
+}
+/** The Soroswap Aggregator v3 contract — the ONLY contract a
+ *  Soroban build may invoke (pinned from the research: the
+ *  swap_exact_in / swap_exact_out entry points live here). */
+export const SOROSWAP_AGGREGATOR_CONTRACT = "CARVQXFP4JF5ELLXUMQ6DALR346YVGBMQOHB4ENA7SSVXAYABXLBDDC4";
+/** The venues the aggregator may route across (the quote
+ *  request's protocol list, from the API reference). */
+export const SOROSWAP_PROTOCOLS = ["soroswap", "aqua", "sushi", "comet", "sdex"];
+/** The house slippage for Soroswap quotes: 50 bps (the API
+ *  reference's own example figure). */
+export const SOROSWAP_SLIPPAGE_BPS = 50;
+/** The most network fee (stroops) a built envelope may
+ *  carry: 1 XLM — orders above any real Stellar fee (a normal
+ *  swap build carries ~0.01 XLM), so a build asking more is
+ *  not the build that was quoted. */
+export const SOROSWAP_MAX_TX_FEE_STROOPS = 10000000n;
+/** The Stellar swap-asset table: swap-space address -> the
+ *  classic asset behind it. Swap-space addresses mirror the
+ *  balance rows exactly (the native sentinel for XLM,
+ *  "CODE:ISSUER" for a trustline asset) so the swap sheet and
+ *  the home list name the same asset the same way. Only
+ *  VERIFIED assets are listed (the STELLAR_USDC rule): XLM
+ *  and Circle's USDC this slice. */
+export const STELLAR_SWAP_ASSETS = [
+  { address: STELLAR_SWAP_NATIVE_TOKEN, symbol: "XLM", code: null, issuer: null, decimals: 7, native: true },
+  { address: "USDC:" + STELLAR_USDC_ISSUER, symbol: "USDC", code: "USDC", issuer: STELLAR_USDC_ISSUER, decimals: 7 },
+];
+/** The swap-table entry for a swap-space token address, or
+ *  null — an asset outside the table is not swappable here. */
+export function stellarSwapAssetFor(tokenAddress) {
+  if (tokenAddress == null) return STELLAR_SWAP_ASSETS[0];
+  const a = String(tokenAddress);
+  return STELLAR_SWAP_ASSETS.find(e => e.address === a)
+    || (a.toLowerCase() === STELLAR_SWAP_NATIVE_TOKEN ? STELLAR_SWAP_ASSETS[0] : null);
+}
+/** The SAC (Stellar Asset Contract) address of a swap-table
+ *  entry — the C... address Soroswap quotes and the
+ *  aggregator trades. Computed with the bundled SDK (the
+ *  canonical derivation), pinned against the research's
+ *  known ids in tests. */
+export function stellarSacAddress(entry) {
+  if (!entry) return null;
+  const asset = entry.native ? StellarAsset.native() : new StellarAsset(entry.code, entry.issuer);
+  return asset.contractId(StellarNetworks.PUBLIC);
+}
+/** The SAC address behind any classic Stellar asset object
+ *  (a decoded operation's asset) — the bounds checker's way
+ *  of naming an operation's assets in quote space. */
+function stellarSacOfClassic(asset) {
+  try { return asset.contractId(StellarNetworks.PUBLIC); } catch { return null; }
+}
+/** Soroswap pair support, structurally: Stellar -> Stellar,
+ *  two DISTINCT assets both in the swap table, and a key
+ *  configured (no key = the surface is absent, honestly). */
+export function soroswapSupportsPair(args, cfg = soroswapConfig()) {
+  if (!args || !cfg.apiKey) return null;
+  if (args.fromChainKey !== "stellar" || args.toChainKey !== "stellar") return null;
+  const from = stellarSwapAssetFor(args.fromTokenAddress);
+  const to = stellarSwapAssetFor(args.toTokenAddress);
+  if (!from || !to || from.address === to.address) return null;
+  return { from, to };
+}
+/** One Soroswap API call. Returns {status, data} for ANY
+ *  HTTP answer (the executor's 428/409 handling needs the
+ *  status); transport failures throw a sanitised error —
+ *  raw API text is never surfaced to the user. */
+async function soroswapPost(path, body, { apiKey, fetchImpl = null, timeoutMs = 20000 } = {}) {
+  const doFetch = fetchImpl || fetch;
+  let res;
+  try {
+    res = await doFetch(`${SOROSWAP_API}${path}?network=mainnet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch { throw new Error("Stellar swaps couldn't be reached — check your connection and try again."); }
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+}
+/** Parse + verify a /quote answer into a route, or null.
+ *  Pure given the price inputs: every figure the route
+ *  carries is re-derived here (amounts echoed exactly, the
+ *  platformFee echo verified against the configured partner
+ *  rate), and USD values come from the wallet's price table
+ *  via the caller — never from the API's own fields. */
+export function parseSoroswapQuote(quote, { fromEntry, toEntry, amountRaw, partnerBps = 0, priceInUsd = null, priceOutUsd = null } = {}) {
+  if (!quote || typeof quote !== "object" || !fromEntry || !toEntry) return null;
+  if (quote.tradeType != null && String(quote.tradeType) !== "EXACT_IN") return null;
+  const rawInt = (v) => (typeof v === "string" && /^\d+$/.test(v) ? BigInt(v) : null);
+  const amountIn = rawInt(quote.amountIn);
+  let amountOut = rawInt(quote.amountOut);
+  if (amountIn == null || amountOut == null) return null;
+  let wantIn;
+  try { wantIn = BigInt(amountRaw); } catch { return null; }
+  if (amountIn !== wantIn || amountIn <= 0n || amountOut <= 0n) return null;
+  let threshold = rawInt(quote.otherAmountThreshold);
+  if (threshold == null) threshold = (amountOut * BigInt(10000 - SOROSWAP_SLIPPAGE_BPS)) / 10000n;
+  if (threshold <= 0n || threshold > amountOut) return null;
+  const platform = quote.platform == null ? "aggregator" : String(quote.platform);
+  if (!["aggregator", "router", "sdex"].includes(platform)) return null;
+  // The capture echo rule (see the header): a configured
+  // partner rate must echo EXACTLY; no configured rate means
+  // any platformFee at all is an unverified charge — refuse.
+  let collecting = false, platformFeeRaw = "0", feeBps = 0;
+  const pf = quote.platformFee;
+  if (partnerBps > 0) {
+    if (!pf || typeof pf !== "object") return null;
+    const echoedBps = Math.floor(Number(pf.feeBps) || 0);
+    const echoedAmt = rawInt(typeof pf.feeAmount === "string" ? pf.feeAmount : String(pf.feeAmount ?? ""));
+    if (echoedBps !== partnerBps || echoedAmt == null) return null;
+    const expected = (amountIn * BigInt(partnerBps)) / 10000n;
+    if (echoedAmt <= 0n || (echoedAmt > expected ? echoedAmt - expected : expected - echoedAmt) > 1n) return null;
+    collecting = true; platformFeeRaw = echoedAmt.toString(); feeBps = partnerBps;
+  } else if (pf != null) return null;
+  const human = (raw, dec) => Number(ethers.formatUnits(raw, dec));
+  const inUsd = priceInUsd != null && Number(priceInUsd) > 0 ? human(amountIn, fromEntry.decimals) * Number(priceInUsd) : null;
+  const outUsd = priceOutUsd != null && Number(priceOutUsd) > 0 ? human(amountOut, toEntry.decimals) * Number(priceOutUsd) : null;
+  const feeUsd = collecting && inUsd != null ? human(BigInt(platformFeeRaw), fromEntry.decimals) * Number(priceInUsd) : 0;
+  // The route's own cost under the fee law's definition: the
+  // fair-value shortfall with Fluid's partner fee taken back
+  // out when collecting (the fee rides inside the shortfall —
+  // amountOut already nets it — and is not a route cost).
+  const routeFeeUsd = routeCostUsd(0, (inUsd != null && outUsd != null) ? inUsd - outUsd - feeUsd : NaN);
+  return {
+    provider: "soroswap",
+    fromChainKey: "stellar", toChainKey: "stellar",
+    fromChainId: STELLAR_SWAP_CHAIN_ID, toChainId: STELLAR_SWAP_CHAIN_ID,
+    fromToken: { address: fromEntry.address, symbol: fromEntry.symbol, decimals: fromEntry.decimals },
+    toToken: { address: toEntry.address, symbol: toEntry.symbol, decimals: toEntry.decimals },
+    fromAmount: amountIn.toString(),
+    toAmount: amountOut.toString(),
+    toAmountMin: threshold.toString(),
+    fromAmountUSD: inUsd, toAmountUSD: outUsd,
+    gasCostUSD: 0,
+    routeFeeUsd,
+    steps: [],
+    platformFeeRaw, platformFeeBps: feeBps,
+    platformFeeUsd: feeUsd,
+    collecting,
+    platformFeeCollecting: collecting,
+    executionDuration: 15,
+    soroswap: {
+      quote,
+      platform,
+      assetInSac: stellarSacAddress(fromEntry),
+      assetOutSac: stellarSacAddress(toEntry),
+    },
+  };
+}
+/** The Soroswap route adapter: ONE /quote call (the fee is
+ *  account-side, so there is no second fee pass — the echo
+ *  on this single quote is verified by parseSoroswapQuote).
+ *  Null = no route (unsupported pair, no key, or an answer
+ *  that fails verification); transport failures throw the
+ *  sanitised reachability error like every rail. */
+export async function getSoroswapSwapRoute(args, opts = {}) {
+  const cfg = soroswapConfig(opts.soroswap || {});
+  const pair = soroswapSupportsPair(args, cfg);
+  if (!pair) return null;
+  // Fluid swaps settle to the user's OWN Stellar address —
+  // a quote addressed anywhere else is not offered.
+  const from = typeof args.fromAddress === "string" ? args.fromAddress : "";
+  const to = typeof args.toAddress === "string" ? args.toAddress : "";
+  if (!isValidStellarAddress(from) || to !== from) return null;
+  const body = {
+    assetIn: stellarSacAddress(pair.from),
+    assetOut: stellarSacAddress(pair.to),
+    amount: String(args.fromAmount),
+    tradeType: "EXACT_IN",
+    protocols: [...SOROSWAP_PROTOCOLS],
+    slippageBps: SOROSWAP_SLIPPAGE_BPS,
+  };
+  const { status, data } = await soroswapPost("/quote", body, { apiKey: cfg.apiKey, fetchImpl: opts.fetchImpl || null });
+  if (status === 400 || status === 404) return null;
+  if (status !== 200 && status !== 201) throw new Error("Stellar swaps couldn't be reached — check your connection and try again.");
+  let prices = null;
+  try { prices = await getPrices(); } catch { prices = null; }
+  const priceOf = (sym) => {
+    const p = prices ? Number(prices[sym]) : NaN;
+    return Number.isFinite(p) && p > 0 ? p : null;
+  };
+  return parseSoroswapQuote(data, {
+    fromEntry: pair.from, toEntry: pair.to, amountRaw: args.fromAmount,
+    partnerBps: cfg.partnerBps,
+    priceInUsd: priceOf(pair.from.symbol), priceOutUsd: priceOf(pair.to.symbol),
+  });
+}
+/** Decode a built envelope. Null for anything unreadable —
+ *  and for a fee-bump wrapper, which is not a shape this
+ *  port ever signs. */
+function soroswapDecodeTx(xdr) {
+  try {
+    const tx = StellarTxBuilder.fromXDR(String(xdr || ""), StellarNetworks.PUBLIC);
+    if (!tx || !Array.isArray(tx.operations) || tx.innerTransaction) return null;
+    return tx;
+  } catch { return null; }
+}
+function soroswapStroopsOf(amountStr) {
+  try { return xlmToStroops(amountStr); } catch { return null; }
+}
+/** The envelope-level pins every API-built transaction must
+ *  pass before Fluid signs it (shared by the swap and the
+ *  trustline checks): sourced by the user's own account,
+ *  EXACTLY the operations of the one approved step, a real
+ *  expiry inside the quote's own lifetime, and a network fee
+ *  no larger than any Stellar fee can honestly be. Returns a
+ *  refusal reason, or null when the envelope is clean. */
+function soroswapEnvelopeRefusal(tx, owner, opCount) {
+  if (!tx) return "That transaction couldn't be read, so it wasn't signed.";
+  if (tx.source !== owner) return "That transaction isn't from your Stellar account, so it wasn't signed.";
+  if (tx.operations.length !== opCount) return "That transaction does more than the one step you approved, so it wasn't signed.";
+  const maxTime = Number(tx.timeBounds?.maxTime || 0);
+  const now = Math.floor(Date.now() / 1000);
+  if (!maxTime) return "That transaction never expires, so it wasn't signed.";
+  if (maxTime <= now) return "That quote went stale — search for routes again.";
+  if (maxTime - now > 3700) return "That transaction stays valid far longer than the quote, so it wasn't signed.";
+  try {
+    if (BigInt(tx.fee) > SOROSWAP_MAX_TX_FEE_STROOPS) return "That transaction's network fee is far above a Stellar fee, so it wasn't signed.";
+  } catch { return "That transaction couldn't be read, so it wasn't signed."; }
+  return null;
+}
+/** Inspect-before-sign for a Soroswap swap build (pure): the
+ *  decoded envelope must be EXACTLY the swap the user
+ *  approved — one operation, paying the user's own address,
+ *  for the quoted assets and amounts. Three honest shapes:
+ *  a Soroban invoke of the pinned aggregator contract
+ *  (swap_exact_in / swap_exact_out carrying the owner, both
+ *  SAC asset ids and the quoted input amount among its
+ *  arguments), or an SDEX path payment in either direction
+ *  pinned to the same fields. Anything else refuses. */
+export function checkSoroswapSwapBounds(route, xdr, ownerAddress) {
+  const refuse = (reason) => ({ ok: false, reason });
+  if (!route || route.provider !== "soroswap" || !route.soroswap) return refuse("That isn't a Soroswap route.");
+  if (!isValidStellarAddress(ownerAddress || "")) return refuse("Your Stellar address couldn't be verified, so nothing was signed.");
+  const env = soroswapEnvelopeRefusal(soroswapDecodeTx(xdr), ownerAddress, 1);
+  if (env) return refuse(env);
+  const tx = soroswapDecodeTx(xdr);
+  const op = tx.operations[0];
+  const S = route.soroswap;
+  const wrongDest = "That swap doesn't pay your own Stellar address, so it wasn't signed.";
+  const wrongAssets = "That swap trades different assets than the route you approved, so it wasn't signed.";
+  const wrongAmount = "That swap moves a different amount than the route you approved, so it wasn't signed.";
+  if (op.type === "invokeHostFunction") {
+    const ic = op.func && op.func.type === "hostFunctionTypeInvokeContract" ? op.func.invokeContract : null;
+    if (!ic) return refuse("That transaction calls something other than a contract swap, so it wasn't signed.");
+    let contract = null, fnName = "";
+    try {
+      contract = StellarAddress.fromScAddress(ic.contractAddress).toString();
+      const rawFn = ic.functionName;
+      fnName = (rawFn instanceof Uint8Array ? Buffer.from(rawFn).toString("utf8") : String(rawFn || "")).replace(/\0+$/g, "");
+    } catch { return refuse("That transaction's contract call couldn't be read, so it wasn't signed."); }
+    if (contract !== SOROSWAP_AGGREGATOR_CONTRACT) return refuse("That transaction doesn't call the Soroswap aggregator contract, so it wasn't signed.");
+    if (fnName !== "swap_exact_in" && fnName !== "swap_exact_out") return refuse("That transaction doesn't call a Soroswap swap, so it wasn't signed.");
+    let natives;
+    try { natives = (ic.args || []).map(a => stellarScValToNative(a)); }
+    catch { return refuse("That transaction's swap details couldn't be read, so it wasn't signed."); }
+    const strings = natives.filter(v => typeof v === "string");
+    const numbers = natives.filter(v => typeof v === "bigint" || (typeof v === "number" && Number.isFinite(v))).map(v => BigInt(v));
+    if (!strings.includes(ownerAddress)) return refuse(wrongDest);
+    if (!strings.includes(S.assetInSac) || !strings.includes(S.assetOutSac)) return refuse(wrongAssets);
+    if (!numbers.includes(BigInt(route.fromAmount))) return refuse(wrongAmount);
+    return { ok: true };
+  }
+  if (op.type === "pathPaymentStrictSend") {
+    if (op.destination !== ownerAddress) return refuse(wrongDest);
+    if (stellarSacOfClassic(op.sendAsset) !== S.assetInSac || stellarSacOfClassic(op.destAsset) !== S.assetOutSac) return refuse(wrongAssets);
+    const sent = soroswapStroopsOf(op.sendAmount);
+    if (sent == null || sent !== BigInt(route.fromAmount)) return refuse(wrongAmount);
+    const min = soroswapStroopsOf(op.destMin);
+    if (min == null || min < BigInt(route.toAmountMin)) return refuse("That swap guarantees less than the route you approved, so it wasn't signed.");
+    return { ok: true };
+  }
+  if (op.type === "pathPaymentStrictReceive") {
+    if (op.destination !== ownerAddress) return refuse(wrongDest);
+    if (stellarSacOfClassic(op.sendAsset) !== S.assetInSac || stellarSacOfClassic(op.destAsset) !== S.assetOutSac) return refuse(wrongAssets);
+    const got = soroswapStroopsOf(op.destAmount);
+    if (got == null || got !== BigInt(route.toAmount)) return refuse(wrongAmount);
+    const max = soroswapStroopsOf(op.sendMax);
+    if (max == null || max !== BigInt(route.fromAmount)) return refuse(wrongAmount);
+    return { ok: true };
+  }
+  return refuse("That transaction isn't a swap of the shape you approved, so it wasn't signed.");
+}
+/** Inspect-before-sign for the 428 trustline step (pure):
+ *  the envelope must be EXACTLY one changeTrust, for the
+ *  asset the API named, ADDING the line (a zero limit would
+ *  remove it) — a trustline XDR is never smuggled inside the
+ *  swap envelope, and the swap envelope is never accepted
+ *  here either. */
+export function checkSoroswapTrustlineBounds(xdr, ownerAddress, asset = {}) {
+  const refuse = (reason) => ({ ok: false, reason });
+  if (!isValidStellarAddress(ownerAddress || "")) return refuse("Your Stellar address couldn't be verified, so nothing was signed.");
+  if (!asset.assetCode || !isValidStellarAddress(asset.assetIssuer || "")) return refuse("The trustline step didn't name its asset clearly, so it wasn't signed.");
+  const tx = soroswapDecodeTx(xdr);
+  const env = soroswapEnvelopeRefusal(tx, ownerAddress, 1);
+  if (env) return refuse(env);
+  const op = tx.operations[0];
+  if (op.type !== "changeTrust") return refuse("That step isn't a trustline change, so it wasn't signed.");
+  const wantSac = stellarSacAddress({ code: asset.assetCode, issuer: asset.assetIssuer, decimals: 7 });
+  if (stellarSacOfClassic(op.line) !== wantSac) return refuse("That trustline is for a different asset than the one named, so it wasn't signed.");
+  const limit = soroswapStroopsOf(op.limit ?? "0");
+  if (limit == null || limit <= 0n) return refuse("That trustline would remove the asset instead of adding it, so it wasn't signed.");
+  return { ok: true };
+}
+/** POST /quote/build for a quoted route: the swap envelope,
+ *  or the trustline step the API demands first (428). A 409
+ *  means the quote went stale (the partner fee moved, or the
+ *  quote aged out) — the answer is a fresh search, never a
+ *  silent re-price. */
+async function soroswapBuild(route, owner, cfg, fetchImpl) {
+  const { status, data } = await soroswapPost("/quote/build", { quote: route.soroswap.quote, from: owner, to: owner }, { apiKey: cfg.apiKey, fetchImpl });
+  if (status === 428) {
+    const ad = data && typeof data === "object" ? (data.actionData || data) : {};
+    const xdr = typeof ad.xdr === "string" ? ad.xdr : (typeof data?.xdr === "string" ? data.xdr : null);
+    const assetCode = typeof ad.assetCode === "string" ? ad.assetCode : null;
+    const assetIssuer = typeof ad.assetIssuer === "string" ? ad.assetIssuer : null;
+    if (!xdr || !assetCode || !assetIssuer) throw new Error("Stellar asked for a trustline first, but the step wasn't clear enough to sign safely.");
+    return { trustline: { xdr, assetCode, assetIssuer } };
+  }
+  if (status === 409) throw new Error("That quote went stale — search for routes again.");
+  if ((status === 200 || status === 201) && typeof data?.xdr === "string") return { xdr: data.xdr };
+  if (status === 400) throw new Error("That swap couldn't be built — search for routes again.");
+  throw new Error("Stellar swaps couldn't be reached — check your connection and try again.");
+}
+/** Sign a trustline envelope with the wallet's Stellar key
+ *  and submit it to Horizon directly (/send is only for the
+ *  swap itself). Mirrors sendStellar's submission and error
+ *  mapping. Returns the transaction hash. */
+async function soroswapSubmitTrustline(phrase, xdr, fetchImpl) {
+  const tx = soroswapDecodeTx(xdr);
+  if (!tx) throw new Error("That trustline step couldn't be read, so it wasn't signed.");
+  tx.sign(stellarKeypair(phrase));
+  const doFetch = fetchImpl || fetch;
+  const res = await doFetch(STELLAR_HORIZON + "/transactions", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "tx=" + encodeURIComponent(tx.toXDR()),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.hash) {
+    const codes = data?.extras?.result_codes;
+    const detail = codes ? [codes.transaction, ...(codes.operations || [])].filter(Boolean).join(", ") : "HTTP " + res.status;
+    throw new Error("Stellar rejected the trustline (" + detail + ").");
+  }
+  return data.hash;
+}
+/** Execute a Soroswap route: build (handling the 428
+ *  trustline step as its own bounds-checked signing first),
+ *  bounds-check the swap envelope, verify it spends the
+ *  account's NEXT sequence (a stale build refuses — the API
+ *  built it against an older account state), sign the
+ *  ENVELOPE with the wallet's Stellar key — never
+ *  re-simulated, exactly as built — and submit via /send.
+ *  Returns [swapHash] (plus the trustline hash first when
+ *  the trustline step ran). */
+export async function executeSoroswapSwapRoute(wallet, route, onProgress = () => {}, opts = {}) {
+  const { ok, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const cfg = soroswapConfig(opts.soroswap || {});
+  if (!cfg.apiKey) throw new Error("Stellar swaps aren't available right now.");
+  const phrase = wallet?.phrase || wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("The wallet is locked — unlock it and try again.");
+  const owner = stellarAddressFromPhrase(phrase);
+  const fetchImpl = opts.fetchImpl || null;
+  const hashes = [];
+  let build = await soroswapBuild(route, owner, cfg, fetchImpl);
+  if (build.trustline) {
+    onProgress(`First, a separate step: your account needs a trustline to hold ${build.trustline.assetCode} — signing it locks 0.5 XLM as reserve, then your swap is built.`);
+    const tb = checkSoroswapTrustlineBounds(build.trustline.xdr, owner, build.trustline);
+    if (!tb.ok) throw new Error(tb.reason);
+    hashes.push(await soroswapSubmitTrustline(phrase, build.trustline.xdr, fetchImpl));
+    onProgress("Trustline added — building your swap…");
+    build = await soroswapBuild(route, owner, cfg, fetchImpl);
+    if (build.trustline) throw new Error("Stellar still needs another trustline before this swap — search for routes again.");
+  }
+  const bounds = checkSoroswapSwapBounds(route, build.xdr, owner);
+  if (!bounds.ok) throw new Error(bounds.reason);
+  const tx = soroswapDecodeTx(build.xdr);
+  const acct = await stellarFetchAccount(owner);
+  if (!acct) throw new Error("Your Stellar account isn't activated yet — it needs to receive at least 1 XLM before it can swap.");
+  if (!tx || String(tx.sequence) !== String(BigInt(acct.sequence) + 1n)) throw new Error("That quote went stale — search for routes again.");
+  onProgress("Signing the swap…");
+  tx.sign(stellarKeypair(phrase));
+  const { status, data } = await soroswapPost("/send", { xdr: tx.toXDR() }, { apiKey: cfg.apiKey, fetchImpl, timeoutMs: 30000 });
+  if ((status !== 200 && status !== 201) || !data?.success || typeof data?.txHash !== "string" || !data.txHash) {
+    throw new Error("The swap didn't go through — your funds stay in your own account. Search for routes again.");
+  }
+  onProgress("Swap sent.");
+  return [...hashes, data.txHash];
 }
 
 /* ---------- SunSwap (Tron same-chain, direct port) ----------
@@ -21421,6 +21957,7 @@ export function destChainName(chainKey) {
   if (chainKey === "cardano") return "Cardano";
   if (chainKey === "zcash") return "Zcash";
   if (chainKey === "dash") return "Dash";
+  if (chainKey === "stellar") return "Stellar";
   if (chainKey === "aptos") return "Aptos";
   if (chainKey === "cosmoshub") return "Cosmos Hub";
   if (chainKey === "osmosis") return "Osmosis";
@@ -21448,6 +21985,7 @@ export function isDestNativeToken(chainKey, tokenAddress) {
   if (chainKey === "cardano") return a.toLowerCase() === CARDANO_SWAP_NATIVE_TOKEN;
   if (chainKey === "zcash") return a.toLowerCase() === ZCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "dash") return a.toLowerCase() === DASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "stellar") return a.toLowerCase() === STELLAR_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return a.toLowerCase() === APTOS_SWAP_NATIVE_TOKEN;
   const skipC = skipChainOf(chainKey);
   if (skipC) return a === skipC.denom;
@@ -21469,6 +22007,7 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "cardano") return CARDANO_SWAP_NATIVE_TOKEN;
   if (chainKey === "zcash") return ZCASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "dash") return DASH_SWAP_NATIVE_TOKEN;
+  if (chainKey === "stellar") return STELLAR_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
   const skipC2 = skipChainOf(chainKey);
   if (skipC2) return skipC2.denom;
@@ -21533,6 +22072,15 @@ export async function readDestNativeRaw(chainKey, address) {
     if (chainKey === "cardano") return getCardanoBalanceLovelace(address);
     if (chainKey === "zcash") return BigInt(Math.round((await getZcashBalance(address)) * 1e8));
     if (chainKey === "dash") return BigInt(Math.round((await getDashBalance(address)) * 1e8));
+    if (chainKey === "stellar") {
+      // The native row is balances[0] by construction in
+      // getStellarAccount (human XLM string, 7 decimals). A
+      // failed read throws inside the reader and lands in this
+      // function's catch: null, never a zero.
+      const acct = await getStellarAccount(address);
+      const row = acct?.balances?.[0];
+      return row && row.amount != null ? ethers.parseUnits(String(row.amount), 7) : null;
+    }
     if (chainKey === "aptos") return BigInt(await aptosAssetBalanceRaw(address, null));
     // Cosmos slice-1 natives (Skip rail, 2026-11-15): the
     // chain's own bank read by its native denom.
@@ -21809,6 +22357,7 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     return [out.hash];
   }
   if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "soroswap") return executeSoroswapSwapRoute(wallet, route, progress);
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** The gas-fallback leg-2 band (security audit WS2 F3,
@@ -22195,6 +22744,7 @@ export function swapOwnAddressFor(chainKey, own) {
     case "cardano": return isValidCardanoAddress(own.cardano || "") ? own.cardano : null;
     case "zcash": return isValidZcashAddress(own.zcash || "") ? own.zcash : null;
     case "dash": return isValidDashAddress(own.dash || "") ? own.dash : null;
+    case "stellar": return isValidStellarAddress(own.stellar || "") ? own.stellar : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     // The Cosmos slice-1 chains (Skip rail, 2026-11-15): the
@@ -24979,6 +25529,13 @@ async function getSwapRoutesDirect(args) {
   if (openOceanSupportsPair(planArgs)) {
     try { const oo = await getOpenOceanSwapRoute(planArgs); if (oo) routes.push(oo); } catch { /* OpenOcean is a candidate, never a single point of failure */ }
   }
+  // Soroswap (gap #9, 2026-11-15): the Stellar same-chain
+  // candidate, beside OpenOcean in the same posture. With no
+  // API key configured, soroswapSupportsPair is null and the
+  // surface is simply absent — no candidate, no error.
+  if (soroswapSupportsPair(planArgs)) {
+    try { const ss = await getSoroswapSwapRoute(planArgs); if (ss) routes.push(ss); } catch { /* Soroswap is a candidate, never a single point of failure */ }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -25870,6 +26427,40 @@ export function swapRouteExecutable(route) {
     if (route.platformFeeCollecting && oo.feeEcho?.ok !== true)
       return { ok: false, reason: "This OpenOcean route's fee could not be verified against its quote — pick another route." };
     return { ok: true, openocean: true };
+  }
+  // Soroswap routes (Stellar same-chain, audit gap #9,
+  // 2026-11-15): executable when the route carries its full
+  // verified quote — the executor re-runs the envelope bounds
+  // check (checkSoroswapSwapBounds: pinned aggregator, own
+  // address, quoted amounts) on the freshly built XDR before
+  // signing, so the gate is structural, exactly like the
+  // lanes above. A route claiming to collect must carry a
+  // platform fee whose arithmetic re-derives from the route
+  // itself: feeAmount == floor(fromAmount x bps / 10000)
+  // within a stroop, at a rate inside the API's 25–300 bps
+  // partner band (the echo parseSoroswapQuote verified
+  // against the configured account rate at quote time).
+  if (route?.provider === "soroswap") {
+    const S = route.soroswap;
+    const incomplete = "This Stellar route is incomplete — pick another route.";
+    const rawOk = (v) => typeof v === "string" && /^\d+$/.test(v);
+    if (route.fromChainKey !== "stellar" || route.toChainKey !== "stellar"
+      || Number(route.fromChainId) !== STELLAR_SWAP_CHAIN_ID || Number(route.toChainId) !== STELLAR_SWAP_CHAIN_ID
+      || !S || !S.quote || typeof S.quote !== "object" || !S.assetInSac || !S.assetOutSac
+      || !rawOk(route.fromAmount) || !rawOk(route.toAmount) || !rawOk(route.toAmountMin))
+      return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting === true || route.collecting === true) {
+      const bps = Number(route.platformFeeBps);
+      if (!rawOk(route.platformFeeRaw) || BigInt(route.platformFeeRaw) <= 0n || !(bps >= 25 && bps <= 300))
+        return { ok: false, reason: "This Stellar route's fee could not be verified against its quote — pick another route." };
+      const expected = (BigInt(route.fromAmount) * BigInt(bps)) / 10000n;
+      const got = BigInt(route.platformFeeRaw);
+      if ((got > expected ? got - expected : expected - got) > 1n)
+        return { ok: false, reason: "This Stellar route's fee could not be verified against its quote — pick another route." };
+    } else if (route.platformFeeRaw != null && String(route.platformFeeRaw) !== "0") {
+      return { ok: false, reason: "This Stellar route's fee could not be verified against its quote — pick another route." };
+    }
+    return { ok: true, soroswap: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
