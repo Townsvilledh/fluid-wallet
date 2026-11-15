@@ -997,18 +997,38 @@ export async function getVerifiedPrice(symbol) {
  *  ~200 ms). Any symbol CoinGecko CAN price must land, so the misses
  *  get one bounded request each. Mutates and returns `out`; it only
  *  ever ADDS prices, never removes one already present.
- *  `fetchImpl` is injectable for tests. */
-export async function mergeCgFallbackPrices(out, fetchImpl) {
+ *  `fetchImpl` is injectable for tests.
+ *  CONCURRENCY (repair batch, 2026-11-15): the retries used to
+ *  run strictly sequentially, so a symbol late in the CG_IDS
+ *  order waited behind every earlier symbol's round trip — in
+ *  stress runs HYPE, last of 29, was not even REQUESTED until
+ *  ~12 s in, and on a degraded network the caller's own budget
+ *  could expire before its turn came (price-fallback
+ *  starvation). The retries now run through a bounded pool
+ *  (CG_FALLBACK_CONCURRENCY in flight at once): every missing
+ *  symbol's request starts within the first few rounds, each
+ *  still individually bounded by its 4 s timeout, and one
+ *  symbol's hang or failure can neither delay nor sink the
+ *  others. The result is identical to the sequential version —
+ *  only the wall-clock shape changed. */
+export const CG_FALLBACK_CONCURRENCY = 5;
+export async function mergeCgFallbackPrices(out, fetchImpl, { concurrency = CG_FALLBACK_CONCURRENCY } = {}) {
   const F = fetchImpl || fetch;
   const missing = Object.keys(CG_IDS).filter(s => out[s] == null);
-  for (const s of missing) {
-    try {
-      const res = await F(`https://api.coingecko.com/api/v3/simple/price?ids=${CG_IDS[s]}&vs_currencies=usd`, { signal: AbortSignal.timeout(4000) });
-      const data = await res.json();
-      const v = Number(data && data[CG_IDS[s]] && data[CG_IDS[s]].usd);
-      if (Number.isFinite(v) && v > 0) out[s] = v;
-    } catch { /* this symbol stays unpriced; the home UI says so honestly */ }
-  }
+  let next = 0;
+  const worker = async () => {
+    while (next < missing.length) {
+      const s = missing[next++];
+      try {
+        const res = await F(`https://api.coingecko.com/api/v3/simple/price?ids=${CG_IDS[s]}&vs_currencies=usd`, { signal: AbortSignal.timeout(4000) });
+        const data = await res.json();
+        const v = Number(data && data[CG_IDS[s]] && data[CG_IDS[s]].usd);
+        if (Number.isFinite(v) && v > 0) out[s] = v;
+      } catch { /* this symbol stays unpriced; the home UI says so honestly */ }
+    }
+  };
+  const lanes = Math.max(1, Math.min(Number(concurrency) || 1, missing.length));
+  await Promise.all(Array.from({ length: lanes }, () => worker()));
   return out;
 }
 
@@ -12262,6 +12282,16 @@ export const ACROSS_SPOKE_POOLS = {
   999: "0x35E63eA3eb0fb7A3bc543C71FB66412e1F6B0E04", // HyperEVM — the probe quote's own allowance spender (gap #6)
   4663: "0xD29C85F15DF544bA632C9E25829fd29d767d7978", // Robinhood Chain — the probe quote's own allowance spender (gap #7)
 };
+/** The destination chain's pinned WETH by chain id (the
+ *  ACROSS_WETH table is keyed by chain key; the deposit bounds
+ *  check works in chain ids). Null when the chain has no WETH
+ *  hub pin. */
+function acrossWethForChainId(chainId) {
+  for (const [k, a] of Object.entries(ACROSS_WETH)) {
+    if (NETWORKS[k] && NETWORKS[k].chainId === Number(chainId)) return String(a).toLowerCase();
+  }
+  return null;
+}
 const ACROSS_DEPOSIT_ABI = ["function deposit(bytes32 depositor, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 destinationChainId, bytes32 exclusiveRelayer, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes message)"];
 const ACROSS_ERC20_TRANSFER = ["function transfer(address to, uint256 amount) returns (bool)"];
 const ACROSS_INSTRUCTIONS_TYPE = "tuple(tuple(address target, bytes data, uint256 value)[] calls, address fallbackRecipient)";
@@ -12396,18 +12426,25 @@ function decodeAcrossHandlerMessage(message) {
  *     exact-amount approval names must be the pool the deposit
  *     calls), and its depositor / tokens / amount / destination
  *     chain must be exactly the swap the user approved;
- *   - fee-free quote: the deposit recipient must be the USER and
- *     the message empty — the plain shape;
- *   - fee-bearing quote: the recipient must be the destination
- *     chain's pinned handler, and the message must decode (byte-
- *     exact) to calls that move value ONLY as pinned — one
- *     transfer of exactly the quote's app fee to the collection
- *     wallet, at least one handler delivery call naming
- *     (outputToken, user) as the remainder leg, at most one
- *     adapter call whose every embedded address is the user, the
- *     collection wallet, the two tokens, the handler or the
- *     adapter itself; every call value 0; no approve / transfer /
- *     transferFrom selector hidden anywhere one does not belong.
+ *   - fee-free quote, plain shape: the deposit recipient must
+ *     be the USER and the message empty;
+ *   - handler-routed quote (a fee-bearing quote, or a fee-free
+ *     WETH delivery — the one fee-free shape Across routes
+ *     through the handler, live-probed 2026-11-15): the
+ *     recipient must be the destination chain's pinned handler,
+ *     and the message must decode (byte-exact) to calls that
+ *     move value ONLY as pinned — one transfer of exactly the
+ *     quote's app fee to the collection wallet (a fee-free
+ *     message carries NO fee transfer), at least one handler
+ *     delivery call naming (outputToken, user) as the remainder
+ *     leg, at most one adapter call whose every embedded
+ *     address is the user, the collection wallet, the two
+ *     tokens, the handler or the adapter itself; every call
+ *     value 0; no approve / transfer / transferFrom selector
+ *     hidden anywhere one does not belong. A fee-free handler
+ *     message is admitted ONLY when the output token is the
+ *     destination chain's pinned WETH — any other fee-free
+ *     handler shape refuses.
  *  Any deviation refuses the route (the dispatcher falls back to
  *  Relay); nothing here can be talked into signing. */
 export function checkAcrossDepositBounds(route, owner) {
@@ -12431,9 +12468,9 @@ export function checkAcrossDepositBounds(route, owner) {
   if (dep.destinationChainId !== Number(ac.destinationChainId)) return refuse("the Across deposit targeted a different chain than the swap's destination.");
   let appFeeRaw = 0n;
   try { appFeeRaw = BigInt(route.platformFeeRaw ?? "0"); } catch { return refuse("the quote's app fee was unreadable."); }
-  if (appFeeRaw <= 0n) {
-    if (dep.recipient.toLowerCase() !== ownerLc) return refuse("a fee-free Across deposit named someone other than you as its recipient.");
-    if (dep.message !== "0x") return refuse("a fee-free Across deposit carried a message Fluid didn't ask for.");
+  if (appFeeRaw <= 0n && dep.recipient.toLowerCase() === ownerLc && dep.message === "0x") {
+    // The plain fee-free shape: the deposit pays the user
+    // directly and carries no message at all.
     return { ok: true };
   }
   const handler = ACROSS_HANDLERS[dep.destinationChainId];
@@ -12441,7 +12478,31 @@ export function checkAcrossDepositBounds(route, owner) {
   if (dep.recipient.toLowerCase() !== handler.toLowerCase()) return refuse("the Across deposit named an unexpected handler contract as its recipient.");
   let depositOut = null;
   try { depositOut = BigInt(dep.outputAmount); } catch { return refuse("the Across deposit output amount was unreadable."); }
-  if (depositOut - appFeeRaw <= 0n) return refuse("the app fee would consume the whole Across delivery.");
+  if (depositOut - appFeeRaw <= 0n) return refuse(appFeeRaw > 0n ? "the app fee would consume the whole Across delivery." : "the Across deposit would deliver nothing.");
+  if (appFeeRaw <= 0n) {
+    // Fee-free HANDLER routing (repair batch, 2026-11-15): the
+    // one legitimate fee-free shape that is not the plain one.
+    // A WETH delivery routes through the destination handler
+    // even with no app fee — the handler is what unwraps and
+    // delivers the native coin — so the deposit names the
+    // handler and carries the delivery message with NO fee
+    // transfer inside it (live-probed 2026-11-15: Base WETH →
+    // Arbitrum native, fee-free — recipient the pinned 42161
+    // handler; message = two delivery calls naming (WETH,
+    // user) + the adapter call; fallback recipient zero). The
+    // old fee-free branch refused that exact shape ("carried a
+    // message Fluid didn't ask for"), the quote died in
+    // parseAcrossQuote, and every fee-free WETH pair fell back
+    // to Relay on every wired lane. The grammar admitted here
+    // is ONLY that shape: the output token must be the
+    // destination chain's pinned WETH, and the message must
+    // pass the SAME containment verification as the fee-bearing
+    // one below, with the fee expectation inverted — any fee
+    // transfer at fee 0 refuses (see the closing checks).
+    const weth = acrossWethForChainId(dep.destinationChainId);
+    if (!weth || dep.outputToken.toLowerCase() !== weth)
+      return refuse("a fee-free Across deposit was routed through the handler for an output that is not the chain's WETH — Fluid has not pinned that shape.");
+  }
   const msg = decodeAcrossHandlerMessage(dep.message);
   if (!msg) return refuse("the Across handler message did not decode into the pinned instruction shape.");
   const fb = String(msg.fallbackRecipient || "").toLowerCase();
@@ -12516,7 +12577,8 @@ export function checkAcrossDepositBounds(route, owner) {
     }
     return refuse("the Across handler message carried a call shape Fluid has not pinned.");
   }
-  if (feeTransfers !== 1) return refuse("the Across handler message did not carry exactly the quoted app-fee transfer.");
+  if (appFeeRaw > 0n && feeTransfers !== 1) return refuse("the Across handler message did not carry exactly the quoted app-fee transfer.");
+  if (appFeeRaw <= 0n && feeTransfers !== 0) return refuse("a fee-free Across handler message carried a fee transfer Fluid didn't quote.");
   if (deliverCalls < 1) return refuse("the Across handler message carried no delivery call naming you as the recipient.");
   return { ok: true };
 }
@@ -23881,6 +23943,27 @@ export function milestoneRetryDelayMs(consecutiveFailures) {
   if (n === 1) return 120000;
   return 300000;
 }
+/** Whether the swap sheet may re-run its no-route DIAGNOSIS
+ *  cascade for a search it has already refused (repair batch,
+ *  2026-11-15). The walk of the driver repair (2026-11-14)
+ *  observed the sheet re-running the full diagnosis — the
+ *  floor-probe ladder plus the market probes, each a bundle of
+ *  router calls — about every 20 s for as long as the sheet
+ *  sat open on a refusal, hot enough on a degraded network to
+ *  starve the page for minutes. The refusal now gets the
+ *  DRIVER's medicine: the same lengthening backoff
+ *  (milestoneRetryDelayMs — 60 s, 120 s, then a 300 s cap),
+ *  counted in consecutive refusals of the SAME search (same
+ *  pair + amount, the sheet's refusal key). Inside the window
+ *  the sheet re-shows the standing refusal text without
+ *  re-running a single probe; a different search (new key),
+ *  or no standing refusal at all, is always due. Pure; the
+ *  sheet keeps the state, this decides. `state` is the
+ *  sheet's { key, failures, lastAt, message } or null. */
+export function refusalRecheckDue(state, key, now = Date.now()) {
+  if (!state || state.key !== key || !state.message || !state.lastAt) return true;
+  return now - Number(state.lastAt) >= milestoneRetryDelayMs(state.failures);
+}
 
 /* ----- Milestone execution: persisted per-leg records -----
  * The generalised gas-fallback record: written when leg 1
@@ -25799,6 +25882,13 @@ export async function findSwapRouteFloor(args, { fromDecimals = null, fromPriceU
   const run = search || getSwapRoutes;
   const rungs = swapFloorProbeRungs(args, { fromDecimals, fromPriceUsd });
   let probedUpToUsd = null;
+  // Transport blindness (repair batch, 2026-11-15): a rung that
+  // dies on transport (rate limit, network) ends the climb —
+  // and the fact is RECORDED on the result. diagnoseNoRouteSwap
+  // reads it to tell "the rails never answered" apart from "the
+  // rails answered and had nothing": only the second may ever
+  // be reported as an unconnected pair.
+  let blind = false;
   try {
     const human = Number(ethers.formatUnits(BigInt(String(args?.fromAmount || "0")), Number(fromDecimals)));
     if (Number.isFinite(human) && human > 0 && Number(fromPriceUsd) > 0) probedUpToUsd = Math.round(human * Number(fromPriceUsd) * 100) / 100;
@@ -25813,11 +25903,12 @@ export async function findSwapRouteFloor(args, { fromDecimals = null, fromPriceU
       // else (a rate limit arriving mid-ladder, a network drop)
       // ends the climb with what was learned.
       if (isNoQuoteSwapError(e)) continue;
+      blind = true;
       break;
     }
-    if (routes && routes.length) return { found: true, usd: rung.usd, amountRaw: rung.amountRaw, amountHuman: rung.amountHuman, routes };
+    if (routes && routes.length) return { found: true, usd: rung.usd, amountRaw: rung.amountRaw, amountHuman: rung.amountHuman, routes, blind: false };
   }
-  return { found: false, probedUpToUsd };
+  return { found: false, probedUpToUsd, blind };
 }
 /** Whether the FROM token is one of its chain's canonical
  *  liquid assets (the native coin, or the chain's listed USDC /
@@ -25842,16 +25933,25 @@ export function swapFromTokenIsHubAsset(args) {
   }
   return false;
 }
-/** Diagnose a no-quote failure into one of the three honest
+/** Diagnose a no-quote failure into one of the four honest
  *  cases, with live probes — never a guess:
  *   - "below-minimum": a bigger size on the SAME pair answers
  *     (findSwapRouteFloor found the floor).
  *   - "no-market": the FROM token cannot be swapped even into
  *     its own chain's native coin, at the user's amount and at
  *     100× it — there is no market for the token to route from.
+ *   - "unreachable": a probe died on transport (rate limit,
+ *     network) before the pair could be judged — the rails
+ *     never answered, so NOTHING about the pair is claimed
+ *     (repair batch, 2026-11-15: this case used to degrade
+ *     into "no-route-yet", printing "isn't connected yet" for
+ *     pairs that are connected — the gap-#12 walk hit exactly
+ *     that mislabel).
  *   - "no-route-yet": the token itself trades (or is a hub
- *     asset, whose market is not in question) but no rail
- *     connects this pair at any probed size.
+ *     asset, whose market is not in question) and the probes
+ *     ANSWERED — but no rail connects this pair at any probed
+ *     size. Only this case, earned by answered probes, may be
+ *     stated as an unconnected pair.
  *  A probe that fails on transport (rate limit, network) reads
  *  as "unknown", never as a market verdict. Never throws. */
 export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPriceUsd = null, search = null, searchError = null } = {}) {
@@ -25890,7 +25990,7 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
   }
   const floor = await findSwapRouteFloor(args, { fromDecimals, fromPriceUsd, search: run });
   if (floor.found) return { kind: "below-minimum", floor, market: null };
-  let market = null;
+  let market = null, marketBlind = false;
   if (!swapFromTokenIsHubAsset(args)) {
     const nativeAddr = destNativeTokenAddress(args?.fromChainKey);
     const sameToken = nativeAddr != null && String(args?.fromTokenAddress || "").toLowerCase() === String(nativeAddr).toLowerCase();
@@ -25904,12 +26004,17 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
           market = false; // an answered-but-empty search is a no-quote answer — try the bigger amount before concluding
         } catch (e) {
           if (isNoQuoteSwapError(e)) { market = false; continue; }
-          market = null; break;
+          // Transport death unknowning the whole probe (the
+          // standing rule) — and now RECORDED, so the verdict
+          // below can name the rails, not the pair, as the
+          // problem (repair batch, 2026-11-15).
+          market = null; marketBlind = true; break;
         }
       }
     }
   }
   if (market === false) return { kind: "no-market", floor, market };
+  if (floor.blind || marketBlind) return { kind: "unreachable", floor, market };
   return { kind: "no-route-yet", floor, market };
 }
 /** The swap sheet's no-route sentences — one plain statement
@@ -25930,6 +26035,13 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
     }
   } else if (verdict?.kind === "no-market") {
     s = `No market found for ${fromSymbol}: it can't be swapped into anything right now — not even ${nativeSymbol || "its own chain's coin"} on its own chain. A token with no market can't be swapped at any size.`;
+  } else if (verdict?.kind === "unreachable") {
+    // The binding state is the RAILS, not the pair (repair
+    // batch, 2026-11-15): the probes died on transport before
+    // the pair could be judged, so the sentence claims nothing
+    // about the pair — "isn't connected yet" is reserved for
+    // the no-route-yet case below, which answered probes earn.
+    s = `No route could be checked for ${fromSymbol} → ${toSymbol}${amt} — the route services didn't answer just now (a network or rate-limit problem, not this pair). The pair may be connected; give it a moment and search again.`;
   } else if (verdict?.kind === "no-route-yet") {
     const upTo = verdict.floor?.probedUpToUsd != null ? ` — none at this amount, and none at any size up to about $${Number(verdict.floor.probedUpToUsd).toFixed(0)} either` : "";
     s = `No route exists for ${fromSymbol} → ${toSymbol} yet${upTo}. The route for this pair isn't connected yet; try a different destination for now.`;
@@ -28233,7 +28345,23 @@ export async function getEvmTokenBalance(wallet, networkKey, token = null) {
 export async function readEvmTokenMeta(networkKey, address, ownerAddress) {
   if (!ethers.isAddress(address)) throw new Error("That is not a valid contract address.");
   const contract = ethers.getAddress(address);
-  const provider = providerFor(networkKey);
+  // Endpoint rotation (repair batch, 2026-11-15): this read used
+  // to ride providerFor — the network's PRIMARY endpoint only,
+  // with no attempt budget — so one refusing or hung endpoint
+  // failed a custom-token add even while the chain's other
+  // endpoints were answering (every other EVM read in the fleet
+  // already rotates via withEvmProvider / evmRpcFetchJson). The
+  // whole meta sequence now runs inside withEvmProvider: a
+  // transport failure anywhere in it re-runs the sequence from
+  // the start on the next endpoint, and the "doesn't answer like
+  // an ERC-20" verdicts below are only reached after every
+  // endpoint has had its turn — the error the user sees is the
+  // last endpoint's, unchanged in shape.
+  return withEvmProvider(networkKey, (provider) => readEvmTokenMetaOnProvider(provider, contract, ownerAddress));
+}
+/** One full meta read against ONE provider (readEvmTokenMeta's
+ *  rotation unit — see there). */
+async function readEvmTokenMetaOnProvider(provider, contract, ownerAddress) {
   const c = new ethers.Contract(contract, ERC20_META_ABI, provider);
   let name = null, symbol = null, decimals = null, balance = 0n;
   try { name = await c.name(); } catch { /* try bytes32 below */ }

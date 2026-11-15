@@ -24,7 +24,7 @@ import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
-import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, destChainName, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, familyRollupTotalUsd } from "../src/wallet-core.js";
+import { DEST_GAS_ENOUGH, destGasSpec, destGasPlanFromBalance, planDestGas, isDestNativeToken, destChainName, formatDestGasLine, relayTopupOriginRaw, mayanSupportsSuiGasDropPair, suiCoinTypeEq, GAS_FALLBACK_STORAGE_KEY, loadGasFallbackRecords, saveGasFallbackRecord, newGasFallbackRecord, gasFallbackLeg2AmountRaw, gasFallbackNeedsAction, gasFallbackHistoryLine, executeGasFallbackRoute, isNoQuoteSwapError, swapFloorProbeRungs, findSwapRouteFloor, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapFromTokenIsHubAsset, SWAP_FLOOR_PROBE_USD, milestoneShapes, milestoneLabelFor, searchMilestoneCompositions, MILESTONE_SWAPS_STORAGE_KEY, loadMilestoneRecords, saveMilestoneRecord, newMilestoneRecord, milestoneNeedsAction, milestoneHistoryLine, hubTokenForChain, milestoneAddressFor, swapAddressBookEntry, swapOwnAddressFor, familyRowsTotalUsd, ERC20_ABI, milestoneTwoCrossingShapes, milestoneAltAnchorFor, MILESTONE_TWO_CROSSING_MAX_LEG_QUOTES, MILESTONE_TWO_CROSSING_HUBS, executeMilestoneRoute, milestoneAnchoredShapes, MILESTONE_ANCHORED_MAX_LEG_QUOTES, MILESTONE_LEG_DOWN_THRESHOLD, milestoneLegVerification, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, refusalRecheckDue, familyRollupTotalUsd } from "../src/wallet-core.js";
 import { swapDestinationDoors, ARKADE_SESSION_ADDRESS, LN_FIRST_RECEIVE_CHANNEL_SATS, applyLnFirstReceiveCost, arkadeOffboardSupportsPair, getArkadeOffboardRoute, executeArkadeOffboardRoute, resolveMilestoneArkadeAddresses, advanceMilestoneRecords, completeMilestoneSwap, fetchArkadeOperatorProgram, resetArkadeOperatorProgramCache, getRelaySwapRoute } from "../src/wallet-core.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -11119,10 +11119,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     app.includes("This is the network's native asset — it has no contract address."));
 }
 
-// ---------- no-route diagnosis (2026-11-13): the three honest cases ----------
+// ---------- no-route diagnosis (2026-11-13): the honest cases ----------
 // A failed route search must say WHICH case it is — below the
-// pair's minimum, no market for the token, or no route for the
-// pair yet — from live probes, never the bare router error. The
+// pair's minimum, no market for the token, no route for the
+// pair yet, or (repair batch, 2026-11-15) the rails unreachable
+// — from live probes, never the bare router error. The
 // searches here are injected fakes; production passes
 // getSwapRoutes itself.
 {
@@ -11170,10 +11171,15 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const vHub = await diagnoseNoRouteSwap(BNB_ARGS, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { hubCalls++; throw new Error("No available quotes"); } });
   ok("nq: a hub asset skips the market probe (ladder calls only) and reads no-route-yet",
     vHub.kind === "no-route-yet" && hubCalls === 3);
-  // A transport failure mid-diagnosis never becomes a verdict.
+  // A transport failure mid-diagnosis never becomes a MARKET
+  // verdict — and since the repair batch (2026-11-15) it no
+  // longer degrades into "no-route-yet" either: the verdict is
+  // "unreachable" (the rails never answered), so the surface
+  // never prints "isn't connected yet" for a pair the probes
+  // could not judge. The market still reads unknown (null).
   const vBlind = await diagnoseNoRouteSwap(SAFU_ARGS, { fromDecimals: 18, fromPriceUsd: null, search: async () => { throw new Error("Rate limit exceeded"); } });
-  ok("nq: a rate-limited market probe reads unknown, not no-market",
-    vBlind.kind === "no-route-yet" && vBlind.market === null);
+  ok("nq: a rate-limited probe reads unreachable with the market unknown — never a pair verdict",
+    vBlind.kind === "unreachable" && vBlind.market === null);
   ok("nq: hub-asset recognition covers natives and listed stables, not long-tail tokens",
     swapFromTokenIsHubAsset(BNB_ARGS) === true
     && swapFromTokenIsHubAsset({ fromChainKey: "bsc", fromTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }) === true
@@ -18683,16 +18689,19 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // real quotes parse collecting and pass the deposit bounds
   // against the pins taken from those same quotes. The control is
   // the fee-free pair of bodies: they carry a ZERO app fee in
-  // their fee details, and they do not parse at all — Across's
-  // native-output grammar routes even a fee-free delivery through
-  // the handler (an unwrap message), which the fee-free bounds
-  // branch refuses. That shape is FLEET-WIDE, not 4663's: the
-  // identical control probe against the long-wired Ethereum ->
-  // Base WETH lane the same day returned the same handler-message
-  // fee-free deposit, parsing null the same way, while its fee
-  // quote parsed collecting (control bodies saved in the research
-  // folder). So 4663's WETH lane stands exactly where every wired
-  // chain's WETH lane stands; the non-vacuity of the echo pins
+  // their fee details. At gap-#7 build time they did not parse at
+  // all — Across's native-output grammar routes even a fee-free
+  // delivery through the handler (an unwrap message), which the
+  // fee-free bounds branch then refused, fleet-wide (the identical
+  // control probe against the long-wired Ethereum -> Base WETH
+  // lane the same day returned the same shape, parsing null the
+  // same way). REPAIRED by the 2026-11-15 repair batch (§135):
+  // the bounds branch now admits exactly that verified shape —
+  // handler-routed, output token the destination chain's pinned
+  // WETH, the full containment verification with NO fee transfer
+  // inside — so the control bodies below now PARSE, honestly
+  // fee-free, and pass the bounds check; §135 pins the grammar
+  // and its tamper refusals. The non-vacuity of the echo pins
   // rests on the bounds check itself, which passes a fee quote
   // only when its deposit carries exactly one transfer of exactly
   // the parsed app fee to the collection wallet. USDG is NOT an
@@ -18720,10 +18729,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && aIn7.toAmount === "9943322017900327" && checkAcrossDepositBounds(aIn7, ACCT7).ok === true);
   const aOutFree7 = parseAcrossQuote(fx7("across-robinhood-weth-out-nofee.json"), aOutArgs7, acrossSupportsPair(aOutArgs7));
   const aInFree7 = parseAcrossQuote(fx7("across-robinhood-weth-in-nofee.json"), aInArgs7, acrossSupportsPair(aInArgs7));
-  ok("gap7: Across control — the fee-free probe quotes carry a zero app fee and do not parse (Across's native-output handler-message shape, refused by the fee-free bounds branch — the fleet-wide WETH position, Base's lane identical)",
+  ok("gap7: Across control — the fee-free probe quotes carry a zero app fee and (repair batch, 2026-11-15) now parse through the handler grammar, honestly fee-free, bounds-clean",
     fx7("across-robinhood-weth-out-nofee.json").fees.total.details.app.amount === "0"
     && fx7("across-robinhood-weth-in-nofee.json").fees.total.details.app.amount === "0"
-    && aOutFree7 === null && aInFree7 === null);
+    && !!aOutFree7 && aOutFree7.platformFeeCollecting === false && checkAcrossDepositBounds(aOutFree7, ACCT7).ok === true
+    && !!aInFree7 && aInFree7.platformFeeCollecting === false && checkAcrossDepositBounds(aInFree7, ACCT7).ok === true);
 }
 
 // ---------- §126. LADYS Move CLAIM EXECUTION — L1 Outbox execute + parser repair (2026-11-15) ----------
@@ -20547,6 +20557,223 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
   } finally {
     globalThis.fetch = realFetch134;
   }
+}
+
+/* ================= §135 — repair batch (2026-11-15): wallet-switch
+ * staleness guards on every family read path; CoinGecko fallback
+ * concurrency (no more sequential starvation); the swap sheet's
+ * refusal-diagnosis cadence on the driver's backoff; the
+ * "unreachable" no-route verdict (the binding state named, never
+ * a pair verdict the probes didn't earn); readEvmTokenMeta
+ * endpoint rotation; and the Across fee-free WETH handler
+ * grammar. Item 7 (Blockchair) ships no client change — its
+ * probe evidence lives in tools/blockchair-proxy/worker.js. */
+{
+  const app135 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("repair1: renderMain takes its render sequence at the top and defines the one stale guard every family settles through",
+    app135.includes("const myRenderSeq = ++renderSeq;")
+    && app135.includes("const staleRender = () => wallet !== w || renderSeq !== myRenderSeq;")
+    && (app135.match(/\+\+renderSeq/g) || []).length === 1);
+  ok("repair1: the family handlers across renderMain settle through the stale guard (bitcoin ×2, tron/solana/sui, stellar, ton, near, algorand, xrpl, polkadot, aptos, stacks, the scalar coins, cosmos, prices)",
+    (app135.match(/staleRender\(\)/g) || []).length >= 30);
+  ok("repair1: the family retry path captures the wallet it started under and stops if it changes",
+    app135.includes("const w0 = wallet;") && app135.includes("if (wallet !== w0) return;"));
+}
+{
+  // Item 2: the fallback merge must overlap its reads — with
+  // the first two requests parked, later symbols still price,
+  // and every missing symbol lands once the parked ones free.
+  const { mergeCgFallbackPrices, CG_FALLBACK_CONCURRENCY } = await import("../src/wallet-core.js");
+  const syms135 = ["BTC", "ETH", "BNB", "SOL", "ADA", "XRP", "DOT", "HYPE"];
+  const out135 = {}; for (const s of syms135) out135[s] = null;
+  let started135 = 0, inFlight135 = 0, maxInFlight135 = 0; const parked135 = [];
+  const fetch135 = (url) => {
+    const id = new URL(url).searchParams.get("ids");
+    started135++; inFlight135++; maxInFlight135 = Math.max(maxInFlight135, inFlight135);
+    return new Promise((resolve) => {
+      const done = () => { inFlight135--; resolve({ ok: true, json: async () => ({ [id]: { usd: 2.5 } }) }); };
+      if (started135 <= 2) parked135.push(done); else setTimeout(done, 5);
+    });
+  };
+  const merge135 = mergeCgFallbackPrices(out135, fetch135);
+  await new Promise(r => setTimeout(r, 80));
+  const pricedEarly135 = Object.values(out135).filter(v => v != null).length;
+  parked135.forEach(fn => fn());
+  await merge135;
+  ok("repair2: the CoinGecko fallback merge runs with bounded concurrency — a parked early symbol no longer starves the rest",
+    CG_FALLBACK_CONCURRENCY >= 3 && maxInFlight135 >= 3 && pricedEarly135 >= 4
+    && syms135.every(s => out135[s] === 2.5));
+}
+{
+  // Item 3: the refusal recheck cadence — the driver's own
+  // backoff numbers (60 s / 120 s / 300 s cap) applied to
+  // consecutive refusals of the same search.
+  const st135 = { key: "k", failures: 1, lastAt: 100000, message: "m" };
+  ok("repair3: a first refusal is always due; repeats wait out the lengthening backoff; a new search or a spent refusal is due at once",
+    refusalRecheckDue(null, "k", 1000) === true
+    && refusalRecheckDue(st135, "k", 100000 + 20000) === false
+    && refusalRecheckDue(st135, "k", 100000 + 60000) === false
+    && refusalRecheckDue(st135, "k", 100000 + 120000) === true
+    && refusalRecheckDue({ ...st135, failures: 9 }, "k", 100000 + 299999) === false
+    && refusalRecheckDue({ ...st135, failures: 9 }, "k", 100000 + 300000) === true
+    && refusalRecheckDue(st135, "other", 100001) === true
+    && refusalRecheckDue({ ...st135, message: "" }, "k", 100001) === true);
+  const app135b = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("repair3: the sheet gates its diagnosis cascade on the cadence, stores the standing refusal, and clears it when a search finds routes",
+    app135b.includes("if (!refusalRecheckDue(refusalDiagState, refusalKey)) return msg(\"wMsg\", refusalDiagState.message);")
+    && app135b.includes("refusalDiagState = {")
+    && app135b.includes("refusalDiagState = null;"));
+}
+
+{
+  // Item 4: readEvmTokenMeta rotates across the network's RPC
+  // endpoints. ethers speaks JSON-RPC over node:http in Node
+  // (fetch stubs can't intercept it — the m5 pattern), so the
+  // fixture is two real local servers behind a throwaway
+  // registered network: the primary refuses everything (HTTP
+  // 500), the fallback answers the ERC-20 meta calls.
+  const { readEvmTokenMeta } = await import("../src/wallet-core.js");
+  const { createServer } = await import("node:http");
+  let badHits135 = 0, goodHits135 = 0;
+  const badSrv135 = createServer((req, res) => { badHits135++; res.statusCode = 500; res.end("refused"); });
+  const coder135m = ethers.AbiCoder.defaultAbiCoder();
+  const goodSrv135 = createServer((req, res) => {
+    goodHits135++;
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      const parsed = JSON.parse(raw);
+      const answer = (body) => {
+        if (body.method === "eth_chainId") return "0x" + (424242).toString(16);
+        if (body.method === "eth_blockNumber") return "0x100";
+        if (body.method === "eth_call") {
+          const data = body.params[0].data;
+          if (data.startsWith("0x06fdde03")) return coder135m.encode(["string"], ["Fixture Token"]);
+          if (data.startsWith("0x95d89b41")) return coder135m.encode(["string"], ["FXT"]);
+          if (data.startsWith("0x313ce567")) return coder135m.encode(["uint256"], [18n]);
+          if (data.startsWith("0x70a08231")) return coder135m.encode(["uint256"], [1000000000000000000n]);
+          return "0x";
+        }
+        return "0x0";
+      };
+      res.setHeader("content-type", "application/json");
+      if (Array.isArray(parsed)) return res.end(JSON.stringify(parsed.map(b => ({ jsonrpc: "2.0", id: b.id, result: answer(b) }))));
+      return res.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: answer(parsed) }));
+    });
+  });
+  await new Promise(r => badSrv135.listen(0, "127.0.0.1", r));
+  await new Promise(r => goodSrv135.listen(0, "127.0.0.1", r));
+  registerNetworks({ xmeta135: { name: "Meta Fixture", chainId: 424242, symbol: "FIX", priceSym: null,
+    rpc: `http://127.0.0.1:${badSrv135.address().port}`, rpcFallback: `http://127.0.0.1:${goodSrv135.address().port}`, explorer: null, tokens: [] } });
+  try {
+    resetEvmRpcHealth();
+    const meta135 = await readEvmTokenMeta("xmeta135", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34");
+    ok("repair4: readEvmTokenMeta rotates past a refusing primary endpoint and reads the meta from the fallback",
+      meta135.symbol === "FXT" && meta135.name === "Fixture Token" && meta135.decimals === 18 && meta135.balance === "1.0"
+      && badHits135 >= 1 && goodHits135 >= 1);
+  } finally {
+    badSrv135.close(); goodSrv135.close();
+  }
+}
+{
+  // Item 5: the Across fee-free WETH handler grammar. Fixture
+  // shapes mirror the live probe of 2026-11-15 (Base WETH →
+  // Arbitrum native, fee-free: recipient = the pinned 42161
+  // handler; message = two delivery calls naming (WETH, user)
+  // + the adapter call; NO fee transfer; fallback zero).
+  const AUSER135 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const ATTACKER135 = "0x000000000000000000000000000000000000dEaD";
+  const BASE_WETH135 = "0x4200000000000000000000000000000000000006";
+  const ARB_WETH135 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
+  const BASE_USDC135 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const ARB_USDC135 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+  const HANDLER135 = ACROSS_HANDLERS[42161];
+  const ADAPTER135 = ACROSS_MESSAGE_ADAPTERS[42161];
+  const POOL135 = ACROSS_SPOKE_POOLS[8453];
+  const coder135 = ethers.AbiCoder.defaultAbiCoder();
+  const b32_135 = (a) => ethers.zeroPadValue(a, 32);
+  const depIface135 = new ethers.Interface(["function deposit(bytes32 depositor,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 inputAmount,uint256 outputAmount,uint256 destinationChainId,bytes32 exclusiveRelayer,uint32 quoteTimestamp,uint32 fillDeadline,uint32 exclusivityParameter,bytes message)"]);
+  const erc20_135 = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]);
+  const INSTR135 = "tuple(tuple(address target, bytes data, uint256 value)[] calls, address fallbackRecipient)";
+  const adapterBlob135 = (token, user) => "0xd836083e" + coder135.encode(["uint256", "uint256", "uint256", "uint256", "address", "uint256", "uint256", "uint256", "uint256", "uint256", "address", "address", "string"], [32n, 480n, 1n, 0n, token, 0n, 0n, 0n, 416n, 0n, user, ACROSS_APP_FEE_RECIPIENT, "None"]).slice(2);
+  const deliver135 = (token, user) => "0xef8738d3" + coder135.encode(["address", "address"], [token, user]).slice(2);
+  const handlerMsg135 = ({ token, user, feeAmt = null, deliverUser = null }) => {
+    const calls = [];
+    if (feeAmt != null) calls.push([token, erc20_135.encodeFunctionData("transfer", [ACROSS_APP_FEE_RECIPIENT, feeAmt]), 0n]);
+    calls.push([HANDLER135, deliver135(token, deliverUser ?? user), 0n]);
+    calls.push([HANDLER135, deliver135(token, deliverUser ?? user), 0n]);
+    calls.push([ADAPTER135, adapterBlob135(token, user), 0n]);
+    return coder135.encode([INSTR135], [[calls, "0x0000000000000000000000000000000000000000"]]);
+  };
+  const quote135 = ({ inTok, outTok, sym, dec, inAmt, bridgeOut, bridgeRaw, bridgeUsd, appRaw = "0", message, recipient }) => {
+    const tok135 = (address, chainId) => ({ decimals: dec, symbol: sym, address, name: sym, chainId });
+    const feeTokIn = tok135(inTok, 8453), feeTokOut = tok135(outTok, 42161);
+    const data = depIface135.encodeFunctionData("deposit", [b32_135(AUSER135), b32_135(recipient), b32_135(inTok), b32_135(outTok), BigInt(inAmt), BigInt(bridgeOut), 42161n, b32_135("0x394311a6aaa0d8e3411d8b62de4578d41322d1bd"), 1794177000, 1794184200, 3, message]);
+    const expected = (BigInt(bridgeOut) - BigInt(appRaw)).toString();
+    return {
+      crossSwapType: "bridgeableToBridgeable", id: "135-fixture",
+      checks: { allowance: { token: inTok, spender: POOL135, actual: "0", expected: inAmt } },
+      inputToken: feeTokIn, outputToken: feeTokOut,
+      fees: { total: { amount: (BigInt(bridgeRaw) + BigInt(appRaw)).toString(), amountUsd: bridgeUsd, token: feeTokIn, details: {
+        swapImpact: { amount: "0", amountUsd: "0", token: feeTokIn },
+        app: { amount: appRaw, amountUsd: "0", token: feeTokOut },
+        bridge: { amount: bridgeRaw, amountUsd: bridgeUsd, token: feeTokIn },
+      } } },
+      inputAmount: inAmt, expectedOutputAmount: expected, minOutputAmount: expected, expectedFillTime: 2,
+      swapTx: { to: POOL135, data, chainId: 8453 }, quoteExpiryTimestamp: 1994180911,
+    };
+  };
+  const wethArgs135 = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "10000000000000000", fromAddress: AUSER135, toAddress: AUSER135 };
+  const planWeth135 = acrossSupportsPair(wethArgs135);
+  const wethFree135 = { inTok: BASE_WETH135, outTok: ARB_WETH135, sym: "WETH", dec: 18, inAmt: "10000000000000000", bridgeOut: "9989331866537829", bridgeRaw: "10668133462171", bridgeUsd: "0.0195" };
+  const freeWethRoute135 = parseAcrossQuote(quote135({ ...wethFree135, message: handlerMsg135({ token: ARB_WETH135, user: AUSER135 }), recipient: HANDLER135 }), wethArgs135, planWeth135);
+  ok("repair5: a fee-free WETH quote routed through the handler (deliveries + adapter, no fee transfer) parses and passes its bounds check",
+    !!freeWethRoute135 && freeWethRoute135.platformFeeCollecting === false && freeWethRoute135.across.nativeInput === true
+    && checkAcrossDepositBounds(freeWethRoute135, AUSER135).ok === true);
+  ok("repair5: a fee transfer inside a fee-free handler message refuses",
+    parseAcrossQuote(quote135({ ...wethFree135, message: handlerMsg135({ token: ARB_WETH135, user: AUSER135, feeAmt: 500n }), recipient: HANDLER135 }), wethArgs135, planWeth135) === null);
+  ok("repair5: a delivery call naming an attacker refuses",
+    parseAcrossQuote(quote135({ ...wethFree135, message: handlerMsg135({ token: ARB_WETH135, user: AUSER135, deliverUser: ATTACKER135 }), recipient: HANDLER135 }), wethArgs135, planWeth135) === null);
+  const usdcArgs135 = { fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC135, toTokenAddress: ARB_USDC135, fromAmount: "100000000", fromAddress: AUSER135, toAddress: AUSER135 };
+  ok("repair5: a fee-free HANDLER-routed USDC quote still refuses — the grammar extension is WETH-only",
+    parseAcrossQuote(quote135({ inTok: BASE_USDC135, outTok: ARB_USDC135, sym: "USDC", dec: 6, inAmt: "100000000", bridgeOut: "99972867", bridgeRaw: "27133", bridgeUsd: "0.0271", message: handlerMsg135({ token: ARB_USDC135, user: AUSER135 }), recipient: HANDLER135 }), usdcArgs135, acrossSupportsPair(usdcArgs135)) === null);
+  const feeWethRoute135 = parseAcrossQuote(quote135({ ...wethFree135, appRaw: "500000000000000", message: handlerMsg135({ token: ARB_WETH135, user: AUSER135, feeAmt: 500000000000000n }), recipient: HANDLER135 }), wethArgs135, planWeth135);
+  ok("repair5: the fee-bearing WETH handler shape still parses under the shared grammar",
+    !!feeWethRoute135 && checkAcrossDepositBounds(feeWethRoute135, AUSER135).ok === true);
+  // The REAL fee-free quote Across served on 2026-11-15 (Base
+  // WETH → Arbitrum native, depositor = the muse ops wallet),
+  // trimmed to the fields the parser consumes; only the API's
+  // own expiry field is normalised — the deposit calldata is
+  // the pinned evidence, byte for byte.
+  const REAL_FREE_WETH_135 = JSON.parse('{"crossSwapType":"bridgeableToBridgeable","id":"gmbmk-1794782901445-33bb8840566f","quoteExpiryTimestamp":1794786311,"inputToken":{"symbol":"WETH","decimals":18},"outputToken":{"symbol":"WETH","decimals":18},"expectedOutputAmount":"9989331866537829","minOutputAmount":"9989331866537829","expectedFillTime":1,"fees":{"total":{"amount":"10670139477874","amountUsd":"0.0195","details":{"bridge":{"amount":"10668133462171","amountUsd":"0.01949633394612137"},"swapImpact":{"amount":"2006015703","amountUsd":"0.00000366605387863"},"app":{"amount":"0","amountUsd":"0.0"}}}},"swapTx":{"to":"0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64","data":"0xad5425c60000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee340000000000000000000000000f7ae28de1c8532170ad4ee566b5801485c13a0e000000000000000000000000420000000000000000000000000000000000000600000000000000000000000082af49447d8a07e3bd95bd0d56f35241523fbab1000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000000000000000000000000000000237d3e9172cf65000000000000000000000000000000000000000000000000000000000000a4b1000000000000000000000000394311a6aaa0d8e3411d8b62de4578d41322d1bd000000000000000000000000000000000000000000000000000000006afa35f7000000000000000000000000000000000000000000000000000000006afa521700000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000056000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000002200000000000000000000000000f7ae28de1c8532170ad4ee566b5801485c13a0e000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044ef8738d300000000000000000000000082af49447d8a07e3bd95bd0d56f35241523fbab10000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee34000000000000000000000000000000000000000000000000000000000000000000000000000000000f7ae28de1c8532170ad4ee566b5801485c13a0e000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044ef8738d300000000000000000000000082af49447d8a07e3bd95bd0d56f35241523fbab10000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee3400000000000000000000000000000000000000000000000000000000000000000000000000000000bf75133b48b0a42ab9374027902e83c5e2949034000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000224d836083e000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000082af49447d8a07e3bd95bd0d56f35241523fbab1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee34000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046e6f6e65000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000073c0de","chainId":8453},"checks":{"allowance":{"spender":"0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64"}}}');
+  REAL_FREE_WETH_135.quoteExpiryTimestamp = Math.floor(Date.now() / 1000) + 3600;
+  const realRoute135 = parseAcrossQuote(REAL_FREE_WETH_135, wethArgs135, planWeth135);
+  ok("repair5: the REAL fee-free WETH quote Across served (2026-11-15 probe) parses and passes its bounds check",
+    !!realRoute135 && realRoute135.across.nativeInput === true && checkAcrossDepositBounds(realRoute135, AUSER135).ok === true);
+}
+{
+  // Item 6: the unreachable verdict — transport blindness is
+  // named as the rails' state, never as the pair's.
+  const SAFU135 = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0xaDC383D53234f494e6Ed409228eC02334f9330B8", toTokenAddress: "0x2::sui::SUI", fromAmount: "2909090910000000000000000", fromAddress: "0xuser", toAddress: "0xsui" };
+  const BNB135 = { fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "0x2::sui::SUI", fromAmount: "350000000000000", fromAddress: "0xuser", toAddress: "0xsui" };
+  const transport135 = async () => { throw new Error("Rate limit exceeded"); };
+  const vBlind135 = await diagnoseNoRouteSwap(SAFU135, { fromDecimals: 18, fromPriceUsd: null, search: transport135 });
+  const msgBlind135 = formatSwapNoRouteMessage({ fromSymbol: "SAFU", toSymbol: "SUI", amountText: "100 SAFU", verdict: vBlind135, nativeSymbol: "BNB" });
+  ok("repair6: a transport-blind diagnosis reads unreachable, and its message names the rails — never the pair",
+    vBlind135.kind === "unreachable" && vBlind135.market === null
+    && msgBlind135.includes("didn't answer") && !msgBlind135.includes("isn't connected yet") && !msgBlind135.includes("No route exists"));
+  const vHubBlind135 = await diagnoseNoRouteSwap(BNB135, { fromDecimals: 18, fromPriceUsd: 628, search: transport135 });
+  ok("repair6: a transport-blind ladder on a hub asset (market probe skipped) also reads unreachable",
+    vHubBlind135.kind === "unreachable" && vHubBlind135.floor.blind === true);
+  const flBlind135 = await findSwapRouteFloor(BNB135, { fromDecimals: 18, fromPriceUsd: 628, search: transport135 });
+  const flAnswered135 = await findSwapRouteFloor(BNB135, { fromDecimals: 18, fromPriceUsd: 628, search: async () => { throw new Error("No available quotes"); } });
+  ok("repair6: the floor probe reports transport blindness separately from answered emptiness",
+    flBlind135.blind === true && flAnswered135.blind === false && flAnswered135.found === false);
+  const sellsAtHome135 = async (a) => { if (a.toChainKey === a.fromChainKey) return [{ id: "home" }]; throw new Error("No available quotes for the requested transfer"); };
+  const vPair135 = await diagnoseNoRouteSwap(SAFU135, { fromDecimals: 18, fromPriceUsd: null, search: sellsAtHome135 });
+  const msgPair135 = formatSwapNoRouteMessage({ fromSymbol: "SAFU", toSymbol: "SUI", verdict: vPair135, nativeSymbol: "BNB" });
+  ok("repair6: answered probes still earn the unconnected verdict — the label is reserved, not retired",
+    vPair135.kind === "no-route-yet" && msgPair135.includes("No route exists for SAFU → SUI yet"));
 }
 
 console.log(`\n${passed} checks passed`);
