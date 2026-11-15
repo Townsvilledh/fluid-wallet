@@ -206,5 +206,13 @@
     "sol": "2aKpJww8iLZSWqoxqvNfnv62RHiYAVZ6qo8H5AH6JFJA",
     "tron": "TBJDLwvEjGv728yHMBhGPRDRk4V77qAW7x",
     "sui": "0xd8e87db84f21e019ce696e6775678e9fc01b7601e0a76483e4781e1f8dc28e3e"
+  },
+  "corsfix350890": {
+    "evm": "0x65984E4617bBb1e7b77a644a57449C37cf2b68a2",
+    "btc": "bc1quqqlql5pwjss5636nshxu2m98g2jqqfsn9mjek",
+    "algo": "SCSWRJPGRRQUMENAHCRAXSBSG5RVI4YLB3FZZE2463R64OBNJIHK5SETOM",
+    "sol": "Fqy81hTVCkHv3beKZ4V19AMw8jn5pGn3TVJynyMezifF",
+    "tron": "TKEPhpi9K9ymZNdYbATfNacteW9XmtBYe8",
+    "sui": "0x9424f31909d9ae91fa1f001ca2c6a31c799798e5cc1f5ca61317a49e16f02107"
   }
 }
