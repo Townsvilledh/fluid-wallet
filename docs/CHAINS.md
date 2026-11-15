@@ -66,8 +66,16 @@ same seed. Everything listed here **ships**: balance, receive and send.
   is disclosed on both cards) and intra-Stacks swaps via
   Bitflow (v1: client-side quotes, no Fluid fee — see
   `docs/SWAPS.md`, gap #11).
-- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub)** —
-  full send/receive/balance.
+- **Algorand** — full send/receive/balance, plus
+  intra-chain swaps via Tinyman v2 and Pact direct (atomic
+  groups Fluid assembles itself, with its fee as a skim leg
+  inside the group; fast class, seconds — see
+  `docs/SWAPS.md`, gap #12). USDt on Algorand trades below
+  $1 in its own pools and is valued at the pool-implied
+  rate everywhere in the swap surface. Cross-chain
+  Algorand is an honest no-route.
+- **TON, NEAR, XRPL, Polkadot (Asset Hub)** — full
+  send/receive/balance.
 
 ## Tokens
 

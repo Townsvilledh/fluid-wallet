@@ -6492,7 +6492,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -12911,7 +12911,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13258,7 +13258,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17102,7 +17102,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17853,7 +17853,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
       && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
     ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
-      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrc120.includes('if (netKey === "cardano")')
+      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrc120.includes('if (netKey === "cardano")')
       && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
       && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr"));
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
@@ -19749,7 +19749,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // App wiring pins (house style).
   ok("gap9 app: the swap sheet lists Stellar (XLM sentinel + USDC row), threads its address, and names Soroswap",
     appSrc129.includes('if (netKey === "stellar")') && appSrc129.includes('"USDC:" + STELLAR_USDC_ISSUER')
-    && appSrc129.includes('"cardano", "zcash", "dash", "stellar", "stacks"]') && appSrc129.includes("stellar: stellarAddr")
+    && appSrc129.includes('"cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrc129.includes("stellar: stellarAddr")
     && appSrc129.includes('if (route && route.provider === "soroswap") return "Soroswap";')
     && appSrc129.includes('if (chainKey === "stellar") {'));
   ok("gap9 app: execution dispatches Soroswap routes to the core executor with the stellar.expert link",
@@ -20179,7 +20179,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && coreSrc131.includes("export async function executeBitflowSwapRoute")
     && coreSrc131.includes('case "stacks": return isValidStacksAddress(own.stacks'));
   ok("gap11 app: the picker lists Stacks, the sheet presents the peg Move, names Bitflow, and the peg records panel + drivers are wired",
-    appSrc131.includes('if (netKey === "stacks")') && appSrc131.includes('"stellar", "stacks"]')
+    appSrc131.includes('if (netKey === "stacks")') && appSrc131.includes('"stellar", "stacks", "algorand"]')
     && appSrc131.includes("sbtcPegPairForRoute(fromKey, fromTok.address, toKey, toTok.address)")
     && appSrc131.includes("openSbtcPegSheet") && appSrc131.includes('id="wSbtcPeg"')
     && appSrc131.includes('if (route && route.provider === "bitflow") return "Bitflow";')
@@ -20303,6 +20303,187 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && sbtcPegPhase(healed, { tipHeight: 900000 }) === "confirming"
       && !!storedHealed && storedHealed.state === "confirming" && storedHealed.mintedAmountSats === null);
   } finally { globalThis.fetch = realFetch132; }
+}
+
+/* ================= §133 — gap #12: Algorand intra-chain
+ * swaps (Tinyman v2 + Pact direct, in-group skim capture) ====
+ * Pins: the ASA ids and fee recipient; the Tinyman pool
+ * address derivation against the live-verified mainnet pools;
+ * both venues' quote arithmetic against the research
+ * fixtures (the live pool states read 2026-11-15, recomputed
+ * independently); Pact's API + global-state parsing against
+ * the fixture shapes; the group assembly and its bounds
+ * checks (a tampered leg refuses); the skim arithmetic (fee
+ * + deposit == amount exactly, per direction); the opt-in as
+ * its own separate step, never a group leg; and USDt valued
+ * at its pool-implied rate in ranking — a >1-output USDt
+ * quote must not outrank a par USDC quote of higher value. */
+import { ALGORAND_SWAP_CHAIN_ID, ALGORAND_SWAP_NATIVE_TOKEN, ALGORAND_SWAP_TOKENS, ALGO_USDT_ASA, ALGO_GOBTC_ASA, ALGO_GOETH_ASA, ALGO_FEE_RECIPIENT, TINYMAN_V2_VALIDATOR_APP_ID, tinymanPoolAddress, parseTinymanPoolState, tinymanFixedInputQuote, parsePactPoolList, parsePactGlobalState, pactFixedInputQuote, algoPoolImpliedUsd, algoSwapSupportsPair, buildAlgoSwapGroupSpec, checkAlgoSwapGroupSpec, buildAlgoOptInSpec, checkAlgoOptInSpec, materialiseAlgoLeg, algoTxnDescriptor, algoDisclosureLines } from "../src/wallet-core.js";
+{
+  const FROM133 = "O67U3XOR7LK42HA5DB2BCQDMSVW7WMY3QMCW6P7XXQONLRVRLESB6XAB34"; // the fee wallet's published address
+  const USER133 = algoAddressFromPhrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
+  ok("gap12: ASA ids pinned (USDC 31566704, USDt 312769, goBTC 386192725, goETH 386195940)",
+    ALGO_USDC_ASA === 31566704 && ALGO_USDT_ASA === 312769 && ALGO_GOBTC_ASA === 386192725 && ALGO_GOETH_ASA === 386195940);
+  ok("gap12: the Algorand fee recipient is the DripBot fee wallet's Algorand address, and the swap chain id is pinned",
+    ALGO_FEE_RECIPIENT === FROM133 && FEE_SPLIT.dripbot.agentWallet.algo === FROM133
+    && ALGORAND_SWAP_CHAIN_ID === 20000000000022
+    && ALGORAND_SWAP_NATIVE_TOKEN === "algo" && TINYMAN_V2_VALIDATOR_APP_ID === 1002541853);
+  ok("gap12: the swap token table is the native coin plus the four pinned ASAs",
+    ALGORAND_SWAP_TOKENS.length === 5 && ALGORAND_SWAP_TOKENS[0].native === true
+    && ALGORAND_SWAP_TOKENS.map(t => t.address).join(",") === "algo,31566704,312769,386192725,386195940"
+    && ALGORAND_SWAP_TOKENS.find(t => t.symbol === "goBTC").decimals === 8);
+  ok("gap12: pair support is Algorand-to-Algorand over the pinned table only",
+    algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "algo" }, toToken: { address: "31566704" } }) === true
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "base", fromToken: { address: "algo" }, toToken: { address: "31566704" } }) === false
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "31566704" }, toToken: { address: "31566704" } }) === false
+    && algoSwapSupportsPair({ fromChainKey: "algorand", toChainKey: "algorand", fromToken: { address: "algo" }, toToken: { address: "999999" } }) === false);
+  // Pool derivation, verified live 2026-11-15: both accounts
+  // exist on mainnet carrying the validator's local state.
+  ok("gap12: the Tinyman pool address derivation reproduces the live mainnet pools",
+    tinymanPoolAddress(0, 31566704) === "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM"
+    && tinymanPoolAddress(31566704, 0) === "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM"
+    && tinymanPoolAddress(31566704, 312769) === "CPMRVP35L6J6Y2D5TXG4ODNKT7GQFOZLCJ5CHF2KCDHCM4UF47FQ5UWSQI");
+  // Tinyman quote arithmetic vs the research fixtures: the
+  // live pool state read 2026-11-15 (reserves in µunits,
+  // total_fee_share 36) and a synthetic 0.3%-share pool.
+  ok("gap12: Tinyman fixed-input quote matches the SDK arithmetic on the fixture states",
+    tinymanFixedInputQuote({ reserveIn: 8858585505904n, reserveOut: 705294605770n, amountIn: 251400000n, totalFeeShare: 36 }) === 19943110n
+    && tinymanFixedInputQuote({ reserveIn: 486700000000n, reserveOut: 38450000000n, amountIn: 63190000n, totalFeeShare: 30 }) === 4976480n
+    && tinymanFixedInputQuote({ reserveIn: 705294605770n, reserveOut: 8858585505904n, amountIn: 20000000n, totalFeeShare: 36 }) === 250291016n
+    && tinymanFixedInputQuote({ reserveIn: 0n, reserveOut: 5n, amountIn: 10n, totalFeeShare: 30 }) === 0n);
+  const kv133 = (k, uint) => ({ key: Buffer.from(k, "utf8").toString("base64"), value: { type: 2, uint } });
+  const tmState133 = parseTinymanPoolState({ "apps-local-state": [{ id: 1002541853, "key-value": [
+    kv133("asset_1_id", 31566704), kv133("asset_2_id", 0), kv133("asset_1_reserves", 705294605770),
+    kv133("asset_2_reserves", 8858585505904), kv133("total_fee_share", 36)] }] });
+  ok("gap12: Tinyman pool state parses out of the algod account shape (and a non-pool account parses to null)",
+    !!tmState133 && tmState133.asset1Id === 31566704 && tmState133.asset2Id === 0
+    && tmState133.asset1Reserves === 705294605770n && tmState133.totalFeeShare === 36
+    && parseTinymanPoolState({ "apps-local-state": [] }) === null && parseTinymanPoolState(null) === null);
+  // Pact parsing vs the fixtures: the ALGO/USDC pool record
+  // (app 1073557308) and its live global state.
+  const pactList133 = parsePactPoolList({ results: [
+    { on_chain_id: "1073557308", on_chain_address: "JWOUUZ7YJJ42EHPRGW2NG64LZNUHNMWK7D5TE36GF6P6P2FXHGPZ42V2AE", pool_type: "CONST", fee_bps: 30, primary_asset: { on_chain_id: 0 }, secondary_asset: { on_chain_id: 31566704 } },
+    { on_chain_id: "885102197", on_chain_address: "CWELFRXFDWLRY6ZO6QET3AB7L3PKZD3KVDJWZULYIJYOARHUTAWN2LZT2Y", pool_type: "STBL", fee_bps: 4, primary_asset: { on_chain_id: 31566704 }, secondary_asset: { on_chain_id: 672913181 } },
+    { on_chain_id: "junk", pool_type: "CONST", primary_asset: { on_chain_id: 0 }, secondary_asset: { on_chain_id: 1 } }] });
+  ok("gap12: Pact pool-list parsing keeps constant-product pools only, with the fixture pool intact",
+    pactList133.length === 1 && pactList133[0].appId === 1073557308
+    && pactList133[0].address === "JWOUUZ7YJJ42EHPRGW2NG64LZNUHNMWK7D5TE36GF6P6P2FXHGPZ42V2AE"
+    && pactList133[0].primaryId === 0 && pactList133[0].secondaryId === 31566704 && pactList133[0].feeBps === 30);
+  const gsBytes133 = (k, bytes) => ({ key: Buffer.from(k, "utf8").toString("base64"), value: { type: 1, bytes: Buffer.from(bytes).toString("base64") } });
+  const cfg133 = Buffer.alloc(24); cfg133.writeBigUInt64BE(0n, 0); cfg133.writeBigUInt64BE(31566704n, 8); cfg133.writeBigUInt64BE(30n, 16);
+  const pactState133 = parsePactGlobalState([kv133("A", 274346719460), kv133("B", 21824591230), gsBytes133("CONFIG", cfg133), gsBytes133("CONTRACT_NAME", Buffer.from("PACT AMM", "utf8"))]);
+  ok("gap12: Pact global state parses CONFIG/A/B for a constant-product pool (and a stableswap app parses to null)",
+    !!pactState133 && pactState133.assetA === 0 && pactState133.assetB === 31566704 && pactState133.feeBps === 30
+    && pactState133.totalPrimary === 274346719460n && pactState133.totalSecondary === 21824591230n
+    && parsePactGlobalState([kv133("A", 1), kv133("B", 2), gsBytes133("CONFIG", cfg133), gsBytes133("CONTRACT_NAME", Buffer.from("[SI] PACT AMM", "utf8"))]) === null);
+  ok("gap12: Pact fixed-input quote matches the SDK arithmetic on the fixture states",
+    pactFixedInputQuote({ liqIn: 274346719460n, liqOut: 21824591230n, amountIn: 251400000n, feeBps: 30 }) === 19920901n
+    && pactFixedInputQuote({ liqIn: 100000000000n, liqOut: 8000000000n, amountIn: 5000000n, feeBps: 30 }) === 398780n
+    && pactFixedInputQuote({ liqIn: 0n, liqOut: 5n, amountIn: 10n, feeBps: 30 }) === 0n);
+  // USDt implied valuation: the live USDC/USD t Tinyman pool
+  // reserves (whole units) imply ≈ $0.8836 — never $1.
+  const implied133 = algoPoolImpliedUsd({ unknownReserveWhole: 3260498.185, anchorReserveWhole: 2880967.427, anchorUsd: 1 });
+  ok("gap12: USDt's implied price comes from its pool (≈ $0.88), never an assumed $1",
+    implied133 > 0.87 && implied133 < 0.89 && implied133 !== 1
+    && algoPoolImpliedUsd({ unknownReserveWhole: 0, anchorReserveWhole: 5, anchorUsd: 1 }) === null);
+  // Route fixtures, built with the exported fee law exactly
+  // as the quoter builds them (ALGO at $0.07962).
+  const ALGO_USD133 = 0.07962;
+  const mkRoute133 = (over) => ({ fromChainKey: "algorand", toChainKey: "algorand", fromChainId: ALGORAND_SWAP_CHAIN_ID, toChainId: ALGORAND_SWAP_CHAIN_ID,
+    steps: [], gasCostUSD: 0.0003, executionDuration: 10, ...over });
+  // A — Tinyman ALGO→USDC, collecting: the skim is exact in
+  // the input (fee 1,257,000 µALGO at the law's 50 bps).
+  const rfA133 = (905040 / 1e6) * ALGO_USD133, amtA133 = 251.4 * ALGO_USD133;
+  const bpsA133 = platformFeeBpsForRoute(rfA133, amtA133, "algorand");
+  const feeA133 = platformFeeOn("251400000", bpsA133);
+  const routeA133 = mkRoute133({ provider: "tinyman", id: "tinyman-algo-0-31566704",
+    fromToken: { address: "algo", symbol: "ALGO", decimals: 6 }, toToken: { address: "31566704", symbol: "USDC", decimals: 6 },
+    fromAmount: "251400000", toAmount: "19843397", toAmountMin: "19744180", fromAmountUSD: amtA133, toAmountUSD: 19.843397,
+    routeFeeUsd: rfA133, platformFeeRaw: feeA133.toString(), platformFeeBps: bpsA133,
+    platformFeeUsd: (Number(feeA133) / 1e6) * ALGO_USD133, collecting: true, platformFeeCollecting: true,
+    algo: { venue: "tinyman", assetInId: 0, assetOutId: 31566704, poolAddress: "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM",
+      poolInputRaw: (251400000n - feeA133).toString(), feeLegRaw: feeA133.toString(), needsOptIn: false, priceImpactPct: 0.4 } });
+  ok("gap12: skim arithmetic, ALGO-in direction — the law yields 50 bps and fee + pool deposit == the amount, exactly",
+    bpsA133 === 50 && feeA133 === 1257000n && feeA133 + BigInt(routeA133.algo.poolInputRaw) === 251400000n);
+  ok("gap12: the executability gate accepts the collecting Tinyman route and re-derives its fee state",
+    swapRouteExecutable(routeA133).ok === true
+    && swapRouteExecutable({ ...routeA133, platformFeeRaw: "0" }).ok === false
+    && swapRouteExecutable({ ...routeA133, algo: { ...routeA133.algo, poolInputRaw: "250143001" } }).ok === false
+    && swapRouteExecutable({ ...routeA133, algo: { ...routeA133.algo, poolAddress: "CPMRVP35L6J6Y2D5TXG4ODNKT7GQFOZLCJ5CHF2KCDHCM4UF47FQ5UWSQI" } }).ok === false);
+  // B — Tinyman USDC→USDt, collecting in an ALGO leg: the
+  // pool receives the full input; the fee leg is the law's
+  // USD figure converted at the quote's ALGO price.
+  const feeUsdB133 = platformFeeUsdForRoute(0.072, 20, "algorand");
+  const feeLegB133 = BigInt(Math.floor((feeUsdB133 / ALGO_USD133) * 1e6));
+  const routeB133 = mkRoute133({ provider: "tinyman", id: "tinyman-algo-31566704-312769",
+    fromToken: { address: "31566704", symbol: "USDC", decimals: 6 }, toToken: { address: "312769", symbol: "USDt", decimals: 6 },
+    fromAmount: "20000000", toAmount: "22398328", toAmountMin: "22286336", fromAmountUSD: 20, toAmountUSD: 22.398328 * implied133,
+    routeFeeUsd: 0.072, platformFeeRaw: feeLegB133.toString(), platformFeeBps: platformFeeBpsForRoute(0.072, 20, "algorand"),
+    platformFeeUsd: feeUsdB133, collecting: true, platformFeeCollecting: true,
+    algo: { venue: "tinyman", assetInId: 31566704, assetOutId: 312769, poolAddress: "CPMRVP35L6J6Y2D5TXG4ODNKT7GQFOZLCJ5CHF2KCDHCM4UF47FQ5UWSQI",
+      poolInputRaw: "20000000", feeLegRaw: feeLegB133.toString(), needsOptIn: true, priceImpactPct: 0.5, usdtImpliedUsd: 0.8836 } });
+  ok("gap12: skim arithmetic, ASA-in direction — the pool receives the full amount and the fee rides as an ALGO leg under the law",
+    platformFeeBpsForRoute(0.072, 20, "algorand") === 50 && feeLegB133 > 0n
+    && routeB133.algo.poolInputRaw === routeB133.fromAmount && swapRouteExecutable(routeB133).ok === true);
+  ok("gap12: USDt ranking honesty — the >1-output USDt quote (22.398 out) does NOT outrank the par USDC quote of higher value",
+    BigInt(routeB133.toAmount) > BigInt(routeA133.toAmount) && routeB133.toAmountUSD < routeA133.toAmountUSD
+    && (() => { const ranked = rankSwapRoutes([routeB133, routeA133], null); return ranked[0] === ranked.find(r => r.toToken.symbol === "USDC") && ranked[0].cheapest === true && ranked[1].cheapest === false; })());
+  // C — Pact ALGO→USDC, collecting; and a fee-free variant.
+  const rfC133 = 0.059943, bpsC133 = platformFeeBpsForRoute(rfC133, amtA133, "algorand");
+  const feeC133 = platformFeeOn("251400000", bpsC133);
+  const routeC133 = mkRoute133({ provider: "pact", id: "pact-algo-0-31566704",
+    fromToken: { address: "algo", symbol: "ALGO", decimals: 6 }, toToken: { address: "31566704", symbol: "USDC", decimals: 6 },
+    fromAmount: "251400000", toAmount: "19821386", toAmountMin: "19722279", fromAmountUSD: amtA133, toAmountUSD: 19.821386,
+    routeFeeUsd: rfC133, platformFeeRaw: feeC133.toString(), platformFeeBps: bpsC133,
+    platformFeeUsd: (Number(feeC133) / 1e6) * ALGO_USD133, collecting: true, platformFeeCollecting: true,
+    algo: { venue: "pact", assetInId: 0, assetOutId: 31566704, poolAddress: "JWOUUZ7YJJ42EHPRGW2NG64LZNUHNMWK7D5TE36GF6P6P2FXHGPZ42V2AE", poolAppId: 1073557308,
+      poolInputRaw: (251400000n - feeC133).toString(), feeLegRaw: feeC133.toString(), needsOptIn: false, priceImpactPct: 0.4 } });
+  const routeFree133 = { ...routeC133, platformFeeRaw: "0", platformFeeBps: 0, platformFeeUsd: 0, collecting: false, platformFeeCollecting: false,
+    algo: { ...routeC133.algo, poolInputRaw: "251400000", feeLegRaw: "0" } };
+  ok("gap12: the gate accepts the collecting Pact route and the honestly fee-free route, and refuses a fee-free route that still carries a fee",
+    bpsC133 === 50 && swapRouteExecutable(routeC133).ok === true && swapRouteExecutable(routeFree133).ok === true
+    && swapRouteExecutable({ ...routeFree133, algo: { ...routeFree133.algo, feeLegRaw: "5" } }).ok === false);
+  // Group assembly + bounds checks.
+  const specA133 = buildAlgoSwapGroupSpec({ venue: "tinyman", from: USER133, poolAddress: routeA133.algo.poolAddress,
+    assetInId: 0, assetOutId: 31566704, poolInputRaw: BigInt(routeA133.algo.poolInputRaw), minOutRaw: BigInt(routeA133.toAmountMin), feeLegRaw: BigInt(routeA133.algo.feeLegRaw) });
+  ok("gap12: group assembly — [deposit, validator call, skim leg], the call pinned to the validator with the reviewed minimum",
+    specA133.legs.length === 3 && specA133.legs[0].kind === "pay" && specA133.legs[0].to === routeA133.algo.poolAddress
+    && specA133.legs[1].kind === "appl" && specA133.legs[1].appId === TINYMAN_V2_VALIDATOR_APP_ID
+    && specA133.legs[1].appArgs[2].v === routeA133.toAmountMin
+    && specA133.legs[2].kind === "pay" && specA133.legs[2].to === ALGO_FEE_RECIPIENT && specA133.legs[2].amount === "1257000"
+    && checkAlgoSwapGroupSpec(specA133, routeA133, USER133).ok === true);
+  const tamper133 = (fn) => { const s = JSON.parse(JSON.stringify(specA133)); fn(s); return checkAlgoSwapGroupSpec(s, routeA133, USER133).ok === false; };
+  ok("gap12: a tampered leg refuses — fee receiver, fee amount, app id, deposit amount, minimum-out, sender, or a dropped leg",
+    tamper133(s => { s.legs[2].to = USER133; }) && tamper133(s => { s.legs[2].amount = "1257001"; })
+    && tamper133(s => { s.legs[1].appId = 999; }) && tamper133(s => { s.legs[0].amount = "250143001"; })
+    && tamper133(s => { s.legs[1].appArgs[2].v = "1"; }) && tamper133(s => { s.legs[0].from = FROM133; })
+    && tamper133(s => { s.legs.pop(); }));
+  const specC133 = buildAlgoSwapGroupSpec({ venue: "pact", from: USER133, poolAddress: routeC133.algo.poolAddress, poolAppId: 1073557308,
+    assetInId: 0, assetOutId: 31566704, poolInputRaw: BigInt(routeC133.algo.poolInputRaw), minOutRaw: BigInt(routeC133.toAmountMin), feeLegRaw: BigInt(routeC133.algo.feeLegRaw) });
+  ok("gap12: the Pact group calls the pool's own app with the SWAP selector, and a wrong pool app refuses",
+    specC133.legs[1].appId === 1073557308 && specC133.legs[1].appArgs[0].v === "SWAP"
+    && checkAlgoSwapGroupSpec(specC133, routeC133, USER133).ok === true
+    && checkAlgoSwapGroupSpec({ ...specC133, legs: specC133.legs.map((l, i) => i === 1 ? { ...l, appId: 1073557309 } : l) }, routeC133, USER133).ok === false);
+  // Materialise → decode → re-check: the executor's second
+  // pass over the ACTUAL transactions it would sign.
+  const gh133 = new Uint8Array(Buffer.from("wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=", "base64"));
+  const params133 = { fee: 1000n, flatFee: true, firstValid: 1000, lastValid: 2000, genesisID: "mainnet-v1.0", genesisHash: gh133 };
+  const built133 = specA133.legs.map(l => materialiseAlgoLeg(l, params133));
+  const decoded133 = { venue: "tinyman", legs: built133.map(algoTxnDescriptor) };
+  ok("gap12: materialised transactions decode back to the reviewed spec and pass the same bounds check",
+    checkAlgoSwapGroupSpec(decoded133, routeA133, USER133).ok === true
+    && decoded133.legs[0].amount === routeA133.algo.poolInputRaw && decoded133.legs[2].to === ALGO_FEE_RECIPIENT);
+  // Opt-in separation: its own single-leg spec, and never a
+  // leg inside the swap group.
+  const optSpec133 = buildAlgoOptInSpec({ from: USER133, assetId: 312769 });
+  ok("gap12: the destination opt-in is its own separate zero-amount self-transfer, never a swap-group leg",
+    optSpec133.legs.length === 1 && optSpec133.legs[0].kind === "axfer" && optSpec133.legs[0].to === USER133
+    && optSpec133.legs[0].amount === "0" && checkAlgoOptInSpec(optSpec133, { from: USER133, assetId: 312769 }).ok === true
+    && checkAlgoOptInSpec({ legs: [{ ...optSpec133.legs[0], amount: "1" }] }, { from: USER133, assetId: 312769 }).ok === false
+    && !specA133.legs.some(l => l.kind === "axfer" && l.to === USER133)
+    && algoDisclosureLines(routeB133).join(" ").includes("separate opt-in transaction")
+    && algoDisclosureLines(routeB133).join(" ").includes("below $1")
+    && algoDisclosureLines(routeFree133).join(" ").includes("No Fluid fee on this route"));
 }
 
 console.log(`\n${passed} checks passed`);

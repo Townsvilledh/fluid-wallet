@@ -5901,7 +5901,11 @@ export const FEE_SPLIT = {
     // Autonomous agent wallet created 2026-11-06 (agent/fluid-agent.mjs,
     // mode: autonomous, paired with @bitcoinornatin). Public addresses only:
     agentWallet: { evm: "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B", btc: "bc1qxtn2gkquphkhazvy6x8ny8tejxm530xlcskqqn",
-      solana: "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn", tron: "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf", sui: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831" },
+      solana: "dpNKQrEWWU3kBLNMRYWZ4Dsnbig7G9vCeVChTHn4VPn", tron: "TMdUcLZmKVvKYHMJ12k5AA3ZCCHxPpmSSf", sui: "0x0cb53076d1207be242b18a63d97d2ccbd63f74d75abb68d4b7ea63b3a1d38831",
+      // Algorand (gap #12, 2026-11-15): the DripBot fee wallet's
+      // Algorand address — the same address its names.json entry
+      // publishes. The Tinyman/Pact skim legs pay here.
+      algo: "O67U3XOR7LK42HA5DB2BCQDMSVW7WMY3QMCW6P7XXQONLRVRLESB6XAB34" },
     // The odd account, by design (docs/DRIPBOT.md): DripBot is AUTONOMOUS.
     // It has NO on/off-ramp and never sells anything. It only RECEIVES
     // BTC over Lightning (converted from platform fee assets) and PAYS
@@ -22367,6 +22371,10 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     const out = await executeBitflowSwapRoute(wallet, route, progress);
     return out.hashes;
   }
+  if (route.provider === "tinyman" || route.provider === "pact") {
+    const out = await executeAlgoSwapRoute(wallet, route, progress);
+    return out.hashes;
+  }
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** The gas-fallback leg-2 band (security audit WS2 F3,
@@ -22754,6 +22762,7 @@ export function swapOwnAddressFor(chainKey, own) {
     case "zcash": return isValidZcashAddress(own.zcash || "") ? own.zcash : null;
     case "dash": return isValidDashAddress(own.dash || "") ? own.dash : null;
     case "stellar": return isValidStellarAddress(own.stellar || "") ? own.stellar : null;
+    case "algorand": return isValidAlgorandAddress(own.algorand || "") ? own.algorand : null;
     case "stacks": return isValidStacksAddress(own.stacks || "") ? own.stacks : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
@@ -25564,6 +25573,15 @@ async function getSwapRoutesDirect(args) {
   if (bitflowSupportsPair(planArgs)) {
     try { const bf = await getBitflowSwapRoute(planArgs); if (bf) routes.push(bf); } catch { /* Bitflow is a candidate, never a single point of failure */ }
   }
+  // Algorand intra-chain (gap #12, 2026-11-15): Tinyman v2 and
+  // Pact quoted directly — Tinyman computed client-side from
+  // algod pool state, Pact discovered through its keyless API
+  // and quoted from app state. Both venues' routes compete on
+  // merit like every other candidate; either venue failing
+  // simply leaves the pair to the other.
+  if (algoSwapSupportsPair(planArgs)) {
+    try { const ag = await getAlgoSwapRoutes(planArgs); for (const r of ag || []) routes.push(r); } catch { /* Algorand venues are candidates, never a single point of failure */ }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -26562,6 +26580,50 @@ export function swapRouteExecutable(route) {
     if (route.collecting === true || route.platformFeeCollecting === true || String(route.platformFeeRaw ?? "0") !== "0")
       return { ok: false, reason: "This Bitflow route claims a Fluid fee the v1 path cannot carry or verify — pick another route." };
     return { ok: true, bitflow: true };
+  }
+  // Algorand intra-chain routes (Tinyman v2 / Pact, gap #12):
+  // executable when the chain ids are the Algorand swap id,
+  // the stored venue payload is complete (pool identity,
+  // deposit amount, fee leg), the slippage floor re-derives
+  // from the quoted output, and the fee state re-derives
+  // under the fee law from the route's own amounts — the
+  // skim is a leg inside the atomic group the executor
+  // assembles and bounds-checks leg by leg before signing,
+  // so the gate is structural, exactly like the lanes above.
+  if (route?.provider === "tinyman" || route?.provider === "pact") {
+    const a = route.algo;
+    const incomplete = "This Algorand route is incomplete — pick another route.";
+    const rawOk = (v) => typeof v === "string" && /^\d+$/.test(v);
+    if (!a || route.fromChainKey !== "algorand" || route.toChainKey !== "algorand"
+      || Number(route.fromChainId) !== ALGORAND_SWAP_CHAIN_ID || Number(route.toChainId) !== ALGORAND_SWAP_CHAIN_ID
+      || a.venue !== route.provider
+      || !rawOk(route.fromAmount) || !rawOk(route.toAmount) || !rawOk(route.toAmountMin)
+      || !rawOk(a.poolInputRaw) || !rawOk(a.feeLegRaw)
+      || !Number.isInteger(a.assetInId) || !Number.isInteger(a.assetOutId) || a.assetInId === a.assetOutId
+      || !isValidAlgorandAddress(a.poolAddress || "")
+      || (route.provider === "tinyman" && a.poolAddress !== tinymanPoolAddress(a.assetInId, a.assetOutId))
+      || (route.provider === "pact" && (!Number.isInteger(a.poolAppId) || a.poolAppId <= 0)))
+      return { ok: false, reason: incomplete };
+    const expectMin = (BigInt(route.toAmount) * BigInt(10000 - ALGO_SWAP_SLIPPAGE_BPS)) / 10000n;
+    if (BigInt(route.toAmountMin) !== expectMin || expectMin <= 0n) return { ok: false, reason: incomplete };
+    if (route.collecting === true || route.platformFeeCollecting === true) {
+      const bps = platformFeeBpsForRoute(route.routeFeeUsd, route.fromAmountUSD, "algorand");
+      const feeUsd = platformFeeUsdForRoute(route.routeFeeUsd, route.fromAmountUSD, "algorand");
+      if (!(bps > 0) || Number(route.platformFeeBps) !== bps) return { ok: false, reason: incomplete };
+      if (!rawOk(route.platformFeeRaw) || BigInt(route.platformFeeRaw) <= 0n) return { ok: false, reason: incomplete };
+      if (String(route.platformFeeRaw) !== String(a.feeLegRaw)) return { ok: false, reason: incomplete };
+      if (Math.abs(Number(route.platformFeeUsd) - feeUsd) > Math.max(0.01, feeUsd * 0.25)) return { ok: false, reason: incomplete };
+      // When the input is ALGO itself, the skim is exact by
+      // construction: fee + pool deposit == the full amount.
+      if (a.assetInId === 0 && BigInt(a.feeLegRaw) !== platformFeeOn(route.fromAmount, bps)) return { ok: false, reason: incomplete };
+      if (a.assetInId === 0 && BigInt(a.feeLegRaw) + BigInt(a.poolInputRaw) !== BigInt(route.fromAmount)) return { ok: false, reason: incomplete };
+      if (a.assetInId !== 0 && BigInt(a.poolInputRaw) !== BigInt(route.fromAmount)) return { ok: false, reason: incomplete };
+    } else {
+      if (String(route.platformFeeRaw ?? "0") !== "0" || String(a.feeLegRaw) !== "0" || Number(route.platformFeeBps ?? 0) !== 0)
+        return { ok: false, reason: "This Algorand route says fee-free but carries a fee — pick another route." };
+      if (BigInt(a.poolInputRaw) !== BigInt(route.fromAmount)) return { ok: false, reason: incomplete };
+    }
+    return { ok: true, algo: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
@@ -33645,6 +33707,639 @@ export async function executeBitflowSwapRoute(wallet, route, onProgress = () => 
     if (!vis) throw e;
   }
   return { hashes: [txid], feeUstx: feeUstx.toString() };
+}
+
+// ---------- Algorand intra-chain swaps: Tinyman v2 + Pact direct (gap #12, 2026-11-15) ----------
+// Fluid's Algorand family held, sent and received long before
+// it could swap (the audit's intra-chain gap). This slice
+// closes it against the chain's two live DEXes DIRECTLY — no
+// aggregator in between:
+//
+//   * Tinyman v2 — pools are LogicSig accounts under the v2
+//     validator app (pinned below); pool state is read from
+//     algod (the pool account's local state for the validator)
+//     and the fixed-input quote is computed client-side with
+//     the official SDK's own arithmetic.
+//   * Pact — pools are applications; discovery runs through
+//     Pact's keyless public API (the pair's pool list), state
+//     from the pool app's global state on algod, the quote
+//     with the official SDK's constant-product arithmetic.
+//     Constant-product pools only ("PACT AMM"); stableswap
+//     pools are not quoted by this slice.
+//
+// Neither venue has an integrator/affiliate programme
+// (Tinyman's FAQ: none; Pact's pool fee goes 100% to LPs), so
+// capture is the SKIM shape (Noble CCTP / SunSwap precedent):
+// Fluid assembles the swap's atomic group itself and appends
+// its fee as a payment leg inside that same group — in ALGO
+// at the quote-implied rate under the fee law, or, when the
+// input is ALGO itself, as a leg of exactly the input's skim
+// (the pool receives amount − fee; fee + deposit == amount,
+// exactly). If the user's ALGO cannot cover the fee leg
+// alongside the swap and the network fees, the route is
+// honestly fee-free (collecting=false), never blocked (the
+// Cosmos precedent); below the fee law's floor it is fee-free
+// by the law itself.
+//
+// Execution is inspect-before-sign in the fleet pattern: the
+// group is built as plain descriptors, every descriptor is
+// bounds-checked against the reviewed route, the materialised
+// algosdk transactions are decoded back to descriptors and
+// checked AGAIN, and only then does anything sign. A missing
+// destination-ASA opt-in is its OWN signing step first (the
+// Stellar trustline precedent): a separate bounds-checked
+// opt-in transaction, then the swap group is built fresh —
+// never smuggled inside the swap group unannounced.
+//
+// USDt honesty (brief E): USDt on Algorand (ASA 312769,
+// genuine Tether) trades BELOW $1 in its own pools (≈ $0.88
+// measured 2026-11-15). Everywhere this slice prices,
+// displays or ranks USDt it uses the quoting pool's implied
+// rate — never the $1 the generic price table pins on the
+// USDT symbol. A USDC→USDt quote showing more than 1 out per
+// 1 in is that discount, and its USD value is stated at the
+// implied rate so it cannot outrank a par quote on raw
+// output. goBTC/goETH (Algomint custodian-bridged ASAs) are
+// ordinary swap assets here — their pools are thin, so the
+// card states the price impact plainly; there is NO Move
+// pair for them (Algomint mint/redeem is a custodial web
+// flow, not a canonical bridge Fluid can compose).
+//
+// Speed: fast class. Algorand's measured block time is
+// 2,574 ms (research, 2026-11-15) and an atomic group settles
+// in about a round — ALGO_SWAP_DURATION_SEC states a ≤ ~10 s
+// bound, honestly, and the route wears the fast badge only
+// under the sheet's own ≤90 s rule.
+//
+// NOT wired, by design: the Haystack Router (ex-Deflex,
+// TxnLab) — it HAS capture (referrerAddress + feeBps), but it
+// is gated three ways (referrer registration in the Haystack
+// app, a production API key issued by email, and a feeBps
+// rate decision) and its quote API could not be observed
+// completing from this environment at all (the KyberSwap
+// class of block: never ship an executor whose traffic was
+// never inspected). Its switch-on triggers are recorded in
+// docs/SWAPS.md. Cross-chain Algorand stays honest no-route.
+export const ALGORAND_SWAP_CHAIN_ID = 20000000000022;
+export const ALGORAND_SWAP_NATIVE_TOKEN = "algo";
+export const ALGO_USDT_ASA = 312769;
+export const ALGO_GOBTC_ASA = 386192725;
+export const ALGO_GOETH_ASA = 386195940;
+/** The swap picker's Algorand universe: the native coin plus
+ *  the pinned ASAs. USDC's id is ALGO_USDC_ASA (31566704,
+ *  Circle — pinned with the Algorand send path and re-verified
+ *  from algod in the gap-#12 research). */
+export const ALGORAND_SWAP_TOKENS = [
+  { symbol: "ALGO", address: ALGORAND_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
+  { symbol: "USDC", address: String(ALGO_USDC_ASA), decimals: 6 },
+  { symbol: "USDt", address: String(ALGO_USDT_ASA), decimals: 6 },
+  { symbol: "goBTC", address: String(ALGO_GOBTC_ASA), decimals: 8 },
+  { symbol: "goETH", address: String(ALGO_GOETH_ASA), decimals: 8 },
+];
+/** Fluid's Algorand fee recipient: the DripBot fee wallet's
+ *  Algorand address (FEE_SPLIT.dripbot.agentWallet.algo — the
+ *  address its names.json entry publishes). Skim legs pay
+ *  here; the executability gate and the group bounds check
+ *  pin every fee leg to exactly this address. */
+export const ALGO_FEE_RECIPIENT = FEE_SPLIT.dripbot.agentWallet.algo;
+export const TINYMAN_V2_VALIDATOR_APP_ID = 1002541853;
+/** The Tinyman v2 pool LogicSig template (the validator's
+ *  published pool program with the three id slots blanked).
+ *  A pool's program is template[0:3] ‖ u64(validatorAppId) ‖
+ *  u64(asset1Id) ‖ u64(asset2Id) ‖ template[27:], where
+ *  asset1 is the LARGER id and asset2 the smaller (so ALGO,
+ *  id 0, is always asset2 in its pairs). Pinned from the
+ *  official SDK (v2 pool constants) and verified live
+ *  2026-11-15: the derived ALGO/USDC pool address carries the
+ *  validator's local state with matching asset ids. */
+export const TINYMAN_POOL_LOGICSIG_TEMPLATE_B64 = "BoAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgQBbNQA0ADEYEkQxGYEBEkSBAUM=";
+export const PACT_API_BASE = "https://api.pact.fi";
+export const ALGO_SWAP_SLIPPAGE_BPS = 50;
+export const ALGO_SWAP_DURATION_SEC = 10;
+/** Per-leg network fees (µALGO) this slice builds with: the
+ *  pool app calls carry 2 × the minimum fee (they pay for
+ *  their inner transactions — the venues' own SDK figures);
+ *  plain payment/transfer legs carry the minimum fee. */
+export const ALGO_SWAP_APP_CALL_FEE = 2000;
+export const ALGO_SWAP_LEG_FEE = 1000;
+/** The one-time minimum-balance reserve an ASA opt-in locks:
+ *  0.1 ALGO per asset, Algorand's own rule. */
+export const ALGO_ASA_OPTIN_MBR = 100000n;
+
+function algoSwapTokenById(assetId) {
+  return ALGORAND_SWAP_TOKENS.find(t => (t.native ? 0 : Number(t.address)) === Number(assetId)) || null;
+}
+function algoAssetIdOfToken(token) {
+  if (!token) return null;
+  if (token.address === ALGORAND_SWAP_NATIVE_TOKEN) return 0;
+  const n = Number(token.address);
+  return Number.isInteger(n) && n > 0 && String(n) === String(token.address).trim() ? n : null;
+}
+/** The Tinyman v2 pool address for a pair (either order —
+ *  the larger id is asset1 by the validator's convention).
+ *  Pure; pinned against the live ALGO/USDC pool in §133. */
+export function tinymanPoolAddress(assetIdA, assetIdB) {
+  const [asset1, asset2] = Number(assetIdA) > Number(assetIdB) ? [Number(assetIdA), Number(assetIdB)] : [Number(assetIdB), Number(assetIdA)];
+  const t = new Uint8Array(Buffer.from(TINYMAN_POOL_LOGICSIG_TEMPLATE_B64, "base64"));
+  const parts = [t.subarray(0, 3), algosdk.encodeUint64(TINYMAN_V2_VALIDATOR_APP_ID),
+    algosdk.encodeUint64(asset1), algosdk.encodeUint64(asset2), t.subarray(27)];
+  const prog = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let off = 0; for (const p of parts) { prog.set(p, off); off += p.length; }
+  return new algosdk.LogicSigAccount(prog).address().toString();
+}
+/** Parse a Tinyman v2 pool's state out of its algod account
+ *  record (the validator app's local state). Pure; reserves
+ *  and the fee share are bigints. Null when the account is
+ *  not a live v2 pool for the validator. */
+export function parseTinymanPoolState(account) {
+  const ls = (account?.["apps-local-state"] || []).find(s => Number(s?.id) === TINYMAN_V2_VALIDATOR_APP_ID);
+  if (!ls) return null;
+  const kv = {};
+  for (const e of ls["key-value"] || []) {
+    let k = ""; try { k = Buffer.from(String(e?.key || ""), "base64").toString("utf8"); } catch { continue; }
+    if (e?.value?.type === 2) { try { kv[k] = BigInt(e.value.uint); } catch { /* hostile row */ } }
+  }
+  const need = ["asset_1_id", "asset_2_id", "asset_1_reserves", "asset_2_reserves", "total_fee_share"];
+  if (need.some(k => kv[k] == null)) return null;
+  return { asset1Id: Number(kv.asset_1_id), asset2Id: Number(kv.asset_2_id),
+    asset1Reserves: kv.asset_1_reserves, asset2Reserves: kv.asset_2_reserves,
+    totalFeeShare: Number(kv.total_fee_share) };
+}
+/** Tinyman v2 fixed-input quote, the official SDK's own
+ *  arithmetic (calculateFixedInputSwap): the pool fee comes
+ *  off the input first, then the constant-product curve, then
+ *  the SDK's −1 rounding guard. Pure bigint math. */
+export function tinymanFixedInputQuote({ reserveIn, reserveOut, amountIn, totalFeeShare }) {
+  const rIn = BigInt(reserveIn), rOut = BigInt(reserveOut), amt = BigInt(amountIn);
+  if (rIn <= 0n || rOut <= 0n || amt <= 0n) return 0n;
+  const feeAmt = (amt * BigInt(totalFeeShare)) / 10000n;
+  const swapAmt = amt - feeAmt;
+  if (swapAmt <= 0n) return 0n;
+  const out = rOut - (rIn * rOut) / (rIn + swapAmt) - 1n;
+  return out > 0n ? out : 0n;
+}
+/** Parse Pact's keyless pool-list answer for a pair: the
+ *  constant-product pools only, in the API's own fields.
+ *  Pure; hostile rows are dropped, never trusted. */
+export function parsePactPoolList(json) {
+  const rows = Array.isArray(json?.results) ? json.results : [];
+  const out = [];
+  for (const p of rows) {
+    if (!p || p.pool_type !== "CONST") continue;
+    const appId = Number(p.on_chain_id), prim = Number(p.primary_asset?.on_chain_id), sec = Number(p.secondary_asset?.on_chain_id);
+    if (!Number.isInteger(appId) || appId <= 0 || !Number.isInteger(prim) || !Number.isInteger(sec)) continue;
+    if (!isValidAlgorandAddress(p.on_chain_address || "")) continue;
+    out.push({ appId, address: p.on_chain_address, primaryId: prim, secondaryId: sec, feeBps: Number(p.fee_bps) || 0 });
+  }
+  return out;
+}
+/** Parse a Pact pool app's global state (algod application
+ *  record): CONFIG decodes to [ASSET_A, ASSET_B, FEE_BPS, …],
+ *  A/B are the pool's internal totals for ASSET_A/ASSET_B.
+ *  Pure; null unless the app is a constant-product Pact pool
+ *  ("PACT AMM") with a readable CONFIG. */
+export function parsePactGlobalState(globalState) {
+  if (!Array.isArray(globalState)) return null;
+  const st = {};
+  for (const e of globalState) {
+    let k = ""; try { k = Buffer.from(String(e?.key || ""), "base64").toString("utf8"); } catch { continue; }
+    if (e?.value?.type === 2) st[k] = e.value.uint;
+    else if (e?.value?.type === 1 && typeof e.value.bytes === "string") st[k] = e.value.bytes;
+  }
+  if (typeof st.CONFIG !== "string") return null;
+  let cfg = [];
+  try { const b = Buffer.from(st.CONFIG, "base64"); for (let o = 0; o + 8 <= b.length; o += 8) cfg.push(Number(b.readBigUInt64BE(o))); } catch { return null; }
+  if (cfg.length < 3) return null;
+  let contractName = "";
+  if (typeof st.CONTRACT_NAME === "string") { try { contractName = Buffer.from(st.CONTRACT_NAME, "base64").toString("utf8"); } catch { /* unreadable */ } }
+  if (contractName !== "PACT AMM") return null;
+  if (st.A == null || st.B == null) return null;
+  return { assetA: cfg[0], assetB: cfg[1], feeBps: cfg[2], totalPrimary: BigInt(st.A), totalSecondary: BigInt(st.B), contractName };
+}
+/** Pact constant-product fixed-input quote, the official
+ *  SDK's own arithmetic: gross off the curve, then the pool
+ *  fee off the gross (gross − gross·(10000−feeBps)/10000 —
+ *  the SDK's rounding, kept exactly). Pure bigint math. */
+export function pactFixedInputQuote({ liqIn, liqOut, amountIn, feeBps }) {
+  const lIn = BigInt(liqIn), lOut = BigInt(liqOut), amt = BigInt(amountIn);
+  if (lIn <= 0n || lOut <= 0n || amt <= 0n) return 0n;
+  const gross = (lOut * amt) / (lIn + amt);
+  const fee = gross - (gross * BigInt(10000 - Number(feeBps))) / 10000n;
+  const net = gross - fee;
+  return net > 0n ? net : 0n;
+}
+/** The pool-implied USD price of an asset whose own price is
+ *  NOT anchored (USDt): what one whole unit of it buys of the
+ *  anchored side at the pool's spot (pre-trade) rate, valued
+ *  at the anchor's USD price. Pure. This is the ONLY way this
+ *  slice ever values USDt — the generic price table's $1 pin
+ *  on the USDT symbol is a different asset's price and is
+ *  never consulted for Algorand's USDt. */
+export function algoPoolImpliedUsd({ unknownReserveWhole, anchorReserveWhole, anchorUsd }) {
+  const u = Number(unknownReserveWhole), a = Number(anchorReserveWhole), p = Number(anchorUsd);
+  if (!(u > 0) || !(a > 0) || !(p > 0)) return null;
+  return (a / u) * p;
+}
+export function algoSwapSupportsPair(args) {
+  if (!args || args.fromChainKey !== "algorand" || args.toChainKey !== "algorand") return false;
+  const inId = algoAssetIdOfToken(args.fromToken), outId = algoAssetIdOfToken(args.toToken);
+  if (inId == null || outId == null || inId === outId) return false;
+  return !!algoSwapTokenById(inId) && !!algoSwapTokenById(outId);
+}
+async function algoFetchJson(url, timeoutMs = 12000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctl.signal, headers: { accept: "application/json" } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; } finally { clearTimeout(t); }
+}
+async function fetchTinymanPool(assetInId, assetOutId) {
+  const address = tinymanPoolAddress(assetInId, assetOutId);
+  const res = await algodJson("/v2/accounts/" + address);
+  if (res.status !== 200 || !res.data) return null;
+  const st = parseTinymanPoolState(res.data);
+  if (!st) return null;
+  if (!((st.asset1Id === assetInId && st.asset2Id === assetOutId) || (st.asset1Id === assetOutId && st.asset2Id === assetInId))) return null;
+  const inIs1 = st.asset1Id === assetInId;
+  return { venue: "tinyman", poolAddress: address, reserveIn: inIs1 ? st.asset1Reserves : st.asset2Reserves,
+    reserveOut: inIs1 ? st.asset2Reserves : st.asset1Reserves, totalFeeShare: st.totalFeeShare,
+    asset1Id: st.asset1Id, asset2Id: st.asset2Id };
+}
+async function fetchPactPools(assetInId, assetOutId) {
+  const [lo, hi] = assetInId < assetOutId ? [assetInId, assetOutId] : [assetOutId, assetInId];
+  const json = await algoFetchJson(`${PACT_API_BASE}/api/pools?primary_asset__on_chain_id=${lo}&secondary_asset__on_chain_id=${hi}&limit=100`);
+  if (!json) return [];
+  const listed = parsePactPoolList(json).filter(p =>
+    (p.primaryId === assetInId && p.secondaryId === assetOutId) || (p.primaryId === assetOutId && p.secondaryId === assetInId));
+  const out = [];
+  for (const p of listed) {
+    const res = await algodJson("/v2/applications/" + p.appId);
+    if (res.status !== 200 || !res.data) continue;
+    const st = parsePactGlobalState(res.data?.params?.["global-state"]);
+    if (!st) continue;
+    if (!((st.assetA === p.primaryId && st.assetB === p.secondaryId))) continue;
+    const inIsA = st.assetA === assetInId;
+    out.push({ venue: "pact", poolAddress: p.address, poolAppId: p.appId,
+      reserveIn: inIsA ? st.totalPrimary : st.totalSecondary, reserveOut: inIsA ? st.totalSecondary : st.totalPrimary,
+      feeBps: st.feeBps, assetA: st.assetA, assetB: st.assetB });
+  }
+  return out;
+}
+/** One venue's route for the pair, or null. The fee law runs
+ *  on the quote's own numbers in two passes (the fleet
+ *  pattern): a gross quote first (pool fee + amount in USD),
+ *  then the skim under platformFeeBpsForRoute, then — when
+ *  the input is ALGO — the final quote on amount − fee. */
+function buildAlgoVenueRoute({ venueState, assetInId, assetOutId, amountInRaw, prices, ownAlgoMicro, needsOptIn }) {
+  const inTok = algoSwapTokenById(assetInId), outTok = algoSwapTokenById(assetOutId);
+  if (!inTok || !outTok) return null;
+  const quote = (poolInput) => venueState.venue === "tinyman"
+    ? tinymanFixedInputQuote({ reserveIn: venueState.reserveIn, reserveOut: venueState.reserveOut, amountIn: poolInput, totalFeeShare: venueState.totalFeeShare })
+    : pactFixedInputQuote({ liqIn: venueState.reserveIn, liqOut: venueState.reserveOut, amountIn: poolInput, feeBps: venueState.feeBps });
+  const poolFeeRawOf = (poolInput, outRaw) => venueState.venue === "tinyman"
+    ? (poolInput * BigInt(venueState.totalFeeShare)) / 10000n
+    : ((venueState.reserveOut * poolInput) / (venueState.reserveIn + poolInput)) - outRaw;
+  // Anchored USD prices: USDC is par by construction; ALGO /
+  // goBTC / goETH come from the price table. USDt is NEVER
+  // anchored — its price is implied by this pool below.
+  const anchorUsd = (id) => id === ALGO_USDC_ASA ? 1
+    : id === 0 ? (Number(prices?.ALGO) > 0 ? Number(prices.ALGO) : null)
+    : id === ALGO_GOBTC_ASA ? (Number(prices?.BTC) > 0 ? Number(prices.BTC) : null)
+    : id === ALGO_GOETH_ASA ? (Number(prices?.ETH) > 0 ? Number(prices.ETH) : null)
+    : null;
+  let inUsd = anchorUsd(assetInId), outUsd = anchorUsd(assetOutId);
+  const reserveInWhole = Number(venueState.reserveIn) / (10 ** inTok.decimals);
+  const reserveOutWhole = Number(venueState.reserveOut) / (10 ** outTok.decimals);
+  if (inUsd == null && outUsd != null && (assetInId === ALGO_USDT_ASA || assetInId === 0))
+    inUsd = algoPoolImpliedUsd({ unknownReserveWhole: reserveInWhole, anchorReserveWhole: reserveOutWhole, anchorUsd: outUsd });
+  if (outUsd == null && inUsd != null && (assetOutId === ALGO_USDT_ASA || assetOutId === 0))
+    outUsd = algoPoolImpliedUsd({ unknownReserveWhole: reserveOutWhole, anchorReserveWhole: reserveInWhole, anchorUsd: inUsd });
+  if (inUsd == null || outUsd == null) return null; // unpriceable pair — no route, never a guessed price
+  const algoUsd = anchorUsd(0) ?? (assetInId === 0 ? inUsd : assetOutId === 0 ? outUsd : null);
+  const amountInWhole = Number(amountInRaw) / (10 ** inTok.decimals);
+  const fromAmountUSD = amountInWhole * inUsd;
+  if (!(fromAmountUSD > 0)) return null;
+  const grossOut = quote(amountInRaw);
+  if (grossOut <= 0n) return null;
+  const poolFeeRaw = poolFeeRawOf(amountInRaw, grossOut);
+  const routeFeeUsd = venueState.venue === "tinyman"
+    ? (Number(poolFeeRaw) / (10 ** inTok.decimals)) * inUsd
+    : (Number(poolFeeRaw) / (10 ** outTok.decimals)) * outUsd;
+  const bps = platformFeeBpsForRoute(routeFeeUsd, fromAmountUSD, "algorand");
+  const feeUsdTarget = platformFeeUsdForRoute(routeFeeUsd, fromAmountUSD, "algorand");
+  // The skim: exact in the input when the input is ALGO;
+  // an ALGO leg at the quote-implied rate otherwise.
+  let feeLegRaw = 0n, poolInputRaw = amountInRaw;
+  if (assetInId === 0) {
+    feeLegRaw = platformFeeOn(amountInRaw.toString(), bps);
+    poolInputRaw = amountInRaw - feeLegRaw;
+  } else if (algoUsd != null && feeUsdTarget > 0) {
+    feeLegRaw = BigInt(Math.floor((feeUsdTarget / algoUsd) * 1e6));
+  }
+  let collecting = feeLegRaw > 0n;
+  // Affordability (Cosmos precedent): if the user's ALGO
+  // cannot cover the fee leg alongside the swap and the
+  // network fees, the route ships honestly fee-free — never
+  // blocked. An unreadable account leaves the law's answer
+  // standing; the chain itself is the final arbiter.
+  if (collecting && ownAlgoMicro != null) {
+    const netFees = BigInt(ALGO_SWAP_APP_CALL_FEE + ALGO_SWAP_LEG_FEE + ALGO_SWAP_LEG_FEE) + (needsOptIn ? BigInt(ALGO_SWAP_LEG_FEE) + ALGO_ASA_OPTIN_MBR : 0n);
+    // Total ALGO leaving the account: for an ALGO input the
+    // amount itself (deposit + skim together) plus network
+    // fees; for an ASA input just the skim leg plus network.
+    const totalAlgoOut = netFees + (assetInId === 0 ? amountInRaw : feeLegRaw);
+    if (ownAlgoMicro < totalAlgoOut) collecting = false;
+  }
+  if (!collecting) { feeLegRaw = 0n; poolInputRaw = amountInRaw; }
+  const outRaw = quote(poolInputRaw);
+  if (outRaw <= 0n) return null;
+  const minOut = (outRaw * BigInt(10000 - ALGO_SWAP_SLIPPAGE_BPS)) / 10000n;
+  if (minOut <= 0n) return null;
+  const outWhole = Number(outRaw) / (10 ** outTok.decimals);
+  const toAmountUSD = outWhole * outUsd;
+  const spotRate = reserveOutWhole / reserveInWhole;
+  const execRate = outWhole / (Number(poolInputRaw) / (10 ** inTok.decimals));
+  const priceImpactPct = spotRate > 0 ? Math.max(0, (1 - execRate / spotRate) * 100) : 0;
+  const netFeeMicro = BigInt(ALGO_SWAP_APP_CALL_FEE + ALGO_SWAP_LEG_FEE + (collecting ? ALGO_SWAP_LEG_FEE : 0) + (needsOptIn ? ALGO_SWAP_LEG_FEE : 0));
+  const gasCostUSD = algoUsd != null ? (Number(netFeeMicro) / 1e6) * algoUsd : 0;
+  const platformFeeUsd = collecting ? (assetInId === 0 ? (Number(feeLegRaw) / 1e6) * inUsd : feeUsdTarget) : 0;
+  return {
+    provider: venueState.venue,
+    id: `${venueState.venue}-algo-${assetInId}-${assetOutId}`,
+    fromChainKey: "algorand", toChainKey: "algorand",
+    fromChainId: ALGORAND_SWAP_CHAIN_ID, toChainId: ALGORAND_SWAP_CHAIN_ID,
+    fromToken: { address: inTok.address, symbol: inTok.symbol, decimals: inTok.decimals },
+    toToken: { address: outTok.address, symbol: outTok.symbol, decimals: outTok.decimals },
+    fromAmount: amountInRaw.toString(), toAmount: outRaw.toString(), toAmountMin: minOut.toString(),
+    fromAmountUSD, toAmountUSD, gasCostUSD, routeFeeUsd,
+    steps: [],
+    platformFeeRaw: feeLegRaw.toString(), platformFeeBps: collecting ? bps : 0,
+    platformFeeUsd, collecting, platformFeeCollecting: collecting,
+    executionDuration: ALGO_SWAP_DURATION_SEC,
+    algo: {
+      venue: venueState.venue, assetInId, assetOutId,
+      poolAddress: venueState.poolAddress, ...(venueState.poolAppId ? { poolAppId: venueState.poolAppId } : {}),
+      poolInputRaw: poolInputRaw.toString(), feeLegRaw: feeLegRaw.toString(),
+      needsOptIn: !!needsOptIn, priceImpactPct: Math.round(priceImpactPct * 100) / 100,
+      ...(assetInId === ALGO_USDT_ASA || assetOutId === ALGO_USDT_ASA
+        ? { usdtImpliedUsd: Math.round((assetOutId === ALGO_USDT_ASA ? outUsd : inUsd) * 10000) / 10000 } : {}),
+    },
+  };
+}
+/** Quote both Algorand venues for the pair and return every
+ *  serving venue's route (0, 1 or 2) — merit ranking in
+ *  rankSwapRoutes picks the winner, and each card names its
+ *  venue. A venue that fails or has no pool simply does not
+ *  appear; the pair is an honest no-route when neither does. */
+export async function getAlgoSwapRoutes(planArgs) {
+  if (!algoSwapSupportsPair(planArgs)) return [];
+  const assetInId = algoAssetIdOfToken(planArgs.fromToken), assetOutId = algoAssetIdOfToken(planArgs.toToken);
+  let amountInRaw;
+  try { amountInRaw = BigInt(swapAmountToRaw(planArgs.amount, planArgs.fromToken.decimals)); } catch { return []; }
+  if (amountInRaw <= 0n) return [];
+  const prices = await getPrices().catch(() => ({}));
+  const own = swapOwnAddressFor("algorand", planArgs.addresses);
+  let ownAlgoMicro = null, needsOptIn = false;
+  if (own) {
+    const res = await algodJson("/v2/accounts/" + own);
+    if (res.status === 200 && res.data) {
+      try { ownAlgoMicro = BigInt(res.data.amount ?? 0); } catch { ownAlgoMicro = null; }
+      if (assetOutId !== 0) needsOptIn = !(res.data.assets || []).some(a => Number(a?.["asset-id"]) === assetOutId);
+    }
+  }
+  const routes = [];
+  try {
+    const tm = await fetchTinymanPool(assetInId, assetOutId);
+    if (tm) { const r = buildAlgoVenueRoute({ venueState: tm, assetInId, assetOutId, amountInRaw, prices, ownAlgoMicro, needsOptIn }); if (r) routes.push(r); }
+  } catch { /* Tinyman is a candidate, never a single point of failure */ }
+  try {
+    const pools = await fetchPactPools(assetInId, assetOutId);
+    let best = null;
+    for (const p of pools) {
+      const r = buildAlgoVenueRoute({ venueState: p, assetInId, assetOutId, amountInRaw, prices, ownAlgoMicro, needsOptIn });
+      if (r && (!best || BigInt(r.toAmount) > BigInt(best.toAmount))) best = r;
+    }
+    if (best) routes.push(best);
+  } catch { /* Pact is a candidate, never a single point of failure */ }
+  return routes;
+}
+/** Build the swap's atomic group as plain descriptors (the
+ *  inspect-before-sign pattern): [deposit, app call] plus the
+ *  appended skim leg when the route collects. Pure — the
+ *  executor materialises exactly these legs, decodes the
+ *  built transactions back to descriptors, and runs the same
+ *  bounds check over both forms before anything signs. */
+export function buildAlgoSwapGroupSpec({ venue, from, poolAddress, poolAppId = null, assetInId, assetOutId, poolInputRaw, minOutRaw, feeLegRaw }) {
+  const legs = [];
+  const deposit = assetInId === 0
+    ? { kind: "pay", from, to: poolAddress, amount: String(poolInputRaw), fee: ALGO_SWAP_LEG_FEE }
+    : { kind: "axfer", from, to: poolAddress, amount: String(poolInputRaw), assetId: assetInId, fee: ALGO_SWAP_LEG_FEE };
+  if (venue === "pact") deposit.note = "Pact swap deposit";
+  legs.push(deposit);
+  if (venue === "tinyman") {
+    const [a1, a2] = assetInId > assetOutId ? [assetInId, assetOutId] : [assetOutId, assetInId];
+    legs.push({ kind: "appl", from, appId: TINYMAN_V2_VALIDATOR_APP_ID,
+      appArgs: [{ t: "str", v: "swap" }, { t: "str", v: "fixed-input" }, { t: "u64", v: String(minOutRaw) }],
+      accounts: [poolAddress], foreignAssets: [a1, a2], fee: ALGO_SWAP_APP_CALL_FEE });
+  } else {
+    const [prim, sec] = assetInId < assetOutId ? [assetInId, assetOutId] : [assetOutId, assetInId];
+    legs.push({ kind: "appl", from, appId: Number(poolAppId),
+      appArgs: [{ t: "str", v: "SWAP" }, { t: "u64", v: String(minOutRaw) }],
+      accounts: [], foreignAssets: [prim, sec], fee: ALGO_SWAP_APP_CALL_FEE });
+  }
+  if (BigInt(feeLegRaw || "0") > 0n)
+    legs.push({ kind: "pay", from, to: ALGO_FEE_RECIPIENT, amount: String(feeLegRaw), fee: ALGO_SWAP_LEG_FEE });
+  return { venue, legs };
+}
+/** The bounds check every Algorand swap group passes before
+ *  signing — applied to the built spec AND to the descriptors
+ *  decoded back out of the materialised transactions. Any
+ *  leg that is not exactly the deposit, the venue's pinned
+ *  app call, or the pinned skim leg refuses the whole group. */
+export function checkAlgoSwapGroupSpec(spec, route, from) {
+  const bad = (reason) => ({ ok: false, reason });
+  const a = route?.algo;
+  if (!spec || !a || !Array.isArray(spec.legs)) return bad("That Algorand swap group is malformed — search again.");
+  if (spec.venue !== a.venue || spec.venue !== route.provider) return bad("That Algorand swap group's venue does not match the route you reviewed.");
+  const legs = spec.legs;
+  const collecting = route.collecting === true && BigInt(a.feeLegRaw || "0") > 0n;
+  if (legs.length !== (collecting ? 3 : 2)) return bad("That Algorand swap group has the wrong number of transactions — refusing to sign it.");
+  for (const leg of legs) if (!leg || leg.from !== from) return bad("A transaction in that group is not from your own wallet — refusing to sign it.");
+  const [deposit, call] = legs;
+  const wantKind = a.assetInId === 0 ? "pay" : "axfer";
+  if (deposit.kind !== wantKind || deposit.to !== a.poolAddress || String(deposit.amount) !== String(a.poolInputRaw)
+    || (wantKind === "axfer" && Number(deposit.assetId) !== a.assetInId) || Number(deposit.fee) !== ALGO_SWAP_LEG_FEE)
+    return bad("The deposit leg of that group does not match the route you reviewed — refusing to sign it.");
+  if (call.kind !== "appl" || Number(call.fee) !== ALGO_SWAP_APP_CALL_FEE) return bad("The swap call in that group is not the venue call you reviewed — refusing to sign it.");
+  const args = Array.isArray(call.appArgs) ? call.appArgs : [];
+  const minArg = args[args.length - 1];
+  if (!minArg || minArg.t !== "u64" || String(minArg.v) !== String(route.toAmountMin))
+    return bad("The minimum-out in that group does not match the route you reviewed — refusing to sign it.");
+  if (spec.venue === "tinyman") {
+    if (Number(call.appId) !== TINYMAN_V2_VALIDATOR_APP_ID) return bad("That group calls an app that is not Tinyman's pinned validator — refusing to sign it.");
+    const [a1, a2] = a.assetInId > a.assetOutId ? [a.assetInId, a.assetOutId] : [a.assetOutId, a.assetInId];
+    if (args.length !== 3 || args[0]?.v !== "swap" || args[1]?.v !== "fixed-input"
+      || JSON.stringify(call.accounts || []) !== JSON.stringify([a.poolAddress])
+      || JSON.stringify((call.foreignAssets || []).map(Number)) !== JSON.stringify([a1, a2]))
+      return bad("That group's Tinyman call does not match the route you reviewed — refusing to sign it.");
+  } else {
+    if (Number(call.appId) !== Number(a.poolAppId)) return bad("That group calls an app that is not the Pact pool you reviewed — refusing to sign it.");
+    const [prim, sec] = a.assetInId < a.assetOutId ? [a.assetInId, a.assetOutId] : [a.assetOutId, a.assetInId];
+    if (args.length !== 2 || args[0]?.v !== "SWAP"
+      || (call.accounts || []).length !== 0
+      || JSON.stringify((call.foreignAssets || []).map(Number)) !== JSON.stringify([prim, sec]))
+      return bad("That group's Pact call does not match the route you reviewed — refusing to sign it.");
+  }
+  if (collecting) {
+    const fee = legs[2];
+    if (fee.kind !== "pay" || fee.to !== ALGO_FEE_RECIPIENT || String(fee.amount) !== String(a.feeLegRaw) || Number(fee.fee) !== ALGO_SWAP_LEG_FEE)
+      return bad("The fee leg of that group does not match the route you reviewed — refusing to sign it.");
+  }
+  return { ok: true };
+}
+/** The ASA opt-in as its OWN spec (Stellar trustline
+ *  precedent): a single zero-amount self-transfer, built and
+ *  signed separately from any swap group, never a leg inside
+ *  one. */
+export function buildAlgoOptInSpec({ from, assetId }) {
+  return { legs: [{ kind: "axfer", from, to: from, amount: "0", assetId: Number(assetId), fee: ALGO_SWAP_LEG_FEE }] };
+}
+export function checkAlgoOptInSpec(spec, { from, assetId }) {
+  const legs = spec?.legs;
+  if (!Array.isArray(legs) || legs.length !== 1) return { ok: false, reason: "That opt-in is malformed — refusing to sign it." };
+  const l = legs[0];
+  if (l.kind !== "axfer" || l.from !== from || l.to !== from || String(l.amount) !== "0" || Number(l.assetId) !== Number(assetId))
+    return { ok: false, reason: "That opt-in is not the zero-amount self-transfer it should be — refusing to sign it." };
+  return { ok: true };
+}
+export function materialiseAlgoLeg(leg, params) {
+  const feeParams = { ...params, fee: BigInt(leg.fee), flatFee: true };
+  const note = leg.note ? new TextEncoder().encode(leg.note) : undefined;
+  if (leg.kind === "pay") return algosdk.makePaymentTxnWithSuggestedParamsFromObject({ sender: leg.from, receiver: leg.to, amount: BigInt(leg.amount), ...(note ? { note } : {}), suggestedParams: feeParams });
+  if (leg.kind === "axfer") return algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({ sender: leg.from, receiver: leg.to, amount: BigInt(leg.amount), assetIndex: Number(leg.assetId), ...(note ? { note } : {}), suggestedParams: feeParams });
+  if (leg.kind === "appl") return algosdk.makeApplicationNoOpTxnFromObject({ sender: leg.from, appIndex: Number(leg.appId),
+    appArgs: leg.appArgs.map(x => x.t === "u64" ? algosdk.encodeUint64(BigInt(x.v)) : new TextEncoder().encode(x.v)),
+    accounts: leg.accounts || [], foreignAssets: (leg.foreignAssets || []).map(Number), suggestedParams: feeParams });
+  throw new Error("Unknown Algorand group leg.");
+}
+/** Decode a materialised algosdk transaction back to a group
+ *  descriptor, so the executor bounds-checks the ACTUAL
+ *  transactions it is about to sign — not just the spec it
+ *  built them from. App-arg u64s decode by position (the
+ *  venues' arg shapes are pinned in the check). */
+export function algoTxnDescriptor(txn) {
+  if (!txn) return null;
+  const from = txn.sender?.toString?.() || "";
+  const fee = Number(txn.fee || 0);
+  if (txn.type === "pay") return { kind: "pay", from, to: txn.payment?.receiver?.toString?.() || "", amount: String(txn.payment?.amount ?? ""), fee };
+  if (txn.type === "axfer") return { kind: "axfer", from, to: txn.assetTransfer?.receiver?.toString?.() || "", amount: String(txn.assetTransfer?.amount ?? ""), assetId: Number(txn.assetTransfer?.assetIndex), fee };
+  if (txn.type === "appl") {
+    const ac = txn.applicationCall || {};
+    const appArgs = (ac.appArgs || []).map((b, i, arr) => {
+      const bytes = b instanceof Uint8Array ? b : new Uint8Array(b || []);
+      if (i === arr.length - 1 && bytes.length === 8) { let v = 0n; for (const x of bytes) v = (v << 8n) | BigInt(x); return { t: "u64", v: v.toString() }; }
+      return { t: "str", v: new TextDecoder().decode(bytes) };
+    });
+    return { kind: "appl", from, appId: Number(ac.appIndex), appArgs,
+      accounts: (ac.accounts || []).map(x => x?.toString?.() || ""), foreignAssets: (ac.foreignAssets || []).map(Number), fee };
+  }
+  return { kind: String(txn.type || "unknown"), from, fee };
+}
+/** Execute a Tinyman/Pact route: opt-in first as its own
+ *  step when the destination ASA is not yet held, then a
+ *  fresh pool read and re-quote (refusing below the reviewed
+ *  minimum), then the atomic group — spec-checked, built,
+ *  decoded back and checked again — signed and submitted. */
+export async function executeAlgoSwapRoute(wallet, route, onProgress = () => {}) {
+  const a = route?.algo;
+  if (!route || (route.provider !== "tinyman" && route.provider !== "pact") || !a) throw new Error("That isn't an Algorand swap route — search again.");
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("Wallet is locked.");
+  const key = algoKey(phrase);
+  const pub = ed25519.getPublicKey(key);
+  const from = algoAddressFromPubkey(pub);
+  const sk = Uint8Array.from([...key, ...pub]);
+  const client = new algosdk.Algodv2("", ALGOD, "");
+  const params = await client.getTransactionParams().do();
+  // Step 1 (only when needed): the destination opt-in, its
+  // own transaction, signed and confirmed BEFORE the swap
+  // group exists — the confirm copy named it, and the swap
+  // below is built fresh after it lands.
+  if (a.assetOutId !== 0) {
+    const acctRes = await algodJson("/v2/accounts/" + from);
+    if (acctRes.status !== 200 || !acctRes.data) throw new Error("Couldn't read your Algorand account — check your connection and try again.");
+    const held = (acctRes.data.assets || []).some(x => Number(x?.["asset-id"]) === a.assetOutId);
+    if (!held) {
+      onProgress(`Opting your wallet into ${route.toToken?.symbol || "the destination asset"} first — a separate one-time step (0.1 ALGO reserve)…`);
+      const spec = buildAlgoOptInSpec({ from, assetId: a.assetOutId });
+      const chk = checkAlgoOptInSpec(spec, { from, assetId: a.assetOutId });
+      if (!chk.ok) throw new Error(chk.reason);
+      const txn = materialiseAlgoLeg(spec.legs[0], params);
+      const back = checkAlgoOptInSpec({ legs: [algoTxnDescriptor(txn)] }, { from, assetId: a.assetOutId });
+      if (!back.ok) throw new Error(back.reason);
+      const signed = algosdk.signTransaction(txn, sk);
+      const { txid } = await client.sendRawTransaction(signed.blob).do();
+      await algosdk.waitForConfirmation(client, txid, 6);
+    }
+  }
+  // Step 2: fresh pool state, fresh quote on the reviewed
+  // amounts. The skim is re-derived from the route's stored
+  // law figures (deterministic), so the group that signs is
+  // the group that was reviewed.
+  const state = a.venue === "tinyman" ? await fetchTinymanPool(a.assetInId, a.assetOutId) : (await fetchPactPools(a.assetInId, a.assetOutId)).find(p => p.poolAppId === a.poolAppId) || null;
+  if (!state || state.poolAddress !== a.poolAddress) throw new Error("That pool couldn't be re-read — search again for a fresh quote.");
+  const amountInRaw = BigInt(route.fromAmount);
+  let feeLegRaw = 0n, poolInputRaw = amountInRaw;
+  if (route.collecting === true) {
+    feeLegRaw = a.assetInId === 0 ? platformFeeOn(route.fromAmount, Number(route.platformFeeBps)) : BigInt(a.feeLegRaw);
+    if (feeLegRaw.toString() !== String(a.feeLegRaw)) throw new Error("That route's fee no longer re-derives — search again for a fresh quote.");
+    poolInputRaw = a.assetInId === 0 ? amountInRaw - feeLegRaw : amountInRaw;
+    if (poolInputRaw.toString() !== String(a.poolInputRaw)) throw new Error("That route's amounts no longer re-derive — search again for a fresh quote.");
+  }
+  const freshOut = a.venue === "tinyman"
+    ? tinymanFixedInputQuote({ reserveIn: state.reserveIn, reserveOut: state.reserveOut, amountIn: poolInputRaw, totalFeeShare: state.totalFeeShare })
+    : pactFixedInputQuote({ liqIn: state.reserveIn, liqOut: state.reserveOut, amountIn: poolInputRaw, feeBps: state.feeBps });
+  if (freshOut < BigInt(route.toAmountMin)) throw new Error("The pool's price moved below the minimum you reviewed — search again for a fresh quote.");
+  const spec = buildAlgoSwapGroupSpec({ venue: a.venue, from, poolAddress: a.poolAddress, poolAppId: a.poolAppId || null,
+    assetInId: a.assetInId, assetOutId: a.assetOutId, poolInputRaw, minOutRaw: BigInt(route.toAmountMin), feeLegRaw });
+  const chk = checkAlgoSwapGroupSpec(spec, route, from);
+  if (!chk.ok) throw new Error(chk.reason);
+  const txns = spec.legs.map(leg => materialiseAlgoLeg(leg, params));
+  const decoded = { venue: a.venue, legs: txns.map(algoTxnDescriptor) };
+  const chk2 = checkAlgoSwapGroupSpec(decoded, route, from);
+  if (!chk2.ok) throw new Error(chk2.reason);
+  algosdk.assignGroupID(txns);
+  const signedBlobs = txns.map(t => algosdk.signTransaction(t, sk).blob);
+  onProgress(`Broadcasting your ${a.venue === "tinyman" ? "Tinyman" : "Pact"} swap…`);
+  const { txid } = await client.sendRawTransaction(signedBlobs).do();
+  try { await algosdk.waitForConfirmation(client, txid, 6); } catch { /* accepted ≠ failed: return the id */ }
+  return { hashes: [txid] };
+}
+/** The Algorand swap card's plain-language lines: the venue
+ *  named, the atomic shape, the skim stated when there is
+ *  one (and its absence stated when there is not), the
+ *  opt-in step named before it happens, the USDt discount
+ *  named wherever USDt is involved, and thin-pool impact
+ *  stated rather than buried. */
+export function algoDisclosureLines(route) {
+  const a = route?.algo || {};
+  const lines = [];
+  const venueName = route?.provider === "tinyman" ? "Tinyman" : "Pact";
+  lines.push(`Direct ${venueName} swap on Algorand, settled in one atomic group from your own wallet — no account, no deposit address. Algorand blocks land about every 2.6 seconds, so it confirms in seconds.`);
+  if (route?.collecting === true) {
+    const feeAlgo = Number(route.platformFeeRaw || "0") / 1e6;
+    lines.push(a.assetInId === 0
+      ? `Fluid's fee of ${feeAlgo} ALGO is skimmed inside the same atomic group: the pool receives your amount minus the fee, and the fee leg pays Fluid's fee wallet in that same group — it cannot be taken without the swap itself happening.`
+      : `Fluid's fee of ${feeAlgo} ALGO rides inside the same atomic group as an extra payment leg to Fluid's fee wallet — it cannot be taken without the swap itself happening.`);
+  } else {
+    lines.push("No Fluid fee on this route — either it falls under the fee floor or your ALGO balance can't spare the fee leg alongside the swap, so it runs fee-free rather than blocked.");
+  }
+  if (a.needsOptIn) lines.push(`Your wallet doesn't hold ${route?.toToken?.symbol || "the destination asset"} yet: before the swap you'll sign a separate opt-in transaction of its own — it locks a one-time 0.1 ALGO minimum-balance reserve (yours, released if you ever opt back out) — and then the swap group is built fresh. The opt-in is never bundled into the swap unannounced.`);
+  if (a.usdtImpliedUsd != null) lines.push(`USDt on Algorand trades below $1 in its own pools — about $${a.usdtImpliedUsd} when this was quoted. Every figure here values USDt at that pool price, never at $1: a quote showing more than 1 USDt per 1 USDC is that discount, not a gain.`);
+  if (Number(a.priceImpactPct) > 2) lines.push(`This pool is thin for a trade this size — your swap moves its price by about ${a.priceImpactPct}%, which is already reflected in the amount you receive above.`);
+  return lines;
 }
 
 // ---------- Fluid Scan: the in-wallet explorer (owner's idea, 2026-11-07) ----------

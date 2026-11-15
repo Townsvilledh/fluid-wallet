@@ -49,6 +49,7 @@ import {
   executeCctpAptosSwapRoute, loadCctpAptosRecords, advanceCctpAptosRecords, cctpAptosHistoryLine, cctpAptosDisclosureLines, cctpAptosPhase,
   sbtcPegPairForRoute, planSbtcPegIn, executeSbtcPegIn, planSbtcPegOut, executeSbtcPegOut, sbtcPegInDisclosureLines, sbtcPegOutDisclosureLines,
   loadSbtcPegRecords, advanceSbtcPegRecords, sbtcPegHistoryLine, sbtcPegPhase, executeBitflowSwapRoute, bitflowDisclosureLines, STACKS_SWAP_NATIVE_TOKEN, stacksAmountToRaw,
+  executeAlgoSwapRoute, algoDisclosureLines, ALGORAND_SWAP_TOKENS,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
@@ -7509,7 +7510,7 @@ let pendingSwap = null;
 // "Searching routes…" line). Each search takes a generation;
 // only the latest generation may paint or diagnose.
 let routeSearchSeq = 0;
-const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : k === "stacks" ? "Stacks" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : k === "stacks" ? "Stacks" : k === "algorand" ? "Algorand" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
   if (netKey === "bitcoin" || netKey === "lightning" || netKey === "arkade") {
     // Satora families: the asset is BTC itself (sats on Bitcoin
@@ -7606,6 +7607,13 @@ function swapTokenList(netKey) {
     return [{ symbol: "STX", address: STACKS_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
             ...STACKS_TOKENS.map(t => ({ symbol: t.symbol, name: t.name, address: t.contract, decimals: t.decimals, native: false }))];
   }
+  if (netKey === "algorand") {
+    // Algorand (Tinyman + Pact intra-chain, audit gap #12):
+    // ALGO by its sentinel, plus the pinned ASAs addressed by
+    // id exactly as their balance rows are (see core's
+    // ALGORAND_SWAP_TOKENS — USDC, USDt, goBTC, goETH).
+    return ALGORAND_SWAP_TOKENS.map(t => ({ symbol: t.symbol, address: t.address, decimals: t.decimals, native: !!t.native }));
+  }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
     // the curated FA stables.
@@ -7643,6 +7651,8 @@ function swapRouteName(route) {
   if (route && route.provider === "soroswap") return "Soroswap";
   if (route && route.provider === "cctp-aptos") return "Circle CCTP";
   if (route && route.provider === "bitflow") return "Bitflow";
+  if (route && route.provider === "tinyman") return "Tinyman";
+  if (route && route.provider === "pact") return "Pact";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7895,6 +7905,20 @@ async function swapBalanceOf(chainKey, tok) {
       if (!row) return 0;
       return row.amount != null ? Number(row.amount) : null;
     }
+    if (chainKey === "algorand") {
+      // Algorand balance for the EXECUTION gate (gap #12): the
+      // native ALGO row (balances[0] by construction in core's
+      // getAlgorandAccount) or the picked ASA's row, addressed
+      // by asset id exactly as the swap list addresses it.
+      // Same null discipline as NEAR's: a row whose amount is
+      // null is a failed read → null; no ASA row at all means
+      // the account has not opted in: a true zero.
+      const acct = await getAlgorandAccount(algoAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
     if (skipChainOf(chainKey)) {
       // Cosmos balance for the EXECUTION gate (Skip rail,
       // 2026-11-15): the picked denom's row of a FRESH
@@ -7933,7 +7957,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7950,12 +7974,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos" || viewKey === "stacks") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos" || viewKey === "stacks" || viewKey === "algorand") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos", "stacks"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar, Aptos and Stacks — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos", "stacks", "algorand"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar, Aptos, Stacks and Algorand — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -8033,7 +8057,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, algorand: algoAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -9093,7 +9117,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}${(r.provider === "tinyman" || r.provider === "pact") ? `<br><small style="color:var(--warn)">${esc(algoDisclosureLines(r).join(" "))}</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
@@ -9287,6 +9311,15 @@ $("actSwap").onclick = () => {
           platformFeeUsd = Number(r.platformFeeUsd);
           const amtUsd = Number(r.fromAmountUSD);
           if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
+        } else if ((r.provider === "tinyman" || r.provider === "pact") && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
+          // Tinyman/Pact take Fluid's fee as a skim leg inside
+          // the swap's own atomic group (core priced it under
+          // the fee law and the executability gate re-derived
+          // it from the route's own amounts, gap #12) —
+          // disclose exactly that figure, like SunSwap's.
+          platformFeeUsd = Number(r.platformFeeUsd);
+          const amtUsd = Number(r.fromAmountUSD);
+          if (amtUsd > 0) platformFeePct = (platformFeeUsd / amtUsd) * 100;
         } else if (r.provider === "cctp-aptos" && r.platformFeeCollecting === true && Number(r.platformFeeUsd) > 0) {
           // CCTP-Aptos takes Fluid's fee as an explicit skim
           // transfer on the EVM side of the crossing (the
@@ -9313,6 +9346,7 @@ $("actSwap").onclick = () => {
         if (r.provider === "soroswap") $("wIntentText").textContent += " One signature runs the swap inside your own Stellar account. If your account first needs a trustline to hold an asset on the route, you'll sign that as its own separate step before the swap — each trustline locks 0.5 XLM as reserve, and it is never bundled into the swap itself.";
         if (r.provider === "cctp-aptos") $("wIntentText").textContent += " " + cctpAptosDisclosureLines(r).join(" ");
         if (r.provider === "bitflow") $("wIntentText").textContent += " " + bitflowDisclosureLines(r).join(" ");
+        if (r.provider === "tinyman" || r.provider === "pact") $("wIntentText").textContent += " " + algoDisclosureLines(r).join(" ");
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -9665,6 +9699,18 @@ $("actSwap").onclick = () => {
         hashes = await executeBitflowSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
         srcExplorer = STACKS_EXPLORER;
         srcLink = stacksExplorerTxUrl(hashes[0]);
+      } else if (route.provider === "tinyman" || route.provider === "pact") {
+        // Algorand intra-chain route (gap #12): core runs the
+        // destination opt-in first when one is needed (its own
+        // separate transaction), re-quotes the pool fresh, then
+        // assembles the atomic group itself — deposit, the
+        // venue's pinned app call, and Fluid's skim leg when
+        // the route collects — bounds-checking the spec and
+        // the decoded built transactions before signing. One
+        // group, one hash (the group's first transaction).
+        hashes = await executeAlgoSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+        srcExplorer = ALGO_EXPLORER;
+        srcLink = `${ALGO_EXPLORER}/tx/${hashes[0]}`;
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,

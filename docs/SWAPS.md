@@ -1956,3 +1956,119 @@ transaction against the reviewed spec before broadcast —
   arguments match the probe's serialised vectors, and every
   transaction the executors sign is decoded and
   bounds-checked in §131 of the suite.
+
+## Algorand — intra-chain swaps via Tinyman v2 + Pact direct (audit gap #12, 2026-11-15)
+
+Algorand held, sent and received long before it could swap.
+This slice closes the intra-chain gap against the chain's
+two live DEXes **directly** — no aggregator in between —
+with Fluid assembling the swap's atomic group itself.
+
+- **Tinyman v2.** Pools are LogicSig accounts under the v2
+  validator app (id **1002541853**, pinned). The pool
+  address is derived locally from the validator's published
+  LogicSig template (asset1 = the larger ASA id; ALGO, id 0,
+  is always asset2 in its pairs) — the derivation is pinned
+  in §133 against the live ALGO/USDC and USDC/USD t pools.
+  Pool state (reserves + `total_fee_share`, read live — the
+  majors currently carry 36, i.e. 0.36%, not an assumed 0.3%)
+  comes from the pool account's validator local state over
+  algod, and the fixed-input quote is computed client-side
+  with the official SDK's own arithmetic.
+- **Pact.** Pools are applications. Discovery runs through
+  Pact's keyless public API (`api.pact.fi/api/pools`, by
+  asset pair); state (CONFIG → [ASSET_A, ASSET_B, FEE_BPS],
+  internal totals A/B) comes from the pool app's global
+  state over algod; the quote uses the SDK's
+  constant-product arithmetic (gross off the curve, the pool
+  fee off the gross, the SDK's rounding kept exactly).
+  **Constant-product pools only** ("PACT AMM") — stableswap
+  pools are not quoted by this slice. Where several pools
+  serve a pair, the best output wins.
+- **Both venues are quoted for every pair both serve**; each
+  route names its venue on the card, and merit ranking
+  decides. Prices come from pool state only. Speed is the
+  fast class: Algorand's measured block time is 2,574 ms
+  and an atomic group settles in about a round (≤ ~10 s
+  stated).
+- **Execution — inspect-before-sign.** The group is built
+  as plain descriptors — [deposit to the pool, the venue's
+  pinned app call carrying the reviewed minimum-out] plus
+  the skim leg when the route collects — bounds-checked
+  against the reviewed route, materialised with algosdk,
+  decoded back to descriptors and checked **again**; only
+  then does anything sign. A missing destination-ASA
+  opt-in is **its own signing step first** (the Stellar
+  trustline precedent): a separate bounds-checked
+  zero-amount self-transfer, confirmed, and only then is
+  the swap group built fresh. The confirm copy names the
+  one-time 0.1 ALGO minimum-balance reserve the opt-in
+  locks. At execution the pool is re-read and re-quoted; a
+  fresh output below the reviewed minimum refuses.
+- **Capture — the SKIM shape (Noble/SunSwap precedent).**
+  Neither venue has an integrator programme (Tinyman's FAQ:
+  none; Pact's pool fee goes 100% to LPs), so Fluid's fee
+  rides **inside the atomic group it assembles**: under the
+  fee law (50 bps class on these routes), taken in ALGO at
+  the quote-implied rate as an appended payment leg to the
+  DripBot fee wallet's Algorand address
+  (`O67U3XOR…B6XAB34`, pinned in `FEE_SPLIT` and §133) —
+  or, when the input is ALGO itself, as a leg of exactly
+  the input's skim: the pool receives amount − fee, and
+  fee + deposit == amount, exactly. The executability gate
+  re-derives the whole fee state from the route's own
+  amounts. If the user's ALGO cannot cover the fee leg
+  alongside the swap and the network fees, the route is
+  **honestly fee-free** (`collecting=false` on the card),
+  never blocked (the Cosmos precedent); below the fee law's
+  floor it is fee-free by the law itself. Collecting is on
+  from day one — no config gate.
+- **USDt warning.** USDt on Algorand (ASA **312769**,
+  genuine Tether) trades **below $1** in its own pools
+  (≈ $0.88 measured 2026-11-15; the USDC/USD t pool implied
+  $0.8836 at build time). Everywhere this slice prices,
+  displays or ranks USDt it uses the quoting pool's implied
+  rate — never the $1 the generic price table pins on the
+  USDT symbol (a different asset's price). A USDC→USDt
+  quote showing more than 1 out per 1 in is that discount,
+  not a gain: §133 pins that such a quote, valued honestly,
+  does not outrank a par USDC quote of higher value. USDC
+  is ASA **31566704** (Circle, pinned, re-verified from
+  algod). goBTC (**386192725**) / goETH (**386195940**) are
+  ordinary swap assets where pools exist — their pools are
+  thin, so the card states the price impact plainly — and
+  there is **no Move pair** for them: Algomint mint/redeem
+  is a custodial web flow, not a canonical bridge.
+- **The Haystack Router is NOT wired.** Haystack (ex-Deflex,
+  TxnLab) is the one Algorand aggregator WITH capture
+  (`referrerAddress` + `feeBps`, default 15 / max 300; the
+  referrer earns 25% of the router fee into a claimable
+  escrow, so Fluid would net 50 bps only at `feeBps=200` —
+  a rate decision). It stays unbuilt because it is gated
+  three ways and environment-blocked: **switch-on triggers,
+  all four required** — (1) a clean-network end-to-end
+  quote proof (from this VM the quote API never completed:
+  a valid-key `fetchQuote` hung past 600 s in-page and
+  280 s by curl, zero response — the KyberSwap class: never
+  ship an executor whose traffic was never inspected);
+  (2) one-time referrer registration in the Haystack app
+  (0.26 ALGO, an operator item — unregistered referrers get
+  HTTP 400 on quotes); (3) a production API key (issued by
+  email request); (4) the `feeBps` rate decision (200 for a
+  50 bps net). Vestige is a no-rail (shutdown announced
+  2026-11-14 for 2026-12-31; its API roots already fail),
+  Folks is a no-rail as a surface (in-app aggregator only),
+  Humble is dead and Algofi wound down in 2023.
+- **Cross-chain Algorand stays honest no-route** in this
+  slice.
+- **Unproven.** No funded Algorand swap has run: settlement
+  proof stays gated on Muse earnings, like every funded
+  proof in this programme. What is proven is the
+  construction and quoting layer — both venues quote live
+  through the shipped quoter (Tinyman and Pact both answered
+  for ALGO→USDC, USDC→USDt and ALGO→goBTC at build time,
+  collecting at 50 bps with fee + deposit == amount
+  exactly), the pool derivation matches the live pools,
+  both quote arithmetics reproduce the research fixtures,
+  and every group the executor signs is spec-checked and
+  decode-checked in §133 of the suite.
