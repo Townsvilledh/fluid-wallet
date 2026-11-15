@@ -85,6 +85,7 @@ import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english
 import { zcashAddress, isValidZcashAddress, dashAddress, isValidDashAddress, buildSignedDashTx, DASH_DUST_SAT, DASH_MIN_OUTPUT, parseBlockchairDashboard, zecTxidFromRaw, zecSighash, buildZecTransparentTx, zecFeeZats, zecLogicalActions, ZEC_CONSENSUS_BRANCH_ID, ZCASH_SWAP_CHAIN_ID, DASH_SWAP_CHAIN_ID, ZCASH_SWAP_NATIVE_TOKEN, DASH_SWAP_NATIVE_TOKEN, formatDashSendIntent, formatZcashSendIntent } from "../src/wallet-core.js";
 import { STELLAR_SWAP_CHAIN_ID, STELLAR_SWAP_NATIVE_TOKEN, STELLAR_SWAP_ASSETS, stellarSwapAssetFor, stellarSacAddress, SOROSWAP_API, SOROSWAP_API_KEY, SOROSWAP_PARTNER_BPS, soroswapConfig, SOROSWAP_AGGREGATOR_CONTRACT, SOROSWAP_PROTOCOLS, SOROSWAP_SLIPPAGE_BPS, SOROSWAP_MAX_TX_FEE_STROOPS, soroswapSupportsPair, parseSoroswapQuote, getSoroswapSwapRoute, checkSoroswapSwapBounds, checkSoroswapTrustlineBounds, executeSoroswapSwapRoute } from "../src/wallet-core.js";
 import { CCTP_APTOS_DOMAIN, CCTP_V2_STANDARD_FINALITY, CCTP_APTOS_EVM_DOMAINS, CCTP_V2_TOKEN_MESSENGER, CCTP_V2_MESSAGE_TRANSMITTER, CCTP_APTOS_FEE_ADDRESS, CCTP_APTOS_DURATION_SEC, CCTP_APTOS_STORAGE_KEY, CCTP_APTOS_BURN_SCRIPT_SHA256, CCTP_APTOS_RECEIVE_SCRIPT_SHA256, verifyCctpAptosScriptBytes, cctpAptosScriptBytes, cctpAptosBurnScriptCall, cctpAptosReceiveScriptCall, buildCctpV2Burn, checkCctpV2Burn, checkCctpV2Message, cctpAptosSupportsPair, cctpAptosFeeFor, getCctpAptosSwapRoute, cctpAptosDisclosureLines, loadCctpAptosRecords, saveCctpAptosRecord, cctpAptosPhase, cctpAptosHistoryLine, aptosBuildScriptTransaction } from "../src/wallet-core.js";
+import { cvUint, cvInt, cvBool, cvBuff, cvPrincipal, cvContractPrincipal, cvTuple, cvList, cvSome, cvNone, serializeClarityValue, parseClarityValue, splitContractId, stacksStxPostCondition, stacksFungiblePostCondition, stacksContractCallPayload, buildSignedStacksContractCall, decodeStacksTx, checkStacksContractCall, STACKS_MAX_CALL_FEE_USTX, SBTC_REGISTRY_CONTRACT, SBTC_WITHDRAWAL_CONTRACT, SBTC_TOKEN_CONTRACT, SBTC_PEG_OUT_DUST_SATS, SBTC_PEG_STORAGE_KEY, parseSbtcSignerData, buildSbtcDepositScript, buildSbtcReclaimScript, buildSbtcDepositAddress, btcScriptNumEncode, sbtcRecipientForBtcAddress, sbtcPegOutCallSpec, sbtcPegInDisclosureLines, sbtcPegOutDisclosureLines, loadSbtcPegRecords, saveSbtcPegRecord, sbtcPegPhase, sbtcPegHistoryLine, sbtcPegPairForRoute, BITFLOW_PINNED_CONTRACTS, BITFLOW_SLIPPAGE_BPS, STACKS_SWAP_CHAIN_ID, STACKS_SWAP_NATIVE_TOKEN, bitflowConfig, bitflowSupportsPair, bitflowArgsForCall, getBitflowSwapRoute, bitflowGuardPostConditions, bitflowDisclosureLines } from "../src/wallet-core.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -6491,7 +6492,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11469,7 +11470,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12910,7 +12911,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13257,7 +13258,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17101,7 +17102,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17852,7 +17853,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
       && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
     ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
-      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar"]') && appSrc120.includes('if (netKey === "cardano")')
+      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"]') && appSrc120.includes('if (netKey === "cardano")')
       && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
       && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr"));
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
@@ -19748,7 +19749,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // App wiring pins (house style).
   ok("gap9 app: the swap sheet lists Stellar (XLM sentinel + USDC row), threads its address, and names Soroswap",
     appSrc129.includes('if (netKey === "stellar")') && appSrc129.includes('"USDC:" + STELLAR_USDC_ISSUER')
-    && appSrc129.includes('"cardano", "zcash", "dash", "stellar"]') && appSrc129.includes("stellar: stellarAddr")
+    && appSrc129.includes('"cardano", "zcash", "dash", "stellar", "stacks"]') && appSrc129.includes("stellar: stellarAddr")
     && appSrc129.includes('if (route && route.provider === "soroswap") return "Soroswap";')
     && appSrc129.includes('if (chainKey === "stellar") {'));
   ok("gap9 app: execution dispatches Soroswap routes to the core executor with the stellar.expert link",
@@ -19940,6 +19941,249 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && appSrc130.includes('id="wCctpAptos"') && appSrc130.includes("advanceCctpAptosRecords(wallet"));
   ok("gap10 fee address: the skim lands at the DripBot EVM fee wallet",
     CCTP_APTOS_FEE_ADDRESS === "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B");
+}
+
+// 131. Stacks contract calls, the sBTC peg + Bitflow (audit
+// gap #11, 2026-11-15): a general Clarity serialiser/parser +
+// contract-call builder (inspect-before-sign), the sBTC peg as
+// a MOVE class (BTC ↔ sBTC 1:1, NO Fluid fee — the peg has no
+// capture surface), and Bitflow intra-Stacks swaps in the v1
+// shape (client-side quotes via Hiro call-reads over the
+// pinned docs gateway's route set; the v2 BFF path is NOT
+// wired — its POSTs never completed from this VM).
+// EVIDENCE CLASSES, stated plainly: the deposit vector was
+// generated with the OFFICIAL helper's grammar (sbtc@0.3.2)
+// over the registry signer data READ LIVE in the 2026-11-15
+// research probe (aggregate key 02d99a…, threshold 8, set 11);
+// the Bitflow quote vectors + Hiro ABIs + gateway route/token
+// fixtures are that probe's captures; everything else is
+// pinned on in-test constructions and stubbed transports. NO
+// funded peg or swap has run — settlement proof stays gated
+// on Muse earnings, exactly as the research states.
+{
+  const ABANDON131 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const fixture131 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const coreSrc131 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc131 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const SP131 = stacksAddressFromPhrase(ABANDON131);
+  const hex131 = (b) => Buffer.from(b).toString("hex");
+  const unhex131 = (h) => new Uint8Array(Buffer.from(String(h).replace(/^0x/, ""), "hex"));
+  const SBTC131 = SBTC_TOKEN_CONTRACT;
+
+  /* ----- A. Clarity serialiser / parser ----- */
+  ok("gap11 clarity: primitive serialisations match the SIP-005 wire bytes",
+    hex131(serializeClarityValue(cvUint(100000n))) === "01000000000000000000000000000186a0"
+    && hex131(serializeClarityValue(cvInt(-1n))) === "00ffffffffffffffffffffffffffffffff"
+    && hex131(serializeClarityValue(cvBool(true))) === "03" && hex131(serializeClarityValue(cvBool(false))) === "04"
+    && hex131(serializeClarityValue(cvNone())) === "09"
+    && hex131(serializeClarityValue(cvBuff(unhex131("abcd")))) === "0200000002abcd"
+    && hex131(serializeClarityValue(cvPrincipal(SP131))).startsWith("0516")
+    && hex131(serializeClarityValue(cvContractPrincipal(SBTC131))).startsWith("0614"));
+  {
+    // Tuple keys serialise sorted (hashbytes before version —
+    // the withdrawal recipient's exact wire shape).
+    const tup = serializeClarityValue(cvTuple({ version: cvBuff(Uint8Array.of(4)), hashbytes: cvBuff(unhex131("751e76e8199196d454941c45d1b3a323f1433bd6")) }));
+    ok("gap11 clarity: tuple keys sort lexicographically on the wire (the peg-out recipient shape)",
+      hex131(tup) === "0c00000002096861736862797465730200000014751e76e8199196d454941c45d1b3a323f1433bd60776657273696f6e020000000104");
+    const nested = cvTuple({ b: cvList([cvUint(1n), cvBool(true)]), a: cvSome(cvBuff(unhex131("abcd"))), c: cvNone(), d: cvContractPrincipal(SBTC131), e: cvInt(-5n) });
+    const rt = parseClarityValue(serializeClarityValue(nested)).value;
+    ok("gap11 clarity: a nested value round-trips through serialise → parse unchanged",
+      rt.t === "tuple" && rt.v.a.t === "some" && hex131(rt.v.a.v.v) === "abcd"
+      && rt.v.b.t === "list" && rt.v.b.v[0].v === 1n && rt.v.b.v[1].v === true
+      && rt.v.c.t === "none" && rt.v.d.v === SBTC131 && rt.v.e.v === -5n);
+  }
+  {
+    // The live registry read from the research probe parses to
+    // the values the probe reported.
+    const fx = fixture131("hiro-sbtc-signer-data.json");
+    const sd = parseSbtcSignerData(parseClarityValue(unhex131(fx.result)).value);
+    ok("gap11 registry: the live signer-data read parses (aggregate key, 8-of-11)",
+      sd.aggregatePubkey === "02d99ad0f0111a7e9aaa2ed22940efec98db0ece9b9475e61e1eec65a6e7f3af69"
+      && sd.threshold === 8 && sd.signerCount === 11 && sd.signerPrincipal === "SM37A2MMXMKEHTZ0N6N81TFF4XEA62J2ZR3NM7BW8");
+    let refused = false;
+    try { parseSbtcSignerData({ t: "tuple", v: {} }); } catch { refused = true; }
+    ok("gap11 registry: a malformed signer set is refused, never defaulted", refused);
+  }
+
+  /* ----- A2. The general contract-call builder ----- */
+  const spec131 = sbtcPegOutCallSpec({ fromAddress: SP131, amountSats: 100000, recipientBtcAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", maxFeeSats: 80000 });
+  {
+    const built = buildSignedStacksContractCall({ phrase: ABANDON131, contract: spec131.contract, functionName: spec131.functionName, args: spec131.args, postConditions: spec131.postConditions, postConditionMode: spec131.postConditionMode, feeUstx: 2000n, nonce: 3 });
+    const dec = decodeStacksTx(built.rawHex);
+    ok("gap11 builder: a built contract call decodes back to exactly the spec it was built from",
+      dec.contract === SBTC_WITHDRAWAL_CONTRACT && dec.functionName === "initiate-withdrawal-request"
+      && dec.args.length === 3 && dec.args.every((a, i) => hex131(a) === hex131(spec131.args[i]))
+      && dec.postConditions.length === 1 && hex131(dec.postConditions[0]) === hex131(spec131.postConditions[0])
+      && dec.postConditionMode === 0x02 && dec.feeUstx === 2000n && dec.nonce === 3 && built.from === SP131);
+    ok("gap11 builder: the bounds check passes the honest build and refuses tampered amount, tampered post-condition and an over-cap fee",
+      checkStacksContractCall(dec, { ...spec131, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX }).ok === true
+      && checkStacksContractCall({ ...dec, args: [serializeClarityValue(cvUint(999999n)), dec.args[1], dec.args[2]] }, { ...spec131, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX }).ok === false
+      && checkStacksContractCall({ ...dec, postConditions: [stacksFungiblePostCondition(SP131, SBTC131, "sbtc-token", "eq", 1n)] }, { ...spec131, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX }).ok === false
+      && checkStacksContractCall({ ...dec, feeUstx: STACKS_MAX_CALL_FEE_USTX + 1n }, { ...spec131, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX }).ok === false);
+    let notCall = false;
+    try { decodeStacksTx(buildSignedStacksTx({ phrase: ABANDON131, to: SP131, amountRaw: 1000n, feeUstx: 200n, nonce: 0 }).rawHex); } catch { notCall = true; }
+    ok("gap11 builder: the decoder refuses a non-contract-call transaction rather than half-parsing it", notCall);
+    ok("gap11 builder: splitContractId validates the pinned ids and rejects free text",
+      splitContractId(SBTC_WITHDRAWAL_CONTRACT)[1] === "sbtc-withdrawal"
+      && (() => { try { splitContractId("not a contract"); return false; } catch { return true; } })());
+  }
+
+  /* ----- B. The sBTC peg ----- */
+  {
+    const vec = fixture131("sbtc-deposit-vector.json");
+    const dep = buildSbtcDepositAddress({ stacksAddress: vec.stacksAddress, signersAggregatePubkey: vec.signersAggregatePubkey, maxFeeSats: vec.maxFeeSats, lockBlocks: vec.lockBlocks, reclaimXonlyKey: vec.userXonlyKey });
+    ok("gap11 peg-in: the deposit address derives byte-identically to the official-grammar vector (live registry key)",
+      dep.address === vec.depositAddress && dep.depositScriptHex === vec.depositScript && dep.reclaimScriptHex === vec.reclaimScript && dep.scriptHex === vec.outputScript);
+    ok("gap11 peg-in: the deposit leaf carries max-fee ‖ recipient then the signers' key; the reclaim leaf is CSV-locked to the user",
+      vec.depositScript.startsWith("1e00000000000138800516") && vec.depositScript.endsWith("ac")
+      && vec.reclaimScript.startsWith("02b603b27520") && hex131(btcScriptNumEncode(950)) === "b603" && hex131(btcScriptNumEncode(16)) === "10" && btcScriptNumEncode(0).length === 0
+      && hex131(buildSbtcDepositScript({ maxFeeSats: 80000, stacksAddress: SP131, signersXonlyKey: unhex131("d99ad0f0111a7e9aaa2ed22940efec98db0ece9b9475e61e1eec65a6e7f3af69") })) === vec.depositScript
+      && hex131(buildSbtcReclaimScript({ lockBlocks: 950, userXonlyKey: vec.userXonlyKey })) === vec.reclaimScript);
+  }
+  ok("gap11 peg-out: every Bitcoin form Fluid holds maps to its contract recipient version",
+    sbtcRecipientForBtcAddress("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").version === 0x04
+    && hex131(sbtcRecipientForBtcAddress("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").hashbytes) === "751e76e8199196d454941c45d1b3a323f1433bd6"
+    && sbtcRecipientForBtcAddress("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr").version === 0x06
+    && hex131(sbtcRecipientForBtcAddress("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr").hashbytes) === "a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c"
+    && sbtcRecipientForBtcAddress("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").version === 0x00
+    && sbtcRecipientForBtcAddress("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy").version === 0x01
+    && (() => { try { sbtcRecipientForBtcAddress("not-an-address"); return false; } catch { return true; } })());
+  ok("gap11 peg-out: the call spec encodes amount + recipient tuple + max-fee, locks exactly amount + max-fee, and refuses the dust boundary",
+    hex131(spec131.args[0]) === "01000000000000000000000000000186a0"
+    && hex131(spec131.args[1]) === "0c00000002096861736862797465730200000014751e76e8199196d454941c45d1b3a323f1433bd60776657273696f6e020000000104"
+    && hex131(spec131.args[2]) === "0100000000000000000000000000013880"
+    && spec131.contract === SBTC_WITHDRAWAL_CONTRACT && spec131.postConditionMode === 0x02
+    && spec131.postConditions[0][0] === 0x01 && spec131.postConditions[0][1] === 0x02
+    && new DataView(spec131.postConditions[0].buffer, spec131.postConditions[0].byteOffset + spec131.postConditions[0].length - 8, 8).getBigUint64(0) === 180000n
+    && (() => { try { sbtcPegOutCallSpec({ fromAddress: SP131, amountSats: SBTC_PEG_OUT_DUST_SATS, recipientBtcAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", maxFeeSats: 80000 }); return false; } catch { return true; } })()
+    && !!sbtcPegOutCallSpec({ fromAddress: SP131, amountSats: SBTC_PEG_OUT_DUST_SATS + 1, recipientBtcAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", maxFeeSats: 80000 }));
+  {
+    const sd131 = { aggregatePubkey: "02d99a", threshold: 8, signerCount: 11, signerPrincipal: null };
+    const inLines = sbtcPegInDisclosureLines({ signerData: sd131, maxFeeSats: 80000, lockBlocks: 950 }).join(" ");
+    const outLines = sbtcPegOutDisclosureLines({ signerData: sd131, maxFeeSats: 80000 }).join(" ");
+    ok("gap11 disclosures: both cards state the 1:1, the live-read threshold, the fee shape, the times and the reclaim/unlock rights",
+      inLines.includes("1:1") && inLines.includes("0.001 BTC") && inLines.includes("Fluid charges no fee")
+      && inLines.includes("80,000 sats") && inLines.includes("10–30 minutes") && inLines.includes("8-of-11")
+      && inLines.includes("signer-held Bitcoin") && inLines.includes("950 blocks") && inLines.includes("6.6 days")
+      && outLines.includes("546") && outLines.includes("locks your amount plus a fee allowance")
+      && outLines.includes("minted back to you in sBTC") && outLines.includes("released back to you")
+      && outLines.includes("6 Bitcoin blocks") && outLines.includes("8-of-11"));
+  }
+  ok("gap11 peg: the swap-sheet matcher presents the Move for BTC ↔ sBTC only — never for the Bitflow pair or a non-peg pair",
+    sbtcPegPairForRoute("bitcoin", "btc", "stacks", SBTC131)?.direction === "in"
+    && sbtcPegPairForRoute("stacks", SBTC131, "bitcoin", "btc")?.direction === "out"
+    && sbtcPegPairForRoute("stacks", STACKS_SWAP_NATIVE_TOKEN, "stacks", SBTC131) === null
+    && sbtcPegPairForRoute("bitcoin", "btc", "stacks", STACKS_SWAP_NATIVE_TOKEN) === null
+    && SBTC_REGISTRY_CONTRACT === "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry");
+  {
+    const store131 = { _m: new Map(), getItem(k) { return this._m.has(k) ? this._m.get(k) : null; }, setItem(k, v) { this._m.set(k, String(v)); } };
+    // A record CLAIMING completion with no protocol evidence
+    // behind it must render in-progress: phases derive from
+    // evidence fields alone, never from record.state.
+    const liarOut = { id: "sbtcpeg-liar-out", kind: "peg-out", state: "done", hashes: ["0xabc"], stacksTxid: "0xabc", requestId: null, reqStatus: null, btcTxid: null, amountSats: "100000", maxFeeSats: 80000, recipientBtcAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", fromSymbol: "sBTC", toSymbol: "BTC", createdAt: 1 };
+    const liarIn = { id: "sbtcpeg-liar-in", kind: "peg-in", state: "done", hashes: ["deadbeef"], btcTxid: "deadbeef", vout: 0, amountSats: "100000", maxFeeSats: 80000, lockBlocks: 950, blockHeight: null, mintedAmountSats: null, fromSymbol: "BTC", toSymbol: "sBTC", createdAt: 1 };
+    saveSbtcPegRecord(store131, liarOut); saveSbtcPegRecord(store131, liarIn);
+    ok("gap11 records: save/load roundtrip under the family key; a seeded 'complete' record with no protocol evidence renders in-progress",
+      SBTC_PEG_STORAGE_KEY === "fluid_sbtc_peg_v1" && loadSbtcPegRecords(store131).length === 2
+      && sbtcPegPhase(liarOut) === "requested" && sbtcPegHistoryLine(liarOut).includes("withdrawal requested")
+      && sbtcPegPhase(liarIn) === "sent" && sbtcPegHistoryLine(liarIn).includes("waiting for its first Bitcoin confirmation"));
+    ok("gap11 records: phases advance only as evidence fields land (confirming → reclaimable → minted; requested → accepted → paid / rejected)",
+      sbtcPegPhase({ ...liarIn, blockHeight: 100 }, { tipHeight: 1049 }) === "confirming"
+      && sbtcPegPhase({ ...liarIn, blockHeight: 100 }, { tipHeight: 1050 }) === "reclaimable"
+      && sbtcPegPhase({ ...liarIn, blockHeight: 100, mintedAmountSats: "99500" }) === "minted"
+      && sbtcPegPhase({ ...liarOut, reqStatus: "accepted" }) === "accepted"
+      && sbtcPegPhase({ ...liarOut, reqStatus: "accepted", btcTxid: "cafe" }) === "paid"
+      && sbtcPegPhase({ ...liarOut, reqStatus: "rejected" }) === "rejected"
+      && sbtcPegHistoryLine({ ...liarOut, reqStatus: "rejected" }).includes("released back"));
+  }
+
+  /* ----- C. Bitflow v1 ----- */
+  {
+    const qXyk = fixture131("hiro-q-xyk-stx-sbtc-20.json"), qVelar = fixture131("hiro-q-velar-stx-sbtc-20.json");
+    ok("gap11 bitflow: the probe's Hiro quote results parse to the amounts the research reported ($20: XYK 30,803 / Velar 30,969 sats)",
+      parseStacksCallReadValue(unhex131(qXyk.result))?.value === 30803n
+      && parseStacksCallReadValue(unhex131(qVelar.result))?.value === 30969n);
+    const routes131 = fixture131("bitflow-gw-routes.json")["token-sbtc"];
+    const abiXyk = fixture131("hiro-abi-xyk-helper.json"), abiVelar = fixture131("hiro-abi-velar-wrapper.json");
+    const qa131 = fixture131("bitflow-quote-args.json");
+    // The probe's "$20" amount, read back out of its own
+    // serialised vector (the probe priced $20 at the live STX
+    // price; the pin is the serialisation identity, not the
+    // price math).
+    const AMT131 = parseClarityValue(unhex131(qa131.xyk_stx_sbtc["20"][0])).value.v;
+    const xykArgs = bitflowArgsForCall(routes131[0].quoteData, abiXyk, { amountIn: AMT131 }).map(hex131);
+    const velarArgs = bitflowArgsForCall(routes131[1].quoteData, abiVelar, { amountIn: AMT131 }).map(hex131);
+    ok("gap11 bitflow: quote arguments build byte-identically to the probe's serialised vectors (ABI order, not the gateway's order array)",
+      JSON.stringify(xykArgs) === JSON.stringify(qa131.xyk_stx_sbtc["20"])
+      && JSON.stringify(velarArgs) === JSON.stringify(qa131.velar_stx_sbtc["20"]));
+    const velarSwapArgs = bitflowArgsForCall(routes131[1].swapData, abiVelar, { amountIn: AMT131, minReceived: 30814n });
+    ok("gap11 bitflow: the Velar swap call carries the amount, the pinned contracts and provider = none (no fee rides the v1 path)",
+      velarSwapArgs.length === 6 && hex131(velarSwapArgs[0]) === qa131.velar_stx_sbtc["20"][0]
+      && hex131(velarSwapArgs[5]) === "09"
+      && bitflowConfig().configured === false && bitflowConfig().providerPrincipal === null);
+    ok("gap11 bitflow: the pair matcher serves the picker's Stacks tokens and nothing else",
+      !!bitflowSupportsPair({ fromChainKey: "stacks", toChainKey: "stacks", fromTokenAddress: STACKS_SWAP_NATIVE_TOKEN, toTokenAddress: SBTC131 })
+      && bitflowSupportsPair({ fromChainKey: "base", toChainKey: "stacks", fromTokenAddress: STACKS_SWAP_NATIVE_TOKEN, toTokenAddress: SBTC131 }) === null
+      && bitflowSupportsPair({ fromChainKey: "stacks", toChainKey: "stacks", fromTokenAddress: SBTC131, toTokenAddress: SBTC131 }) === null
+      && STACKS_SWAP_CHAIN_ID === 20000000000021 && BITFLOW_PINNED_CONTRACTS.length === 2);
+  }
+  {
+    // End-to-end quote over stubbed transports: the gateway
+    // fixtures + the Hiro interface/quote fixtures. Velar must
+    // WIN (30,969 > 30,803) — the aggregator's whole point.
+    const realFetch131 = globalThis.fetch;
+    const tokensFx = fixture131("bitflow-gw-tokens.json"), routesFx = fixture131("bitflow-gw-routes.json");
+    const abiXyk = fixture131("hiro-abi-xyk-helper.json"), abiVelar = fixture131("hiro-abi-velar-wrapper.json");
+    const qXyk = fixture131("hiro-q-xyk-stx-sbtc-20.json"), qVelar = fixture131("hiro-q-velar-stx-sbtc-20.json");
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("getAllTokensAndPools")) return { ok: true, status: 200, json: async () => tokensFx, text: async () => JSON.stringify(tokensFx) };
+      if (u.includes("getAllRoutes")) return { ok: true, status: 200, json: async () => routesFx, text: async () => JSON.stringify(routesFx) };
+      if (u.includes("/v2/contracts/interface/")) return { ok: true, status: 200, json: async () => (u.includes("xyk-swap-helper") ? abiXyk : abiVelar), text: async () => "" };
+      if (u.includes("/v2/contracts/call-read/")) return { ok: true, status: 200, json: async () => (u.includes("xyk-swap-helper") ? qXyk : qVelar), text: async () => "" };
+      return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+    };
+    try {
+      resetPricesCache();
+      const amt131 = parseClarityValue(unhex131(fixture131("bitflow-quote-args.json").xyk_stx_sbtc["20"][0])).value.v;
+      const route131 = await getBitflowSwapRoute({ fromChainKey: "stacks", toChainKey: "stacks", fromTokenAddress: STACKS_SWAP_NATIVE_TOKEN, toTokenAddress: SBTC131, fromAmount: amt131, fromAddress: SP131, toAddress: SP131 });
+      ok("gap11 bitflow: the live-shaped quote picks Velar over Bitflow's own pool and carries the honest v1 fee state",
+        !!route131 && route131.provider === "bitflow"
+        && route131.bitflow.swapContract === "SM1793C4R5PZ4NS4VQ4WMP7SKKYVH8JZEWSZ9HCCR.wrapper-velar-path-v-1-2"
+        && route131.bitflow.quotedOut === "30969" && route131.toAmount === "30969"
+        && route131.bitflow.minReceived === ((30969n * BigInt(10000 - BITFLOW_SLIPPAGE_BPS)) / 10000n).toString()
+        && route131.collecting === false && route131.platformFeeCollecting === false && route131.platformFeeRaw === "0"
+        && route131.bitflow.providerPrincipal === null);
+      ok("gap11 bitflow: the executability gate accepts the honest route and refuses a fee-claiming or minimum-tampered one",
+        swapRouteExecutable(route131).ok === true
+        && swapRouteExecutable({ ...route131, collecting: true }).ok === false
+        && swapRouteExecutable({ ...route131, platformFeeRaw: "100" }).ok === false
+        && swapRouteExecutable({ ...route131, bitflow: { ...route131.bitflow, minReceived: "1" } }).ok === false
+        && swapRouteExecutable({ ...route131, bitflow: { ...route131.bitflow, swapContract: "SM1793C4R5PZ4NS4VQ4WMP7SKKYVH8JZEWSZ9HCCR.router-xyk-velar-v-1-4" } }).ok === false);
+      const pcs131 = bitflowGuardPostConditions(route131, SP131);
+      const tailAmount = (pc) => new DataView(pc.buffer, pc.byteOffset + pc.length - 8, 8).getBigUint64(0);
+      ok("gap11 bitflow: Fluid's guard post-conditions bind exactly the input out and at least the minimum in",
+        pcs131.length === 2
+        && pcs131[0][0] === 0x00 && pcs131[0][1] === 0x02 && pcs131[0][23] === 0x01 && tailAmount(pcs131[0]) === amt131
+        && pcs131[1][0] === 0x01 && pcs131[1][1] === 0x03 && pcs131[1][pcs131[1].length - 9] === 0x03 && tailAmount(pcs131[1]) === BigInt(route131.bitflow.minReceived)
+        && hex131(pcs131[1]).includes(Buffer.from("sbtc-token").toString("hex")));
+      ok("gap11 bitflow: the card copy states the guard shape and the honest no-fee v1 state",
+        bitflowDisclosureLines(route131).join(" ").includes("post-conditions")
+        && bitflowDisclosureLines(route131).join(" ").includes("No Fluid fee is charged on this route"));
+    } finally { globalThis.fetch = realFetch131; }
+  }
+
+  /* ----- wiring pins (house style) ----- */
+  ok("gap11 wiring: the dispatcher quotes Bitflow as a candidate, the gate and the executor dispatch it, and own-address resolution knows Stacks",
+    coreSrc131.includes("bitflowSupportsPair(planArgs)") && coreSrc131.includes('route.provider === "bitflow"')
+    && coreSrc131.includes("export async function executeBitflowSwapRoute")
+    && coreSrc131.includes('case "stacks": return isValidStacksAddress(own.stacks'));
+  ok("gap11 app: the picker lists Stacks, the sheet presents the peg Move, names Bitflow, and the peg records panel + drivers are wired",
+    appSrc131.includes('if (netKey === "stacks")') && appSrc131.includes('"stellar", "stacks"]')
+    && appSrc131.includes("sbtcPegPairForRoute(fromKey, fromTok.address, toKey, toTok.address)")
+    && appSrc131.includes("openSbtcPegSheet") && appSrc131.includes('id="wSbtcPeg"')
+    && appSrc131.includes('if (route && route.provider === "bitflow") return "Bitflow";')
+    && appSrc131.includes("executeBitflowSwapRoute(wallet, route") && appSrc131.includes("advanceSbtcPegRecords(wallet"));
 }
 
 console.log(`\n${passed} checks passed`);

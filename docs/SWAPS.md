@@ -1823,3 +1823,111 @@ is a different asset and never matches.
   minus the disclosed skim), the scripts are Circle's own
   bytes pinned by hash, and every calldata/script/message
   the executor signs is bounds-checked in §130 of the suite.
+
+## Stacks — the sBTC peg (Move class) + Bitflow intra swaps (audit gap #11, 2026-11-15)
+
+Stacks gains its swap surfaces on one new primitive: a
+**general contract-call builder** (a Clarity value
+serialiser/parser, contract-call payloads with caller-built
+post-conditions, and a decoder that bounds-checks the built
+transaction against the reviewed spec before broadcast —
+§131 of the suite pins it independently of both surfaces).
+
+- **The sBTC peg — a MOVE, never a swap, and fee-free.**
+  BTC ↔ sBTC is Bitcoin's canonical bridged form on Stacks:
+  the peg redeems exactly 1:1, so the swap sheet presents
+  the Move card instead of any market quote, and the move
+  carries **no Fluid fee** — the peg has no capture surface
+  at all (no protocol fee, no signer fee; the only deduction
+  is the Bitcoin network fee of the signers' sweep, capped
+  by the user's own max-fee), and a canonical move never
+  invents one (the LADYS precedent).
+  - **Peg-in (BTC → sBTC)** is a plain Bitcoin send to a
+    P2TR deposit address computed locally from the pinned
+    script grammar (the official sBTC helper's): a deposit
+    leaf naming the user's Stacks recipient + the signers'
+    aggregate key, and a reclaim leaf CSV-locked to the
+    user's own key (default 950 blocks, ~6.6 days). The
+    aggregate key is **read live from the sBTC registry at
+    quote time** — signer sets rotate, so a failed read
+    refuses the quote and an executor re-read refuses a
+    deposit priced against a rotated set; never a stale
+    hardcoded key. Minimum 0.001 BTC (the peg route's own
+    floor, set by the protocol). Minting lands within ~3
+    Bitcoin blocks (~10–30 min). Emily is notified
+    best-effort after broadcast and its deposit limits are
+    shown when it answers; neither ever blocks, and no cap
+    is ever fabricated from its silence.
+  - **Peg-out (sBTC → BTC)** is one contract call —
+    `sbtc-withdrawal.initiate-withdrawal-request` — guarded
+    by an exact-lock post-condition (the user's sBTC moves
+    by exactly amount + max-fee or the transaction aborts).
+    The contract locks amount + fee allowance at initiation;
+    the signers pay the Bitcoin payout fee from the
+    allowance, the unspent part is minted back in sBTC, and
+    the user receives exactly the amount in BTC; a rejected
+    request unlocks the full lock. Payout ~1 h class (after
+    ~6 Bitcoin blocks). The recipient is the user's own
+    Bitcoin address, encoded in the contract's version table
+    for every address form Fluid holds.
+  - **Trust disclosure, on both cards:** the peg is held by
+    a threshold signer set (8-of-11 at the 2026-11-15 probe;
+    the threshold and set size are read live with the key
+    and printed as read) — sBTC is signer-held Bitcoin, not
+    native BTC; the reclaim path is the user's protection
+    on the way in.
+  - **Records** persist under `fluid_sbtc_peg_v1` and resume
+    like the bridge-move records; phases advance only from
+    protocol evidence (Bitcoin confirmations, the registry's
+    completed-deposit / withdrawal-request reads, the sBTC
+    balance delta, the payout visible on the user's Bitcoin
+    address) — a record's own state claim never completes it.
+- **Bitflow intra-Stacks swaps — the v1 shape.** Quotes are
+  computed the legacy SDK's client-side way: the route set
+  comes from the pinned **docs gateway host** (the SDK's
+  bundled default host is dead), each route's quote function
+  is called read-only through Hiro with arguments built in
+  **ABI order** (the gateway's own `order` array disagrees
+  with the ABI on the Velar path and is not trusted), and
+  the best quote wins — in probes Velar's pool beat
+  Bitflow's own XYK pool on STX→sBTC, which is the
+  aggregator's whole point. Execution is a contract call
+  through the general builder against **pinned,
+  fixture-verified contracts only** (the XYK swap helper and
+  the Velar path wrapper in this slice), guarded by Fluid's
+  own post-conditions built from the route's map: exactly
+  the quoted input leaves the wallet, at least the quoted
+  minimum (0.5% slippage floor) arrives, or the transaction
+  aborts. **Prices come from the quotes, never from
+  Bitflow's token price feed — the feed is proven stale**
+  (its sBTC figure disagreed with the pools by ~18% at probe
+  time).
+  - **Capture: none on v1, honestly shown.** The legacy
+    path carries no fee in the transaction — Bitflow's own
+    SDK docs state the `provider` principal is attribution
+    only, with no automated revenue sharing from it — so
+    every v1 route is `collecting=false` and the card says
+    no Fluid fee is charged. The provider principal is a
+    config seam (empty in this build → provider = none).
+  - **The v2 BFF path is NOT wired.** Its fee-carrying
+    aggregator calls are POSTs to `bff.bitflowapis.finance`,
+    and POSTs to that host never completed from this VM
+    (the KyberSwap environment class — no build may depend
+    on an executor whose calls were never inspected from
+    here). **Re-probe trigger:** from a clean network,
+    (1) a BFF `POST /quotes/v2/quote` + `POST
+    /quotes/v2/agg/swap` round-trip completes and the built
+    call is inspectable, and (2) Bitflow's revenue-share
+    percentage to providers is pinned in writing (today it
+    is published only as "a portion"). On both, v2 switches
+    on with `agg_fee_bps` on `agg_buildable` routes — the
+    route/gate/executor shapes here need no redesign.
+- **Unproven.** No funded peg-in, peg-out or Bitflow swap
+  has run: settlement proof stays gated on Muse earnings,
+  like every funded proof in this programme. What is proven
+  is the construction layer — the deposit address derives
+  byte-identically to the official grammar over the live
+  registry key, the peg-out call and the Bitflow quote/swap
+  arguments match the probe's serialised vectors, and every
+  transaction the executors sign is decoded and
+  bounds-checked in §131 of the suite.

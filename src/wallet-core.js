@@ -21958,6 +21958,7 @@ export function destChainName(chainKey) {
   if (chainKey === "zcash") return "Zcash";
   if (chainKey === "dash") return "Dash";
   if (chainKey === "stellar") return "Stellar";
+  if (chainKey === "stacks") return "Stacks";
   if (chainKey === "aptos") return "Aptos";
   if (chainKey === "cosmoshub") return "Cosmos Hub";
   if (chainKey === "osmosis") return "Osmosis";
@@ -22362,6 +22363,10 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     const out = await executeCctpAptosSwapRoute(wallet, route, progress, { storage, onApprove });
     return out.hashes;
   }
+  if (route.provider === "bitflow") {
+    const out = await executeBitflowSwapRoute(wallet, route, progress);
+    return out.hashes;
+  }
   throw new Error("That route can't be executed — search again and pick another route.");
 }
 /** The gas-fallback leg-2 band (security audit WS2 F3,
@@ -22749,6 +22754,7 @@ export function swapOwnAddressFor(chainKey, own) {
     case "zcash": return isValidZcashAddress(own.zcash || "") ? own.zcash : null;
     case "dash": return isValidDashAddress(own.dash || "") ? own.dash : null;
     case "stellar": return isValidStellarAddress(own.stellar || "") ? own.stellar : null;
+    case "stacks": return isValidStacksAddress(own.stacks || "") ? own.stacks : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
     // The Cosmos slice-1 chains (Skip rail, 2026-11-15): the
@@ -25550,6 +25556,14 @@ async function getSwapRoutesDirect(args) {
   if (cctpAptosSupportsPair(planArgs)) {
     try { const ca = await getCctpAptosSwapRoute(planArgs); if (ca) routes.push(ca); } catch { /* CCTP-Aptos is a candidate, never a single point of failure */ }
   }
+  // Bitflow (gap #11, 2026-11-15): the intra-Stacks candidate,
+  // beside CCTP-Aptos in the same posture — quotes computed
+  // client-side from Hiro call-reads over the pinned gateway's
+  // route set; a gateway or Hiro outage simply leaves the pair
+  // to its other routes (today: none, so an honest no-route).
+  if (bitflowSupportsPair(planArgs)) {
+    try { const bf = await getBitflowSwapRoute(planArgs); if (bf) routes.push(bf); } catch { /* Bitflow is a candidate, never a single point of failure */ }
+  }
   // Mechanism 2 (all-to-native, then swap back) is synthesized
   // only when a gas plan exists and no quoted route can carry
   // the delivery — it is the fallback, never a rival to a drop.
@@ -26517,6 +26531,37 @@ export function swapRouteExecutable(route) {
       return { ok: false, reason: "This CCTP route's fee could not be verified against the fee law — pick another route." };
     }
     return { ok: true, cctpAptos: true };
+  }
+  // Bitflow routes (gap #11, 2026-11-15): executable when the
+  // route is structurally complete — both chain ids the Stacks
+  // sentinel, the quoted amounts re-deriving exactly (the
+  // minimum is the slippage floor of the quote, computed here
+  // again), the execution contracts the pinned fixture-verified
+  // pair, and the stored call parameters + post-condition map
+  // present for the executor to rebuild from. The executor
+  // re-derives the wallet's own Stacks address, rebuilds the
+  // call from those parameters, and bounds-checks the decoded
+  // transaction before signing, so the gate is structural,
+  // exactly like the lanes above. The fee state is part of the
+  // gate: v1's legacy path carries no verifiable fee, so a
+  // Bitflow route claiming one is refused outright.
+  if (route?.provider === "bitflow") {
+    const b = route.bitflow;
+    const incomplete = "This Bitflow route is incomplete — pick another route.";
+    const rawOk = (v) => typeof v === "string" && /^\d+$/.test(v);
+    if (!b || route.fromChainKey !== "stacks" || route.toChainKey !== "stacks"
+      || Number(route.fromChainId) !== STACKS_SWAP_CHAIN_ID || Number(route.toChainId) !== STACKS_SWAP_CHAIN_ID
+      || !rawOk(route.fromAmount) || !rawOk(route.toAmount) || !rawOk(b.amountIn) || !rawOk(b.quotedOut) || !rawOk(b.minReceived)
+      || String(b.amountIn) !== String(route.fromAmount) || String(b.quotedOut) !== String(route.toAmount)
+      || !BITFLOW_PINNED_CONTRACTS.includes(b.swapContract) || !BITFLOW_PINNED_CONTRACTS.includes(b.quoteContract)
+      || !b.swapParameters || typeof b.swapParameters !== "object"
+      || !b.postConditions || typeof b.postConditions !== "object")
+      return { ok: false, reason: incomplete };
+    const expectMin = (BigInt(b.quotedOut) * BigInt(10000 - BITFLOW_SLIPPAGE_BPS)) / 10000n;
+    if (BigInt(b.minReceived) !== expectMin || expectMin <= 0n) return { ok: false, reason: incomplete };
+    if (route.collecting === true || route.platformFeeCollecting === true || String(route.platformFeeRaw ?? "0") !== "0")
+      return { ok: false, reason: "This Bitflow route claims a Fluid fee the v1 path cannot carry or verify — pick another route." };
+    return { ok: true, bitflow: true };
   }
   // Relay routes (the primary router since 2026-11-08): executable
   // when their source is an EVM chain and every step is a complete
@@ -32295,6 +32340,1266 @@ export async function sendStacks(phrase, draft, network = "mainnet") {
   let txid = plan.txid;
   try { const j = JSON.parse(text); if (typeof j === "string" && /^0x[0-9a-f]{64}$/i.test(j)) txid = j; } catch { /* plain-text txid */ }
   return { hash: txid, plan };
+}
+
+/* ================= Stacks contract calls, the sBTC peg + Bitflow (audit gap #11, 2026-11-15) =================
+ * Three surfaces ride on one new primitive: a GENERAL Stacks
+ * contract-call builder. Until here the Stacks builder signed
+ * only STX transfers and one hardwired SIP-010 transfer; this
+ * section adds a general Clarity value serialiser + parser,
+ * contract-call payloads with caller-built post-conditions, a
+ * decoder that reads a built transaction back, and the fleet's
+ * inspect-before-sign discipline (the decoded fields are
+ * bounds-checked against the quote/spec before anything is
+ * signed or broadcast). The existing builders are untouched —
+ * their byte-identity test vectors must not move.
+ *
+ * On top of it: (B) the sBTC peg as a MOVE class — BTC ↔ sBTC
+ * over the canonical peg, exactly 1:1, NO Fluid fee (the peg
+ * has no capture surface and a canonical move never invents
+ * one — the LADYS precedent); and (C) Bitflow intra-Stacks
+ * swaps in the v1 shape the transport probes proved: quotes
+ * computed client-side from Hiro read-only call-reads over the
+ * route set the pinned docs gateway serves, execution through
+ * the general builder against pinned contracts. The v2 BFF
+ * path is deliberately NOT wired (its POSTs never completed
+ * from this VM — see docs/SWAPS.md for the re-probe trigger). */
+
+/* ---------- general Clarity values (SIP-005 serialisation) ---------- */
+export function cvUint(v) { return { t: "uint", v: BigInt(v) }; }
+export function cvInt(v) { return { t: "int", v: BigInt(v) }; }
+export function cvBool(v) { return { t: "bool", v: !!v }; }
+export function cvBuff(bytes) { return { t: "buff", v: bytes instanceof Uint8Array ? bytes : hexToBytesB(String(bytes).replace(/^0x/, "")) }; }
+export function cvAscii(s) { return { t: "ascii", v: String(s) }; }
+export function cvUtf8(s) { return { t: "utf8", v: String(s) }; }
+export function cvPrincipal(address) { return { t: "principal", v: String(address) }; }
+export function cvContractPrincipal(id) { return { t: "contractPrincipal", v: String(id) }; }
+export function cvTuple(entries) { return { t: "tuple", v: entries }; }
+export function cvList(items) { return { t: "list", v: items }; }
+export function cvSome(inner) { return { t: "some", v: inner }; }
+export function cvNone() { return { t: "none" }; }
+export function cvOk(inner) { return { t: "ok", v: inner }; }
+export function cvErr(inner) { return { t: "err", v: inner }; }
+
+/** Split + validate a contract id "ADDRESS.name" (mainnet/testnet
+ *  aware). Throws on anything malformed — contract ids are pins,
+ *  never free text. */
+export function splitContractId(id, network = "mainnet") {
+  const s = String(id || "");
+  const dot = s.indexOf(".");
+  if (dot <= 0 || dot === s.length - 1) throw new Error(`Invalid contract id ${s}`);
+  const addr = s.slice(0, dot), name = s.slice(dot + 1);
+  if (!isValidStacksContractAddress(addr, network)) throw new Error(`Invalid contract address in ${s}`);
+  if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name) || name.length > 128) throw new Error(`Invalid contract name in ${s}`);
+  return [addr, name];
+}
+
+/** Serialise a Clarity value descriptor (the cv* constructors
+ *  above) to its SIP-005 wire bytes. Tuple keys are sorted
+ *  lexicographically, as the wire format requires. */
+export function serializeClarityValue(cv) {
+  switch (cv?.t) {
+    case "int": { const v = BigInt(cv.v); return catB(Uint8Array.of(0x00), u128beS(v < 0n ? (1n << 128n) + v : v)); }
+    case "uint": return catB(Uint8Array.of(0x01), u128beS(BigInt(cv.v)));
+    case "buff": { const b = cv.v; if (!(b instanceof Uint8Array)) throw new Error("buff value must be bytes"); return catB(Uint8Array.of(0x02), u32beS(b.length), b); }
+    case "bool": return Uint8Array.of(cv.v ? 0x03 : 0x04);
+    case "principal": return stacksPrincipalCvBytes(cv.v);
+    case "contractPrincipal": { const [addr, name] = splitContractId(cv.v); return catB(Uint8Array.of(0x06), stacksPrincipalBytes(addr), lpStringS(name)); }
+    case "ok": return catB(Uint8Array.of(0x07), serializeClarityValue(cv.v));
+    case "err": return catB(Uint8Array.of(0x08), serializeClarityValue(cv.v));
+    case "none": return Uint8Array.of(0x09);
+    case "some": return catB(Uint8Array.of(0x0a), serializeClarityValue(cv.v));
+    case "list": return catB(Uint8Array.of(0x0b), u32beS(cv.v.length), ...cv.v.map(serializeClarityValue));
+    case "tuple": {
+      const keys = Object.keys(cv.v).sort();
+      return catB(Uint8Array.of(0x0c), u32beS(keys.length), ...keys.map(k => catB(lpStringS(k), serializeClarityValue(cv.v[k]))));
+    }
+    case "ascii": { const b = new TextEncoder().encode(cv.v); return catB(Uint8Array.of(0x0d), u32beS(b.length), b); }
+    case "utf8": { const cps = [...String(cv.v)]; const parts = [Uint8Array.of(0x0e), u32beS(cps.length)]; for (const c of cps) parts.push(u32beS(c.codePointAt(0))); return catB(...parts); }
+    default: throw new Error("Cannot serialise this Clarity value");
+  }
+}
+
+/** Parse one Clarity value at `offset` → { value, next } in the
+ *  same descriptor shape serializeClarityValue consumes, so
+ *  protocol reads (registry tuples, optionals, signer sets)
+ *  round-trip through one grammar. Throws on truncation or an
+ *  unknown prefix — a hostile or drifted read must fail loudly,
+ *  never parse as something it is not. */
+export function parseClarityValue(bytes, offset = 0) {
+  const b = bytes; let o = offset;
+  const need = (n) => { if (o + n > b.length) throw new Error("Clarity value overruns its bytes"); };
+  const u32 = () => { need(4); const v = (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]; o += 4; return v >>> 0; };
+  const u128 = () => { need(16); let v = 0n; for (let i = 0; i < 16; i++) v = (v << 8n) | BigInt(b[o + i]); o += 16; return v; };
+  const lpName = () => { need(1); const len = b[o]; o += 1; need(len); const s = new TextDecoder().decode(b.slice(o, o + len)); o += len; return s; };
+  const principalAddr = () => { need(21); const version = b[o]; const hash = b.slice(o + 1, o + 21); o += 21; return stacksAddressEncode(version, hash); };
+  need(1); const prefix = b[o]; o += 1;
+  switch (prefix) {
+    case 0x00: { const u = u128(); return { value: { t: "int", v: u >= (1n << 127n) ? u - (1n << 128n) : u }, next: o }; }
+    case 0x01: return { value: { t: "uint", v: u128() }, next: o };
+    case 0x02: { const len = u32(); need(len); const v = b.slice(o, o + len); o += len; return { value: { t: "buff", v }, next: o }; }
+    case 0x03: return { value: { t: "bool", v: true }, next: o };
+    case 0x04: return { value: { t: "bool", v: false }, next: o };
+    case 0x05: return { value: { t: "principal", v: principalAddr() }, next: o };
+    case 0x06: { const addr = principalAddr(); const name = lpName(); return { value: { t: "contractPrincipal", v: `${addr}.${name}` }, next: o }; }
+    case 0x07: { const r = parseClarityValue(b, o); return { value: { t: "ok", v: r.value }, next: r.next }; }
+    case 0x08: { const r = parseClarityValue(b, o); return { value: { t: "err", v: r.value }, next: r.next }; }
+    case 0x09: return { value: { t: "none" }, next: o };
+    case 0x0a: { const r = parseClarityValue(b, o); return { value: { t: "some", v: r.value }, next: r.next }; }
+    case 0x0b: { const n = u32(); if (n > 100000) throw new Error("Clarity list is unreasonably long"); const items = []; for (let i = 0; i < n; i++) { const r = parseClarityValue(b, o); items.push(r.value); o = r.next; } return { value: { t: "list", v: items }, next: o }; }
+    case 0x0c: { const n = u32(); if (n > 1000) throw new Error("Clarity tuple is unreasonably wide"); const entries = {}; for (let i = 0; i < n; i++) { const k = lpName(); const r = parseClarityValue(b, o); entries[k] = r.value; o = r.next; } return { value: { t: "tuple", v: entries }, next: o }; }
+    case 0x0d: { const len = u32(); need(len); const s = new TextDecoder().decode(b.slice(o, o + len)); o += len; return { value: { t: "ascii", v: s }, next: o }; }
+    case 0x0e: { const n = u32(); if (n > 100000) throw new Error("Clarity string is unreasonably long"); let s = ""; for (let i = 0; i < n; i++) s += String.fromCodePoint(u32()); return { value: { t: "utf8", v: s }, next: o }; }
+    default: throw new Error(`Unknown Clarity type prefix 0x${prefix.toString(16)}`);
+  }
+}
+
+/** A Hiro call-read WITH serialized arguments (the zero-arg
+ *  stacksCallRead above serves only metadata reads). Returns the
+ *  raw result bytes; the caller parses with parseClarityValue.
+ *  Rotates over the family's Hiro hosts like every Stacks read. */
+export async function stacksCallReadWithArgs(contract, fn, argBytesList, sender, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const [addr, name] = splitContractId(contract, network);
+  if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(String(fn || ""))) throw new Error("Invalid function name");
+  const apis = network === "testnet" ? [net.api] : STACKS_APIS;
+  return withFamilyEndpoints("stacks", apis, async (base) => {
+    const r = await fetch(`${base}/v2/contracts/call-read/${addr}/${name}/${fn}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sender, arguments: (argBytesList || []).map(a => "0x" + bytesToHexB(a)) }),
+    });
+    if (!r.ok) throw new Error(`call-read ${fn} HTTP ${r.status}`);
+    const j = await r.json();
+    if (!j || j.okay !== true || typeof j.result !== "string") throw new Error(`call-read ${fn} failed`);
+    return hexToBytesB(j.result.replace(/^0x/, ""));
+  });
+}
+
+/* ---------- post-conditions (SIP-005 wire) ---------- */
+export const STACKS_PC_CODES = { eq: 0x01, gt: 0x02, gte: 0x03, lt: 0x04, lte: 0x05 };
+function stacksPcCodeByte(code) {
+  if (typeof code === "number") { if (!Object.values(STACKS_PC_CODES).includes(code)) throw new Error("Unknown post-condition code"); return code; }
+  const c = STACKS_PC_CODES[String(code || "").toLowerCase()];
+  if (c == null) throw new Error(`Unknown post-condition code ${code}`);
+  return c;
+}
+/** Post-condition principal wire bytes: standard (0x02) or
+ *  contract (0x03) form. */
+export function stacksPcPrincipalBytes(principal) {
+  const s = String(principal || "");
+  if (s.includes(".")) { const [addr, name] = splitContractId(s); return catB(Uint8Array.of(0x03), stacksPrincipalBytes(addr), lpStringS(name)); }
+  return catB(Uint8Array.of(0x02), stacksPrincipalBytes(s));
+}
+export function stacksStxPostCondition(principal, code, amountUstx) {
+  const amount = BigInt(amountUstx);
+  if (amount < 0n || amount > 0xffffffffffffffffn) throw new Error("Post-condition amount is outside the u64 range");
+  return catB(Uint8Array.of(0x00), stacksPcPrincipalBytes(principal), Uint8Array.of(stacksPcCodeByte(code)), u64beS(amount));
+}
+export function stacksFungiblePostCondition(principal, contractId, assetName, code, amountRaw) {
+  const amount = BigInt(amountRaw);
+  if (amount < 0n || amount > 0xffffffffffffffffn) throw new Error("Post-condition amount is outside the u64 range");
+  const [addr, name] = splitContractId(contractId);
+  const asset = catB(stacksPrincipalBytes(addr), lpStringS(name), lpStringS(assetName));
+  return catB(Uint8Array.of(0x01), stacksPcPrincipalBytes(principal), asset, Uint8Array.of(stacksPcCodeByte(code)), u64beS(amount));
+}
+
+/* ---------- the general contract-call builder ---------- */
+/** The contract-call payload bytes for a call spec
+ *  { contract, functionName, args (serialized CV byte arrays) }. */
+export function stacksContractCallPayload({ contract, functionName, args = [] }) {
+  const [cAddr, cName] = splitContractId(contract);
+  if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(String(functionName || ""))) throw new Error("Invalid contract function name");
+  return catB(
+    Uint8Array.of(0x02), stacksPrincipalBytes(cAddr), lpStringS(cName), lpStringS(functionName),
+    u32beS(args.length), ...args,
+  );
+}
+/** Build + sign a general Stacks contract call. Reuses the
+ *  SIP-005 machinery (spending condition, sighash chain,
+ *  serialiser) the transfer builder pinned; only the payload
+ *  and post-conditions differ. postConditionMode: 0x01 Allow /
+ *  0x02 Deny (SIP-005) — specified post-conditions are enforced
+ *  in BOTH modes; the mode governs only UNCOVERED transfers. */
+export function buildSignedStacksContractCall({ phrase, network = "mainnet", contract, functionName, args = [], postConditions = [], postConditionMode = 0x02, feeUstx, nonce }) {
+  const net = stacksNetwork(network);
+  const child = stacksChildFromPhrase(phrase);
+  const priv = child.privateKey;
+  const pub = secp256k1.getPublicKey(priv, true);
+  const from = stacksAddressEncode(net.addressVersion, ripemd160(sha256(pub)));
+  if (postConditionMode !== 0x01 && postConditionMode !== 0x02) throw new Error("Invalid post-condition mode");
+  const fee = BigInt(feeUstx); const nn = BigInt(nonce);
+  if (fee < 0n) throw new Error("Fee cannot be negative");
+  const payload = stacksContractCallPayload({ contract, functionName, args });
+  const anchorMode = 0x03; // Any
+  const clearedAuth = stacksSpendingCondition({ pubKey: pub, nonce: 0n, feeUstx: 0n });
+  const unsigned = stacksSerializeTx({ net, auth: clearedAuth, anchorMode, postConditionMode, postConditions, payload });
+  const { preSign } = stacksSighash(unsigned, fee, nn, pub, null);
+  const sigVrs = secp256k1.sign(hexToBytesB(preSign), priv, { lowS: true, prehash: false, format: "recovered" });
+  const auth = stacksSpendingCondition({ pubKey: pub, nonce: nn, feeUstx: fee, signature: sigVrs });
+  const raw = stacksSerializeTx({ net, auth, anchorMode, postConditionMode, postConditions, payload });
+  return { rawHex: bytesToHexB(raw), txid: "0x" + bytesToHexB(sha512_256(raw)), from };
+}
+
+/** Byte length of one serialized post-condition starting at o
+ *  (STX + fungible forms — the only two Fluid builds). */
+function stacksPcByteLength(bytes, o) {
+  const type = bytes[o];
+  let p = o + 1;
+  const principalLen = () => {
+    const k = bytes[p];
+    if (k === 0x00) return 1;
+    if (k === 0x02) return 22;
+    if (k === 0x03) return 22 + 1 + bytes[p + 22];
+    throw new Error("Unrecognised post-condition principal");
+  };
+  if (type === 0x00) { p += principalLen(); return (p - o) + 1 + 8; }
+  if (type === 0x01) {
+    p += principalLen();
+    p += 21;                       // asset address (version + hash160)
+    p += 1 + bytes[p];             // contract name
+    p += 1 + bytes[p];             // asset name
+    return (p - o) + 1 + 8;
+  }
+  throw new Error("Unsupported post-condition type in this transaction");
+}
+
+/** Decode a serialized Stacks transaction back into its
+ *  inspectable fields — the inspect-before-sign half of the
+ *  builder. Supports the single-sig sponsored=false shape
+ *  Fluid itself builds; anything else throws rather than
+ *  half-parsing. */
+export function decodeStacksTx(rawHex) {
+  const bytes = typeof rawHex === "string" ? hexToBytesB(String(rawHex).replace(/^0x/, "")) : rawHex;
+  let o = 0;
+  const take = (n) => { if (o + n > bytes.length) throw new Error("Stacks transaction is truncated"); const s = bytes.slice(o, o + n); o += n; return s; };
+  const readU32 = () => { const b = take(4); return ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0; };
+  const readU64 = () => { const b = take(8); let v = 0n; for (const x of b) v = (v << 8n) | BigInt(x); return v; };
+  take(1); // tx version
+  readU32(); // chain id
+  // The auth block: type (0x04 single-sig) + hash mode + signer
+  // (20) + nonce (8) + fee (8) + key encoding + signature (65)
+  // = 104 bytes — the exact shape stacksSpendingCondition emits.
+  const cond = take(104);
+  if (cond[0] !== 0x04) throw new Error("Only single-signature Stacks transactions are inspected");
+  const nonce = Number(new DataView(cond.buffer, cond.byteOffset + 22, 8).getBigUint64(0));
+  const feeUstx = new DataView(cond.buffer, cond.byteOffset + 30, 8).getBigUint64(0);
+  take(1); // anchor mode
+  const postConditionMode = take(1)[0];
+  const pcCount = readU32();
+  const postConditions = [];
+  for (let i = 0; i < pcCount; i++) { const len = stacksPcByteLength(bytes, o); postConditions.push(bytes.slice(o, o + len)); o += len; }
+  const payloadType = take(1)[0];
+  if (payloadType !== 0x02) throw new Error("Not a contract-call transaction");
+  const addrBytes = take(21);
+  const contractAddr = stacksAddressEncode(addrBytes[0], addrBytes.slice(1));
+  const lpName = () => { const len = take(1)[0]; return new TextDecoder().decode(take(len)); };
+  const contractName = lpName();
+  const functionName = lpName();
+  const argc = readU32();
+  const args = [];
+  for (let i = 0; i < argc; i++) { const r = parseClarityValue(bytes, o); args.push(bytes.slice(o, r.next)); o = r.next; }
+  return { contract: `${contractAddr}.${contractName}`, functionName, args, postConditions, postConditionMode, feeUstx, nonce };
+}
+
+/** Bounds-check a decoded contract call against the spec it was
+ *  supposed to be built from — contract, function, EVERY
+ *  argument byte-for-byte, every post-condition byte-for-byte,
+ *  the mode, and the fee cap. This is the check that runs on
+ *  the BUILT transaction before it is broadcast: what was
+ *  reviewed is what is signed, or nothing is. */
+export function checkStacksContractCall(decoded, expect) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this Stacks transaction: " + m });
+  if (!decoded || !expect) return refuse("the transaction could not be inspected.");
+  if (decoded.contract !== expect.contract) return refuse("it calls a different contract than the one reviewed.");
+  if (decoded.functionName !== expect.functionName) return refuse("it calls a different function than the one reviewed.");
+  const expArgs = expect.args || [];
+  if (decoded.args.length !== expArgs.length) return refuse("its argument count differs from the reviewed call.");
+  for (let i = 0; i < expArgs.length; i++)
+    if (bytesToHexB(decoded.args[i]) !== bytesToHexB(expArgs[i])) return refuse("one of its arguments differs from the reviewed call.");
+  const expPcs = expect.postConditions || [];
+  if (decoded.postConditions.length !== expPcs.length) return refuse("its post-conditions differ from the reviewed call.");
+  for (let i = 0; i < expPcs.length; i++)
+    if (bytesToHexB(decoded.postConditions[i]) !== bytesToHexB(expPcs[i])) return refuse("one of its post-conditions differs from the reviewed call.");
+  if (expect.postConditionMode != null && decoded.postConditionMode !== expect.postConditionMode) return refuse("its post-condition mode differs from the reviewed call.");
+  if (expect.maxFeeUstx != null && decoded.feeUstx > BigInt(expect.maxFeeUstx)) return refuse("its network fee exceeds the safety cap.");
+  return { ok: true };
+}
+
+/* ---------- contract-call fees + broadcast ---------- */
+export const STACKS_MAX_CALL_FEE_USTX = 500_000n; // 0.5 STX — far above any sane contract-call fee
+/** Hiro's /v2/fees/transaction estimator for a contract call:
+ *  the middle estimation, sanity-bounded like every fee in this
+ *  wallet before anything is signed. */
+export async function estimateStacksContractCallFee(payloadHex, estimatedLen, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const r = await fetch(`${net.api}/v2/fees/transaction`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ transaction_payload: payloadHex, estimated_len: estimatedLen }),
+  });
+  if (!r.ok) throw new Error(`Hiro fee estimate HTTP ${r.status}`);
+  const j = await r.json();
+  const ests = Array.isArray(j?.estimations) ? j.estimations : [];
+  const raw = ests[1]?.fee ?? ests[0]?.fee;
+  if (raw == null || !/^\d+$/.test(String(raw))) throw new Error("Hiro returned an unusable contract-call fee estimate");
+  const fee = BigInt(raw);
+  if (fee <= 0n) throw new Error("Hiro returned an unusable contract-call fee estimate");
+  if (fee > STACKS_MAX_CALL_FEE_USTX) throw new Error(`Estimated Stacks fee ${stxMicroToStx(fee)} STX exceeds the safety cap — refusing to sign`);
+  return fee;
+}
+/** Broadcast a signed Stacks transaction via Hiro. Returns the
+ *  node's txid when it answers one, else null (the caller keeps
+ *  its locally computed txid — the two are identical by
+ *  construction). Throws with the node's reason on rejection. */
+export async function broadcastStacksTx(rawHex, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const r = await fetch(`${net.api}/v2/transactions`, {
+    method: "POST", headers: { "content-type": "application/octet-stream" },
+    body: hexToBytesB(rawHex),
+  });
+  const text = await r.text();
+  if (!r.ok) {
+    let reason = text.slice(0, 200);
+    try { const j = JSON.parse(text); reason = j.reason || j.error || reason; if (j.reason_data?.message) reason += `: ${j.reason_data.message}`; } catch { /* keep raw */ }
+    throw new Error(`Stacks node rejected the transaction (${reason})`);
+  }
+  try { const j = JSON.parse(text); if (typeof j === "string" && /^0x[0-9a-f]{64}$/i.test(j)) return j; } catch { /* plain-text txid */ }
+  return null;
+}
+/** Whether a Stacks txid is visible to Hiro at all (the
+ *  broadcast-outcome check: a rejection the network never saw
+ *  is a definitive non-broadcast; a visible tx stands). */
+export async function stacksTxVisible(txid, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const apis = network === "testnet" ? [net.api] : STACKS_APIS;
+  for (const base of apis) {
+    try { const r = await fetch(`${base}/extended/v1/tx/${txid}`); if (r.ok) return true; } catch { /* next host */ }
+  }
+  return false;
+}
+/** Read a Stacks transaction object from Hiro (status + result
+ *  repr) — the peg-out driver reads its request id from here. */
+export async function fetchStacksTx(txid, network = "mainnet") {
+  const net = stacksNetwork(network);
+  const apis = network === "testnet" ? [net.api] : STACKS_APIS;
+  let lastErr = null;
+  for (const base of apis) {
+    try {
+      const r = await fetch(`${base}/extended/v1/tx/${txid}`);
+      if (!r.ok) { lastErr = new Error(`Hiro tx HTTP ${r.status}`); continue; }
+      return await r.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("Couldn't read the Stacks transaction");
+}
+
+/* ---------- B. The sBTC peg — BTC ↔ sBTC as a MOVE (gap #11) ----------
+ * sBTC is Bitcoin's canonical bridged form on Stacks: the peg
+ * redeems 1:1 in both directions, so — exactly like the LADYS
+ * canonical bridge — the swap sheet presents a Move, never a
+ * market quote, and the move carries NO Fluid fee: the peg has
+ * no fee surface at all (no protocol fee, no signer fee; the
+ * only deduction anywhere is the Bitcoin network fee of the
+ * signers' sweep, taken from the deposit and capped by the
+ * max-fee the user sets). Inventing a capture here would break
+ * the 1:1; the universal capture rule does not ask for one —
+ * a canonical move is fee-free by design (see docs/SWAPS.md).
+ *
+ * Peg-in: a plain Bitcoin send to a P2TR deposit address
+ * computed LOCALLY from the pinned script grammar (the official
+ * sbtc helper's, sbtc@0.3.2): a 2-leaf taproot tree under an
+ * unspendable NUMS internal key — a deposit leaf naming the
+ * user's Stacks recipient + the signers' aggregate key, and a
+ * reclaim leaf CSV-locked to the user's own key. The aggregate
+ * key is READ LIVE from the sBTC registry at quote time
+ * (signer sets rotate); the read failing refuses the quote —
+ * never a stale hardcoded key. Peg-out: one contract call,
+ * sbtc-withdrawal.initiate-withdrawal-request, through the
+ * general builder with an exact-lock post-condition.
+ *
+ * Trust shape, stated on both cards in plain words: the peg is
+ * held by a threshold signer set (8-of-11 at the 2026-11-15
+ * probe; the threshold and set size are read live with the key
+ * and printed as read) — sBTC is signer-held Bitcoin, not
+ * native BTC. The reclaim path is the user's protection on the
+ * way in. */
+export const SBTC_REGISTRY_CONTRACT = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry";
+export const SBTC_WITHDRAWAL_CONTRACT = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal";
+export const SBTC_TOKEN_CONTRACT = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
+export const SBTC_DEPLOYER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
+export const SBTC_PEG_IN_MIN_SATS = 100_000;      // 0.001 BTC — the operator floor (sBTC FAQ)
+export const SBTC_PEG_OUT_DUST_SATS = 546;        // the withdrawal amount must EXCEED this (contract DUST_LIMIT)
+export const SBTC_DEPOSIT_MAX_FEE_SATS = 80_000;  // the official helper's default sweep-fee cap
+export const SBTC_WITHDRAWAL_MAX_FEE_SATS = 80_000; // same default on the way out; the unused part returns in sBTC
+export const SBTC_DEPOSIT_LOCK_BLOCKS = 950;      // the official helper's default reclaim lock (~6.6 days)
+export const SBTC_EMILY_API = "https://api.emily.sbtc.tech";
+export const SBTC_PEG_STORAGE_KEY = "fluid_sbtc_peg_v1";
+// The unspendable NUMS internal key of the deposit tree (the
+// official helper's UNSPENDABLE_PUBKEY — a nothing-up-my-sleeve
+// point; no one holds a key path spend for a deposit address).
+const SBTC_NUMS_INTERNAL_KEY_HEX = "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0";
+
+/** Read the CURRENT signer set from the sBTC registry —
+ *  aggregate key, threshold, set size, multisig principal.
+ *  This read gates every peg-in quote: it throws on any
+ *  failure or drift, and the executor refuses rather than
+ *  deposit to a stale key. */
+export async function fetchSbtcSignerData(network = "mainnet") {
+  const bytes = await stacksCallReadWithArgs(SBTC_REGISTRY_CONTRACT, "get-current-signer-data", [], SBTC_DEPLOYER, network);
+  const { value } = parseClarityValue(bytes);
+  return parseSbtcSignerData(value);
+}
+/** Parse a get-current-signer-data value (a bare tuple).
+ *  Hostile-input safe: every field is shape-checked, and the
+ *  set must be at least as large as its threshold. Pure. */
+export function parseSbtcSignerData(value) {
+  const t = value?.t === "tuple" ? value.v : null;
+  if (!t) throw new Error("The sBTC registry returned an unreadable signer set — refusing to build a deposit");
+  const key = t["current-aggregate-pubkey"], thr = t["current-signature-threshold"], set = t["current-signer-set"], princ = t["current-signer-principal"];
+  if (key?.t !== "buff" || key.v.length !== 33) throw new Error("The sBTC registry returned a malformed aggregate key — refusing to build a deposit");
+  if (thr?.t !== "uint" || thr.v < 1n || thr.v > 128n) throw new Error("The sBTC registry returned a malformed signer threshold — refusing to build a deposit");
+  if (set?.t !== "list" || set.v.length < Number(thr.v) || set.v.length > 128) throw new Error("The sBTC registry returned a malformed signer set — refusing to build a deposit");
+  for (const k of set.v) if (k?.t !== "buff" || k.v.length !== 33) throw new Error("The sBTC registry returned a malformed signer key — refusing to build a deposit");
+  return {
+    aggregatePubkey: bytesToHexB(key.v),
+    threshold: Number(thr.v),
+    signerCount: set.v.length,
+    signerPrincipal: princ?.t === "principal" ? princ.v : null,
+  };
+}
+
+/* ----- deposit address construction (the pinned grammar) ----- */
+function btcPushData(bytes) {
+  if (bytes.length < 76) return catB(Uint8Array.of(bytes.length), bytes);
+  if (bytes.length <= 0xff) return catB(Uint8Array.of(0x4c, bytes.length), bytes);
+  if (bytes.length <= 0xffff) { const l = new Uint8Array(2); new DataView(l.buffer).setUint16(0, bytes.length, true); return catB(Uint8Array.of(0x4d), l, bytes); }
+  throw new Error("Push data too long");
+}
+/** Bitcoin script-number encoding (little-endian signed
+ *  magnitude) — the reclaim lock's wire form. */
+export function btcScriptNumEncode(n) {
+  const num = Number(n);
+  if (!Number.isInteger(num) || num < 0) throw new Error("Script number must be a non-negative integer");
+  if (num === 0) return new Uint8Array(0);
+  let a = num; const out = [];
+  while (a > 0) { out.push(a & 0xff); a >>= 8; }
+  if (out[out.length - 1] & 0x80) out.push(0);
+  return new Uint8Array(out);
+}
+/** The deposit leaf script: <max_fee (8-byte BE) ‖ recipient
+ *  (SIP-005 principal serialisation)> OP_DROP <signers'
+ *  aggregate x-only key> OP_CHECKSIG. The recipient rides IN
+ *  the script — no OP_RETURN, no registration step. */
+export function buildSbtcDepositScript({ maxFeeSats, stacksAddress, signersXonlyKey }) {
+  const maxFee = BigInt(maxFeeSats);
+  if (maxFee < 0n || maxFee > 0xffffffffffffffffn) throw new Error("The deposit max fee is outside the u64 range");
+  const key = signersXonlyKey instanceof Uint8Array ? signersXonlyKey : hexToBytesB(String(signersXonlyKey).replace(/^0x/, ""));
+  if (key.length !== 32) throw new Error("The signers' aggregate key must be its 32-byte x-only form");
+  if (!isValidStacksAddress(stacksAddress)) throw new Error("The sBTC recipient is not a valid Stacks address");
+  const data = catB(u64beS(maxFee), stacksPrincipalCvBytes(stacksAddress));
+  return catB(btcPushData(data), Uint8Array.of(0x75), btcPushData(key), Uint8Array.of(0xac));
+}
+/** The reclaim leaf script: <lock_time> OP_CSV OP_DROP <user
+ *  x-only key> OP_CHECKSIG — after the lock, the depositor's
+ *  own key reclaims the deposit if the signers never swept. */
+export function buildSbtcReclaimScript({ lockBlocks, userXonlyKey }) {
+  const lock = Number(lockBlocks);
+  if (!Number.isInteger(lock) || lock < 1 || lock > 0x7fffffff) throw new Error("The reclaim lock must be a positive block count");
+  const key = userXonlyKey instanceof Uint8Array ? userXonlyKey : hexToBytesB(String(userXonlyKey).replace(/^0x/, ""));
+  if (key.length !== 32) throw new Error("The reclaim key must be a 32-byte x-only key");
+  return catB(btcPushData(btcScriptNumEncode(lock)), Uint8Array.of(0xb2, 0x75), btcPushData(key), Uint8Array.of(0xac));
+}
+/** The full deposit address: the 2-leaf tree under the NUMS
+ *  internal key. signersAggregatePubkey is the registry's
+ *  33-byte compressed key (its x-only form goes in the leaf). */
+export function buildSbtcDepositAddress({ stacksAddress, signersAggregatePubkey, maxFeeSats, lockBlocks, reclaimXonlyKey }) {
+  const agg = signersAggregatePubkey instanceof Uint8Array ? signersAggregatePubkey : hexToBytesB(String(signersAggregatePubkey).replace(/^0x/, ""));
+  const xonly = agg.length === 33 ? agg.slice(1) : agg;
+  if (xonly.length !== 32) throw new Error("The signers' aggregate key is malformed");
+  const depositScript = buildSbtcDepositScript({ maxFeeSats, stacksAddress, signersXonlyKey: xonly });
+  const reclaimScript = buildSbtcReclaimScript({ lockBlocks, userXonlyKey: reclaimXonlyKey });
+  const tr = btc.p2tr(hexToBytesB(SBTC_NUMS_INTERNAL_KEY_HEX), [{ script: depositScript }, { script: reclaimScript }], btc.NETWORK, true);
+  return { address: tr.address, scriptHex: bytesToHexB(tr.script), depositScriptHex: bytesToHexB(depositScript), reclaimScriptHex: bytesToHexB(reclaimScript) };
+}
+
+/* ----- peg-out: the withdrawal recipient + call spec ----- */
+/** The sBTC withdrawal recipient descriptor { version,
+ *  hashbytes } for a Bitcoin address, in the contract's own
+ *  version table (0x00 P2PKH, 0x01 P2SH, 0x04 P2WPKH, 0x05
+ *  P2WSH, 0x06 P2TR). Every form Fluid itself holds decodes
+ *  here; anything else is refused, never guessed. */
+export function sbtcRecipientForBtcAddress(address) {
+  let d;
+  try { d = btc.Address(btc.NETWORK).decode(String(address || "").trim()); } catch { throw new Error("That Bitcoin address can't take an sBTC withdrawal payout"); }
+  switch (d.type) {
+    case "pkh": return { version: 0x00, hashbytes: d.hash };
+    case "sh": return { version: 0x01, hashbytes: d.hash };
+    case "wpkh": return { version: 0x04, hashbytes: d.hash };
+    case "wsh": return { version: 0x05, hashbytes: d.hash };
+    case "tr": return { version: 0x06, hashbytes: d.pubkey };
+    default: throw new Error("That Bitcoin address form can't take an sBTC withdrawal payout");
+  }
+}
+/** The peg-out call spec: initiate-withdrawal-request(amount,
+ *  recipient, max-fee) on the pinned withdrawal contract, with
+ *  ONE Deny-mode post-condition — the user's sBTC moves by
+ *  exactly amount + max-fee (the protocol lock) or the
+ *  transaction aborts. Pure: the executor builds from this spec
+ *  and bounds-checks the built transaction against it. */
+export function sbtcPegOutCallSpec({ fromAddress, amountSats, recipientBtcAddress, maxFeeSats }) {
+  const amount = BigInt(amountSats), maxFee = BigInt(maxFeeSats);
+  if (amount <= BigInt(SBTC_PEG_OUT_DUST_SATS)) throw new Error(`An sBTC withdrawal must be more than ${SBTC_PEG_OUT_DUST_SATS} sats (the Bitcoin dust limit)`);
+  if (maxFee < 0n) throw new Error("The withdrawal max fee cannot be negative");
+  if (!isValidStacksAddress(fromAddress)) throw new Error("The withdrawal sender is not a valid Stacks address");
+  const recip = sbtcRecipientForBtcAddress(recipientBtcAddress);
+  const args = [
+    serializeClarityValue(cvUint(amount)),
+    serializeClarityValue(cvTuple({ version: cvBuff(Uint8Array.of(recip.version)), hashbytes: cvBuff(recip.hashbytes) })),
+    serializeClarityValue(cvUint(maxFee)),
+  ];
+  const sbtcPin = STACKS_TOKENS.find(t => t.symbol === "sBTC");
+  const postConditions = [stacksFungiblePostCondition(fromAddress, sbtcPin.contract, sbtcPin.assetName, "eq", amount + maxFee)];
+  return { contract: SBTC_WITHDRAWAL_CONTRACT, functionName: "initiate-withdrawal-request", args, postConditions, postConditionMode: 0x02 };
+}
+
+/* ----- disclosure copy (the cards render these verbatim) ----- */
+export function sbtcTrustLine(signerData) {
+  const thr = signerData ? `${signerData.threshold}-of-${signerData.signerCount}` : "a threshold of";
+  return `The sBTC peg is held by ${thr} Stacks signers${signerData ? ", read live from the sBTC registry as this move was priced" : ""}. sBTC is signer-held Bitcoin, not native BTC: while you hold sBTC, that signer threshold holds the Bitcoin behind it.`;
+}
+export function sbtcPegInDisclosureLines({ signerData, maxFeeSats = SBTC_DEPOSIT_MAX_FEE_SATS, lockBlocks = SBTC_DEPOSIT_LOCK_BLOCKS } = {}) {
+  const days = (Number(lockBlocks) * 10 / 1440).toFixed(1);
+  return [
+    `A 1:1 move, not a swap: your BTC becomes sBTC on Stacks at exactly one sBTC per BTC. Minimum deposit 0.001 BTC — the peg route's own floor, set by the sBTC protocol, not by Fluid. Fluid charges no fee on this move — the peg has no fee surface to take one from.`,
+    `The signers sweep your deposit and mint the sBTC minus the Bitcoin network fee for that sweep, capped at the max fee of ${Number(maxFeeSats).toLocaleString()} sats you set here (the sBTC tooling default). Minting lands within about 3 Bitcoin blocks — roughly 10–30 minutes.`,
+    sbtcTrustLine(signerData),
+    `Your protection on the way in is the reclaim path built into the deposit address: if the signers never sweep this deposit, the same BTC becomes spendable again by your own key after ${Number(lockBlocks).toLocaleString()} blocks (about ${days} days). This move's record keeps that deadline.`,
+  ];
+}
+export function sbtcPegOutDisclosureLines({ signerData, maxFeeSats = SBTC_WITHDRAWAL_MAX_FEE_SATS } = {}) {
+  return [
+    `A 1:1 move, not a swap: your sBTC becomes BTC on Bitcoin at exactly one BTC per sBTC. The amount must exceed the ${SBTC_PEG_OUT_DUST_SATS}-sat Bitcoin dust limit, and the Stacks network fee is paid in STX. Fluid charges no fee on this move.`,
+    `At initiation the contract locks your amount plus a fee allowance of up to ${Number(maxFeeSats).toLocaleString()} sats of sBTC. The signers pay the Bitcoin payout fee out of that allowance; whatever they don't spend is minted back to you in sBTC, and you receive exactly the amount in BTC. If the signers reject the request, the full lock — amount plus allowance — is released back to you.`,
+    `The payout lands after the signers act and it confirms on Bitcoin — about an hour in the usual case (the payout waits for ~6 Bitcoin blocks after the request).`,
+    sbtcTrustLine(signerData),
+  ];
+}
+
+/* ----- peg records: persistence + evidence-derived phases -----
+ * Same discipline as the bridge-move records: the record is the
+ * recovery key, funds are never in Fluid's custody, and a phase
+ * advances ONLY from protocol evidence (Bitcoin confirmations,
+ * the registry's own completion/request reads, the sBTC balance,
+ * the payout visible on the user's Bitcoin address) — never
+ * from the record's own claim. sbtcPegPhase derives the phase
+ * from the evidence fields alone and pointedly IGNORES
+ * record.state, so a seeded or stale "complete" claim with no
+ * evidence behind it renders in-progress. */
+export function loadSbtcPegRecords(storage) {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(SBTC_PEG_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter(r => r && r.id && (r.kind === "peg-in" || r.kind === "peg-out")) : [];
+  } catch { return []; }
+}
+export function saveSbtcPegRecord(storage, record) {
+  if (!storage || !record?.id) return record;
+  const list = loadSbtcPegRecords(storage).filter(r => r.id !== record.id);
+  list.unshift(record);
+  try { storage.setItem(SBTC_PEG_STORAGE_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* storage full/blocked: the record is a nicety on top of the chain state */ }
+  return record;
+}
+export function removeSbtcPegRecord(storage, id) {
+  if (!storage || !id) return;
+  try { storage.setItem(SBTC_PEG_STORAGE_KEY, JSON.stringify(loadSbtcPegRecords(storage).filter(r => r.id !== id))); } catch { /* best-effort */ }
+}
+function newSbtcPegRecordId() { return "sbtcpeg-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36); }
+export function sbtcPegPhase(record, { tipHeight = null } = {}) {
+  if (!record) return "unknown";
+  if (record.kind === "peg-out") {
+    if (record.btcTxid) return "paid";
+    if (record.reqStatus === "rejected") return "rejected";
+    if (record.reqStatus === "accepted") return "accepted";
+    return "requested";
+  }
+  if (record.mintedAmountSats != null) return "minted";
+  if (record.blockHeight != null && tipHeight != null && Number(tipHeight) >= Number(record.blockHeight) + Number(record.lockBlocks || SBTC_DEPOSIT_LOCK_BLOCKS)) return "reclaimable";
+  if (record.blockHeight != null) return "confirming";
+  return "sent";
+}
+export function sbtcPegHistoryLine(record, opts = {}) {
+  const ph = sbtcPegPhase(record, opts);
+  const amt = stacksRawToAmount(BigInt(record?.amountSats || 0), 8);
+  if (record?.kind === "peg-in") {
+    if (ph === "minted") return `Moved ${amt} BTC to sBTC on Stacks — ${stacksRawToAmount(BigInt(record.mintedAmountSats), 8)} sBTC arrived (the difference is the signers' sweep fee, inside the cap you set).`;
+    if (ph === "reclaimable") return `BTC → sBTC move of ${amt} BTC was never swept by the signers — the deposit became reclaimable by your own key at Bitcoin block ${Number(record.blockHeight) + Number(record.lockBlocks || SBTC_DEPOSIT_LOCK_BLOCKS)}.`;
+    if (ph === "confirming") return `Moving ${amt} BTC to sBTC on Stacks — the deposit is confirmed on Bitcoin; the signers mint within about 3 blocks.`;
+    return `Moving ${amt} BTC to sBTC on Stacks — deposit sent, waiting for its first Bitcoin confirmation.`;
+  }
+  if (record?.kind === "peg-out") {
+    if (ph === "paid") return `Moved ${amt} sBTC back to Bitcoin — ${amt} BTC paid to your Bitcoin address.`;
+    if (ph === "rejected") return `sBTC → BTC move of ${amt} sBTC was rejected by the signers — the locked sBTC (amount + fee allowance) was released back to your Stacks wallet.`;
+    if (ph === "accepted") return `Moving ${amt} sBTC back to Bitcoin — the signers accepted; the BTC payout is on its way (~6 Bitcoin blocks).`;
+    return `Moving ${amt} sBTC back to Bitcoin — withdrawal requested; the signers act within about an hour.`;
+  }
+  return "sBTC peg move.";
+}
+
+/* ----- Emily: best-effort only (gap #11 scope D) -----
+ * Emily is the signers' index/accelerator, never a safety
+ * dependency: deposits are discovered on-chain regardless, and
+ * an unprocessed deposit stays reclaimable by the user. Its
+ * absence never blocks a move and never fabricates a cap. */
+export async function notifyEmilyDeposit(record, txHex) {
+  const r = await fetch(`${SBTC_EMILY_API}/deposit`, {
+    method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      bitcoinTxid: record.btcTxid, bitcoinTxOutputIndex: record.vout ?? 0,
+      depositScript: record.depositScript, reclaimScript: record.reclaimScript,
+      transactionHex: txHex,
+    }),
+  });
+  if (!r.ok) throw new Error(`Emily HTTP ${r.status}`);
+  return r.json().catch(() => null);
+}
+/** Live deposit/withdrawal limits from Emily when reachable —
+ *  the raw object, or null. Callers show a figure ONLY when a
+ *  named field parses as a positive number; null means the
+ *  protocol minimum stands alone. */
+export async function fetchSbtcDepositLimits() {
+  try {
+    const r = await fetch(`${SBTC_EMILY_API}/limits`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && typeof j === "object" ? j : null;
+  } catch { return null; }
+}
+
+/* ----- peg-in: plan + execute ----- */
+/** Price a peg-in: the signer set is read LIVE (a failed read
+ *  refuses the quote — never a stale key), the deposit address
+ *  is computed locally from it, and the funding send is planned
+ *  with the wallet's ordinary Bitcoin machinery (confirmed
+ *  UTXOs, inscription protection) so the review shows the exact
+ *  Bitcoin fee before anything is signed. */
+export async function planSbtcPegIn(phrase, { amountSats, maxFeeSats = SBTC_DEPOSIT_MAX_FEE_SATS, lockBlocks = SBTC_DEPOSIT_LOCK_BLOCKS, network = "mainnet" } = {}) {
+  const amount = BigInt(amountSats);
+  if (amount < BigInt(SBTC_PEG_IN_MIN_SATS)) throw new Error(`The smallest sBTC deposit is 0.001 BTC (${SBTC_PEG_IN_MIN_SATS.toLocaleString()} sats)`);
+  if (BigInt(maxFeeSats) >= amount) throw new Error("The max sweep fee must be smaller than the deposit");
+  const stacksAddress = stacksAddressFromPhrase(phrase, network);
+  const signerData = await fetchSbtcSignerData(network);
+  const reclaimXonlyKey = btc.Address(btc.NETWORK).decode(bitcoinTaprootAddress(phrase)).pubkey;
+  const dep = buildSbtcDepositAddress({ stacksAddress, signersAggregatePubkey: signerData.aggregatePubkey, maxFeeSats, lockBlocks, reclaimXonlyKey });
+  const btcAddress = bitcoinAddress(phrase);
+  const acct = await fetchStacksAccount(stacksAddress, network);
+  const sbtcRow = (acct.tokens || []).find(t => t.contract === SBTC_TOKEN_CONTRACT);
+  const baselineSbtcRaw = acct.scanFailed ? null : (sbtcRow ? String(sbtcRow.balanceRaw) : "0");
+  const btcPlan = await planBitcoinSend(phrase, { to: dep.address, amountBtc: Number(amount) / 1e8, kind: "segwit" });
+  const emilyLimits = await fetchSbtcDepositLimits();
+  return {
+    signerData, stacksAddress, btcAddress,
+    depositAddress: dep.address, depositScriptHex: dep.depositScriptHex, reclaimScriptHex: dep.reclaimScriptHex, outputScriptHex: dep.scriptHex,
+    amountSats: amount.toString(), maxFeeSats: Number(maxFeeSats), lockBlocks: Number(lockBlocks),
+    baselineSbtcRaw, emilyLimits,
+    btcPlan: { hex: btcPlan.hex, txid: btcPlan.txid, feeSat: btcPlan.feeSat, rate: btcPlan.rate },
+    feeSat: btcPlan.feeSat,
+  };
+}
+/** Execute a reviewed peg-in: the signer set is re-read first
+ *  (a rotation since the review refuses, rather than depositing
+ *  to a dead key), the record persists BEFORE broadcast, and
+ *  the broadcast is the reviewed plan's exact bytes — the
+ *  Bitcoin send discipline. Emily is notified best-effort
+ *  after; its failure changes nothing. */
+export async function executeSbtcPegIn(phrase, plan, { storage = null, onBroadcast = null, network = "mainnet" } = {}) {
+  if (!plan || !plan.btcPlan?.hex || !plan.signerData?.aggregatePubkey) throw new Error("That peg-in plan is incomplete — price the move again.");
+  const now = await fetchSbtcSignerData(network);
+  if (now.aggregatePubkey.toLowerCase() !== String(plan.signerData.aggregatePubkey).toLowerCase())
+    throw new Error("The sBTC signer set changed while you were reviewing — price the move again so the deposit goes to the current signers.");
+  const record = {
+    id: newSbtcPegRecordId(), kind: "peg-in", state: "sent",
+    hashes: [plan.btcPlan.txid], btcTxid: plan.btcPlan.txid, vout: 0,
+    amountSats: plan.amountSats, maxFeeSats: plan.maxFeeSats, lockBlocks: plan.lockBlocks,
+    depositAddress: plan.depositAddress, depositScript: plan.depositScriptHex, reclaimScript: plan.reclaimScriptHex,
+    stacksAddress: plan.stacksAddress, btcAddress: plan.btcAddress,
+    baselineSbtcRaw: plan.baselineSbtcRaw, blockHeight: null, confirmations: 0, mintedAmountSats: null,
+    fromSymbol: "BTC", toSymbol: "sBTC", createdAt: Date.now(),
+  };
+  if (storage) saveSbtcPegRecord(storage, record);
+  if (onBroadcast) { try { onBroadcast(record); } catch { /* history is a record, never a blocker */ } }
+  try {
+    await broadcastBitcoinTx(plan.btcPlan.hex);
+  } catch (e) {
+    // A broadcast the network never saw is a definitive
+    // non-deposit: drop the record rather than track a phantom.
+    const seen = await fetchBtcTxEsplora(record.btcTxid).catch(() => null);
+    if (!seen) { if (storage) removeSbtcPegRecord(storage, record.id); throw e; }
+  }
+  notifyEmilyDeposit(record, plan.btcPlan.hex).catch(() => { /* best-effort: the signers also discover deposits on-chain */ });
+  return { record, txid: record.btcTxid };
+}
+
+/* ----- peg-out: plan + execute ----- */
+/** Price a peg-out: balance + lock coverage checked against a
+ *  fresh account read, the Stacks fee estimated from a probe
+ *  build of the exact call, and the signer set read live for
+ *  the card's trust line. The recipient is the user's own
+ *  Bitcoin address (the BIP84 account by default). */
+export async function planSbtcPegOut(phrase, { amountSats, maxFeeSats = SBTC_WITHDRAWAL_MAX_FEE_SATS, btcAddress = null, network = "mainnet" } = {}) {
+  const from = stacksAddressFromPhrase(phrase, network);
+  const recipient = btcAddress || bitcoinAddress(phrase);
+  const signerData = await fetchSbtcSignerData(network);
+  const spec = sbtcPegOutCallSpec({ fromAddress: from, amountSats, recipientBtcAddress: recipient, maxFeeSats });
+  const acct = await fetchStacksAccount(from, network);
+  if (acct.scanFailed) throw new Error("Couldn't reach the Stacks network (Hiro) — check your connection and try again");
+  const sbtcRow = (acct.tokens || []).find(t => t.contract === SBTC_TOKEN_CONTRACT);
+  const bal = sbtcRow ? BigInt(sbtcRow.balanceRaw) : 0n;
+  if (BigInt(amountSats) + BigInt(maxFeeSats) > bal) throw new Error("Your sBTC balance doesn't cover the amount plus the fee allowance the withdrawal locks");
+  const probe = buildSignedStacksContractCall({ phrase, network, ...spec, feeUstx: 0n, nonce: acct.nonce });
+  const feeUstx = await estimateStacksContractCallFee("0x" + bytesToHexB(stacksContractCallPayload(spec)), probe.rawHex.length / 2, network);
+  if (feeUstx > BigInt(acct.stxUstx)) throw new Error("Insufficient STX for the network fee");
+  return { signerData, from, recipientBtcAddress: recipient, amountSats: String(amountSats), maxFeeSats: Number(maxFeeSats), feeUstx: feeUstx.toString(), spec };
+}
+/** Execute a reviewed peg-out: a FRESH build (current nonce +
+ *  fee, the sendStacks discipline), decoded and bounds-checked
+ *  against the reviewed spec before broadcast — contract,
+ *  function, every argument, the exact-lock post-condition,
+ *  the fee cap. The record persists before broadcast; a
+ *  broadcast the network never saw removes it again. */
+export async function executeSbtcPegOut(phrase, plan, { storage = null, onBroadcast = null, network = "mainnet" } = {}) {
+  if (!plan || !plan.spec || !plan.from) throw new Error("That peg-out plan is incomplete — price the move again.");
+  const spec = plan.spec;
+  const acct = await fetchStacksAccount(plan.from, network);
+  if (acct.scanFailed) throw new Error("Couldn't reach the Stacks network (Hiro) — check your connection and try again");
+  const probe = buildSignedStacksContractCall({ phrase, network, ...spec, feeUstx: 0n, nonce: acct.nonce });
+  const feeUstx = await estimateStacksContractCallFee("0x" + bytesToHexB(stacksContractCallPayload(spec)), probe.rawHex.length / 2, network);
+  const built = buildSignedStacksContractCall({ phrase, network, ...spec, feeUstx, nonce: acct.nonce });
+  const decoded = decodeStacksTx(built.rawHex);
+  const check = checkStacksContractCall(decoded, { contract: spec.contract, functionName: spec.functionName, args: spec.args, postConditions: spec.postConditions, postConditionMode: spec.postConditionMode, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX });
+  if (!check.ok) throw new Error(check.reason);
+  const record = {
+    id: newSbtcPegRecordId(), kind: "peg-out", state: "requested",
+    hashes: [built.txid], stacksTxid: built.txid, requestId: null,
+    amountSats: plan.amountSats, maxFeeSats: plan.maxFeeSats, feeSats: null, reqStatus: null,
+    recipientBtcAddress: plan.recipientBtcAddress, btcTxid: null,
+    fromSymbol: "sBTC", toSymbol: "BTC", createdAt: Date.now(),
+  };
+  if (storage) saveSbtcPegRecord(storage, record);
+  if (onBroadcast) { try { onBroadcast(record); } catch { /* history is a record, never a blocker */ } }
+  let txid = built.txid;
+  try {
+    const got = await broadcastStacksTx(built.rawHex, network);
+    if (got) txid = got;
+  } catch (e) {
+    const vis = await stacksTxVisible(built.txid, network).catch(() => false);
+    if (!vis) { if (storage) removeSbtcPegRecord(storage, record.id); throw e; }
+  }
+  return { record, txid };
+}
+
+/* ----- the peg driver: phases advance from protocol evidence only ----- */
+async function fetchBtcTxEsplora(txid) {
+  for (const base of [MEMPOOL, BLOCKSTREAM]) {
+    try { const r = await fetch(`${base}/tx/${txid}`); if (r.ok) return await r.json(); } catch { /* next base */ }
+  }
+  throw new Error("Couldn't read the Bitcoin transaction");
+}
+async function fetchBtcTipHeight() {
+  for (const base of [MEMPOOL, BLOCKSTREAM]) {
+    try { const r = await fetch(`${base}/blocks/tip/height`); if (r.ok) { const n = Number(await r.text()); if (Number.isFinite(n) && n > 0) return n; } } catch { /* next base */ }
+  }
+  throw new Error("Couldn't read the Bitcoin tip height");
+}
+async function fetchBtcAddressTxs(address) {
+  for (const base of [MEMPOOL, BLOCKSTREAM]) {
+    try { const r = await fetch(`${base}/address/${address}/txs`); if (r.ok) { const j = await r.json(); if (Array.isArray(j)) return j; } } catch { /* next base */ }
+  }
+  throw new Error("Couldn't read the Bitcoin address history");
+}
+/** A txid's bytes in Bitcoin's internal (block) order — the
+ *  form the sBTC registry's completed-deposit map is keyed by. */
+function btcTxidInternalBytes(txidDisplay) {
+  const b = hexToBytesB(String(txidDisplay).replace(/^0x/, ""));
+  if (b.length !== 32) throw new Error("Bitcoin txid must be 32 bytes");
+  return b.slice().reverse();
+}
+export async function advanceSbtcPegRecord(record, { storage = null, network = "mainnet" } = {}) {
+  if (!record) return record;
+  try {
+    if (record.kind === "peg-in") {
+      if (record.mintedAmountSats != null) return record;
+      let tip = null;
+      const tx = await fetchBtcTxEsplora(record.btcTxid).catch(() => null);
+      if (tx?.status?.confirmed && Number.isFinite(Number(tx.status.block_height))) {
+        record.blockHeight = Number(tx.status.block_height);
+        tip = await fetchBtcTipHeight().catch(() => null);
+        if (tip != null) record.confirmations = Math.max(0, tip - record.blockHeight + 1);
+      }
+      // Mint evidence, strongest first: the registry's own
+      // completed-deposit entry for this outpoint…
+      let minted = null;
+      try {
+        const res = await stacksCallReadWithArgs(SBTC_REGISTRY_CONTRACT, "get-completed-deposit",
+          [serializeClarityValue(cvBuff(btcTxidInternalBytes(record.btcTxid))), serializeClarityValue(cvUint(record.vout ?? 0))],
+          SBTC_DEPLOYER, network);
+        const { value } = parseClarityValue(res);
+        if (value?.t === "some" && value.v?.t === "tuple" && value.v.v.amount?.t === "uint") minted = value.v.v.amount.v;
+      } catch { /* the registry read is one evidence source, not the only one */ }
+      // …then the sBTC balance delta against the baseline the
+      // plan captured (bounded by the deposit and its fee cap,
+      // so an unrelated credit can't complete this record).
+      if (minted == null && record.baselineSbtcRaw != null) {
+        const acct = await fetchStacksAccount(record.stacksAddress, network);
+        if (!acct.scanFailed) {
+          const row = (acct.tokens || []).find(t => t.contract === SBTC_TOKEN_CONTRACT);
+          const now = row ? BigInt(row.balanceRaw) : 0n;
+          const delta = now - BigInt(record.baselineSbtcRaw);
+          if (delta >= BigInt(record.amountSats) - BigInt(record.maxFeeSats) && delta <= BigInt(record.amountSats)) minted = delta;
+        }
+      }
+      if (minted != null) record.mintedAmountSats = minted.toString();
+      const ph = sbtcPegPhase(record, { tipHeight: tip });
+      record.state = ph === "minted" ? "done" : ph;
+      if (storage) saveSbtcPegRecord(storage, record);
+      return record;
+    }
+    if (record.kind === "peg-out") {
+      if (record.btcTxid || record.reqStatus === "rejected") return record;
+      if (record.requestId == null) {
+        const tx = await fetchStacksTx(record.stacksTxid, network).catch(() => null);
+        const repr = String(tx?.tx_result?.repr || "").trim();
+        const m = /^\(ok u(\d+)\)$/.exec(repr);
+        if (m) record.requestId = Number(m[1]);
+        else if (tx && (tx.tx_status === "abort_by_response" || tx.tx_status === "abort_by_post_condition")) record.reqStatus = "rejected";
+      }
+      if (record.requestId != null && record.reqStatus == null) {
+        const res = await stacksCallReadWithArgs(SBTC_REGISTRY_CONTRACT, "get-withdrawal-request",
+          [serializeClarityValue(cvUint(record.requestId))], SBTC_DEPLOYER, network);
+        const { value } = parseClarityValue(res);
+        if (value?.t === "some" && value.v?.t === "tuple") {
+          const st = value.v.v.status;
+          if (st?.t === "some" && st.v?.t === "bool") record.reqStatus = st.v.v ? "accepted" : "rejected";
+        }
+      }
+      if (record.reqStatus === "accepted" && !record.btcTxid) {
+        const txs = await fetchBtcAddressTxs(record.recipientBtcAddress).catch(() => []);
+        for (const t of txs || []) {
+          const pays = (t?.vout || []).some(v => v && v.scriptpubkey_address === record.recipientBtcAddress && BigInt(v.value ?? -1) === BigInt(record.amountSats));
+          if (pays) { record.btcTxid = t.txid; break; }
+        }
+      }
+      const ph = sbtcPegPhase(record);
+      record.state = ph === "paid" ? "done" : ph;
+      if (storage) saveSbtcPegRecord(storage, record);
+      return record;
+    }
+  } catch { /* a failed evidence read leaves the record exactly as it was */ }
+  return record;
+}
+export async function advanceSbtcPegRecords(wallet, { storage = null, onRecord = null, network = "mainnet" } = {}) {
+  const records = loadSbtcPegRecords(storage);
+  const out = [];
+  for (const r of records) {
+    if (r.state === "done" || r.state === "rejected") { out.push(r); continue; }
+    const before = JSON.stringify(r);
+    const next = await advanceSbtcPegRecord(r, { storage, network });
+    out.push(next);
+    if (onRecord && JSON.stringify(next) !== before) { try { onRecord(next); } catch { /* history is a record, never a blocker */ } }
+  }
+  return out;
+}
+
+/** The swap-sheet Move matcher for the peg: BTC ↔ sBTC is a
+ *  canonical 1:1 crossing, so the sheet presents the Move card
+ *  INSTEAD of any market quote (the BRIDGED_MOVE_PAIRS
+ *  discipline). Pure. */
+export function sbtcPegPairForRoute(fromChainKey, fromTokenAddress, toChainKey, toTokenAddress) {
+  if (!fromTokenAddress || !toTokenAddress) return null;
+  const isBtc = (k, a) => k === "bitcoin" && String(a).toLowerCase() === "btc";
+  const isSbtc = (k, a) => k === "stacks" && String(a).toLowerCase() === SBTC_TOKEN_CONTRACT.toLowerCase();
+  if (isBtc(fromChainKey, fromTokenAddress) && isSbtc(toChainKey, toTokenAddress))
+    return { direction: "in", fromChainKey: "bitcoin", toChainKey: "stacks", symbol: "BTC → sBTC" };
+  if (isSbtc(fromChainKey, fromTokenAddress) && isBtc(toChainKey, toTokenAddress))
+    return { direction: "out", fromChainKey: "stacks", toChainKey: "bitcoin", symbol: "sBTC → BTC" };
+  return null;
+}
+
+/* ---------- C. Bitflow intra-Stacks swaps — the v1 shape (gap #11) ----------
+ * Bitflow aggregates Stacks DEX liquidity (its own XYK pools,
+ * Velar, and more). The v1 integration is the shape the
+ * transport probes PROVED from the production origin: the
+ * legacy SDK's client-side method — the route set comes from
+ * the pinned DOCS gateway host (the SDK's bundled default host
+ * is dead; the docs host answered in-page), quotes are computed
+ * by calling each route contract's read-only quote function
+ * through Hiro, and execution is a contract call through the
+ * general builder against PINNED contracts. Prices come from
+ * the quotes themselves, NEVER from Bitflow's token price feed
+ * (probed stale: its sBTC figure disagreed with the pools by
+ * ~18%).
+ *
+ * Capture, honestly: the legacy path carries NO fee in the
+ * transaction — Bitflow's own SDK docs state the `provider`
+ * principal is attribution only and no automated revenue
+ * sharing runs from it. So every v1 route is collecting=false
+ * and says so; the provider config seam below exists so the
+ * attribution principal can be set without a code change, and
+ * it changes nothing about fees. The v2 BFF path (which DOES
+ * carry an in-call agg fee) is not wired: its POSTs never
+ * completed from this VM (the KyberSwap environment class).
+ * Re-probe trigger, recorded in docs/SWAPS.md: a clean-network
+ * POST probe of the BFF + the revenue-share percentage pinned
+ * → v2 switches on with agg_fee_bps, no redesign. */
+export const BITFLOW_GATEWAY_API = "https://bitflow-sdk-api-gateway-7owjsmt8.uc.gateway.dev";
+export const BITFLOW_BFF_API = "https://bff.bitflowapis.finance/api"; // v2 — NOT wired (see above)
+export const STACKS_SWAP_CHAIN_ID = 20000000000021;
+export const STACKS_SWAP_NATIVE_TOKEN = "stx";
+export const BITFLOW_SLIPPAGE_BPS = 50;
+/** The execution contracts Fluid has fixture-verified (quote +
+ *  swap ABIs and live quote vectors in the suite). A gateway
+ *  route through any other helper is not offered in this slice
+ *  — the search simply has no route for it, never a guessed
+ *  call. */
+export const BITFLOW_PINNED_CONTRACTS = [
+  "SM1793C4R5PZ4NS4VQ4WMP7SKKYVH8JZEWSZ9HCCR.xyk-swap-helper-v-1-3",
+  "SM1793C4R5PZ4NS4VQ4WMP7SKKYVH8JZEWSZ9HCCR.wrapper-velar-path-v-1-2",
+];
+/** The integrator-attribution principal for the legacy path
+ *  (the Soroswap-style config seam): empty in this build, so
+ *  routes carry provider = none. Setting it later enables
+ *  Bitflow's attribution — it can never carry a fee on this
+ *  path, so collecting stays false either way. */
+const BITFLOW_PROVIDER_PRINCIPAL = "";
+export function bitflowConfig() {
+  const p = String(BITFLOW_PROVIDER_PRINCIPAL || "").trim();
+  return { providerPrincipal: p && isValidStacksAddress(p) ? p : null, configured: !!(p && isValidStacksAddress(p)) };
+}
+
+let bitflowTokensCache = null;
+const bitflowRoutesCache = new Map();
+const bitflowAbiCache = new Map();
+async function bitflowFetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Bitflow gateway HTTP ${r.status}`);
+  return r.json();
+}
+/** The gateway's token list, normalised field by field (the
+ *  response is hostile data: string "null" sentinels for the
+ *  native coin, ids as keys). Cached per session. */
+export async function fetchBitflowTokens() {
+  if (bitflowTokensCache) return bitflowTokensCache;
+  const j = await bitflowFetchJson(`${BITFLOW_GATEWAY_API}/getAllTokensAndPools`);
+  const list = Array.isArray(j?.tokens) ? j.tokens : [];
+  const out = [];
+  for (const t of list) {
+    const id = typeof t?.["token-id"] === "string" ? t["token-id"] : null;
+    if (!id) continue;
+    out.push({
+      id,
+      contract: typeof t.tokenContract === "string" && t.tokenContract !== "null" ? t.tokenContract : null,
+      assetName: typeof t.tokenName === "string" && t.tokenName !== "null" ? t.tokenName : null,
+      symbol: typeof t.symbol === "string" && t.symbol ? t.symbol : id,
+      decimals: Number.isFinite(Number(t.tokenDecimals)) ? Number(t.tokenDecimals) : 0,
+    });
+  }
+  bitflowTokensCache = out;
+  return out;
+}
+/** The gateway's route set for a source token id: a map keyed
+ *  by DESTINATION token id. Cached per session. */
+export async function fetchBitflowRoutes(tokenXId) {
+  if (bitflowRoutesCache.has(tokenXId)) return bitflowRoutesCache.get(tokenXId);
+  const j = await bitflowFetchJson(`${BITFLOW_GATEWAY_API}/getAllRoutes?tokenX=${encodeURIComponent(tokenXId)}&depth=4`);
+  const map = j && typeof j === "object" && !Array.isArray(j) ? (j.routes && typeof j.routes === "object" ? j.routes : j) : {};
+  bitflowRoutesCache.set(tokenXId, map);
+  return map;
+}
+/** A Stacks contract's interface (ABI) from Hiro, cached —
+ *  the ABI's argument order is authoritative for call
+ *  construction (the gateway's own `order` array is not: it
+ *  disagrees with the ABI on the Velar path). */
+export async function fetchStacksContractInterface(contract, network = "mainnet") {
+  if (bitflowAbiCache.has(contract)) return bitflowAbiCache.get(contract);
+  const net = stacksNetwork(network);
+  const [addr, name] = splitContractId(contract, network);
+  const apis = network === "testnet" ? [net.api] : STACKS_APIS;
+  const iface = await withFamilyEndpoints("stacks", apis, async (base) => {
+    const r = await fetch(`${base}/v2/contracts/interface/${addr}/${name}`);
+    if (!r.ok) throw new Error(`contract interface HTTP ${r.status}`);
+    return r.json();
+  });
+  bitflowAbiCache.set(contract, iface);
+  return iface;
+}
+
+/** Convert one gateway parameter value to a Clarity value by
+ *  its ABI type. null is the gateway's runtime slot: the
+ *  provider (optional principal), a min-received slot, or the
+ *  amount — anything else null refuses the route. */
+function bitflowParamToCv(value, type, argName, ctx) {
+  if (value && typeof value === "object" && typeof value.$type === "string") return clarityJsonToCv(value);
+  if (value === null || value === undefined) {
+    if (argName === "provider" || (type && typeof type === "object" && "optional" in type))
+      return ctx.providerPrincipal ? cvSome(cvPrincipal(ctx.providerPrincipal)) : cvNone();
+    if (/min/.test(argName)) {
+      if (ctx.minReceived == null) throw new Error("This Bitflow call carries a minimum slot a quote cannot fill");
+      return cvUint(ctx.minReceived);
+    }
+    if (type === "uint128" || type === "int128") return cvUint(ctx.amountIn);
+    throw new Error(`Bitflow route leaves its ${argName} argument unfilled`);
+  }
+  if (type && typeof type === "object") {
+    if ("optional" in type) return cvSome(bitflowParamToCv(value, type.optional, argName, ctx));
+    if ("tuple" in type) {
+      if (typeof value !== "object" || Array.isArray(value)) throw new Error("Bitflow tuple argument is malformed");
+      const entries = {};
+      for (const f of type.tuple) {
+        if (!(f.name in value)) throw new Error(`Bitflow tuple is missing its ${f.name} field`);
+        entries[f.name] = bitflowParamToCv(value[f.name], f.type, f.name, ctx);
+      }
+      return cvTuple(entries);
+    }
+    if ("list" in type) {
+      if (!Array.isArray(value)) throw new Error("Bitflow list argument is malformed");
+      return cvList(value.map(v => bitflowParamToCv(v, type.list, argName, ctx)));
+    }
+    if ("buffer" in type) return cvBuff(value);
+    throw new Error("Unsupported Bitflow argument type");
+  }
+  switch (type) {
+    case "uint128": case "int128": {
+      if (typeof value !== "number" && typeof value !== "string") throw new Error("Bitflow numeric argument is malformed");
+      return cvUint(BigInt(value));
+    }
+    case "bool": return cvBool(!!value);
+    case "principal": case "trait_reference": {
+      const s = String(value);
+      return s.includes(".") ? cvContractPrincipal(s) : cvPrincipal(s);
+    }
+    default: throw new Error(`Unsupported Bitflow argument type ${type}`);
+  }
+}
+/** The $type-tagged Clarity-JSON shape some gateway parameter
+ *  generations use for tuple fields. */
+function clarityJsonToCv(value) {
+  switch (value.$type) {
+    case "uint": return cvUint(BigInt(value.value));
+    case "int": return cvInt(BigInt(value.value));
+    case "bool": return cvBool(!!value.value);
+    case "buff": return cvBuff(value.value);
+    case "principal": { const s = String(value.value); return s.includes(".") ? cvContractPrincipal(s) : cvPrincipal(s); }
+    case "optional": return value.value == null ? cvNone() : cvSome(clarityJsonToCv(value.value));
+    case "tuple": {
+      const entries = {};
+      for (const k of Object.keys(value)) { if (k === "$type") continue; entries[k] = clarityJsonToCv(value[k]); }
+      return cvTuple(entries);
+    }
+    case "list": return cvList((value.value || []).map(clarityJsonToCv));
+    default: throw new Error(`Unsupported Clarity-JSON type ${value.$type}`);
+  }
+}
+/** Build a Bitflow call's serialized arguments: iterate the
+ *  ABI's arguments IN ABI ORDER and fill each from the
+ *  gateway's parameters by name (with the "-trait" suffix
+ *  fallback some helper generations use). A parameter the ABI
+ *  needs and the gateway didn't supply refuses the route. */
+export function bitflowArgsForCall(leg, abi, { amountIn, minReceived = null, providerPrincipal = null } = {}) {
+  const fn = (abi?.functions || []).find(f => f && f.name === leg?.function);
+  if (!fn) throw new Error(`Bitflow route function ${leg?.function} is not in the contract's interface`);
+  const params = leg.parameters || {};
+  const ctx = { amountIn: BigInt(amountIn), minReceived: minReceived == null ? null : BigInt(minReceived), providerPrincipal };
+  const args = [];
+  for (const a of fn.args || []) {
+    let key = a.name;
+    if (!(key in params) && key.endsWith("-trait")) key = key.slice(0, -"-trait".length);
+    if (!(key in params)) throw new Error(`Bitflow route is missing its ${a.name} argument`);
+    args.push(serializeClarityValue(bitflowParamToCv(params[key], a.type, a.name, ctx)));
+  }
+  return args;
+}
+
+/** The pair Bitflow serves in this slice, or null: both sides
+ *  Stacks, the tokens the swap picker lists (native STX by its
+ *  sentinel, the pinned SIP-010s by contract). Pure. */
+export function bitflowSupportsPair(args) {
+  if (!args || args.fromChainKey !== "stacks" || args.toChainKey !== "stacks") return null;
+  if (!args.fromTokenAddress || !args.toTokenAddress) return null;
+  if (String(args.fromTokenAddress).toLowerCase() === String(args.toTokenAddress).toLowerCase()) return null;
+  const meta = (addr) => {
+    if (addr === STACKS_SWAP_NATIVE_TOKEN) return { symbol: "STX", decimals: 6, contract: null, assetName: null };
+    const pin = STACKS_TOKENS.find(t => t.contract.toLowerCase() === String(addr).toLowerCase());
+    return pin ? { symbol: pin.symbol, decimals: pin.decimals, contract: pin.contract, assetName: pin.assetName } : null;
+  };
+  const from = meta(args.fromTokenAddress), to = meta(args.toTokenAddress);
+  if (!from || !to) return null;
+  return { from, to };
+}
+
+/** Quote one gateway route entry through Hiro: the route's own
+ *  quote function, called with the ABI-built arguments, priced
+ *  by the contract itself. Returns the output raw amount, or
+ *  null when the route can't be quoted. */
+async function bitflowQuoteRoute(entry, { amountIn, fromAddress, providerPrincipal }) {
+  const q = entry?.quoteData, s = entry?.swapData;
+  if (!q || !s) return null;
+  if (!BITFLOW_PINNED_CONTRACTS.includes(q.contract) || !BITFLOW_PINNED_CONTRACTS.includes(s.contract)) return null;
+  const abi = await fetchStacksContractInterface(q.contract);
+  const args = bitflowArgsForCall(q, abi, { amountIn, providerPrincipal });
+  const res = await stacksCallReadWithArgs(q.contract, q.function, args, fromAddress);
+  const { value } = parseClarityValue(res);
+  const out = value?.t === "ok" && value.v?.t === "uint" ? value.v.v : (value?.t === "uint" ? value.v : null);
+  if (out == null || out <= 0n) return null;
+  return out;
+}
+/** The Bitflow route for a Stacks pair: every pinned route the
+ *  gateway serves for the pair is quoted live through Hiro and
+ *  the best output wins (in probes Velar's pool beat Bitflow's
+ *  own XYK on this pair — the aggregator's whole point). The
+ *  route carries everything the executor re-derives from. */
+export async function getBitflowSwapRoute(args) {
+  const pair = bitflowSupportsPair(args);
+  if (!pair) return null;
+  const amountIn = BigInt(args.fromAmount);
+  if (amountIn <= 0n) return null;
+  const fromAddress = typeof args.fromAddress === "string" ? args.fromAddress : "";
+  if (!isValidStacksAddress(fromAddress)) return null;
+  const tokens = await fetchBitflowTokens();
+  const byContract = new Map();
+  for (const t of tokens) if (t.contract) byContract.set(t.contract.toLowerCase(), t);
+  const fromId = pair.from.contract ? byContract.get(pair.from.contract.toLowerCase())?.id : "token-stx";
+  const toId = pair.to.contract ? byContract.get(pair.to.contract.toLowerCase())?.id : "token-stx";
+  if (!fromId || !toId) return null;
+  const routesByDest = await fetchBitflowRoutes(fromId);
+  const candidates = Array.isArray(routesByDest?.[toId]) ? routesByDest[toId] : [];
+  const cfg = bitflowConfig();
+  let best = null;
+  for (const entry of candidates) {
+    try {
+      const out = await bitflowQuoteRoute(entry, { amountIn, fromAddress, providerPrincipal: cfg.providerPrincipal });
+      if (out == null) continue;
+      if (!best || out > best.out) best = { entry, out };
+    } catch { /* a route that can't be quoted is not a route */ }
+  }
+  if (!best) return null;
+  const minReceived = (best.out * BigInt(10000 - BITFLOW_SLIPPAGE_BPS)) / 10000n;
+  if (minReceived <= 0n) return null;
+  let prices = {};
+  try { prices = await getPrices() || {}; } catch { /* USD figures are display-only */ }
+  const px = (sym) => sym === "sBTC" ? Number(prices.BTC) : sym === "USDA" ? 1 : Number(prices[sym]);
+  const fromPx = px(pair.from.symbol), toPx = px(pair.to.symbol);
+  const fromAmountUSD = Number.isFinite(fromPx) && fromPx > 0 ? Number(swapRawToAmount(amountIn.toString(), pair.from.decimals)) * fromPx : 0;
+  const toAmountUSD = Number.isFinite(toPx) && toPx > 0 ? Number(swapRawToAmount(best.out.toString(), pair.to.decimals)) * toPx : 0;
+  return {
+    provider: "bitflow",
+    id: `bitflow-${fromId}-${toId}-${amountIn.toString()}`,
+    fromChainKey: "stacks", toChainKey: "stacks",
+    fromChainId: STACKS_SWAP_CHAIN_ID, toChainId: STACKS_SWAP_CHAIN_ID,
+    fromToken: { address: args.fromTokenAddress, symbol: pair.from.symbol, decimals: pair.from.decimals },
+    toToken: { address: args.toTokenAddress, symbol: pair.to.symbol, decimals: pair.to.decimals },
+    fromAmount: amountIn.toString(),
+    toAmount: best.out.toString(),
+    toAmountMin: minReceived.toString(),
+    fromAmountUSD, toAmountUSD,
+    gasCostUSD: 0, routeFeeUsd: 0, steps: [],
+    platformFeeRaw: "0", platformFeeBps: 0, platformFeeUsd: 0,
+    collecting: false, platformFeeCollecting: false,
+    executionDuration: 60,
+    bitflow: {
+      dexPath: Array.isArray(best.entry.dex_path) ? best.entry.dex_path : [],
+      tokenPath: Array.isArray(best.entry.token_path) ? best.entry.token_path : [fromId, toId],
+      quoteContract: best.entry.quoteData.contract, quoteFunction: best.entry.quoteData.function,
+      swapContract: best.entry.swapData.contract, swapFunction: best.entry.swapData.function,
+      swapParameters: best.entry.swapData.parameters, quoteParameters: best.entry.quoteData.parameters,
+      postConditions: best.entry.postConditions || {},
+      fromTokenId: fromId, toTokenId: toId,
+      amountIn: amountIn.toString(), quotedOut: best.out.toString(), minReceived: minReceived.toString(),
+      providerPrincipal: cfg.providerPrincipal,
+    },
+  };
+}
+/** Fluid's OWN guard post-conditions for a Bitflow swap, built
+ *  from the route's post-condition map: the user sends EXACTLY
+ *  the quoted input, and the route's output pool sends AT LEAST
+ *  the quoted minimum of the output — or the transaction
+ *  aborts and nothing moves. Post-condition mode is Allow:
+ *  specified conditions are always enforced, and the venues'
+ *  intermediate plumbing (wraps, pool hops) is not the user's
+ *  money to guard. A map that doesn't parse into this shape
+ *  refuses the route. */
+export function bitflowGuardPostConditions(route, senderAddress) {
+  const b = route?.bitflow;
+  if (!b) throw new Error("That isn't a Bitflow route — search again.");
+  const pcs = b.postConditions || {};
+  const keys = Object.keys(pcs).filter(k => /^\d+$/.test(k)).sort((x, y) => Number(x) - Number(y));
+  if (keys.length < 2) throw new Error("This Bitflow route carries no post-condition map to guard it with — refusing to sign.");
+  const inEntry = pcs[keys[0]], outEntry = pcs[keys[keys.length - 1]];
+  const pcFor = (entry, who, code, amount) => {
+    if (!entry || typeof entry.tokenContract !== "string" || typeof entry.tokenName !== "string")
+      throw new Error("This Bitflow route's post-condition map is malformed — refusing to sign.");
+    if (entry.tokenContract === "token-stx") return stacksStxPostCondition(who, code, amount);
+    return stacksFungiblePostCondition(who, entry.tokenContract, entry.tokenName, code, amount);
+  };
+  const inSender = inEntry?.senderAddress === "tx-sender" ? senderAddress : inEntry?.senderAddress;
+  if (inSender !== senderAddress) throw new Error("This Bitflow route's input guard names a different sender than your wallet — refusing to sign.");
+  const outSender = outEntry?.senderAddress;
+  if (!outSender || outSender === "tx-sender") throw new Error("This Bitflow route's output guard names no pool to bind the minimum to — refusing to sign.");
+  return [
+    pcFor(inEntry, senderAddress, "eq", BigInt(b.amountIn)),
+    pcFor(outEntry, outSender, "gte", BigInt(b.minReceived)),
+  ];
+}
+/** The card + confirmation lines for a Bitflow route. Pure. */
+export function bitflowDisclosureLines(route) {
+  if (!route?.bitflow) return [];
+  return [
+    "Intra-Stacks swap over Bitflow's route set (Bitflow's own pools and Velar's), quoted live from the contracts themselves — the best quote wins. One Stacks transaction, guarded by post-conditions: exactly your input leaves your wallet, and at least the minimum shown must arrive, or the transaction aborts and nothing moves.",
+    "No Fluid fee is charged on this route in this build: Bitflow's legacy integration path carries attribution only — no fee rides in the transaction for Fluid to verify — so none is taken.",
+  ];
+}
+/** Execute a Bitflow route: rebuild the swap call from the
+ *  route's own stored parameters (what was reviewed is what is
+ *  signed), attach Fluid's guard post-conditions, estimate the
+ *  fee, then decode the built transaction and bounds-check
+ *  EVERY field against the spec before broadcasting. */
+export async function executeBitflowSwapRoute(wallet, route, onProgress = () => {}) {
+  const b = route?.bitflow;
+  if (!route || route.provider !== "bitflow" || !b) throw new Error("That isn't a Bitflow route — search again.");
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("Wallet is locked.");
+  const from = stacksAddressFromPhrase(phrase);
+  const acct = await fetchStacksAccount(from);
+  if (acct.scanFailed) throw new Error("Couldn't reach the Stacks network (Hiro) — check your connection and try again");
+  const amountIn = BigInt(b.amountIn);
+  const isStxIn = route.fromToken?.address === STACKS_SWAP_NATIVE_TOKEN;
+  if (isStxIn) {
+    if (amountIn > BigInt(acct.stxUstx)) throw new Error("Insufficient STX balance for this swap");
+  } else {
+    const row = (acct.tokens || []).find(t => t.contract === route.fromToken?.address);
+    if (!row || amountIn > BigInt(row.balanceRaw)) throw new Error(`Insufficient ${route.fromToken?.symbol || "token"} balance for this swap`);
+  }
+  const abi = await fetchStacksContractInterface(b.swapContract);
+  const args = bitflowArgsForCall({ contract: b.swapContract, function: b.swapFunction, parameters: b.swapParameters }, abi,
+    { amountIn, minReceived: BigInt(b.minReceived), providerPrincipal: b.providerPrincipal });
+  const postConditions = bitflowGuardPostConditions(route, from);
+  const spec = { contract: b.swapContract, functionName: b.swapFunction, args, postConditions, postConditionMode: 0x01 };
+  const probe = buildSignedStacksContractCall({ phrase, ...spec, feeUstx: 0n, nonce: acct.nonce });
+  const feeUstx = await estimateStacksContractCallFee("0x" + bytesToHexB(stacksContractCallPayload(spec)), probe.rawHex.length / 2);
+  if (isStxIn ? amountIn + feeUstx > BigInt(acct.stxUstx) : feeUstx > BigInt(acct.stxUstx))
+    throw new Error("Insufficient STX for the network fee");
+  const built = buildSignedStacksContractCall({ phrase, ...spec, feeUstx, nonce: acct.nonce });
+  const decoded = decodeStacksTx(built.rawHex);
+  const check = checkStacksContractCall(decoded, { ...spec, maxFeeUstx: STACKS_MAX_CALL_FEE_USTX });
+  if (!check.ok) throw new Error(check.reason);
+  onProgress("Broadcasting your Stacks swap…");
+  let txid = built.txid;
+  try {
+    const got = await broadcastStacksTx(built.rawHex);
+    if (got) txid = got;
+  } catch (e) {
+    const vis = await stacksTxVisible(built.txid).catch(() => false);
+    if (!vis) throw e;
+  }
+  return { hashes: [txid], feeUstx: feeUstx.toString() };
 }
 
 // ---------- Fluid Scan: the in-wallet explorer (owner's idea, 2026-11-07) ----------

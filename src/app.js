@@ -47,6 +47,8 @@ import {
   movePairForToken, movePairForRoute, estimateMoveGas, executeBridgeMove, moveDisclosureLines, loadBridgeMoveRecords, saveBridgeMoveRecord, bridgeMoveHistoryLine, bridgeMovePhase, moveClaimableAt,
   movePairById, probeBridgeMoveClaim, bridgeMoveChainPhase, estimateMoveClaimGas, executeBridgeMoveClaim,
   executeCctpAptosSwapRoute, loadCctpAptosRecords, advanceCctpAptosRecords, cctpAptosHistoryLine, cctpAptosDisclosureLines, cctpAptosPhase,
+  sbtcPegPairForRoute, planSbtcPegIn, executeSbtcPegIn, planSbtcPegOut, executeSbtcPegOut, sbtcPegInDisclosureLines, sbtcPegOutDisclosureLines,
+  loadSbtcPegRecords, advanceSbtcPegRecords, sbtcPegHistoryLine, sbtcPegPhase, executeBitflowSwapRoute, bitflowDisclosureLines, STACKS_SWAP_NATIVE_TOKEN, stacksAmountToRaw,
   formatDestGasLine, executeGasFallbackRoute, completeGasFallbackSwap, advanceGasFallbackRecords, loadGasFallbackRecords, gasFallbackHistoryLine, gasFallbackNeedsAction,
   executeMilestoneRoute, completeMilestoneSwap, advanceMilestoneRecords, loadMilestoneRecords, milestoneHistoryLine, milestoneNeedsAction, milestoneRecordFromAmountHuman, milestoneRetryDelayMs, milestoneRecordDestinationCheck, gasFallbackRecordDestinationCheck,
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
@@ -2701,6 +2703,110 @@ function openMoveSheet(pair, row = null, presetAmount = "") {
         explorerUrl: historyTxUrl({ hash: record.txHash, explorer: NETWORKS[p.fromChainKey].explorer }), txid: record.txHash, pending: false });
       rescanAfterActivity();
     } catch (e) { sendFailed(btn, "mvMsg", e, "Move failed: "); }
+  };
+}
+
+// ---------- sBTC peg move sheet (gap #11, 2026-11-15) ----------
+// The peg counterpart of openMoveSheet: amount → live-priced
+// review (the signer set is read live inside core's plan; a
+// failed read refuses the sheet rather than pricing against a
+// stale key) → the disclosure lines verbatim → confirm. The
+// record is written at broadcast through the executor's
+// onBroadcast hook, and its phases advance from protocol
+// evidence in core's driver — the sheet never claims a state.
+let pendingPeg = null;
+function openSbtcPegSheet(direction, presetAmount = "") {
+  pendingPeg = null;
+  const pegIn = direction === "in";
+  const title = pegIn ? "Move BTC to sBTC on Stacks" : "Move sBTC back to Bitcoin";
+  openSheet(`<h3>${title}</h3>
+    <p class="tag">${pegIn
+      ? "sBTC is Bitcoin's canonical form on Stacks. The peg mints it <b>1:1</b> against your BTC deposit — a swap would price the two differently and hand you the cheaper side. The deposit is a plain Bitcoin send to an address computed in this wallet from the signers' current aggregate key, read live from the sBTC registry when you review."
+      : "The sBTC peg redeems sBTC for BTC at exactly <b>1:1</b> — a swap would price the two differently and hand you the cheaper side. One Stacks transaction starts the withdrawal; the signers pay the BTC to your own Bitcoin address."}</p>
+    <input id="pgAmt" inputmode="decimal" data-autofocus placeholder="Amount" value="${esc(String(presetAmount || ""))}">
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
+      <p class="tag" id="pgBal" style="flex:1;margin:0"></p>
+      <button class="btn ghost" id="pgMax" style="margin:0;padding:4px 12px">MAX</button>
+    </div>
+    <button class="btn" id="pgReview">Review move</button>
+    <div id="pgIntent" class="hidden">
+      <p class="seed" id="pgIntentText"></p>
+      <div id="pgNotes"></div>
+      <button class="btn" id="pgConfirm">Confirm &amp; move</button>
+    </div>
+    <p class="msg err" id="pgMsg"></p>`);
+  const balText = async () => {
+    if (pegIn) { const b = await getBitcoinBalance(btcAddr); return b == null ? null : Number(b); }
+    const acct = await fetchStacksAccount(stacksAddr);
+    if (!acct || acct.scanFailed) return null;
+    const row = (acct.tokens || []).find(t => t.contract === "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token");
+    return row ? Number(BigInt(row.balanceRaw || "0")) / 1e8 : 0;
+  };
+  const paintBal = async () => {
+    try { const b = await balText(); const el = $("pgBal"); if (el) el.textContent = b == null ? "Balance couldn't load right now." : `Balance: ${fmt(b)} ${pegIn ? "BTC" : "sBTC"}`; return b; }
+    catch { const el = $("pgBal"); if (el) el.textContent = "Balance couldn't load right now."; return null; }
+  };
+  paintBal();
+  $("pgMax").onclick = async () => {
+    const b = await paintBal();
+    if (b == null) return msg("pgMsg", "Your balance couldn't load right now — try again in a moment.");
+    $("pgAmt").value = String(b);
+  };
+  $("pgReview").onclick = async () => {
+    const amount = $("pgAmt").value.trim();
+    if (!amount || Number(amount) <= 0) return msg("pgMsg", "Enter an amount.");
+    let amountSats;
+    try { amountSats = stacksAmountToRaw(amount, 8); } catch { return msg("pgMsg", "That amount isn't valid."); }
+    try {
+      msg("pgMsg", "Pricing this move…", true);
+      const bal = await paintBal();
+      if (bal != null && Number(amount) > bal) return msg("pgMsg", `Not enough ${pegIn ? "BTC" : "sBTC"} (you have ${fmt(bal)}).`);
+      const phrase = wallet.mnemonic.phrase;
+      const plan = pegIn
+        ? await planSbtcPegIn(phrase, { amountSats })
+        : await planSbtcPegOut(phrase, { amountSats });
+      pendingPeg = { direction, amount, amountSats: amountSats.toString(), plan };
+      $("pgIntentText").textContent = pegIn
+        ? `Move ${amount} BTC to sBTC on Stacks (1:1). The peg mints your deposit minus the signers' sweep fee (capped at 80,000 sats), so ${fmt(Number(amount) - 0.0008)} sBTC or more lands at your Stacks address ${plan.stacksAddress}. Bitcoin network fee: ${Number(plan.feeSat).toLocaleString()} sats. No Fluid fee.`
+        : `Move ${amount} sBTC back to Bitcoin (1:1). Exactly ${amount} BTC lands at your Bitcoin address ${plan.recipientBtcAddress}. Stacks network fee: about ${stxMicroToStx(BigInt(plan.feeUstx))} STX. No Fluid fee.`;
+      const notes = $("pgNotes");
+      notes.innerHTML = "";
+      const lines = pegIn ? sbtcPegInDisclosureLines(plan) : sbtcPegOutDisclosureLines(plan);
+      // Emily's live per-deposit cap, when it answered with one
+      // (best-effort only — its absence never blocks and never
+      // fabricates a figure; see core).
+      const capRaw = plan.emilyLimits ? (plan.emilyLimits.per_deposit_cap_satoshis ?? plan.emilyLimits.perDepositCapSatoshis) : null;
+      if (pegIn && capRaw != null && Number.isFinite(Number(capRaw)) && Number(capRaw) > 0)
+        lines.push(`The signers' deposit service (Emily) currently reports a per-deposit cap of ${Number(capRaw).toLocaleString()} sats — deposits above it wait for the cap to move.`);
+      for (const line of lines) {
+        const p = document.createElement("p");
+        p.className = "tag";
+        p.textContent = line;
+        notes.appendChild(p);
+      }
+      show("pgIntent");
+      msg("pgMsg", "");
+    } catch (e) { try { console.warn("[fluid] raw failure:", e); } catch { /* never break the sheet */ } msg("pgMsg", humanizeTxError(e)); }
+  };
+  $("pgConfirm").onclick = async () => {
+    if (!pendingPeg) return;
+    const btn = $("pgConfirm");
+    const { direction: dir, amount, plan } = pendingPeg;
+    try {
+      setSendBusy(btn, true);
+      msg("pgMsg", "Starting the move…", true);
+      const phrase = wallet.mnemonic.phrase;
+      const out = dir === "in"
+        ? await executeSbtcPegIn(phrase, plan, { storage: localStorage, onBroadcast: (rec) => syncPendingSwapHistory("sbtc-peg", rec, { amount, fromSymbol: "BTC", toSymbol: "sBTC", to: plan.stacksAddress, explorer: "https://mempool.space" }) })
+        : await executeSbtcPegOut(phrase, plan, { storage: localStorage, onBroadcast: (rec) => syncPendingSwapHistory("sbtc-peg", rec, { amount, fromSymbol: "sBTC", toSymbol: "BTC", to: plan.recipientBtcAddress, explorer: STACKS_EXPLORER }) });
+      pendingPeg = null;
+      showTxSuccess({ verb: "Move started", amount, symbol: dir === "in" ? "BTC→sBTC" : "sBTC→BTC",
+        logoHtml: `<span class="swaplogos">${tokenLogoHtml({ symbol: dir === "in" ? "BTC" : "sBTC" }, dir === "in" ? "bitcoin" : "stacks")}${tokenLogoHtml({ symbol: dir === "in" ? "sBTC" : "BTC" }, dir === "in" ? "stacks" : "bitcoin")}</span>`,
+        to: dir === "in" ? out.record.stacksAddress : out.record.recipientBtcAddress, familyName: dir === "in" ? "Bitcoin → Stacks" : "Stacks → Bitcoin",
+        feeText: dir === "in" ? `${Number(plan.feeSat).toLocaleString()} sats Bitcoin network fee · no Fluid fee` : `≈ ${stxMicroToStx(BigInt(plan.feeUstx))} STX network fee · no Fluid fee`,
+        explorerUrl: historyTxUrl({ hash: out.txid, explorer: dir === "in" ? "https://mempool.space" : STACKS_EXPLORER }), txid: out.txid, pending: false });
+      rescanAfterActivity();
+    } catch (e) { sendFailed(btn, "pgMsg", e, "Move failed: "); }
   };
 }
 
@@ -7403,7 +7509,7 @@ let pendingSwap = null;
 // "Searching routes…" line). Each search takes a generation;
 // only the latest generation may paint or diagnose.
 let routeSearchSeq = 0;
-const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : k === "stacks" ? "Stacks" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
   if (netKey === "bitcoin" || netKey === "lightning" || netKey === "arkade") {
     // Satora families: the asset is BTC itself (sats on Bitcoin
@@ -7493,6 +7599,13 @@ function swapTokenList(netKey) {
     return [{ symbol: "XLM", address: STELLAR_SWAP_NATIVE_TOKEN, decimals: 7, native: true },
             { symbol: "USDC", address: "USDC:" + STELLAR_USDC_ISSUER, decimals: 7, native: false }];
   }
+  if (netKey === "stacks") {
+    // Stacks (Bitflow intra-chain + the sBTC peg Move, audit
+    // gap #11): STX by its sentinel, plus the pinned SIP-010s
+    // addressed by contract exactly as their balance rows are.
+    return [{ symbol: "STX", address: STACKS_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
+            ...STACKS_TOKENS.map(t => ({ symbol: t.symbol, name: t.name, address: t.contract, decimals: t.decimals, native: false }))];
+  }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
     // the curated FA stables.
@@ -7529,6 +7642,7 @@ function swapRouteName(route) {
   if (route && route.provider === "openocean") return "OpenOcean";
   if (route && route.provider === "soroswap") return "Soroswap";
   if (route && route.provider === "cctp-aptos") return "Circle CCTP";
+  if (route && route.provider === "bitflow") return "Bitflow";
   if (route && route.provider === "gasfallback") return "Two-step via " + swapRouteName(route.legs?.leg1 || {});
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
@@ -7756,6 +7870,21 @@ async function swapBalanceOf(chainKey, tok) {
       if (!row) return 0;
       return row.amount != null ? Number(row.amount) : null;
     }
+    if (chainKey === "stacks") {
+      // Stacks balance for the EXECUTION gate (gap #11): the
+      // native STX row or the picked SIP-010's row of the
+      // account read. fetchStacksAccount never throws — a
+      // failed read comes back flagged scanFailed, which maps
+      // to null here: the gate's unreadable verdict, never a
+      // silent zero or a silent pass. No token row at all is a
+      // true zero.
+      const acct = await fetchStacksAccount(stacksAddr);
+      if (!acct || acct.scanFailed) return null;
+      if (tok.native) return Number(BigInt(acct.stxUstx || "0")) / 1e6;
+      const row = (acct.tokens || []).find(b => b && b.contract === tok.address);
+      if (!row) return 0;
+      return Number(BigInt(row.balanceRaw || "0")) / (10 ** (tok.decimals || 0));
+    }
     if (chainKey === "aptos") {
       // Aptos balance for the EXECUTION gate: the native APT
       // row or the picked FA's row of the account read, with
@@ -7804,7 +7933,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -7821,12 +7950,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos" || viewKey === "stacks") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar and Aptos — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos", "stacks"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar, Aptos and Stacks — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -7879,6 +8008,7 @@ $("actSwap").onclick = () => {
     <div id="wOneClickSwaps"></div>
     <div id="wMoves"></div>
     <div id="wCctpAptos"></div>
+    <div id="wSbtcPeg"></div>
     <div id="wGasFallback"></div>
     <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
@@ -7903,7 +8033,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -8529,6 +8659,20 @@ $("actSwap").onclick = () => {
   }
   paintCctpAptosSwaps();
   advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).then(() => paintCctpAptosSwaps()).catch(() => {});
+  // sBTC peg moves in flight, same conventions: the persisted
+  // record is the whole state (the wait is the peg's own clock
+  // — Bitcoin confirmations in, the signers' payout out),
+  // rendered as text only. Phases advance from protocol
+  // evidence alone (see core's driver).
+  function paintSbtcPegMoves() {
+    const host = $("wSbtcPeg"); if (!host) return;
+    const records = loadSbtcPegRecords(localStorage);
+    if (!records.length) { host.innerHTML = ""; return; }
+    host.innerHTML = `<h4>sBTC peg moves</h4>` + records.map(r => `<p class="tag" data-sbtcpeg-line="${esc(r.id)}"></p>`).join("");
+    host.querySelectorAll("[data-sbtcpeg-line]").forEach((el, i) => { el.textContent = sbtcPegHistoryLine(records[i]); });
+  }
+  paintSbtcPegMoves();
+  advanceSbtcPegRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("sbtc-peg", rec) }).then(() => paintSbtcPegMoves()).catch(() => {});
   // Gas-fallback two-step swaps, same conventions: the persisted
   // record is the recovery key; a record whose first leg landed
   // surfaces its line plus the one-tap "Complete the swap"
@@ -8781,6 +8925,25 @@ $("actSwap").onclick = () => {
       $("wMoveBtn").onclick = () => openMoveSheet(mvPair, null, amount);
       return;
     }
+    // The sBTC peg (gap #11, 2026-11-15): BTC ↔ sBTC is the
+    // same canonical-bridge shape — the peg redeems 1:1, so
+    // the sheet presents the Move INSTEAD of any market quote
+    // (a market price for sBTC against BTC would be the loss,
+    // not a route). No Fluid fee: the peg has no fee surface.
+    const pegPair = sbtcPegPairForRoute(fromKey, fromTok.address, toKey, toTok.address);
+    if (pegPair) {
+      msg("wMsg", "");
+      const pegIn = pegPair.direction === "in";
+      $("wList").innerHTML = `<div class="netitem" style="cursor:default">
+          <span><b>${pegIn ? "Move BTC to sBTC on Stacks" : "Move sBTC back to Bitcoin"} — 1:1</b><br>
+          <small style="color:var(--dim)">${pegIn
+            ? "sBTC is Bitcoin's canonical form on Stacks: the sBTC peg mints it 1:1 against your BTC deposit and redeems it 1:1 on the way back, so a market swap is never the right tool here. The move takes about 10–30 minutes (the signers sweep within ~3 Bitcoin blocks) and Fluid adds no fee. The peg is held by a threshold of Stacks signers — the move sheet states the current threshold, read live."
+            : "The sBTC peg redeems sBTC for BTC at exactly 1:1, so a market swap is never the right tool here. The move takes about an hour (the signers pay out after ~6 Bitcoin blocks) and Fluid adds no fee. The peg is held by a threshold of Stacks signers — the move sheet states the current threshold, read live."}</small></span>
+        </div>
+        <button class="btn" id="wPegBtn" style="margin:8px 0">${pegIn ? "Move to Stacks (sBTC)" : "Move to Bitcoin"}</button>`;
+      $("wPegBtn").onclick = () => openSbtcPegSheet(pegPair.direction, amount);
+      return;
+    }
     try {
       // Route-preview decision (2026-11-14, walk defect D2): the
       // search is balance-free discovery — no balance pre-flight
@@ -8805,7 +8968,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -8930,7 +9093,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
@@ -9149,6 +9312,7 @@ $("actSwap").onclick = () => {
         if (r.provider === "skip" && r.skip?.rail !== "cctp-noble") $("wIntentText").textContent += " One signature on the chain you're sending from runs the whole swap. If the transfer ever times out, the network refunds it automatically to this same wallet — there is nothing to claim.";
         if (r.provider === "soroswap") $("wIntentText").textContent += " One signature runs the swap inside your own Stellar account. If your account first needs a trustline to hold an asset on the route, you'll sign that as its own separate step before the swap — each trustline locks 0.5 XLM as reserve, and it is never bundled into the swap itself.";
         if (r.provider === "cctp-aptos") $("wIntentText").textContent += " " + cctpAptosDisclosureLines(r).join(" ");
+        if (r.provider === "bitflow") $("wIntentText").textContent += " " + bitflowDisclosureLines(r).join(" ");
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
         // warning — appended to the review before the user confirms.
@@ -9490,6 +9654,17 @@ $("actSwap").onclick = () => {
         srcExplorer = swapSrcExplorerFor(fromKey);
         if (fromKey === "aptos") srcLink = `${APTOS_EXPLORER}/transaction/${hashes[0]}`;
         try { paintCctpAptosSwaps(); } catch { /* the list repaints on sheet open regardless */ }
+      } else if (route.provider === "bitflow") {
+        // Bitflow route (Stacks same-chain, gap #11): core
+        // rebuilds the swap call from the route's own stored
+        // parameters, attaches Fluid's guard post-conditions
+        // (exact input out, minimum output in), bounds-checks
+        // the decoded transaction, then broadcasts via Hiro.
+        // One transaction, one hash; the shared history write
+        // below records it like every one-leg route.
+        hashes = await executeBitflowSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+        srcExplorer = STACKS_EXPLORER;
+        srcLink = stacksExplorerTxUrl(hashes[0]);
       } else {
         // Every route the search can produce carries a provider
         // handled above (milestone, satora, relay, across,
@@ -9610,15 +9785,18 @@ function renderHistory() {
         msId: r.id, msKind: kind, msState: "in-progress",
         msStep: pendingSwapStepText(kind, r),
         hash: (r.hashes && r.hashes[0]) || r.id,
-        amount: kind === "milestone" ? milestoneRecordFromAmountHuman(r) : null,
+        amount: kind === "milestone" ? milestoneRecordFromAmountHuman(r)
+          : kind === "sbtc-peg" && r.amountSats != null ? swapRawToAmount(r.amountSats, 8)
+          : null,
         symbol: `${sanitizePersistedSymbol(r.fromSymbol || r.legs?.[0]?.fromSymbol || "")}→${sanitizePersistedSymbol(r.toSymbol || r.legs?.[r.legs.length - 1]?.toSymbol || "")}`,
-        to: r.legs?.[r.legs.length - 1]?.toAddress || r.destAddress || "",
+        to: r.legs?.[r.legs.length - 1]?.toAddress || r.destAddress || r.recipientBtcAddress || r.stacksAddress || "",
         at: r.at || r.createdAt || Date.now(),
       });
     };
     for (const r of loadMilestoneRecords(localStorage)) if (r.state !== "done") synthFor("milestone", r);
     for (const r of loadGasFallbackRecords(localStorage)) if (r.state === "awaiting-credit" || r.state === "leg2-due") synthFor("gasfallback", r);
     for (const r of loadCctpAptosRecords(localStorage)) if (r.state !== "done") synthFor("cctp-aptos", r);
+    for (const r of loadSbtcPegRecords(localStorage)) if (r.state !== "done" && r.state !== "rejected") synthFor("sbtc-peg", r);
     // 1Click records (2026-11-14): a record whose deposit
     // broadcast but whose Activity entry is missing (an entry
     // evicted from the capped list, or a build that predates
@@ -10103,7 +10281,7 @@ $("unlockBtn").onclick = async () => {
     // polling while the wallet stays unlocked.
     pollSatoraSwapStatuses(localStorage).catch(() => {});
     resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {});
-    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) { pollSatoraSwapStatuses(localStorage).catch(() => {}); resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {}); advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).catch(() => {}); } }, 60000);
+    if (!satoraPollTimer) satoraPollTimer = setInterval(() => { if (wallet) { pollSatoraSwapStatuses(localStorage).catch(() => {}); resumeSatoraBridgedSwaps(wallet, localStorage).catch(() => {}); advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).catch(() => {}); advanceSbtcPegRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("sbtc-peg", rec) }).catch(() => {}); } }, 60000);
     // Mayan swap polling resumes on unlock on the same terms
     // (source hashes are the recovery key).
     pollMayanSwapStatuses(localStorage).catch(() => {});
@@ -10116,6 +10294,7 @@ $("unlockBtn").onclick = async () => {
     // cadence: a landed attestation becomes the mint, claimed
     // by the user's own keys (gap #10).
     advanceCctpAptosRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("cctp-aptos", rec) }).catch(() => {});
+    advanceSbtcPegRecords(wallet, { storage: localStorage, onRecord: (rec) => syncPendingSwapHistory("sbtc-peg", rec) }).catch(() => {});
     // One-move order (2026-11-14): unfinished compositions
     // resume BY THEMSELVES on unlock — the auto-driver
     // advances, verifies and signs their remaining legs
@@ -10305,7 +10484,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "stellar" ? STELLAR_EXPLORER : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "stacks" ? STACKS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "stellar" ? STELLAR_EXPLORER : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a
@@ -10327,6 +10506,17 @@ function releaseSwapRun(key) { swapRunsInFlight = Math.max(0, swapRunsInFlight -
  *  about where a composition stands. */
 function pendingSwapStepText(kind, record) {
   if (!record) return "";
+  if (kind === "sbtc-peg") {
+    // sBTC peg records carry their evidence-derived phase —
+    // the step text is the phase in plain words.
+    const ph = sbtcPegPhase(record);
+    return ph === "sent" ? "deposit sent"
+      : ph === "confirming" ? "deposit confirmed — signers minting"
+      : ph === "reclaimable" ? "reclaimable by your key"
+      : ph === "requested" ? "withdrawal requested"
+      : ph === "accepted" ? "signers accepted — payout on its way"
+      : "";
+  }
   if (kind === "cctp-aptos") {
     // CCTP-Aptos records carry their phase, not a leg index —
     // the step text is the phase in plain words.
@@ -10384,11 +10574,15 @@ function syncPendingSwapHistory(kind, record, seed = null) {
         : (record.status === "FAILED" || record.status === "INCOMPLETE_DEPOSIT") ? "failed"
         : null
       : null;
+    // A rejected peg-out is terminal with the user's sBTC
+    // unlocked back — Activity names it like a refund, never
+    // an eternal "in progress".
+    const pegState = kind === "sbtc-peg" && record.state === "rejected" ? "refunded" : null;
     const done = kind === "oneclick" ? record.status === "SUCCESS" : record.state === "done";
     const fields = {
       msId: record.id, msKind: kind,
-      msState: ocState || (done ? "done" : "in-progress"),
-      msStep: (done || ocState) ? "" : pendingSwapStepText(kind, record),
+      msState: pegState || ocState || (done ? "done" : "in-progress"),
+      msStep: (done || ocState || pegState) ? "" : pendingSwapStepText(kind, record),
     };
     const i = h.findIndex(x => x && x.msId === record.id);
     if (i >= 0) { h[i] = { ...h[i], ...fields }; }

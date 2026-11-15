@@ -60,8 +60,14 @@ same seed. Everything listed here **ships**: balance, receive and send.
   own bridge (domain 9; slow class ~15–19 min; the inbound
   mint is claimed by the user's own account and needs a
   little APT) — see `docs/SWAPS.md` (gap #10).
-- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub),
-  Stacks** — full send/receive/balance.
+- **Stacks** — full send/receive/balance. BTC ↔ sBTC over
+  the canonical sBTC peg (Move class, 1:1, no Fluid fee;
+  ~10–30 min in, ~1 h out; the signer-threshold trust shape
+  is disclosed on both cards) and intra-Stacks swaps via
+  Bitflow (v1: client-side quotes, no Fluid fee — see
+  `docs/SWAPS.md`, gap #11).
+- **TON, NEAR, Algorand, XRPL, Polkadot (Asset Hub)** —
+  full send/receive/balance.
 
 ## Tokens
 

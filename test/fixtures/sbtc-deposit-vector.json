@@ -1,0 +1,11 @@
+{
+  "stacksAddress": "SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J",
+  "signersAggregatePubkey": "02d99ad0f0111a7e9aaa2ed22940efec98db0ece9b9475e61e1eec65a6e7f3af69",
+  "maxFeeSats": 80000,
+  "lockBlocks": 950,
+  "userXonlyKey": "a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c",
+  "depositScript": "1e000000000001388005161859c6840c4dc8ab3a3d39c6b5003fb36c5e72327520d99ad0f0111a7e9aaa2ed22940efec98db0ece9b9475e61e1eec65a6e7f3af69ac",
+  "reclaimScript": "02b603b27520a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684cac",
+  "depositAddress": "bc1pgfs9ukp7jrn2pp24jet7gdlfkgtd8ehlf4z3mr6z80hm767rqwns4h7css",
+  "outputScript": "512042605e583e90e6a085559657e437e9b216d3e6ff4d451d8f423befbf6bc303a7"
+}
