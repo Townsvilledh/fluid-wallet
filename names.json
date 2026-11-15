@@ -278,5 +278,21 @@
     "sol": "AHKbJMRWxKQQsGo5WfuCJAasWWKWuTxR8qBSQXjwwR3N",
     "tron": "TYKaDXUVNTJCCwLKZM97fKS3AMZSBcChty",
     "sui": "0xa956fd26f9a34993286cb54431483a2eb27b990d3d385a082383c911344b6188"
+  },
+  "thgovernor": {
+    "evm": "0x5B3cc14C063d4bbbd1a30c994bDBaA0c67fD7A3D",
+    "btc": "bc1qxn2dg97efm8lvc7hlapw6k64rwd4af79eqdllh",
+    "algo": "BDXEAZVXINNDG6B3O6XMF2RGC3MOQXLSDSCPS6UYOWNSC5D3JDVNJVLK3M",
+    "sol": "4SL7HdGmhXdrtnYfZFABx5s3CNGhY7wAhjg13QspvkG7",
+    "tron": "TJHdGrLxpnsMiAprKaEAnVp21WFBJkgdqX",
+    "sui": "0x393201d0f3a43a6686c8af71b96e3f79d1b11af8459d3310b2b9f7509a2f22ca"
+  },
+  "ladyswalk42762": {
+    "evm": "0x33Ecebbf24Aa62dDF73b57a7Cd6a8901b81f04B2",
+    "btc": "bc1qvu0d57dgvqzpkcxm50lvwnsxecrqpemxd5tae4",
+    "algo": "PF4PB4TV4NW4SBJY3RVG3MPLZHE6BWUS4SIYO2RWSYYVWU4DMOXDB34HAU",
+    "sol": "7HdZX5DVaWE49RU3BkAtNWmEFay5xdkTjN4soqjeWE6g",
+    "tron": "TEhmHPormgJHbxbLpm7Y8CUqJLd56jnXMo",
+    "sui": "0xfcabbd0fbdefa9908ed0118e10c463dac0e61de989b838747780bcc380aa6da9"
   }
 }
