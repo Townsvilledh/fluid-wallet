@@ -294,5 +294,13 @@
     "sol": "7HdZX5DVaWE49RU3BkAtNWmEFay5xdkTjN4soqjeWE6g",
     "tron": "TEhmHPormgJHbxbLpm7Y8CUqJLd56jnXMo",
     "sui": "0xfcabbd0fbdefa9908ed0118e10c463dac0e61de989b838747780bcc380aa6da9"
+  },
+  "tundeosq": {
+    "evm": "0x3342C6d06FE430cE57a426A3edab33353B02642E",
+    "btc": "bc1q3p5x7sls93mr88tg5xu65nzp96eaj82ud77jw4",
+    "algo": "OPEL7U3SBZPIUOICGZMTLFDPVF4O5VS3B2FRXHHVPZJ2BKIM3GGCTII5UI",
+    "sol": "7XbKA4bieY5C1Rk9tvTMV64qw4a9RmmB7HVR32abGuSZ",
+    "tron": "TEeFTZcYzJx73cboN7HfoX3K5j8UhQqPdo",
+    "sui": "0x26c67fc4d812659e71244ce6f63456ee6be7b1fee0dc8ca87e213eb32bdb1778"
   }
 }
