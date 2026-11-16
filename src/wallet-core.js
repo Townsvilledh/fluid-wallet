@@ -10864,6 +10864,66 @@ export function parseOpenOceanSwap(data, { chainId, fromAmountRaw, nativeInput }
   };
 }
 
+/** The OpenOcean probe ledger: the latest classified outcome
+ *  per chain, written by the QUOTE pass of
+ *  getOpenOceanSwapRoute (the fee pass builds on an answer
+ *  already received — its failures say nothing about whether
+ *  the pair could be asked, so it never writes here). The
+ *  candidate swallows every failure into the same empty
+ *  answer, so without this record a transport block is
+ *  indistinguishable from a refusal by the time the no-route
+ *  diagnosis runs — the gap-#14 walk (2026-11-16) watched
+ *  Rootstock/Flare pairs print "isn't connected yet" while
+ *  Cloudflare held the only rail's door shut. The diagnosis
+ *  reads the ledger through openOceanProbeBlind: a fresh
+ *  BLOCKED outcome for the pair's chain is blindness
+ *  evidence of the same standing as a thrown transport
+ *  error (floor.blind / marketBlind). */
+const openOceanProbeOutcomes = new Map();
+/** How long a ledger outcome stays evidence. A diagnosis
+ *  runs seconds after the search that probed (and its own
+ *  probes refresh the record first); the window only bounds
+ *  how stale a read may be when a diagnosis consults the
+ *  ledger for a chain its own probes never reached. */
+export const OPENOCEAN_PROBE_FRESH_MS = 120000;
+function noteOpenOceanProbe(chainId, outcome) {
+  openOceanProbeOutcomes.set(Number(chainId), { outcome, at: Date.now() });
+}
+/** The latest classified OpenOcean probe outcome for a
+ *  chain — { outcome: "answered" | "blocked", at } — or
+ *  null when the chain was never probed. Exported for
+ *  tests. */
+export function openOceanProbeOutcome(chainId) {
+  const rec = openOceanProbeOutcomes.get(Number(chainId));
+  return rec ? { ...rec } : null;
+}
+export function resetOpenOceanProbeOutcomes() { openOceanProbeOutcomes.clear(); }
+/** Blindness evidence for the no-route diagnosis: the pair
+ *  is one OpenOcean serves (it is that pair's only rail)
+ *  and its latest probe outcome, still fresh, is a
+ *  transport block — the rail never answered, so no probe
+ *  earned a verdict about the pair. Pure read of the
+ *  ledger. */
+export function openOceanProbeBlind(args, now = Date.now()) {
+  const sup = openOceanSupportsPair(args);
+  if (!sup) return false;
+  const rec = openOceanProbeOutcomes.get(Number(sup.chainId));
+  return !!rec && rec.outcome === "blocked" && now - rec.at <= OPENOCEAN_PROBE_FRESH_MS;
+}
+
+/** One OpenOcean /swap probe, classified. The API speaks a
+ *  JSON envelope ({ code, data }); a response IN that
+ *  envelope is an ANSWER — a quote (code 200 with data), or
+ *  a refusal the API itself returns as data (a JSON 400
+ *  naming the pair is an answer, not blindness). Everything
+ *  else means the service never answered the question: an
+ *  HTTP 403 (the edge refusing the question itself — this
+ *  API never returns one as data), a Cloudflare challenge /
+ *  block page or an edge error page (HTML where the
+ *  envelope belongs), or the fetch dying outright (network,
+ *  timeout). Those are transport blocks. Returns
+ *  { data, outcome } — data is the quote payload on an
+ *  answered quote, null otherwise. */
 async function fetchOpenOceanSwap(chainId, { inToken, outToken, amountHuman, account, dialPct = 0 }, fetchImpl = null) {
   const impl = fetchImpl || fetch;
   const qs = new URLSearchParams({
@@ -10871,13 +10931,17 @@ async function fetchOpenOceanSwap(chainId, { inToken, outToken, amountHuman, acc
     gasPrice: OPENOCEAN_GAS_PRICE[chainId], slippage: String(OPENOCEAN_SLIPPAGE), account,
   });
   if (dialPct > 0) { qs.set("referrer", RELAY_APP_FEE_RECIPIENT); qs.set("referrerFee", String(dialPct)); }
+  let res;
   try {
-    const res = await impl(`${OPENOCEAN_API}/${chainId}/swap?${qs.toString()}`, { signal: AbortSignal.timeout(30000) });
-    if (!res || !res.ok) return null;
-    const body = await res.json().catch(() => null);
-    if (!body || Number(body.code) !== 200 || !body.data) return null;
-    return body.data;
-  } catch { return null; }
+    res = await impl(`${OPENOCEAN_API}/${chainId}/swap?${qs.toString()}`, { signal: AbortSignal.timeout(30000) });
+  } catch { return { data: null, outcome: "blocked" }; }
+  if (!res) return { data: null, outcome: "blocked" };
+  if (res.status === 403) return { data: null, outcome: "blocked" };
+  const body = await res.json().catch(() => null);
+  const answered = !!body && typeof body === "object" && body.code != null && Number.isFinite(Number(body.code));
+  if (!answered) return { data: null, outcome: "blocked" };
+  if (!res.ok || Number(body.code) !== 200 || !body.data) return { data: null, outcome: "answered" };
+  return { data: body.data, outcome: "answered" };
 }
 
 /** Token metadata for one side of an OpenOcean pair, resolved
@@ -10916,7 +10980,10 @@ function openOceanHumanAmount(raw, decimals) {
  *  output delta is ECHO-VERIFIED before the fee build may
  *  ship. Any failure of pass 2 or of the echo ships pass 1's
  *  build with collecting=false. Returns null when the pair is
- *  unsupported or unquotable. `args.fromAmount` is RAW units
+ *  unsupported or unquotable. Pass 1's classified outcome is
+ *  recorded on the probe ledger (noteOpenOceanProbe), so the
+ *  no-route diagnosis can tell a transport block from a
+ *  refusal. `args.fromAmount` is RAW units
  *  (the direct-search convention). */
 export async function getOpenOceanSwapRoute(args, { fetchImpl = null, prices: pricesOpt = undefined } = {}) {
   const sup = openOceanSupportsPair(args);
@@ -10930,9 +10997,11 @@ export async function getOpenOceanSwapRoute(args, { fetchImpl = null, prices: pr
   const toMeta = await openOceanTokenMeta(chainKey, args.toTokenAddress);
   if (!fromMeta || !toMeta) return null;
   const amountHuman = openOceanHumanAmount(amountRaw, fromMeta.decimals);
-  const freeData = await fetchOpenOceanSwap(chainId, {
+  const freeProbe = await fetchOpenOceanSwap(chainId, {
     inToken: fromMeta.address, outToken: toMeta.address, amountHuman, account: fromAddress,
   }, fetchImpl);
+  noteOpenOceanProbe(chainId, freeProbe.outcome);
+  const freeData = freeProbe.data;
   if (!freeData) return null;
   const freeBuild = parseOpenOceanSwap(freeData, { chainId, fromAmountRaw: amountRaw, nativeInput: fromMeta.native });
   if (!freeBuild) return null;
@@ -10993,9 +11062,9 @@ export async function getOpenOceanSwapRoute(args, { fetchImpl = null, prices: pr
   const target = PLATFORM_FEE_COLLECTION_ENABLED ? platformFeeBpsForRoute(routeFeeUsd, fromAmountUSD, chainKey) : 0;
   const dialPct = openOceanDialForBps(target);
   if (dialPct <= 0) return ship(freeBuild, noFee, null);
-  const feeData = await fetchOpenOceanSwap(chainId, {
+  const feeData = (await fetchOpenOceanSwap(chainId, {
     inToken: fromMeta.address, outToken: toMeta.address, amountHuman, account: fromAddress, dialPct,
-  }, fetchImpl);
+  }, fetchImpl)).data;
   const feeBuild = feeData ? parseOpenOceanSwap(feeData, { chainId, fromAmountRaw: amountRaw, nativeInput: fromMeta.native }) : null;
   if (!feeBuild || !openOceanFeeEchoOk(freeBuild.outAmount, feeBuild.outAmount, dialPct)) {
     // The echo failed (or the fee build did): the fee-free
@@ -26103,8 +26172,11 @@ export function swapFromTokenIsHubAsset(args) {
  *     its own chain's native coin, at the user's amount and at
  *     100× it — there is no market for the token to route from.
  *   - "unreachable": a probe died on transport (rate limit,
- *     network) before the pair could be judged — the rails
- *     never answered, so NOTHING about the pair is claimed
+ *     network) before the pair could be judged — or the
+ *     pair's only rail transport-blocked its probe (an HTTP
+ *     403 / Cloudflare block, read off the OpenOcean probe
+ *     ledger; see openOceanProbeBlind) — the rails never
+ *     answered, so NOTHING about the pair is claimed
  *     (repair batch, 2026-11-15: this case used to degrade
  *     into "no-route-yet", printing "isn't connected yet" for
  *     pairs that are connected — the gap-#12 walk hit exactly
@@ -26175,6 +26247,22 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
       }
     }
   }
+  // Rail blindness the thrown-error channel cannot carry
+  // (2026-11-16): OpenOcean — the only rail on its chains —
+  // swallows a transport block (HTTP 403, a Cloudflare page,
+  // a dead fetch) into the same empty answer as a refusal,
+  // so every probe above reads "answered" while the rail
+  // never spoke. The fetch layer's probe ledger holds the
+  // distinction (openOceanProbeBlind): a fresh BLOCKED
+  // outcome for this pair's chain is blindness of the same
+  // standing as floor.blind, and it voids a no-market read
+  // too — that probe asked the same blocked rail about the
+  // same chain, so its emptiness is unearned (the market
+  // reads unknown, not absent). A market the probes DID
+  // prove (routes home) still stands: some rail answered,
+  // and the pair verdict below is the earned one.
+  const railBlind = openOceanProbeBlind(args);
+  if (railBlind && market !== true) return { kind: "unreachable", floor, market: market === false ? null : market };
   if (market === false) return { kind: "no-market", floor, market };
   if (floor.blind || marketBlind) return { kind: "unreachable", floor, market };
   return { kind: "no-route-yet", floor, market };

@@ -21197,4 +21197,99 @@ import { ed25519 as ed25519_137 } from "@noble/curves/ed25519.js";
   }
 }
 
+/* ================= §138 — rail transport-block blindness
+ * (2026-11-16) =================
+ * Follow-up filed by the gap-#14 walk: on Rootstock/Flare
+ * pairs (OpenOcean is the only rail), a Cloudflare 403 from
+ * this network left every diagnosis probe reading "answered"
+ * — the candidate swallows the block into the same empty
+ * answer as a refusal — and the sheet printed "isn't
+ * connected yet" for a connected pair. The fetch layer now
+ * classifies each probe (an answer is a response in the
+ * API's own JSON envelope; an HTTP 403, a block page, or a
+ * dead fetch is a transport block) and records it on the
+ * probe ledger; the diagnosis reads a fresh BLOCKED outcome
+ * as blindness of the same standing as a thrown transport
+ * error. */
+import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind, OPENOCEAN_PROBE_FRESH_MS } from "../src/wallet-core.js";
+{
+  const ACCT138 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const RSK_USDT0_138 = "0x779dED0C9e1022225F8e0630b35A9B54Be713736";
+  const argsRsk138 = { fromChainKey: "rootstock", toChainKey: "rootstock", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: RSK_USDT0_138, fromAmount: "10000000000000000", fromAddress: ACCT138, toAddress: ACCT138 };
+  const cfBlock138 = async () => ({ ok: false, status: 403, json: async () => { throw new Error("cloudflare html"); } });
+  const htmlPage138 = async () => ({ ok: false, status: 503, json: async () => { throw new Error("not json"); } });
+  const deadFetch138 = async () => { throw new TypeError("fetch failed"); };
+  const jsonRefusal138 = async () => ({ ok: false, status: 400, json: async () => ({ code: 400, message: "pair not supported" }) });
+  const envelopeRefusal138 = async () => ({ ok: true, status: 200, json: async () => ({ code: 404 }) });
+
+  // The classifier, exercised through the route flow (the
+  // fetch helper itself is internal): an HTTP 403, a block
+  // page and a dead fetch are transport blocks; refusals
+  // carried in the API's own envelope are answers.
+  resetOpenOceanProbeOutcomes();
+  const r403 = await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: cfBlock138 });
+  ok("railblind: an HTTP 403 from the pair's only rail is a transport block, not an answer",
+    r403 === null && openOceanProbeOutcome(30)?.outcome === "blocked");
+  const rHtml = await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: htmlPage138 });
+  const rDead = await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: deadFetch138 });
+  ok("railblind: a Cloudflare-style HTML error page and a dead fetch are transport blocks too",
+    rHtml === null && rDead === null && openOceanProbeOutcome(30)?.outcome === "blocked");
+  const rJson400 = await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: jsonRefusal138 });
+  ok("railblind: a refusal carried as JSON data (HTTP 400, the API's own envelope) is an ANSWER, not blindness",
+    rJson400 === null && openOceanProbeOutcome(30)?.outcome === "answered");
+  const rEnv = await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: envelopeRefusal138 });
+  ok("railblind: an envelope refusal on HTTP 200 is an answer too",
+    rEnv === null && openOceanProbeOutcome(30)?.outcome === "answered");
+
+  // The ledger read: fresh-windowed and pair-scoped.
+  resetOpenOceanProbeOutcomes();
+  await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: cfBlock138 });
+  const rec138 = openOceanProbeOutcome(30);
+  ok("railblind: the blindness read holds inside the freshness window, lapses outside it, and never fires for a non-OpenOcean pair",
+    !!rec138 && openOceanProbeBlind(argsRsk138, rec138.at) === true
+    && openOceanProbeBlind(argsRsk138, rec138.at + OPENOCEAN_PROBE_FRESH_MS) === true
+    && openOceanProbeBlind(argsRsk138, rec138.at + OPENOCEAN_PROBE_FRESH_MS + 1) === false
+    && openOceanProbeBlind({ fromChainKey: "bsc", toChainKey: "sui", fromTokenAddress: "0x0000000000000000000000000000000000000000", toTokenAddress: "0x2::sui::SUI" }, rec138.at) === false);
+
+  // The walked defect, end to end at the diagnosis: the
+  // sheet's search probed OpenOcean and was blocked (the
+  // route call above IS that probe — its ledger record is
+  // still on the books); every diagnosis probe then answers
+  // empty, exactly as the real search does when the
+  // candidate returns nothing. RBTC is a hub asset, so no
+  // market probe runs. Before this fix the verdict landed
+  // on no-route-yet.
+  const answeredEmpty138 = async () => { throw new Error("No available quotes for the requested transfer"); };
+  const vBlocked138 = await diagnoseNoRouteSwap(argsRsk138, { fromDecimals: 18, fromPriceUsd: null, search: answeredEmpty138 });
+  const msgBlocked138 = formatSwapNoRouteMessage({ fromSymbol: "RBTC", toSymbol: "USDT", amountText: "0.01 RBTC", verdict: vBlocked138, nativeSymbol: "RBTC" });
+  ok("railblind: a transport-blocked only rail diagnoses unreachable — the services-didn't-answer copy, never 'isn't connected yet'",
+    vBlocked138.kind === "unreachable"
+    && msgBlocked138.includes("didn't answer") && !msgBlocked138.includes("isn't connected yet"));
+  // Control: with no ledger record at all, the identical
+  // probes earn the unconnected verdict — the ledger is the
+  // evidence, not the pair's shape.
+  resetOpenOceanProbeOutcomes();
+  const vNoRec138 = await diagnoseNoRouteSwap(argsRsk138, { fromDecimals: 18, fromPriceUsd: null, search: answeredEmpty138 });
+  ok("railblind: with no blocked probe on record, the same answered probes still read no-route-yet",
+    vNoRec138.kind === "no-route-yet");
+  // An ANSWERED refusal from the rail keeps the unconnected
+  // verdict — the label is reserved, not retired.
+  await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: jsonRefusal138 });
+  const vAnswered138 = await diagnoseNoRouteSwap(argsRsk138, { fromDecimals: 18, fromPriceUsd: null, search: answeredEmpty138 });
+  const msgAnswered138 = formatSwapNoRouteMessage({ fromSymbol: "RBTC", toSymbol: "USDT", verdict: vAnswered138, nativeSymbol: "RBTC" });
+  ok("railblind: an answered refusal still earns the unconnected verdict and its copy",
+    vAnswered138.kind === "no-route-yet" && msgAnswered138.includes("isn't connected yet"));
+  // A blocked rail voids a no-market read: the market probe
+  // asks the same rail about the same chain (here it answers
+  // empty at both amounts), so its emptiness is unearned —
+  // the market reads unknown, not absent.
+  resetOpenOceanProbeOutcomes();
+  await getOpenOceanSwapRoute(argsRsk138, { fetchImpl: cfBlock138 });
+  const argsToken138 = { ...argsRsk138, fromTokenAddress: "0x1234567890AbcdEF1234567890AbcdEF12345678" };
+  const vMktBlind138 = await diagnoseNoRouteSwap(argsToken138, { fromDecimals: 18, fromPriceUsd: null, search: async () => [] });
+  ok("railblind: a blocked rail voids the market probe's emptiness — unreachable, market unknown, never no-market",
+    vMktBlind138.kind === "unreachable" && vMktBlind138.market === null);
+  resetOpenOceanProbeOutcomes();
+}
+
 console.log(`\n${passed} checks passed`);
