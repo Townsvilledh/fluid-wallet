@@ -27,7 +27,7 @@ import {
   tezosAddressFromPhrase, getTezosAccount, sendTezos, isValidTezosAddress, formatTezosSendIntent, tezosSendPlan, TEZOS_EXPLORER, TEZOS_USDT, TEZOS_SWAP_TOKENS,
   hederaAddressFromPhrase, getHederaAccount, sendHedera, isValidHederaAddress, formatHederaSendIntent, hederaSendPlan, HEDERA_EXPLORER, HEDERA_USDC, HEDERA_SWAP_TOKENS,
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
-  dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
+  dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS, loadPolkadotSdk,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
@@ -637,6 +637,19 @@ $("notifyBtn").onclick = () => {
   msg("notifyMsg", "You're on the list — on this device. Launch news will also be posted in the GitHub repo.", true);
 };
 
+// Service worker at boot (loading performance, 2026-11-16): the
+// worker's fetch handler serves the stamp-versioned app bundle
+// cache-first, so a repeat load costs zero bundle network bytes and
+// the wallet opens on connections too weak to download it. It
+// intercepts nothing else (see src/sw.js). Best-effort by design:
+// a registration failure must never block the unlock screen. (The
+// Lightning wake-up flow registers the same worker separately and
+// keeps its own loud failure — push needs the registration to be
+// real; the bundle cache does not.)
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
 // ---------- gate ----------
 // Lock-screen recovery: a stored vault used to trap anyone who
 // forgot the password — the gate hid the create/import box (the only
@@ -1111,22 +1124,38 @@ async function renderMain() {
       xrpBalances = [{ symbol: "XRP", name: "XRP", amount: null, address: null, decimals: 6, verified: true }];
       markLoaded("xrpl"); paintAssets();
     });
-  dotAddr = dotAddressFromPhrase(w.mnemonic.phrase);
+  // Polkadot rides the lazy SDK chunk (loading performance,
+  // 2026-11-16): the module loads here, on first home render, and
+  // the family resolves asynchronously so the chunk download never
+  // blocks the families below. A failed chunk load lands in the
+  // same honest "couldn't load" state as a failed chain read.
   if (!hydratedFams.has("polkadot")) dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: "0", address: null, decimals: 10, verified: true },
                  ...DOT_TOKENS.map(t => ({ ...t, amount: "0" }))];
   dotExists = null; dotLoadFailed = false;
-  getDotAccount(dotAddr)
-    .then(acct => { if (staleRender()) return; dotBalances = acct.balances; dotExists = acct.exists; markLiveOk("polkadot"); markLoaded("polkadot"); paintAssets(); })
-    .catch(() => {
+  (async () => {
+    try { await loadPolkadotSdk(); dotAddr = dotAddressFromPhrase(w.mnemonic.phrase); }
+    catch { dotAddr = null; }
+    if (!dotAddr) {
       if (staleRender()) return;
-      // A failed read is UNKNOWN, not zero (QA F12, same pattern
-      // as XRPL): rows carry amount null and render "couldn't
-      // load" — never a $0.00 presented as a loaded balance.
       dotLoadFailed = true;
       dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: null, address: null, decimals: 10, verified: true },
                      ...DOT_TOKENS.map(t => ({ ...t, amount: null }))];
       markLoaded("polkadot"); paintAssets();
-    });
+      return;
+    }
+    getDotAccount(dotAddr)
+      .then(acct => { if (staleRender()) return; dotBalances = acct.balances; dotExists = acct.exists; markLiveOk("polkadot"); markLoaded("polkadot"); paintAssets(); })
+      .catch(() => {
+        if (staleRender()) return;
+        // A failed read is UNKNOWN, not zero (QA F12, same pattern
+        // as XRPL): rows carry amount null and render "couldn't
+        // load" — never a $0.00 presented as a loaded balance.
+        dotLoadFailed = true;
+        dotBalances = [{ symbol: "DOT", name: "Polkadot", amount: null, address: null, decimals: 10, verified: true },
+                       ...DOT_TOKENS.map(t => ({ ...t, amount: null }))];
+        markLoaded("polkadot"); paintAssets();
+      });
+  })();
   // Aptos (Phase 5): SLIP-0010 Ed25519 branch (coin type 637, the
   // Petra path) of the same seed. The account read reports existence
   // honestly — an address the chain has never seen is "not yet
@@ -4852,6 +4881,11 @@ function openDotSheet(tok) {
     <p class="tag">This address is for Polkadot Asset Hub (DOT and its USDC/USDT). An account must always keep at least 0.01 DOT (the existential deposit) — Fluid stops any send that would reap it. Sends are final.</p>`);
   $("dtReview").onclick = async () => {
     const to = $("dtTo").value.trim(), amount = $("dtAmt").value.trim();
+    // The address check rides the lazy Polkadot chunk — make sure
+    // it is in before validating (normally already loaded by the
+    // home render; a failed load leaves the check answering false,
+    // the sheet's honest refusal).
+    await loadPolkadotSdk().catch(() => null);
     if (!isValidDotAddress(to)) return msg("dtMsg", "That is not a valid Polkadot address.");
     if (!amount || Number(amount) <= 0) return msg("dtMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("dtMsg", "Amount is more than your balance.");

@@ -63,7 +63,7 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
   normalizeBlockscoutTxs, normalizeBlockscoutTokenTransfers, normalizeEsploraTxs, normalizeAlgoIndexerTxs,
   normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
-import { withDeadline, dotApi } from "../src/wallet-core.js";
+import { withDeadline, dotApi, installCosmosSdk, installPolkadotSdk, loadCosmosSdk, loadPolkadotSdk } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
@@ -96,6 +96,16 @@ import { bech32 } from "@scure/base";
 
 let passed = 0;
 const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); passed++; };
+
+// Loading performance (2026-11-16): the Cosmos + Polkadot SDKs
+// ship as lazy chunks in the app (src/cosmos.js / src/polkadot.js
+// are the chunk entries); the suite installs the same entry
+// modules into wallet-core's lazy-SDK registry before any test
+// runs, so the synchronous helpers (Injective builders, the Skip
+// registry, DOT address derivation) behave exactly as they do in
+// the app after its first-use load.
+installCosmosSdk(await import("../src/cosmos.js"));
+installPolkadotSdk(await import("../src/polkadot.js"));
 
 // 1. Known-vector import: Hardhat's well-known test mnemonic → known address
 const KNOWN_PHRASE = "test test test test test test test test test test test junk";
@@ -21290,6 +21300,72 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("railblind: a blocked rail voids the market probe's emptiness — unreachable, market unknown, never no-market",
     vMktBlind138.kind === "unreachable" && vMktBlind138.market === null);
   resetOpenOceanProbeOutcomes();
+}
+
+// ---------- §139: loading performance — SW bundle cache + lazy SDK chunks ----------
+// The boot bundle was 6,566,973 bytes (1,763,748 gzip) with the
+// Cosmos + Polkadot SDKs inlined, and every release forced a full
+// re-download on the weakest connections. Now: the service worker
+// serves the stamp-versioned bundle cache-first (repeat loads cost
+// zero bundle network bytes), and the two SDK families ship as
+// lazy chunks on the existing chunk pattern.
+{
+  const swSrc139 = readFileSync(new URL("../src/sw.js", import.meta.url), "utf8");
+  const coreSrc139 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc139 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const buildSrc139 = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  const publishSrc139 = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  const cosmosEntry139 = readFileSync(new URL("../src/cosmos.js", import.meta.url), "utf8");
+  const polkadotEntry139 = readFileSync(new URL("../src/polkadot.js", import.meta.url), "utf8");
+
+  ok("loadperf: sw.js carries exactly one fetch listener",
+    (swSrc139.match(/addEventListener\("fetch"/g) || []).length === 1);
+  ok("loadperf: the fetch handler intercepts only the stamped bundle path with its ?v= stamp — HTML, names.json and sw.js itself never match that path, so they always reach the network",
+    swSrc139.includes('url.pathname.endsWith("/app.bundle.js")') && swSrc139.includes('url.searchParams.has("v")') && swSrc139.includes('req.method !== "GET"'));
+  ok("loadperf: the bundle cache name is stamp-versioned and activate deletes older stamps' caches",
+    swSrc139.includes('"fluid-bundle-" + FLUID_BUILD_STAMP') && swSrc139.includes('name.startsWith("fluid-bundle-")') && swSrc139.includes("caches.delete"));
+  ok("loadperf: the push wake-up behaviour is intact alongside the cache",
+    swSrc139.includes('addEventListener("push"') && swSrc139.includes("showNotification") && swSrc139.includes('addEventListener("notificationclick"'));
+  ok("loadperf: the build stamps the worker with the bundle hash",
+    buildSrc139.includes('replace("__FLUID_BUILD_STAMP__", bundleHash)') && buildSrc139.includes('writeFileSync("dist/sw.js"'));
+  ok("loadperf: app.js registers the service worker at boot, best-effort, beside the Lightning flow's own registration",
+    (appSrc139.match(/navigator\.serviceWorker\.register\("sw\.js"\)/g) || []).length >= 2 &&
+    appSrc139.includes('navigator.serviceWorker.register("sw.js").catch(() => {})'));
+  ok("loadperf: wallet-core statically imports neither the Cosmos nor the Polkadot SDK",
+    !/from "@cosmjs\//.test(coreSrc139) && !/from "cosmjs-types\//.test(coreSrc139) && !/from "@polkadot\//.test(coreSrc139));
+  ok("loadperf: wallet-core loads both families through their chunk specifiers, marker-gated",
+    coreSrc139.includes('import("./cosmos.chunk.js")') && coreSrc139.includes('import("./polkadot.chunk.js")') &&
+    coreSrc139.includes("COSMOS_CHUNK_MARKER") && coreSrc139.includes("POLKADOT_CHUNK_MARKER"));
+  ok("loadperf: the chunk entries carry the SDKs and their markers",
+    cosmosEntry139.includes("COSMOS_CHUNK_MARKER = true") && cosmosEntry139.includes('"@cosmjs/stargate"') && cosmosEntry139.includes('"cosmjs-types/cosmos/tx/v1beta1/tx"') &&
+    polkadotEntry139.includes("POLKADOT_CHUNK_MARKER = true") && polkadotEntry139.includes('"@polkadot/api"') && polkadotEntry139.includes('"@polkadot/keyring"'));
+  ok("loadperf: the build emits both chunks as externals of the boot bundle and publish ships them",
+    buildSrc139.includes("dist/cosmos.chunk.js") && buildSrc139.includes("dist/polkadot.chunk.js") &&
+    buildSrc139.includes('"./cosmos.chunk.js"') && buildSrc139.includes('"./polkadot.chunk.js"') &&
+    publishSrc139.includes('"cosmos.chunk.js"') && publishSrc139.includes('"polkadot.chunk.js"'));
+  ok("loadperf: the home render awaits the Polkadot load before deriving the DOT address",
+    appSrc139.includes("await loadPolkadotSdk(); dotAddr = dotAddressFromPhrase"));
+  ok("loadperf: the boot bundle dedupes zod to its ESM build (one alias, main build only)",
+    buildSrc139.includes("alias: { zod: ZOD_ESM_ENTRY }") && buildSrc139.includes("node_modules/zod/index.js"));
+
+  const cosmosMod139 = await loadCosmosSdk();
+  const polkadotMod139 = await loadPolkadotSdk();
+  ok("loadperf: the Cosmos loader resolves to the marker-gated SDK surface",
+    cosmosMod139.COSMOS_CHUNK_MARKER === true && typeof cosmosMod139.SigningStargateClient === "function" && typeof cosmosMod139.Registry === "function" && typeof cosmosMod139.CosmosTxBody?.encode === "function");
+  ok("loadperf: the Polkadot loader resolves to the marker-gated SDK surface",
+    polkadotMod139.POLKADOT_CHUNK_MARKER === true && typeof polkadotMod139.ApiPromise?.create === "function" && typeof polkadotMod139.Keyring === "function" && typeof polkadotMod139.decodeAddress === "function");
+
+  // dist/ in the tree is the previous build's output (the suite
+  // runs before the build in the release flow): the boot bundle
+  // must sit below the pre-split figure and both chunks must
+  // exist as real payloads. The source pins above are the
+  // load-bearing guards; this catches a dist that regressed.
+  let bootBytes139 = null, cosmosBytes139 = 0, polkadotBytes139 = 0;
+  try { bootBytes139 = statSync(new URL("../dist/app.bundle.js", import.meta.url)).size; } catch { /* no dist yet */ }
+  try { cosmosBytes139 = statSync(new URL("../dist/cosmos.chunk.js", import.meta.url)).size; } catch { /* no dist yet */ }
+  try { polkadotBytes139 = statSync(new URL("../dist/polkadot.chunk.js", import.meta.url)).size; } catch { /* no dist yet */ }
+  ok("loadperf: the built boot bundle is below the pre-split 6,566,973 bytes, with both SDK chunks split out",
+    bootBytes139 !== null && bootBytes139 < 6566973 && cosmosBytes139 > 500000 && polkadotBytes139 > 500000);
 }
 
 console.log(`\n${passed} checks passed`);

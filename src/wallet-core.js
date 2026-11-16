@@ -9,15 +9,73 @@ import { mnemonicToSeedSync, mnemonicToEntropy } from "@scure/bip39";
 import { wordlist as bip39EnglishWordlist } from "@scure/bip39/wordlists/english.js";
 import * as btc from "@scure/btc-signer";
 import { base58, base58check, base58xrp, base64, base32, bech32, bech32m, hex } from "@scure/base";
-import { SigningStargateClient, GasPrice, calculateFee, assertIsDeliverTxSuccess, defaultRegistryTypes } from "@cosmjs/stargate";
-import { DirectSecp256k1Wallet, Registry } from "@cosmjs/proto-signing";
-import { TxBody as CosmosTxBody, TxRaw as CosmosTxRaw, AuthInfo as CosmosAuthInfo, SignDoc as CosmosSignDoc, SignerInfo as CosmosSignerInfo, ModeInfo as CosmosModeInfo } from "cosmjs-types/cosmos/tx/v1beta1/tx";
-import { MsgSend as CosmosBankMsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
-import { MsgTransfer as IbcMsgTransfer } from "cosmjs-types/ibc/applications/transfer/v1/tx";
-import { MsgExecuteContract as WasmMsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
-import { Any as ProtobufAny } from "cosmjs-types/google/protobuf/any";
-import { PubKey as CosmosSecp256k1PubKey } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
-import { Coin as CosmosCoin } from "cosmjs-types/cosmos/base/v1beta1/coin";
+// ---------- Lazy chain SDKs: Cosmos + Polkadot ----------
+// Loading performance (2026-11-16): the Cosmos (CosmJS +
+// cosmjs-types, ~1.24 MB) and Polkadot (@polkadot/*, ~830 KB)
+// SDKs were the two heaviest families in the boot bundle, and
+// neither is needed to render the unlock screen — Cosmos
+// derivation is Fluid's own @scure stack, Cosmos balance reads
+// are plain REST, and the Polkadot home read goes through the
+// loader below. Both SDKs ship as lazy chunks on the existing
+// lightning/walletconnect/arkade pattern: separate esbuild
+// entries (src/cosmos.js, src/polkadot.js), dynamically imported
+// on first use, gated on the chunk's marker export (the arkade
+// discipline — the Lightning chunk's in-bundle SHA-256 pin is
+// Lightning-only, as it carries a WASM node; these chunks, like
+// WalletConnect's, carry no pin).
+// Async entry points await loadCosmosSdk() / loadPolkadotSdk().
+// The few synchronous helpers (the Injective protobuf builders,
+// skipCosmosRegistry, dotAddressFromPhrase) read the installed
+// module via the *SdkSync() accessors and fail loud if a caller
+// reaches them before a load — every production caller is
+// downstream of one (sends await their loader; app.js awaits the
+// Polkadot load in the home render before deriving the DOT
+// address). isValidDotAddress is the one deliberate exception:
+// it answers false before the load (address validation on the
+// search path must never throw), which the swap machinery reads
+// as "not a DOT address" — unknown, never a wrong verdict.
+let cosmosSdk = null, cosmosSdkPromise = null;
+export function installCosmosSdk(mod) { if (mod && mod.COSMOS_CHUNK_MARKER === true) cosmosSdk = mod; }
+export function loadCosmosSdk() {
+  if (cosmosSdk) return Promise.resolve(cosmosSdk);
+  if (!cosmosSdkPromise) {
+    cosmosSdkPromise = (async () => {
+      let mod;
+      try { mod = await import("./cosmos.chunk.js"); }
+      catch { throw new Error("The Cosmos module isn't included in this build (the single-file build doesn't carry it). Open Fluid from fluidwallet.dpdns.org to send on Cosmos chains."); }
+      if (!mod || mod.COSMOS_CHUNK_MARKER !== true) throw new Error("The Cosmos module loaded but doesn't match this build — hard-refresh the page and try again.");
+      cosmosSdk = mod;
+      return mod;
+    })();
+    cosmosSdkPromise.catch(() => { cosmosSdkPromise = null; });
+  }
+  return cosmosSdkPromise;
+}
+function cosmosSdkSync() {
+  if (!cosmosSdk) throw new Error("The Cosmos module hasn't loaded yet — try again in a moment.");
+  return cosmosSdk;
+}
+let polkadotSdk = null, polkadotSdkPromise = null;
+export function installPolkadotSdk(mod) { if (mod && mod.POLKADOT_CHUNK_MARKER === true) polkadotSdk = mod; }
+export function loadPolkadotSdk() {
+  if (polkadotSdk) return Promise.resolve(polkadotSdk);
+  if (!polkadotSdkPromise) {
+    polkadotSdkPromise = (async () => {
+      let mod;
+      try { mod = await import("./polkadot.chunk.js"); }
+      catch { throw new Error("The Polkadot module isn't included in this build (the single-file build doesn't carry it). Open Fluid from fluidwallet.dpdns.org to use Polkadot Asset Hub."); }
+      if (!mod || mod.POLKADOT_CHUNK_MARKER !== true) throw new Error("The Polkadot module loaded but doesn't match this build — hard-refresh the page and try again.");
+      polkadotSdk = mod;
+      return mod;
+    })();
+    polkadotSdkPromise.catch(() => { polkadotSdkPromise = null; });
+  }
+  return polkadotSdkPromise;
+}
+function polkadotSdkSync() {
+  if (!polkadotSdk) throw new Error("The Polkadot module hasn't loaded yet — try again in a moment.");
+  return polkadotSdk;
+}
 import { hmac } from "@noble/hashes/hmac.js";
 import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
@@ -53,9 +111,7 @@ import { WalletContractV4 as TonWalletContractV4 } from "@ton/ton";
 import { keyPairFromSeed as tonKeyPairFromSeed } from "@ton/crypto";
 import algosdk from "algosdk";
 import { encodeForSigning as xrplEncodeForSigning, encode as xrplEncode, decode as xrplDecode } from "ripple-binary-codec";
-import { ApiPromise as DotApiPromise, HttpProvider as DotHttpProvider } from "@polkadot/api";
-import { Keyring as DotKeyring } from "@polkadot/keyring";
-import { decodeAddress as dotDecodeAddress, cryptoWaitReady as dotCryptoWaitReady } from "@polkadot/util-crypto";
+
 
 const USDC = (address, decimals = 6) => ({ symbol: "USDC", address, decimals });
 const USDT = (address, decimals = 6) => ({ symbol: "USDT", address, decimals });
@@ -4914,6 +4970,7 @@ function cosmosMsgSend(chain, from, to, rawAmount, denom = chain.denom) {
            value: { fromAddress: from, toAddress: to, amount: [{ denom, amount: rawAmount }] } };
 }
 async function cosmosSignerClient(phrase, chain, { registry = null } = {}) {
+  const { DirectSecp256k1Wallet, SigningStargateClient, GasPrice } = await loadCosmosSdk();
   const { child } = cosmosKeys(phrase, cosmosCoinType(chain));
   const signer = await DirectSecp256k1Wallet.fromKey(child.privateKey, chain.prefix);
   return SigningStargateClient.connectWithSigner(chain.rpc, signer, { gasPrice: GasPrice.fromString(chain.gasPrice), ...(registry ? { registry } : {}) });
@@ -4933,6 +4990,7 @@ export const INJECTIVE_PUBKEY_TYPE = "/injective.crypto.v1beta1.ethsecp256k1.Pub
  *  tests against a transaction that was also simulated live on
  *  injective-1. Returns { txBytes, signDocBytes, signature }. */
 export function buildInjectiveSignedTx({ privateKey, publicKey, fromAddress, toAddress, denom, amountBase, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1" }) {
+  const { ProtobufAny, CosmosBankMsgSend, CosmosCoin } = cosmosSdkSync();
   const msgAny = ProtobufAny.fromPartial({
     typeUrl: "/cosmos.bank.v1beta1.MsgSend",
     value: CosmosBankMsgSend.encode(CosmosBankMsgSend.fromPartial({
@@ -4948,6 +5006,7 @@ export function buildInjectiveSignedTx({ privateKey, publicKey, fromAddress, toA
  *  the MsgSend special case of this — byte-identical by
  *  construction, and pinned so in the suite. */
 export function assembleInjectiveSignedTx({ privateKey, publicKey, msgAnys, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1" }) {
+  const { CosmosTxBody, CosmosTxRaw, CosmosAuthInfo, CosmosSignDoc, CosmosSignerInfo, CosmosModeInfo, ProtobufAny, CosmosSecp256k1PubKey, CosmosCoin } = cosmosSdkSync();
   const bodyBytes = CosmosTxBody.encode(CosmosTxBody.fromPartial({ messages: msgAnys, memo: "" })).finish();
   const pubKeyAny = ProtobufAny.fromPartial({
     typeUrl: INJECTIVE_PUBKEY_TYPE,
@@ -5015,6 +5074,7 @@ function injectiveGasPricePerGas(chain) {
  *  chain's insufficient-funds message, which is the honest answer
  *  for an empty account. */
 async function estimateInjectiveFee(phrase, chain, { to, amount, denom = null, decimals = null }) {
+  await loadCosmosSdk();
   const from = cosmosAddress(phrase, chain.key);
   const acct = await injectiveAccount(chain, from);
   if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
@@ -5040,6 +5100,7 @@ async function estimateInjectiveFee(phrase, chain, { to, amount, denom = null, d
  *  network). Takes the fee object from estimateInjectiveFee so the
  *  broadcast matches exactly what the user approved. Returns { hash }. */
 async function sendInjective(phrase, chain, { to, amount, fee = null, denom = null, decimals = null }) {
+  await loadCosmosSdk();
   const from = cosmosAddress(phrase, chain.key);
   const acct = await injectiveAccount(chain, from);
   if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
@@ -5070,6 +5131,7 @@ async function sendInjective(phrase, chain, { to, amount, fee = null, denom = nu
  *  MsgSend builder produces for a MsgSend input (pinned). */
 export function buildInjectiveSignedTxForMsgs({ privateKey, publicKey, msgs, feeAmountBase, gasLimit, accountNumber, sequence, chainId = "injective-1", registry }) {
   if (!registry) throw new Error("buildInjectiveSignedTxForMsgs needs a registry to encode its messages.");
+  const { ProtobufAny } = cosmosSdkSync();
   const msgAnys = (msgs || []).map(m => ProtobufAny.fromPartial({ typeUrl: m.typeUrl, value: registry.encode(m) }));
   if (!msgAnys.length) throw new Error("No messages to sign.");
   return assembleInjectiveSignedTx({ privateKey, publicKey, msgAnys, feeAmountBase, gasLimit, accountNumber, sequence, chainId });
@@ -5094,6 +5156,7 @@ async function broadcastInjectiveTx(chain, txBytes) {
  *  account that cannot pay fails with the chain's own message),
  *  rebuild at simulated gas × 1.4, broadcast. Returns { hash }. */
 export async function sendInjectiveMsgs(phrase, chain, msgs, { registry } = {}) {
+  await loadCosmosSdk();
   const from = cosmosAddress(phrase, chain.key);
   const acct = await injectiveAccount(chain, from);
   if (!acct) throw new Error("Your Injective account isn't on-chain yet — receive some INJ first, then sending works.");
@@ -5123,6 +5186,7 @@ export async function estimateCosmosFee(phrase, chainKey, { to, amount, denom = 
   const client = await cosmosSignerClient(phrase, chain);
   try {
     const gasUsed = await client.simulate(from, [cosmosMsgSend(chain, from, to, raw, denom || chain.denom)], "");
+    const { calculateFee, GasPrice } = cosmosSdkSync();
     const fee = calculateFee(Math.round(gasUsed * 1.4), GasPrice.fromString(chain.gasPrice));
     const coin = fee.amount[0] || { denom: chain.denom, amount: "0" };
     return { fee, feeText: ethers.formatUnits(BigInt(coin.amount), chain.decimals), feeSymbol: chain.symbol };
@@ -5146,7 +5210,7 @@ export async function sendCosmos(phrase, chainKey, { to, amount, fee = null, den
   const client = await cosmosSignerClient(phrase, chain);
   try {
     const result = await client.signAndBroadcast(from, [cosmosMsgSend(chain, from, to, raw.toString(), denom || chain.denom)], fee || "auto", "");
-    assertIsDeliverTxSuccess(result);
+    cosmosSdkSync().assertIsDeliverTxSuccess(result);
     return { hash: result.transactionHash };
   } finally { client.disconnect(); }
 }
@@ -9998,6 +10062,7 @@ export function skipMsgToEncodeObject(msgJson) {
  *  (MsgTransfer and MsgSend ride there) plus the wasm
  *  execute type and Fluid's hand-built CCTP codec. */
 export function skipCosmosRegistry() {
+  const { Registry, defaultRegistryTypes, WasmMsgExecuteContract } = cosmosSdkSync();
   return new Registry([
     ...defaultRegistryTypes,
     ["/cosmwasm.wasm.v1.MsgExecuteContract", WasmMsgExecuteContract],
@@ -10300,6 +10365,7 @@ export async function getSkipSwapRoute(args, { fetchImpl = null, affiliateAddres
  *  milestone runner executes WITHOUT storage so legs never
  *  nest records). */
 export async function executeSkipSwapRoute(wallet, route, onProgress = () => {}, opts = {}) {
+  await loadCosmosSdk();
   if (!route || route.provider !== "skip" || !route.skip?.msgs) throw new Error("That Skip route is not executable — search again.");
   const phrase = wallet?.mnemonic?.phrase;
   if (!phrase) throw new Error("Wallet is locked.");
@@ -10335,7 +10401,7 @@ export async function executeSkipSwapRoute(wallet, route, onProgress = () => {},
     const client = await cosmosSignerClient(phrase, chain, { registry: skipCosmosRegistry() });
     try {
       const res = await client.signAndBroadcast(from, encodeObjects, "auto", "");
-      assertIsDeliverTxSuccess(res);
+      cosmosSdkSync().assertIsDeliverTxSuccess(res);
       hash = res.transactionHash;
     } finally { client.disconnect(); }
   }
@@ -25421,6 +25487,10 @@ function chainflipDotSideAddress(args, primary) {
 export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT } = {}) {
   const plan = chainflipSupportsPair(args);
   if (!plan) return null;
+  // The DOT-side address resolution rides the Polkadot chunk;
+  // a failed load degrades to no-route (the address book read
+  // answers null), never a thrown search.
+  await loadPolkadotSdk().catch(() => null);
   const brokerCfg = chainflipBrokerConfig(brokerAccount);
   const { direction, anchor } = plan;
   const fromAmount = String(args?.fromAmount ?? "");
@@ -25577,6 +25647,11 @@ export async function requestChainflipVaultSwap(route, { brokerAccount = CHAINFL
  *  fields). Pure. */
 export function checkChainflipVaultSwapData(route, encoded, expectedCfParameters) {
   const bad = (reason) => ({ ok: false, reason });
+  // The destination decode below rides the Polkadot chunk; a
+  // caller that reaches this check before the load fails closed
+  // (the executor awaits the load first — this guard is the
+  // backstop, never a pass).
+  if (!polkadotSdk) return bad("the Polkadot module hasn't loaded yet — try again in a moment");
   const c = route?.chainflip;
   if (!c || c.direction !== "in") return bad("not a Chainflip route into Polkadot");
   if (!encoded || typeof encoded.calldata !== "string" || !encoded.calldata.startsWith("0x"))
@@ -25607,7 +25682,7 @@ export function checkChainflipVaultSwapData(route, encoded, expectedCfParameters
   if (Number(vals[0]) !== CHAINFLIP_SRC_CHAIN_ENUM_BSC || Number(vals[2]) !== CHAINFLIP_DEST_CHAIN_ENUM_ASSETHUB)
     return bad("the vault call names the wrong chains");
   let wantDest;
-  try { wantDest = ethers.hexlify(dotDecodeAddress(c.destAddress)); }
+  try { wantDest = ethers.hexlify(polkadotSdk.decodeAddress(c.destAddress)); }
   catch { return bad("the route's Polkadot destination is not a valid address"); }
   if (String(vals[1]).toLowerCase() !== wantDest.toLowerCase())
     return bad("the swap's destination is not your Polkadot address");
@@ -25635,6 +25710,7 @@ export function checkChainflipVaultSwapData(route, encoded, expectedCfParameters
  *  to the user's own Asset Hub address; a fill-or-kill miss
  *  refunds to the user's own BSC address automatically. */
 export async function executeChainflipSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
+  await loadPolkadotSdk();
   const { ok, reason } = swapRouteExecutable(route);
   if (!ok) throw new Error(reason);
   const c = route.chainflip;
@@ -30447,7 +30523,7 @@ export const DOT_TOKENS = [
 ];
 let dotKeyringInstance = null;
 function dotKeyring() {
-  if (!dotKeyringInstance) dotKeyringInstance = new DotKeyring({ type: "sr25519", ss58Format: 0 });
+  if (!dotKeyringInstance) dotKeyringInstance = new (polkadotSdkSync().Keyring)({ type: "sr25519", ss58Format: 0 });
   return dotKeyringInstance;
 }
 function dotPair(phrase) {
@@ -30461,8 +30537,12 @@ export function dotAddressFromPhrase(phrase) {
 /** A valid SS58 address (any network prefix — the account bytes are
  *  what the chain reads; Fluid's own addresses are format 0). */
 export function isValidDotAddress(address) {
+  // Before the Polkadot chunk has loaded this answers false —
+  // never a throw: it sits on synchronous search/address-book
+  // paths where "not (yet) a DOT address" is the honest read.
+  if (!polkadotSdk) return false;
   try {
-    const raw = dotDecodeAddress(String(address || "").trim());
+    const raw = polkadotSdk.decodeAddress(String(address || "").trim());
     return raw.length === 32;
   } catch { return false; }
 }
@@ -30492,8 +30572,11 @@ export function withDeadline(promise, ms, label) {
  *  deadline is a parameter so tests can drive it short. */
 export function dotApi(timeoutMs = 30000) {
   if (!dotApiPromise) {
-    dotCryptoWaitReady().catch(() => {});
-    const attempt = DotApiPromise.create({ provider: new DotHttpProvider(DOT_RPC), noInitWarn: true });
+    const attempt = (async () => {
+      const { ApiPromise, HttpProvider, cryptoWaitReady } = await loadPolkadotSdk();
+      cryptoWaitReady().catch(() => {});
+      return ApiPromise.create({ provider: new HttpProvider(DOT_RPC), noInitWarn: true });
+    })();
     dotApiPromise = withDeadline(attempt, timeoutMs, "Polkadot connection")
       .catch(e => { dotApiPromise = null; throw e; });
   }
@@ -30511,6 +30594,7 @@ function dotNativeRow(amount) {
  *  chain gives no cheap "all assets of one account" query without
  *  an indexer, and inventing one from partial data would lie. */
 export async function getDotAccount(address, timeoutMs = 30000) {
+  await loadPolkadotSdk();
   if (!isValidDotAddress(address)) throw new Error("That is not a valid Polkadot address.");
   const api = await dotApi(timeoutMs);
   // The query phase is deadline-bound too (TS-F1): an established
@@ -30552,6 +30636,7 @@ function dotBuildTx(api, pair, { to, amount, token }) {
 /** Read-only pre-flight for the send sheet: the network's own fee
  *  estimate for exactly this transfer, plus the ED. */
 export async function dotSendPlan(phrase, { to, amount, token = null } = {}) {
+  await loadPolkadotSdk().catch(() => null);
   const plan = { feeDot: null, senderFreeDot: null, existentialDepositDot: null };
   if (!isValidDotAddress(to)) return plan;
   try {
@@ -30601,6 +30686,7 @@ function dotSubmit(tx, pair) {
  *  signing: transferKeepAlive at the protocol level, plus Fluid's
  *  own pre-check so the user reads the reason, not an error code. */
 export async function sendDot(phrase, { to, amount, token = null }) {
+  await loadPolkadotSdk();
   if (!isValidDotAddress(to)) throw new Error("That is not a valid Polkadot address.");
   const api = await dotApi();
   const pair = dotPair(phrase);
