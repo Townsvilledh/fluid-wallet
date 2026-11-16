@@ -943,6 +943,32 @@ export function fluidStorageKeysToWipe(keys) {
     && (k.startsWith("fluid_") || k.startsWith("fluidln.") || k.startsWith("fluid.lnBridge.")));
 }
 
+/* ---------- game-mode honours (2026-11-16) ----------
+ * Pure derivation for the recognition layer. Counts of real
+ * completed actions live only in local per-wallet state (app.js);
+ * what is derived here — which honours are earned, and the single
+ * title shown — is all that ever reaches the screen. The counts
+ * themselves are never rendered anywhere: recognition, not
+ * points. Ladder order is honour order: the title shown is the
+ * LAST earned rung. */
+export const GAME_HONOUR_LADDER = [
+  { key: "receive", title: "HOLDER", toast: "First Receive", earned: (c) => (c?.receives || 0) >= 1 },
+  { key: "send", title: "MOVER", toast: "First Send", earned: (c) => (c?.sends || 0) >= 1 },
+  { key: "swap", title: "DEFI NATIVE", toast: "First Swap", earned: (c) => (c?.swaps || 0) >= 1 },
+  { key: "hopper", title: "CHAIN HOPPER", toast: "Chain Hopper", earned: (c) => (c?.hopperSwaps || 0) >= 1 },
+  { key: "smith", title: "SWAP SMITH", toast: "Swap Smith", earned: (c) => (c?.swaps || 0) >= 10 },
+];
+export function gameHonoursForCounts(counts) {
+  const c = counts && typeof counts === "object" ? counts : {};
+  return GAME_HONOUR_LADDER.filter(h => h.earned(c)).map(h => h.key);
+}
+export function gameTitleForCounts(counts) {
+  const earned = gameHonoursForCounts(counts);
+  if (!earned.length) return null;
+  const top = GAME_HONOUR_LADDER.find(h => h.key === earned[earned.length - 1]);
+  return top ? top.title : null;
+}
+
 /* ---------- user-facing error language (2026-11-12 repair) ----------
  * Raw library/RPC error text must never reach a banner: ethers'
  * "could not coalesce error" (its UNKNOWN_ERROR wrapper for an RPC

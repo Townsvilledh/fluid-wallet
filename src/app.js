@@ -30,6 +30,7 @@ import {
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS, loadPolkadotSdk,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
   escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, formatWelcomeHeader, fluidStorageKeysToWipe, toChecksumAddress,
+  gameHonoursForCounts, gameTitleForCounts, GAME_HONOUR_LADDER,
   stacksAddressFromPhrase, fetchStacksAccount, planStacksSend, sendStacks, isValidStacksAddress, stxMicroToStx, stacksRawToAmount, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_EXPLORER,
   cosmosAddresses, getCosmosBalances, getCosmosAllBalances, sendCosmos, estimateCosmosFee, isValidCosmosAddress, formatCosmosSendIntent, COSMOS_CHAINS,
   SKIP_ASSETS, skipChainOf, executeSkipSwapRoute, executeOpenOceanSwapRoute, executeSoroswapSwapRoute,
@@ -464,6 +465,424 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
 }
+
+// ---------- game mode: the recognition layer (2026-11-16) ----------
+// Ethuram's shape, from the preview he approved: black + Bitcoin
+// orange kept, same layout and tap targets, skin + motion only —
+// dim glyph rain behind the unlock screen and Home, a short
+// terminal boot on unlock, a scanning line on the receive code,
+// and HONOURS for real completed actions. Recognition only, by
+// his ruling: this layer renders no tallies, no levels, no bars —
+// counts of completed actions live only in local per-wallet state
+// (fluid_game_v1) and never reach the screen; all the screen ever
+// shows is the earned title and the earned milestone badges
+// (derivation: wallet-core gameTitleForCounts /
+// gameHonoursForCounts). Sheets and signing surfaces are
+// untouched: the rain hides under any open sheet, and toasts
+// queue until the sheet closes and Home is visible. Settings →
+// Game mode (default on, fluid_game_mode_v1) removes the whole
+// layer from the DOM; turning it back on rebuilds it in place.
+const GAME_MODE_KEY = "fluid_game_mode_v1";
+const GAME_STATE_KEY = "fluid_game_v1";
+let gameModeOn = true;
+try { gameModeOn = localStorage.getItem(GAME_MODE_KEY) !== "0"; } catch { /* storage unavailable — default on */ }
+const gameReducedMotion = () => { try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch { return false; } };
+const gameHost = () => document.querySelector(".phone") || document.body;
+let gameAllCache = null;
+function gameLoadAll() {
+  if (gameAllCache) return gameAllCache;
+  try { const all = JSON.parse(localStorage.getItem(GAME_STATE_KEY) || "{}"); gameAllCache = all && typeof all === "object" ? all : {}; }
+  catch { gameAllCache = {}; }
+  return gameAllCache;
+}
+function gameSave() { try { localStorage.setItem(GAME_STATE_KEY, JSON.stringify(gameLoadAll())); } catch { /* best effort */ } }
+function gameState() {
+  if (!wallet || !wallet.address) return null;
+  const all = gameLoadAll();
+  let st = all[wallet.address];
+  if (!st || typeof st !== "object") {
+    st = { counts: { swaps: 0, sends: 0, receives: 0, hopperSwaps: 0 }, honoured: {}, seenSwaps: [], lastSwapAt: 0, balSnap: null, balSnapAt: 0 };
+    all[wallet.address] = st;
+  }
+  if (!st.counts) st.counts = { swaps: 0, sends: 0, receives: 0, hopperSwaps: 0 };
+  if (!st.honoured) st.honoured = {};
+  if (!Array.isArray(st.seenSwaps)) st.seenSwaps = [];
+  return st;
+}
+/** Grant any honours the hidden counts have newly earned. Each
+ *  fires its toast exactly once ever — the honoured flag is set
+ *  (and saved) before the toast is queued, so a lock or a crash
+ *  can never re-fire it. A swap completion also queues the
+ *  SWAP COMPLETE flourish, first in line. */
+function gameGrantHonours(flourish) {
+  const st = gameState(); if (!st) return;
+  const fresh = [];
+  for (const key of gameHonoursForCounts(st.counts)) {
+    if (!st.honoured[key]) {
+      st.honoured[key] = 1;
+      const rung = GAME_HONOUR_LADDER.find(h => h.key === key);
+      if (rung) fresh.push(rung.toast);
+    }
+  }
+  if (fresh.length) gameSave();
+  if (flourish) gameQueueBurst();
+  for (const t of fresh) gameQueueToast(t);
+  paintGameHonours();
+}
+function gameCountSwap(id, composed) {
+  const st = gameState(); if (!st) return;
+  if (id) {
+    if (st.seenSwaps.includes(id)) return;
+    st.seenSwaps.push(id);
+    if (st.seenSwaps.length > 200) st.seenSwaps = st.seenSwaps.slice(-200);
+  }
+  st.counts.swaps++;
+  if (composed) st.counts.hopperSwaps++;
+  st.lastSwapAt = Date.now();
+  gameSave();
+  gameGrantHonours(true);
+}
+function gameOnReceive() {
+  if (!gameModeOn) return;
+  try {
+    const st = gameState(); if (!st) return;
+    st.counts.receives++;
+    gameSave();
+    gameGrantHonours(false);
+  } catch { /* recognition must never break a completion */ }
+}
+/** Send + direct-swap completions funnel through showTxSuccess;
+ *  its verbs are the app's own completion signals (the success
+ *  screen only opens for a broadcast the app made). Move verbs
+ *  are neither sends nor swaps and are ignored. */
+const GAME_SEND_VERBS = ["Sent", "Broadcast", "Sold", "Paid", "Submitted"];
+/** Record-backed swaps (milestone, gas-fallback, 1Click,
+ *  CCTP-Aptos) ALSO pass through showTxSuccess at first-leg /
+ *  deposit broadcast — counting there would double-count them
+ *  (the pending-swap sync counts them at true completion) and
+ *  would fire the SWAP COMPLETE flourish while legs are still
+ *  in flight. Their records exist by broadcast time and carry
+ *  the broadcast hash, so a "Swapped" success whose txid backs
+ *  a record is left for the sync; only true one-leg swaps
+ *  count here. */
+function gameRecordHash(record) {
+  if (!record || typeof record !== "object") return null;
+  return (Array.isArray(record.hashes) && record.hashes[0]) || record.depositTxHash || record.burnTxHash || null;
+}
+function gameTxIsRecordBacked(txid) {
+  const loaders = [loadMilestoneRecords, loadGasFallbackRecords, loadOneClickSwapRecords, loadCctpAptosRecords];
+  for (const load of loaders) {
+    try { if (load(localStorage).some(r => gameRecordHash(r) === txid)) return true; } catch { /* an unreadable store backs nothing */ }
+  }
+  return false;
+}
+function gameOnTxSuccess(verb, txid) {
+  if (!gameModeOn) return;
+  try {
+    if (verb === "Swapped") {
+      if (txid && gameTxIsRecordBacked(txid)) return;
+      gameCountSwap(txid ? "tx:" + txid : null, false);
+      return;
+    }
+    if (GAME_SEND_VERBS.includes(verb)) {
+      const st = gameState(); if (!st) return;
+      st.counts.sends++;
+      gameSave();
+      gameGrantHonours(false);
+    }
+  } catch { /* as above */ }
+}
+/** Pending and composed swaps complete through the pending-swap
+ *  history sync; the first time a record lands in its done state
+ *  it counts, deduped by record id so polls and reloads never
+ *  recount. milestone + gasfallback are the composed multi-leg
+ *  swaps (the Chain Hopper honour); oneclick and cctp-aptos count
+ *  as swaps; sbtc-peg is a peg move, not a swap, and never
+ *  counts. */
+function gameOnSwapSync(kind, record, done) {
+  if (!gameModeOn || !done || !record || !record.id) return;
+  try {
+    if (kind === "sbtc-peg") return;
+    const hash = gameRecordHash(record);
+    gameCountSwap(hash ? "tx:" + hash : "sync:" + record.id, kind === "milestone" || kind === "gasfallback");
+  } catch { /* as above */ }
+}
+/** A swap still in flight anywhere (composed legs, gas-fallback
+ *  legs, a 1Click deposit) means a balance increase may be that
+ *  swap landing — never a receive. */
+function gameSwapInFlight() {
+  try {
+    if (loadMilestoneRecords(localStorage).some(r => r && r.state !== "done")) return true;
+    if (loadGasFallbackRecords(localStorage).some(r => r && r.state !== "done")) return true;
+    if (loadOneClickSwapRecords(localStorage).some(r => r && !["SUCCESS", "REFUNDED", "FAILED", "INCOMPLETE_DEPOSIT"].includes(r.status))) return true;
+  } catch { /* unreadable stores read as no flight */ }
+  return false;
+}
+/** On-chain receive detection, from the app's own proven balance
+ *  snapshot: persistBalanceCache hands over the exact rows and
+ *  scalars it just persisted (live reads only, never cache
+ *  echoes). The first snapshot for a wallet is a baseline and
+ *  never counts. A later strict increase counts once — unless a
+ *  swap completed after the baseline was taken, or one is still
+ *  in flight, in which case the snapshot simply re-baselines:
+ *  swap proceeds are not a receive. Lightning receives arrive
+ *  separately through the node event funnel (lnHandleEvents). */
+function gameOnBalanceSnapshot(rows, scalars, evm, cosmosRows) {
+  if (!gameModeOn) return;
+  try {
+    const st = gameState(); if (!st) return;
+    const map = {};
+    const put = (k, v) => { const n = Number(v); if (Number.isFinite(n)) map[k] = n; };
+    for (const [fam, arr] of Object.entries(rows || {})) {
+      if (!Array.isArray(arr)) continue;
+      for (const r of arr) { if (r && r.symbol != null) put(fam + ":" + r.symbol + ":" + (r.address || r.contract || ""), r.amount); }
+    }
+    if (evm && Array.isArray(evm.rows)) for (const r of evm.rows) { if (r && r.symbol != null) put("evm:" + (evm.network || "") + ":" + r.symbol + ":" + (r.address || ""), r.amount); }
+    if (Array.isArray(cosmosRows)) for (const r of cosmosRows) { if (r && r.symbol != null) put("cosmos:" + (r.key || r.symbol) + ":" + r.symbol, r.amount); }
+    for (const [k, v] of Object.entries(scalars || {})) put("scalar:" + k, v);
+    const prev = st.balSnap, prevAt = st.balSnapAt || 0;
+    st.balSnap = map;
+    st.balSnapAt = Date.now();
+    if (!prev) { gameSave(); return; }
+    let increased = false;
+    if ((st.lastSwapAt || 0) <= prevAt && !gameSwapInFlight()) {
+      for (const k of Object.keys(map)) {
+        const p = prev[k], v = map[k];
+        if (v > 0 && (p == null || v > p * (1 + 1e-9) + 1e-12)) { increased = true; break; }
+      }
+    }
+    gameSave();
+    if (increased) gameOnReceive();
+  } catch { /* as above */ }
+}
+// ---------- glyph rain ----------
+let gameRainCv = null, gameRainCtx = null, gameRainCols = [], gameRainLast = 0, gameRainRunning = false;
+const GAME_GLYPHS = "アカサタナハマヤラワガザダバパ0123456789₿Ξ◆◇";
+function gameRainWanted() {
+  if (!gameModeOn || gameReducedMotion() || document.hidden) return false;
+  const sr = $("sheetRoot"); if (sr && !sr.classList.contains("hidden")) return false;
+  const onb = $("onboard"); if (onb && !onb.classList.contains("hidden")) return true;
+  const app = $("app"); if (!app || app.classList.contains("hidden")) return false;
+  const tw = $("tab-wallet"); return !!(tw && !tw.classList.contains("hidden"));
+}
+function gameRainSize() {
+  if (!gameRainCv) return;
+  gameRainCv.width = window.innerWidth;
+  gameRainCv.height = window.innerHeight;
+  const n = Math.max(8, Math.floor(window.innerWidth / 19));
+  gameRainCols = Array.from({ length: n }, (_, i) => ({ x: i * 19 + 4, y: Math.random() * window.innerHeight, sp: 0.7 + Math.random() * 1.6, seed: Math.random() * 90 | 0 }));
+}
+function gameRainTick(t) {
+  if (!gameRainCv || !gameRainCtx) { gameRainRunning = false; return; }
+  requestAnimationFrame(gameRainTick);
+  const want = gameRainWanted();
+  gameRainCv.style.visibility = want ? "visible" : "hidden";
+  if (!want) return;
+  if (t - gameRainLast < 66) return;
+  gameRainLast = t;
+  const ctx = gameRainCtx, W = gameRainCv.width, H = gameRainCv.height;
+  const onb = $("onboard"); const target = onb && !onb.classList.contains("hidden") ? 0.5 : 0.14;
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = "15px ui-monospace, Menlo, Consolas, monospace";
+  for (const c of gameRainCols) {
+    for (let k = 8; k >= 0; k--) {
+      const gy = c.y - k * 17;
+      if (gy < -20 || gy > H + 20) continue;
+      ctx.fillStyle = k === 0 ? "#FFB74D" : "#F7931A";
+      ctx.globalAlpha = (k === 0 ? target : target * (1 - k / 10)) ;
+      ctx.fillText(GAME_GLYPHS[(c.seed + k * 7 + ((t / 300 | 0) % 5)) % GAME_GLYPHS.length], c.x, gy);
+    }
+    c.y += c.sp * 17;
+    if (c.y - 9 * 17 > H) { c.y = -20 - Math.random() * 160; c.sp = 0.7 + Math.random() * 1.6; c.seed = Math.random() * 90 | 0; }
+  }
+  ctx.globalAlpha = 1;
+}
+function gameRainStart() {
+  if (!gameModeOn || gameReducedMotion() || gameRainCv) return;
+  const cv = document.createElement("canvas");
+  cv.id = "gameRain";
+  cv.setAttribute("aria-hidden", "true");
+  document.body.prepend(cv);
+  gameRainCv = cv;
+  gameRainCtx = cv.getContext("2d");
+  gameRainSize();
+  if (!gameRainRunning) { gameRainRunning = true; requestAnimationFrame(gameRainTick); }
+}
+// ---------- boot overlay (unlock transition only) ----------
+let gameBootEl = null, gameBootTimers = [];
+function gameBootDismiss() {
+  gameBootTimers.forEach(clearTimeout);
+  gameBootTimers = [];
+  if (gameBootEl) { gameBootEl.remove(); gameBootEl = null; }
+}
+function gameBootSequence() {
+  if (!gameModeOn || gameReducedMotion() || !wallet) return;
+  gameBootDismiss();
+  const el = document.createElement("div");
+  el.id = "gameBoot";
+  el.innerHTML = `<div class="gb-in"><div class="gb-logo">FLUID<span>OS</span></div><div class="gb-tag">ONE SEED · EVERY CHAIN · NO CUSTODY</div><div class="gb-lines"></div><div class="gb-ring"><div class="gb-spin"></div><div class="gb-core">₿</div></div><div class="gb-hint">TAP TO SKIP</div></div>`;
+  gameHost().appendChild(el);
+  gameBootEl = el;
+  el.addEventListener("pointerdown", gameBootDismiss);
+  const lines = ["> fluid-os ............ loaded ✓", "> keys: local only · seed verified ✓", "> chains online · custody: none", "> syncing balances…"];
+  const box = el.querySelector(".gb-lines");
+  lines.forEach((text, i) => {
+    gameBootTimers.push(setTimeout(() => {
+      if (!gameBootEl) return;
+      const d = document.createElement("div");
+      box.appendChild(d);
+      let n = 0;
+      const step = () => { if (!gameBootEl) return; d.textContent = text.slice(0, ++n); if (n < text.length) gameBootTimers.push(setTimeout(step, 11)); };
+      step();
+    }, i * 300));
+  });
+  gameBootTimers.push(setTimeout(gameBootDismiss, 1400));
+}
+// ---------- achievement toasts + swap flourish ----------
+let gameToastQueue = [], gameToastBusy = false, gameToastEl = null, gameBurstEl = null;
+function gameQueueToast(title) { gameToastQueue.push({ kind: "toast", title }); gameFlushToasts(); }
+function gameQueueBurst() { gameToastQueue.push({ kind: "burst" }); gameFlushToasts(); }
+function gameToastWanted() {
+  if (!gameModeOn || !wallet) return false;
+  const sr = $("sheetRoot"); if (sr && !sr.classList.contains("hidden")) return false;
+  const app = $("app"); if (!app || app.classList.contains("hidden")) return false;
+  const tw = $("tab-wallet"); return !!(tw && !tw.classList.contains("hidden"));
+}
+function gameFlushToasts() {
+  if (gameToastBusy || !gameToastQueue.length || !gameToastWanted()) return;
+  const item = gameToastQueue.shift();
+  gameToastBusy = true;
+  const next = () => { gameToastBusy = false; gameFlushToasts(); };
+  if (item.kind === "burst") gameShowBurst(next); else gameShowToast(item.title, next);
+}
+function gameShowToast(title, done) {
+  const el = document.createElement("div");
+  el.id = "gameToast";
+  el.innerHTML = `<div class="gt-ic">🏆</div><div><div class="gt-t1">ACHIEVEMENT UNLOCKED</div><div class="gt-t2"></div></div>`;
+  el.querySelector(".gt-t2").textContent = title;
+  gameHost().appendChild(el);
+  gameToastEl = el;
+  requestAnimationFrame(() => el.classList.add("show"));
+  let over = false;
+  const finish = () => {
+    if (over) return;
+    over = true;
+    el.classList.remove("show");
+    setTimeout(() => { el.remove(); if (gameToastEl === el) gameToastEl = null; done(); }, 350);
+  };
+  el.addEventListener("pointerdown", finish);
+  setTimeout(finish, 4000);
+}
+function gameShowBurst(done) {
+  if (gameReducedMotion()) { done(); return; }
+  const el = document.createElement("div");
+  el.id = "gameBurst";
+  let sparks = "";
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2, d = 90 + (i % 5) * 22;
+    sparks += `<span class="gbs" style="--dx:${Math.round(Math.cos(a) * d)}px;--dy:${Math.round(Math.sin(a) * d)}px"></span>`;
+  }
+  el.innerHTML = `<div class="gbu-t">SWAP COMPLETE</div>` + sparks;
+  gameHost().appendChild(el);
+  gameBurstEl = el;
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.remove(); if (gameBurstEl === el) gameBurstEl = null; done(); }, 1950);
+}
+// ---------- honours card (Home) ----------
+let gameCardEl = null;
+function gameEnsureCard() {
+  if (gameCardEl && gameCardEl.isConnected) return gameCardEl;
+  const anchor = document.querySelector("#tab-wallet .actions");
+  if (!anchor) return null;
+  const el = document.createElement("div");
+  el.className = "card game-honours hidden";
+  el.id = "gameHonoursCard";
+  el.innerHTML = `<div class="gh-top"><span class="gh-ic">🏆</span><span class="gh-tt"><span class="gh-tag">HONOUR TITLE</span><span class="gh-title"></span></span></div><div class="gh-badges"></div>`;
+  anchor.after(el);
+  gameCardEl = el;
+  return el;
+}
+/** Renders ONLY the earned title and the earned badges — the
+ *  hidden counts are read by the derivation and never written
+ *  to the DOM. Before the first honour the card stays absent. */
+function paintGameHonours() {
+  if (!gameModeOn) return;
+  const st = gameState(); if (!st) return;
+  const title = gameTitleForCounts(st.counts);
+  const card = gameEnsureCard(); if (!card) return;
+  if (!title) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  card.querySelector(".gh-title").textContent = title;
+  const box = card.querySelector(".gh-badges");
+  box.innerHTML = "";
+  for (const key of gameHonoursForCounts(st.counts)) {
+    const rung = GAME_HONOUR_LADDER.find(h => h.key === key);
+    if (!rung) continue;
+    const chip = document.createElement("span");
+    chip.className = "gh-chip";
+    chip.textContent = "✦ " + rung.toast;
+    box.appendChild(chip);
+  }
+}
+// ---------- receive scan line ----------
+function gameDecorateReceiveQrs() {
+  if (!gameModeOn || gameReducedMotion()) return;
+  const body = $("sheetBody"); if (!body) return;
+  body.querySelectorAll("img.qr").forEach(img => {
+    if (img.parentElement && img.parentElement.classList.contains("game-qrbox")) return;
+    const wrap = document.createElement("span");
+    wrap.className = "game-qrbox";
+    img.replaceWith(wrap);
+    wrap.appendChild(img);
+    const scan = document.createElement("i");
+    scan.className = "game-scanline";
+    wrap.appendChild(scan);
+  });
+}
+// ---------- lifecycle: sheet watch, lock, toggle ----------
+function gameOnSheetToggle() {
+  const sr = $("sheetRoot");
+  const open = !!(sr && !sr.classList.contains("hidden"));
+  if (open) { gameBootDismiss(); return; }
+  gameFlushToasts();
+}
+function gameOnLock() {
+  gameBootDismiss();
+  if (gameToastEl) { gameToastEl.remove(); gameToastEl = null; }
+  if (gameBurstEl) { gameBurstEl.remove(); gameBurstEl = null; }
+  gameToastBusy = false;
+}
+function gameTeardown() {
+  gameBootDismiss();
+  if (gameRainCv) { gameRainCv.remove(); gameRainCv = null; gameRainCtx = null; }
+  if (gameToastEl) { gameToastEl.remove(); gameToastEl = null; }
+  if (gameBurstEl) { gameBurstEl.remove(); gameBurstEl = null; }
+  if (gameCardEl) { gameCardEl.remove(); gameCardEl = null; }
+  gameToastQueue = [];
+  gameToastBusy = false;
+}
+function gamePaintModeRow() { const s = $("gameModeState"); if (s) s.textContent = gameModeOn ? "On" : "Off"; }
+function gameInit() {
+  document.body.classList.toggle("game-on", gameModeOn);
+  gamePaintModeRow();
+  if (!gameModeOn) return;
+  // Rain starts after the first frame so it can never block the
+  // home render.
+  requestAnimationFrame(() => requestAnimationFrame(gameRainStart));
+  paintGameHonours();
+}
+function gameSetMode(on) {
+  gameModeOn = !!on;
+  try { localStorage.setItem(GAME_MODE_KEY, gameModeOn ? "1" : "0"); } catch { /* best effort */ }
+  if (!gameModeOn) gameTeardown();
+  gameInit();
+}
+if (window.MutationObserver) {
+  const sr = $("sheetRoot");
+  if (sr) new MutationObserver(gameOnSheetToggle).observe(sr, { attributes: true, attributeFilter: ["class"] });
+}
+addEventListener("resize", () => { if (gameRainCv) gameRainSize(); });
+gameInit();
 /** The review step's balance-impact line (§4.8, Pera-style): rendered
  *  as its own line UNDER the intent sentence. fee is subtracted only
  *  when it is denominated in the sent asset; otherwise the line is
@@ -594,6 +1013,7 @@ function badgeHtml(b, famKey) {
 // BEFORE calling this; the helper replaces the sheet content with the
 // animated check + recap, and Done returns to a refreshed wallet.
 function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName, feeText, explorerUrl, txid, pending }) {
+  gameOnTxSuccess(verb, txid);
   setSendBusy(null, false); sheetBusy = false;
   const root = $("sheetRoot"); if (root) root.removeAttribute("data-busy");
   try { navigator.vibrate && navigator.vibrate(15); } catch { /* unsupported — fine */ }
@@ -630,6 +1050,7 @@ function goTab(name) {
   for (const t of ["wallet", "play", "activity", "scan", "more", "bridge"]) show("tab-" + t, t === name);
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   if (name === "activity") clearActivityDot();
+  if (name === "wallet") gameFlushToasts();
   if (name === "bridge") bridgeRefresh().catch(() => {});
   const pane = $("tab-" + name);
   if (pane) { pane.classList.remove("tabenter"); void pane.offsetWidth; pane.classList.add("tabenter"); }
@@ -834,6 +1255,7 @@ function persistBalanceCache() {
       prices,
     }, now);
     if (packed) localStorage.setItem(BALANCE_CACHE_KEY, packed);
+    if (packed) gameOnBalanceSnapshot(rows, scalars, evm, cosmosRowsSnap);
   } catch { /* storage unavailable/full — the cache is an optimisation only */ }
 }
 
@@ -921,6 +1343,7 @@ async function renderMain() {
   refreshHomeClaimBanner();
   refreshHomeBackupCard();
   paintHomeMilestoneSwaps();
+  paintGameHonours();
   // A failed Bitcoin load is UNKNOWN, not zero (EVM precedent): each
   // account tracks its own failure, and the family flag is the OR.
   // Flags reset at load start so a Refresh can clear them.
@@ -3361,6 +3784,7 @@ $("actReceive").onclick = () => {
     const host = $("rcvPanel"); if (!host) return;
     host.innerHTML = panels[selected] || "";
     if (binds[selected]) binds[selected]();
+    gameDecorateReceiveQrs();
   };
   const paintList = () => {
     const host = $("rcvList"); if (!host) return;
@@ -5710,6 +6134,7 @@ function lnHandleEvents(evs) {
     lnEventWaiters = remaining;
   }
   lnEvents = [...evs].reverse().concat(lnEvents).slice(0, 8);
+  if (evs.some(ev => ev && ev.type === "payment_received")) gameOnReceive();
   if ($("lnPanel")) paintLnPanel();
   paintLnNodeStatus();
 }
@@ -10938,6 +11363,7 @@ $("unlockBtn").onclick = async () => {
     // reused for the KDF upgrade above) — it leaves the field.
     $("unlockPw").value = "";
     refreshGate();
+    gameBootSequence();
     // Satora swap polling resumes on unlock: persisted swap ids are
     // the recovery key, so any swap left in flight by a reload or a
     // locked session picks its status back up here, then keeps
@@ -11265,6 +11691,7 @@ function syncPendingSwapHistory(kind, record, seed = null) {
     }
     localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
     markActivityDot();
+    gameOnSwapSync(kind, record, done);
   } catch { /* history is a record, never a blocker */ }
 }
 
@@ -12411,9 +12838,10 @@ function lockWallet() {
   if (lnSession) { lnSession.stopLoops(); lnSession = null; }
   try { lnChunk?.shutdownLightning?.(); } catch { /* teardown must never block a lock */ }
   clearSensitiveFields(); // H-A: seed + password fields leave the page on every lock
-  wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; msg("onboardMsg", ""); refreshGate();
+  wallet = null; pendingSend = null; restoreMode = false; nameAdoptTried = false; arkSession = null; arkBootPromise = null; bridgeQuote = null; gameOnLock(); msg("onboardMsg", ""); refreshGate();
 }
 $("lockBtn").onclick = lockWallet;
+$("gameModeBtn").onclick = () => gameSetMode(!gameModeOn);
 const hdrLockBtn = $("hdrLockBtn"); // §4.1 header lock — same handler as More's lock row
 if (hdrLockBtn) hdrLockBtn.onclick = lockWallet;
 

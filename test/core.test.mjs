@@ -21,6 +21,7 @@ import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MIN
 import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC, TON_SWAP_CHAIN_ID, TON_SWAP_NATIVE_TOKEN, RELAY_TON_CHAIN_ID, RELAY_TON_DEPOSITORY, relayTonExecutableSteps, buildRelayTonDepositBody, parseRelayTonDepositBody, checkRelayTonStepBounds, tonAddressEquals, executeRelayTonSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
 import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
+import { GAME_HONOUR_LADDER, gameHonoursForCounts, gameTitleForCounts, fluidStorageKeysToWipe } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
@@ -21935,6 +21936,104 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       const s = rampRoutesFor(c.code, "sell", "bsc", "USDC").routes.filter(r => r.badge).map(r => r.name);
       return ["USD", "EUR", "GBP"].includes(c.fiat) ? (s.length === 1 && s[0] === "Peer") : s.length === 0;
     }));
+}
+
+// §144 — GAME MODE: THE RECOGNITION LAYER (2026-11-16).
+// Ethuram approved the Matrix-style layer from the preview —
+// glyph rain, terminal boot on unlock, receive scan line —
+// with one binding correction before any build: NO points
+// mechanics, ever. Fluid never took the airdrop/points route
+// and points bring legal attention, so the layer is
+// RECOGNITION only: milestone toasts ("Achievement unlocked —
+// First Swap"), a swap-completion flourish with no numbers,
+// and an HONOURS card on Home showing the earned TITLE plus
+// the earned milestone badges. The counts behind the titles
+// live only in local per-wallet state (fluid_game_v1) and are
+// NEVER rendered — no tallies, no bars, no "3/5" anywhere.
+// Titles (wallet-core GAME_HONOUR_LADDER): first receive →
+// HOLDER; first send → MOVER; first swap → DEFI NATIVE; a
+// composed (multi-leg) swap → CHAIN HOPPER; 10+ swaps →
+// SWAP SMITH. Counts hook ONLY real completion paths: sends
+// and direct swaps through showTxSuccess's verbs, composed
+// swaps through the pending-swap history sync's done state
+// (deduped by record id; sbtc-peg is a move, never a swap),
+// Lightning receives through the node event funnel, and
+// on-chain receives through the proven-balance snapshot diff
+// (first snapshot is a baseline; swap proceeds and in-flight
+// swaps re-baseline instead of counting). Settings → Game
+// mode (fluid_game_mode_v1, default on) removes the whole
+// layer from the DOM. §144 pins the derivation, the absence
+// of any points surface, and every hook point by source shape.
+{
+  const appSrc144 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idxSrc144 = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const sl144 = (a, b) => { const i = appSrc144.indexOf(a); if (i < 0) return ""; const j = b ? appSrc144.indexOf(b, i + a.length) : -1; return appSrc144.slice(i, j < 0 ? i + 4200 : j); };
+  const gameSec = sl144("game mode: the recognition layer", "The review step's balance-impact line");
+  ok("§144: no actions yet — no honours, no title (the card stays absent before the first milestone)",
+    gameTitleForCounts({}) === null && gameTitleForCounts(null) === null && gameTitleForCounts(undefined) === null
+    && JSON.stringify(gameHonoursForCounts({})) === "[]");
+  ok("§144: first receive earns HOLDER, first send MOVER, first swap DEFI NATIVE",
+    gameTitleForCounts({ receives: 1 }) === "HOLDER"
+    && gameTitleForCounts({ receives: 1, sends: 1 }) === "MOVER"
+    && gameTitleForCounts({ receives: 1, sends: 1, swaps: 1 }) === "DEFI NATIVE");
+  ok("§144: a composed (multi-leg) swap earns CHAIN HOPPER above DEFI NATIVE",
+    gameTitleForCounts({ swaps: 1, hopperSwaps: 1 }) === "CHAIN HOPPER"
+    && JSON.stringify(gameHonoursForCounts({ swaps: 1, hopperSwaps: 1 })) === JSON.stringify(["swap", "hopper"]));
+  ok("§144: SWAP SMITH needs ten completed swaps — nine is still DEFI NATIVE",
+    gameTitleForCounts({ swaps: 9 }) === "DEFI NATIVE" && !gameHonoursForCounts({ swaps: 9 }).includes("smith")
+    && gameTitleForCounts({ swaps: 10 }) === "SWAP SMITH");
+  ok("§144: honours come back in ladder order and the title is the last earned rung",
+    JSON.stringify(gameHonoursForCounts({ receives: 1, sends: 1, swaps: 10, hopperSwaps: 1 })) === JSON.stringify(["receive", "send", "swap", "hopper", "smith"])
+    && gameTitleForCounts({ receives: 1, sends: 1, swaps: 10, hopperSwaps: 1 }) === "SWAP SMITH");
+  ok("§144: no title, badge or toast label carries a digit — recognition is never a tally",
+    GAME_HONOUR_LADDER.every(h => !/\d/.test(h.title) && !/\d/.test(h.toast)));
+  ok("§144: the hidden counts and the toggle live under the two fluid_ keys (wiped with the wallet like all per-wallet state)",
+    appSrc144.includes("fluid_game_v1") && appSrc144.includes("fluid_game_mode_v1")
+    && JSON.stringify(fluidStorageKeysToWipe(["fluid_game_v1", "fluid_game_mode_v1", "other_app_key"])) === JSON.stringify(["fluid_game_v1", "fluid_game_mode_v1"]));
+  ok("§144: the game layer has no points surface at all — no XP, no quest, no progress, no LVL/Level markup in its source",
+    gameSec.length > 1000 && !/\bXP\b/.test(gameSec) && !/\bquest\b/i.test(gameSec) && !/\bprogress\b/i.test(gameSec)
+    && !/\bLVL\b/.test(gameSec) && !/\bLevel\b/.test(gameSec));
+  ok("§144: the honours card renders the derived title and badges only — the stored counts are read by the derivation, never written to the DOM",
+    sl144("function paintGameHonours()", "receive scan line").includes("gameTitleForCounts(st.counts)")
+    && !/textContent\s*=\s*[^;\n]*counts/.test(sl144("function paintGameHonours()", "receive scan line"))
+    && !/innerHTML\s*=\s*[^;\n]*counts/.test(sl144("function paintGameHonours()", "receive scan line")));
+  ok("§144: each milestone toast fires exactly once ever — the honoured flag is checked and set before the toast queues",
+    sl144("function gameGrantHonours(", "function gameCountSwap(").includes("if (!st.honoured[key])")
+    && sl144("function gameGrantHonours(", "function gameCountSwap(").includes("gameQueueToast"));
+  ok("§144: sends and direct swaps count only through the app's own completion funnel — gameOnTxSuccess is showTxSuccess's first act",
+    sl144("function showTxSuccess(").includes("gameOnTxSuccess(verb, txid);")
+    && sl144("function gameOnTxSuccess(", "function gameOnSwapSync(").includes('verb === "Swapped"'));
+  ok("§144: composed swaps count at the pending-swap history sync's done transition, deduped by record id, and sbtc-peg (a move) never counts",
+    sl144("function syncPendingSwapHistory(").includes("gameOnSwapSync(kind, record, done);")
+    && sl144("function gameOnSwapSync(", "A swap still in flight").includes('"sbtc-peg"')
+    && sl144("function gameCountSwap(", "function gameOnReceive(").includes("seenSwaps"));
+  ok("§144: record-backed swaps never count at broadcast — the success funnel skips a txid that backs a pending-swap record, so the sync counts it once, at true completion, in the same tx: key space",
+    sl144("function gameOnTxSuccess(", "function gameOnSwapSync(").includes("gameTxIsRecordBacked(txid)")
+    && sl144("function gameOnSwapSync(", "A swap still in flight").includes("gameRecordHash(record)")
+    && sl144("function gameOnSwapSync(", "A swap still in flight").includes('"tx:" + hash'));
+  ok("§144: Lightning receives count at the node event funnel's payment_received, on-chain receives at the proven-balance snapshot",
+    sl144("function lnHandleEvents(").includes('ev.type === "payment_received")) gameOnReceive();')
+    && sl144("function persistBalanceCache(").includes("gameOnBalanceSnapshot(rows, scalars, evm, cosmosRowsSnap);"));
+  ok("§144: the boot overlay runs on the unlock transition only (definition + the unlock handler's one call), time-bounded at 1.4 s and tap-to-skip",
+    (appSrc144.match(/gameBootSequence\(\)/g) || []).length === 2
+    && sl144("function gameBootSequence(", "achievement toasts").includes("setTimeout(gameBootDismiss, 1400)")
+    && sl144("function gameBootSequence(", "achievement toasts").includes('addEventListener("pointerdown", gameBootDismiss)'));
+  ok("§144: rain rules — canvas is pointer-events none, reduced-motion disables the layer, and a sheet watch hides rain and flushes queued toasts on close",
+    idxSrc144.slice(idxSrc144.indexOf("#gameRain{"), idxSrc144.indexOf("#gameRain{") + 140).includes("pointer-events:none")
+    && gameSec.includes('matchMedia("(prefers-reduced-motion: reduce)")')
+    && gameSec.includes("new MutationObserver(gameOnSheetToggle)"));
+  ok("§144: toasts never show over a sheet — the flush gate requires the sheet closed and Home visible, and returning to the wallet tab retries the queue",
+    sl144("function gameToastWanted(", "function gameFlushToasts(").includes('classList.contains("hidden")')
+    && appSrc144.includes('if (name === "wallet") gameFlushToasts();'));
+  ok("§144: toggle OFF removes the whole layer from the DOM (canvas, boot, toast, burst, card) and the Settings row + handler ship in the page",
+    sl144("function gameTeardown(", "function gamePaintModeRow(").includes("gameRainCv.remove()")
+    && sl144("function gameTeardown(", "function gamePaintModeRow(").includes("gameCardEl.remove()")
+    && idxSrc144.includes('id="gameModeBtn"') && idxSrc144.includes("Game mode") && idxSrc144.includes('id="gameModeState"')
+    && appSrc144.includes('$("gameModeBtn").onclick = () => gameSetMode(!gameModeOn);'));
+  ok("§144: the receive QR gets the scan line from the receive panel's own paint path, and the animation ships in the page CSS",
+    sl144("const paintPanel = () => {", "const paintList").includes("gameDecorateReceiveQrs();")
+    && sl144("function gameDecorateReceiveQrs(", "lifecycle: sheet watch").includes("game-scanline")
+    && idxSrc144.includes(".game-scanline") && idxSrc144.includes("@keyframes gamescan"));
 }
 
 console.log(`\n${passed} checks passed`);
