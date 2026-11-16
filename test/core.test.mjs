@@ -64,6 +64,7 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
   normalizeSolanaTx, normalizeTronTxs, normalizeTronTrc20Txs, normalizeSuiTxPage, mergeScanRows,
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { withDeadline, dotApi, installCosmosSdk, installPolkadotSdk, loadCosmosSdk, loadPolkadotSdk } from "../src/wallet-core.js";
+import { installPeerSdk, loadPeerSdk, PEER_REFERRAL_CODE, PEER_BASE_USDC, PEER_MIN_SELL_USDC, PEER_BUY_NOTE, peerReferralConfigured, peerSellCorridor, peerPlatformName, peerPlatformsForCurrency, peerPairFillStats, peerFillSecondsLabel, peerFillTimeLine, peerUsdcToRaw, peerRawToUsdc, peerAttributionCheck, peerErrorCopy, peerCashClient, peerCapabilities, peerPrepareSell, peerExecuteSell, peerExecuteWithdraw, peerExecuteTopUp, peerViemReceipt, peerCurrencyHash, parsePeerBook, peerBookFloorLine } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
@@ -106,6 +107,7 @@ const ok = (name, cond) => { assert.ok(cond, name); console.log("✓", name); pa
 // the app after its first-use load.
 installCosmosSdk(await import("../src/cosmos.js"));
 installPolkadotSdk(await import("../src/polkadot.js"));
+installPeerSdk(await import("../src/peer.js"));
 
 // 1. Known-vector import: Hardhat's well-known test mnemonic → known address
 const KNOWN_PHRASE = "test test test test test test test test test test test junk";
@@ -469,15 +471,24 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const MTP_EXT_ALL = [...MTP_EXT_EUR, ...Object.keys(MTP_EXT_OWN)];
   ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries, + 7 LCS batch-2 additions = 61", RAMP_COUNTRIES.length === 61
     && MTP_EXT_ALL.length === 32 && MTP_EXT_ALL.every(code => RAMP_COUNTRIES.some(c => c.code === code)));
+  // §140: the EUR-fiat extension corridors gained the Peer
+  // in-app row on both sides (Peer sells carry the badge; Mt
+  // Pelerin keeps the buy badge). Own-fiat corridors are
+  // untouched — none of their fiats is a Peer corridor.
   ok("extensions: every new corridor is Mt Pelerin only, badge buy-only", MTP_EXT_ALL.every(code =>
-    JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify(["Mt Pelerin"])
-    && JSON.stringify(badged(code)) === JSON.stringify(["Mt Pelerin"])
-    && JSON.stringify(badged(code, "sell")) === JSON.stringify([])));
+    MTP_EXT_EUR.includes(code)
+      ? JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin", "Peer"])
+        && JSON.stringify(names(code, "sell")) === JSON.stringify(["Peer", "Mt Pelerin"])
+        && JSON.stringify(badged(code)) === JSON.stringify(["Mt Pelerin"])
+        && JSON.stringify(badged(code, "sell")) === JSON.stringify(["Peer"])
+      : JSON.stringify(names(code)) === JSON.stringify(["Mt Pelerin"])
+        && JSON.stringify(names(code, "sell")) === JSON.stringify(["Mt Pelerin"])
+        && JSON.stringify(badged(code)) === JSON.stringify(["Mt Pelerin"])
+        && JSON.stringify(badged(code, "sell")) === JSON.stringify([])));
   ok("extensions: every new-corridor link carries the referral + its preset fiat", MTP_EXT_ALL.every(code => {
     const fiat = MTP_EXT_OWN[code] || "EUR";
     const r = rampRoutesFor(code, "buy", "bsc", "USDC");
-    const buy = r.routes[0], sell = rampRoutesFor(code, "sell", "bsc", "USDC").routes[0];
+    const buy = r.routes.find(x => x.name === "Mt Pelerin"), sell = rampRoutesFor(code, "sell", "bsc", "USDC").routes.find(x => x.name === "Mt Pelerin");
     return buy.url.includes(`bsc=${fiat}&`) && buy.url.includes("rfr=Fp3dGFX3")
       && sell.url.includes(`sdc=${fiat}`) && sell.url.includes("rfr=Fp3dGFX3")
       && r.mtpUnavailable === false;
@@ -487,7 +498,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     && rampRoutesFor("PL", "sell", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/sell-tether-usdt?ssc=USDT&sdc=PLN&rfr=Fp3dGFX3"
     && rampRoutesFor("AU", "buy", "bsc", "USDT").routes[0].url === "https://www.mtpelerin.com/buy-tether-usdt?bsc=AUD&bdc=USDT&rfr=Fp3dGFX3"
     && rampRoutesFor("SG", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=SGD&bdc=USDC&rfr=Fp3dGFX3"
-    && rampRoutesFor("FR", "buy", "bsc", "USDC").routes[0].url === "https://www.mtpelerin.com/buy-usdc?bsc=EUR&bdc=USDC&rfr=Fp3dGFX3");
+    && rampRoutesFor("FR", "buy", "bsc", "USDC").routes.find(r => r.name === "Mt Pelerin").url === "https://www.mtpelerin.com/buy-usdc?bsc=EUR&bdc=USDC&rfr=Fp3dGFX3");
   // Corridor extensions batch 2 (global ramp coverage matrix,
   // 2026-11-10): CH, JP, HK, NZ join on the same Mt Pelerin
   // referral preset, re-verified on the provider's own pricing
@@ -540,12 +551,17 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // What remains is the flagged Mt Pelerin row (it excludes US
   // persons) — non-navigating, unbadged, on both sides; the sheet
   // otherwise resolves to the honest empty state.
-  ok("US lineup is the flagged Mt Pelerin row only, no badge", JSON.stringify(names("US")) === JSON.stringify(["Mt Pelerin"])
+  // §140 (Peer launch, 2026-11-16): the Peer in-app row now leads
+  // both US sheets — unbadged on buy (book surface), CHEAPEST on
+  // sell (the corridor's first live route). The flagged Mt
+  // Pelerin row keeps its exact old shape behind it.
+  ok("US lineup is the flagged Mt Pelerin row only, no badge", JSON.stringify(names("US")) === JSON.stringify(["Peer", "Mt Pelerin"])
     && JSON.stringify(badged("US")) === JSON.stringify([])
-    && JSON.stringify(names("US", "sell")) === JSON.stringify(["Mt Pelerin"])
-    && JSON.stringify(badged("US", "sell")) === JSON.stringify([]));
+    && JSON.stringify(names("US", "sell")) === JSON.stringify(["Peer", "Mt Pelerin"])
+    && JSON.stringify(badged("US", "sell")) === JSON.stringify(["Peer"]));
   ok("US Mt Pelerin flags non-US", (() => { const us = rampRoutesFor("US", "buy", "bsc", "USDC").routes;
-    return us[0].unavailable === true && us[0].url === null && us[0].note.includes("Not available to US residents"); })());
+    const mtp = us.find(r => r.name === "Mt Pelerin");
+    return mtp.unavailable === true && mtp.url === null && mtp.note.includes("Not available to US residents"); })());
 
   // IN, ID: their only route was removed under the capture
   // gate — both sides resolve to the honest empty state.
@@ -570,7 +586,9 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     const { routes } = rampRoutesFor(c.code, m, "bsc", "USDT");
     const b = routes.filter(r => r.badge);
     return b.length <= 1 && (b.length === 0 || routes[0].badge === true)
-      && routes.every(r => r.unavailable ? (r.url === null && r.note.length > 0) : r.url.startsWith("https://"));
+      // §140: Peer rows are in-app routes — url null by design,
+      // note always present; every other available route is a link.
+      && routes.every(r => r.peer ? (r.url === null && r.note.length > 0) : r.unavailable ? (r.url === null && r.note.length > 0) : r.url.startsWith("https://"));
   })));
   // QA F8: Mt Pelerin in the US corridor is labelled unavailable —
   // it must reach the sheet as a non-navigating row (no URL) with
@@ -580,7 +598,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     return r && r.unavailable === true && r.url === null && r.note.includes("Not available to US residents");
   }));
   ok("F8: no other corridor's Mt Pelerin is unavailable", ["ZA", "GB", "DE", "MX"].every(code =>
-    rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => !r.unavailable && r.url.startsWith("https://"))));
+    rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => r.peer || (!r.unavailable && r.url.startsWith("https://")))));
   // After the 2026-11-10 removal the formerly restored
   // corridors were empty on every network, supported or not;
   // ZM still is. UG gained the network-agnostic labelled
@@ -8905,9 +8923,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // Capture-gate removal (owner ruling 2026-11-09 ~14:34 WAT,
   // superseding the specced F2/F3 note fixes): Paybis and Spritz
   // are gone from every corridor; the consequences are pinned.
+  // §140: the claim now scopes to the non-Peer rows — Peer's
+  // in-app row (2026-11-16) is the corridor's first route, and
+  // it navigates nowhere (url null) by design.
   ok("gate removal: US carries no navigating route and no badge on either side",
     ["buy", "sell"].every(m => {
-      const rs = rampRoutesFor("US", m, "bsc", "USDC").routes;
+      const rs = rampRoutesFor("US", m, "bsc", "USDC").routes.filter(r => !r.peer);
       return rs.every(r => r.unavailable === true && r.url === null && r.badge === false);
     }));
   ok("gate removal: IN/ID are honestly empty on both sides (BR/PH gained the capture-clean LCS sell row in batch 2 and lost it to the size bar, §16d — empty again too)",
@@ -8915,9 +8936,16 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
   ok("gate removal + 2026-11-10 scrap: ZA sell is Mt Pelerin only, no removed row",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
+  // §140: GB/DE gained the Peer in-app row on both sides — sell
+  // leads with Peer, buy keeps the badged Mt Pelerin lead with
+  // Peer behind it (MX's fiat isn't a Peer corridor — it keeps
+  // Mt Pelerin only).
   ok("gate removal: GB/DE/MX keep Mt Pelerin only",
-    ["GB", "DE", "MX"].every(code => ["buy", "sell"].every(m =>
-      JSON.stringify(rampRoutesFor(code, m, "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]))));
+    ["GB", "DE"].every(code =>
+      JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Peer", "Mt Pelerin"])
+      && JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Peer"]))
+    && ["buy", "sell"].every(m =>
+      JSON.stringify(rampRoutesFor("MX", m, "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])));
   ok("gate removal: the removed providers appear in no assembled route, note or URL",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !/paybis|spritz/i.test(r.name + (r.url || "") + r.note)))));
@@ -8939,16 +8967,29 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !r.note.includes("sets its own minimum inside the widget")))));
 
   // P0-4 — the badge rule's audit outcomes.
-  ok("badge rule: US carries no badge on either side", badges("US", "buy").length === 0 && badges("US", "sell").length === 0);
+  // §140: the US sell sheet gained the Peer badge (the in-app
+  // route); the US buy sheet stays unbadged (Peer's book row
+  // completes no trade and carries no badge by design).
+  ok("badge rule: US carries no badge on either side", badges("US", "buy").length === 0
+    && JSON.stringify(badges("US", "sell")) === JSON.stringify(["Peer"]));
+  // §140: DE/FR sell sheets now badge Peer (ZAR isn't a Peer
+  // corridor — ZA unchanged); buy sheets badge Mt Pelerin only.
   ok("badge rule: DE/FR/ZA sell sheets are unbadged, buy sheets badge Mt Pelerin only",
-    ["DE", "FR", "ZA"].every(code => badges(code, "sell").length === 0
-      && JSON.stringify(badges(code, "buy")) === JSON.stringify(["Mt Pelerin"])));
+    ["DE", "FR"].every(code => JSON.stringify(badges(code, "sell")) === JSON.stringify(["Peer"])
+      && JSON.stringify(badges(code, "buy")) === JSON.stringify(["Mt Pelerin"]))
+    && badges("ZA", "sell").length === 0
+    && JSON.stringify(badges("ZA", "buy")) === JSON.stringify(["Mt Pelerin"]));
   ok("badge rule: IN/BR/PH carry no badge on either side",
     ["IN", "BR", "PH"].every(code => badges(code, "buy").length === 0 && badges(code, "sell").length === 0));
+  // §140 restated: buy badges remain Mt Pelerin-only; sell
+  // badges are Peer's, and only on Peer's own corridors.
   ok("badge rule: every Mt Pelerin corridor badges buy-only",
     RAMP_COUNTRIES.every(c => {
       const b = badges(c.code, "buy"), s = badges(c.code, "sell");
-      return s.length === 0 && (b.length === 0 || (b.length === 1 && b[0] === "Mt Pelerin"));
+      const sellOk = ["USD", "EUR", "GBP"].includes(c.fiat)
+        ? (s.length === 1 && s[0] === "Peer")
+        : s.length === 0;
+      return sellOk && (b.length === 0 || (b.length === 1 && b[0] === "Mt Pelerin"));
     }));
   ok("badge rule: global invariants re-asserted — ≤1 badge per sheet, badge only on rank 0",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => {
@@ -8991,9 +9032,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
           && r.note.includes("sell fee 0–1.3% by bank")
           && r.note.includes("~CHF 999/month") && !r.note.includes("$57")))));
   ok("MTP-COPY: the US sell note keeps its residents prefix with the IBAN lead and corrected figure",
-    rampRoutesFor("US", "sell").routes[0].note.includes("Not available to US residents")
-    && rampRoutesFor("US", "sell").routes[0].note.includes("or any amount if you hold a free personal Mt Pelerin IBAN")
-    && rampRoutesFor("US", "sell").routes[0].note.includes("(about $61)"));
+    rampRoutesFor("US", "sell").routes.find(r => r.name === "Mt Pelerin").note.includes("Not available to US residents")
+    && rampRoutesFor("US", "sell").routes.find(r => r.name === "Mt Pelerin").note.includes("or any amount if you hold a free personal Mt Pelerin IBAN")
+    && rampRoutesFor("US", "sell").routes.find(r => r.name === "Mt Pelerin").note.includes("(about $61)"));
 
   // P1-12 — SWIFT line on the 15 own-fiat corridors, buy-side only
   // (12 from 2026-11-09 + JP/HK/NZ from batch 2, 2026-11-10; CH
@@ -10026,8 +10067,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // §1.11(a): the US unavailable row speaks per-mode — the sell
   // sheet carries sell terms, never the buy sheet's 0%-fee copy.
   ok("§1.11: the US sell note is sell copy; the buy note keeps the buy terms",
-    !rampRoutesFor("US", "sell").routes[0].note.includes("first CHF 500") && rampRoutesFor("US", "sell").routes[0].note.includes("sells start at CHF 50")
-    && rampRoutesFor("US", "buy").routes[0].note.includes("first CHF 500") && rampRoutesFor("US", "buy").routes[0].note.includes("held 7 days"));
+    !rampRoutesFor("US", "sell").routes.find(r => r.name === "Mt Pelerin").note.includes("first CHF 500") && rampRoutesFor("US", "sell").routes.find(r => r.name === "Mt Pelerin").note.includes("sells start at CHF 50")
+    && rampRoutesFor("US", "buy").routes.find(r => r.name === "Mt Pelerin").note.includes("first CHF 500") && rampRoutesFor("US", "buy").routes.find(r => r.name === "Mt Pelerin").note.includes("held 7 days"));
   // §1.11(c): Cosmos failure rows use the shared wording.
   ok("§1.11: Cosmos failure rows say \"couldn't load\" like every other family",
     appSrcBatch.includes("<small>couldn't load</small>") && !appSrcBatch.includes("<small>unavailable</small>"));
@@ -21366,6 +21407,311 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   try { polkadotBytes139 = statSync(new URL("../dist/polkadot.chunk.js", import.meta.url)).size; } catch { /* no dist yet */ }
   ok("loadperf: the built boot bundle is below the pre-split 6,566,973 bytes, with both SDK chunks split out",
     bootBytes139 !== null && bootBytes139 < 6566973 && cosmosBytes139 > 500000 && polkadotBytes139 > 500000);
+}
+
+// ---------- §140: Peer (ZKP2P) launch — sell in-app, buy book (2026-11-16) ----------
+// Owner launch decision 2026-11-16: Peer goes live inside Fluid
+// today — sell as a full in-app flow on the USD/EUR/GBP corridors
+// at a 1 USDC floor, buy as the live book surfaced in-app at the
+// $1 floor policy (the completion step needs Peer's browser
+// extension for the payment proof — the buy sheet says so and
+// takes no money). Sell floor $0.50 per the owner's same-day
+// ruling (~14:40 WAT): the protocol hard floor is 0.01 USDC and
+// Peer's $1 is only a fill-reliability recommendation, so the UI
+// never hard-blocks below $1 — sub-$1 sells carry honest wait
+// copy naming Fluid's own (future) desk as what takes them.
+// Capture is the ERC-8021 referral marker
+// (peer-ref-IHCLL9, 50 bps on fills), verified LIVE against
+// production prepare() on 2026-11-16: both prepared transactions
+// (approve + createDeposit) carried exactly one marker, preceded
+// by peer-cash; a fresh PayPal/Wise handle threw
+// PAYEE_VERIFICATION_REQUIRED before any transaction; below-min
+// threw AMOUNT_BELOW_MINIMUM. Prep: research_notes/fluid-peer-prep-20261115/.
+{
+  const coreSrc140 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrc140 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const buildSrc140 = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  const publishSrc140 = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  const peerEntry140 = readFileSync(new URL("../src/peer.js", import.meta.url), "utf8");
+  const pkg140 = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
+  // --- Route rows (brief Phase C pin 1 + 10, floor-policy form) ---
+  const usSell140 = rampRoutesFor("US", "sell", "bsc", "USDC").routes;
+  ok("peer: US sell leads with the Peer route — exact note, CHEAPEST badge, in-app marker, no URL",
+    usSell140[0].name === "Peer" && usSell140[0].peer === "sell" && usSell140[0].url === null && usSell140[0].badge === true
+    && usSell140[0].note === peerSellCorridor("USD").note
+    && usSell140[0].note.includes("minimum 0.50 USDC") && usSell140[0].note.includes("Fluid earns 50 bps, paid by Peer — it costs you nothing extra")
+    && usSell140[0].note.includes("withdraw it back at any time")
+    && usSell140[0].note.includes("sells under $1 can wait longer for a taker until Fluid's own desk is live to take them"));
+  ok("peer: EUR and GBP sell sheets lead with Peer carrying their corridor notes",
+    rampRoutesFor("DE", "sell", "bsc", "USDC").routes[0].note === peerSellCorridor("EUR").note
+    && rampRoutesFor("DE", "sell", "bsc", "USDC").routes[0].note.includes("Revolut or Wise")
+    && rampRoutesFor("GB", "sell", "bsc", "USDC").routes[0].note === peerSellCorridor("GBP").note
+    && rampRoutesFor("GB", "sell", "bsc", "USDC").routes[0].note.includes("Revolut, Wise or Monzo"));
+  ok("peer: buy sheets carry the Peer book row — unbadged, with the honest extension note",
+    ["US", "DE", "GB"].every(code => {
+      const r = rampRoutesFor(code, "buy", "bsc", "USDC").routes.find(x => x.name === "Peer");
+      return r && r.peer === "buy" && r.badge === false && r.url === null && r.note === PEER_BUY_NOTE
+        && r.note.includes("takes no money and places no order");
+    })
+    // Position rule: the badged completable route keeps the buy
+    // lead where one exists (DE/GB); on the US sheet, whose only
+    // other row is unavailable-flagged, the Peer row leads.
+    && rampRoutesFor("US", "buy", "bsc", "USDC").routes[0].name === "Peer"
+    && rampRoutesFor("DE", "buy", "bsc", "USDC").routes[0].name === "Mt Pelerin"
+    && rampRoutesFor("DE", "buy", "bsc", "USDC").routes[1].name === "Peer");
+  ok("peer: no Peer row outside the USD/EUR/GBP fiats — Nigeria in particular stays exactly as it was",
+    RAMP_COUNTRIES.every(c => ["USD", "EUR", "GBP"].includes(c.fiat)
+      || ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Peer")))
+    && ["buy", "sell"].every(m => rampRoutesFor("NG", m, "bsc", "USDC").routes.every(r => r.name !== "Peer"))
+    && RAMP_COUNTRIES.filter(c => ["USD", "EUR", "GBP"].includes(c.fiat)).every(c =>
+      ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.filter(r => r.name === "Peer").length === 1)));
+
+  // --- Config + fail-closed (pin 2) ---
+  ok("peer: the referral constant is Ethuram's code and the shape gate is strict",
+    PEER_REFERRAL_CODE === "IHCLL9" && peerReferralConfigured() === true
+    && peerReferralConfigured("IHCLL") === false && peerReferralConfigured("IHCLL99") === false
+    && peerReferralConfigured("") === false && peerReferralConfigured(null) === false && peerReferralConfigured("IHCLL!") === false);
+  ok("peer: the client is constructed for production with the referral constant, chunk-loaded and marker-gated",
+    coreSrc140.includes('createCashClient({ environment: "production", referralCode: PEER_REFERRAL_CODE')
+    && coreSrc140.includes('import("./peer.chunk.js")') && coreSrc140.includes("PEER_CHUNK_MARKER")
+    && peerEntry140.includes("PEER_CHUNK_MARKER = true") && peerEntry140.includes('"@zkp2p/cash"')
+    && buildSrc140.includes('entryPoints: ["src/peer.js"]') && buildSrc140.includes('"./peer.chunk.js"') && buildSrc140.includes("dist/peer.chunk.js")
+    && publishSrc140.includes('"peer.chunk.js"')
+    && pkg140.dependencies["@zkp2p/cash"] === "0.7.3" && pkg140.dependencies["viem"] === "2.57.20"
+    && JSON.parse(readFileSync(new URL("../node_modules/@zkp2p/sdk/package.json", import.meta.url), "utf8")).version === "0.14.10");
+
+  // --- Attribution guard (pin 3) ---
+  const hex140 = (s) => [...s].map(ch => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  const marked140 = (data) => ({ to: "0x777777779d229cdF3110e9de47943791c26300Ef", data, value: 0n, chainId: 8453 });
+  const goodData140 = "0xabcdef" + hex140("peer-cash") + hex140("peer-ref-IHCLL9");
+  ok("peer: a plan whose every tx carries exactly one referral marker after peer-cash passes the guard",
+    peerAttributionCheck([marked140(goodData140), marked140(goodData140)]).ok === true);
+  ok("peer: zero markers, two markers, reversed markers and a missing peer-cash all fail the guard",
+    peerAttributionCheck([marked140("0xabcdef")]).ok === false
+    && peerAttributionCheck([marked140(goodData140 + hex140("peer-ref-IHCLL9"))]).ok === false
+    && peerAttributionCheck([marked140("0xabcdef" + hex140("peer-ref-IHCLL9") + hex140("peer-cash"))]).ok === false
+    && peerAttributionCheck([marked140("0xabcdef" + hex140("peer-ref-IHCLL9"))]).ok === false
+    && peerAttributionCheck([]).ok === false);
+
+  // --- Prepare path against a stubbed client (pins 3, 4, 9) ---
+  const stub140 = (over = {}) => ({
+    prepare: async (input) => {
+      stub140.lastInput = input;
+      return { txs: [marked140(goodData140), marked140(goodData140)], steps: [{ kind: "approve" }, { kind: "createDeposit" }], register: { hashedOnchainIds: ["0x00"] }, accessPolicyRequired: false, accessPolicyPaymentMethods: [] };
+    },
+    prepareWithdraw: async () => ({ txs: [marked140(goodData140)], steps: [{ kind: "withdrawDeposit" }] }),
+    prepareTopUp: async () => ({ txs: [marked140(goodData140)], steps: [{ kind: "approve" }, { kind: "addFunds" }] }),
+    ...over,
+  });
+  const prep140 = await peerPrepareSell({ amountRaw: "1000000", currency: "EUR", platform: "revolut", payee: "@someone" }, stub140());
+  ok("peer: prepare returns the marked plan and is NEVER called with a source (Relay routing stays out of prepare)",
+    prep140.txs.length === 2 && !("source" in stub140.lastInput)
+    && stub140.lastInput.amount === 1000000n && stub140.lastInput.receive.platform === "revolut");
+  let attrErr140 = null;
+  try { await peerPrepareSell({ amountRaw: "1000000", currency: "EUR", platform: "revolut", payee: "@someone" }, stub140({ prepare: async () => ({ txs: [marked140("0xabcdef")], steps: [{ kind: "createDeposit" }] }) })); }
+  catch (e) { attrErr140 = e; }
+  ok("peer: a marker-less prepared plan is refused with ATTRIBUTION_MISSING before anything can be signed",
+    attrErr140 && attrErr140.code === "ATTRIBUTION_MISSING"
+    && peerErrorCopy(attrErr140).includes("missing Fluid's referral marker"));
+  let wdErr140 = null;
+  try { await peerExecuteWithdraw(null, "escrow_1", null, stub140({ prepareWithdraw: async () => ({ txs: [marked140("0xabcdef")], steps: [{ kind: "withdrawDeposit" }] }) })); }
+  catch (e) { wdErr140 = e; }
+  let tuErr140 = null;
+  try { await peerExecuteTopUp(null, "escrow_1", "1000000", stub140({ prepareTopUp: async () => ({ txs: [marked140("0xabcdef")], steps: [{ kind: "addFunds" }] }) })); }
+  catch (e) { tuErr140 = e; }
+  ok("peer: withdraw and top-up plans pass the same attribution gate before any send",
+    wdErr140 && wdErr140.code === "ATTRIBUTION_MISSING" && tuErr140 && tuErr140.code === "ATTRIBUTION_MISSING");
+  ok("peer: SDK failures map to plain copy — never a raw error (verification, minimum, referral, registration)",
+    peerErrorCopy({ code: "PAYEE_VERIFICATION_REQUIRED" }).includes("already registered with Peer")
+    && peerErrorCopy({ code: "AMOUNT_BELOW_MINIMUM" }) === "Peer cash-outs start at 0.50 USDC — increase the amount."
+    && peerErrorCopy({ code: "INVALID_REFERRAL_CODE" }).includes("paused rather than run without it")
+    && peerErrorCopy({ code: "PAYEE_REGISTRATION_FAILED" }).includes("couldn't register that handle")
+    && peerErrorCopy({ code: "ORDER_NOT_FOUND" }).includes("still indexing"));
+
+  // --- Amounts (pin 5) ---
+  ok("peer: USDC amount parsing is exact and rejects dirty input",
+    peerUsdcToRaw("1") === 1000000n && peerUsdcToRaw("0.5") === 500000n && peerUsdcToRaw("1.000001") === 1000001n
+    && peerUsdcToRaw("abc") === null && peerUsdcToRaw("1.0000001") === null && peerUsdcToRaw("") === null
+    && peerRawToUsdc(1000000n) === "1" && peerRawToUsdc("12500000") === "12.5" && peerRawToUsdc(1n) === "0.000001");
+  ok("peer: the sheet blocks below the $0.50 product floor (never at $1) with the minimum copy before any prepare",
+    appSrc140.includes("raw < 500000n") && appSrc140.includes("Peer cash-outs start at 0.50 USDC — increase the amount.")
+    && !appSrc140.includes("if (raw < 1000000n) { showSheetError"));
+  ok("peer: a sub-$1 amount carries the honest wait line on the estimate — no fast-fill promise",
+    appSrc140.includes("under $1: small sells can wait longer for a buyer to take them, until Fluid's own desk is live to take them"));
+
+  // --- Receipt conversion (finalize seam) ---
+  const vr140 = peerViemReceipt("0xhash", { status: 1, logs: [{ address: "0xE", topics: ["0xt"], data: "0x", blockHash: "0xb", blockNumber: 123, index: 4, transactionHash: "0xhash", transactionIndex: 1 }] });
+  ok("peer: an ethers receipt converts to the viem shape finalizePreparedCashout parses",
+    vr140.status === "success" && vr140.logs[0].blockNumber === 123n && vr140.logs[0].logIndex === 4
+    && coreSrc140.includes("finalizePreparedCashout(peerViemReceipt") && coreSrc140.includes("prepareAccessPolicy"));
+
+  // --- Fill-time honesty (pins 6 + 11: the §2.11 gate, Venmo shape) ---
+  const stats140 = {
+    "revolut:EUR": { fills: 1203, medianFillSeconds: 1137 },
+    "venmo:USD": { fills: 1029, medianFillSeconds: 215187 },
+    "wise:EUR+USD": { fills: 176, medianFillSeconds: 250244 },
+  };
+  const revLine140 = peerFillTimeLine(stats140, "revolut", "EUR");
+  const venLine140 = peerFillTimeLine(stats140, "venmo", "USD");
+  ok("peer: the fill-time line is the §2.8 string with the pair's real median — fast pairs pass the gate",
+    revLine140 && revLine140.line === "Buyers took orders like this in about 19 minutes over the last 30 days — an average, not a promise"
+    && revLine140.gated === true && revLine140.slow === false);
+  ok("peer: a Venmo-shaped pair (many fills, ~60h median) renders its real slow median, labelled slow, never gated as fast",
+    venLine140 && venLine140.line.includes("about 2.5 days") && venLine140.slow === true && venLine140.gated === false
+    && appSrc140.includes("This app is slow to fill — think days, not minutes."));
+  ok("peer: multi-currency set stats serve their member currencies; an unmeasured pair yields NO line (never an invented wait)",
+    peerPairFillStats(stats140, "wise", "EUR") && peerPairFillStats(stats140, "wise", "EUR").fills === 176
+    && peerFillTimeLine(stats140, "monzo", "GBP") === null && peerFillTimeLine(null, "revolut", "EUR") === null
+    && peerFillSecondsLabel(45) === "about a minute" && peerFillSecondsLabel(7675) === "about 2 hours");
+  ok("peer: the estimate line carries the ≈ binding string and the stale-reading caution",
+    appSrc140.includes("the exact rate is set at the moment a buyer takes your order")
+    && appSrc140.includes("this rate reading is old — treat it with caution"));
+
+  // --- Corridor platform order (capabilities-driven, lead first) ---
+  const capsSynth140 = { platforms: [
+    { platform: "wise", currencies: ["USD", "EUR"], payeeHint: "Wisetag", requiresIdentityAttestation: true },
+    { platform: "paypal", currencies: ["USD"], payeeHint: "email", requiresIdentityAttestation: true },
+    { platform: "zelle", currencies: ["USD"], payeeHint: "email or phone", requiresIdentityAttestation: false },
+    { platform: "venmo", currencies: ["USD"], payeeHint: "@username", requiresIdentityAttestation: false },
+    { platform: "cashapp", currencies: ["USD"], payeeHint: "$cashtag", requiresIdentityAttestation: false },
+    { platform: "xmoney", currencies: ["USD"], payeeHint: "@username", requiresIdentityAttestation: false },
+    { platform: "revolut", currencies: ["EUR", "USD"], payeeHint: "Revtag", requiresIdentityAttestation: false },
+    { platform: "monzo", currencies: ["GBP"], payeeHint: "account", requiresIdentityAttestation: false },
+  ] };
+  ok("peer: corridor platforms come from capabilities with the lead order first and attestation flags intact",
+    JSON.stringify(peerPlatformsForCurrency(capsSynth140, "USD").map(p => p.platform)) === JSON.stringify(["venmo", "cashapp", "zelle", "xmoney", "wise", "paypal", "revolut"])
+    && JSON.stringify(peerPlatformsForCurrency(capsSynth140, "EUR").map(p => p.platform)) === JSON.stringify(["revolut", "wise"])
+    && JSON.stringify(peerPlatformsForCurrency(capsSynth140, "GBP").map(p => p.platform)) === JSON.stringify(["monzo"])
+    && peerPlatformsForCurrency(capsSynth140, "USD").find(p => p.platform === "wise").requiresIdentityAttestation === true
+    && peerPlatformName("cashapp") === "Cash App" && peerPlatformName("xmoney") === "X Money");
+
+  // --- Persistence + order actions (pins 7 + 8, source level) ---
+  ok("peer: the depositId is persisted at placement, before the order card paints, and the card resumes from it",
+    appSrc140.includes("savePeerOrder({ depositId: res.depositId, owner: wallet.address")
+    && appSrc140.indexOf("savePeerOrder({ depositId: res.depositId") < appSrc140.indexOf("paintPeerOrderCard(res.depositId")
+    && appSrc140.includes("peerOrder(depositId)") && appSrc140.includes("loadPeerOrders()"));
+  ok("peer: withdraw renders exactly when nextActions includes withdraw; top-up only while in flight",
+    appSrc140.includes('(order.nextActions || []).includes("withdraw")')
+    && appSrc140.includes("order.isInFlight ? `<label class=\"tag\">Top up this order</label>")
+    && appSrc140.includes("PEER_ORDER_STATE_COPY[order.state]"));
+
+  // --- Buy book (floor policy: surface $1 where it exists, name the real smallest where it doesn't) ---
+  ok("peer: the currency hash matches the indexer's own encoding (prep-recorded NZD vector)",
+    peerCurrencyHash("NZD") === "0xdbd9d34f382e9f6ae078447a655e0816927c7c3edec70bd107de1d34cb15172e"
+    && PEER_BASE_USDC === "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" && PEER_MIN_SELL_USDC === 0.5);
+  const dep140 = (id, min, max, rem) => ({ id, depositId: id, escrowAddress: "0xE", remainingDeposits: String(rem), intentAmountMin: String(min), intentAmountMax: String(max), acceptingIntents: true, timestamp: 1 });
+  const mc140 = (depositId, code, rate) => ({ depositId, currencyCode: peerCurrencyHash(code), conversionRate: String(BigInt(Math.round(rate * 1e18))) });
+  const book140 = parsePeerBook(
+    [dep140("d1", 500000, 100000000, 100000000), dep140("d2", 5000000, 50000000, 50000000), dep140("d3", 10000000, 10000000, 5000000), dep140("d4", 1000000, 10000000, 10000000), dep140("d5", 1000000, 10000000, 10000000)],
+    [mc140("d1", "USD", 1.0), mc140("d2", "USD", 0.99), mc140("d3", "USD", 0.98), mc140("d4", "EUR", 0.9), { depositId: "d5", currencyCode: peerCurrencyHash("USD"), conversionRate: "not-a-number" }],
+    "USD");
+  ok("peer: the book parse keeps live offers only — dead (remaining < min) and hostile (non-numeric rate) rows are dropped, cheapest first",
+    book140.offerCount === 2 && book140.fillable1Count === 1 && book140.smallestMinUsdc === 0.5
+    && book140.offers[0].rate === 0.99 && book140.offers[1].rate === 1.0);
+  const book140b = parsePeerBook([dep140("d2", 5000000, 50000000, 50000000)], [mc140("d2", "USD", 0.99)], "USD");
+  ok("peer: the floor line claims $1 LIVE only when $1-fillable offers exist; otherwise it names the real smallest offer",
+    peerBookFloorLine(book140).includes("Fluid's $1 floor is live on this book")
+    && peerBookFloorLine(book140b).includes("smallest live offer starts at about $4.95")
+    && !peerBookFloorLine(book140b).includes("floor is live")
+    && peerBookFloorLine({ currency: "USD", offerCount: 0, offers: [] }).includes("No live offers"));
+
+  // --- Live client surface (offline-safe: capabilities is static) ---
+  const peerMod140 = await loadPeerSdk();
+  ok("peer: the chunk resolves to the marker-gated SDK surface with the protocol constants intact",
+    peerMod140.PEER_CHUNK_MARKER === true && typeof peerMod140.createCashClient === "function"
+    && peerMod140.toCashReferralAttributionCode("IHCLL9") === "peer-ref-IHCLL9"
+    && peerMod140.MIN_CASHOUT_AMOUNT === 10000n && peerMod140.RECOMMENDED_MIN_CASHOUT_AMOUNT === 1000000n);
+  const caps140 = await peerCapabilities();
+  ok("peer: production capabilities carry the 1 USDC recommended floor and the attestation split (Wise/PayPal attest; Venmo doesn't)",
+    caps140.amount.min === 10000n && caps140.amount.recommendedMin === 1000000n
+    && caps140.platforms.find(p => p.platform === "wise").requiresIdentityAttestation === true
+    && caps140.platforms.find(p => p.platform === "paypal").requiresIdentityAttestation === true
+    && caps140.platforms.find(p => p.platform === "venmo").requiresIdentityAttestation === false
+    && peerPlatformsForCurrency(caps140, "USD")[0].platform === "venmo"
+    && peerPlatformsForCurrency(caps140, "EUR")[0].platform === "revolut"
+    && peerPlatformsForCurrency(caps140, "GBP")[0].platform === "revolut");
+
+  // --- Sheet-render discipline (§137 resolver pin, Peer sheets) ---
+  {
+    // codeOnly140 is a MODE-STACK lexer, not §137's depth-hack
+    // stripper: the depth-hack version never pops template
+    // interpolations, so on sheets whose templates carry several
+    // ${...} (the Peer order card) it inverts — template text
+    // scans as code and code as template, flagging prose words
+    // ("Withdraw back (…") as phantom calls. The mode stack
+    // tracks interpolations and nested templates exactly, so
+    // what remains is genuinely code. (Regex literals would
+    // still fool it; these sheets contain none.)
+    const codeOnly140 = (s) => {
+      let out = "", i = 0;
+      const stack = [{ mode: "code", braces: 0 }];
+      const top = () => stack[stack.length - 1];
+      while (i < s.length) {
+        const c = s[i], n = s[i + 1], t = top();
+        if (t.mode === "code" || t.mode === "interp") {
+          if (c === "/" && n === "/") { stack.push({ mode: "lc" }); i += 2; continue; }
+          if (c === "/" && n === "*") { stack.push({ mode: "bc" }); i += 2; continue; }
+          if (c === "'") { stack.push({ mode: "sq" }); i++; continue; }
+          if (c === '"') { stack.push({ mode: "dq" }); i++; continue; }
+          if (c === "`") { stack.push({ mode: "tmpl" }); i++; continue; }
+          if (c === "{") { t.braces++; out += c; i++; continue; }
+          if (c === "}") {
+            if (t.mode === "interp" && t.braces === 0) { stack.pop(); i++; continue; }
+            t.braces--; out += c; i++; continue;
+          }
+          out += c; i++; continue;
+        }
+        if (t.mode === "lc") { if (c === "\n") { stack.pop(); out += c; } i++; continue; }
+        if (t.mode === "bc") { if (c === "*" && n === "/") { stack.pop(); i += 2; continue; } i++; continue; }
+        if (t.mode === "sq" || t.mode === "dq") { const q = t.mode === "sq" ? "'" : '"'; if (c === "\\") { i += 2; continue; } if (c === q) stack.pop(); i++; continue; }
+        // tmpl
+        if (c === "\\") { i += 2; continue; }
+        if (c === "`") { stack.pop(); i++; continue; }
+        if (c === "$" && n === "{") { stack.push({ mode: "interp", braces: 0 }); out += " "; i += 2; continue; }
+        i++;
+      }
+      return out;
+    };
+    const bodyOf140 = (name) => {
+      const st = appSrc140.indexOf(`function ${name}(`);
+      let j = appSrc140.indexOf("{", st), depth = 0;
+      for (; j < appSrc140.length; j++) {
+        if (appSrc140[j] === "{") depth++;
+        else if (appSrc140[j] === "}") { depth--; if (depth === 0) break; }
+      }
+      return appSrc140.slice(st, j + 1);
+    };
+    const defined140 = new Set();
+    for (const m of appSrc140.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) defined140.add(m[1]);
+    for (const m of appSrc140.matchAll(/(?:^|[;\n])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) defined140.add(m[1]);
+    for (const m of appSrc140.matchAll(/import\s*\{([^}]*)\}\s*from/g))
+      for (let part of m[1].split(",")) { part = part.trim(); if (part) defined140.add((part.split(/\s+as\s+/)[1] || part).trim()); }
+    for (const m of appSrc140.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g))
+      for (let part of m[1].split(",")) { const nm = part.split(":")[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(nm)) defined140.add(nm); }
+    const globals140 = new Set(["Number", "String", "Boolean", "Array", "Object", "JSON", "Math", "Date", "Promise", "Error", "RegExp", "Map", "Set", "parseFloat", "parseInt", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "console", "document", "localStorage", "navigator", "fetch", "BigInt", "URL", "TextEncoder", "TextDecoder", "crypto", "atob", "btoa"]);
+    const keywords140 = new Set(["if", "for", "while", "switch", "catch", "return", "typeof", "new", "function", "await", "async", "else", "do", "in", "of", "void", "delete", "instanceof", "yield", "case"]);
+    const unresolved140 = (body) => {
+      const code = codeOnly140(body);
+      const locals = new Set();
+      for (const m of code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) locals.add(m[1]);
+      for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) m[1].split(",").forEach(p => { const nm = p.trim().split("=")[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(nm)) locals.add(nm); });
+      for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) locals.add(m[1]);
+      const bad = new Set();
+      for (const m of code.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+        const nm = m[1];
+        if (!keywords140.has(nm) && !defined140.has(nm) && !locals.has(nm) && !globals140.has(nm)) bad.add(nm);
+      }
+      return bad;
+    };
+    ok("peer: the Peer sheets reference no undefined helper — every bare call in their bodies resolves (the §137 discipline)",
+      unresolved140(bodyOf140("openPeerSellSheet")).size === 0
+      && unresolved140(bodyOf140("openPeerBuySheet")).size === 0
+      && unresolved140(bodyOf140("paintPeerOrderCard")).size === 0
+      && unresolved140(bodyOf140("loadPeerOrders")).size === 0
+      && unresolved140(bodyOf140("savePeerOrder")).size === 0
+      && unresolved140(bodyOf140("writePeerHistoryEntry")).size === 0);
+  }
 }
 
 console.log(`\n${passed} checks passed`);

@@ -1,7 +1,7 @@
 {
   "name": "fluid-wallet",
   "version": "2.0.0",
-  "description": "Fluid \u2014 a simple, seamless, open-source non-custodial Web3 wallet. Your money, only you control.",
+  "description": "Fluid — a simple, seamless, open-source non-custodial Web3 wallet. Your money, only you control.",
   "directories": {
     "test": "test"
   },
@@ -16,6 +16,7 @@
   "license": "MIT",
   "dependencies": {
     "@arkade-os/sdk": "^0.5.4",
+    "@cetusprotocol/aggregator-sdk": "^1.7.5",
     "@cosmjs/proto-signing": "^0.39.0",
     "@cosmjs/stargate": "^0.39.0",
     "@mysten/sui": "^2.39.0",
@@ -36,6 +37,7 @@
     "@ton/ton": "^16.3.0",
     "@walletconnect/core": "2.25.0",
     "@walletconnect/utils": "2.25.0",
+    "@zkp2p/cash": "0.7.3",
     "algosdk": "^3.9.0",
     "buffer": "^6.0.3",
     "cosmjs-types": "^0.11.0",
@@ -46,7 +48,7 @@
     "ripple-address-codec": "^5.0.1",
     "ripple-binary-codec": "^2.11.0",
     "ripple-keypairs": "^3.1.0",
-    "@cetusprotocol/aggregator-sdk": "^1.7.5"
+    "viem": "2.57.20"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

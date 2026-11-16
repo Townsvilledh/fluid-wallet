@@ -72,6 +72,10 @@ import {
   estimateRampFeeEvmGasUsd, executeRampFeeSendEvm,
   solanaRampSplitPlan, sendSolanaRampSplit, SOLANA_ATA_RENT_LAMPORTS, solLamportsToSol,
   RAMP_FEE_TRON_LEG_GAS_USD,
+  PEER_FIAT_SYMBOLS, PEER_ORDER_STATE_COPY, peerSellCorridor, peerPlatformName, peerPlatformsForCurrency,
+  peerFillTimeLine, peerCapabilities, peerFillStats, peerEstimate, peerExecuteSell, peerExecuteWithdraw,
+  peerExecuteTopUp, peerOrder, peerOrders, peerBuyerProfile, peerBaseBalances, peerUsdcToRaw, peerRawToUsdc,
+  peerErrorCopy, fetchPeerBuyBook, peerBookFloorLine,
 } from "./wallet-core.js";
 import { ethers } from "ethers";
 import { LN_WASM_PIN, LN_CHUNK_SHA256 } from "./ln-asset-pins.generated.js";
@@ -7738,7 +7742,11 @@ function rampSheet(mode) {
     const { country: c, routes, mtpUnavailable } = rampRoutesFor(code, mode, netKey, asset);
     $("rList").innerHTML =
       `<p class="tag" style="margin-top:10px">Sorted by real measured price against the market rate (price checks 6–7 Nov 2026) — where a price couldn't be verified, the note says so. The provider shows your final quote before you pay.</p>` +
-      routes.map(r => r.unavailable
+      routes.map(r => r.peer
+        // Peer rows (2026-11-16) are in-app flows, not links: the
+        // button carries the side + fiat and opens the Peer sheet.
+        ? `<button class="netitem rampitem" data-ramp-peer="${esc(r.peer)}" data-ramp-fiat="${esc(c.fiat)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`
+        : r.unavailable
         // Unavailable-for-this-corridor rows (QA F8) render as plain
         // rows with the reason visible — never as live links.
         ? `<div class="netitem rampitem"><span class="rampname">${esc(r.name)} <span class="pill soon">UNAVAILABLE</span></span><small class="rampnote">${esc(r.note)}</small></div>`
@@ -7749,6 +7757,10 @@ function rampSheet(mode) {
       (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
       (mtpUnavailable ? `<p class="tag">Mt Pelerin is not available for ${esc(c.fiat)} yet — it takes USD, EUR, GBP, ZAR and 14 other currencies.</p>` : "");
     document.querySelectorAll("[data-ramp-url]").forEach(b => b.onclick = () => { const u = b.dataset.rampUrl; if (u && /^https:\/\//.test(u)) window.open(u, "_blank", "noopener"); });
+    document.querySelectorAll("[data-ramp-peer]").forEach(b => b.onclick = () => {
+      if (b.dataset.rampPeer === "sell") openPeerSellSheet(b.dataset.rampFiat);
+      else openPeerBuySheet(b.dataset.rampFiat);
+    });
     paintBench();
     const bMeta = BENCH[code];
     if (bMeta && benchKey !== code + ":" + mode) {
@@ -7768,6 +7780,261 @@ $("actBuy").onclick = () => rampSheet("buy");
 $("actCash").onclick = () => rampSheet("sell");
 const hzBuy = $("homeBuy"); if (hzBuy) hzBuy.onclick = () => $("actBuy").click();
 const hzRcv = $("homeReceive"); if (hzRcv) hzRcv.onclick = () => $("actReceive").click();
+
+// ---------- Peer (ZKP2P): sell in-app, buy book (2026-11-16) ----------
+// Local order records are a shortcut into the order card only —
+// the chain is the database (peerOrder resumes from depositId
+// alone, and the sheet also lists this wallet's on-chain orders).
+const PEER_ORDERS_KEY = "fluid_peer_orders_v1";
+function loadPeerOrders() {
+  try { const a = JSON.parse(localStorage.getItem(PEER_ORDERS_KEY) || "[]"); return Array.isArray(a) ? a.filter(x => x && x.depositId && x.owner) : []; }
+  catch { return []; }
+}
+function savePeerOrder(rec) {
+  try {
+    const a = loadPeerOrders().filter(x => x.depositId !== rec.depositId);
+    a.unshift(rec);
+    localStorage.setItem(PEER_ORDERS_KEY, JSON.stringify(a.slice(0, 25)));
+  } catch { /* a lost shortcut, never a lost order */ }
+}
+function writePeerHistoryEntry(depositId, txHash, amountText) {
+  try {
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    h.unshift({ hash: txHash, amount: Number(amountText), symbol: "USDC", to: "Peer escrow · Base", explorer: NETWORKS.base.explorer, at: Date.now(), peerDepositId: depositId });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+    markActivityDot();
+  } catch { /* history is a record, never a blocker */ }
+}
+
+/** The live order card: state, amounts, fills (with each buyer's
+ *  track record), and the withdraw / top-up actions exactly when
+ *  the protocol says they're available. Polls while in flight;
+ *  an indexer-lag miss right after creation renders as "still
+ *  indexing" with the deposit transaction named, never as loss. */
+async function paintPeerOrderCard(depositId, box, txHash) {
+  if (!box) return;
+  if (box._peerPoll) { clearTimeout(box._peerPoll); box._peerPoll = null; }
+  box.innerHTML = `<p class="tag">Loading your Peer order…</p>`;
+  let order = null, err = null;
+  try { order = await peerOrder(depositId); } catch (e) { err = e; }
+  if (!box.isConnected) return;
+  if (!order) {
+    const txNote = txHash ? ` Deposit transaction ${esc(txHash)} is on-chain; the order itself is safe in escrow.` : "";
+    box.innerHTML = `<div class="netitem"><span class="rampname">Order placed — still indexing</span><small class="rampnote">${esc(peerErrorCopy(err))}${txNote}</small></div>
+      <button class="btn ghost" id="peerOrderRetry">Refresh order</button>`;
+    const rb = $("peerOrderRetry"); if (rb) rb.onclick = () => paintPeerOrderCard(depositId, box, txHash);
+    box._peerPoll = setTimeout(() => paintPeerOrderCard(depositId, box, txHash), 15000);
+    return;
+  }
+  const remainingRaw = BigInt(order.totalAmount || 0) - BigInt(order.filledAmount || 0) - BigInt(order.returnedAmount || 0);
+  const explain = typeof order.explain === "function" ? order.explain() : "";
+  const payouts = (order.payouts || []).map(p => `${peerPlatformName(p.platform)}${p.currency ? " · " + p.currency : ""}`).join(", ");
+  const fillsHtml = (order.fills || []).map((f, i) => {
+    let line = `<div class="netitem"><span class="rampname">${esc(peerRawToUsdc(f.amount || 0))} USDC · ${esc(String(f.status || ""))}</span><small class="rampnote">Buyer ${esc(String(f.buyer || "").slice(0, 10))}…`;
+    if (f.fiatOwed != null) line += ` · to pay ${esc(String(f.fiatOwed))} ${esc(f.currency || "")}`;
+    if (f.fiatPaid != null) line += ` · paid ${esc(String(f.fiatPaid))} ${esc(f.paidCurrency || f.currency || "")}`;
+    return line + ` <span id="peerBuyerLine${i}"></span></small></div>`;
+  }).join("");
+  const canWithdraw = (order.nextActions || []).includes("withdraw");
+  const explainHtml = explain ? ` ${esc(explain)}` : "";
+  const payoutsHtml = payouts ? `<br>Paid to: ${esc(payouts)}` : "";
+  const withdrawHtml = canWithdraw ? `<label class="tag">Withdraw back (blank = everything left)</label><input id="peerWithdrawAmt" inputmode="decimal" placeholder="Amount in USDC"><button class="btn" id="peerWithdrawBtn">Withdraw</button>` : "";
+  const topupHtml = order.isInFlight ? `<label class="tag">Top up this order</label><input id="peerTopAmt" inputmode="decimal" placeholder="Amount in USDC"><button class="btn ghost" id="peerTopBtn">Top up</button>` : "";
+  box.innerHTML = `<div class="netitem"><span class="rampname">Peer order · ${esc(peerRawToUsdc(order.totalAmount || 0))} USDC</span><small class="rampnote">${esc(PEER_ORDER_STATE_COPY[order.state] || String(order.state || ""))}${explainHtml}<br>Filled ${esc(peerRawToUsdc(order.filledAmount || 0))} USDC · returned ${esc(peerRawToUsdc(order.returnedAmount || 0))} USDC · still in escrow ${esc(peerRawToUsdc(remainingRaw.toString()))} USDC${payoutsHtml}</small></div>
+    ${fillsHtml}
+    ${withdrawHtml}
+    ${topupHtml}
+    <button class="btn ghost" id="peerOrderRefresh">Refresh order</button>`;
+  (order.fills || []).forEach((f, i) => {
+    if (!f.buyer) return;
+    peerBuyerProfile(f.buyer).then(p => {
+      const el = $(`peerBuyerLine${i}`); if (!el || !p) return;
+      el.textContent = p.successRateBps != null
+        ? `· buyer record: ${p.fulfilled} completed, ${Math.round(p.successRateBps / 100)}% success`
+        : `· buyer record: ${p.fulfilled} completed`;
+    }).catch(() => {});
+  });
+  const rf = $("peerOrderRefresh"); if (rf) rf.onclick = () => paintPeerOrderCard(depositId, box, txHash);
+  const wd = $("peerWithdrawBtn");
+  if (wd) wd.onclick = async () => {
+    const amtText = $("peerWithdrawAmt").value.trim();
+    let raw = null;
+    if (amtText) { raw = peerUsdcToRaw(amtText); if (raw == null || raw <= 0n) { showSheetError("Enter the amount to withdraw, or leave it blank to withdraw everything left."); return; } }
+    setSendBusy(wd, true);
+    try { await peerExecuteWithdraw(wallet, depositId, raw != null ? raw.toString() : null); }
+    catch (e) { setSendBusy(wd, false); showSheetError(peerErrorCopy(e)); return; }
+    setSendBusy(wd, false);
+    paintPeerOrderCard(depositId, box, txHash);
+  };
+  const tp = $("peerTopBtn");
+  if (tp) tp.onclick = async () => {
+    const raw = peerUsdcToRaw($("peerTopAmt").value);
+    if (raw == null || raw <= 0n) { showSheetError("Enter the top-up amount in USDC."); return; }
+    setSendBusy(tp, true);
+    try { await peerExecuteTopUp(wallet, depositId, raw.toString()); }
+    catch (e) { setSendBusy(tp, false); showSheetError(peerErrorCopy(e)); return; }
+    setSendBusy(tp, false);
+    paintPeerOrderCard(depositId, box, txHash);
+  };
+  if (order.isInFlight) {
+    box._peerPoll = setTimeout(() => {
+      const ae = document.activeElement;
+      if (ae && box.contains(ae) && ae.tagName === "INPUT") { box._peerPoll = setTimeout(() => paintPeerOrderCard(depositId, box, txHash), 20000); return; }
+      paintPeerOrderCard(depositId, box, txHash);
+    }, 20000);
+  }
+}
+
+function openPeerSellSheet(fiat) {
+  const corridor = peerSellCorridor(fiat);
+  if (!corridor) { showSheetError("Peer doesn't cover this currency yet."); return; }
+  if (!wallet) { showSheetError("Unlock your wallet first."); return; }
+  const currency = corridor.currency, sym = PEER_FIAT_SYMBOLS[currency] || "";
+  openSheet(`<h3>Sell with Peer — ${esc(currency)}</h3>
+    <p class="tag">Your USDC waits in Peer's escrow contract on Base. A buyer pays your handle directly — and you can withdraw the USDC back at any time until a buyer pays. No Peer account, no signup: the whole sale runs here.</p>
+    <p class="tag" id="peerBal">Reading your Base balances…</p>
+    <label class="tag">Amount (USDC on Base)</label>
+    <input id="peerAmt" inputmode="decimal" data-autofocus placeholder="At least 0.50 USDC">
+    <label class="tag">Get paid on</label>
+    <select id="peerPlatform"><option>Loading Peer apps…</option></select>
+    <p class="tag" id="peerFill"></p>
+    <label class="tag">Your handle on that app</label>
+    <input id="peerHandle" placeholder="Your payout handle">
+    <p class="tag" id="peerHint"></p>
+    <p class="tag" id="peerEst"></p>
+    <button class="btn" id="peerReview">Review sale</button>
+    <div id="peerReviewBox" class="hidden"></div>
+    <div id="peerOrdersBox" style="margin-top:14px"></div>
+    <div id="peerOrderBox" style="margin-top:14px"></div>`);
+  let caps = null, stats = null, bals = null, est = null, estTimer = null;
+  const amtEl = $("peerAmt"), platEl = $("peerPlatform"), handleEl = $("peerHandle");
+  const selectedPlatform = () => {
+    if (!caps || !platEl) return null;
+    return peerPlatformsForCurrency(caps, currency).find(x => x.platform === platEl.value) || null;
+  };
+  const paintHint = () => {
+    const el = $("peerHint"); if (!el) return;
+    const p = selectedPlatform();
+    if (!p) { el.textContent = ""; return; }
+    el.textContent = (p.payeeHint || "Your handle on that app.") + (p.requiresIdentityAttestation ? " Peer needs this handle to already be registered with Peer — a brand-new handle can't be verified from here yet." : "");
+  };
+  const paintFill = () => {
+    const el = $("peerFill"); if (!el) return;
+    const p = selectedPlatform();
+    if (!p) { el.textContent = ""; return; }
+    if (!stats) { el.textContent = "Fill history didn't load — the wait for a buyer is unproven, so treat it as slow until Peer's book says otherwise."; return; }
+    const line = peerFillTimeLine(stats, p.platform, currency);
+    el.textContent = line
+      ? line.line + (line.slow ? " This app is slow to fill — think days, not minutes." : "")
+      : "No fill history for this app yet — the wait for a buyer is unproven, so treat it as slow until Peer's book says otherwise.";
+  };
+  const refreshEstimate = async () => {
+    const el = $("peerEst"); if (!el) return;
+    const raw = peerUsdcToRaw(amtEl.value);
+    const p = selectedPlatform();
+    if (raw == null || !p) { est = null; el.textContent = ""; return; }
+    try {
+      const e = await peerEstimate({ amountRaw: raw.toString(), currency, platform: p.platform });
+      if (!amtEl.isConnected) return;
+      est = e;
+      el.textContent = `≈ ${sym}${fmt(e.receiveAmount, 2)} — the exact rate is set at the moment a buyer takes your order` + (e.stale ? " · this rate reading is old — treat it with caution" : "") + (raw < 1000000n ? " · under $1: small sells can wait longer for a buyer to take them, until Fluid's own desk is live to take them" : "");
+    } catch { est = null; if (el.isConnected) el.textContent = ""; }
+  };
+  const queueEstimate = () => { if (estTimer) clearTimeout(estTimer); estTimer = setTimeout(refreshEstimate, 450); };
+  const paintPeerOrdersList = () => {
+    const box = $("peerOrdersBox"); if (!box) return;
+    const mine = loadPeerOrders().filter(x => String(x.owner).toLowerCase() === String(wallet.address).toLowerCase() && (!x.currency || x.currency === currency));
+    box.innerHTML = mine.length
+      ? `<p class="tag">Your Peer orders</p>` + mine.map(o => `<button class="netitem rampitem" data-peer-order="${esc(o.depositId)}"><span class="rampname">${esc(peerRawToUsdc(o.amountRaw || "0"))} USDC · ${esc(peerPlatformName(o.platform || ""))}</span><small class="rampnote">Placed ${esc(new Date(o.createdAt || Date.now()).toLocaleString())} — tap for live status, withdraw or top up</small></button>`).join("")
+      : "";
+    box.querySelectorAll("[data-peer-order]").forEach(b => b.onclick = () => paintPeerOrderCard(b.dataset.peerOrder, $("peerOrderBox")));
+    peerOrders(wallet.address).then(list => {
+      if (!box.isConnected) return;
+      const shown = new Set(mine.map(x => x.depositId));
+      const extra = (list || []).filter(o => o && o.depositId && !shown.has(o.depositId));
+      if (!extra.length) return;
+      box.innerHTML += (mine.length ? "" : `<p class="tag">Your Peer orders</p>`) + extra.map(o => `<button class="netitem rampitem" data-peer-order="${esc(o.depositId)}"><span class="rampname">${esc(peerRawToUsdc(o.totalAmount || "0"))} USDC · ${esc(String(o.state || ""))}</span><small class="rampnote">Found on-chain for this wallet — tap for live status, withdraw or top up</small></button>`).join("");
+      box.querySelectorAll("[data-peer-order]").forEach(b => b.onclick = () => paintPeerOrderCard(b.dataset.peerOrder, $("peerOrderBox")));
+    }).catch(() => {});
+  };
+  amtEl.oninput = queueEstimate;
+  platEl.onchange = () => { paintHint(); paintFill(); queueEstimate(); };
+  $("peerReview").onclick = async () => {
+    const raw = peerUsdcToRaw(amtEl.value);
+    const p = selectedPlatform();
+    const handle = handleEl.value.trim();
+    if (raw == null) { showSheetError("Enter the amount of USDC to sell."); return; }
+    if (raw < 500000n) { showSheetError("Peer cash-outs start at 0.50 USDC — increase the amount."); return; }
+    if (bals && BigInt(bals.usdcRaw) < raw) { showSheetError("Your Base USDC balance is below the amount entered."); return; }
+    if (bals && BigInt(bals.ethRaw) === 0n) { showSheetError("You need a little ETH on Base to pay the network fees — add Base ETH first."); return; }
+    if (!p) { showSheetError("Pick the app you want to be paid on."); return; }
+    if (!handle) { showSheetError("Enter your handle on that app — it's where the buyer sends your money."); return; }
+    if (!est) await refreshEstimate();
+    const box = $("peerReviewBox"); if (!box) return;
+    box.classList.remove("hidden");
+    box.innerHTML = `<p class="tag" style="margin-top:10px">You're selling ${esc(peerRawToUsdc(raw))} USDC on Base. It waits in Peer's escrow contract until a buyer pays <b>${esc(handle)}</b> on ${esc(peerPlatformName(p.platform))}${est ? ` — about ${sym}${fmt(est.receiveAmount, 2)} at today's rate` : ""}. You can withdraw it back at any time until a buyer pays. Two small transactions on Base follow (an approval, then the deposit), each paying its own network fee${p.requiresIdentityAttestation ? ", and one more may follow to open the order to Peer Pay buyers" : ""}. Fluid earns 50 bps, paid by Peer — it costs you nothing extra.</p>
+      <button class="btn" id="peerConfirm">Confirm — deposit into escrow</button>`;
+    const cb = $("peerConfirm");
+    cb.onclick = async () => {
+      setSendBusy(cb, true);
+      try {
+        const res = await peerExecuteSell(wallet, { amountRaw: raw.toString(), currency, platform: p.platform, payee: handle });
+        savePeerOrder({ depositId: res.depositId, owner: wallet.address, currency, platform: p.platform, amountRaw: raw.toString(), createdAt: Date.now() });
+        writePeerHistoryEntry(res.depositId, res.txHash, peerRawToUsdc(raw));
+        setSendBusy(cb, false);
+        box.innerHTML = `<p class="tag" style="margin-top:10px">Order placed — your USDC is in Peer's escrow on Base.${res.policyError ? " One follow-up (opening the order to Peer Pay buyers) didn't confirm — buyers can still take your order; some may need to stake." : ""}</p>`;
+        paintPeerOrdersList();
+        paintPeerOrderCard(res.depositId, $("peerOrderBox"), res.txHash);
+      } catch (e) {
+        setSendBusy(cb, false);
+        showSheetError(peerErrorCopy(e));
+      }
+    };
+  };
+  paintPeerOrdersList();
+  (async () => {
+    try {
+      const [c, s, b] = await Promise.all([peerCapabilities(), peerFillStats().catch(() => null), peerBaseBalances(wallet).catch(() => null)]);
+      if (!platEl.isConnected) return;
+      caps = c; stats = s; bals = b;
+      const platforms = peerPlatformsForCurrency(caps, currency);
+      if (!platforms.length) { platEl.innerHTML = `<option>No Peer apps for ${esc(currency)}</option>`; return; }
+      platEl.innerHTML = platforms.map(p => `<option value="${esc(p.platform)}">${esc(peerPlatformName(p.platform))}${p.requiresIdentityAttestation ? " — existing Peer handles only" : ""}</option>`).join("");
+      const balEl = $("peerBal");
+      if (balEl) balEl.textContent = b
+        ? `Balance: ${fmt(Number(peerRawToUsdc(b.usdcRaw)), 2)} USDC on Base · ETH for network fees: ${fmt(Number(b.ethRaw) / 1e18, 6)}`
+        : "Your Base balance couldn't load just now — the amount is checked again against the chain before anything is signed.";
+      paintHint(); paintFill();
+    } catch (e) {
+      if (platEl.isConnected) { platEl.innerHTML = `<option>Peer didn't answer</option>`; showSheetError(peerErrorCopy(e)); }
+    }
+  })();
+}
+
+function openPeerBuySheet(fiat) {
+  const corridor = peerSellCorridor(fiat);
+  if (!corridor) { showSheetError("Peer doesn't cover this currency yet."); return; }
+  const currency = corridor.currency, sym = PEER_FIAT_SYMBOLS[currency] || "";
+  openSheet(`<h3>Buy with Peer — ${esc(currency)}</h3>
+    <p class="tag">Fluid's floor is $1. This is Peer's live order book for ${esc(currency)} — real offers from real sellers, read just now. Completing a Peer buy today needs Peer's browser extension for the payment proof, which can't run inside Fluid, so this sheet shows the book only: it takes no money and places no order.</p>
+    <div id="peerBookBox"><p class="tag">Reading Peer's book…</p></div>
+    <button class="btn ghost" id="peerBookRefresh">Refresh the book</button>`);
+  const paint = async () => {
+    const box = $("peerBookBox"); if (!box) return;
+    box.innerHTML = `<p class="tag">Reading Peer's book…</p>`;
+    try {
+      const book = await fetchPeerBuyBook(currency);
+      if (!box.isConnected) return;
+      box.innerHTML = `<p class="tag">${esc(peerBookFloorLine(book))}</p>`
+        + (book.offers || []).map(o => `<div class="netitem"><span class="rampname">Pay ≈ ${esc(sym)}${esc(fmt(o.rate, 4))} per $1 USDC</span><small class="rampnote">orders from ${esc(sym)}${esc(fmt(o.minUsdc * o.rate, 2))} · up to ${esc(sym)}${esc(fmt(o.remainingUsdc * o.rate, 2))} available</small></div>`).join("")
+        + `<p class="tag">${book.offerCount} live offer${book.offerCount === 1 ? "" : "s"} on this page of the book · ${esc(fmt(book.totalRemainingUsdc, 2))} USDC behind them · read ${esc(new Date(book.asOf).toLocaleTimeString())}</p>`;
+    } catch {
+      if (box.isConnected) box.innerHTML = `<p class="tag">Peer's book couldn't load just now — check your connection and refresh. Nothing was hidden: an unread book shows as unread, never as an empty one.</p>`;
+    }
+  };
+  $("peerBookRefresh").onclick = paint;
+  paint();
+}
 
 // ---------- swap (multi-rail routes: same-chain + cross-chain) ----------
 // Token pickers are searchable over the chain's FULL token list

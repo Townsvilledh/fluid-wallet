@@ -36,6 +36,10 @@ await build({ entryPoints: ["src/cosmos.js"], bundle: true, minify: true, format
 // and loaded lazily by wallet-core before the first Polkadot use
 // (loading performance, 2026-11-16).
 await build({ entryPoints: ["src/polkadot.js"], bundle: true, minify: true, format: "esm", outfile: "dist/polkadot.chunk.js" });
+// Peer chunk: the @zkp2p/cash SDK (+ its @zkp2p/sdk internals and
+// viem peer), built separately and loaded lazily by wallet-core
+// on the first Peer cash-out path (Peer sell launch, 2026-11-16).
+await build({ entryPoints: ["src/peer.js"], bundle: true, minify: true, format: "esm", outfile: "dist/peer.chunk.js" });
 copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_bg.wasm");
 // Asset fingerprint pins (owner security requirement, 2026-11-10):
 // the SHA-256 of the Lightning WASM and of the Lightning chunk are
@@ -63,7 +67,7 @@ copyFileSync("lightning/pkg-web/fluid_lightning_bg.wasm", "dist/fluid_lightning_
 // two copies of the same library. The alias points the bare "zod"
 // specifier at the ESM entry, so only one copy ships.
 const ZOD_ESM_ENTRY = new URL("../node_modules/zod/index.js", import.meta.url).pathname;
-await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js", "./walletconnect.chunk.js", "./arkade.chunk.js", "./cosmos.chunk.js", "./polkadot.chunk.js"], alias: { zod: ZOD_ESM_ENTRY } });
+await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, outfile: "dist/app.bundle.js", external: ["./lightning.chunk.js", "./walletconnect.chunk.js", "./arkade.chunk.js", "./cosmos.chunk.js", "./polkadot.chunk.js", "./peer.chunk.js"], alias: { zod: ZOD_ESM_ENTRY } });
 copyFileSync("src/index.html", "dist/index.html");
 copyFileSync("tools/recovery.html", "dist/recovery.html");
 copyFileSync("names.json", "dist/names.json");

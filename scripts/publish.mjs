@@ -48,7 +48,7 @@ const WORKTREE = "/tmp/fluid-gh-pages";
 const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "fluid-wallet.html",
   "names.json", "robots.txt", "sitemap.xml", "og-image.png", "og-card.png", "_headers", "CNAME",
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js", "walletconnect.chunk.js", "arkade.chunk.js",
-  "cosmos.chunk.js", "polkadot.chunk.js",
+  "cosmos.chunk.js", "polkadot.chunk.js", "peer.chunk.js",
   "fonts/inter-var.woff2", "fonts/space-grotesk-var.woff2", "favicon.png",
   "fluid-agent.json", ".well-known/fluid-agent.json", ".nojekyll",
   "funding.json", ".well-known/funding-manifest-urls",

@@ -55,6 +55,28 @@ function cosmosSdkSync() {
   if (!cosmosSdk) throw new Error("The Cosmos module hasn't loaded yet — try again in a moment.");
   return cosmosSdk;
 }
+// Peer (ZKP2P) Cash chunk: the @zkp2p/cash SDK surface, loaded
+// lazily on the first Peer cash-out path (Peer sell launch,
+// 2026-11-16) under the same marker discipline as the families
+// above — src/peer.js is a separate esbuild entry
+// (dist/peer.chunk.js), absent from the single-file build.
+let peerSdk = null, peerSdkPromise = null;
+export function installPeerSdk(mod) { if (mod && mod.PEER_CHUNK_MARKER === true) peerSdk = mod; }
+export function loadPeerSdk() {
+  if (peerSdk) return Promise.resolve(peerSdk);
+  if (!peerSdkPromise) {
+    peerSdkPromise = (async () => {
+      let mod;
+      try { mod = await import("./peer.chunk.js"); }
+      catch { throw new Error("The Peer module isn't included in this build (the single-file build doesn't carry it). Open Fluid from fluidwallet.dpdns.org to sell with Peer."); }
+      if (!mod || mod.PEER_CHUNK_MARKER !== true) throw new Error("The Peer module loaded but doesn't match this build — hard-refresh the page and try again.");
+      peerSdk = mod;
+      return mod;
+    })();
+    peerSdkPromise.catch(() => { peerSdkPromise = null; });
+  }
+  return peerSdkPromise;
+}
 let polkadotSdk = null, polkadotSdkPromise = null;
 export function installPolkadotSdk(mod) { if (mod && mod.POLKADOT_CHUNK_MARKER === true) polkadotSdk = mod; }
 export function loadPolkadotSdk() {
@@ -7974,7 +7996,469 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
       rank: routes.length,
     });
   }
+  // Peer (ZKP2P) rows (Peer launch, 2026-11-16): an in-app route,
+  // not a link — url stays null and the sheet opens the Peer flow
+  // on the row's `peer` marker. Corridors are fiat-defined (USD /
+  // EUR / GBP, Peer's covered launch corridors; see the Peer
+  // section below). The row exists only while the referral
+  // constant is well-formed — fail closed: no capture configured,
+  // no route shown. Sell leads its sheet and carries CHEAPEST on
+  // the pinned badge rule: Class 1 (completes inside Fluid), 0.00%
+  // spread, and it completes at the corridor's $1 small-ticket
+  // size, which no other row on these sheets does. Buy carries no
+  // badge: its sheet surfaces the live book and completes no trade
+  // in-app yet (PEER_BUY_NOTE states why, on the row itself).
+  if (peerReferralConfigured() && peerSellCorridor(c.fiat)) {
+    const peerRow = mode === "sell"
+      ? { name: "Peer", url: null, note: peerSellCorridor(c.fiat).note, badge: true, external: false, unavailable: false, addressEntry: "paste", pasteAddress: false, peer: "sell" }
+      : { name: "Peer", url: null, note: PEER_BUY_NOTE, badge: false, external: false, unavailable: false, addressEntry: "paste", pasteAddress: false, peer: "buy" };
+    // Sell: Peer leads (it is the badged route). Buy: the book
+    // row completes no trade, so a badged completable route
+    // keeps the lead where one exists (the badge invariant: the
+    // badged route leads its sheet); where none does (the US
+    // sheet, whose only other row is unavailable-flagged), the
+    // Peer row leads.
+    if (mode === "buy" && routes.some(r => r.badge)) routes.push(peerRow);
+    else routes.unshift(peerRow);
+    routes.forEach((r, i) => { r.rank = i; });
+  }
   return { country: c, routes, mtpUnavailable: !MTPELERIN_FIATS.includes(c.fiat) };
+}
+
+/* ================= Peer (ZKP2P) — sell in-app, buy book (2026-11-16) =================
+ * Peer's cash-out protocol (peer.xyz / ZKP2P): the seller's USDC
+ * waits in Peer's on-chain escrow on Base; a buyer pays the
+ * seller's handle in their own payment app and proves the payment
+ * (zkTLS/TEE proof), and the escrow releases. No Peer account, no
+ * signup, no KYC for the Fluid user; Fluid never touches the fiat.
+ *
+ * Capture (UNIVERSAL CAPTURE law): the client is constructed
+ * with PEER_REFERRAL_CODE, and the SDK stamps every prepared
+ * transaction with the ERC-8021 markers `peer-cash` then
+ * `peer-ref-<CODE>`; when a deposit carrying the marker fills,
+ * Curator pays the code owner 50 bps. The constant is Ethuram's
+ * own Peer referral code (one-time signup, 2026-11-15). If the
+ * constant is ever absent or malformed the route hides (fail
+ * closed), and peerAttributionCheck refuses to broadcast a
+ * prepared plan whose markers are missing — a sale that would
+ * earn Fluid nothing is never sent.
+ *
+ * Floors (owner launch policy, 2026-11-16): sell minimum is the
+ * SDK's recommended 1 USDC (the protocol hard floor is $0.01);
+ * buy is a $1 product floor — the buy sheet surfaces the live
+ * book, $1 offers wherever the book has them and the real
+ * smallest offer where it doesn't, never a faked $1 fill.
+ * Corridors at launch: USD / EUR / GBP — Peer's covered corridors
+ * with measured books (2026-11-15). Nigeria is NOT on Peer (no
+ * NGN in the production catalog, no book), so NG rows are
+ * untouched. Prep evidence: research_notes/fluid-peer-prep-20261115/.
+ */
+export const PEER_REFERRAL_CODE = "IHCLL9";
+export const PEER_BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+export const PEER_MIN_SELL_USDC = 0.5; // product floor (owner
+// ruling 2026-11-16 ~14:40 WAT: $1 is too high for sell). The
+// protocol hard floor is 0.01 USDC; Peer's 1 USDC is only a
+// fill-reliability recommendation — sub-$1 sells ship with
+// honest wait copy, never a hard block at $1.
+export const PEER_INDEXER_URL = "https://indexer.zkp2p.xyz/v1/graphql";
+export const PEER_FIAT_SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+
+/** The referral constant is well-formed (six alphanumerics, the
+ *  shape Peer's codes take). Anything else hides the route. */
+export function peerReferralConfigured(code = PEER_REFERRAL_CODE) {
+  return typeof code === "string" && /^[A-Za-z0-9]{6}$/.test(code.trim());
+}
+
+export const PEER_SELL_CORRIDORS = {
+  USD: { currency: "USD", lead: ["venmo", "cashapp", "zelle", "xmoney"], note: "Sell USDC on Base at the live market rate — no spread — paid to your Venmo, Cash App, Zelle or X Money · minimum 0.50 USDC · sells under $1 can wait longer for a taker until Fluid's own desk is live to take them · a Peer buyer pays your handle directly: Zelle lands in your bank account, the others land in the app · your USDC waits in Peer's escrow contract and you can withdraw it back at any time until a buyer pays · Fluid earns 50 bps, paid by Peer — it costs you nothing extra" },
+  EUR: { currency: "EUR", lead: ["revolut", "wise"], note: "Sell USDC on Base at the live market rate — no spread — paid to your Revolut or Wise · minimum 0.50 USDC · sells under $1 can wait longer for a taker until Fluid's own desk is live to take them · a Peer buyer pays your handle directly · your USDC waits in Peer's escrow contract and you can withdraw it back at any time until a buyer pays · Fluid earns 50 bps, paid by Peer — it costs you nothing extra" },
+  GBP: { currency: "GBP", lead: ["revolut", "wise", "monzo"], note: "Sell USDC on Base at the live market rate — no spread — paid to your Revolut, Wise or Monzo · minimum 0.50 USDC · sells under $1 can wait longer for a taker until Fluid's own desk is live to take them · a Peer buyer pays your handle directly · your USDC waits in Peer's escrow contract and you can withdraw it back at any time until a buyer pays · Fluid earns 50 bps, paid by Peer — it costs you nothing extra" },
+};
+export function peerSellCorridor(fiat) { return PEER_SELL_CORRIDORS[fiat] || null; }
+
+export const PEER_BUY_NOTE = "Live Peer order book, shown inside Fluid — sellers offer USDC on Base at market rates and Fluid's floor is $1: $1 offers are shown wherever the book has them, and where it doesn't, the smallest real offer is shown as it is · completing a Peer buy today needs Peer's browser extension for the payment proof, which can't run inside Fluid — so this sheet shows the book only: it takes no money and places no order";
+
+export const PEER_PLATFORM_NAMES = { venmo: "Venmo", cashapp: "Cash App", zelle: "Zelle", xmoney: "X Money", paypal: "PayPal", revolut: "Revolut", wise: "Wise", monzo: "Monzo", chime: "Chime", alipay: "Alipay", upi: "UPI" };
+export function peerPlatformName(id) {
+  if (PEER_PLATFORM_NAMES[id]) return PEER_PLATFORM_NAMES[id];
+  const s = String(id || "");
+  return s ? s[0].toUpperCase() + s.slice(1) : "";
+}
+
+/** "12.5" → 12500000n; null for anything that isn't a clean
+ *  USDC amount (max 6 dp). */
+export function peerUsdcToRaw(text) {
+  const t = String(text ?? "").trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(t)) return null;
+  const [w, f = ""] = t.split(".");
+  return BigInt(w) * 1000000n + BigInt((f + "000000").slice(0, 6));
+}
+/** Raw base units → trimmed human string ("12500000" → "12.5"). */
+export function peerRawToUsdc(raw) {
+  const v = BigInt(raw);
+  const w = v / 1000000n, f = (v % 1000000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return f ? `${w}.${f}` : `${w}`;
+}
+
+/** The §2.11 promotion gate's pair lookup: exact `platform:CUR`
+ *  first, then the platform's multi-currency sets containing the
+ *  currency (largest fill count wins). Null when the pair has no
+ *  measured stats — the sheet then shows no fill-time line rather
+ *  than an invented one. */
+export function peerPairFillStats(stats, platform, currency) {
+  if (!stats || typeof stats !== "object") return null;
+  const exact = stats[`${platform}:${currency}`];
+  if (exact && Number.isFinite(exact.fills)) return { fills: exact.fills, medianFillSeconds: exact.medianFillSeconds };
+  let best = null;
+  for (const [k, v] of Object.entries(stats)) {
+    const [p, curs] = k.split(":");
+    if (p !== platform || !curs || !v || !Number.isFinite(v.fills)) continue;
+    if (curs.split("+").includes(currency) && (!best || v.fills > best.fills)) best = { fills: v.fills, medianFillSeconds: v.medianFillSeconds };
+  }
+  return best;
+}
+export function peerFillSecondsLabel(sec) {
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  if (sec < 90) return "about a minute";
+  if (sec < 3600) return `about ${Math.round(sec / 60)} minutes`;
+  if (sec < 86400) { const h = sec / 3600; return h < 2 ? "about an hour" : `about ${Math.round(h)} hours`; }
+  const d = Math.round((sec / 86400) * 2) / 2;
+  return d <= 1 ? "about a day" : `about ${d} days`;
+}
+/** The fill-time line for one platform:currency pair, with the
+ *  gate verdicts the sheet needs: `gated` = passes the §2.11
+ *  promotion gate (fills ≥ 10 AND median ≤ 48h); `slow` = median
+ *  over 24h (the Venmo shape — labelled, never hidden). */
+export function peerFillTimeLine(stats, platform, currency) {
+  const s = peerPairFillStats(stats, platform, currency);
+  if (!s || !Number.isFinite(s.medianFillSeconds) || s.medianFillSeconds <= 0) return null;
+  const label = peerFillSecondsLabel(s.medianFillSeconds);
+  if (!label) return null;
+  return {
+    fills: s.fills, medianFillSeconds: s.medianFillSeconds,
+    gated: s.fills >= 10 && s.medianFillSeconds <= 48 * 3600,
+    slow: s.medianFillSeconds > 24 * 3600,
+    line: `Buyers took orders like this in ${label} over the last 30 days — an average, not a promise`,
+  };
+}
+
+/** Corridor platforms from a live capabilities() payload: the
+ *  corridor's lead platforms first (in corridor order), then any
+ *  other platform the catalog offers for the currency. Each entry
+ *  carries the catalog's own payee hint and its
+ *  identity-attestation flag (platforms that need an
+ *  already-registered handle). */
+export function peerPlatformsForCurrency(caps, currency) {
+  const corridor = peerSellCorridor(currency);
+  if (!caps || !Array.isArray(caps.platforms) || !corridor) return [];
+  const usable = caps.platforms.filter(p => p && Array.isArray(p.currencies) && p.currencies.includes(currency));
+  const byId = new Map(usable.map(p => [p.platform, p]));
+  const out = [];
+  for (const id of corridor.lead) { const p = byId.get(id); if (p) { out.push(p); byId.delete(id); } }
+  for (const p of byId.values()) out.push(p);
+  return out;
+}
+
+const peerAsciiHex = (s) => [...s].map(ch => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+/** Capture guard, run on EVERY prepared plan before Fluid signs
+ *  anything: each transaction's calldata must carry exactly one
+ *  `peer-ref-<CODE>` ERC-8021 marker, preceded by the `peer-cash`
+ *  marker. A plan that fails is refused, never broadcast — the
+ *  route exists to earn the 50 bps, and a silent marker drop by
+ *  an SDK update must fail loud here, not at payout time. */
+export function peerAttributionCheck(txs, code = PEER_REFERRAL_CODE) {
+  if (!peerReferralConfigured(code)) return { ok: false, reason: "the referral code is missing or malformed" };
+  if (!Array.isArray(txs) || txs.length === 0) return { ok: false, reason: "no transactions were prepared" };
+  const cashHex = peerAsciiHex("peer-cash"), refHex = peerAsciiHex("peer-ref-" + code.trim());
+  for (const tx of txs) {
+    const data = String((tx && tx.data) || "").toLowerCase();
+    const refCount = data.split(refHex).length - 1;
+    const cashCount = data.split(cashHex).length - 1;
+    if (refCount !== 1) return { ok: false, reason: `a prepared transaction carries ${refCount} referral markers (exactly one expected)` };
+    if (cashCount < 1) return { ok: false, reason: "a prepared transaction is missing the peer-cash marker" };
+    if (data.indexOf(cashHex) > data.indexOf(refHex)) return { ok: false, reason: "the referral marker precedes the peer-cash marker" };
+  }
+  return { ok: true };
+}
+
+/** Plain-language copy for every Peer failure the sheet can hit.
+ *  SDK error codes map to their honest sentence; a raw SDK error
+ *  string never reaches the user. */
+export function peerErrorCopy(err) {
+  const code = (err && (err.code || (err.cause && err.cause.code))) || "";
+  switch (code) {
+    case "AMOUNT_BELOW_MINIMUM": return "Peer cash-outs start at 0.50 USDC — increase the amount.";
+    case "PAYEE_VERIFICATION_REQUIRED": return "Peer can't take a new handle for this app yet — use a handle you've already registered with Peer, or pick another app.";
+    case "PAYEE_REGISTRATION_FAILED": return "Peer couldn't register that handle — check it matches your handle on that app exactly, then try again.";
+    case "INVALID_REFERRAL_CODE": return "Peer's referral setup isn't available right now — the route is paused rather than run without it.";
+    case "ORDER_NOT_FOUND": case "INDEXER_LAG": return "Peer is still indexing this order — give it a few seconds and refresh.";
+    case "INDEXER_UNAVAILABLE": return "Peer's order index isn't answering right now — try again in a moment.";
+    case "INSUFFICIENT_TOKEN_BALANCE": return "Your Base USDC balance is below the amount entered.";
+    case "ACTIVE_INTENT_BLOCKS_WITHDRAWAL": return "A buyer is mid-payment on this order — withdrawal opens again once their window closes.";
+    case "NOTHING_TO_WITHDRAW": return "There's nothing left to withdraw on this order.";
+    case "ATTRIBUTION_MISSING": return "Fluid stopped before sending: the prepared transactions were missing Fluid's referral marker, so this sale would have earned nothing. Nothing was sent.";
+    case "UNSUPPORTED_PLATFORM": case "UNSUPPORTED_PLATFORM_CURRENCY": return "Peer doesn't offer that app for this currency — pick another app.";
+    default: break;
+  }
+  const msg = String((err && err.message) || "");
+  if (/user rejected|user denied|ACTION_REJECTED/i.test(msg)) return "You cancelled the signature — nothing was sent.";
+  return "Something went wrong with Peer just now — nothing more was sent. Try again in a moment.";
+}
+
+export const PEER_ORDER_STATE_COPY = {
+  "awaiting-buyer": "Waiting for a buyer — your USDC sits in Peer's escrow contract, and you can withdraw it back at any time.",
+  "matched": "A buyer has taken your order and is sending the payment to your handle.",
+  "delivering": "The payment is being proven and the escrow is releasing your USDC to the buyer.",
+  "delivered": "Delivered — the buyer paid, the proof checked out, and the escrow released your USDC.",
+  "returned": "Closed with no completed payment — withdraw whatever remains back to your wallet.",
+};
+
+let peerClientCache = null;
+/** The production Peer Cash client (chunk-loaded, referral
+ *  configured). A clientOverride is the test seam — unit pins
+ *  drive the prepare/send paths against a stubbed client with
+ *  the same surface. Construction fails closed on a malformed
+ *  referral constant: no client, no route. */
+export async function peerCashClient(clientOverride) {
+  if (clientOverride) return clientOverride;
+  if (!peerReferralConfigured()) { const e = new Error("Peer's referral code is not configured."); e.code = "INVALID_REFERRAL_CODE"; throw e; }
+  const mod = await loadPeerSdk();
+  if (!peerClientCache) {
+    peerClientCache = mod.createCashClient({ environment: "production", referralCode: PEER_REFERRAL_CODE, rpcUrl: NETWORKS.base.rpc });
+  }
+  return peerClientCache;
+}
+export async function peerCapabilities(clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.capabilities();
+}
+export async function peerFillStats(clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.fillStats();
+}
+/** Oracle estimate for a cash-out (no payee, no side effects).
+ *  The rate binds at the moment a buyer signals — the sheet
+ *  renders it with the ≈ binding note, never as a locked quote. */
+export async function peerEstimate({ amountRaw, currency, platform }, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.estimate({ amount: BigInt(amountRaw), currency, platform }, { includeEta: false });
+}
+
+/** Prepare a cash-out WITHOUT signing: the SDK registers the
+ *  payee with the Curator (a new handle on an
+ *  identity-attestation platform throws PAYEE_VERIFICATION_REQUIRED
+ *  here — before any transaction exists) and returns the unsigned
+ *  plan [approve, createDeposit]. The plan is attribution-checked
+ *  before it is handed back; a marker-less plan throws
+ *  ATTRIBUTION_MISSING and nothing is ever signed from it. */
+export async function peerPrepareSell({ amountRaw, currency, platform, payee }, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  const prep = await c.prepare({ amount: BigInt(amountRaw), receive: { platform, currency, payee } });
+  const check = peerAttributionCheck(prep.txs);
+  if (!check.ok) { const e = new Error("Prepared Peer transactions failed the attribution check: " + check.reason); e.code = "ATTRIBUTION_MISSING"; throw e; }
+  return prep;
+}
+
+/** Send prepared Peer transactions with Fluid's own signer, in
+ *  order, each confirmed before the next (the CCTP discipline:
+ *  populate → sign → hash → broadcast → wait; a broadcast the
+ *  network provably never saw is the only retryable failure, and
+ *  it is not retried here — the caller surfaces it). */
+export async function peerSendPrepared(wallet, txs) {
+  const signer = wallet.connect(providerFor("base"));
+  const out = [];
+  for (const tx of txs) {
+    const populated = await signer.populateTransaction({ to: tx.to, data: tx.data, value: BigInt(tx.value ?? 0), chainId: 8453 });
+    const signed = await signer.signTransaction(populated);
+    const hash = ethers.keccak256(signed);
+    try { await signer.provider.broadcastTransaction(signed); }
+    catch (e) {
+      let known = false;
+      try { known = !!(await signer.provider.getTransaction(hash)); } catch { /* unknown is the answer we need */ }
+      if (!known) throw e;
+    }
+    const receipt = await signer.provider.waitForTransaction(hash).catch(() => null);
+    if (!receipt || Number(receipt.status) !== 1) throw new Error("A Peer transaction failed on-chain — check your Base balances and try again.");
+    out.push({ hash, receipt });
+  }
+  return out;
+}
+
+/** An ethers receipt → the viem-shaped receipt
+ *  finalizePreparedCashout parses for the deposit event. */
+export function peerViemReceipt(hash, ethersReceipt) {
+  return {
+    transactionHash: hash,
+    status: Number(ethersReceipt.status) === 1 ? "success" : "reverted",
+    logs: (ethersReceipt.logs || []).map(l => ({
+      address: l.address,
+      topics: [...(l.topics || [])],
+      data: l.data,
+      blockHash: l.blockHash,
+      blockNumber: BigInt(l.blockNumber),
+      logIndex: l.index ?? l.logIndex ?? 0,
+      transactionHash: l.transactionHash || hash,
+      transactionIndex: l.transactionIndex ?? 0,
+      removed: false,
+    })),
+  };
+}
+
+/** The full sell execution: prepare → attribution check → Fluid
+ *  signs each step → finalize from the createDeposit receipt →
+ *  persistable depositId → any restricted-leg access-policy
+ *  follow-ups the prepare flagged (Peer Pay merchant-group
+ *  policy; without it those buyers must stake, with it they
+ *  skip staking — the deposit works either way, so a policy
+ *  failure is reported in the result, never fatal to the order). */
+export async function peerExecuteSell(wallet, { amountRaw, currency, platform, payee }, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  const prep = await peerPrepareSell({ amountRaw, currency, platform, payee }, c);
+  const depIdx = prep.steps.findIndex(s => s && s.kind === "createDeposit");
+  const sent = await peerSendPrepared(wallet, prep.txs);
+  const depSent = sent[depIdx >= 0 ? depIdx : sent.length - 1];
+  const result = c.finalizePreparedCashout(peerViemReceipt(depSent.hash, depSent.receipt));
+  const policyHashes = [];
+  let policyError = null;
+  if (prep.accessPolicyRequired && Array.isArray(prep.accessPolicyPaymentMethods)) {
+    for (const method of prep.accessPolicyPaymentMethods) {
+      try {
+        const ptx = c.prepareAccessPolicy(result.depositId, method);
+        const ps = await peerSendPrepared(wallet, [ptx]);
+        policyHashes.push(ps[0].hash);
+      } catch (e) { policyError = e; break; }
+    }
+  }
+  return { depositId: result.depositId, txHash: depSent.hash, order: result.order, policyHashes, policyError };
+}
+
+/** Withdraw (full close when amountRaw is null, partial
+ *  otherwise) through the unsigned prepare path, attribution
+ *  checked like every Peer plan. */
+export async function peerExecuteWithdraw(wallet, depositId, amountRaw, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  const prep = await c.prepareWithdraw(depositId, amountRaw != null ? { amount: BigInt(amountRaw) } : {});
+  const check = peerAttributionCheck(prep.txs);
+  if (!check.ok) { const e = new Error("Prepared Peer withdrawal failed the attribution check: " + check.reason); e.code = "ATTRIBUTION_MISSING"; throw e; }
+  const sent = await peerSendPrepared(wallet, prep.txs);
+  return { txHashes: sent.map(s => s.hash) };
+}
+/** Top up a live order (same payee, same market rate) through
+ *  the unsigned prepare path. */
+export async function peerExecuteTopUp(wallet, depositId, amountRaw, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  const prep = await c.prepareTopUp(depositId, BigInt(amountRaw));
+  const check = peerAttributionCheck(prep.txs);
+  if (!check.ok) { const e = new Error("Prepared Peer top-up failed the attribution check: " + check.reason); e.code = "ATTRIBUTION_MISSING"; throw e; }
+  const sent = await peerSendPrepared(wallet, prep.txs);
+  return { txHashes: sent.map(s => s.hash) };
+}
+
+export async function peerOrder(depositId, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.order(depositId);
+}
+export async function peerOrders(owner, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.orders(owner, { limit: 25 });
+}
+export async function peerBuyerProfile(address, clientOverride) {
+  const c = await peerCashClient(clientOverride);
+  return c.buyer(address);
+}
+
+/** The sheet's Base balances, read fresh on Base itself (the
+ *  home list may be showing another network): USDC available to
+ *  sell, and the ETH that pays the network fees. */
+export async function peerBaseBalances(wallet) {
+  return withEvmProvider("base", async (provider) => {
+    const usdc = new ethers.Contract(PEER_BASE_USDC, ERC20_ABI, provider);
+    const [usdcRaw, ethRaw] = await Promise.all([usdc.balanceOf(wallet.address), provider.getBalance(wallet.address)]);
+    return { usdcRaw: usdcRaw.toString(), ethRaw: ethRaw.toString() };
+  });
+}
+
+/* ---------- Peer BUY book (read-only, public indexer) ----------
+ * The buy side's honest surface: Peer's live order book from its
+ * public indexer (the same read the 2026-11-15 prep measured).
+ * A deposit counts as a live offer for a currency when it is
+ * accepting intents, still holds at least its own minimum, and a
+ * MethodCurrency row prices it in that currency. Rates are the
+ * deposits' own conversion rates (fiat per USDC, 1e18-scaled) —
+ * hostile remote data: non-finite or non-positive values are
+ * dropped, never displayed. */
+export function peerCurrencyHash(currency) {
+  return ethers.keccak256(ethers.toUtf8Bytes(String(currency || "").toUpperCase()));
+}
+export function parsePeerBook(deposits, methodCurrencies, currency) {
+  const hash = peerCurrencyHash(currency).toLowerCase();
+  const mcByDep = new Map();
+  for (const mc of methodCurrencies || []) {
+    if (!mc || String(mc.currencyCode || "").toLowerCase() !== hash) continue;
+    if (!mcByDep.has(mc.depositId)) mcByDep.set(mc.depositId, mc);
+  }
+  const offers = [];
+  for (const d of deposits || []) {
+    if (!d || d.acceptingIntents !== true) continue;
+    const mc = mcByDep.get(d.id);
+    if (!mc) continue;
+    const min = Number(d.intentAmountMin) / 1e6, max = Number(d.intentAmountMax) / 1e6, rem = Number(d.remainingDeposits) / 1e6;
+    const rate = Number(mc.conversionRate ?? mc.effectiveOracleRate ?? mc.oracleRate) / 1e18;
+    if (![min, max, rem, rate].every(Number.isFinite) || rate <= 0 || rem <= 0 || rem < Math.max(min, 0.000001)) continue;
+    offers.push({ minUsdc: min, maxUsdc: max, remainingUsdc: rem, rate });
+  }
+  offers.sort((a, b) => a.rate - b.rate);
+  const fillable = offers.filter(o => o.minUsdc <= PEER_MIN_SELL_USDC);
+  return {
+    currency,
+    offers: offers.slice(0, 8),
+    offerCount: offers.length,
+    fillable1Count: fillable.length,
+    fillable1Usdc: fillable.reduce((s, o) => s + o.remainingUsdc, 0),
+    smallestMinUsdc: offers.length ? Math.min(...offers.map(o => o.minUsdc)) : null,
+    totalRemainingUsdc: offers.reduce((s, o) => s + o.remainingUsdc, 0),
+  };
+}
+/** The floor-policy line for the buy sheet, from a parsed book:
+ *  the $1 floor is stated as LIVE only when the book actually
+ *  holds $1-fillable offers; otherwise the real smallest offer
+ *  is named. Never rounds a $5 book down to a $1 claim. */
+export function peerBookFloorLine(book) {
+  if (!book || !book.offerCount) return "No live offers on Peer's book for this currency right now.";
+  if (book.fillable1Count > 0) return `${book.fillable1Count} live offer${book.fillable1Count === 1 ? "" : "s"} take orders from $1 right now — Fluid's $1 floor is live on this book.`;
+  const sym = PEER_FIAT_SYMBOLS[book.currency] || "";
+  const smallest = book.offers && book.offers.length ? Math.min(...book.offers.map(o => o.minUsdc * o.rate)) : null;
+  return `No $1 offers on the book right now — the smallest live offer starts at about ${sym}${smallest != null ? (Math.round(smallest * 100) / 100) : "?"} of fiat. Fluid's floor stays $1: the moment a $1 offer exists, it shows here.`;
+}
+export async function fetchPeerBuyBook(currency, fetchImpl) {
+  const doFetch = fetchImpl || fetch;
+  const gql = async (query, variables) => {
+    const r = await doFetch(PEER_INDEXER_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined,
+    });
+    const j = await r.json();
+    if (!j || j.errors || !j.data) throw new Error("Peer's book didn't answer cleanly.");
+    return j.data;
+  };
+  // The book's smallest-minimum deposits first (500 is far past
+  // the measured $1-fillable counts: USD 152, EUR 24, GBP 17).
+  const depData = await gql(
+    `query ($limit: Int) { Deposit(where: {chainId: {_eq: 8453}, acceptingIntents: {_eq: true}}, order_by: {intentAmountMin: asc}, limit: $limit) { id depositId escrowAddress remainingDeposits intentAmountMin intentAmountMax acceptingIntents timestamp } }`,
+    { limit: 500 });
+  const deposits = depData.Deposit || [];
+  const ids = deposits.map(d => d.id);
+  const mcs = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const batch = ids.slice(i, i + 200);
+    const mcData = await gql(
+      `query ($ids: [String!]) { MethodCurrency(where: {depositId: {_in: $ids}}) { depositId currencyCode conversionRate oracleRate effectiveOracleRate spreadBps } }`,
+      { ids: batch });
+    mcs.push(...(mcData.MethodCurrency || []));
+  }
+  return { ...parsePeerBook(deposits, mcs, currency), asOf: Date.now(), capped: deposits.length >= 500 };
 }
 
 /** Paycrest's keyless public rates API — the cheapest verifiable NG
