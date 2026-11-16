@@ -20776,4 +20776,166 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
     vPair135.kind === "no-route-yet" && msgPair135.includes("No route exists for SAFU → SUI yet"));
 }
 
+// ---------- §136: EVM long-tail batch — audit gap #14 (2026-11-16) ----------
+// Twelve hand-verified built-ins. Rootstock + Flare carry the
+// OpenOcean intra rail (build-verified live at admission, fee
+// echo included); the other ten are presence-only — swaps are
+// an honest no-route. Satora chain 30 is deliberately NOT
+// wired: its keyed capture echo was PROVEN live at build time
+// (see the research addendum), but execution locks in an
+// HTLCNative v2 with no gasless funding and pays out through
+// RIF Relay smart wallets — two mechanisms Fluid does not
+// implement, and a route that refuses at creation is not
+// offered. Fixtures: the live admission probes, verbatim.
+{
+  const fx136 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const ACCT136 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const OO_EXCHANGE136 = "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64";
+  const RSK_USDT0 = "0x779dED0C9e1022225F8e0630b35A9B54Be713736";
+  const FLR_USDT0 = "0xe7cd86e13ac4309349f30b3435a9d337750fc82d";
+  const FLR_IMPOSTOR = "0x0b38e83b86d491735feaa0a791f65c2b99535396";
+  const entry136 = (key, chainId, symbol, priceSym, rpc, explorer) => {
+    const n = NETWORKS[key];
+    return !!n && n.chainId === chainId && n.symbol === symbol && n.priceSym === priceSym
+      && n.rpc === rpc && n.explorer === explorer;
+  };
+
+  // ---- Table-entry pins: all twelve, byte-exact ----
+  ok("gap14: Rootstock entry (30, RBTC, verified RPC rotation, USDT0 pin)",
+    entry136("rootstock", 30, "RBTC", "BTC", "https://public-node.rsk.co", "https://explorer.rootstock.io")
+    && JSON.stringify(NETWORKS.rootstock.rpcs) === JSON.stringify(["https://public-node.rsk.co", "https://mycrypto.rsk.co"])
+    && NETWORKS.rootstock.rpcFallback === "https://mycrypto.rsk.co"
+    && NETWORKS.rootstock.tokens.length === 1 && NETWORKS.rootstock.tokens[0].address === RSK_USDT0
+    && NETWORKS.rootstock.tokens[0].symbol === "USDT" && NETWORKS.rootstock.tokens[0].decimals === 6);
+  ok("gap14: Flare entry (14, FLR, USDT0 pin — the same-name impostor is never pinned)",
+    entry136("flare", 14, "FLR", "FLR", "https://flare.drpc.org", "https://flare-explorer.flare.network")
+    && NETWORKS.flare.tokens.length === 1 && NETWORKS.flare.tokens[0].address === FLR_USDT0
+    && NETWORKS.flare.tokens[0].symbol === "USDT" && NETWORKS.flare.tokens[0].decimals === 6
+    && !JSON.stringify(NETWORKS.flare.tokens).toLowerCase().includes(FLR_IMPOSTOR));
+  ok("gap14: Kaia + Filecoin + Taiko entries (presence-only, no stable pin)",
+    entry136("kaia", 8217, "KAIA", "KAIA", "https://kaia.drpc.org", "https://kaiscan.io") && NETWORKS.kaia.tokens.length === 0
+    && entry136("filecoin", 314, "FIL", "FIL", "https://filecoin.drpc.org", "https://filfox.info") && NETWORKS.filecoin.tokens.length === 0
+    && entry136("taiko", 167000, "ETH", "ETH", "https://taiko.drpc.org", "https://taikoscan.io") && NETWORKS.taiko.tokens.length === 0);
+  ok("gap14: Core + Kava entries (Kava pins Tether's canonical USDt)",
+    entry136("core", 1116, "CORE", "CORE", "https://rpc.coredao.org", "https://scan.coredao.org") && NETWORKS.core.tokens.length === 0
+    && entry136("kava", 2222, "KAVA", "KAVA", "https://kava.drpc.org", "https://kavascan.io")
+    && NETWORKS.kava.tokens.length === 1 && NETWORKS.kava.tokens[0].address === "0x919C1c267BC06a7039e03fcc2eF738525769109c"
+    && NETWORKS.kava.tokens[0].symbol === "USDT" && NETWORKS.kava.tokens[0].decimals === 6);
+  ok("gap14: Cronos zkEVM entry — NO stable pin (Circle's Cronos USDC is chain 25, not 388)",
+    entry136("cronoszkevm", 388, "zkCRO", "CRO", "https://cronos-zkevm.drpc.org", "https://explorer.zkevm.cronos.org")
+    && NETWORKS.cronoszkevm.tokens.length === 0);
+  ok("gap14: Aurora entry (Rainbow-bridge canonical USDC + USDT pinned)",
+    entry136("aurora", 1313161554, "ETH", "ETH", "https://aurora.drpc.org", "https://explorer.aurora.dev")
+    && NETWORKS.aurora.tokens.length === 2
+    && NETWORKS.aurora.tokens[0].address === "0xB12BFcA5A55806AaF64E99521918A4bf0fC40802" && NETWORKS.aurora.tokens[0].symbol === "USDC"
+    && NETWORKS.aurora.tokens[1].address === "0x4988a896b1227218e4A686fdE5EabdcAbd91571f" && NETWORKS.aurora.tokens[1].symbol === "USDT");
+  ok("gap14: Moonriver entry — native only (the defunct-Multichain stables are never pinned)",
+    entry136("moonriver", 1285, "MOVR", "MOVR", "https://moonriver.drpc.org", "https://moonriver.moonscan.io")
+    && NETWORKS.moonriver.tokens.length === 0
+    && !JSON.stringify(NETWORKS.moonriver.tokens).toLowerCase().includes("0xe3f5a90f9cb311505cd691a46596599aa1a0ad7d")
+    && !JSON.stringify(NETWORKS.moonriver.tokens).toLowerCase().includes("0xb44a9b6905af7c801311e8f4e76932ee959c663c"));
+  ok("gap14: Bitlayer + TAC entries (presence-only)",
+    entry136("bitlayer", 200901, "BTC", "BTC", "https://rpc.bitlayer.org", "https://www.btrscan.com") && NETWORKS.bitlayer.tokens.length === 0
+    && entry136("tac", 239, "TAC", "TAC", "https://tac.drpc.org", "https://explorer.tac.build") && NETWORKS.tac.tokens.length === 0);
+  const { builtinNetworkForChainId: builtin136, cgPlatformForChain: cgPlatform136 } = await import("../src/wallet-core.js");
+  ok("gap14: the twelve resolve as built-ins and swap chains under their fresh keys",
+    builtin136(30) === NETWORKS.rootstock && builtin136(14) === NETWORKS.flare
+    && builtin136(8217) === NETWORKS.kaia && builtin136(1313161554) === NETWORKS.aurora
+    && ["rootstock", "flare", "kaia", "filecoin", "taiko", "core", "kava", "cronoszkevm", "aurora", "moonriver", "bitlayer", "tac"]
+      .every(k => swapChainOf(k)?.chainId === NETWORKS[k].chainId));
+  ok("gap14: CoinGecko platform + token-list slugs for Rootstock and Flare",
+    cgPlatform136(30) === "rootstock" && cgPlatform136(14) === "flare-network"
+    && COINGECKO_TOKEN_LIST_SLUGS[30] === "rootstock" && COINGECKO_TOKEN_LIST_SLUGS[14] === "flare-network");
+
+  // ---- OpenOcean rail: gates, pins, the live-fixture echo ----
+  const argsRskOo = { fromChainKey: "rootstock", toChainKey: "rootstock", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: RSK_USDT0, fromAmount: "10000000000000000", fromAddress: ACCT136, toAddress: ACCT136 };
+  const argsFlrOo = { fromChainKey: "flare", toChainKey: "flare", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: FLR_USDT0, fromAmount: "1000000000000000000000", fromAddress: ACCT136, toAddress: ACCT136 };
+  ok("gap14: OpenOcean serves exactly Rootstock + Flare beyond the gap-#5 pair",
+    OPENOCEAN_CHAINS[30] === "rootstock" && OPENOCEAN_CHAINS[14] === "flare"
+    && OPENOCEAN_EXCHANGE[30] === OO_EXCHANGE136 && OPENOCEAN_EXCHANGE[14] === OO_EXCHANGE136
+    && openOceanSupportsPair(argsRskOo)?.chainId === 30 && openOceanSupportsPair(argsFlrOo)?.chainId === 14
+    && openOceanSupportsPair({ ...argsRskOo, toChainKey: "flare" }) === null);
+  ok("gap14: OpenOcean refuses every presence-only chain (a token list is not a route)",
+    ["kaia", "filecoin", "taiko", "core", "kava", "cronoszkevm", "aurora", "moonriver", "bitlayer", "tac"]
+      .every(k => openOceanSupportsPair({ fromChainKey: k, toChainKey: k, fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS }) === null));
+  const oo30Free = fx136("gap14-oo-30-free.json").data, oo30Fee = fx136("gap14-oo-30-fee.json").data;
+  const oo14Free = fx136("gap14-oo-14-free.json").data, oo14Fee = fx136("gap14-oo-14-fee.json").data;
+  ok("gap14: echo — the live admission A/B matches the 0.625 dial on both chains",
+    openOceanFeeEchoOk(oo30Free.outAmount, oo30Fee.outAmount, 0.625) === true
+    && openOceanFeeEchoOk(oo14Free.outAmount, oo14Fee.outAmount, 0.625) === true);
+  ok("gap14: parse — the live native builds normalise (pinned exchange, full amount as value)",
+    (() => { const p = parseOpenOceanSwap(oo30Free, { chainId: 30, fromAmountRaw: "10000000000000000", nativeInput: true });
+      return !!p && p.to === OO_EXCHANGE136 && p.value === "10000000000000000" && p.outAmount === oo30Free.outAmount; })()
+    && (() => { const p = parseOpenOceanSwap(oo14Free, { chainId: 14, fromAmountRaw: "1000000000000000000000", nativeInput: true });
+      return !!p && p.to === OO_EXCHANGE136 && p.value === "1000000000000000000000" && p.outAmount === oo14Free.outAmount; })());
+
+  // ---- Satora chain 30: NOT wired, deliberately (see header) ----
+  ok("gap14: Satora refuses Rootstock pairs — execution unbuilt, so no route is offered",
+    satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: "", fromAmount: "500000000000000" }) === null
+    && satoraSupportsPair({ fromChainKey: "bitcoin", toChainKey: "rootstock", fromTokenAddress: "", toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "50000" }) === null
+    && relaySupportsPair("rootstock", "rootstock") === false && relaySupportsPair("kaia", "kaia") === false);
+
+  // ---- Dispatcher level (§134 discipline): the REAL
+  // getSwapRoutes, the sheet's exact args shape, a fetch stub
+  // that serves the live fixtures to the OpenOcean host and
+  // refuses everything else. The OpenOcean candidate must
+  // actually be invoked and return a collecting route.
+  const jsonRes136 = (body) => ({ ok: true, status: 200, json: async () => body });
+  const { resetPricesCache: resetPrices136 } = await import("../src/wallet-core.js");
+  resetPrices136();
+  const prevFetch136 = globalThis.fetch;
+  const seen136 = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    seen136.push(u);
+    if (u.includes("open-api.openocean.finance")) {
+      const fee = u.includes("referrerFee=");
+      if (u.includes("/30/")) return jsonRes136({ code: 200, data: fee ? oo30Fee : oo30Free });
+      if (u.includes("/14/")) return jsonRes136({ code: 200, data: fee ? oo14Fee : oo14Free });
+      return jsonRes136({ code: 404 });
+    }
+    // The fee law prices from the wallet's verified table:
+    // serve the Binance batch for BTC (RBTC's priceSym) at
+    // the level the captured quote itself implies — at
+    // capture the quote was break-even against spot, so the
+    // law charged its cap rate (the pair's 0.625 dial). At a
+    // materially higher spot the same quote's spread alone
+    // would bust the $0.20 EVM total-cost ceiling and the
+    // route would ship fee-free: the law working as designed,
+    // not a wiring fault. FLR has no Binance/CoinGecko feed —
+    // its route prices from the build's own usd fields, the
+    // documented fallback, exactly as in production.
+    if (u.includes("api.binance.com")) return jsonRes136([{ symbol: "BTCUSDT", price: "64900" }]);
+    throw new Error("gap14 stub: unexpected " + u.slice(0, 80));
+  };
+  try {
+    const routesRsk = await getSwapRoutes({ fromChainKey: "rootstock", toChainKey: "rootstock",
+      fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: RSK_USDT0, fromAmount: "10000000000000000",
+      fromAddress: ACCT136, toAddress: ACCT136, addresses: { evm: ACCT136 } });
+    const ooRsk = (routesRsk || []).find(r => r.provider === "openocean");
+    ok("gap14: dispatcher — Rootstock RBTC->USDT0 returns the OpenOcean route, collecting on a verified echo",
+      !!ooRsk && ooRsk.toChainId === 30 && ooRsk.openocean?.chainId === 30 && ooRsk.platformFeeCollecting === true && ooRsk.openocean?.feeEcho?.ok === true
+      && ooRsk.toAmount === oo30Fee.outAmount
+      && seen136.some(u => u.includes("open-api.openocean.finance/v4/30/swap"))
+      && swapRouteExecutable(ooRsk).ok === true && checkOpenOceanSwapBounds(ooRsk, ACCT136).ok === true);
+    seen136.length = 0;
+    const routesFlr = await getSwapRoutes({ fromChainKey: "flare", toChainKey: "flare",
+      fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: FLR_USDT0, fromAmount: "1000000000000000000000",
+      fromAddress: ACCT136, toAddress: ACCT136, addresses: { evm: ACCT136 } });
+    const ooFlr = (routesFlr || []).find(r => r.provider === "openocean");
+    ok("gap14: dispatcher — Flare FLR->USDT0 returns the OpenOcean route, collecting on a verified echo",
+      !!ooFlr && ooFlr.toChainId === 14 && ooFlr.openocean?.chainId === 14 && ooFlr.platformFeeCollecting === true && ooFlr.openocean?.feeEcho?.ok === true
+      && ooFlr.toAmount === oo14Fee.outAmount
+      && seen136.some(u => u.includes("open-api.openocean.finance/v4/14/swap"))
+      && swapRouteExecutable(ooFlr).ok === true && checkOpenOceanSwapBounds(ooFlr, ACCT136).ok === true);
+    const routesKaia = await getSwapRoutes({ fromChainKey: "kaia", toChainKey: "kaia",
+      fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "1000000000000000000",
+      fromAddress: ACCT136, toAddress: ACCT136, addresses: { evm: ACCT136 } });
+    ok("gap14: dispatcher — a presence-only chain returns no OpenOcean route (honest no-route)",
+      !(routesKaia || []).some(r => r.provider === "openocean"));
+  } finally {
+    globalThis.fetch = prevFetch136;
+  }
+}
+
 console.log(`\n${passed} checks passed`);

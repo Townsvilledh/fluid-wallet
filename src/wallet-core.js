@@ -285,6 +285,149 @@ export const NETWORKS = {
     rpcFallback: "https://robinhood-rpc.publicnode.com",
     tokens: [USDG("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"), WETH("0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73")],
   },
+  // ---- EVM long-tail batch (audit gap #14, 2026-11-16) ----
+  // Twelve hand-verified built-ins from one rail-probe pass
+  // (research_notes/fluid-evm-longtail-20261116: probe notes +
+  // 92 fixtures + the build addendum). None of the twelve is
+  // auto-discovered — no swap router Fluid runs lists any of
+  // them — so, like HyperEVM, each joins by hand with its RPC
+  // verified against the chain itself (eth_chainId from this
+  // machine). Only Rootstock and Flare carry a swap rail
+  // (OpenOcean intra, below); the other ten are presence-only:
+  // derive, hold, receive, send — swaps are an honest
+  // no-route until a rail with capture answers for them.
+  // Rootstock (30): Bitcoin's oldest sidechain; RBTC is the
+  // native coin (priced as BTC). Both public nodes verified
+  // (chainId 0x1e, blocks flowing). The pinned stable is
+  // USD₮0 — Tether's LayerZero OFT form, the traded dollar on
+  // RSK (OpenOcean's live list + builds); its contract symbol
+  // is "USD₮0", pinned here as the chain's USDT with the
+  // provenance named (rUSDT, the token-bridge form, is NOT
+  // pinned). Satora quotes RBTC ↔ BTC/Lightning/Arkade with
+  // the keyed capture echo PROVEN live at build time — but
+  // its execution is NOT wired: chain-30 swaps lock in an
+  // HTLCNative v2 (no gasless funding) and pay out through
+  // RIF Relay smart wallets, two mechanisms Fluid does not
+  // implement; the full evidence is the research addendum.
+  // A route that would refuse at creation is not offered.
+  rootstock: {
+    name: "Rootstock", chainId: 30, symbol: "RBTC", priceSym: "BTC",
+    rpc: "https://public-node.rsk.co", explorer: "https://explorer.rootstock.io",
+    rpcs: [
+      "https://public-node.rsk.co",
+      "https://mycrypto.rsk.co",
+    ],
+    rpcFallback: "https://mycrypto.rsk.co",
+    tokens: [USDT("0x779dED0C9e1022225F8e0630b35A9B54Be713736")],
+  },
+  // Flare (14): OpenOcean intra only (Relay refuses the chain
+  // explicitly). The pinned stable is USD₮0 (LayerZero) at
+  // 0xe7cd86e1… — Flare's adopted dollar, quoted live at
+  // build time. IMPOSTOR CAUTION: an unrelated same-name
+  // "USDT" at 0x0b38e83b86d491735feaa0a791f65c2b99535396
+  // also trades on Flare; it is never pinned and never
+  // offered (the Robinhood rule). USDC.e (bridged) is not
+  // pinned either — USD₮0 is the chain's dollar here.
+  flare: {
+    name: "Flare", chainId: 14, symbol: "FLR", priceSym: "FLR",
+    rpc: "https://flare.drpc.org", explorer: "https://flare-explorer.flare.network",
+    tokens: [USDT("0xe7cd86e13ac4309349f30b3435a9d337750fc82d")],
+  },
+  // Kaia (8217): presence only. Relay refuses the chain
+  // explicitly (UNSUPPORTED_CHAIN, live quote); OpenOcean's
+  // token list answers but its /swap refuses — a list is not
+  // a route. No stable pinned: the traded dollars are
+  // Orbit-bridged forms, and Tether's canonical ex-Klaytn
+  // deployment is not the traded one — no pin without a rail.
+  kaia: {
+    name: "Kaia", chainId: 8217, symbol: "KAIA", priceSym: "KAIA",
+    rpc: "https://kaia.drpc.org", explorer: "https://kaiscan.io",
+    tokens: [],
+  },
+  // Filecoin FEVM (314): presence only; no rail lists it
+  // (OpenOcean's token list errored server-side and the
+  // chain is absent from its support list). No canonical
+  // stable pinned — a pin is moot without a rail.
+  filecoin: {
+    name: "Filecoin", chainId: 314, symbol: "FIL", priceSym: "FIL",
+    rpc: "https://filecoin.drpc.org", explorer: "https://filfox.info",
+    tokens: [],
+  },
+  // Taiko (167000): presence only. Across refuses it
+  // explicitly ("Unsupported token on given origin chain");
+  // no other rail lists it. Bridged stables exist via the
+  // canonical bridge but are not pinned without a rail.
+  taiko: {
+    name: "Taiko", chainId: 167000, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://taiko.drpc.org", explorer: "https://taikoscan.io",
+    tokens: [],
+  },
+  // Core (1116): presence only; no rail lists it anywhere
+  // probed. RPC verified against the chain's own endpoint
+  // (0x45c, blocks flowing).
+  core: {
+    name: "Core", chainId: 1116, symbol: "CORE", priceSym: "CORE",
+    rpc: "https://rpc.coredao.org", explorer: "https://scan.coredao.org",
+    tokens: [],
+  },
+  // Kava (2222): presence only. OpenOcean's token list
+  // answers (23 tokens) but /swap refuses in both path
+  // forms — no quotable route. The pinned stable is
+  // Tether's canonical Kava deployment (USDt, 6 decimals,
+  // verified on-chain at build time).
+  kava: {
+    name: "Kava", chainId: 2222, symbol: "KAVA", priceSym: "KAVA",
+    rpc: "https://kava.drpc.org", explorer: "https://kavascan.io",
+    tokens: [USDT("0x919C1c267BC06a7039e03fcc2eF738525769109c")],
+  },
+  // Cronos zkEVM (388): presence only; no rail lists it.
+  // NO stable pin, deliberately: Circle's official list has
+  // no USDC here — its "Cronos" row is chain 25 (Cronos
+  // EVM), a different chain; pinning that address here
+  // would pin a contract that does not exist on 388.
+  cronoszkevm: {
+    name: "Cronos zkEVM", chainId: 388, symbol: "zkCRO", priceSym: "CRO",
+    rpc: "https://cronos-zkevm.drpc.org", explorer: "https://explorer.zkevm.cronos.org",
+    tokens: [],
+  },
+  // Aurora (1313161554): presence only. OpenOcean's token
+  // list answers but /swap refuses. The pinned stables are
+  // the chain's canonical dollars — the Rainbow-bridge
+  // forms minted from Ethereum mainnet (both 6 decimals,
+  // verified on-chain at build time).
+  aurora: {
+    name: "Aurora", chainId: 1313161554, symbol: "ETH", priceSym: "ETH",
+    rpc: "https://aurora.drpc.org", explorer: "https://explorer.aurora.dev",
+    tokens: [USDC("0xB12BFcA5A55806AaF64E99521918A4bf0fC40802"), USDT("0x4988a896b1227218e4A686fdE5EabdcAbd91571f")],
+  },
+  // Moonriver (1285): presence only. OpenOcean's token list
+  // answers but /swap refuses. NO stable pin: the traded
+  // dollars are Multichain-era bridged forms and that
+  // bridge is defunct — their value is impaired, and a pin
+  // would present them as the chain's canonical dollars.
+  // Native MOVR only until a live canonical stable verifies.
+  moonriver: {
+    name: "Moonriver", chainId: 1285, symbol: "MOVR", priceSym: "MOVR",
+    rpc: "https://moonriver.drpc.org", explorer: "https://moonriver.moonscan.io",
+    tokens: [],
+  },
+  // Bitlayer (200901): presence only; no rail lists it.
+  // The native coin is BTC itself (priced as BTC). RPC
+  // verified on the chain's own endpoint (0x310c5).
+  bitlayer: {
+    name: "Bitlayer", chainId: 200901, symbol: "BTC", priceSym: "BTC",
+    rpc: "https://rpc.bitlayer.org", explorer: "https://www.btrscan.com",
+    tokens: [],
+  },
+  // TAC (239): presence only. OpenOcean's token list
+  // answers but /swap refuses. No stable pinned: the
+  // traded dollar is a TON-bridged form with no rail to
+  // price it against — native TAC only for now.
+  tac: {
+    name: "TAC", chainId: 239, symbol: "TAC", priceSym: "TAC",
+    rpc: "https://tac.drpc.org", explorer: "https://explorer.tac.build",
+    tokens: [],
+  },
   sepolia: {
     name: "Sepolia (testnet)", chainId: 11155111, symbol: "ETH", priceSym: null,
     rpc: "https://ethereum-sepolia-rpc.publicnode.com", explorer: "https://sepolia.etherscan.io",
@@ -10580,7 +10723,7 @@ export async function executeRelayTonSwapRoute(wallet, route, onProgress = () =>
   return [hash];
 }
 
-/* ---------- OpenOcean (Sei EVM + Injective EVM same-chain, 2026-11-15) ----------
+/* ---------- OpenOcean (same-chain: Sei EVM + Injective EVM, 2026-11-15; Rootstock + Flare, gap #14, 2026-11-16) ----------
  * Audit gap #5's swap rail: OpenOcean is the ONLY aggregator
  * that quotes Sei EVM (1329) or Injective EVM (1776) — Relay,
  * Across, 1Click, Mayan, Squid and KyberSwap were all probed
@@ -10629,21 +10772,30 @@ export async function executeRelayTonSwapRoute(wallet, route, onProgress = () =>
  * (what actually leaves the user's trade), never the assumed
  * net. */
 export const OPENOCEAN_API = "https://open-api.openocean.finance/v4";
-/** The chains this rail serves: chainId -> NETWORKS key. */
-export const OPENOCEAN_CHAINS = { 1329: "seievm", 1776: "injectiveevm" };
+/** The chains this rail serves: chainId -> NETWORKS key.
+ *  Gap #14 (2026-11-16) added Rootstock (30) and Flare (14):
+ *  of the seven long-tail chains whose OpenOcean token list
+ *  answers, /swap builds ONLY for these two (the other five
+ *  refuse in both path forms — a token list is not a route).
+ *  Both were build-verified live at admission, fee echo
+ *  included (research_notes/fluid-evm-longtail-20261116). */
+export const OPENOCEAN_CHAINS = { 1329: "seievm", 1776: "injectiveevm", 30: "rootstock", 14: "flare" };
 /** OpenOcean's exchange contract per chain, pinned from quoted
- *  builds (both chains quoted the same contract in every probe,
+ *  builds (every chain quoted the same contract in every probe,
  *  fee and fee-free, native and ERC-20 legs). A build naming
  *  any other `to` is refused — never signed. */
 export const OPENOCEAN_EXCHANGE = {
   1329: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
   1776: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+  30: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
+  14: "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64",
 };
 /** The chains' live eth_gasPrice at probe time (Sei ≈ 55 gwei,
- *  Injective 0.16 gwei). This is only the API's own gas-estimate
- *  input — the executor prices gas from the chain itself and
- *  never trusts this figure. */
-const OPENOCEAN_GAS_PRICE = { 1329: "55000000000", 1776: "160000000" };
+ *  Injective 0.16 gwei, Rootstock ≈ 0.026 gwei, Flare ≈ 500
+ *  gwei). This is only the API's own gas-estimate input — the
+ *  executor prices gas from the chain itself and never trusts
+ *  this figure. */
+const OPENOCEAN_GAS_PRICE = { 1329: "55000000000", 1776: "160000000", 30: "26067648", 14: "500753165652" };
 /** The house slippage for OpenOcean builds: 1% — the API folds
  *  it into the build's minOutAmount, which the route carries
  *  as its floor verbatim. */
@@ -10753,8 +10905,9 @@ function openOceanHumanAmount(raw, decimals) {
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
-/** OpenOcean's route for a Sei EVM / Injective EVM same-chain
- *  swap, priced under the fee law — the two-pass discipline:
+/** OpenOcean's route for a same-chain swap on one of its
+ *  served chains (Sei EVM, Injective EVM, Rootstock, Flare),
+ *  priced under the fee law — the two-pass discipline:
  *  pass 1 builds fee-free (its shortfall prices the law's
  *  target), pass 2 rebuilds at the grossed-up dial and the
  *  output delta is ECHO-VERIFIED before the fee build may
@@ -10862,7 +11015,7 @@ export async function getOpenOceanSwapRoute(args, { fetchImpl = null, prices: pr
 
 /** The bounds check for an OpenOcean swap, run by the executor
  *  on the QUOTED build before anything is signed: the route is
- *  an OpenOcean route, on one of its two chains, same-chain,
+ *  an OpenOcean route, on one of its served chains, same-chain,
  *  built for this wallet, and its transaction pays the pinned
  *  exchange contract with exactly the value the quote stated
  *  (the full amount for a native input, zero otherwise). The
@@ -25626,8 +25779,10 @@ async function getSwapRoutesDirect(args) {
   if (skipSupportsPair(planArgs)) {
     try { const sk = await getSkipSwapRoute(planArgs); if (sk) routes.push(sk); } catch { /* Skip is a candidate, never a single point of failure */ }
   }
-  // OpenOcean (gap #5, 2026-11-15): the Sei EVM / Injective
-  // EVM same-chain candidate, beside Skip in the same posture.
+  // OpenOcean (gap #5, 2026-11-15; gap #14, 2026-11-16): the
+  // same-chain candidate for its served chains (Sei EVM,
+  // Injective EVM, Rootstock, Flare), beside Skip in the
+  // same posture.
   if (openOceanSupportsPair(planArgs)) {
     try { const oo = await getOpenOceanSwapRoute(planArgs); if (oo) routes.push(oo); } catch { /* OpenOcean is a candidate, never a single point of failure */ }
   }
@@ -26565,9 +26720,10 @@ export function swapRouteExecutable(route) {
       return { ok: false, reason: "This Skip route's fee could not be verified against its quote — pick another route." };
     return { ok: true, skip: true };
   }
-  // OpenOcean routes (Sei EVM + Injective EVM same-chain,
-  // 2026-11-15): executable when the route carries its quoted
-  // build for one of the rail's two chains — the executor
+  // OpenOcean routes (same-chain on its served chains,
+  // 2026-11-15; Rootstock + Flare added 2026-11-16):
+  // executable when the route carries its quoted
+  // build for one of the rail's chains — the executor
   // re-runs the full bounds check (checkOpenOceanSwapBounds:
   // pinned exchange, exact value, this wallet's build) before
   // signing, so the gate is structural, exactly like the
@@ -27579,7 +27735,11 @@ export async function getDexScreenerTokenInfo(dexChainId, addresses) {
 // unknown token, no platform) yields nulls, not an error.
 const CG_PLATFORM_IDS = { 1: "ethereum", 56: "binance-smart-chain", 8453: "base", 42161: "arbitrum-one",
   10: "optimistic-ethereum", 137: "polygon-pos", 43114: "avalanche", 100: "xdai", 42220: "celo",
-  59144: "linea", 324: "zksync", 5000: "mantle", 534352: "scroll" };
+  59144: "linea", 324: "zksync", 5000: "mantle", 534352: "scroll",
+  // Gap #14 (2026-11-16): Rootstock + Flare platform ids,
+  // verified live (their token lists answer under the same
+  // slugs — see COINGECKO_TOKEN_LIST_SLUGS).
+  30: "rootstock", 14: "flare-network" };
 export function cgPlatformForChain(chainId) {
   return CG_PLATFORM_IDS[Number(chainId)] || null;
 }
@@ -27697,6 +27857,14 @@ export const COINGECKO_TOKEN_LIST_SLUGS = {
   // research). Without the slug the chain has no token
   // scan/metadata at all.
   4663: "robinhood",
+  // Gap #14 (2026-11-16): Rootstock (30) is CoinGecko's
+  // "rootstock" list and Flare (14) its "flare-network"
+  // list — both verified answering at build time. The other
+  // ten long-tail chains have no verified list (Kaia and
+  // Filecoin's candidate slugs 403), so they fall back to
+  // the curated + custom + held-token sets like every
+  // slug-less chain.
+  30: "rootstock", 14: "flare-network",
 };
 function cgTokenShape(t) {
   if (!t || !t.address || !t.symbol) return null;

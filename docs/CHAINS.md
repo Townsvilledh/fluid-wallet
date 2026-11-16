@@ -6,12 +6,29 @@ same seed. Everything listed here **ships**: balance, receive and send.
 
 ## Chain families
 
-- **EVM — 20 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
+- **EVM — 32 built-in networks:** Ethereum, BNB Chain, Base, Arbitrum,
   OP Mainnet, Polygon, Avalanche, zkSync Era, Linea, Scroll, Mantle,
   Gnosis, Celo, Fuse, B² Network, Sei EVM, Injective EVM, HyperEVM,
-  Robinhood Chain, and Sepolia (testnet). Networks the swap routers support beyond
+  Robinhood Chain, Rootstock, Flare, Kaia, Filecoin, Taiko, Core,
+  Kava, Cronos zkEVM, Aurora, Moonriver, Bitlayer, TAC, and Sepolia
+  (testnet). Networks the swap routers support beyond
   the built-ins (for example **Arc**, chain 5042) are discovered and
-  added automatically after unlock. Sei EVM (chain 1329) is where SEI lives
+  added automatically after unlock. The last twelve (Rootstock
+  through TAC) are the gap-#14 long-tail batch (2026-11-16),
+  hand-verified built-ins — none is router-discovered. Rootstock
+  (chain 30, RBTC) and Flare (chain 14, FLR) carry OpenOcean
+  intra-chain swaps; the other ten are presence-only (derive,
+  hold, receive, send — swaps are an honest no-route until a
+  rail with capture answers for them). Flare's pinned dollar is
+  USD₮0 — an unrelated same-name "USDT" contract on Flare is an
+  impostor and is never offered. Moonriver is native-only: its
+  traded stables are defunct-Multichain bridged forms whose
+  value is impaired, so none is pinned. Cronos zkEVM pins no
+  stable either (Circle's Cronos USDC lives on chain 25, a
+  different chain). See `docs/SWAPS.md` (gap #14) for the
+  per-chain verdicts, the held-out chains (Story, Oasis
+  Sapphire, Conflux eSpace, Bittensor-EVM) and Liquid
+  Network's separate-probe status. Sei EVM (chain 1329) is where SEI lives
   now — Sei's Cosmos network is retired (see Cosmos below).
   Injective EVM (chain 1776) is Injective's second face: its balance
   is unified with the Cosmos side (one account, one ledger — INJ or

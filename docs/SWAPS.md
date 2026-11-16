@@ -2072,3 +2072,93 @@ with Fluid assembling the swap's atomic group itself.
   both quote arithmetics reproduce the research fixtures,
   and every group the executor signs is spec-checked and
   decode-checked in §133 of the suite.
+
+## EVM long-tail batch — audit gap #14 (2026-11-16)
+
+Seventeen candidate chains probed live in one pass (research:
+`research_notes/fluid-evm-longtail-20261116` — probe notes, 92
+fixtures, and the build addendum). Twelve join as hand-verified
+built-ins; none is auto-discovered (no router Fluid runs lists
+any of them, so the discovery gate has nothing to admit — the
+gate was not loosened, HyperEVM precedent). Every chain's RPC
+was verified against the chain itself (eth_chainId) from this
+machine.
+
+- **Rootstock (30) — FULL: presence + OpenOcean intra.**
+  RBTC ↔ USD₮0 quotes and builds live through the fleet
+  OpenOcean rail (the pinned exchange, the zero-address
+  native sentinel accepted, per-route echo verification —
+  the admission A/B matched the 0.625 dial at 0.6196%). The
+  pinned stable is USD₮0 (Tether's LayerZero form, the traded
+  dollar on RSK), pinned as the chain's USDT with provenance
+  named; rUSDT (the bridge form) is not pinned.
+- **Rootstock's Satora lane — capture PROVEN, execution NOT
+  wired, deliberately.** Satora quotes RBTC ↔ BTC /
+  Lightning / Arkade 1:1 both ways, and the keyed
+  `extra_fees` echo was proven live at build time (protocol
+  fee 250 → 500 under the developer key, net down exactly
+  250 sats, both directions — the shipped differential
+  identity holds to the sat). But chain-30 execution is a
+  different grammar from every shipped lane: creations lock
+  in an **HTLCNative v2** (the server refuses gasless funding
+  for native locks outright, and Fluid's executor funds only
+  Permit2 ERC-20 locks), and payouts claim through the
+  user's **RIF Relay smart wallet** (relayed
+  meta-transactions; `/chain-config` publishes the relay
+  block). Neither grammar is implemented, and the lock-call
+  ABI appears in no payload — so no Satora route is offered
+  for Rootstock. A route that would refuse at creation is
+  not a route. **Re-probe / build trigger:** a separate
+  slice that pins the HTLCNative v2 ABI (lock + refund) and
+  the RIF Relay claim flow from the reference SDK against
+  the addendum's payloads, then re-runs the keyed echo.
+- **Flare (14) — FULL: presence + OpenOcean intra.** Relay
+  refuses the chain explicitly; OpenOcean builds live (echo
+  0.6199% at sane size at admission; the shipped rail
+  re-verifies every route). The pinned stable is USD₮0
+  `0xe7cd86e1…`. **Impostor caution:** an unrelated same-name
+  "USDT" at `0x0b38e83b…` also trades on Flare — never
+  pinned, never offered (the Robinhood rule). At dust sizes
+  the venue over-echoes the dial, so dust routes read
+  fee-free honestly under the fee law, as on every
+  echo-verified rail.
+- **Presence-only (10) — derive, hold, receive, send; swaps
+  are an honest no-route.** Kaia (8217), Filecoin FEVM
+  (314), Taiko (167000), Core (1116), Kava (2222), Cronos
+  zkEVM (388), Aurora (1313161554), Moonriver (1285),
+  Bitlayer (200901), TAC (239). The recurring trap, recorded
+  per chain in CHAINS.md: five of them (Kaia, Kava, Aurora,
+  Moonriver, TAC) appear in OpenOcean's token LIST while its
+  /swap refuses every build — a token list is not a route,
+  and presence was never gated on it. Stable pins only where
+  a canonical dollar verifies without a rail: Kava pins
+  Tether's canonical USDt; Aurora pins the Rainbow-bridge
+  USDC/USDT; Cronos zkEVM pins NOTHING (Circle's "Cronos"
+  USDC is chain 25, not 388); Moonriver pins nothing (its
+  traded dollars are defunct-Multichain bridged forms —
+  native MOVR only, the value caveat stated in CHAINS.md).
+  **Re-probe trigger for each:** any rail Fluid runs (Relay,
+  Across, Mayan, 1Click, OpenOcean, Satora, Skip) quoting
+  the chain with capture, re-verified live.
+- **Held out entirely (4) — NO-RAIL, not admitted:** Story
+  (1514), Oasis Sapphire (42262), Conflux eSpace (1030),
+  Bittensor-EVM (964). Absent from every rail probed AND
+  their canonical public RPCs never answered from this
+  network (multi-endpoint timeouts), so even presence is
+  unverified from here. **Re-probe trigger:** a clean-network
+  pass that (a) reads the chain id from a canonical RPC and
+  (b) finds any quotable rail; neither alone admits.
+- **Liquid Network — NO-RAIL for this batch, separate
+  future probe.** Liquid is not an EVM chain (Elements /
+  Bitcoin sidechain: L-BTC, issued assets, its own address
+  and transaction grammar), so the EVM table cannot carry
+  it. The one candidate door (Boltz submarine swaps) was
+  unreachable from this VM (HTTP 000 ×5), so its capture is
+  UNVERIFIED, not absent. **Re-probe trigger:** a
+  clean-network Boltz pass proving L-BTC ↔ BTC/Lightning
+  quotes AND the referral/capture terms, judged then as its
+  own family slice (like Zcash/Dash), never as a table row.
+- **Unproven, named:** funded OpenOcean settlement on 30/14
+  (same status as the gap-#5 chains), and every presence
+  chain's funded send — the construction and read layers are
+  what this batch proves.
