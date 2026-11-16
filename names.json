@@ -502,5 +502,13 @@
     "sol": "9fxT9YHuHHqt4AGkfxm8RkPGreBAhwaR2UPfA7W1n3kv",
     "tron": "TMMtqf3Vp4eivuVKTFDRXyeuerVPQSG5q7",
     "sui": "0x186136127d2584b1fbbf3f12928fbd9c4007082181e4e8a396bd8766a32a1ed4"
+  },
+  "verifydn9957445": {
+    "evm": "0xB11a1cf5E1794e59Ba2345a80f083427a95A2961",
+    "btc": "bc1qtrv8663jxf5rd5xgde7e9mvjpaqlq253carpay",
+    "algo": "UD65IIJU44BEPXOR7W3Z5CKKGU62LMC6QBA3ACEH77LGO3FQW6F3QZGP4M",
+    "sol": "BJC9D9iWZjsqKUqG558VDcwMRgGyeVmkxNQcRqx9BwrU",
+    "tron": "TS7dtPGsVcb2aWQsJE8Yzx1tjfb7s8dNaB",
+    "sui": "0x3568dfd6daeb98fb250d8fe72d84f951e1abad7b0ec7346aa698c7c9df786c34"
   }
 }
