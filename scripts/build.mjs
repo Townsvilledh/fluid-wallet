@@ -94,6 +94,10 @@ copyFileSync("public/robots.txt", "dist/robots.txt");
 // the repo — it lives only on the publishing machine.
 copyFileSync("public/release-pubkey.pem", "dist/release-pubkey.pem");
 copyFileSync("public/sitemap.xml", "dist/sitemap.xml");
+// Donate page (2026-11-16): a plain static page on Fluid's own site —
+// nobody can unlist it. Served at /donate (GitHub Pages resolves the
+// extensionless path to donate.html) and /donate.html.
+copyFileSync("public/donate.html", "dist/donate.html");
 copyFileSync("public/og-image.png", "dist/og-image.png");
 // Social card lives at a NEW filename (og-card.png, 2026-11-11): X and
 // other crawlers cache card images by URL, and the old /og-image.png URL

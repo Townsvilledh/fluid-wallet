@@ -11,5 +11,7 @@
   Cache-Control: public, max-age=0, must-revalidate
 /recovery.html
   Cache-Control: public, max-age=0, must-revalidate
+/donate.html
+  Cache-Control: public, max-age=0, must-revalidate
 /fluid-wallet.html
   Cache-Control: public, max-age=0, must-revalidate

@@ -22047,4 +22047,48 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   }
 }
 
+// ---------- §142 (2026-11-16): the donate page ----------
+// Ethuram's order after the Giveth unlisting: a DONATE page on Fluid's
+// OWN site — a page nobody can unlist. A plain static page (no wallet
+// bundle, no unlock), linked from the home page, receiving ONLY at
+// Ethuram's published registry addresses (names.json "ethuram"):
+// Lightning first (the cheapest way to give), then EVM, then BTC.
+// The addresses are pinned VERBATIM here and against the registry
+// itself, so a typo'd or swapped address can never ship silently.
+{
+  const donateSrc = readFileSync(new URL("../public/donate.html", import.meta.url), "utf8");
+  const buildSrc142 = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  const pubSrc142 = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
+  const idxSrc142 = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const sitemapSrc = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
+  const headersSrc142 = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
+  const namesReg = JSON.parse(readFileSync(new URL("../names.json", import.meta.url), "utf8"));
+  const LN_ADDR = "ethuram@fluidwallet.dpdns.org";
+  const EVM_ADDR = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const BTC_ADDR = "bc1qh0eydm0klss3y0j79d3mctcvkpxu7xrzyfzqdw";
+  ok("§142: the pinned donate addresses ARE Ethuram's registry addresses (names.json 'ethuram')",
+    !!namesReg.ethuram && namesReg.ethuram.evm === EVM_ADDR && namesReg.ethuram.btc === BTC_ADDR);
+  ok("§142: the donate page carries all three addresses verbatim, each shown AND on its copy control",
+    [LN_ADDR, EVM_ADDR, BTC_ADDR].every(a => donateSrc.includes(">" + a + "<") && donateSrc.includes('data-copy="' + a + '"')));
+  ok("§142: Lightning is FIRST on the page (before EVM, before BTC) and labelled the cheapest way to give",
+    donateSrc.indexOf(LN_ADDR) > -1 && donateSrc.indexOf(LN_ADDR) < donateSrc.indexOf(EVM_ADDR)
+    && donateSrc.indexOf(EVM_ADDR) < donateSrc.indexOf(BTC_ADDR)
+    && donateSrc.includes("cheapest way to give"));
+  ok("§142: the copy is honest and plain — what Fluid is, what donations fund, the 80/20 split, no promises",
+    donateSrc.includes("Support Fluid") && donateSrc.includes("non-custodial")
+    && donateSrc.includes("no KYC") && donateSrc.includes("route testing, infrastructure, and security review")
+    && donateSrc.includes("80% goes to the work") && donateSrc.includes("20% to upkeep")
+    && donateSrc.includes("Any amount helps") && donateSrc.includes("no promises"));
+  ok("§142: the page is self-contained — inline script/style only, no external script or stylesheet",
+    !/<script[^>]+src=/.test(donateSrc) && !/<link[^>]+rel="stylesheet"/.test(donateSrc)
+    && donateSrc.includes("navigator.clipboard.writeText"));
+  ok("§142: the build ships donate.html into dist and the publisher carries it to gh-pages",
+    buildSrc142.includes('copyFileSync("public/donate.html", "dist/donate.html")')
+    && pubSrc142.includes('"donate.html"'));
+  ok("§142: the home page links the donate page (More-tab card, footer line, noscript intro)",
+    (idxSrc142.match(/href="donate\.html"/g) || []).length >= 3 && idxSrc142.includes("Support Fluid"));
+  ok("§142: sitemap lists /donate and _headers gives the page the must-revalidate HTML rule",
+    sitemapSrc.includes("https://fluidwallet.dpdns.org/donate") && headersSrc142.includes("/donate.html"));
+}
+
 console.log(`\n${passed} checks passed`);

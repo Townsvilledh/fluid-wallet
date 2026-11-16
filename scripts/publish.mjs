@@ -45,7 +45,7 @@ import { homedir } from "node:os";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const WORKTREE = "/tmp/fluid-gh-pages";
-const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "fluid-wallet.html",
+const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "donate.html", "fluid-wallet.html",
   "names.json", "robots.txt", "sitemap.xml", "og-image.png", "og-card.png", "_headers", "CNAME",
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js", "walletconnect.chunk.js", "arkade.chunk.js",
   "cosmos.chunk.js", "polkadot.chunk.js", "peer.chunk.js",
