@@ -24,6 +24,8 @@ import {
   tonAddressFromPhrase, getTonAccount, sendTon, isValidTonAddress, formatTonSendIntent, tonSendPlan, TON_EXPLORER, TON_USDT,
   nearAddressFromPhrase, getNearAccount, sendNear, isValidNearAddress, formatNearSendIntent, nearSendPlan, NEAR_EXPLORER, NEAR_TOKENS,
   algoAddressFromPhrase, getAlgorandAccount, sendAlgorand, isValidAlgorandAddress, formatAlgoSendIntent, algoSendPlan, ALGO_EXPLORER, ALGO_USDC,
+  tezosAddressFromPhrase, getTezosAccount, sendTezos, isValidTezosAddress, formatTezosSendIntent, tezosSendPlan, TEZOS_EXPLORER, TEZOS_USDT, TEZOS_SWAP_TOKENS,
+  hederaAddressFromPhrase, getHederaAccount, sendHedera, isValidHederaAddress, formatHederaSendIntent, hederaSendPlan, HEDERA_EXPLORER, HEDERA_USDC, HEDERA_SWAP_TOKENS,
   xrplAddressFromPhrase, getXrplAccount, sendXrpl, isValidXrplAddress, formatXrplSendIntent, xrplSendPlan, XRPL_EXPLORER,
   dotAddressFromPhrase, getDotAccount, sendDot, isValidDotAddress, formatDotSendIntent, dotSendPlan, DOT_EXPLORER, DOT_TOKENS,
   aptosAddressFromPhrase, aptosPublicKeyFromPhrase, getAptosAccount, sendAptos, isValidAptosAddress, formatAptosSendIntent, aptosSendPlan, aptosOctasToApt, aptosAmountToRaw, APTOS_EXPLORER, APTOS_TOKENS,
@@ -140,7 +142,7 @@ const liveOkFams = new Set();
 let cacheWriteNeeded = false;
 const markLiveOk = (k) => { if (!liveOkFams.has(k)) { liveOkFams.add(k); cacheWriteNeeded = true; } };
 const HOME_FAMILIES = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near",
-  "algorand", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
+  "algorand", "tezos", "hedera", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
 function saveViewKey() { try { localStorage.setItem(VIEW_KEY_LS, viewKey); } catch { /* best effort */ } }
 const viewMeta = () => RECEIVE_NETWORKS.find(m => m.id === viewKey) || null;
 const isCosmosView = () => COSMOS_CHAINS.some(c => c.key === viewKey);
@@ -152,7 +154,8 @@ const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", BNB: "#f0b90b", USDC: "#27
   POL: "#8247e5", AVAX: "#e84142", CELO: "#35d07f", MNT: "#5eead4", xDAI: "#04795d", FUSE: "#b4f461", TRX: "#eb0029", SOL: "#9945ff", SUI: "#4da2ff",
   LTC: "#345d9d", DOGE: "#c2a633", BCH: "#8dc351", ADA: "#0033ad", ZEC: "#f4b728", DASH: "#008de4", XLM: "#3b5bdb",
   TON: "#2aabee", NEAR: "#00c08b", wNEAR: "#00c08b", ALGO: "#454545", XRP: "#4b5563", DOT: "#e6007a", APT: "#2dd4bf", lzUSDC: "#2775ca",
-  ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a" };
+  ATOM: "#2e3148", OSMO: "#750bbb", TIA: "#7c2bf0", INJ: "#25b6e9", SEI: "#c1272d", DYDX: "#6966ff", STX: "#5546ff", sBTC: "#f7931a",
+  XTZ: "#2c7df7", HBAR: "#000000" };
 // P2-1: the display formatters live in wallet-core (dustDisplayFloor &
 // friends) so a nonzero value can never render as an apparent zero —
 // dust shows as "<0.000001" / "<$0.01", a true zero stays plain zero.
@@ -168,6 +171,8 @@ let stellarAddr = null, stellarBalances = [], stellarFunded = null, stellarLoadF
 let tonAddr = null, tonBalances = [], tonState = null, tonLoadFailed = false, tonScanFailed = false;
 let nearAddr = null, nearBalances = [], nearExists = null, nearLoadFailed = false;
 let algoAddr = null, algoBalances = [], algoFunded = null, algoLoadFailed = false;
+let tezAddr = null, tezBalances = [], tezFunded = null, tezLoadFailed = false;
+let hbaAddr = null, hbaBalances = [], hbaExists = null, hbaLoadFailed = false;
 let xrpAddr = null, xrpBalances = [], xrpFunded = null, xrpLoadFailed = false;
 let dotAddr = null, dotBalances = [], dotExists = null, dotLoadFailed = false;
 let aptosAddr = null, aptosBalances = [], aptosExists = null, aptosLoadFailed = false, aptosScanFailed = false;
@@ -571,7 +576,7 @@ document.addEventListener("error", (e) => {
 let dupSymbols = new Set();
 const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH", cardano: "ADA", zcash: "ZEC", dash: "DASH",
   tron: "TRX", solana: "SOL", sui: "SUI", stellar: "XLM", ton: "TON", near: "NEAR",
-  algorand: "ALGO", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
+  algorand: "ALGO", tezos: "XTZ", hedera: "HBAR", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
 function badgeHtml(b, famKey) {
   if (viewKey !== "all" || !b || !dupSymbols.has(b.symbol)) return "";
   const nat = famKey === "evm" ? NETWORKS[networkKey].symbol : FAMILY_NATIVE_SYM[famKey];
@@ -719,6 +724,8 @@ function hydrateBalanceCache(w) {
   put("ton", (rows) => { tonBalances = rows; });
   put("near", (rows) => { nearBalances = rows; });
   put("algorand", (rows) => { algoBalances = rows; });
+  put("tezos", (rows) => { tezBalances = rows; });
+  put("hedera", (rows) => { hbaBalances = rows; });
   put("xrpl", (rows) => { xrpBalances = rows; });
   put("polkadot", (rows) => { dotBalances = rows; });
   put("aptos", (rows) => { aptosBalances = rows; });
@@ -773,7 +780,7 @@ function persistBalanceCache() {
     const take = (key, arr) => { if (liveOkFams.has(key)) rows[key] = arr; };
     take("tron", tronBalances); take("solana", solBalances); take("sui", suiBalances);
     take("stellar", stellarBalances); take("ton", tonBalances); take("near", nearBalances);
-    take("algorand", algoBalances); take("xrpl", xrpBalances); take("polkadot", dotBalances);
+    take("algorand", algoBalances); take("tezos", tezBalances); take("hedera", hbaBalances); take("xrpl", xrpBalances); take("polkadot", dotBalances);
     take("aptos", aptosBalances); take("stacks", stacksBalances);
     delete rows.cosmos; // cosmos travels via cosmosRows in the pack format
     const scalars = { ...(prev && prev.scalars ? prev.scalars : {}) };
@@ -1055,6 +1062,40 @@ async function renderMain() {
       algoBalances = [{ symbol: "ALGO", name: "Algorand", amount: null, address: null, decimals: 6, verified: true },
                       { ...ALGO_USDC, amount: null }];
       markLoaded("algorand"); paintAssets();
+    });
+  // Tezos (gap #16): SLIP-0010 Ed25519 branch (coin type 1729)
+  // of the same seed. TzKT reads; a failed read is unknown,
+  // never a dressed-up zero.
+  tezAddr = tezosAddressFromPhrase(w.mnemonic.phrase);
+  if (!hydratedFams.has("tezos")) tezBalances = [{ symbol: "XTZ", name: "Tezos", amount: "0", address: null, decimals: 6, verified: true },
+                  { ...TEZOS_USDT, amount: "0" }];
+  tezFunded = null; tezLoadFailed = false;
+  getTezosAccount(tezAddr)
+    .then(acct => { if (staleRender()) return; tezBalances = acct.balances; tezFunded = acct.funded; markLiveOk("tezos"); markLoaded("tezos"); paintAssets(); })
+    .catch(() => {
+      if (staleRender()) return;
+      tezLoadFailed = true;
+      tezBalances = [{ symbol: "XTZ", name: "Tezos", amount: null, address: null, decimals: 6, verified: true },
+                      { ...TEZOS_USDT, amount: null }];
+      markLoaded("tezos"); paintAssets();
+    });
+  // Hedera (gap #16): BIP32 secp256k1 (coin type 3030),
+  // ECDSA-first — the EVM-address alias is the receive face;
+  // the account is created by its first receive (the sender
+  // pays the creation fee), so an uncreated account is a
+  // true-zero state, not an error.
+  hbaAddr = hederaAddressFromPhrase(w.mnemonic.phrase);
+  if (!hydratedFams.has("hedera")) hbaBalances = [{ symbol: "HBAR", name: "Hedera", amount: "0", address: null, decimals: 8, verified: true },
+                  { ...HEDERA_USDC, amount: "0" }];
+  hbaExists = null; hbaLoadFailed = false;
+  getHederaAccount(hbaAddr)
+    .then(acct => { if (staleRender()) return; hbaBalances = acct.balances; hbaExists = acct.exists; markLiveOk("hedera"); markLoaded("hedera"); paintAssets(); })
+    .catch(() => {
+      if (staleRender()) return;
+      hbaLoadFailed = true;
+      hbaBalances = [{ symbol: "HBAR", name: "Hedera", amount: null, address: null, decimals: 8, verified: true },
+                      { ...HEDERA_USDC, amount: null }];
+      markLoaded("hedera"); paintAssets();
     });
   xrpAddr = xrplAddressFromPhrase(w.mnemonic.phrase);
   if (!hydratedFams.has("xrpl")) xrpBalances = [{ symbol: "XRP", name: "XRP", amount: "0", address: null, decimals: 6, verified: true }];
@@ -1372,6 +1413,8 @@ function familyUsdTotals() {
   m.ton = (tonLoadFailed || !famLoaded.has("ton")) ? null : sumRows(tonBalances, (b) => prices[b.symbol]);
   m.near = (nearLoadFailed || !famLoaded.has("near")) ? null : sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
   m.algorand = (algoLoadFailed || !famLoaded.has("algorand")) ? null : sumRows(algoBalances, (b) => prices[b.symbol]);
+  m.tezos = (tezLoadFailed || !famLoaded.has("tezos")) ? null : sumRows(tezBalances, (b) => prices[b.symbol]);
+  m.hedera = (hbaLoadFailed || !famLoaded.has("hedera")) ? null : sumRows(hbaBalances, (b) => prices[b.symbol]);
   m.xrpl = (xrpLoadFailed || !famLoaded.has("xrpl")) ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
   m.polkadot = (dotLoadFailed || !famLoaded.has("polkadot")) ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
   m.aptos = (aptosLoadFailed || !famLoaded.has("aptos")) ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
@@ -1413,6 +1456,8 @@ function unpricedHoldingGroups() {
     [tonBalances, (b) => prices[b.symbol]],
     [nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]],
     [algoBalances, (b) => prices[b.symbol]],
+    [tezBalances, (b) => prices[b.symbol]],
+    [hbaBalances, (b) => prices[b.symbol]],
     [xrpBalances, (b) => prices[b.symbol]],
     [dotBalances, (b) => prices[b.symbol]],
     [aptosBalances, (b) => prices[b.symbol]],
@@ -1445,7 +1490,7 @@ function viewAddress() {
   if (viewKey === "all" || viewKey === "evm") return { text: short(wallet.address), copy: wallet.address };
   const byKey = {
     bitcoin: btcAddr, tron: tronAddr, solana: solAddr, sui: suiAddr, stellar: stellarAddr,
-    ton: tonAddr, near: nearAddr, algorand: algoAddr, xrpl: xrpAddr, polkadot: dotAddr,
+    ton: tonAddr, near: nearAddr, algorand: algoAddr, tezos: tezAddr, hedera: hbaAddr, xrpl: xrpAddr, polkadot: dotAddr,
     aptos: aptosAddr, stacks: stacksAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr,
   };
   if (viewKey === "lightning") return { text: "Your own Lightning node", copy: null };
@@ -1479,6 +1524,8 @@ function balancesUnloadedInView() {
       || tonLoadFailed || tonScanFailed || rowNull(tonBalances)
       || nearLoadFailed || rowNull(nearBalances)
       || algoLoadFailed || rowNull(algoBalances)
+      || tezLoadFailed || rowNull(tezBalances)
+      || hbaLoadFailed || rowNull(hbaBalances)
       || xrpLoadFailed || rowNull(xrpBalances)
       || dotLoadFailed || rowNull(dotBalances)
       || aptosLoadFailed || rowNull(aptosBalances)
@@ -1500,6 +1547,8 @@ function balancesUnloadedInView() {
     case "ton": return tonLoadFailed || tonScanFailed || rowNull(tonBalances);
     case "near": return nearLoadFailed || rowNull(nearBalances);
     case "algorand": return algoLoadFailed || rowNull(algoBalances);
+    case "tezos": return tezLoadFailed || rowNull(tezBalances);
+    case "hedera": return hbaLoadFailed || rowNull(hbaBalances);
     case "xrpl": return xrpLoadFailed || rowNull(xrpBalances);
     case "polkadot": return dotLoadFailed || rowNull(dotBalances);
     case "aptos": return aptosLoadFailed || rowNull(aptosBalances);
@@ -1649,6 +1698,8 @@ function familyAlertMap() {
   else if (tonScanFailed) m.ton = "Full jetton scan unavailable — showing the native TON balance only; jetton balances couldn't load.";
   if (nearLoadFailed) m.near = "NEAR balances couldn't be loaded right now.";
   if (algoLoadFailed) m.algorand = "Algorand balances couldn't be loaded right now.";
+  if (tezLoadFailed) m.tezos = "Tezos balances couldn't be loaded right now.";
+  if (hbaLoadFailed) m.hedera = "Hedera balances couldn't be loaded right now.";
   if (xrpLoadFailed) m.xrpl = "XRP Ledger balances couldn't be loaded right now.";
   if (dotLoadFailed) m.polkadot = "Polkadot Asset Hub balances couldn't be loaded right now.";
   if (aptosLoadFailed) m.aptos = "Aptos balances couldn't be loaded right now.";
@@ -1773,6 +1824,8 @@ function paintAssets() {
     for (const b of tonBalances) noteSym(b.symbol, "ton");
     for (const b of nearBalances) noteSym(b.symbol, "near");
     for (const b of algoBalances) noteSym(b.symbol, "algorand");
+    for (const b of tezBalances) noteSym(b.symbol, "tezos");
+    for (const b of hbaBalances) noteSym(b.symbol, "hedera");
     for (const b of xrpBalances) noteSym(b.symbol, "xrpl");
     for (const b of dotBalances) noteSym(b.symbol, "polkadot");
     for (const b of aptosBalances) noteSym(b.symbol, "aptos");
@@ -1857,6 +1910,20 @@ function paintAssets() {
     const render = ({ b, v }) => tokenRowHtml(b, v, "Algorand", `data-algo="${algoBalances.indexOf(b)}"`, "algorand");
     rows.push(familyRowsHtml("algorand", algoBalances, (b) => prices[b.symbol], render));
     grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows);
+  }
+  // Tezos family rows (gap #16; tap a row to send on Tezos)
+  if (tezBalances.length) {
+    const rows = [];
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Tezos", `data-tez="${tezBalances.indexOf(b)}"`, "tezos");
+    rows.push(familyRowsHtml("tezos", tezBalances, (b) => prices[b.symbol], render));
+    grp("tezos", `<p class="tag" style="margin:12px 0 2px">Tezos</p>`, rows);
+  }
+  // Hedera family rows (gap #16; tap a row to send on Hedera)
+  if (hbaBalances.length) {
+    const rows = [];
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Hedera", `data-hba="${hbaBalances.indexOf(b)}"`, "hedera");
+    rows.push(familyRowsHtml("hedera", hbaBalances, (b) => prices[b.symbol], render));
+    grp("hedera", `<p class="tag" style="margin:12px 0 2px">Hedera</p>`, rows);
   }
   // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
   if (xrpBalances.length) {
@@ -1962,7 +2029,7 @@ function paintAssets() {
       ["tron", tronBalances, "TRX", tronLoadFailed], ["solana", solBalances, "SOL", false],
       ["sui", suiBalances, "SUI", false], ["stellar", stellarBalances, "XLM", stellarLoadFailed],
       ["ton", tonBalances, "TON", tonLoadFailed], ["near", nearBalances, "NEAR", nearLoadFailed],
-      ["algorand", algoBalances, "ALGO", algoLoadFailed], ["xrpl", xrpBalances, "XRP", xrpLoadFailed],
+      ["algorand", algoBalances, "ALGO", algoLoadFailed], ["tezos", tezBalances, "XTZ", tezLoadFailed], ["hedera", hbaBalances, "HBAR", hbaLoadFailed], ["xrpl", xrpBalances, "XRP", xrpLoadFailed],
       ["polkadot", dotBalances, "DOT", dotLoadFailed], ["aptos", aptosBalances, "APT", aptosLoadFailed],
       ["stacks", stacksBalances, "STX", stacksLoadFailed],
     ]) {
@@ -1988,7 +2055,7 @@ function paintAssets() {
     bitcoin: (Number(btcBal) + Number(btcTrBal)) > 0,
     evm: anyHeld(balances), tron: anyHeld(tronBalances), solana: anyHeld(solBalances),
     sui: anyHeld(suiBalances), stellar: anyHeld(stellarBalances), ton: anyHeld(tonBalances),
-    near: anyHeld(nearBalances), algorand: anyHeld(algoBalances), xrpl: anyHeld(xrpBalances),
+    near: anyHeld(nearBalances), algorand: anyHeld(algoBalances), tezos: anyHeld(tezBalances), hedera: anyHeld(hbaBalances), xrpl: anyHeld(xrpBalances),
     polkadot: anyHeld(dotBalances), aptos: anyHeld(aptosBalances), stacks: anyHeld(stacksBalances),
     litecoin: Number(ltcBal) > 0, dogecoin: Number(dogeBal) > 0, bitcoincash: Number(bchBal) > 0,
     cardano: Number(adaBal) > 0, zcash: Number(zecBal) > 0, dash: Number(dashBal) > 0,
@@ -2007,7 +2074,7 @@ function paintAssets() {
     bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,
     dogecoin: dogeLoadFailed, bitcoincash: bchLoadFailed, cardano: adaLoadFailed, zcash: zecLoadFailed, dash: dashLoadFailed, tron: tronLoadFailed,
     stellar: stellarLoadFailed, ton: tonLoadFailed, near: nearLoadFailed,
-    algorand: algoLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
+    algorand: algoLoadFailed, tezos: tezLoadFailed, hedera: hbaLoadFailed, xrpl: xrpLoadFailed, polkadot: dotLoadFailed,
     aptos: aptosLoadFailed, stacks: stacksLoadFailed || stacksScanFailed,
     cosmos: famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),
   };
@@ -2078,7 +2145,7 @@ function paintAssets() {
   const hz = $("homeZero");
   if (hz) {
     const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal + zecBal + dashBal) > 0
-      || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
+      || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, tezBalances, hbaBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
     hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal && scopedTotal() === 0));
@@ -2129,6 +2196,14 @@ function paintAssets() {
   document.querySelectorAll("[data-algo]").forEach(r => r.onclick = () => {
     const b = algoBalances[Number(r.dataset.algo)];
     if (b) openAlgoSheet(b);
+  });
+  document.querySelectorAll("[data-tez]").forEach(r => r.onclick = () => {
+    const b = tezBalances[Number(r.dataset.tez)];
+    if (b) openTezosSheet(b);
+  });
+  document.querySelectorAll("[data-hba]").forEach(r => r.onclick = () => {
+    const b = hbaBalances[Number(r.dataset.hba)];
+    if (b) openHederaSheet(b);
   });
   document.querySelectorAll("[data-xrp]").forEach(r => r.onclick = () => {
     const b = xrpBalances[Number(r.dataset.xrp)];
@@ -3090,6 +3165,14 @@ $("actReceive").onclick = () => {
     algorand: `<p class="tag">Algorand address (ALGO and ASAs like USDC):</p>
       <img class="qr" id="qrAlgo"><p class="mono">${algoAddr}</p>
       <button class="btn ghost" id="cpAlgo">Copy Algorand address</button>`,
+    tezos: `<p class="tag">Tezos address (XTZ and Tether USDt):</p>
+      <img class="qr" id="qrTez"><p class="mono">${tezAddr}</p>
+      <button class="btn ghost" id="cpTez">Copy Tezos address</button>
+      <p class="tag">Your tz1 is ready to receive — a fresh address needs nothing before its first incoming transfer.</p>`,
+    hedera: `<p class="tag">Hedera address (HBAR and Circle USDC):</p>
+      <img class="qr" id="qrHba"><p class="mono">${hbaAddr}</p>
+      <button class="btn ghost" id="cpHba">Copy Hedera address</button>
+      ${hbaExists === false ? `<p class="tag">This account is created automatically by its first incoming transfer — the sender pays a small creation fee and you receive the full amount. No account number is needed.</p>` : ""}`,
     xrpl: `<p class="tag">XRP Ledger address (XRP and trust-line tokens):</p>
       <img class="qr" id="qrXrp"><p class="mono">${xrpAddr}</p>
       <button class="btn ghost" id="cpXrp">Copy XRP Ledger address</button>
@@ -3202,6 +3285,8 @@ $("actReceive").onclick = () => {
     ton: () => { qr("qrTon", tonAddr); $("cpTon").onclick = () => copyText(tonAddr, $("cpTon")); },
     near: () => { qr("qrNear", nearAddr); $("cpNear").onclick = () => copyText(nearAddr, $("cpNear")); },
     algorand: () => { qr("qrAlgo", algoAddr); $("cpAlgo").onclick = () => copyText(algoAddr, $("cpAlgo")); },
+    tezos: () => { qr("qrTez", tezAddr); $("cpTez").onclick = () => copyText(tezAddr, $("cpTez")); },
+    hedera: () => { qr("qrHba", hbaAddr); $("cpHba").onclick = () => copyText(hbaAddr, $("cpHba")); },
     xrpl: () => { qr("qrXrp", xrpAddr); $("cpXrp").onclick = () => copyText(xrpAddr, $("cpXrp")); },
     polkadot: () => { qr("qrDot", dotAddr); $("cpDot").onclick = () => copyText(dotAddr, $("cpDot")); },
     aptos: () => { qr("qrAptos", aptosAddr); $("cpAptos").onclick = () => copyText(aptosAddr, $("cpAptos")); },
@@ -3293,6 +3378,8 @@ $("actSend").onclick = () => {
   if (viewKey === "ton") return openTonSheet(nativeOf(tonBalances));
   if (viewKey === "near") return openNearSheet(nativeOf(nearBalances));
   if (viewKey === "algorand") return openAlgoSheet(nativeOf(algoBalances));
+  if (viewKey === "tezos") return openTezosSheet(nativeOf(tezBalances));
+  if (viewKey === "hedera") return openHederaSheet(nativeOf(hbaBalances));
   if (viewKey === "xrpl") return openXrplSheet(nativeOf(xrpBalances));
   if (viewKey === "polkadot") return openDotSheet(nativeOf(dotBalances));
   if (viewKey === "aptos") return openAptosSheet(nativeOf(aptosBalances));
@@ -4552,6 +4639,116 @@ function openAlgoSheet(tok) {
   };
 }
 
+// ---------- Tezos sheet (audit gap #16) ----------
+// Tezos presence: hold / receive / send on TzKT reads and
+// forge/sign/inject broadcasts. Send-flow honesty: a fresh
+// tz1 destination carries the 0.06425 XTZ allocation burn
+// and the sender's first outbound op needs a one-time
+// reveal — both are stated in the review sentence, never
+// silently folded in.
+let pendingTezosSend = null;
+function openTezosSheet(tok) {
+  if (balanceUnknownGate(tok, tezBalances, tezLoadFailed, "Tezos")) return;
+  sheetStack = [];
+  if (tezFunded === false) {
+    openSheet(`<button class="back" data-close>‹ Back</button><h3>Tezos</h3>
+      <p class="tag">This account hasn't received anything yet, so there is nothing to send. Receive some XTZ first — a fresh tz1 needs nothing before its first incoming transfer.</p>`);
+    return;
+  }
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<button class="back" data-close>‹ Back</button><h3>Send ${esc(tok.symbol)} on Tezos</h3>
+    <p class="tag">Balance: ${fmtAmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
+    <label>To (tz1 / tz2 / tz3 / KT1 address or Fluid name)</label><input id="tezTo" placeholder="tz1…">
+    <label>Amount (${esc(tok.symbol)})</label><input id="tezAmt" inputmode="decimal" placeholder="0.0">
+    <button class="btn" id="tezReview">Review send</button>
+    <div id="tezIntent" class="hidden"><p class="tag" id="tezIntentText"></p>
+      <button class="btn" id="tezConfirm">Confirm &amp; send</button></div>
+    <p class="tag" id="tezMsg"></p>`);
+  $("#tezReview").onclick = async () => {
+    pendingTezosSend = null; show("tezIntent", false);
+    const toIn = $("#tezTo").value.trim(), amount = $("#tezAmt").value.trim();
+    if (!amount || Number(amount) <= 0) return msg("tezMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("tezMsg", "Amount is more than your balance.");
+    try {
+      msg("tezMsg", "Checking the destination…", true);
+      const resolved = await resolveChainRecipient(toIn, { field: "tezos", validate: isValidTezosAddress, familyLabel: "Tezos" });
+      if (!resolved.ok) return msg("tezMsg", resolved.message);
+      const to = resolved.address;
+      const plan = await tezosSendPlan(tezAddr, to, tokenArg);
+      const intent = formatTezosSendIntent({ amount, symbol: tok.symbol, to, name: resolved.name || null,
+        feeXtz: plan.feeXtz, needsReveal: plan.needsReveal, burnXtz: plan.burnXtz });
+      $("tezIntentText").textContent = intent + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("tezIntentText"), { balance: tok.amount, amount, fee: tok.address ? null : String(Number(plan.feeXtz) + Number(plan.burnXtz || 0)), symbol: tok.symbol });
+      pendingTezosSend = { to, amount, token: tokenArg, symbol: tok.symbol, feeXtz: plan.feeXtz, burnXtz: plan.burnXtz || 0 };
+      show("tezIntent"); msg("tezMsg", resolved.note || "");
+    } catch (e) { msg("tezMsg", "Could not prepare this send: " + humanizeTxError(e)); }
+  };
+  $("#tezConfirm").onclick = async () => {
+    if (!pendingTezosSend) return;
+    const p = pendingTezosSend; pendingTezosSend = null; show("tezIntent", false);
+    try {
+      msg("tezMsg", "Broadcasting…", true);
+      const { hash } = await sendTezos(wallet.mnemonic.phrase, { to: p.to, amount: p.amount, token: p.token });
+      pushHistory({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${TEZOS_EXPLORER}/${hash}`, explorer: TEZOS_EXPLORER, feeNative: Number(p.feeXtz) + Number(p.burnXtz || 0), feeSym: "XTZ" });
+      showTxSuccess({ amount: p.amount, symbol: p.symbol, to: p.to, hash, explorer: TEZOS_EXPLORER, familyName: "Tezos", feeText: `${fmtFixed(Number(p.feeXtz) + Number(p.burnXtz || 0))} XTZ` });
+    } catch (e) { sendFailed(e, "tezMsg"); }
+  };
+}
+// ---------- Hedera sheet (audit gap #16) ----------
+// Hedera presence: hold / receive / send. The receive face
+// is the EVM-address alias (ECDSA, coin type 3030); the
+// account is created by its first receive and completed by
+// its first signed send. Sends ride the Hashio JSON-RPC
+// relay — if the relay is unreachable the send refuses
+// with that named plainly, never a silent failure.
+let pendingHederaSend = null;
+function openHederaSheet(tok) {
+  if (balanceUnknownGate(tok, hbaBalances, hbaLoadFailed, "Hedera")) return;
+  sheetStack = [];
+  if (hbaExists === false) {
+    openSheet(`<button class="back" data-close>‹ Back</button><h3>Hedera</h3>
+      <p class="tag">This account hasn't been created yet — a Hedera account is created automatically by its first incoming transfer (the sender pays a small creation fee; you receive the full amount). Receive some HBAR first, then sending works from here.</p>`);
+    return;
+  }
+  const tokenArg = tok.address ? tok : null;
+  openSheet(`<button class="back" data-close>‹ Back</button><h3>Send ${esc(tok.symbol)} on Hedera</h3>
+    <p class="tag">Balance: ${fmtAmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
+    <label>To (0x… address, 0.0.x account id or Fluid name)</label><input id="hbaTo" placeholder="0x…">
+    <label>Amount (${esc(tok.symbol)})</label><input id="hbaAmt" inputmode="decimal" placeholder="0.0">
+    <button class="btn" id="hbaReview">Review send</button>
+    <div id="hbaIntent" class="hidden"><p class="tag" id="hbaIntentText"></p>
+      <button class="btn" id="hbaConfirm">Confirm &amp; send</button></div>
+    <p class="tag" id="hbaMsg"></p>`);
+  $("#hbaReview").onclick = async () => {
+    pendingHederaSend = null; show("hbaIntent", false);
+    const toIn = $("#hbaTo").value.trim(), amount = $("#hbaAmt").value.trim();
+    if (!amount || Number(amount) <= 0) return msg("hbaMsg", "Enter an amount.");
+    if (Number(amount) > Number(tok.amount)) return msg("hbaMsg", "Amount is more than your balance.");
+    try {
+      msg("hbaMsg", "Checking the Hedera relay…", true);
+      const resolved = await resolveChainRecipient(toIn, { field: "hedera", validate: isValidHederaAddress, familyLabel: "Hedera" });
+      if (!resolved.ok) return msg("hbaMsg", resolved.message);
+      const to = resolved.address;
+      const plan = await hederaSendPlan(hbaAddr, tokenArg);
+      if (!plan.relayOk) return msg("hbaMsg", "The Hedera relay (Hashio) is unreachable right now, so this send can't be prepared. Nothing was sent — try again later.");
+      const intent = formatHederaSendIntent({ amount, symbol: tok.symbol, to, name: resolved.name || null });
+      $("hbaIntentText").textContent = intent + (tok.verified === false ? " ⚠ " + UNVERIFIED_CAUTION : "");
+      setBalanceAfter($("hbaIntentText"), { balance: tok.amount, amount, fee: null, symbol: tok.symbol });
+      pendingHederaSend = { to, amount, token: tokenArg, symbol: tok.symbol };
+      show("hbaIntent"); msg("hbaMsg", resolved.note || "");
+    } catch (e) { msg("hbaMsg", "Could not prepare this send: " + humanizeTxError(e)); }
+  };
+  $("#hbaConfirm").onclick = async () => {
+    if (!pendingHederaSend) return;
+    const p = pendingHederaSend; pendingHederaSend = null; show("hbaIntent", false);
+    try {
+      msg("hbaMsg", "Broadcasting…", true);
+      const { hash } = await sendHedera(wallet.mnemonic.phrase, { to: p.to, amount: p.amount, token: p.token });
+      pushHistory({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${HEDERA_EXPLORER}/transaction/${hash}`, explorer: HEDERA_EXPLORER });
+      showTxSuccess({ amount: p.amount, symbol: p.symbol, to: p.to, hash, explorer: HEDERA_EXPLORER, familyName: "Hedera" });
+    } catch (e) { sendFailed(e, "hbaMsg"); }
+  };
+}
 // ---------- XRP Ledger sheet (Phase 4) ----------
 // Includes the optional destination tag exchanges require. Review
 // pre-flights funding + the live reserve via xrplSendPlan;
@@ -7547,7 +7744,7 @@ let pendingSwap = null;
 // "Searching routes…" line). Each search takes a generation;
 // only the latest generation may paint or diagnose.
 let routeSearchSeq = 0;
-const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : k === "stacks" ? "Stacks" : k === "algorand" ? "Algorand" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
+const swapChainName = (k) => (k === "bitcoin" ? "Bitcoin" : k === "lightning" ? "Lightning" : k === "arkade" ? "Arkade" : k === "polkadot" ? "Polkadot Asset Hub" : k === "stacks" ? "Stacks" : k === "algorand" ? "Algorand" : k === "tezos" ? "Tezos" : k === "hedera" ? "Hedera" : (swapChainOf(k) ? swapChainOf(k).name : NETWORKS[k].name));
 function swapTokenList(netKey) {
   if (netKey === "bitcoin" || netKey === "lightning" || netKey === "arkade") {
     // Satora families: the asset is BTC itself (sats on Bitcoin
@@ -7650,6 +7847,21 @@ function swapTokenList(netKey) {
     // id exactly as their balance rows are (see core's
     // ALGORAND_SWAP_TOKENS — USDC, USDt, goBTC, goETH).
     return ALGORAND_SWAP_TOKENS.map(t => ({ symbol: t.symbol, address: t.address, decimals: t.decimals, native: !!t.native }));
+  }
+  if (netKey === "tezos") {
+    // Tezos (presence, audit gap #16): XTZ by its sentinel,
+    // plus Tether USDt addressed by contract exactly as its
+    // balance row is. No swap rail serves Tezos yet — listed
+    // deliberately so holders get the honest no-route
+    // diagnosis (gap #12 lesson).
+    return TEZOS_SWAP_TOKENS.map(t => ({ symbol: t.symbol, address: t.address, decimals: t.decimals, native: !!t.native }));
+  }
+  if (netKey === "hedera") {
+    // Hedera (presence, audit gap #16): HBAR by its sentinel,
+    // plus Circle USDC addressed by token id exactly as its
+    // balance row is. No swap rail serves Hedera yet — listed
+    // deliberately, same reason as Tezos.
+    return HEDERA_SWAP_TOKENS.map(t => ({ symbol: t.symbol, address: t.address, decimals: t.decimals, native: !!t.native }));
   }
   if (netKey === "aptos") {
     // Aptos (1Click): the native coin by its sentinel, plus
@@ -7956,6 +8168,32 @@ async function swapBalanceOf(chainKey, tok) {
       if (!row) return 0;
       return row.amount != null ? Number(row.amount) : null;
     }
+    if (chainKey === "tezos") {
+      // Tezos balance for the EXECUTION gate (gap #16): the
+      // native XTZ row (balances[0] by construction in core's
+      // getTezosAccount) or the picked FA2's row, addressed by
+      // contract exactly as the swap list addresses it. Same
+      // null discipline as NEAR's: a null amount is a failed
+      // read → null; no token row at all is a true zero.
+      const acct = await getTezosAccount(tezAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
+    if (chainKey === "hedera") {
+      // Hedera balance for the EXECUTION gate (gap #16): the
+      // native HBAR row (balances[0] by construction in core's
+      // getHederaAccount) or the picked HTS token's row,
+      // addressed by token id exactly as the swap list
+      // addresses it. Same null discipline as NEAR's; an
+      // uncreated account reads as a true zero (exists:false).
+      const acct = await getHederaAccount(hbaAddr);
+      if (tok.native) { const row = acct?.balances?.[0]; return row && row.amount != null ? Number(row.amount) : null; }
+      const row = (acct?.balances || []).find(b => b && b.address === tok.address);
+      if (!row) return 0;
+      return row.amount != null ? Number(row.amount) : null;
+    }
     if (skipChainOf(chainKey)) {
       // Cosmos balance for the EXECUTION gate (Skip rail,
       // 2026-11-15): the picked denom's row of a FRESH
@@ -7994,7 +8232,7 @@ $("actSwap").onclick = () => {
   // Token-detail entry (item F): a detail Swap tap names its source
   // network + token; consumed here, synchronously, exactly once.
   const swapPre = pendingSwapFrom; pendingSwapFrom = null;
-  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"];
+  const swapNets = [...Object.keys(NETWORKS).filter(k => k !== "sepolia"), "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"];
   // Bitcoin is a full endpoint (Part B, 2026-11-14): a
   // destination from EVM stablecoins AND a source to EVM
   // stablecoins / Lightning, both via Satora — funded by an
@@ -8011,12 +8249,12 @@ $("actSwap").onclick = () => {
   // / EVM stablecoins, both via Satora.
   const swapDestNets = [...swapNets];
   const fromKey0 = (swapPre && swapNets.includes(swapPre.netKey)) ? swapPre.netKey
-    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos" || viewKey === "stacks" || viewKey === "algorand") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
+    : (viewKey === "tron" || viewKey === "solana" || viewKey === "sui" || viewKey === "lightning" || viewKey === "bitcoin" || viewKey === "ton" || viewKey === "near" || viewKey === "xrpl" || viewKey === "litecoin" || viewKey === "dogecoin" || viewKey === "bitcoincash" || viewKey === "cardano" || viewKey === "zcash" || viewKey === "dash" || viewKey === "stellar" || viewKey === "aptos" || viewKey === "stacks" || viewKey === "algorand" || viewKey === "tezos" || viewKey === "hedera") ? viewKey : (networkKey === "sepolia" ? "bsc" : networkKey);
   const toKey0 = fromKey0 === "base" ? "bsc" : "base";
   // §4.2: from a non-swappable family view the sheet still opens —
   // with a one-line caption, never a dead button.
-  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos", "stacks", "algorand"].includes(viewKey))
-    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar, Aptos, Stacks and Algorand — pick a source chain below.</p>` : "";
+  const swapViewCaption = (viewKey !== "all" && viewKey !== "evm" && !["tron", "solana", "sui", "lightning", "bitcoin", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash", "stellar", "aptos", "stacks", "algorand", "tezos", "hedera"].includes(viewKey))
+    ? `<p class="tag">Swaps run on EVM, Solana, Tron, Sui, TON, Lightning, Bitcoin, NEAR, XRP Ledger, Litecoin, Dogecoin, Bitcoin Cash, Cardano, Zcash, Dash, Stellar, Aptos, Stacks, Algorand, Tezos and Hedera — pick a source chain below.</p>` : "";
   openSheet(`<h3>Swap</h3>
     ${swapViewCaption}
     <label class="tag">From</label>
@@ -8094,7 +8332,7 @@ $("actSwap").onclick = () => {
   // replaces had no "polkadot" case, so Polkadot fell through
   // to the EVM address and the direct DOT route reached the
   // core gate with a destination it must refuse.
-  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, algorand: algoAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
+  const addrOf = (k) => swapOwnAddressFor(k, { evm: wallet.address, tron: tronAddr, solana: solAddr, sui: suiAddr, bitcoin: btcAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, algorand: algoAddr, tezos: tezAddr, hedera: hbaAddr, arkade: arkSession && arkSession.address ? arkSession.address : null, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx });
   function updateNetBtn(side) { $(P[side].netBtn).textContent = swapChainName(netSel[side]) + " ▾"; }
   function setNetValue(side, key) { netSel[side] = key; updateNetBtn(side); }
   function renderNetList(side) {
@@ -9043,7 +9281,7 @@ $("actSwap").onclick = () => {
       // until then). No external, provider or Fluid address
       // can be in this book by construction — it is assembled
       // only from these derived values.
-      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
+      const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, tezos: tezAddr, hedera: hbaAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx };
       for (const k of Object.keys(NETWORKS)) addressBook[k] = wallet.address;
       if (btcTrAddr) addressBook.bitcoin = btcTrAddr;
       if (arkSession && arkSession.address) addressBook.arkade = arkSession.address;
@@ -10595,7 +10833,7 @@ const recordEvmApprovalGfb = (rec) => {
 
 /** Explorer base for a swap's source family (the swap
  *  sheet's own mapping, shared by the history writer). */
-const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "stacks" ? STACKS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "stellar" ? STELLAR_EXPLORER : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
+const swapSrcExplorerFor = (k) => k === "solana" ? SOLANA_EXPLORER : k === "tron" ? TRON_EXPLORER : k === "sui" ? SUI_EXPLORER : k === "bitcoin" ? "https://mempool.space" : k === "near" ? NEAR_EXPLORER : k === "xrpl" ? XRPL_EXPLORER : k === "aptos" ? APTOS_EXPLORER : k === "stacks" ? STACKS_EXPLORER : k === "litecoin" ? "https://litecoinspace.org" : k === "dogecoin" ? "https://blockchair.com/dogecoin" : k === "bitcoincash" ? "https://blockchair.com/bitcoin-cash" : k === "cardano" ? "https://cardanoscan.io" : k === "zcash" ? "https://blockchair.com/zcash" : k === "dash" ? "https://blockchair.com/dash" : k === "stellar" ? STELLAR_EXPLORER : k === "tezos" ? TEZOS_EXPLORER : k === "hedera" ? HEDERA_EXPLORER : k === "lightning" || k === "arkade" ? "" : (COSMOS_CHAINS.find(c => c.key === k)?.explorer || NETWORKS[k]?.explorer || "");
 
 /** Swap-run registry (auto-continuation, 2026-11-14): a
  *  pending record is completed by exactly ONE runner at a

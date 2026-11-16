@@ -2182,12 +2182,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 {
   const ids = q => filterReceiveNetworks(q).map(m => m.id);
   const TOP_IDS = ["evm", "bitcoin", "lightning", "tron", "solana", "sui", "stellar", "ton", "near",
-    "algorand", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
-  ok("receive: one entry per network (20 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 27);
+    "algorand", "tezos", "hedera", "xrpl", "polkadot", "aptos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
+  ok("receive: one entry per network (22 top-level + 7 Cosmos)", RECEIVE_NETWORKS.length === 29);
   ok("receive: ids unique", new Set(RECEIVE_NETWORKS.map(m => m.id)).size === RECEIVE_NETWORKS.length);
   ok("receive: every panel id covered", TOP_IDS.every(id => RECEIVE_NETWORKS.some(m => m.id === id))
     && COSMOS_CHAINS.every(c => RECEIVE_NETWORKS.some(m => m.id === c.key)));
-  ok("receive: blank query lists everything", ids("") .length === 27 && ids("   ").length === 27);
+  ok("receive: blank query lists everything", ids("") .length === 29 && ids("   ").length === 29);
   ok("receive: btc → Bitcoin only (not Bitcoin Cash)", JSON.stringify(ids("btc")) === '["bitcoin"]');
   ok("receive: ln → Lightning only", JSON.stringify(ids("ln")) === '["lightning"]');
   ok("receive: lightning → Lightning only", JSON.stringify(ids("lightning")) === '["lightning"]');
@@ -6492,7 +6492,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const appSrcSatora = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   ok("satora: app offers Bitcoin as a full endpoint (source AND destination since Part B, 2026-11-14; Lightning likewise), gates, reviews and polls",
     appSrcSatora.includes('const swapDestNets = [...swapNets];')
-    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]')
+    && appSrcSatora.includes('"tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]')
     && appSrcSatora.includes("checkSatoraLightningReceivability({")
     && appSrcSatora.includes("formatSatoraSwapIntent({ route: r, destInput })")
     && appSrcSatora.includes("pollSatoraSwapStatuses(localStorage)")
@@ -11476,7 +11476,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const appBook = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     ok("book: the sheet builds the book ONLY from the wallet's derived addresses and threads it through swapArgs",
       appBook.includes("addresses: addressBook")
-      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
+      && appBook.includes("const addressBook = { tron: tronAddr, solana: solAddr, sui: suiAddr, polkadot: dotAddr, ton: tonAddr, near: nearAddr, xrpl: xrpAddr, litecoin: ltcAddr, dogecoin: dogeAddr, bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, algorand: algoAddr, tezos: tezAddr, hedera: hbaAddr, stellar: stellarAddr, aptos: aptosAddr, stacks: stacksAddr, cosmoshub: cosmosAddrs.cosmoshub, osmosis: cosmosAddrs.osmosis, noble: cosmosAddrs.noble, celestia: cosmosAddrs.celestia, injective: cosmosAddrs.injective, dydx: cosmosAddrs.dydx }")
       && appBook.includes("addressBook[k] = wallet.address")
       && appBook.includes("addressBook.bitcoin = btcTrAddr")
       && appBook.includes("addressBook.arkade = arkSession.address"));
@@ -12917,7 +12917,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("arkade endpoint: core carries the three Arkade endpoints + the gasless claim",
       coreSrcAK.includes('"/swap/evm/arkade"') && coreSrcAK.includes('"/swap/arkade/evm"') && coreSrcAK.includes('"/swap/arkade/lightning"') && coreSrcAK.includes("claim-gasless"));
     ok("arkade endpoint: the sheet wires Arkade into the nets, the gated funding and both claims, with the warning element",
-      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
+      appSrcAK.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]') && appSrcAK.includes("mod.fundArkadeVhtlc") && appSrcAK.includes("executeSatoraArkadeSourceRoute")
       && appSrcAK.includes("Claim sats into my Arkade wallet") && appSrcAK.includes('id="wArkWarn"') && appSrcAK.includes("operator-assisted exits"));
   }
 }
@@ -13264,7 +13264,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("ln source: core carries the two LN-source creation endpoints + the gasless claim",
       coreSrcLN.includes('"/swap/lightning/evm"') && coreSrcLN.includes('"/swap/lightning/bitcoin"') && coreSrcLN.includes("claimSatoraLnEvmSwap"));
     ok("ln source: the sheet wires Lightning into the nets, the gated payer, the gate's balance read and both claims",
-      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
+      appSrcLN.includes('"sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]') && appSrcLN.includes("executeSatoraLnSourceRoute") && appSrcLN.includes("payLnSwapInvoice")
       && appSrcLN.includes("formatSatoraLnSourceIntent") && appSrcLN.includes('chainKey === "lightning"') && appSrcLN.includes("Claim Bitcoin on-chain")
       && appSrcLN.includes("lnBtcBelowFloor"));
   }
@@ -17108,7 +17108,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc117.includes("executeOneClickSwapRoute(wallet, route")
       && appSrc117.includes('syncPendingSwapHistory("oneclick", rec')
       && appSrc117.includes("pollOneClickSwapStatuses(localStorage)")
-      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]'));
+      && appSrc117.includes('"near", "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]'));
     const coreSrc117 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
     ok("oneclick core: the dispatcher, the gate and the milestone runner all carry the oneclick branch",
       coreSrc117.includes('route.provider === "oneclick"') && coreSrc117.includes("executeOneClickSwapRoute") && coreSrc117.includes("pollOneClickLegOutcome"));
@@ -17859,7 +17859,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && appSrc120.includes('data-ada="1"') && appSrc120.includes('cardano: () => { qr("qrAda", adaAddr);')
       && appSrc120.includes('if (viewKey === "cardano") return openCardanoSheet();'));
     ok("cardano app: the swap sheet lists Cardano, prices its balance for the gate, and threads its address through addrOf and the book",
-      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrc120.includes('if (netKey === "cardano")')
+      appSrc120.includes('"injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]') && appSrc120.includes('if (netKey === "cardano")')
       && appSrc120.includes('if (chainKey === "cardano") return await getCardanoBalance(adaAddr);')
       && appSrc120.includes("cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr") && appSrc120.includes("bitcoincash: bchAddr, cardano: adaAddr, zcash: zecAddr, dash: dashAddr, stellar: stellarAddr, aptos: aptosAddr"));
     ok("cardano core: the 1Click deposit send rides the Cardano builder with the quoted amount as exact lovelace — no float path",
@@ -19759,7 +19759,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // App wiring pins (house style).
   ok("gap9 app: the swap sheet lists Stellar (XLM sentinel + USDC row), threads its address, and names Soroswap",
     appSrc129.includes('if (netKey === "stellar")') && appSrc129.includes('"USDC:" + STELLAR_USDC_ISSUER')
-    && appSrc129.includes('"cardano", "zcash", "dash", "stellar", "stacks", "algorand"]') && appSrc129.includes("stellar: stellarAddr")
+    && appSrc129.includes('"cardano", "zcash", "dash", "stellar", "stacks", "algorand", "tezos", "hedera"]') && appSrc129.includes("stellar: stellarAddr")
     && appSrc129.includes('if (route && route.provider === "soroswap") return "Soroswap";')
     && appSrc129.includes('if (chainKey === "stellar") {'));
   ok("gap9 app: execution dispatches Soroswap routes to the core executor with the stellar.expert link",
@@ -20189,7 +20189,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && coreSrc131.includes("export async function executeBitflowSwapRoute")
     && coreSrc131.includes('case "stacks": return isValidStacksAddress(own.stacks'));
   ok("gap11 app: the picker lists Stacks, the sheet presents the peg Move, names Bitflow, and the peg records panel + drivers are wired",
-    appSrc131.includes('if (netKey === "stacks")') && appSrc131.includes('"stellar", "stacks", "algorand"]')
+    appSrc131.includes('if (netKey === "stacks")') && appSrc131.includes('"stellar", "stacks", "algorand", "tezos", "hedera"]')
     && appSrc131.includes("sbtcPegPairForRoute(fromKey, fromTok.address, toKey, toTok.address)")
     && appSrc131.includes("openSbtcPegSheet") && appSrc131.includes('id="wSbtcPeg"')
     && appSrc131.includes('if (route && route.provider === "bitflow") return "Bitflow";')
@@ -20935,6 +20935,171 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
       !(routesKaia || []).some(r => r.provider === "openocean"));
   } finally {
     globalThis.fetch = prevFetch136;
+  }
+}
+
+/* ================= §137 — gap #16: Tezos + Hedera PRESENCE
+ * (hold / receive / send; swaps honest no-route on both) ====
+ * Research record: research_notes/fluid-tezos-hedera-20261116.
+ * Tezos: SLIP-0010 ed25519 at m/44'/1729'/0'/0' → tz1, proven
+ * byte-identical by two implementations AND against mainnet
+ * state during research; the @scure/bip32 default (secp256k1)
+ * derives a silently-wrong tz1 at the same path — pinned
+ * against. Hedera: ECDSA-first (coin 3030) — the EVM-address
+ * alias is the receive face because ed25519 key aliases are
+ * NOT resolvable on the public mirror; the account is a
+ * hollow account until its first receive creates it. The
+ * Hashport-bridged USDT[hts] (0.0.1055472) is NEVER pinned:
+ * Hashport was decommissioned 2026-05-31 and the stock is
+ * permanently unredeemable — its absence is asserted. */
+import { tezosAddressFromPhrase, tezosAddressFromSeed, tezosSeedFromSeed, tezosEdpkFromPubkey, isValidTezosAddress,
+  TEZOS_USDT, TEZOS_USDT_CONTRACT, TEZOS_USDT_IMPOSTOR, TEZOS_FRESH_ACCOUNT_BURN_MUTEZ, TEZOS_COST_PER_BYTE_MUTEZ,
+  TEZOS_ORIGINATION_SIZE, tezosMinFeeMutez, TEZOS_REVEAL_FEE_MUTEZ, TEZOS_TX_FEE_MUTEZ, TEZOS_FA2_FEE_MUTEZ,
+  buildTezosContents, signTezosOperation, parseTezosBalances, TEZOS_SWAP_TOKENS, TEZOS_SWAP_NATIVE_TOKEN,
+  hederaAddressFromPhrase, hederaEd25519PubkeyFromSeed, hederaAccountIdToEvm, hederaNormalizeAddress, isValidHederaAddress,
+  HEDERA_USDC, HEDERA_USDC_TOKEN_ID, HEDERA_UNREDEEMABLE_USDT_HTS_ID, parseHederaAccount, buildHederaRelayTx,
+  signHederaRelayTx, HEDERA_SWAP_TOKENS, HEDERA_CHAIN_ID, tezosAddressFromPubkey } from "../src/wallet-core.js";
+import { ed25519 as ed25519_137 } from "@noble/curves/ed25519.js";
+{
+  const PHRASE137 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const seed137 = mnemonicToSeedSync(PHRASE137);
+  // --- Tezos derivation: the research vectors, byte-exact.
+  ok("gap16: Tezos tz1 matches the research vector (SLIP-0010 ed25519, m/44'/1729'/0'/0')",
+    tezosAddressFromPhrase(PHRASE137) === "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL"
+    && tezosAddressFromSeed(seed137) === "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL");
+  ok("gap16: Tezos key agrees with the ed25519-hd-key reference derivation, and the edpk matches the research vector",
+    Buffer.from(tezosSeedFromSeed(seed137)).toString("hex")
+      === Buffer.from(ed25519HdDerivePath("m/44'/1729'/0'/0'", Buffer.from(seed137).toString("hex")).key).toString("hex")
+    && tezosEdpkFromPubkey(ed25519_137.getPublicKey(tezosSeedFromSeed(seed137)))
+      === "edpku4US3ZykcZifjzSGFCmFr3zRgCKndE82estE4irj4d5oqDNDvf");
+  // The trap: @scure/bip32's default node is secp256k1 — a
+  // tz1 built from its public key at the same path is a
+  // DIFFERENT, silently-wrong address.
+  ok("gap16: the secp256k1 trap — an HDKey-derived key at the Tezos path does NOT produce the wallet's tz1",
+    (() => { const node = HDKey.fromMasterSeed(seed137).derive("m/44'/1729'/0'/0'");
+      const edPub = ed25519_137.getPublicKey(tezosSeedFromSeed(seed137));
+      return node.publicKey.length === 33
+        && Buffer.from(node.publicKey).toString("hex") !== Buffer.from(edPub).toString("hex")
+        && tezosAddressFromPubkey(node.publicKey.slice(1)) !== tezosAddressFromPhrase(PHRASE137)
+        && tezosAddressFromPubkey(edPub) === tezosAddressFromPhrase(PHRASE137); })());
+  ok("gap16: Tezos address validation (tz1 + KT1 accepted, garbage refused)",
+    isValidTezosAddress("tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL") === true
+    && isValidTezosAddress("KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o") === true
+    && isValidTezosAddress("tz1bad") === false && isValidTezosAddress("0x716f1417A6C09d41FF3905F2316D40c2c3277BB6") === false
+    && isValidTezosAddress("") === false);
+  // --- The pinned dollar and the impostor swarm.
+  ok("gap16: Tether USDt is pinned by contract + token id 0, and the named copycat is never the pin",
+    TEZOS_USDT.address === "KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o" && TEZOS_USDT_CONTRACT === TEZOS_USDT.address
+    && TEZOS_USDT.tokenId === 0 && TEZOS_USDT.verified === true
+    && TEZOS_USDT_IMPOSTOR === "KT19f2aMEKeG3zVY7vRiSGsW2pnVQ3svRff9" && TEZOS_USDT_IMPOSTOR !== TEZOS_USDT.address
+    && !TEZOS_SWAP_TOKENS.some(t => t.address === TEZOS_USDT_IMPOSTOR)
+    && TEZOS_SWAP_TOKENS.length === 2 && TEZOS_SWAP_NATIVE_TOKEN === "xtz");
+  ok("gap16: parseTezosBalances verifies ONLY the exact contract+id — a same-name copycat row is unverified",
+    (() => { const p = parseTezosBalances({ address: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", balance: 2500000, type: "user" }, [
+      { token: { contract: { address: "KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o" }, tokenId: "0", standard: "fa2", metadata: { symbol: "USDt", name: "Tether USDt", decimals: "6" } }, balance: "1234567" },
+      { token: { contract: { address: "KT19f2aMEKeG3zVY7vRiSGsW2pnVQ3svRff9" }, tokenId: "0", standard: "fa2", metadata: { symbol: "USDt", name: "Tether USDt", decimals: "6" } }, balance: "999000000" }]);
+      return p.funded === true && p.balances[0].amount === "2.5"
+        && p.balances[1].verified === true && p.balances[1].amount === "1.234567"
+        && p.balances[2].verified === false && p.balances[2].address === TEZOS_USDT_IMPOSTOR; })());
+  // --- Sender-side facts: the burn and the fee floor.
+  ok("gap16: the fresh-account burn is the protocol product (250 mutez/byte × 257 bytes = 64,250 mutez = 0.06425 XTZ)",
+    TEZOS_FRESH_ACCOUNT_BURN_MUTEZ === 64250 && TEZOS_COST_PER_BYTE_MUTEZ === 250 && TEZOS_ORIGINATION_SIZE === 257
+    && TEZOS_COST_PER_BYTE_MUTEZ * TEZOS_ORIGINATION_SIZE === TEZOS_FRESH_ACCOUNT_BURN_MUTEZ);
+  ok("gap16: every declared Tezos fee meets the protocol minimum at its schedule size",
+    TEZOS_REVEAL_FEE_MUTEZ >= tezosMinFeeMutez(150, 10000) && TEZOS_TX_FEE_MUTEZ >= tezosMinFeeMutez(200, 11000)
+    && TEZOS_FA2_FEE_MUTEZ >= tezosMinFeeMutez(250, 30000));
+  // --- Operation construction + signing, byte-pinned.
+  ok("gap16: buildTezosContents — an unrevealed sender to a fresh tz1 is [reveal, transaction] with the burn storage limit",
+    (() => { const cs = buildTezosContents({ from: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", edpk: "edpku4US3ZykcZifjzSGFCmFr3zRgCKndE82estE4irj4d5oqDNDvf", counter: "41", revealed: false, to: "tz1burnburnburnburnburnburnburjAYjjX", amountRaw: "1000000", token: null, destFunded: false });
+      return cs.length === 2 && cs[0].kind === "reveal" && cs[0].counter === "42" && cs[0].public_key.startsWith("edpk")
+        && cs[1].kind === "transaction" && cs[1].counter === "43" && cs[1].storage_limit === "257" && cs[1].amount === "1000000"
+        && cs[1].parameters === undefined; })());
+  ok("gap16: buildTezosContents — an FA2 send calls transfer on the pinned contract with token id 0, never a value transfer",
+    (() => { const cs = buildTezosContents({ from: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", edpk: "edpku4US3ZykcZifjzSGFCmFr3zRgCKndE82estE4irj4d5oqDNDvf", counter: "41", revealed: true, to: "tz1burnburnburnburnburnburnburjAYjjX", amountRaw: "2500000", token: TEZOS_USDT, destFunded: true });
+      const v = cs[0]?.parameters?.value?.[0];
+      return cs.length === 1 && cs[0].destination === TEZOS_USDT_CONTRACT && cs[0].amount === "0"
+        && cs[0].parameters.entrypoint === "transfer" && v?.prim === "Pair"
+        && v.args[1][0].args[1].args[0].int === "0" && v.args[1][0].args[1].args[1].int === "2500000"; })());
+  ok("gap16: signTezosOperation is deterministic — signature and op hash pinned for a fixed forged payload",
+    (() => { const s = signTezosOperation("03a964920b28f6d24a7f08b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2", tezosSeedFromSeed(seed137));
+      return s.signatureHex === "a605a63b34be36c8e98ef1132f82cc082cb6e84f3e33e03622158440105324662fe523336b8c2c66254215d2ec6b69413bc3de765233cf82548889bf7357570b"
+        && s.opHash === "op6cErgic1MKdFKgcTPxvH6rz6dVZAsuEp9cw4JS9ZKPU1PE4oi"
+        && s.signedHex.endsWith(s.signatureHex); })());
+  // --- Hedera derivation: ECDSA-first, research vectors.
+  ok("gap16: Hedera ECDSA alias matches the research vector (coin 3030, m/44'/3030'/0'/0'/0')",
+    hederaAddressFromPhrase(PHRASE137) === "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6");
+  ok("gap16: Hedera ed25519 alternate key matches the research pin (internal only — never the receive face)",
+    hederaEd25519PubkeyFromSeed(seed137) === "10fcec8c5db29aeab62272a08be39b1ec75eba50624351fba9948ff5d3d78ecf");
+  ok("gap16: Hedera account-id ⇄ EVM long-zero forms and validation",
+    hederaAccountIdToEvm("0.0.456858") === "0x000000000000000000000000000000000006f89a"
+    && hederaNormalizeAddress("0.0.456858") === "0x000000000000000000000000000000000006f89a"
+    && isValidHederaAddress("0.0.456858") === true && isValidHederaAddress("0x716f1417a6c09d41ff3905f2316d40c2c3277bb6") === true
+    && isValidHederaAddress("tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL") === false && isValidHederaAddress("nope") === false);
+  // --- The pinned dollar and the unredeemable absence.
+  ok("gap16: Circle USDC 0.0.456858 is the only pinned Hedera dollar; USDT[hts] appears in NO offered set",
+    HEDERA_USDC.address === "0.0.456858" && HEDERA_USDC_TOKEN_ID === "0.0.456858" && HEDERA_USDC.verified === true
+    && HEDERA_UNREDEEMABLE_USDT_HTS_ID === "0.0.1055472"
+    && !HEDERA_SWAP_TOKENS.some(t => t.address === HEDERA_UNREDEEMABLE_USDT_HTS_ID)
+    && HEDERA_SWAP_TOKENS.length === 2 && HEDERA_SWAP_TOKENS[1].address === HEDERA_USDC_TOKEN_ID);
+  ok("gap16: parseHederaAccount — a held USDT[hts] balance parses as data but is never promoted to a verified row by the parser",
+    (() => { const p = parseHederaAccount({ account: "0.0.1001", evm_address: "0x716f1417a6c09d41ff3905f2316d40c2c3277bb6", balance: { balance: 123456789, tokens: [{ token_id: "0.0.456858", balance: 2500000 }, { token_id: "0.0.1055472", balance: 777 }] } },
+      { "0.0.456858": { symbol: "USDC", name: "USDC", decimals: 6 }, "0.0.1055472": { symbol: "USDT[hts]", name: "USDT[hts]", decimals: 6 } });
+      return p.exists === true && p.hbarTiny === "123456789" && p.tokens.length === 2
+        && p.tokens.find(t => t.tokenId === "0.0.1055472").balance === "777"; })());
+  // --- Relay transaction construction + signing.
+  ok("gap16: buildHederaRelayTx — a native send is a weibars value transfer on chain 295 to the normalised destination",
+    (() => { const tx = buildHederaRelayTx({ to: "0.0.2", amountTiny: "100000000", nonce: 0, gasPriceWei: "100000000000", gasLimit: 21000 });
+      return tx.chainId === 295 && HEDERA_CHAIN_ID === 295 && tx.to === "0x0000000000000000000000000000000000000002"
+        && tx.value === "1000000000000000000" && tx.data === "0x"; })());
+  ok("gap16: buildHederaRelayTx — a token send is ERC-20 transfer calldata to the token's long-zero address, value 0",
+    (() => { const tx = buildHederaRelayTx({ token: HEDERA_USDC, to: "0.0.12345", tokenRaw: "1500000", nonce: 3, gasPriceWei: "120000000000", gasLimit: 100000 });
+      return tx.to === "0x000000000000000000000000000000000006f89a" && tx.value === "0"
+        && tx.data === "0xa9059cbb0000000000000000000000000000000000000000000000000000000000003039000000000000000000000000000000000000000000000000000000000016e360"; })());
+  {
+    const tx137 = buildHederaRelayTx({ to: "0.0.2", amountTiny: "100000000", nonce: 0, gasPriceWei: "100000000000", gasLimit: 21000 });
+    const raw137 = await signHederaRelayTx(tx137, "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    ok("gap16: the signed Hedera relay transaction parses back with the signer's address and chain 295",
+      ethers.Transaction.from(raw137).from === "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" && ethers.Transaction.from(raw137).chainId === 295n);
+  }
+  // --- Swap-universe wiring: address book + honest no-route,
+  // pinned through the REAL dispatcher with the sheet's exact
+  // args shape (§134 discipline).
+  ok("gap16: swapOwnAddressFor resolves tezos/hedera from the book and refuses cross-family shapes",
+    swapOwnAddressFor("tezos", { tezos: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", hedera: "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6" }) === "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL"
+    && swapOwnAddressFor("hedera", { tezos: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", hedera: "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6" }) === "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6"
+    && swapOwnAddressFor("tezos", { tezos: "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6" }) === null
+    && destNativeTokenAddress("tezos") === "xtz" && destNativeTokenAddress("hedera") === "hbar");
+  ok("gap16: the Receive sheet lists Tezos and Hedera and finds them by spoken names",
+    RECEIVE_NETWORKS.some(n => n.id === "tezos") && RECEIVE_NETWORKS.some(n => n.id === "hedera")
+    && JSON.stringify(filterReceiveNetworks("xtz").map(n => n.id)) === '["tezos"]'
+    && JSON.stringify(filterReceiveNetworks("hbar").map(n => n.id)) === '["hedera"]');
+  {
+    const app137 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("gap16: the app's swap address books carry tezos: and hedera: entries (the gap #12 lesson)",
+      app137.includes("tezos: tezAddr, hedera: hbaAddr") && app137.includes("tezos: tezAddr") && app137.includes("hedera: hbaAddr"));
+  }
+  {
+    const realFetch137 = globalThis.fetch;
+    const stub137 = async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => "" });
+    try {
+      globalThis.fetch = stub137;
+      const TZ137 = "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL", HB137 = "0x716f1417A6C09d41FF3905F2316D40c2c3277BB6";
+      const BASE_USDC137 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", EVM137 = "0x1111111111111111111111111111111111111111";
+      const book137 = { tezos: TZ137, hedera: HB137, evm: EVM137 };
+      const r1 = await getSwapRoutes({ fromChainKey: "tezos", toChainKey: "base", fromTokenAddress: "xtz", toTokenAddress: BASE_USDC137, fromAmount: "1000000", fromAddress: TZ137, toAddress: EVM137, addresses: book137 });
+      const r2 = await getSwapRoutes({ fromChainKey: "hedera", toChainKey: "tezos", fromTokenAddress: "hbar", toTokenAddress: "xtz", fromAmount: "100000000", fromAddress: HB137, toAddress: TZ137, addresses: book137 });
+      ok("gap16: dispatcher — Tezos and Hedera pairs resolve to NO routes (honest no-route, production args shape)",
+        Array.isArray(r1) && r1.length === 0 && Array.isArray(r2) && r2.length === 0);
+      const noQuote137 = async () => { throw new Error("No available quotes for the requested transfer"); };
+      const dNative = await diagnoseNoRouteSwap({ fromChainKey: "tezos", toChainKey: "base", fromTokenAddress: "xtz", toTokenAddress: BASE_USDC137, fromAmount: "1000000", fromAddress: TZ137, toAddress: EVM137, addresses: book137 },
+        { fromDecimals: 6, fromPriceUsd: 2.4, search: noQuote137 });
+      const dToken = await diagnoseNoRouteSwap({ fromChainKey: "tezos", toChainKey: "base", fromTokenAddress: TEZOS_USDT_CONTRACT, toTokenAddress: BASE_USDC137, fromAmount: "1000000", fromAddress: TZ137, toAddress: EVM137, addresses: book137 },
+        { fromDecimals: 6, fromPriceUsd: 1, search: noQuote137 });
+      ok("gap16: diagnosis — XTZ (the chain's hub asset) reads no-route-yet; USDt with no market reads no-market",
+        dNative.kind === "no-route-yet" && dToken.kind === "no-market");
+    } finally {
+      globalThis.fetch = realFetch137;
+    }
   }
 }
 

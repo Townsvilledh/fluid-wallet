@@ -91,6 +91,33 @@ same seed. Everything listed here **ships**: balance, receive and send.
   $1 in its own pools and is valued at the pool-implied
   rate everywhere in the swap surface. Cross-chain
   Algorand is an honest no-route.
+- **Tezos** — full send/receive/balance (presence; audit
+  gap #16). SLIP-0010 Ed25519 derivation (coin type 1729)
+  to a tz1; reads via TzKT; broadcasts forge/sign/inject
+  on public octez RPCs. The chain's dollar is Tether USDt
+  (FA2 KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o, token id 0),
+  pinned by contract against a same-name impostor swarm —
+  no Circle USDC exists on Tezos L1 and none is offered.
+  Send copy states the sender-side facts plainly: a first
+  send to a fresh tz1 carries the 0.06425 XTZ allocation
+  burn, and the account needs a one-time reveal before its
+  first outbound operation. No swap rail serves Tezos yet
+  — swaps are an honest no-route.
+- **Hedera** — full send/receive/balance (presence; audit
+  gap #16). ECDSA-first (coin type 3030): the EVM-address
+  alias is the receive address — no account number exists
+  until the first inbound transfer creates the account
+  (the creation fee is charged to the sender, associations
+  are unlimited, and the account completes on its first
+  signed send). Reads via the public mirror REST; sends
+  ride the Hashio JSON-RPC relay (native HAPI is gRPC and
+  not browser-feasible). The chain's only dollar is Circle
+  USDC (0.0.456858). **"USDT" 0.0.1055472 (USDT[hts]) is
+  never pinned or offered as a dollar: it is Hashport-
+  bridged stock, Hashport was decommissioned on
+  2026-05-31, and the stock is permanently unredeemable.**
+  No swap rail serves Hedera yet — swaps are an honest
+  no-route.
 - **TON, NEAR, XRPL, Polkadot (Asset Hub)** — full
   send/receive/balance.
 

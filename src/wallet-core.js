@@ -1083,8 +1083,8 @@ const PRICE_PAIRS = { ETH: "ETHUSDT", BNB: "BNBUSDT", BTC: "BTCUSDT", POL: "POLU
   AVAX: "AVAXUSDT", CELO: "CELOUSDT", MNT: "MNTUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT", USDT: null, TRX: "TRXUSDT", SOL: "SOLUSDT",
   LTC: "LTCUSDT", DOGE: "DOGEUSDT", BCH: "BCHUSDT", ADA: "ADAUSDT", ZEC: "ZECUSDT", DASH: "DASHUSDT", SUI: "SUIUSDT", XLM: "XLMUSDT",
   ATOM: "ATOMUSDT", OSMO: "OSMUSDT", TIA: "TIAUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", DYDX: "DYDXUSDT",
-  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT" };
-const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", ZEC: "zcash", DASH: "dash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack", HYPE: "hyperliquid" };
+  TON: "TONUSDT", NEAR: "NEARUSDT", ALGO: "ALGOUSDT", XRP: "XRPUSDT", DOT: "DOTUSDT", APT: "APTUSDT", STX: "STXUSDT", XTZ: "XTZUSDT", HBAR: "HBARUSDT" };
+const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", BNB: "binancecoin", POL: "polygon-ecosystem-token", AVAX: "avalanche-2", CELO: "celo", MNT: "mantle", TRX: "tron", SOL: "solana", LTC: "litecoin", DOGE: "dogecoin", BCH: "bitcoin-cash", ADA: "cardano", ZEC: "zcash", DASH: "dash", SUI: "sui", XLM: "stellar", ATOM: "cosmos", OSMO: "osmosis", TIA: "celestia", INJ: "injective-protocol", SEI: "sei-network", DYDX: "dydx-chain", TON: "the-open-network", NEAR: "near", ALGO: "algorand", XRP: "ripple", DOT: "polkadot", APT: "aptos", STX: "blockstack", HYPE: "hyperliquid", XTZ: "tezos", HBAR: "hedera-hashgraph" };
 /* RED-TEAM 2026-11-06 (Finding C): getPrices() takes Binance's word alone
  * (CoinGecko only fills gaps and is never compared), yet the agent runtime
  * prices its USD spending CAPS from it — one wrong or malicious response
@@ -4729,6 +4729,9 @@ export const RECEIVE_NETWORKS = [
   { id: "ton", name: "TON", aliases: ["ton", "the open network", "jetton", "jettons"] },
   { id: "near", name: "NEAR", aliases: ["near"] },
   { id: "algorand", name: "Algorand", aliases: ["algo", "algorand", "asa"] },
+  { id: "tezos", name: "Tezos", aliases: ["xtz", "tezos", "usdt"] },
+  { id: "hedera", name: "Hedera", sub: "account creates itself on first receive",
+    aliases: ["hbar", "hedera", "hashgraph"] },
   { id: "xrpl", name: "XRP Ledger", aliases: ["xrp", "xrpl", "ripple", "xrp ledger"] },
   { id: "polkadot", name: "Polkadot Asset Hub", aliases: ["dot", "polkadot", "asset hub"] },
   { id: "aptos", name: "Aptos", aliases: ["apt", "aptos"] },
@@ -22229,6 +22232,8 @@ export function destNativeTokenAddress(chainKey) {
   if (chainKey === "dash") return DASH_SWAP_NATIVE_TOKEN;
   if (chainKey === "stellar") return STELLAR_SWAP_NATIVE_TOKEN;
   if (chainKey === "aptos") return APTOS_SWAP_NATIVE_TOKEN;
+  if (chainKey === "tezos") return TEZOS_SWAP_NATIVE_TOKEN;
+  if (chainKey === "hedera") return HEDERA_SWAP_NATIVE_TOKEN;
   const skipC2 = skipChainOf(chainKey);
   if (skipC2) return skipC2.denom;
   if (NETWORKS[chainKey]) return NATIVE_TOKEN_ADDRESS;
@@ -22978,6 +22983,8 @@ export function swapOwnAddressFor(chainKey, own) {
     case "dash": return isValidDashAddress(own.dash || "") ? own.dash : null;
     case "stellar": return isValidStellarAddress(own.stellar || "") ? own.stellar : null;
     case "algorand": return isValidAlgorandAddress(own.algorand || "") ? own.algorand : null;
+    case "tezos": return isValidTezosAddress(own.tezos || "") ? own.tezos : null;
+    case "hedera": return isValidHederaAddress(own.hedera || "") ? own.hedera : null;
     case "stacks": return isValidStacksAddress(own.stacks || "") ? own.stacks : null;
     case "aptos": { const a = typeof own.aptos === "string" ? own.aptos.trim() : ""; if (!a) return null; try { return isValidAptosAddress(a) ? normalizeAptosAddress(a) : null; } catch { return null; } }
     case "arkade": { const a = typeof own.arkade === "string" ? own.arkade.trim() : ""; return a || null; }
@@ -29404,6 +29411,650 @@ export async function sendAlgorand(phrase, { to, amount, token = null }) {
   return { hash: txid };
 }
 
+// ---------- Tezos (SLIP-0010 Ed25519 branch, coin type 1729) — audit gap #16 ----------
+// Tezos keys are Ed25519 at the Temple/Kukai ecosystem path
+// m/44'/1729'/0'/0' — SLIP-0010 hardened-only, like every other
+// Ed25519 family here. THE TRAP the gap-#16 research caught:
+// @scure/bip32's default tree is secp256k1 — deriving this path
+// on it and hashing the result produces a silently WRONG tz1
+// (a different account the user does not hold the Ed25519 key
+// for in Tezos terms). The derivation below is the house
+// SLIP-0010 (deriveSlip10Ed25519) and is pinned in tests to the
+// research's mainnet-verified vector: the test phrase's tz1 is
+// a real revealed account whose on-chain edpk matches the
+// locally computed one byte-for-byte.
+// Presence only (gap #16): no rail Fluid runs quotes Tezos
+// with capture (Relay/Across/1Click/Satora/OpenOcean probed
+// absent; 3route/QuipuSwap have no integrator fee), so swaps
+// are an honest no-route — the family derives, holds, receives
+// and sends. Reads ride TzKT (keyless, CORS *); sends forge
+// through the public octez RPCs, sign locally, and inject on
+// the same hosts. Sender-side facts are DISCLOSED, never
+// hidden: a first send to a never-funded tz1 pays the
+// one-time allocation burn (cost_per_byte 250 mutez ×
+// origination_size 257 = 64,250 mutez = 0.06425 XTZ, protocol
+// constants probed live in the gap-#16 research), and a fresh
+// account's first outbound operation must batch a one-time
+// key reveal ahead of the transfer.
+export const TEZOS_EXPLORER = "https://tzkt.io";
+export const TZKT_API = "https://api.tzkt.io/v1";
+export const TEZOS_RPCS = [
+  "https://mainnet.smartpy.io",
+  "https://rpc.tzbeta.net",
+];
+/** Tether's USDt on Tezos L1 — the chain's canonical dollar
+ *  (FA2, token id 0; TzKT-probed in the gap-#16 research:
+ *  supply 141,000,001, 3,356 holders, alias "Tether Token").
+ *  There is NO Circle USDC on Tezos L1 (TzKT symbol search
+ *  returns [] — USDC exists only on Etherlink, a different
+ *  chain), so no USDC row is ever offered here. */
+export const TEZOS_USDT_CONTRACT = "KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o";
+export const TEZOS_USDT = { symbol: "USDt", name: "Tether USDt", address: TEZOS_USDT_CONTRACT, tokenId: 0, decimals: 6, verified: true, priceUsd: 1 };
+/** A named USDt copycat from the gap-#16 probe: the TzKT
+ *  search returns a swarm (≥8) of contracts cloning Tether's
+ *  name, thumbnail and even its supply figure. Pins are by
+ *  full contract + token id only; this one is named so tests
+ *  can assert it is never the pin and never verified. */
+export const TEZOS_USDT_IMPOSTOR = "KT19f2aMEKeG3zVY7vRiSGsW2pnVQ3svRff9";
+export const TEZOS_SWAP_NATIVE_TOKEN = "xtz";
+export const TEZOS_SWAP_TOKENS = [
+  { symbol: "XTZ", address: TEZOS_SWAP_NATIVE_TOKEN, decimals: 6, native: true },
+  { symbol: "USDt", address: TEZOS_USDT_CONTRACT, decimals: 6, native: false },
+];
+/** Protocol constants (live-probed, gap #16): the allocation
+ *  burn for creating an implicit account is cost_per_byte ×
+ *  origination_size, charged to the SENDER of the first
+ *  payment to a fresh tz1. */
+export const TEZOS_COST_PER_BYTE_MUTEZ = 250;
+export const TEZOS_ORIGINATION_SIZE = 257;
+export const TEZOS_FRESH_ACCOUNT_BURN_MUTEZ = TEZOS_COST_PER_BYTE_MUTEZ * TEZOS_ORIGINATION_SIZE; // 64,250
+/** Declared gas limits + fees for the three operation shapes
+ *  Fluid builds. Fees follow the protocol minimum formula
+ *  (minimal_fees 100 mutez + 1 mutez/byte + 0.1 mutez per gas
+ *  unit, on the DECLARED gas limit) with a safety margin —
+ *  see tezosMinFeeMutez; tests pin declared ≥ minimum. */
+export const TEZOS_REVEAL_GAS = 10000;
+export const TEZOS_TX_GAS = 11000;
+export const TEZOS_FA2_GAS = 30000;
+export const TEZOS_FA2_STORAGE = 1000;
+export const TEZOS_REVEAL_FEE_MUTEZ = 1400;
+export const TEZOS_TX_FEE_MUTEZ = 1500;
+export const TEZOS_FA2_FEE_MUTEZ = 3600;
+/** The protocol minimum fee (mutez) for an operation of the
+ *  given forged size at the given declared gas limit. Pure. */
+export function tezosMinFeeMutez(sizeBytes, gasLimit) {
+  return Math.ceil(100 + Number(sizeBytes) + Number(gasLimit) / 10);
+}
+
+const TEZOS_B58C = base58check(sha256);
+const TEZOS_PREFIX = {
+  tz1: [6, 161, 159], tz2: [6, 161, 161], tz3: [6, 161, 164], KT1: [2, 90, 121],
+  edpk: [13, 15, 37, 217], op: [5, 116],
+};
+/** The wallet's Tezos private seed: BIP39 seed → m/44'/1729'/0'/0'. */
+export function tezosSeedFromSeed(seed) {
+  return deriveSlip10Ed25519(seed, [44, 1729, 0, 0]).key;
+}
+function tezosKey(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return tezosSeedFromSeed(mnemonicToSeedSync(clean));
+}
+/** tz1 encoding: base58check(prefix ‖ blake2b-160(pubkey)). */
+export function tezosAddressFromPubkey(pubkey) {
+  return TEZOS_B58C.encode(Uint8Array.from([...TEZOS_PREFIX.tz1, ...blake2b(pubkey, { dkLen: 20 })]));
+}
+/** The edpk (base58check public key) a reveal operation names. */
+export function tezosEdpkFromPubkey(pubkey) {
+  return TEZOS_B58C.encode(Uint8Array.from([...TEZOS_PREFIX.edpk, ...pubkey]));
+}
+/** Tezos address for a raw BIP39 seed. */
+export function tezosAddressFromSeed(seed) {
+  return tezosAddressFromPubkey(ed25519.getPublicKey(tezosSeedFromSeed(seed)));
+}
+/** The Tezos address of the wallet's main account. */
+export function tezosAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return tezosAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** Decode a Tezos address to { kind, hash } (kind = tz1/tz2/
+ *  tz3/KT1), verifying the base58 checksum and the 20-byte
+ *  hash length. Null for anything else. */
+export function tezosAddressDecode(address) {
+  try {
+    const payload = TEZOS_B58C.decode(String(address || "").trim());
+    if (!payload || payload.length !== 23) return null;
+    for (const kind of ["tz1", "tz2", "tz3", "KT1"]) {
+      const p = TEZOS_PREFIX[kind];
+      if (payload[0] === p[0] && payload[1] === p[1] && payload[2] === p[2]) {
+        return { kind, hash: payload.slice(3) };
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+export function isValidTezosAddress(address) { return tezosAddressDecode(address) !== null; }
+export function tezosMutezToXtz(mutez) { return ethers.formatUnits(BigInt(mutez), 6); }
+export function tezosXtzToMutez(amount) { return ethers.parseUnits(String(amount), 6); }
+
+/** One TzKT read (keyless). Throws on transport/HTTP failure —
+ *  a failed read is "couldn't load", never a zero. */
+async function tzktJson(path) {
+  const res = await fetch(TZKT_API + path, { signal: AbortSignal.timeout(20000) });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data == null) throw new Error("Tezos read failed (HTTP " + res.status + ").");
+  return data;
+}
+/** Pure: TzKT account + token-balance payloads → the family's
+ *  account state. The native row and the pinned USDt row are
+ *  always present (USDt at a true zero when unheld); every
+ *  other held FA token rides as an UNVERIFIED row from its
+ *  TzKT metadata — only the exact contract + token id of
+ *  TEZOS_USDT is ever verified (the copycat swarm rule). */
+export function parseTezosBalances(acctData, tokenData) {
+  const d = acctData && typeof acctData === "object" ? acctData : {};
+  const funded = d.type !== "empty_account" && (Number(d.balance || 0) > 0 || d.revealed === true || Number(d.counter || 0) > 0);
+  const balances = [{ symbol: "XTZ", name: "Tezos", amount: tezosMutezToXtz(d.balance ?? 0), address: null, decimals: 6, verified: true }];
+  let usdtAmount = "0";
+  const others = [];
+  for (const row of Array.isArray(tokenData) ? tokenData : []) {
+    const t = row?.token || {};
+    const contract = t.contract?.address || null;
+    const tokenId = Number(t.tokenId ?? 0);
+    const raw = row?.balance;
+    if (raw == null || !contract) continue;
+    if (contract === TEZOS_USDT_CONTRACT && tokenId === TEZOS_USDT.tokenId) {
+      usdtAmount = ethers.formatUnits(BigInt(raw), TEZOS_USDT.decimals);
+      continue;
+    }
+    const meta = t.metadata || {};
+    const decimals = Number(meta.decimals ?? 0);
+    others.push({
+      symbol: meta.symbol || "FA token", name: meta.name || "Tezos token",
+      amount: ethers.formatUnits(BigInt(raw), Number.isFinite(decimals) ? decimals : 0),
+      address: contract, tokenId, decimals: Number.isFinite(decimals) ? decimals : 0, verified: false,
+    });
+  }
+  balances.push({ ...TEZOS_USDT, amount: usdtAmount });
+  balances.push(...others);
+  return { funded, revealed: d.revealed === true, balances };
+}
+/** The full Tezos account state via TzKT. */
+export async function getTezosAccount(address) {
+  if (!isValidTezosAddress(address)) throw new Error("That is not a valid Tezos address.");
+  const acct = await tzktJson("/accounts/" + address);
+  let tokens = [];
+  try {
+    const t = await tzktJson("/tokens/balances?account=" + address + "&balance.gt=0&limit=1000");
+    if (Array.isArray(t)) tokens = t;
+  } catch { /* token list is additive — the native read already landed */ }
+  return parseTezosBalances(acct, tokens);
+}
+/** Tezos balances shaped like the other families' row lists. */
+export async function getTezosBalances(address) {
+  return (await getTezosAccount(address)).balances;
+}
+/** Read-only pre-flight for the send sheet: sender funding +
+ *  reveal state, destination existence (drives the burn
+ *  disclosure), and the declared fee total. Never throws —
+ *  unknown fields stay null (the algoSendPlan posture). */
+export async function tezosSendPlan(fromAddress, { to, token = null } = {}) {
+  const plan = { senderFunded: null, senderRevealed: null, senderXtz: null, destFunded: null, needsReveal: null, burnXtz: null, feeXtz: null };
+  try {
+    const s = await tzktJson("/accounts/" + fromAddress);
+    plan.senderFunded = s.type !== "empty_account" && (Number(s.balance || 0) > 0 || s.revealed === true || Number(s.counter || 0) > 0);
+    plan.senderRevealed = s.revealed === true;
+    plan.senderXtz = tezosMutezToXtz(s.balance ?? 0);
+    plan.needsReveal = plan.senderFunded === true && plan.senderRevealed === false;
+  } catch { /* stays null */ }
+  try {
+    const d = await tzktJson("/accounts/" + to);
+    plan.destFunded = d.type !== "empty_account" && (Number(d.balance || 0) > 0 || d.revealed === true || Number(d.counter || 0) > 0 || Number(d.numTransactions || 0) > 0);
+  } catch { plan.destFunded = false; /* an unreadable/invalid dest reads as fresh — the burn cap is the safe side */ }
+  const burn = !token && plan.destFunded === false;
+  plan.burnXtz = burn ? tezosMutezToXtz(TEZOS_FRESH_ACCOUNT_BURN_MUTEZ) : "0";
+  const feeMutez = (token ? TEZOS_FA2_FEE_MUTEZ : TEZOS_TX_FEE_MUTEZ) + (plan.needsReveal ? TEZOS_REVEAL_FEE_MUTEZ : 0);
+  plan.feeXtz = tezosMutezToXtz(feeMutez);
+  return plan;
+}
+/** The signer principle, Tezos edition — with the family's
+ *  two sender-side facts stated in the sentence when they
+ *  apply: the one-time key reveal, and the one-time
+ *  allocation burn a first payment to a fresh tz1 charges
+ *  the sender. Neither is ever folded silently into a fee. */
+export function formatTezosSendIntent({ amount, symbol, to, feeXtz, name = null, needsReveal = false, burnXtz = null }) {
+  const dest = name ? `${name}.${FLUID_DOMAIN} (${to})` : to;
+  let s = `Send ${amount} ${symbol} to ${dest} on Tezos.`;
+  if (feeXtz != null) s += ` Network fee about ${feeXtz} XTZ.`;
+  if (needsReveal) s += " This is your account's first send, so it also reveals your public key on-chain — a one-time Tezos step, already inside the fee above.";
+  if (burnXtz != null && Number(burnXtz) > 0) s += ` The recipient's account is brand new, so Tezos also charges you a one-time ${burnXtz} XTZ account-creation burn for it.`;
+  return s + " Confirm?";
+}
+/** Pure: the unsigned operation contents for one Tezos send —
+ *  a reveal first (counter+1) when the account has never
+ *  revealed, then the transfer (native, or the FA2 `transfer`
+ *  entrypoint on the pinned USDt contract). Fees and gas are
+ *  the declared schedule above; the native transfer's storage
+ *  limit carries the origination size exactly when the
+ *  destination is fresh (the burn cap), else zero. */
+export function buildTezosContents({ from, edpk, counter, revealed, to, amountRaw, token = null, destFunded = true }) {
+  const contents = [];
+  let n = Number(counter);
+  const next = () => String(++n);
+  if (!revealed) {
+    contents.push({ kind: "reveal", source: from, fee: String(TEZOS_REVEAL_FEE_MUTEZ), counter: next(), gas_limit: String(TEZOS_REVEAL_GAS), storage_limit: "0", public_key: edpk });
+  }
+  if (!token) {
+    contents.push({ kind: "transaction", source: from, fee: String(TEZOS_TX_FEE_MUTEZ), counter: next(), gas_limit: String(TEZOS_TX_GAS), storage_limit: destFunded ? "0" : String(TEZOS_ORIGINATION_SIZE), amount: String(amountRaw), destination: to });
+  } else {
+    contents.push({ kind: "transaction", source: from, fee: String(TEZOS_FA2_FEE_MUTEZ), counter: next(), gas_limit: String(TEZOS_FA2_GAS), storage_limit: String(TEZOS_FA2_STORAGE), amount: "0", destination: token.address,
+      parameters: { entrypoint: "transfer", value: [
+        { prim: "Pair", args: [{ string: from }, [
+          { prim: "Pair", args: [{ string: to }, { prim: "Pair", args: [{ int: String(token.tokenId ?? 0) }, { int: String(amountRaw) }] }] },
+        ]] },
+      ] } });
+  }
+  return contents;
+}
+/** Pure: sign forged operation bytes (the octez generic
+ *  signing rule: ed25519 over blake2b-256 of the 0x03
+ *  watermark ‖ forged bytes) and derive the operation hash.
+ *  Deterministic — tests pin the exact signature + hash for
+ *  a fixed forged payload and the test key. */
+export function signTezosOperation(forgedHex, privKey) {
+  const bytes = hex.decode(String(forgedHex || "").trim());
+  const digest = blake2b(Uint8Array.from([3, ...bytes]), { dkLen: 32 });
+  const sig = ed25519.sign(digest, privKey);
+  const signed = Uint8Array.from([...bytes, ...sig]);
+  const opHash = TEZOS_B58C.encode(Uint8Array.from([...TEZOS_PREFIX.op, ...blake2b(signed, { dkLen: 32 })]));
+  return { signedHex: hex.encode(signed), signatureHex: hex.encode(sig), opHash };
+}
+/** One octez RPC call across the rotated public nodes. */
+async function tezosRpc(path, { method = "GET", body = null } = {}) {
+  return withFamilyEndpoints("tezos", TEZOS_RPCS, async (base) => {
+    const res = await fetch(base + path, {
+      method,
+      headers: body != null ? { "content-type": "application/json" } : undefined,
+      body: body != null ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = new Error("Tezos node refused the request (HTTP " + res.status + ").");
+      err.rpcData = data;
+      throw err;
+    }
+    return data;
+  });
+}
+/** Build, sign LOCALLY, and inject a Tezos send: the octez
+ *  RPC forges the operation group (the canonical remote-forge
+ *  flow), Fluid signs the forged bytes with the derived key,
+ *  and the signed bytes are injected on the same hosts. The
+ *  injection POST is the chain's canonical submission path;
+ *  from networks where public-node POSTs stall it fails with
+ *  a plain connection message, never a silent success.
+ *  Returns {hash} = the operation hash, computed locally
+ *  from the signed bytes before injection. */
+export async function sendTezos(phrase, { to, amount, token = null }) {
+  if (!isValidTezosAddress(to)) throw new Error("That is not a valid Tezos address.");
+  const key = tezosKey(phrase);
+  const pub = ed25519.getPublicKey(key);
+  const from = tezosAddressFromPubkey(pub);
+  const edpk = tezosEdpkFromPubkey(pub);
+  let raw;
+  try { raw = ethers.parseUnits(String(amount), token ? token.decimals : 6); }
+  catch { throw new Error(`${token ? token.symbol : "XTZ"} amounts can have at most ${token ? token.decimals : 6} decimal places.`); }
+  if (raw <= 0n) throw new Error("Enter an amount.");
+  // Sender state from the node itself (counter + reveal are
+  // consensus facts; TzKT is the read layer for balances).
+  const contract = await tezosRpc("/chains/main/blocks/head/context/contracts/" + from).catch(() => null);
+  if (!contract) throw new Error("Your Tezos account doesn't exist yet — it needs to receive XTZ before it can send.");
+  const balanceMutez = BigInt(contract.balance ?? 0);
+  const counter = Number(contract.counter ?? 0);
+  const mk = contract.manager_key;
+  const revealed = typeof mk === "string" ? mk.length > 0 : !!(mk && typeof mk === "object" && mk.key);
+  // Destination existence (drives the burn) + token balance,
+  // from the TzKT read layer.
+  let destFunded = true;
+  try {
+    const d = await tzktJson("/accounts/" + to);
+    destFunded = d.type !== "empty_account" && (Number(d.balance || 0) > 0 || d.revealed === true || Number(d.counter || 0) > 0 || Number(d.numTransactions || 0) > 0);
+  } catch { destFunded = false; }
+  const feeMutez = BigInt((token ? TEZOS_FA2_FEE_MUTEZ : TEZOS_TX_FEE_MUTEZ) + (revealed ? 0 : TEZOS_REVEAL_FEE_MUTEZ));
+  if (!token) {
+    const burn = destFunded ? 0n : BigInt(TEZOS_FRESH_ACCOUNT_BURN_MUTEZ);
+    if (raw + feeMutez + burn > balanceMutez) {
+      throw new Error(`Not enough XTZ: this send needs the amount plus about ${tezosMutezToXtz(feeMutez + burn)} XTZ of fees${burn ? " and the one-time account-creation burn" : ""}, and you have ${tezosMutezToXtz(balanceMutez)} XTZ.`);
+    }
+  } else {
+    if (feeMutez > balanceMutez) throw new Error(`Not enough XTZ for the network fee (about ${tezosMutezToXtz(feeMutez)} XTZ) — you have ${tezosMutezToXtz(balanceMutez)} XTZ.`);
+    const acct = await getTezosAccount(from);
+    const row = acct.balances.find(b => b.address === token.address && Number(b.tokenId ?? 0) === Number(token.tokenId ?? 0));
+    if (!row || raw > ethers.parseUnits(String(row.amount), token.decimals)) {
+      throw new Error(`Not enough ${token.symbol} on Tezos (you have ${row ? row.amount : "0"}).`);
+    }
+  }
+  const branch = await tezosRpc("/chains/main/blocks/head/hash");
+  const contents = buildTezosContents({ from, edpk, counter, revealed, to, amountRaw: raw.toString(), token, destFunded });
+  const forged = await tezosRpc("/chains/main/blocks/head/helpers/forge/operations", { method: "POST", body: { branch, contents } });
+  if (typeof forged !== "string" || !/^[0-9a-f]+$/i.test(forged)) throw new Error("The Tezos node returned an unreadable forged operation.");
+  const { signedHex, opHash } = signTezosOperation(forged, key);
+  const injected = await tezosRpc("/injection/operation", { method: "POST", body: signedHex });
+  if (typeof injected === "string" && injected !== opHash) throw new Error("The Tezos node accepted a different operation than the one signed — refusing to report it as sent.");
+  return { hash: opHash };
+}
+
+// ---------- Hedera (BIP32 secp256k1, coin type 3030 — ECDSA-first) — audit gap #16 ----------
+// Hedera's account model is the one real subtlety (gap-#16
+// research, docs-verified HIP-32/542/583/904): an account
+// NUMBER (0.0.x) cannot be derived or predicted offline — it
+// is assigned by the network at creation. The wallet never
+// needs one upfront: for ECDSA keys the ALIAS — the EVM
+// address, rightmost 20 bytes of keccak-256(pubkey) — is the
+// receive target, and the FIRST inbound transfer to it
+// auto-creates the account ("hollow account"): the creation
+// fee is charged to the transfer's PAYER, the recipient gets
+// the full amount, and auto-created accounts default to
+// unlimited automatic token associations. The account then
+// completes itself on its first signed send (HIP-583: the
+// network extracts the ECDSA key from the signature). So
+// this family is ECDSA-first: BIP32 secp256k1 at the
+// @hashgraph/sdk standard path m/44'/3030'/0'/0'/0', the EVM
+// address is the receive face, and sends ride a JSON-RPC
+// relay as EthereumTransactions (native HAPI submission is
+// gRPC — not browser-feasible). The ed25519 key at the same
+// path exists as an internal alternate only: bare ed25519
+// aliases are NOT resolvable on the public mirror (probed:
+// HTTP 400 in every form), so an ed25519-first wallet could
+// not even number itself — it is never the receive face.
+// Presence only (gap #16): no probed rail answers with
+// verified capture (Squid/Axelar documents an integrator fee
+// but its API is keyed — no quote was obtained), so swaps
+// are an honest no-route. Reads ride the public mirror node
+// REST API (keyless, CORS *, documented 50 req/s/IP).
+export const HEDERA_EXPLORER = "https://hashscan.io/mainnet";
+export const HEDERA_MIRROR_API = "https://mainnet-public.mirrornode.hedera.com/api/v1";
+export const HEDERA_RELAY_URL = "https://mainnet.hashio.io/api";
+export const HEDERA_CHAIN_ID = 295;
+/** Circle's USDC on Hedera — the chain's only sound dollar
+ *  (issuer-native; mirror-probed in the gap-#16 research:
+ *  supply 450,010,110, treasury 0.0.439909 = Circle). */
+export const HEDERA_USDC_TOKEN_ID = "0.0.456858";
+export const HEDERA_USDC = { symbol: "USDC", name: "USD Coin", address: HEDERA_USDC_TOKEN_ID, decimals: 6, verified: true, priceUsd: 1 };
+/** ⚠ NEVER PIN: "USDT" 0.0.1055472 ("Tether USD", symbol
+ *  USDT[hts]) is Hashport-bridged stock — and Hashport was
+ *  permanently decommissioned on 2026-05-31, leaving every
+ *  [hts] wrapped asset permanently unredeemable. There is
+ *  NO Tether-native USDT on Hedera. This id is exported
+ *  ONLY so tests can assert its absence from every pin and
+ *  its unverified state if a user happens to hold it. */
+export const HEDERA_UNREDEEMABLE_USDT_HTS_ID = "0.0.1055472";
+export const HEDERA_SWAP_NATIVE_TOKEN = "hbar";
+export const HEDERA_SWAP_TOKENS = [
+  { symbol: "HBAR", address: HEDERA_SWAP_NATIVE_TOKEN, decimals: 8, native: true },
+  { symbol: "USDC", address: HEDERA_USDC_TOKEN_ID, decimals: 6, native: false },
+];
+/** Fallback gas limits when the relay cannot estimate (a
+ *  hollow account completing on its first send is exactly
+ *  the case estimation may refuse). Bounded, and the fee is
+ *  still computed from the relay's own gas price. */
+export const HEDERA_FALLBACK_GAS = 100000;
+
+/** The Hedera BIP32 node: coin 3030 at the SDK standard
+ *  path. (The trap symmetric to Tezos': the SDK's ed25519
+ *  default is SLIP-0010 — the ECDSA face must come from the
+ *  secp256k1 BIP32 tree, or the alias is a different account.) */
+function hederaEcdsaNode(seed) {
+  return HDKey.fromMasterSeed(seed).derive("m/44'/3030'/0'/0'/0'");
+}
+function hederaKey(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return hederaEcdsaNode(mnemonicToSeedSync(clean));
+}
+/** The wallet's Hedera receive face: the ECDSA account's
+ *  EVM address (its alias). Checksummed, as ethers renders. */
+export function hederaAddressFromSeed(seed) {
+  const node = hederaEcdsaNode(seed);
+  return ethers.computeAddress("0x" + hex.encode(node.privateKey));
+}
+export function hederaAddressFromPhrase(phrase) {
+  const clean = String(phrase || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return hederaAddressFromSeed(mnemonicToSeedSync(clean));
+}
+/** The ed25519 alternate's public key (hex) — internal
+ *  alternate only, exported for the research pin. Never the
+ *  receive face (see the family note). */
+export function hederaEd25519PubkeyFromSeed(seed) {
+  return hex.encode(ed25519.getPublicKey(deriveSlip10Ed25519(seed, [44, 3030, 0, 0, 0]).key));
+}
+/** An account id ("0.0.456858") as its EVM long-zero address:
+ *  shard (4 bytes) ‖ realm (8) ‖ num (8), all zero but num
+ *  on mainnet. Pure. */
+export function hederaAccountIdToEvm(id) {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(id || "").trim());
+  if (!m) return null;
+  const shard = BigInt(m[1]), realm = BigInt(m[2]), num = BigInt(m[3]);
+  if (shard > 0xffffffffn || realm > 0xffffffffffffffffn || num > 0xffffffffffffffffn) return null;
+  const bytes = new Uint8Array(20);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, Number(shard), false);
+  view.setBigUint64(4, realm, false);
+  view.setBigUint64(12, num, false);
+  return ethers.getAddress("0x" + hex.encode(bytes));
+}
+/** Any Hedera address form Fluid accepts — the EVM alias
+ *  (0x…) or an account id (0.0.x) — normalised to the
+ *  checksummed EVM form the relay and mirror both speak.
+ *  Null for anything else. */
+export function hederaNormalizeAddress(address) {
+  const a = String(address || "").trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(a)) { try { return ethers.getAddress(a); } catch { return null; } }
+  return hederaAccountIdToEvm(a);
+}
+export function isValidHederaAddress(address) { return hederaNormalizeAddress(address) !== null; }
+export function hederaTinyToHbar(tiny) { return ethers.formatUnits(BigInt(tiny), 8); }
+/** 1 tinybar = 10^10 weibars (the relay's unit). Pure. */
+export function hederaTinyToWei(tiny) { return BigInt(tiny) * 10000000000n; }
+
+/** One mirror-node read. 404 is a state (account not yet
+ *  created), returned not thrown; anything else failing
+ *  throws — a failed read is "couldn't load", never a zero. */
+async function hederaMirrorJson(path) {
+  const res = await fetch(HEDERA_MIRROR_API + path, { signal: AbortSignal.timeout(20000) });
+  if (res.status === 404) return { status: 404, data: null };
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data == null) throw new Error("Hedera read failed (HTTP " + res.status + ").");
+  return { status: res.status, data };
+}
+/** Pure: a mirror account payload → { exists, accountId,
+ *  hbarTiny, tokens }. */
+export function parseHederaAccount(data) {
+  if (!data || typeof data !== "object") return { exists: false, accountId: null, hbarTiny: "0", tokens: [] };
+  return {
+    exists: true,
+    accountId: data.account || null,
+    hbarTiny: String(data.balance?.balance ?? 0),
+    tokens: (Array.isArray(data.balance?.tokens) ? data.balance.tokens : [])
+      .map(t => ({ tokenId: t.token_id, balance: String(t.balance ?? 0) })),
+  };
+}
+/** The full Hedera account state via the mirror, addressed
+ *  by alias (EVM address) or account id. A 404 is a hollow
+ *  wallet that has never received: exists=false with true
+ *  zero rows — receiving still works (the first inbound
+ *  transfer creates the account at the sender's cost). The
+ *  pinned USDC row is always present; every other held HTS
+ *  token rides as an UNVERIFIED row from its mirror
+ *  metadata — including, if held, the unredeemable
+ *  USDT[hts], which is never verified and never the pin. */
+export async function getHederaAccount(address) {
+  const id = hederaNormalizeAddress(address) || String(address || "").trim();
+  const { status, data } = await hederaMirrorJson("/accounts/" + id);
+  const acct = status === 404 ? { exists: false, accountId: null, hbarTiny: "0", tokens: [] } : parseHederaAccount(data);
+  const balances = [{ symbol: "HBAR", name: "Hedera", amount: hederaTinyToHbar(acct.hbarTiny), address: null, decimals: 8, verified: true }];
+  let usdcAmount = "0";
+  const others = [];
+  for (const t of acct.tokens) {
+    if (t.tokenId === HEDERA_USDC_TOKEN_ID) { usdcAmount = ethers.formatUnits(BigInt(t.balance), HEDERA_USDC.decimals); continue; }
+    others.push(t);
+  }
+  balances.push({ ...HEDERA_USDC, amount: usdcAmount });
+  for (const t of others) {
+    let meta = null;
+    try {
+      const r = await hederaMirrorJson("/tokens/" + t.tokenId);
+      if (r.data) meta = { symbol: r.data.symbol || null, name: r.data.name || null, decimals: Number(r.data.decimals ?? 0) };
+    } catch { /* the row still surfaces, labelled by id */ }
+    const decimals = meta && Number.isFinite(meta.decimals) ? meta.decimals : 0;
+    balances.push({
+      symbol: meta?.symbol || t.tokenId, name: meta?.name || "Hedera token",
+      amount: ethers.formatUnits(BigInt(t.balance), decimals),
+      address: t.tokenId, decimals, verified: false,
+    });
+  }
+  return { exists: acct.exists, accountId: acct.accountId, balances };
+}
+/** Hedera balances shaped like the other families' rows. */
+export async function getHederaBalances(address) {
+  return (await getHederaAccount(address)).balances;
+}
+/** Read-only pre-flight for the send sheet: mirror state
+ *  (existence is the send gate — a hollow account cannot
+ *  send until its first receive creates it) plus a relay
+ *  reachability probe. Never throws. */
+export async function hederaSendPlan(fromAddress, { to = null, token = null } = {}) {
+  const plan = { exists: null, accountId: null, hbar: null, relayOk: null };
+  try {
+    const acct = await getHederaAccount(fromAddress);
+    plan.exists = acct.exists;
+    plan.accountId = acct.accountId;
+    const row = acct.balances[0];
+    plan.hbar = row ? row.amount : null;
+  } catch { /* stays null */ }
+  try {
+    const chainId = await hederaRelayCall("eth_chainId", []);
+    plan.relayOk = Number(BigInt(chainId)) === HEDERA_CHAIN_ID;
+  } catch { plan.relayOk = false; }
+  return plan;
+}
+/** The signer principle, Hedera edition. */
+export function formatHederaSendIntent({ amount, symbol, to, feeHbar, name = null }) {
+  const dest = name ? `${name}.${FLUID_DOMAIN} (${to})` : to;
+  let s = `Send ${amount} ${symbol} to ${dest} on Hedera.`;
+  if (feeHbar != null) s += ` Network fee about ${feeHbar} HBAR.`;
+  return s + " Confirm?";
+}
+const HEDERA_ERC20_IFACE = new ethers.Interface(["function transfer(address to, uint256 amount)"]);
+/** Pure: the unsigned relay transaction for one Hedera
+ *  send — a native value transfer in weibars, or an ERC-20
+ *  transfer against the token's long-zero EVM address (HTS
+ *  tokens answer the ERC-20 surface through the relay).
+ *  Chain 295, legacy type (the relay's widest-supported
+ *  form); nonce/gas come from the relay's own reads. */
+export function buildHederaRelayTx({ to, token = null, amountTiny = null, tokenRaw = null, nonce, gasPriceWei, gasLimit }) {
+  const base = { chainId: HEDERA_CHAIN_ID, nonce: Number(nonce), gasPrice: String(gasPriceWei), gasLimit: String(gasLimit) };
+  const dest = hederaNormalizeAddress(to);
+  if (!dest) throw new Error("That is not a valid Hedera address.");
+  if (!token) {
+    return { ...base, to: dest, value: hederaTinyToWei(amountTiny ?? 0).toString(), data: "0x" };
+  }
+  const tokenEvm = hederaAccountIdToEvm(token.address);
+  if (!tokenEvm) throw new Error("That token has no Hedera EVM address.");
+  return { ...base, to: tokenEvm, value: "0",
+    data: HEDERA_ERC20_IFACE.encodeFunctionData("transfer", [dest, BigInt(tokenRaw ?? 0)]) };
+}
+/** Sign a relay transaction with the derived ECDSA key.
+ *  The signed bytes are a standard Ethereum transaction —
+ *  the relay submits them as a Hedera EthereumTransaction,
+ *  and on a hollow account's first send the signature is
+ *  what completes the account (HIP-583). */
+export async function signHederaRelayTx(unsigned, privKeyHex) {
+  const w = new ethers.Wallet(privKeyHex);
+  return w.signTransaction({
+    type: 0, chainId: unsigned.chainId, nonce: unsigned.nonce,
+    gasPrice: BigInt(unsigned.gasPrice), gasLimit: BigInt(unsigned.gasLimit),
+    to: unsigned.to, value: BigInt(unsigned.value), data: unsigned.data || "0x",
+  });
+}
+/** One JSON-RPC call to the Hedera relay (Hashio, the
+ *  public Swirlds Labs instance). Every failure — transport
+ *  or an RPC error body — becomes one plain message naming
+ *  the relay: sends depend on it, and an unreachable relay
+ *  is a named state, never a silent stall. */
+async function hederaRelayCall(method, params) {
+  let res;
+  try {
+    res = await fetch(HEDERA_RELAY_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch {
+    throw new Error("Couldn't reach the Hedera relay (Hashio) — Hedera sends ride the public JSON-RPC relay. Check your connection and try again.");
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.error || data.result == null) {
+    throw new Error("The Hedera relay (Hashio) refused " + method + (data?.error?.message ? ": " + data.error.message : "") + ".");
+  }
+  return data.result;
+}
+/** Build, sign LOCALLY, and submit a Hedera send through
+ *  the JSON-RPC relay. Existence is enforced from the
+ *  mirror first: an account that has never received cannot
+ *  send (its first receive creates it; its first send then
+ *  completes it). Gas is estimated by the relay where it
+ *  answers, with the bounded fallback for exactly the
+ *  hollow-completion case estimation may refuse. Returns
+ *  {hash} = the relay's transaction hash. */
+export async function sendHedera(phrase, { to, amount, token = null }) {
+  const dest = hederaNormalizeAddress(to);
+  if (!dest) throw new Error("That is not a valid Hedera address.");
+  const node = hederaKey(phrase);
+  const from = ethers.computeAddress("0x" + hex.encode(node.privateKey));
+  const acct = await getHederaAccount(from);
+  if (!acct.exists) {
+    throw new Error("Your Hedera account isn't created yet — it is created automatically by your first receive, at the sender's cost. Receive HBAR or USDC at your Hedera address first; your first send after that completes the account.");
+  }
+  let amountTiny = null, tokenRaw = null;
+  if (!token) {
+    try { amountTiny = ethers.parseUnits(String(amount), 8); }
+    catch { throw new Error("HBAR amounts can have at most 8 decimal places."); }
+    if (amountTiny <= 0n) throw new Error("Enter an amount.");
+  } else {
+    try { tokenRaw = ethers.parseUnits(String(amount), token.decimals); }
+    catch { throw new Error(`${token.symbol} amounts can have at most ${token.decimals} decimal places.`); }
+    if (tokenRaw <= 0n) throw new Error("Enter an amount.");
+    const row = acct.balances.find(b => b.address === token.address);
+    if (!row || tokenRaw > ethers.parseUnits(String(row.amount), token.decimals)) {
+      throw new Error(`Not enough ${token.symbol} on Hedera (you have ${row ? row.amount : "0"}).`);
+    }
+  }
+  const hbarTiny = ethers.parseUnits(String(acct.balances[0]?.amount ?? "0"), 8);
+  const chainId = await hederaRelayCall("eth_chainId", []);
+  if (Number(BigInt(chainId)) !== HEDERA_CHAIN_ID) throw new Error("The Hedera relay answered for the wrong network — refusing to send.");
+  const nonce = Number(BigInt(await hederaRelayCall("eth_getTransactionCount", [from, "latest"])));
+  const gasPriceWei = BigInt(await hederaRelayCall("eth_gasPrice", []));
+  const unsigned0 = buildHederaRelayTx({ to: dest, token, amountTiny: amountTiny?.toString(), tokenRaw: tokenRaw?.toString(), nonce, gasPriceWei: gasPriceWei.toString(), gasLimit: HEDERA_FALLBACK_GAS });
+  let gasLimit = BigInt(HEDERA_FALLBACK_GAS);
+  try {
+    const est = BigInt(await hederaRelayCall("eth_estimateGas", [{ from, to: unsigned0.to, value: "0x" + BigInt(unsigned0.value).toString(16), data: unsigned0.data }]));
+    gasLimit = (est * 13n + 9n) / 10n; // estimate + 30%
+    if (gasLimit < 21000n) gasLimit = 21000n;
+  } catch { /* the bounded fallback stands (hollow-completion sends may not estimate) */ }
+  const feeTiny = (gasPriceWei * gasLimit) / 10000000000n;
+  if (!token && amountTiny + feeTiny > hbarTiny) {
+    throw new Error(`Not enough HBAR: this send needs the amount plus about ${hederaTinyToHbar(feeTiny)} HBAR of network fee, and you have ${hederaTinyToHbar(hbarTiny)} HBAR.`);
+  }
+  if (token && feeTiny > hbarTiny) {
+    throw new Error(`Not enough HBAR for the network fee (about ${hederaTinyToHbar(feeTiny)} HBAR) — you have ${hederaTinyToHbar(hbarTiny)} HBAR.`);
+  }
+  const unsigned = { ...unsigned0, gasLimit: gasLimit.toString() };
+  const rawTx = await signHederaRelayTx(unsigned, "0x" + hex.encode(node.privateKey));
+  const hash = await hederaRelayCall("eth_sendRawTransaction", [rawTx]);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(String(hash))) throw new Error("The Hedera relay returned an unreadable transaction hash.");
+  return { hash: String(hash) };
+}
+
 // ---------- XRP Ledger (secp256k1 BIP44 branch, coin type 144) ----------
 // XRPL accounts in the wider world come in two flavours: Ed25519
 // keys (Xaman-style, from a family seed) and secp256k1 keys at the
@@ -31238,7 +31889,7 @@ export function dropLegacyBalanceCache(storage) {
     return true;
   } catch { return false; }
 }
-const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks"];
+const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks", "tezos", "hedera"];
 const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal", "zecBal", "dashBal"];
 
 /** Serialise a balance snapshot for the cache. `snap` is the app's

@@ -2162,3 +2162,68 @@ machine.
   (same status as the gap-#5 chains), and every presence
   chain's funded send — the construction and read layers are
   what this batch proves.
+
+## Tezos + Hedera — presence only, no rail (audit gap #16, 2026-11-16)
+
+Both families ship hold / receive / send with swaps as an
+honest no-route: every rail Fluid runs was probed during
+research (Relay, Across, 1Click, Satora, OpenOcean) and
+none serves either chain; the on-chain DEXes that exist
+(3route / QuipuSwap on Tezos) expose no integrator fee, so
+capture is NONE and no route is offered. The swap sheet
+lists both families deliberately (the gap #12 lesson): the
+dispatcher resolves their pairs to zero routes and the
+diagnosis reads "isn't connected yet" for the native asset
+and "no market" for a token with no answered market probe —
+suite §137 pins both through `getSwapRoutes` with the
+sheet's exact args shape. **Re-probe trigger:** any rail
+quoting either chain with capture, re-verified live; for
+Hedera the one named candidate is Squid/Axelar, whose API
+is keyed (401 without a real integrator id), so its capture
+is UNVERIFIED, not absent.
+
+- **Tezos.** Derivation SLIP-0010 Ed25519
+  `m/44'/1729'/0'/0'` → tz1 (research-proven byte-identical
+  two ways and against mainnet state; @scure/bip32's
+  secp256k1 default at the same path yields a silently
+  wrong tz1 — suite-pinned against). Reads via TzKT
+  (keyless, CORS `*`); broadcast is forge/sign/inject on
+  the public octez RPCs. The injection POST was
+  environment-blocked from the build VM — the standard path
+  is built; a walk that cannot prove injection from here
+  adjudicates as named-environment, not a client defect.
+  Dollar: Tether USDt FA2 `KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o`
+  token id 0, pinned by contract; at least eight same-name
+  copycats exist (one named in the suite) and none is ever
+  offered. No Circle USDC exists on Tezos L1. Sender-side
+  facts priced into the confirmation copy: the 0.06425 XTZ
+  allocation burn on a first send to a fresh tz1
+  (250 mutez/byte × 257 bytes, protocol constants) and the
+  one-time reveal before the account's first outbound op.
+- **Hedera.** ECDSA-first (coin type 3030,
+  `m/44'/3030'/0'/0'/0'`): the EVM-address alias IS the
+  receive target — ed25519 key aliases are NOT resolvable
+  on the public mirror (HTTP 400 in every form), so receive
+  is never built on them. Hollow-account model: no account
+  number can be derived offline and none is needed; the
+  first inbound HBAR or token transfer auto-creates the
+  account with the creation fee charged to the SENDER and
+  unlimited auto-associations (HIP-32/542/904), and the
+  account self-completes on its first signed send
+  (HIP-583). Reads via the public mirror REST (keyless,
+  CORS `*`, documented 50 req/s/IP). Sends ride the Hashio
+  JSON-RPC relay as legacy Ethereum transactions (native
+  HAPI is gRPC — not browser-feasible); Hashio was
+  environment-blocked from the build VM, so the relay path
+  is built to the research spec and an unreachable relay
+  refuses with that named plainly — no unprobed fallback
+  exists. Dollar: Circle USDC `0.0.456858` only. **"USDT"
+  `0.0.1055472` (USDT[hts]) is NEVER pinned: it is
+  Hashport-bridged stock, Hashport was decommissioned on
+  2026-05-31, and the stock is permanently unredeemable** —
+  a held balance still shows as an unverified row (a held
+  balance is never hidden), never as a dollar.
+- **Unproven, named:** funded sends on both chains (Tezos
+  injection and the Hashio relay were both unreachable from
+  the build VM); the construction, signing and read layers
+  are what this slice proves, all suite-pinned (§137).
