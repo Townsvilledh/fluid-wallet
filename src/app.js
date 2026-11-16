@@ -4648,7 +4648,7 @@ function openAlgoSheet(tok) {
 // silently folded in.
 let pendingTezosSend = null;
 function openTezosSheet(tok) {
-  if (balanceUnknownGate(tok, tezBalances, tezLoadFailed, "Tezos")) return;
+  if (balanceUnknownGate(tok, "Tezos")) return;
   sheetStack = [];
   if (tezFunded === false) {
     openSheet(`<button class="back" data-close>‹ Back</button><h3>Tezos</h3>
@@ -4657,16 +4657,16 @@ function openTezosSheet(tok) {
   }
   const tokenArg = tok.address ? tok : null;
   openSheet(`<button class="back" data-close>‹ Back</button><h3>Send ${esc(tok.symbol)} on Tezos</h3>
-    <p class="tag">Balance: ${fmtAmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
+    <p class="tag">Balance: ${fmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
     <label>To (tz1 / tz2 / tz3 / KT1 address or Fluid name)</label><input id="tezTo" placeholder="tz1…">
     <label>Amount (${esc(tok.symbol)})</label><input id="tezAmt" inputmode="decimal" placeholder="0.0">
     <button class="btn" id="tezReview">Review send</button>
     <div id="tezIntent" class="hidden"><p class="tag" id="tezIntentText"></p>
       <button class="btn" id="tezConfirm">Confirm &amp; send</button></div>
     <p class="tag" id="tezMsg"></p>`);
-  $("#tezReview").onclick = async () => {
+  $("tezReview").onclick = async () => {
     pendingTezosSend = null; show("tezIntent", false);
-    const toIn = $("#tezTo").value.trim(), amount = $("#tezAmt").value.trim();
+    const toIn = $("tezTo").value.trim(), amount = $("tezAmt").value.trim();
     if (!amount || Number(amount) <= 0) return msg("tezMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("tezMsg", "Amount is more than your balance.");
     try {
@@ -4683,15 +4683,19 @@ function openTezosSheet(tok) {
       show("tezIntent"); msg("tezMsg", resolved.note || "");
     } catch (e) { msg("tezMsg", "Could not prepare this send: " + humanizeTxError(e)); }
   };
-  $("#tezConfirm").onclick = async () => {
+  $("tezConfirm").onclick = async () => {
     if (!pendingTezosSend) return;
+    const btn = $("tezConfirm");
     const p = pendingTezosSend; pendingTezosSend = null; show("tezIntent", false);
     try {
+      setSendBusy(btn, true);
       msg("tezMsg", "Broadcasting…", true);
       const { hash } = await sendTezos(wallet.mnemonic.phrase, { to: p.to, amount: p.amount, token: p.token });
-      pushHistory({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${TEZOS_EXPLORER}/${hash}`, explorer: TEZOS_EXPLORER, feeNative: Number(p.feeXtz) + Number(p.burnXtz || 0), feeSym: "XTZ" });
-      showTxSuccess({ amount: p.amount, symbol: p.symbol, to: p.to, hash, explorer: TEZOS_EXPLORER, familyName: "Tezos", feeText: `${fmtFixed(Number(p.feeXtz) + Number(p.burnXtz || 0))} XTZ` });
-    } catch (e) { sendFailed(e, "tezMsg"); }
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${TEZOS_EXPLORER}/${hash}`, explorer: TEZOS_EXPLORER, feeNative: Number(p.feeXtz) + Number(p.burnXtz || 0), feeSym: "XTZ", at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      showTxSuccess({ verb: "Sent", amount: p.amount, symbol: p.symbol, to: p.to, familyName: "Tezos", feeText: `${fmtFixed(Number(p.feeXtz) + Number(p.burnXtz || 0))} XTZ`, explorerUrl: historyTxUrl({ link: `${TEZOS_EXPLORER}/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "tezMsg", e); }
   };
 }
 // ---------- Hedera sheet (audit gap #16) ----------
@@ -4703,7 +4707,7 @@ function openTezosSheet(tok) {
 // with that named plainly, never a silent failure.
 let pendingHederaSend = null;
 function openHederaSheet(tok) {
-  if (balanceUnknownGate(tok, hbaBalances, hbaLoadFailed, "Hedera")) return;
+  if (balanceUnknownGate(tok, "Hedera")) return;
   sheetStack = [];
   if (hbaExists === false) {
     openSheet(`<button class="back" data-close>‹ Back</button><h3>Hedera</h3>
@@ -4712,16 +4716,16 @@ function openHederaSheet(tok) {
   }
   const tokenArg = tok.address ? tok : null;
   openSheet(`<button class="back" data-close>‹ Back</button><h3>Send ${esc(tok.symbol)} on Hedera</h3>
-    <p class="tag">Balance: ${fmtAmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
+    <p class="tag">Balance: ${fmt(tok.amount)} ${esc(tok.symbol)}${tok.address ? ` · <span class="mono">${esc(tok.address)}</span>` : ""}${tok.verified === false ? " — ⚠ " + UNVERIFIED_CAUTION : ""}</p>
     <label>To (0x… address, 0.0.x account id or Fluid name)</label><input id="hbaTo" placeholder="0x…">
     <label>Amount (${esc(tok.symbol)})</label><input id="hbaAmt" inputmode="decimal" placeholder="0.0">
     <button class="btn" id="hbaReview">Review send</button>
     <div id="hbaIntent" class="hidden"><p class="tag" id="hbaIntentText"></p>
       <button class="btn" id="hbaConfirm">Confirm &amp; send</button></div>
     <p class="tag" id="hbaMsg"></p>`);
-  $("#hbaReview").onclick = async () => {
+  $("hbaReview").onclick = async () => {
     pendingHederaSend = null; show("hbaIntent", false);
-    const toIn = $("#hbaTo").value.trim(), amount = $("#hbaAmt").value.trim();
+    const toIn = $("hbaTo").value.trim(), amount = $("hbaAmt").value.trim();
     if (!amount || Number(amount) <= 0) return msg("hbaMsg", "Enter an amount.");
     if (Number(amount) > Number(tok.amount)) return msg("hbaMsg", "Amount is more than your balance.");
     try {
@@ -4738,15 +4742,19 @@ function openHederaSheet(tok) {
       show("hbaIntent"); msg("hbaMsg", resolved.note || "");
     } catch (e) { msg("hbaMsg", "Could not prepare this send: " + humanizeTxError(e)); }
   };
-  $("#hbaConfirm").onclick = async () => {
+  $("hbaConfirm").onclick = async () => {
     if (!pendingHederaSend) return;
+    const btn = $("hbaConfirm");
     const p = pendingHederaSend; pendingHederaSend = null; show("hbaIntent", false);
     try {
+      setSendBusy(btn, true);
       msg("hbaMsg", "Broadcasting…", true);
       const { hash } = await sendHedera(wallet.mnemonic.phrase, { to: p.to, amount: p.amount, token: p.token });
-      pushHistory({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${HEDERA_EXPLORER}/transaction/${hash}`, explorer: HEDERA_EXPLORER });
-      showTxSuccess({ amount: p.amount, symbol: p.symbol, to: p.to, hash, explorer: HEDERA_EXPLORER, familyName: "Hedera" });
-    } catch (e) { sendFailed(e, "hbaMsg"); }
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash, amount: p.amount, symbol: p.symbol, to: p.to, link: `${HEDERA_EXPLORER}/transaction/${hash}`, explorer: HEDERA_EXPLORER, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      showTxSuccess({ verb: "Sent", amount: p.amount, symbol: p.symbol, to: p.to, familyName: "Hedera", explorerUrl: historyTxUrl({ link: `${HEDERA_EXPLORER}/transaction/${hash}` }), txid: hash, pending: false });
+    } catch (e) { sendFailed(btn, "hbaMsg", e); }
   };
 }
 // ---------- XRP Ledger sheet (Phase 4) ----------

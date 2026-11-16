@@ -21079,6 +21079,100 @@ import { ed25519 as ed25519_137 } from "@noble/curves/ed25519.js";
       app137.includes("tezos: tezAddr, hedera: hbaAddr") && app137.includes("tezos: tezAddr") && app137.includes("hedera: hbaAddr"));
   }
   {
+    // --- Sheet-render regression pins (first-user walk FAIL,
+    // 2026-11-16): the suite passed while both new send sheets
+    // threw on open — fmtAmt and pushHistory were called but
+    // defined nowhere, $("#id") lookups returned null ($ is
+    // getElementById), the balance gate received the balances
+    // array as its label ("[object Object],[object Object]"),
+    // and sendFailed got its arguments in the wrong order.
+    // app.js is not importable here (DOM at module level), so
+    // these pins work on the source: strip comments, string
+    // contents and template TEXT (keeping ${…} interpolations
+    // as code), then resolve every bare call in the two sheet
+    // bodies against the app's own definitions and imports.
+    const appSrc137 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const codeOnly137 = (s) => {
+      let out = "", i = 0, mode = "code", braceDepth = 0; const stack = [];
+      while (i < s.length) {
+        const c = s[i], n = s[i + 1];
+        if (mode === "code") {
+          if (c === "/" && n === "/") { mode = "lc"; i += 2; continue; }
+          if (c === "/" && n === "*") { mode = "bc"; i += 2; continue; }
+          if (c === "'") { mode = "sq"; i++; continue; }
+          if (c === '"') { mode = "dq"; i++; continue; }
+          if (c === "`") { mode = "tmpl"; i++; continue; }
+          if (c === "{") braceDepth++;
+          if (c === "}") { braceDepth--; if (stack.length && braceDepth === stack[stack.length - 1]) { stack.pop(); mode = "tmpl"; i++; continue; } }
+          out += c; i++; continue;
+        }
+        if (mode === "lc") { if (c === "\n") { mode = "code"; out += c; } i++; continue; }
+        if (mode === "bc") { if (c === "*" && n === "/") { mode = "code"; i += 2; continue; } i++; continue; }
+        if (mode === "sq" || mode === "dq") { const q = mode === "sq" ? "'" : '"'; if (c === "\\") { i += 2; continue; } if (c === q) mode = "code"; i++; continue; }
+        if (c === "\\") { i += 2; continue; }
+        if (c === "`") { mode = "code"; i++; continue; }
+        if (c === "$" && n === "{") { stack.push(braceDepth); braceDepth++; i += 2; continue; }
+        i++;
+      }
+      return out;
+    };
+    const bodyOf137 = (name) => {
+      const st = appSrc137.indexOf(`function ${name}(`);
+      let j = appSrc137.indexOf("{", st), depth = 0;
+      for (; j < appSrc137.length; j++) {
+        if (appSrc137[j] === "{") depth++;
+        else if (appSrc137[j] === "}") { depth--; if (depth === 0) break; }
+      }
+      return appSrc137.slice(st, j + 1);
+    };
+    const defined137 = new Set();
+    for (const m of appSrc137.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) defined137.add(m[1]);
+    for (const m of appSrc137.matchAll(/(?:^|[;\n])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) defined137.add(m[1]);
+    for (const m of appSrc137.matchAll(/import\s*\{([^}]*)\}\s*from/g))
+      for (let part of m[1].split(",")) { part = part.trim(); if (part) defined137.add((part.split(/\s+as\s+/)[1] || part).trim()); }
+    for (const m of appSrc137.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g))
+      for (let part of m[1].split(",")) { const nm = part.split(":")[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(nm)) defined137.add(nm); }
+    const globals137 = new Set(["Number", "String", "Boolean", "Array", "Object", "JSON", "Math", "Date", "Promise", "Error", "RegExp", "Map", "Set", "parseFloat", "parseInt", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "console", "document", "localStorage", "navigator", "fetch", "BigInt", "URL", "TextEncoder", "TextDecoder", "crypto", "atob", "btoa"]);
+    const keywords137 = new Set(["if", "for", "while", "switch", "catch", "return", "typeof", "new", "function", "await", "async", "else", "do", "in", "of", "void", "delete", "instanceof", "yield", "case"]);
+    const unresolved137 = (body) => {
+      const code = codeOnly137(body);
+      const locals = new Set();
+      for (const m of code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) locals.add(m[1]);
+      for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) m[1].split(",").forEach(p => { const nm = p.trim().split("=")[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(nm)) locals.add(nm); });
+      for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) locals.add(m[1]);
+      const bad = new Set();
+      for (const m of code.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+        const nm = m[1];
+        if (!keywords137.has(nm) && !defined137.has(nm) && !locals.has(nm) && !globals137.has(nm)) bad.add(nm);
+      }
+      return bad;
+    };
+    const tezBody137 = bodyOf137("openTezosSheet"), hbaBody137 = bodyOf137("openHederaSheet");
+    ok("gap16: the Tezos/Hedera send sheets reference no undefined helper — every bare call in their bodies resolves to an app definition, an import, a local, or a global (the fmtAmt/pushHistory walk failure)",
+      unresolved137(tezBody137).size === 0 && unresolved137(hbaBody137).size === 0
+      && !appSrc137.includes("fmtAmt") && !appSrc137.includes("pushHistory"));
+    ok("gap16: the sheets' Balance line calls the fleet formatter fmt — defined in app.js as formatDisplayAmount — and that formatter renders an amount instead of throwing",
+      appSrc137.includes("const fmt = (n, d = 6) => formatDisplayAmount(n, d);")
+      && tezBody137.includes("Balance: ${fmt(tok.amount)} ${esc(tok.symbol)}")
+      && hbaBody137.includes("Balance: ${fmt(tok.amount)} ${esc(tok.symbol)}")
+      && formatDisplayAmount("2.5") === "2.5" && typeof formatDisplayAmount(0) === "string");
+    ok("gap16: the balance-unknown gate is called with its real two-arg shape — balanceUnknownGate(tok, chainLabel) — so the gate sheet titles itself with the chain name, never \"[object Object]\"",
+      appSrc137.includes("function balanceUnknownGate(tok, chainLabel)")
+      && tezBody137.includes('balanceUnknownGate(tok, "Tezos")') && hbaBody137.includes('balanceUnknownGate(tok, "Hedera")')
+      && !/balanceUnknownGate\(tok, (tez|hba)/.test(tezBody137 + hbaBody137));
+    ok("gap16: the sheets look elements up by bare id — $ is getElementById, so a \"#id\" lookup would return null and the .onclick assignment would throw on open",
+      appSrc137.includes('const $ = (id) => document.getElementById(id);')
+      && !tezBody137.includes('$("#') && !hbaBody137.includes('$("#')
+      && tezBody137.includes('$("tezReview")') && tezBody137.includes('$("tezConfirm")')
+      && hbaBody137.includes('$("hbaReview")') && hbaBody137.includes('$("hbaConfirm")'));
+    ok("gap16: a successful Tezos/Hedera send records history with the fleet's inline HISTORY_KEY write, reports failure via sendFailed(btn, msgId, e), and hands the success screen its txid + explorer URL",
+      tezBody137.includes("localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)))")
+      && hbaBody137.includes("localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)))")
+      && tezBody137.includes('sendFailed(btn, "tezMsg", e)') && hbaBody137.includes('sendFailed(btn, "hbaMsg", e)')
+      && tezBody137.includes("txid: hash") && hbaBody137.includes("txid: hash")
+      && tezBody137.includes("historyTxUrl({ link:") && hbaBody137.includes("historyTxUrl({ link:"));
+  }
+  {
     const realFetch137 = globalThis.fetch;
     const stub137 = async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => "" });
     try {
