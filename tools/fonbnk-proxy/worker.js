@@ -18,7 +18,12 @@
 // nine Merchant API paths the wallet uses are forwarded, only
 // with their documented methods; the request body passes
 // through verbatim (Fonbnk does not sign bodies). The Worker
-// stores nothing and logs nothing. Residual risk, stated
+// stores nothing and logs nothing. Deliberately NOT on the
+// list: POST /api/v2/user/kyc, Fonbnk's KYC-submit endpoint —
+// the owner's order (2026-11-16: "Anything KYC, I don't want
+// it") removed every ID-checked Fonbnk row from Fluid, so
+// this proxy can read a per-order KYC state (the wallet's
+// refusal guard) but can never submit an identity check. Residual risk, stated
 // plainly: anyone who learns this URL can ask the Worker to
 // sign Fonbnk calls as Fluid's merchant — quotes and discovery
 // are harmless, but order creation is not, so the merchant
@@ -51,7 +56,6 @@ const ALLOWED = new Map([
   ["GET /api/v2/currencies", 1],
   ["GET /api/v2/order-limits", 1],
   ["GET /api/v2/user/kyc", 1],
-  ["POST /api/v2/user/kyc", 1],
   ["POST /api/v2/quote", 1],
   ["POST /api/v2/order", 1],
   ["GET /api/v2/order", 1],

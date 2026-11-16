@@ -65,7 +65,7 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { withDeadline, dotApi, installCosmosSdk, installPolkadotSdk, loadCosmosSdk, loadPolkadotSdk } from "../src/wallet-core.js";
 import { installPeerSdk, loadPeerSdk, PEER_REFERRAL_CODE, PEER_BASE_USDC, PEER_MIN_SELL_USDC, PEER_BUY_NOTE, peerReferralConfigured, peerSellCorridor, peerPlatformName, peerPlatformsForCurrency, peerPairFillStats, peerFillSecondsLabel, peerFillTimeLine, peerUsdcToRaw, peerRawToUsdc, peerAttributionCheck, peerErrorCopy, peerCashClient, peerCapabilities, peerPrepareSell, peerExecuteSell, peerExecuteWithdraw, peerExecuteTopUp, peerViemReceipt, peerCurrencyHash, parsePeerBook, peerBookFloorLine } from "../src/wallet-core.js";
-import { FONBNK_PROXY_URL, FONBNK_MERCHANT_FEE_PCT, fonbnkConfig, fonbnkConfigured, FONBNK_COUNTRIES, fonbnkCountry, FONBNK_ASSETS, fonbnkAsset, fonbnkBuyKycLine, fonbnkMinLine, fonbnkDeliveryLine, fonbnkRouteNote, fonbnkQuoteCapture, fonbnkCaptureRefusal, FONBNK_ORDER_STATUS_COPY, fonbnkOrderStatusCopy, fonbnkOrderFinal, fonbnkLeg, fonbnkQuoteBody, fonbnkPair, fonbnkErrorCopy, fonbnkCreateQuote } from "../src/wallet-core.js";
+import { FONBNK_PROXY_URL, FONBNK_MERCHANT_FEE_PCT, fonbnkConfig, fonbnkConfigured, FONBNK_COUNTRIES, fonbnkCountry, FONBNK_ASSETS, fonbnkAsset, fonbnkMinLine, fonbnkDeliveryLine, fonbnkRouteNote, fonbnkQuoteCapture, fonbnkCaptureRefusal, FONBNK_ORDER_STATUS_COPY, fonbnkOrderStatusCopy, fonbnkOrderFinal, fonbnkLeg, fonbnkQuoteBody, fonbnkPair, fonbnkErrorCopy, fonbnkCreateQuote } from "../src/wallet-core.js";
 import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
@@ -332,17 +332,22 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // REVERSED 2026-11-16 by the owner's launch directive: the
   // empty state above (2026-11-10 size-bar end-state) ended
   // when Fonbnk returned as an in-app Merchant-API form route
-  // (§141) — NG now resolves to exactly that route on both
-  // sides, on every network, badged as the only completable
-  // in-app route at the corridor's size.
-  ok("NG buy and sell both carry the Fonbnk form route (2026-11-16 restoration)", JSON.stringify(names("NG")) === JSON.stringify(["Fonbnk"])
+  // (§141) — NG resolved to exactly that route on both sides.
+  // NARROWED THE SAME DAY (owner's scrap orders, 2026-11-16
+  // 17:15/17:16 WAT): the Fonbnk BUY row carried a BVN check
+  // and was removed in full ("Anything KYC, I don't want it")
+  // — NG buy is honestly empty again, and NG sell carries the
+  // Fonbnk route alone, bank-only (the airtime payout was
+  // scrapped in the same orders), badged as the only
+  // completable in-app route at the corridor's size.
+  ok("NG sell carries the Fonbnk form route; NG buy is honestly empty (BVN buy row removed, owner's order 2026-11-16)", JSON.stringify(names("NG")) === JSON.stringify([])
     && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Fonbnk"]));
-  ok("NG buy resolves to the Fonbnk route on supported and unsupported networks alike", ["bsc", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
+  ok("NG buy resolves honestly empty on supported and unsupported networks alike", ["bsc", "linea"].every(k =>
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
   ok("NG sell resolves to the Fonbnk route on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
     JSON.stringify(rampRoutesFor("NG", "sell", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
-  ok("NG badges Fonbnk on both sides", JSON.stringify(badged("NG")) === JSON.stringify(["Fonbnk"]) && JSON.stringify(badged("NG", "sell")) === JSON.stringify(["Fonbnk"]));
-  ok("NG has exactly one route per side", names("NG").length === 1 && names("NG", "sell").length === 1);
+  ok("NG badges Fonbnk on sell only — buy has no route to badge", JSON.stringify(badged("NG")) === JSON.stringify([]) && JSON.stringify(badged("NG", "sell")) === JSON.stringify(["Fonbnk"]));
+  ok("NG has exactly one route, on sell; buy has none", names("NG").length === 0 && names("NG", "sell").length === 1);
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the absence of ANY
@@ -352,10 +357,12 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("app sheet renders the honest empty state for zero-route combos", appSrcR.includes("routes.length === 0")
     && appSrcR.includes("passes Fluid's bar right now"));
   ok("app source names no REMOVED ramp provider anywhere", !/mercuryo|noones|noblocks/i.test(appSrcR));
-  // (2026-11-16: NG buy is no longer empty — the Fonbnk form
-  // route, §141, resolves on every network/asset by design.)
-  ok("NG buy carries exactly the Fonbnk form route on every network and asset", ["bsc", "base", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
+  // (2026-11-16, later: NG buy is empty again — the Fonbnk
+  // form route's buy side was BVN-gated and the owner removed
+  // it the day it shipped, §141. Sell still resolves on every
+  // network/asset by design.)
+  ok("NG buy carries no route on any network or asset (the BVN buy row is removed, not disclosed-and-kept)", ["bsc", "base", "linea"].every(k =>
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
 
   // The address-entry capability table is the standing buy gate:
   // every listed buy route anywhere takes a pasted address. A
@@ -392,10 +399,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // fees in BTC — the sanctioned exception shape.
   // (KE/GH end-state REVERSED 2026-11-16 with NG's: the
   // Fonbnk form route, §141. UG's LocalCoinSwap row survives
-  // as the fallback behind Fonbnk's lead.)
-  ok("KE buy and sell both carry the Fonbnk form route (2026-11-16 restoration)", JSON.stringify(names("KE")) === JSON.stringify(["Fonbnk"])
+  // as the fallback behind Fonbnk's lead. NARROWED THE SAME
+  // DAY by the owner's no-KYC scrap: KE/GH buy rows carried
+  // ID-number checks from $1 and were removed with NG's —
+  // both corridors are Fonbnk SELL-only now.)
+  ok("KE sell carries the Fonbnk form route; KE buy is empty (ID-checked buy row removed, owner's order 2026-11-16)", JSON.stringify(names("KE")) === JSON.stringify([])
     && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Fonbnk"]));
-  ok("GH buy and sell both carry the Fonbnk form route (2026-11-16 restoration)", JSON.stringify(names("GH")) === JSON.stringify(["Fonbnk"])
+  ok("GH sell carries the Fonbnk form route; GH buy is empty (ID-checked buy row removed, owner's order 2026-11-16)", JSON.stringify(names("GH")) === JSON.stringify([])
     && JSON.stringify(names("GH", "sell")) === JSON.stringify(["Fonbnk"]));
   ok("UG sell keeps its labelled external link-out carrying the referral, behind the Fonbnk lead", (() => {
     const r = rampRoutesFor("UG", "sell", "bsc", "USDT").routes.find(x => x.name === "LocalCoinSwap");
@@ -403,10 +413,10 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
       && r.url === "https://localcoinswap.com/?rc=EC82BA22"
       && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("trades from UGX 1,000");
   })());
-  ok("batch-1 outcome after the 2026-11-16 restoration: NG/KE/CM carry Fonbnk on both sides; UG sell is Fonbnk then LocalCoinSwap", ["NG", "KE", "CM"].every(code =>
-    JSON.stringify(names(code)) === JSON.stringify(["Fonbnk"])
+  ok("batch-1 outcome after the 2026-11-16 restoration + same-day no-KYC scrap: NG/KE/CM are Fonbnk sell-only; UG buy empty, sell Fonbnk then LocalCoinSwap", ["NG", "KE", "CM"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify(["Fonbnk"]))
-    && JSON.stringify(names("UG")) === JSON.stringify(["Fonbnk"])
+    && JSON.stringify(names("UG")) === JSON.stringify([])
     && JSON.stringify(names("UG", "sell")) === JSON.stringify(["Fonbnk", "LocalCoinSwap"]));
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
     ["buy", "sell"].every(m => ["UG", "PK", "AR", "CO", "AE"].includes(c.code) && m === "sell"
@@ -429,15 +439,18 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // restricted-jurisdictions list (live Terms checked by
   // the batch-2 build).
   // (BR/PH end-state REVERSED 2026-11-16: both are Fonbnk
-  // markets — the form route covers both sides, §141.)
-  ok("batch-2 outcome after the size bar: PK/AR/CO/AE sell is the LocalCoinSwap row alone; BD/EG/VN empty on both sides; BR/PH carry Fonbnk", ["PK", "AR", "CO", "AE"].every(code =>
+  // markets — the form route covered both sides, §141; the
+  // same-day no-KYC scrap then removed their ID-checked buy
+  // rows, leaving Fonbnk sell-only, like every Fonbnk
+  // market.)
+  ok("batch-2 outcome after the size bar: PK/AR/CO/AE sell is the LocalCoinSwap row alone; BD/EG/VN empty on both sides; BR/PH Fonbnk sell-only", ["PK", "AR", "CO", "AE"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"]))
     && ["BD", "EG", "VN"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
     && ["BR", "PH"].every(code =>
-    JSON.stringify(names(code)) === JSON.stringify(["Fonbnk"])
+    JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify(["Fonbnk"])));
   ok("surviving sell rows are labelled external link-outs carrying the referral and their size-bar figures", (() => {
     const want = { UG: ["MTN MoMo", "trades from UGX 1,000"], PK: ["bank transfer", "trades from Rs 50"], AR: ["bank transfer", "trades from ARS 1,000"], CO: ["Bancolombia", "trades from COP 1,000"], AE: ["bank transfer", "trades from AED 1 ·"] };
@@ -467,21 +480,24 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // returned to the empty end-state the same night under the
   // size bar, §16d, while UG's row survived it.)
   // (End-state REVERSED 2026-11-16: all four are Fonbnk
-  // markets — the form route covers both sides, §141.)
-  ok("scrapped corridors: Fonbnk covers both sides after the 2026-11-16 restoration", ["TZ", "SN", "CI", "ZM"].every(code =>
-    JSON.stringify(names(code)) === JSON.stringify(["Fonbnk"])
+  // markets — the form route covered both sides, §141; the
+  // same-day no-KYC scrap removed the buy sides, so all four
+  // are Fonbnk sell-only now.)
+  ok("scrapped corridors: Fonbnk sell-only after the 2026-11-16 restoration + no-KYC scrap", ["TZ", "SN", "CI", "ZM"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify(["Fonbnk"])));
 
   // South Africa: Mt Pelerin led both sides after the
-  // 2026-11-10 removal; since 2026-11-16 Fonbnk queues behind
-  // Mt Pelerin's badged buy lead and LEADS the sell side (it
-  // completes at small-ticket size where Mt Pelerin's sell
-  // fails the test at CHF 50 — the badge follows completability
-  // at size, §141).
-  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Fonbnk"])
-    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Fonbnk", "Mt Pelerin"]));
-  ok("ZA badges: Mt Pelerin on buy, Fonbnk on sell", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
-    && JSON.stringify(badged("ZA", "sell")) === JSON.stringify(["Fonbnk"]));
+  // 2026-11-10 removal; on 2026-11-16 Fonbnk queued behind
+  // Mt Pelerin's badged buy lead and led the sell side — for
+  // a few hours. The owner's no-KYC scrap the same day
+  // removed BOTH Fonbnk ZA rows (buy ID-checked from $3;
+  // sell carried Fonbnk's one on ID-verification switch), so
+  // ZA is Mt Pelerin alone again on both sides.
+  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin"]));
+  ok("ZA badges: Mt Pelerin on buy, none on sell (Fonbnk's sell badge left with its removed row)", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(badged("ZA", "sell")) === JSON.stringify([]));
 
   // Corridor extensions (global ramp scout, 2026-11-09): the
   // existing Mt Pelerin referral preset extended to the rest of
@@ -496,7 +512,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const MTP_EXT_EUR = ["AT", "BE", "BG", "CY", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IS", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "RO", "SI", "SK"];
   const MTP_EXT_OWN = { CZ: "CZK", DK: "DKK", HU: "HUF", LI: "CHF", NO: "NOK", PL: "PLN", SE: "SEK", CA: "CAD", AU: "AUD", SG: "SGD" };
   const MTP_EXT_ALL = [...MTP_EXT_EUR, ...Object.keys(MTP_EXT_OWN)];
-  ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries, + 7 LCS batch-2 additions = 61, + 8 Fonbnk batch-3 additions (2026-11-16) = 69", RAMP_COUNTRIES.length === 69
+  ok("extensions: 32 corridors of 2026-11-09 + batch 2 of 2026-11-10 take the picker to 54 countries, + 7 LCS batch-2 additions = 61, + 8 Fonbnk batch-3 additions (2026-11-16) = 69, − RW/MW (airtime-only Fonbnk markets, out with the same-day airtime scrap) = 67", RAMP_COUNTRIES.length === 67
     && MTP_EXT_ALL.length === 32 && MTP_EXT_ALL.every(code => RAMP_COUNTRIES.some(c => c.code === code)));
   // §140: the EUR-fiat extension corridors gained the Peer
   // in-app row on both sides (Peer sells carry the badge; Mt
@@ -639,13 +655,15 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // (REVERSED 2026-11-16: the Fonbnk form route is
   // network-agnostic, so these corridors resolve to it on
   // unsupported networks too; UG's sell keeps the
-  // LocalCoinSwap row behind it.)
-  ok("restored corridors on unsupported networks: ZM/KE carry Fonbnk; UG buy Fonbnk, sell Fonbnk then LocalCoinSwap", ["ZM", "KE"].every(code =>
-    JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])
+  // LocalCoinSwap row behind it. SELL-ONLY since the
+  // same-day no-KYC scrap: the buy sides resolve empty on
+  // unsupported networks exactly as on supported ones.)
+  ok("restored corridors on unsupported networks: ZM/KE Fonbnk sell-only; UG buy empty, sell Fonbnk then LocalCoinSwap", ["ZM", "KE"].every(code =>
+    JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
     && JSON.stringify(rampRoutesFor(code, "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"]))
     && ["UG"].every(code => {
       const rs = rampRoutesFor(code, "sell", "linea", "USDT").routes;
-      return JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])
+      return JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
         && rs.length === 2 && rs[0].name === "Fonbnk" && rs[1].name === "LocalCoinSwap";
     }));
 }
@@ -695,10 +713,12 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   const LCS_REMOVED = ["NG", "KE", "GH", "CM", "BD", "EG", "VN", "BR", "PH"];
   // (The LCS_REMOVED set's Fonbnk markets — NG/KE/GH/CM/BR/PH
   // — left the empty end-state on 2026-11-16 with the Fonbnk
-  // form route, §141; BD/EG/VN are not Fonbnk markets and stay
-  // honestly empty. The size bar's LCS verdict is unchanged:
-  // no LCS row or plan entry anywhere in the set.)
-  ok("size bar: removed LocalCoinSwap corridors hold no LCS row or plan row; non-Fonbnk ones stay empty, Fonbnk ones carry the form route", LCS_REMOVED.every(code =>
+  // form route, §141, and narrowed to sell-only the same day
+  // under the owner's no-KYC scrap; BD/EG/VN are not Fonbnk
+  // markets and stay honestly empty. The size bar's LCS
+  // verdict is unchanged: no LCS row or plan entry anywhere
+  // in the set.)
+  ok("size bar: removed LocalCoinSwap corridors hold no LCS row or plan row; non-Fonbnk ones stay empty, Fonbnk ones carry the form route on sell only", LCS_REMOVED.every(code =>
     RAMP_COUNTRY_PLAN[code].every(([n]) => n !== "LocalCoinSwap")
     && rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap")
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))
@@ -706,7 +726,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
       rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
       && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0)
     && ["NG", "KE", "GH", "CM", "BR", "PH"].every(code =>
-      JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])
+      JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
       && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
   ok("size bar: LocalCoinSwap survives only as the five kept sell rows, each quoting a ≤$1 floor", RAMP_COUNTRIES.every(c =>
     ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -8433,26 +8453,31 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("capture gate: the removed provider holds no static link, caps entry or plan row",
     !("Noblocks" in RAMP_STATIC_LINKS) && !("Noblocks" in RAMP_ADDRESS_ENTRY)
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Noblocks")));
-  ok("capture gate: NG buy carries exactly the Fonbnk form route on every network/asset (2026-11-16 restoration)",
-    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])
-    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"]));
+  ok("capture gate: NG buy carries NO route on any network/asset (the restored Fonbnk buy row was BVN-gated; removed under the owner's no-KYC order, 2026-11-16)",
+    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
   ok("removal: the NG plan holds no row at all (the LocalCoinSwap sell row was itself removed under the size bar)", RAMP_COUNTRY_PLAN.NG.length === 0);
 }
 
 // 74. Fonbnk removal (2026-11-10, owner's direct order —
 // "Scrap Fonbnk") — AND its restoration (2026-11-16, owner's
-// launch directive). The 2026-11-10 removal killed the OLD
-// shape in full: hosted widget rows, plan rows, link builders,
-// a network code, a WalletConnect-only buy, and no capture
-// mechanism anywhere in it. The 2026-11-16 restoration is a
-// DIFFERENT integration of the same provider: Fluid's own form
-// on Fonbnk's Merchant API, the signing secret held in a
-// proxy Worker, capture native to every quote as an
-// echo-verified merchant_fee (§141 pins the shape end to end).
-// What these pins now assert: the old shape stays gone (no
-// plan row, no static link, no network code — the removal's
-// substance is untouched), and every Fonbnk presence anywhere
-// is the one programmatic form route.
+// launch directive) — AND the restoration's same-day
+// narrowing (2026-11-16 17:15/17:16 WAT: the no-KYC scrap and
+// the airtime scrap, §141's header narrates both). The
+// 2026-11-10 removal killed the OLD shape in full: hosted
+// widget rows, plan rows, link builders, a network code, a
+// WalletConnect-only buy, and no capture mechanism anywhere
+// in it. The 2026-11-16 restoration is a DIFFERENT
+// integration of the same provider: Fluid's own form on
+// Fonbnk's Merchant API, the signing secret held in a proxy
+// Worker, capture native to every quote as an echo-verified
+// merchant_fee (§141 pins the shape end to end) — narrowed
+// within hours to SELL-ONLY, fiat-only, because every buy
+// row carried an ID check and airtime is not fiat. What
+// these pins now assert: the old shape stays gone (no plan
+// row, no static link, no network code — the removal's
+// substance is untouched), and every Fonbnk presence
+// anywhere is the one programmatic form route, on sell.
 {
   const CORRIDORS = ["NG", "KE", "GH", "ZA", "UG", "TZ", "CM", "SN", "CI", "ZM"];
   ok("removal stands for the old shape: no plan row, no static link, no network code",
@@ -8462,12 +8487,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("restoration: every Fonbnk presence is the programmatic in-app form route — marker set, no URL, never unavailable-flagged",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Fonbnk" || (r.fonbnk === m && r.url === null && r.unavailable === false)))));
-  ok("restoration: the ten former corridors carry the form route on both sides",
-    CORRIDORS.every(code => ["buy", "sell"].every(m =>
-      rampRoutesFor(code, m, "bsc", "USDC").routes.some(r => r.name === "Fonbnk"))));
-  ok("restoration: ZA sell is led by Fonbnk with Mt Pelerin behind; the buy badge stays Mt Pelerin's",
-    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk", "Mt Pelerin"])
-    && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify(["Fonbnk"])
+  ok("restoration, narrowed by the same-day no-KYC scrap: nine of the ten former corridors carry the form route on SELL only; ZA carries none (both its rows were ID-checked)",
+    CORRIDORS.filter(code => code !== "ZA").every(code =>
+      rampRoutesFor(code, "sell", "bsc", "USDC").routes.some(r => r.name === "Fonbnk")
+      && !rampRoutesFor(code, "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"))
+    && ["buy", "sell"].every(m => !rampRoutesFor("ZA", m, "bsc", "USDC").routes.some(r => r.name === "Fonbnk")));
+  ok("restoration, narrowed: ZA sell is Mt Pelerin alone and badgeless; the buy badge stays Mt Pelerin's",
+    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify([])
     && JSON.stringify(rampRoutesFor("ZA", "buy", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   ok("removal: Mercuryo still appears in no route, note, URL or table",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
@@ -8972,13 +8999,14 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       const rs = rampRoutesFor("US", m, "bsc", "USDC").routes.filter(r => !r.peer);
       return rs.every(r => r.unavailable === true && r.url === null && r.badge === false);
     }));
-  ok("gate removal: IN/ID are honestly empty on both sides (BR/PH gained the capture-clean LCS sell row in batch 2 and lost it to the size bar, §16d; since 2026-11-16 both carry the Fonbnk form route, §141)",
+  ok("gate removal: IN/ID are honestly empty on both sides (BR/PH gained the capture-clean LCS sell row in batch 2 and lost it to the size bar, §16d; since 2026-11-16 both carry the Fonbnk form route on SELL only — their buy rows were ID-checked and removed the same day, §141)",
     ["IN", "ID"].every(code => ["buy", "sell"].every(m =>
       rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
-    && ["BR", "PH"].every(code => ["buy", "sell"].every(m =>
-      JSON.stringify(rampRoutesFor(code, m, "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"]))));
-  ok("gate removal + 2026-11-16 restoration: ZA sell is Fonbnk then Mt Pelerin, no removed row",
-    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk", "Mt Pelerin"]));
+    && ["BR", "PH"].every(code =>
+      JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"])));
+  ok("gate removal + 2026-11-16 restoration + same-day scrap: ZA sell is Mt Pelerin alone, no Fonbnk row, no removed row",
+    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   // §140: GB/DE gained the Peer in-app row on both sides — sell
   // leads with Peer, buy keeps the badged Mt Pelerin lead with
   // Peer behind it (MX's fiat isn't a Peer corridor — it keeps
@@ -9017,29 +9045,32 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && JSON.stringify(badges("US", "sell")) === JSON.stringify(["Peer"]));
   // §140: DE/FR sell sheets now badge Peer (ZAR isn't a Peer
   // corridor); buy sheets badge Mt Pelerin only.
-  // §141: ZA's sell badge is Fonbnk's (it completes at size
-  // where Mt Pelerin's sell doesn't); ZA buy still Mt Pelerin.
-  ok("badge rule: DE/FR sell sheets badge Peer, ZA sell badges Fonbnk, buy sheets badge Mt Pelerin only",
+  // §141 as amended by the same-day scrap: ZA's sell badge was
+  // Fonbnk's for a few hours (it completed at size where
+  // Mt Pelerin's sell doesn't) — it left with the removed
+  // ID-verified sell row, so ZA sell is badgeless again; ZA
+  // buy still Mt Pelerin.
+  ok("badge rule: DE/FR sell sheets badge Peer, ZA sell badges nothing (Fonbnk's badge left with its row), buy sheets badge Mt Pelerin only",
     ["DE", "FR"].every(code => JSON.stringify(badges(code, "sell")) === JSON.stringify(["Peer"])
       && JSON.stringify(badges(code, "buy")) === JSON.stringify(["Mt Pelerin"]))
-    && JSON.stringify(badges("ZA", "sell")) === JSON.stringify(["Fonbnk"])
+    && JSON.stringify(badges("ZA", "sell")) === JSON.stringify([])
     && JSON.stringify(badges("ZA", "buy")) === JSON.stringify(["Mt Pelerin"]));
-  ok("badge rule: IN carries no badge; BR/PH badge Fonbnk on both sides (§141)",
+  ok("badge rule: IN carries no badge; BR/PH badge Fonbnk on SELL only (§141 as amended — their buy rows are removed)",
     badges("IN", "buy").length === 0 && badges("IN", "sell").length === 0
-    && ["BR", "PH"].every(code => JSON.stringify(badges(code, "buy")) === JSON.stringify(["Fonbnk"]) && JSON.stringify(badges(code, "sell")) === JSON.stringify(["Fonbnk"])));
+    && ["BR", "PH"].every(code => JSON.stringify(badges(code, "buy")) === JSON.stringify([]) && JSON.stringify(badges(code, "sell")) === JSON.stringify(["Fonbnk"])));
   // §140 restated: buy badges remain Mt Pelerin-only; sell
   // badges are Peer's, and only on Peer's own corridors.
-  // §141 restated: on Fonbnk corridors the form route badges
-  // the side it covers (buy too, where no Mt Pelerin badge
-  // holds the lead — ZA buy); everywhere else stays badgeless.
-  ok("badge rule: badges belong to Mt Pelerin (buy), Peer (its sell corridors) and Fonbnk (its corridors) only",
+  // §141 as amended: on Fonbnk corridors the form route badges
+  // the SELL side only (it has no buy side since the scrap);
+  // everywhere else stays badgeless.
+  ok("badge rule: badges belong to Mt Pelerin (buy), Peer (its sell corridors) and Fonbnk (its sell corridors) only",
     RAMP_COUNTRIES.every(c => {
       const b = badges(c.code, "buy"), s = badges(c.code, "sell");
       const fb = fonbnkCountry(c.code);
       const sellOk = ["USD", "EUR", "GBP"].includes(c.fiat)
         ? (s.length === 1 && s[0] === "Peer")
         : (fb && fb.sell.length ? (s.length === 1 && s[0] === "Fonbnk") : s.length === 0);
-      const buyOk = b.length === 0 || (b.length === 1 && (b[0] === "Mt Pelerin" || (b[0] === "Fonbnk" && fb && fb.buy.length)));
+      const buyOk = b.length === 0 || (b.length === 1 && b[0] === "Mt Pelerin");
       return sellOk && buyOk;
     }));
   ok("badge rule: global invariants re-asserted — ≤1 badge per sheet, badge only on rank 0",
@@ -21765,23 +21796,43 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   }
 }
 
-// ---------- §141: Fonbnk form-style ramps — Nigeria first (2026-11-16) ----------
+// ---------- §141: Fonbnk form-style SELL ramps — Nigeria first (2026-11-16) ----------
 // Owner launch directive 2026-11-16: global buy and sell live,
 // Nigeria included. Fonbnk is the form-style route: Fluid
 // renders the form, Fonbnk's agent network fulfils, the user
 // never holds a Fonbnk account. Facts from Fonbnk's own docs
 // read live 2026-11-16 (docs.fonbnk.com) + research_notes/
 // fluid-composed-floor-20261116/report.md: NG sell needs NO
-// KYC (airtime from $1.00, bank from ₦5,000); NG buy is $1.00
-// minimum but BVN-gated from the first $1 (403 NG_BVN_REQUIRED)
-// — the BVN line is pinned on the row AND the sheet, before the
-// user starts. Capture is the account-level merchant_fee,
-// echo-verified per quote (the Soroswap discipline): the
-// documented NG sell quote carries merchant_fee 1% beside
-// Fonbnk's 2.5% service fee. The signing secret lives in the
-// fluid-fonbnk-proxy Worker; the bundle ships only its URL, and
-// while it is empty the sheets render with an activation-
-// pending state and the API refuses — no silent dead control.
+// KYC (bank from ₦5,000; airtime from $1.00); NG buy is $1.00
+// minimum but BVN-gated from the first $1 (403 NG_BVN_REQUIRED).
+// As first shipped, the BVN requirement was stated plainly on
+// the buy row and the sheet. THE OWNER SCRAPPED THAT SHAPE
+// THE SAME DAY (2026-11-16 17:15 WAT, binding): "I don't want
+// anything BVN. Anything KYC, I don't want it." A KYC route
+// does not ship in Fluid even with the requirement disclosed:
+// every Fonbnk BUY row was removed (NG's BVN row first; GH/KE
+// ID-number buys and every other buy market under the general
+// sentence), and the ZA SELL row went too (ID verification).
+// Minutes later (17:16 WAT) he scrapped the AIRTIME sell
+// destination as well — "sell for fiat, not airtime" — which
+// took out the airtime channel everywhere and the RW/MW rows
+// entirely (airtime was their only sell path; their picker
+// entries existed only for Fonbnk). Nigeria's sell floor is
+// therefore ₦5,000 (≈ $3.50) to bank; the "$1 Nigeria sell"
+// figure rested on airtime and is retired — the sub-₦5,000
+// no-KYC fiat sell is an OPEN GAP, labelled on the row.
+// §141 now pins the surviving shape: sell-only, fiat-only,
+// no ID anywhere — the sheet's KYC step is a refusal guard,
+// the KYC-submit call and the proxy's POST KYC path are
+// deleted, and activation is a SELL-ONLY merchant ask.
+// Capture is the account-level merchant_fee, echo-verified
+// per quote (the Soroswap discipline): the documented NG
+// sell quote carries merchant_fee 1% beside Fonbnk's 2.5%
+// service fee. The signing secret lives in the
+// fluid-fonbnk-proxy Worker; the bundle ships only its URL,
+// and while it is empty the sheets render with an
+// activation-pending state and the API refuses — no silent
+// dead control.
 {
   const coreSrc141 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   const appSrc141 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
@@ -21802,66 +21853,67 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     fbRefused141 && fbRefused141.code === "FONBNK_NOT_CONFIGURED"
     && fonbnkErrorCopy(fbRefused141).includes("merchant account is switched on"));
 
-  // --- Country table (docs supported-countries snapshot) ---
-  ok("fonbnk: the country table carries Fonbnk's 20 live markets",
-    Object.keys(FONBNK_COUNTRIES).length === 20
-    && ["NG", "KE", "GH", "ZA", "TZ", "UG", "ZM", "BJ", "BF", "CI", "SN", "CM", "GA", "CG", "CD", "GM", "RW", "MW", "BR", "PH"].every(c => !!FONBNK_COUNTRIES[c]));
-  ok("fonbnk: Nigeria's shape is the researched one — bank buy, bank+airtime sell, BVN from $1, ₦5,000 bank / $1 airtime floors, no sell KYC",
-    JSON.stringify(fonbnkCountry("NG").buy) === JSON.stringify(["bank"])
-    && JSON.stringify(fonbnkCountry("NG").sell) === JSON.stringify(["bank", "airtime"])
-    && fonbnkCountry("NG").buyKycDoc === "BVN" && fonbnkCountry("NG").buyKycFromUsd === 1
-    && fonbnkCountry("NG").mins.sellBankMinFiat === 5000 && fonbnkCountry("NG").mins.sellAirtimeMinUsd === 1
-    && fonbnkCountry("NG").offrampKyc === false);
-  ok("fonbnk: South Africa is the ONLY country whose sell side carries Fonbnk's KYC switch",
-    Object.entries(FONBNK_COUNTRIES).every(([c, v]) => v.offrampKyc === (c === "ZA")));
-  ok("fonbnk: Rwanda and Malawi are sell-only (airtime) — no buy channels, so no buy route can render",
-    fonbnkCountry("RW").buy.length === 0 && JSON.stringify(fonbnkCountry("RW").sell) === JSON.stringify(["airtime"])
-    && fonbnkCountry("MW").buy.length === 0 && JSON.stringify(fonbnkCountry("MW").sell) === JSON.stringify(["airtime"]));
-  ok("fonbnk: the picker gained the eight Fonbnk-only countries",
-    ["BJ", "BF", "GA", "CG", "CD", "GM", "RW", "MW"].every(c => RAMP_COUNTRIES.some(r => r.code === c)));
+  // --- Country table (docs snapshot minus the owner's scraps) ---
+  ok("fonbnk: the country table carries 17 markets — Fonbnk's 20 minus ZA (sell ID verification) and RW/MW (airtime-only)",
+    Object.keys(FONBNK_COUNTRIES).length === 17
+    && ["NG", "KE", "GH", "TZ", "UG", "ZM", "BJ", "BF", "CI", "SN", "CM", "GA", "CG", "CD", "GM", "BR", "PH"].every(c => !!FONBNK_COUNTRIES[c])
+    && fonbnkCountry("ZA") === null && fonbnkCountry("RW") === null && fonbnkCountry("MW") === null);
+  ok("fonbnk: Nigeria's surviving shape — no buy side at all, bank-only sell, ₦5,000 floor, no airtime anywhere in the entry",
+    JSON.stringify(fonbnkCountry("NG").buy) === JSON.stringify([])
+    && JSON.stringify(fonbnkCountry("NG").sell) === JSON.stringify(["bank"])
+    && fonbnkCountry("NG").mins.sellBankMinFiat === 5000 && fonbnkCountry("NG").mins.sellBankMinUsd === 3.5
+    && !("sellAirtimeMinUsd" in fonbnkCountry("NG").mins) && !("buyKycDoc" in fonbnkCountry("NG")));
+  ok("fonbnk: NO Fonbnk row anywhere carries an ID requirement or the airtime destination (owner's general sentence, applied table-wide)",
+    Object.values(FONBNK_COUNTRIES).every(c => c.buy.length === 0 && !c.sell.includes("airtime")));
+  ok("fonbnk: Rwanda and Malawi are OUT — no country entry, no picker entry (their only sell path was the scrapped airtime)",
+    fonbnkCountry("RW") === null && fonbnkCountry("MW") === null
+    && !RAMP_COUNTRIES.some(r => r.code === "RW") && !RAMP_COUNTRIES.some(r => r.code === "MW"));
+  ok("fonbnk: the picker keeps the six surviving Fonbnk-only countries",
+    ["BJ", "BF", "GA", "CG", "CD", "GM"].every(c => RAMP_COUNTRIES.some(r => r.code === c)));
 
-  // --- Copy: the BVN line, minimums, delivery attribution ---
-  ok("fonbnk: the NG buy KYC line states the BVN requirement plainly, before the user starts",
-    fonbnkBuyKycLine("NG").includes("needs a BVN") && fonbnkBuyKycLine("NG").includes("at any amount")
-    && fonbnkBuyKycLine("NG").includes("There is no way to buy here without it")
-    && fonbnkBuyKycLine("NG").includes("Selling needs no BVN and no ID"));
-  ok("fonbnk: the researched minimum lines are exact — NG buy ₦1,408, NG bank ₦5,000, NG airtime ₦1,242",
-    fonbnkMinLine("NG", "buy").includes("₦1,408") && fonbnkMinLine("NG", "sell", "bank").includes("₦5,000")
-    && fonbnkMinLine("NG", "sell", "airtime").includes("₦1,242")
-    && fonbnkMinLine("ZA", "sell", "bank") === null);
-  ok("fonbnk: delivery copy attributes Fonbnk's claim and never promises — ZA bank names the two-business-day warning",
+  // --- Copy: minimums, delivery attribution, the removal itself ---
+  ok("fonbnk: the BVN line and the KYC submit are DELETED, not hidden — neither source names them (owner-ordered removal)",
+    !coreSrc141.includes("fonbnkBuyKycLine") && !appSrc141.includes("fonbnkBuyKycLine")
+    && !coreSrc141.includes("fonbnkSubmitKyc") && !appSrc141.includes("fonbnkSubmitKyc")
+    && !coreSrc141.includes("There is no way to buy here without it"));
+  ok("fonbnk: the sheet's ID step is a refusal guard — it confirms no ID is needed and refuses any order Fonbnk tries to ID-check",
+    appSrc141.includes("Confirm no ID is needed for this order") && appSrc141.includes("Fluid doesn't do ID checks")
+    && appSrc141.includes("the order stops here instead") && !appSrc141.includes("fbKycSubmit") && !appSrc141.includes("fbKycHosted"));
+  ok("fonbnk: the researched minimum lines are exact — NG sell ₦5,000 to bank; no buy line exists; KE sell $1.00",
+    fonbnkMinLine("NG", "sell", "bank").includes("₦5,000") && fonbnkMinLine("NG", "sell", "bank").includes("about $3.50")
+    && fonbnkMinLine("NG", "buy") === null && fonbnkMinLine("NG", "sell", "airtime") === fonbnkMinLine("NG", "sell", "bank")
+    && fonbnkMinLine("KE", "sell").includes("$1.00"));
+  ok("fonbnk: delivery copy attributes Fonbnk's claim and never promises — the removed ZA two-business-day warning is gone with its row",
     fonbnkDeliveryLine("NG", "bank").includes("Fonbnk says payouts land minutes") && fonbnkDeliveryLine("NG", "bank").includes("Fluid has not measured this route")
-    && fonbnkDeliveryLine("ZA", "bank").includes("up to two business days"));
+    && !fonbnkDeliveryLine("ZA", "bank").includes("two business days"));
 
   // --- Route rows ---
   const ngBuy141 = rampRoutesFor("NG", "buy", "polygon", "USDT").routes;
   const ngSell141 = rampRoutesFor("NG", "sell", "polygon", "USDT").routes;
-  ok("fonbnk: Nigeria buy leads with the Fonbnk form route — badged, in-app, no URL, BVN on the note's face",
-    ngBuy141.length === 1 && ngBuy141[0].name === "Fonbnk" && ngBuy141[0].fonbnk === "buy" && ngBuy141[0].url === null
-    && ngBuy141[0].badge === true && ngBuy141[0].external === false && ngBuy141[0].unavailable === false
-    && ngBuy141[0].note.includes("your BVN is required before your first buy, at any amount")
-    && ngBuy141[0].note.includes("₦1,408 (about $1)"));
-  ok("fonbnk: Nigeria sell leads with Fonbnk — no-ID line and both floors on the note",
+  ok("fonbnk: Nigeria buy has NO route — the BVN row was removed in full, not kept with the requirement disclosed (owner's decision-letter removal)",
+    ngBuy141.length === 0);
+  ok("fonbnk: Nigeria sell leads with Fonbnk — no-ID line, the ₦5,000 bank floor, and the open sub-₦5,000 gap labelled on the note",
     ngSell141.length === 1 && ngSell141[0].name === "Fonbnk" && ngSell141[0].fonbnk === "sell" && ngSell141[0].badge === true
     && ngSell141[0].note.includes("no ID and no BVN needed to sell")
-    && ngSell141[0].note.includes("from $1.00 paid as airtime") && ngSell141[0].note.includes("₦5,000 (about $3.50)"));
-  ok("fonbnk: Ghana and Kenya carry both sides; the US carries none",
-    rampRoutesFor("GH", "buy", "polygon", "USDT").routes.some(r => r.fonbnk === "buy")
+    && ngSell141[0].note.includes("₦5,000 (about $3.50)") && ngSell141[0].note.includes("smaller fiat sells aren't covered yet")
+    && !ngSell141[0].note.includes("airtime") && !ngSell141[0].note.includes("$1.00 paid"));
+  ok("fonbnk: Ghana and Kenya carry SELL only (their ID-checked buy rows removed under the general sentence); the US carries none",
+    rampRoutesFor("GH", "buy", "polygon", "USDT").routes.length === 0
     && rampRoutesFor("GH", "sell", "polygon", "USDT").routes.some(r => r.fonbnk === "sell")
-    && rampRoutesFor("KE", "buy", "polygon", "USDT").routes.some(r => r.fonbnk === "buy")
+    && rampRoutesFor("KE", "buy", "polygon", "USDT").routes.length === 0
     && rampRoutesFor("KE", "sell", "polygon", "USDT").routes.some(r => r.fonbnk === "sell")
     && !rampRoutesFor("US", "buy", "bsc", "USDC").routes.some(r => r.name === "Fonbnk")
     && !rampRoutesFor("US", "sell", "bsc", "USDC").routes.some(r => r.name === "Fonbnk"));
-  ok("fonbnk: ZA buy keeps Mt Pelerin's badged lead with Fonbnk behind it; ZA sell is led by Fonbnk",
-    (() => { const za = rampRoutesFor("ZA", "buy", "polygon", "USDT").routes; return za[0].name === "Mt Pelerin" && za[0].badge === true && za.some(r => r.name === "Fonbnk" && r.badge === false); })()
-    && rampRoutesFor("ZA", "sell", "polygon", "USDT").routes[0].name === "Fonbnk");
-  ok("fonbnk: Rwanda gets a sell route and NO buy route; Uganda sell leads with Fonbnk ahead of the external marketplace row",
-    !rampRoutesFor("RW", "buy", "polygon", "USDT").routes.some(r => r.name === "Fonbnk")
-    && rampRoutesFor("RW", "sell", "polygon", "USDT").routes[0].name === "Fonbnk"
+  ok("fonbnk: ZA carries NO Fonbnk row on either side (buy ID-checked, sell ID-verified — both removed); Mt Pelerin stands alone",
+    !rampRoutesFor("ZA", "buy", "polygon", "USDT").routes.some(r => r.name === "Fonbnk")
+    && !rampRoutesFor("ZA", "sell", "polygon", "USDT").routes.some(r => r.name === "Fonbnk")
+    && rampRoutesFor("ZA", "buy", "polygon", "USDT").routes[0].name === "Mt Pelerin");
+  ok("fonbnk: Rwanda is not a ramp country at all anymore (out with the airtime scrap — rampRoutesFor is never handed its code); Uganda sell leads with Fonbnk ahead of the external marketplace row",
+    !RAMP_COUNTRIES.some(c => c.code === "RW") && !("RW" in RAMP_COUNTRY_PLAN)
     && rampRoutesFor("UG", "sell", "polygon", "USDT").routes[0].name === "Fonbnk");
   ok("fonbnk: the address-entry table routes Fonbnk to the in-app form, and Nigeria's plan stays empty (the route is programmatic, Peer-style)",
     RAMP_ADDRESS_ENTRY["Fonbnk"] === "paste"
-    && JSON.stringify(rampRoutesFor("NG", "buy", "polygon", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"]));
+    && JSON.stringify(rampRoutesFor("NG", "sell", "polygon", "USDT").routes.map(r => r.name)) === JSON.stringify(["Fonbnk"]));
 
   // --- Capture gate, on Fonbnk's own documented quote fixtures ---
   // NG sell quote (docs' create-quote example, trimmed to the
@@ -21871,8 +21923,11 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     deposit: { paymentChannel: "crypto", currencyType: "crypto", currencyCode: "CELO_USDT", cashout: { amountBeforeFees: 21.61, amountAfterFees: 21.61, chargedFees: [{ id: "blockchain_gas_fee", type: "flat", recipient: "blockchain", amount: 0.02 }], chargedFeesUsd: [{ id: "blockchain_gas_fee", type: "flat", recipient: "blockchain", amount: 0.02 }], feeSettings: [{ id: "blockchain_gas_fee", recipient: "blockchain", type: "percentage", value: 0.1 }] } },
     payout: { paymentChannel: "bank", currencyType: "fiat", currencyCode: "NGN", countryIsoCode: "NG", cashout: { amountBeforeFees: 31088, amountAfterFees: 30000, chargedFees: [{ id: "service_fee", type: "percentage", recipient: "platform", amount: 777.2 }, { id: "merchant_fee", type: "percentage", recipient: "merchant", amount: 310.88 }], chargedFeesUsd: [{ id: "service_fee", type: "percentage", recipient: "platform", amount: 0.53 }, { id: "merchant_fee", type: "percentage", recipient: "merchant", amount: 0.21 }], feeSettings: [{ id: "service_fee", recipient: "platform", type: "percentage", value: 2.5 }, { id: "merchant_fee", recipient: "merchant", type: "percentage", value: 1, min: 0, max: 0 }] } },
   };
-  // NG buy quote (docs' example): the deposit leg carries only
-  // provider + service fees; no merchant fee anywhere.
+  // NG buy quote (docs' example; fixture retained because the
+  // capture gate is mode-agnostic — the buy ROUTE was removed
+  // 2026-11-16, the verdict discipline was not): the deposit
+  // leg carries only provider + service fees; no merchant fee
+  // anywhere.
   const ngBuyQuote141 = {
     deposit: { paymentChannel: "bank", currencyType: "fiat", currencyCode: "NGN", countryIsoCode: "NG", cashout: { amountBeforeFees: 30588, amountAfterFees: 30000, chargedFees: [{ id: "provider_fee", type: "percentage", recipient: "provider", amount: 300 }, { id: "service_fee", type: "percentage", recipient: "platform", amount: 288 }], chargedFeesUsd: [], feeSettings: [{ id: "provider_fee", recipient: "provider", type: "percentage", value: 1 }, { id: "service_fee", recipient: "platform", type: "percentage", value: 0.96 }] } },
     payout: { paymentChannel: "crypto", currencyType: "crypto", currencyCode: "POLYGON_USDT", cashout: { amountBeforeFees: 20, amountAfterFees: 20, chargedFees: [{ id: "blockchain_gas_fee", type: "flat", recipient: "blockchain", amount: 0.01 }], chargedFeesUsd: [], feeSettings: [] } },
@@ -21886,18 +21941,19 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && fonbnkCaptureRefusal("missing").includes("earn Fluid nothing") && fonbnkCaptureRefusal("none").includes("isn't switched on"));
 
   // --- Payload builders + status copy ---
-  ok("fonbnk: quote bodies put the amount on exactly one leg, in Fonbnk's strict leg shape",
-    (() => { const b = fonbnkQuoteBody({ ...fonbnkPair({ mode: "buy", countryCode: "NG", assetCode: "POLYGON_USDT", channel: "bank" }), amount: 30588, amountLeg: "deposit" });
-      return b.deposit.amount === 30588 && b.payout.amount === undefined && b.deposit.countryIsoCode === "NG" && b.payout.currencyCode === "POLYGON_USDT" && !("countryIsoCode" in b.payout); })()
-    && (() => { const b = fonbnkQuoteBody({ ...fonbnkPair({ mode: "sell", countryCode: "NG", assetCode: "CELO_USDT", channel: "airtime", carrierCode: "ng_9mobile" }), amount: 30000, amountLeg: "payout" });
-      return b.payout.amount === 30000 && b.deposit.amount === undefined && b.payout.carrierCode === "ng_9mobile"; })());
+  ok("fonbnk: quote bodies put the amount on exactly one leg, in Fonbnk's strict leg shape (sell pairs — the only side that ships)",
+    (() => { const b = fonbnkQuoteBody({ ...fonbnkPair({ mode: "sell", countryCode: "NG", assetCode: "CELO_USDT", channel: "bank" }), amount: 30000, amountLeg: "payout" });
+      return b.payout.amount === 30000 && b.deposit.amount === undefined && b.payout.countryIsoCode === "NG" && b.deposit.currencyCode === "CELO_USDT" && !("countryIsoCode" in b.deposit); })()
+    && (() => { const b = fonbnkQuoteBody({ ...fonbnkPair({ mode: "sell", countryCode: "KE", assetCode: "CELO_USDT", channel: "mobile_money", carrierCode: "ke_safaricom" }), amount: 150, amountLeg: "payout" });
+      return b.payout.amount === 150 && b.deposit.amount === undefined && b.payout.carrierCode === "ke_safaricom"; })());
   ok("fonbnk: every one of Fonbnk's thirteen order statuses has plain copy; only the two terminal states are final",
     ["deposit_awaiting", "deposit_validating", "deposit_successful", "payout_pending", "payout_successful", "deposit_canceled", "deposit_expired", "deposit_invalid", "payout_failed", "refund_initiated", "refund_pending", "refund_failed", "refund_successful"].every(s => typeof FONBNK_ORDER_STATUS_COPY[s] === "string" && FONBNK_ORDER_STATUS_COPY[s].length > 3)
     && fonbnkOrderFinal("payout_successful") === true && fonbnkOrderFinal("refund_successful") === true
     && fonbnkOrderFinal("payout_failed") === false && fonbnkOrderFinal("deposit_invalid") === false
     && fonbnkOrderStatusCopy("payout_successful").includes("Done"));
-  ok("fonbnk: error copy maps the BVN refusal and the merchant-capability wall to plain language",
-    fonbnkErrorCopy({ code: "NG_BVN_REQUIRED" }).includes("needs your BVN verified first")
+  ok("fonbnk: error copy maps a BVN demand to a refusal (never an instruction to complete a BVN step) and the merchant-capability wall to plain language",
+    fonbnkErrorCopy({ code: "NG_BVN_REQUIRED" }).includes("doesn't do BVN or ID checks")
+    && !fonbnkErrorCopy({ code: "NG_BVN_REQUIRED" }).includes("Complete the BVN step")
     && fonbnkErrorCopy({ code: "FONBNK_CAPABILITY_OFF" }).includes("can't create them yet")
     && fonbnkErrorCopy({ code: "ROUTE_NOT_AVAILABLE" }).includes("no live offer"));
 
@@ -21906,16 +21962,17 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     appSrc141.includes('data-ramp-fonbnk="${esc(r.fonbnk)}"') && appSrc141.includes("openFonbnkSheet(b.dataset.rampFonbnk, b.dataset.rampCountry)")
     && appSrc141.includes('const FONBNK_ORDERS_KEY = "fluid_fonbnk_orders_v1"')
     && appSrc141.includes("fonbnkQuoteCapture(st.quote)") && appSrc141.includes("fonbnkCaptureRefusal(cap.verdict)"));
-  ok("fonbnk: the sheet carries the activation-pending state and the BVN box — no dead controls while unconfigured",
-    appSrc141.includes("Not switched on yet.") && appSrc141.includes("fonbnkBuyKycLine(code)")
+  ok("fonbnk: the sheet carries the activation-pending state — and no BVN box, no carrier (airtime) picker, no dead controls while unconfigured",
+    appSrc141.includes("Not switched on yet.") && !appSrc141.includes("fbCarrier") && !appSrc141.includes('"airtime"')
     && appSrc141.includes('id="fbQuoteBtn"') && appSrc141.includes("fonbnkErrorCopy(e)"));
   ok("fonbnk: create-order timeouts recover by orderParams before failing (Fonbnk's non-idempotency rule)",
     appSrc141.includes("fonbnkGetOrder({ orderParams: st.orderParams })")
     && appSrc141.includes("NOT idempotent at Fonbnk"));
 
   // --- Proxy worker (static pins: allowlist, env secrets, signing construction) ---
-  ok("fonbnk: the signing proxy allowlists exactly the wallet's Merchant API paths and signs as Fonbnk specifies",
-    ["GET /api/v2/currencies", "GET /api/v2/order-limits", "GET /api/v2/user/kyc", "POST /api/v2/user/kyc", "POST /api/v2/quote", "POST /api/v2/order", "GET /api/v2/order", "POST /api/v2/order/confirm", "POST /api/v2/order/cancel", "POST /api/v2/order/intermediate-action"].every(p => workerSrc141.includes(`"${p}"`))
+  ok("fonbnk: the signing proxy allowlists exactly the wallet's Merchant API paths and signs as Fonbnk specifies — the KYC-submit path is NOT allowlisted (owner's no-KYC order)",
+    ["GET /api/v2/currencies", "GET /api/v2/order-limits", "GET /api/v2/user/kyc", "POST /api/v2/quote", "POST /api/v2/order", "GET /api/v2/order", "POST /api/v2/order/confirm", "POST /api/v2/order/cancel", "POST /api/v2/order/intermediate-action"].every(p => workerSrc141.includes(`"${p}"`))
+    && !workerSrc141.includes('"POST /api/v2/user/kyc"')
     && workerSrc141.includes("env.FONBNK_CLIENT_ID") && workerSrc141.includes("env.FONBNK_API_SECRET")
     && workerSrc141.includes('"x-signature"') && workerSrc141.includes("HMAC") && workerSrc141.includes("SHA-256")
     && workerSrc141.includes("https://api.fonbnk.com"));

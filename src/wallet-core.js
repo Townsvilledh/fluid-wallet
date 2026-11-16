@@ -7343,15 +7343,17 @@ export const RAMP_COUNTRIES = [
   { code: "AE", name: "United Arab Emirates · AED", fiat: "AED" },
   // Fonbnk batch (2026-11-16): countries the ramp picker had
   // never carried, added because Fonbnk's form-style route
-  // covers them — see FONBNK_COUNTRIES below.
+  // covers them — see FONBNK_COUNTRIES below. Rwanda and
+  // Malawi were in this batch as Fonbnk sell-only markets;
+  // their only sell path was airtime, which the owner
+  // scrapped the same day (2026-11-16 17:16 WAT — "sell for
+  // fiat, not airtime"), so both came back out with it.
   { code: "BJ", name: "Benin · XOF", fiat: "XOF" },
   { code: "BF", name: "Burkina Faso · XOF", fiat: "XOF" },
   { code: "GA", name: "Gabon · XAF", fiat: "XAF" },
   { code: "CG", name: "Republic of the Congo · XAF", fiat: "XAF" },
   { code: "CD", name: "DR Congo · CDF", fiat: "CDF" },
   { code: "GM", name: "Gambia · GMD", fiat: "GMD" },
-  { code: "RW", name: "Rwanda · RWF", fiat: "RWF" },
-  { code: "MW", name: "Malawi · MWK", fiat: "MWK" },
 ];
 // Mt Pelerin: the consumer site IS the checkout (no account, no partner
 // key). URL params prefill the fiat + crypto pair (bsc/bdc buy, ssc/sdc
@@ -7628,18 +7630,18 @@ export const RAMP_COUNTRY_PLAN = {
   // market. No RU country or row is added — a corridor is
   // never surfaced without a passing live check.
   GH: [],
-  // Fonbnk batch (2026-11-16): these eight countries exist in
+  // Fonbnk batch (2026-11-16): these six countries exist in
   // the picker only because Fonbnk's form-style route covers
   // them; like NG/KE/GH their plans stay empty — the route is
-  // appended programmatically from FONBNK_COUNTRIES.
+  // appended programmatically from FONBNK_COUNTRIES. (RW/MW
+  // were the other two batch countries; out with the airtime
+  // sell scrap, 2026-11-16 — see the Fonbnk section.)
   BJ: [],
   BF: [],
   GA: [],
   CG: [],
   CD: [],
   GM: [],
-  RW: [],
-  MW: [],
   ZA: [
     ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
   ],
@@ -8055,10 +8057,13 @@ export function rampRoutesFor(countryCode, mode = "buy", networkKey = "bsc", ass
   // never from the plan (NG/KE/GH keep their empty plans and
   // their removal history). The row opens Fluid's own sheet
   // (openFonbnkSheet in app.js) — no URL, no external account.
+  // SELL-ONLY since the owner's same-day scrap orders
+  // (2026-11-16 17:15/17:16 WAT): every Fonbnk buy row carried
+  // an ID check and came out, and the airtime sell destination
+  // came out with them — the country table's buy lists are all
+  // empty, so this block can only ever append a sell row.
   // Placement: the row leads (unshift, badged) unless an
-  // existing route already carries the badge — ZA buy keeps
-  // Mt Pelerin's badged lead and Fonbnk queues behind it,
-  // exactly Peer's buy rule. The badge here is NOT a price
+  // existing route already carries the badge. The badge here is NOT a price
   // claim: Fonbnk's rate lives inside its quote and is
   // unmeasured against the market, so the badge means what the
   // Peer sell badge means — the row that completes inside
@@ -8516,7 +8521,7 @@ export async function fetchPeerBuyBook(currency, fetchImpl) {
   return { ...parsePeerBook(deposits, mcs, currency), asOf: Date.now(), capped: deposits.length >= 500 };
 }
 
-/* ================= Fonbnk — form-style ramps, Nigeria first (2026-11-16) =================
+/* ================= Fonbnk — form-style SELL ramps, Nigeria first (2026-11-16) =================
  * Fonbnk (fonbnk.com) is a merchant ramp network live in 20
  * emerging markets — Nigeria included — whose server-to-server
  * API is built for exactly Fluid's form-style programme: Fluid
@@ -8524,6 +8529,10 @@ export async function fetchPeerBuyBook(currency, fetchImpl) {
  * both legs), the user fills their bank / mobile-money details
  * on Fluid's own page, Fonbnk's agent network fulfils. No
  * Fonbnk account for the user; Fluid never touches the fiat.
+ * Fluid ships 17 of the 20 markets, SELL-ONLY — the owner's
+ * scrap orders of 2026-11-16 17:15/17:16 WAT removed every
+ * buy row (all ID-checked) and the airtime sell destination;
+ * the full narration is in the KYC paragraph below.
  * Evidence: Fonbnk's own developer docs, read live 2026-11-16
  * (docs.fonbnk.com — country pages, flow examples, endpoint
  * pages, KYC page) + research_notes/fluid-composed-floor-
@@ -8554,13 +8563,20 @@ export async function fetchPeerBuyBook(currency, fetchImpl) {
  * Integration, webhook URL under Navigation → Webhooks, the
  * merchant fee set on the account. TWO further switches are
  * Fonbnk-side: the end-user-creation capability (Create /
- * Confirm / Cancel order, both KYC endpoints and Get user KYC
- * state all 403 without it — quotes and discovery are NOT
- * gated) must be enabled by Fonbnk support, and the account's
- * merchant_fee must be set for capture to exist. The docs
- * publish no KYB document list for registration; whether
- * production activation asks for business documents is not
- * published and can only be learned at the dashboard.
+ * Confirm / Cancel order and Get user KYC state all 403
+ * without it — quotes and discovery are NOT gated) must be
+ * enabled by Fonbnk support, and the account's merchant_fee
+ * must be set for capture to exist. The docs publish no KYB
+ * document list for registration; whether production
+ * activation asks for business documents is not published and
+ * can only be learned at the dashboard. ACTIVATION IS
+ * SELL-ONLY (owner's scrap orders, 2026-11-16 — see KYC
+ * below): the account is asked to run sell orders only, and
+ * there is NO "switch your KYC off" negotiation — Fluid does
+ * not seek a KYC-free buy shape from Fonbnk, because Fluid
+ * does not run the buy side at all. If Fonbnk's merchant
+ * account cannot run sell-only, that is a fact to report,
+ * never a reason to restore a buy row.
  *
  * CAPTURE (UNIVERSAL CAPTURE law): every quote breaks out its
  * fees per recipient; the merchant's own fee appears as
@@ -8577,34 +8593,55 @@ export async function fetchPeerBuyBook(currency, fetchImpl) {
  * with the reason on its face. Nothing about the user's price
  * changes: the fee comes out of Fonbnk's side of the quote.
  *
- * KYC — the sides split, and the copy never blurs it: SELL
- * needs no KYC in every Fonbnk country except South Africa
- * (the one country whose off-ramp switch is on today — read
- * live per order via offrampKycRequired, never assumed). BUY
- * is ID-checked from the first $1 in the researched markets:
- * Nigeria demands a BVN on file at ANY amount (orders without
- * one return 403 NG_BVN_REQUIRED; from $15 a hosted photo-ID
- * check applies on top), Ghana a Ghana Card number from $1
- * (photo ID from $100), Kenya a national ID number from $1.
- * The NG buy row and sheet state the BVN requirement BEFORE
- * the user starts — it is not a no-ID buy route and is never
- * presented as one. The live authority at runtime is Get user
- * KYC state with the order's amounts (requiredKycType), which
- * the sheet consults before creating any order.
+ * KYC — REMOVED, owner's orders 2026-11-16 17:15 + 17:16
+ * WAT, binding: "I don't want anything BVN. Anything KYC, I
+ * don't want it." As first shipped (earlier the same day)
+ * this route carried Fonbnk's ID checks stated plainly on the
+ * rows: every BUY row was ID-checked — Nigeria demands a BVN
+ * on file at ANY amount (orders without one return 403
+ * NG_BVN_REQUIRED; a hosted photo-ID check applies from $15),
+ * Ghana a Ghana Card number from $1, Kenya a national ID
+ * number from $1, and the remaining buy markets' tables
+ * declare a national-ID check from $1 likewise — and South
+ * Africa's SELL side carried ID verification (Fonbnk's one
+ * on off-ramp switch). Plain statement was NOT enough: a
+ * KYC/BVN route does not ship in Fluid at all. Every buy row
+ * is removed (the country table's buy lists are empty), the
+ * ZA sell row is removed, and the ZA market is out of the
+ * table entirely. What remains is sell-only, in markets whose
+ * sell side needs no ID. The sheet's per-order Get user KYC
+ * state read survives ONLY as a guard: if Fonbnk ever demands
+ * an ID check on a sell order, the sheet refuses the order in
+ * plain language — Fluid never collects ID details, never
+ * submits them (the KYC submit call and the proxy's POST KYC
+ * path are deleted), and never sends the user to a hosted ID
+ * check. The same orders scrapped AIRTIME as a sell
+ * destination ("why will my people be selling their crypto
+ * for airtime? They need to sell for fiat, not airtime"):
+ * a sell here means fiat to a bank or mobile-money account —
+ * mobile money (M-Pesa/MoMo) is a withdrawable cash balance
+ * and stays; airtime (phone credit) is out everywhere.
+ * Rwanda and Malawi sold ONLY via airtime, so their rows —
+ * and their picker entries, which existed only for Fonbnk —
+ * came out with it.
  *
  * FLOORS (production limits, docs snapshot 2026-10-09, NG):
- * buy from $1.00 (₦1,408); sell to bank from ₦5,000
- * (≈ $3.50); sell to airtime from $1.00 (₦1,242, max ≈ $19);
- * $500 per-order max. GH/KE sell from $1.00. Everywhere else
- * the sheet reads Get order limits live — Fonbnk's own docs
- * instruct building against the endpoint, not the page.
+ * sell to bank from ₦5,000 (≈ $3.50), $500 per-order max —
+ * that is Nigeria's sell floor now. The "$1 Nigeria sell"
+ * figure rested on the scrapped airtime payout (₦1,242) and
+ * is retired everywhere: a no-KYC fiat sell below ₦5,000 in
+ * Nigeria is an OPEN GAP (Lubrica desk / composed routes are
+ * the named fixes), labelled as such wherever the floor is
+ * stated, never papered over. GH/KE sell from $1.00.
+ * Everywhere else the sheet reads Get order limits live —
+ * Fonbnk's own docs instruct building against the endpoint,
+ * not the page.
  *
  * DELIVERY HONESTY: Fonbnk's channel tables claim "minutes
- * after the user pays / the crypto arrives" for NG bank and
- * airtime; South African bank payouts "can take up to two
- * business days". Neither figure is Fluid-measured — the
- * sheets attribute the claim to Fonbnk and say Fluid hasn't
- * measured the route yet. No 10-minute promise is made.
+ * after the user pays / the crypto arrives" for NG bank.
+ * That figure is not Fluid-measured — the sheets attribute
+ * the claim to Fonbnk and say Fluid hasn't measured the
+ * route yet. No 10-minute promise is made.
  *
  * ORDER SAFETY: Create order is NOT idempotent — every order
  * carries a unique orderParams minted here, and a create that
@@ -8634,38 +8671,38 @@ export function fonbnkConfig({ proxyUrl = FONBNK_PROXY_URL, merchantFeePct = FON
 }
 export function fonbnkConfigured(cfg = fonbnkConfig()) { return !!cfg.proxyUrl; }
 
-export const FONBNK_CHANNEL_NAMES = { bank: "Bank transfer", mobile_money: "Mobile money", airtime: "Airtime", paybill: "Paybill", buy_goods: "Buy goods", digital_wallet: "Digital wallet", crypto: "Crypto" };
-export const FONBNK_FIAT_SYMBOLS = { NGN: "₦", KES: "KSh ", GHS: "GH₵ ", ZAR: "R ", UGX: "USh ", TZS: "TSh ", XOF: "CFA ", XAF: "FCFA ", ZMW: "ZK ", BRL: "R$ ", PHP: "₱ ", GMD: "D ", RWF: "FRw ", MWK: "MK ", CDF: "FC " };
-/** Fonbnk's live countries (docs supported-countries snapshot,
- *  read 2026-11-16). buy/sell list the fiat channels per side;
- *  buyKycDoc names the buyer ID the researched markets demand
- *  from buyKycFromUsd; offrampKyc is Fonbnk's per-country
- *  sell-KYC switch (on ONLY in South Africa today — the live
- *  per-order answer still comes from the KYC state call);
+export const FONBNK_CHANNEL_NAMES = { bank: "Bank transfer", mobile_money: "Mobile money", paybill: "Paybill", buy_goods: "Buy goods", digital_wallet: "Digital wallet", crypto: "Crypto" };
+export const FONBNK_FIAT_SYMBOLS = { NGN: "₦", KES: "KSh ", GHS: "GH₵ ", UGX: "USh ", TZS: "TSh ", XOF: "CFA ", XAF: "FCFA ", ZMW: "ZK ", BRL: "R$ ", PHP: "₱ ", GMD: "D ", CDF: "FC " };
+/** Fonbnk's live countries as FLUID SHIPS THEM (docs
+ *  supported-countries snapshot, read 2026-11-16, minus the
+ *  owner's same-day scrap orders — see the KYC paragraph
+ *  above): SELL-ONLY, fiat channels only. Every buy list is
+ *  empty because every Fonbnk buy side carries an ID check
+ *  (NG's BVN first among them); no sell list carries the
+ *  scrapped airtime destination; South Africa is absent
+ *  entirely (its sell side carried ID verification) and so
+ *  are Rwanda and Malawi (airtime was their only sell path).
  *  mins carries the researched production limits where the
- *  research verified them (NG full, GH/KE headline) and is
+ *  research verified them (NG bank, GH/KE headline) and is
  *  null elsewhere — the sheet then reads live limits. */
 export const FONBNK_COUNTRIES = {
-  NG: { fiat: "NGN", buy: ["bank"], sell: ["bank", "airtime"], buyKycDoc: "BVN", buyKycFromUsd: 1, offrampKyc: false, mins: { buyMinUsd: 1, sellBankMinFiat: 5000, sellBankMinUsd: 3.5, sellAirtimeMinFiat: 1242, sellAirtimeMinUsd: 1, maxUsd: 500 } },
-  KE: { fiat: "KES", buy: ["mobile_money"], sell: ["mobile_money", "bank", "paybill", "buy_goods", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: { buyMinUsd: 1, sellMinUsd: 1 } },
-  GH: { fiat: "GHS", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "Ghana Card number", buyKycFromUsd: 1, offrampKyc: false, mins: { buyMinUsd: 1, sellMinUsd: 1 } },
-  ZA: { fiat: "ZAR", buy: ["bank"], sell: ["bank", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 3, offrampKyc: true, mins: null },
-  TZ: { fiat: "TZS", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  UG: { fiat: "UGX", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  ZM: { fiat: "ZMW", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  BJ: { fiat: "XOF", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  BF: { fiat: "XOF", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  CI: { fiat: "XOF", buy: ["mobile_money", "digital_wallet"], sell: ["mobile_money", "digital_wallet", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  SN: { fiat: "XOF", buy: ["mobile_money", "digital_wallet"], sell: ["mobile_money", "digital_wallet", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  CM: { fiat: "XAF", buy: ["mobile_money"], sell: ["mobile_money", "airtime"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  GA: { fiat: "XAF", buy: ["mobile_money"], sell: ["mobile_money"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  CG: { fiat: "XAF", buy: ["mobile_money"], sell: ["mobile_money"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  CD: { fiat: "CDF", buy: ["mobile_money"], sell: ["mobile_money"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  GM: { fiat: "GMD", buy: ["mobile_money", "digital_wallet"], sell: ["mobile_money", "digital_wallet"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null, beta: true },
-  RW: { fiat: "RWF", buy: [], sell: ["airtime"], buyKycDoc: null, buyKycFromUsd: 0, offrampKyc: false, mins: null, beta: true },
-  MW: { fiat: "MWK", buy: [], sell: ["airtime"], buyKycDoc: null, buyKycFromUsd: 0, offrampKyc: false, mins: null, beta: true },
-  BR: { fiat: "BRL", buy: ["bank"], sell: ["bank"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
-  PH: { fiat: "PHP", buy: ["bank"], sell: ["bank"], buyKycDoc: "national ID number", buyKycFromUsd: 1, offrampKyc: false, mins: null },
+  NG: { fiat: "NGN", buy: [], sell: ["bank"], mins: { sellBankMinFiat: 5000, sellBankMinUsd: 3.5, maxUsd: 500 } },
+  KE: { fiat: "KES", buy: [], sell: ["mobile_money", "bank", "paybill", "buy_goods"], mins: { sellMinUsd: 1 } },
+  GH: { fiat: "GHS", buy: [], sell: ["mobile_money"], mins: { sellMinUsd: 1 } },
+  TZ: { fiat: "TZS", buy: [], sell: ["mobile_money"], mins: null },
+  UG: { fiat: "UGX", buy: [], sell: ["mobile_money"], mins: null },
+  ZM: { fiat: "ZMW", buy: [], sell: ["mobile_money"], mins: null },
+  BJ: { fiat: "XOF", buy: [], sell: ["mobile_money"], mins: null },
+  BF: { fiat: "XOF", buy: [], sell: ["mobile_money"], mins: null, beta: true },
+  CI: { fiat: "XOF", buy: [], sell: ["mobile_money", "digital_wallet"], mins: null, beta: true },
+  SN: { fiat: "XOF", buy: [], sell: ["mobile_money", "digital_wallet"], mins: null, beta: true },
+  CM: { fiat: "XAF", buy: [], sell: ["mobile_money"], mins: null },
+  GA: { fiat: "XAF", buy: [], sell: ["mobile_money"], mins: null, beta: true },
+  CG: { fiat: "XAF", buy: [], sell: ["mobile_money"], mins: null },
+  CD: { fiat: "CDF", buy: [], sell: ["mobile_money"], mins: null, beta: true },
+  GM: { fiat: "GMD", buy: [], sell: ["mobile_money", "digital_wallet"], mins: null, beta: true },
+  BR: { fiat: "BRL", buy: [], sell: ["bank"], mins: null },
+  PH: { fiat: "PHP", buy: [], sell: ["bank"], mins: null },
 };
 export function fonbnkCountry(code) { return FONBNK_COUNTRIES[String(code || "").toUpperCase()] || null; }
 /** The crypto legs Fluid offers on Fonbnk: Fonbnk currencyCode
@@ -8700,53 +8737,41 @@ export const FONBNK_ASSETS = [
 ];
 export function fonbnkAsset(code) { return FONBNK_ASSETS.find(a => a.code === code) || null; }
 
-/** The buyer-ID line for a Fonbnk country, stated BEFORE the
- *  user starts (the NG BVN honesty rule). Null where Fonbnk
- *  has no buy side. */
-export function fonbnkBuyKycLine(code) {
-  const c = fonbnkCountry(code);
-  if (!c || !c.buy.length) return null;
-  if (String(code).toUpperCase() === "NG") return "Buying in Nigeria needs a BVN: Fonbnk checks your BVN against the national registry before your first buy, at any amount — and from $15 a hosted photo-ID check applies too. There is no way to buy here without it. Selling needs no BVN and no ID.";
-  if (String(code).toUpperCase() === "GH") return "Buying in Ghana needs your Ghana Card number from the first $1 — Fonbnk checks it against the national registry before your first buy, and a photo-ID check applies from $100. Selling needs no ID.";
-  return `Fonbnk verifies buyers here with a ${c.buyKycDoc || "national ID number"} before the first buy, from $${c.buyKycFromUsd || 1} — the exact check appears before you pay. Selling needs no ID here.`;
-}
-/** The honest minimum line for one side of one corridor, from
- *  the researched production limits. Null where the research
- *  didn't verify figures — the sheet then reads live limits
- *  and says the quote carries the corridor's minimum. */
+/** The honest minimum line for a Fonbnk sell, from the
+ *  researched production limits. Null for buy (no Fonbnk buy
+ *  route exists — owner's no-KYC scrap, 2026-11-16) and where
+ *  the research didn't verify figures — the sheet then reads
+ *  live limits and says the quote carries the corridor's
+ *  minimum. */
 export function fonbnkMinLine(code, mode, channel) {
+  if (mode !== "sell") return null;
   const c = fonbnkCountry(code);
   if (!c || !c.mins) return null;
   const m = c.mins, sym = FONBNK_FIAT_SYMBOLS[c.fiat] || "";
   if (String(code).toUpperCase() === "NG") {
-    if (mode === "buy") return `Minimum buy ${sym}1,408 (about $1.00) · up to $500 per order`;
-    if (channel === "airtime") return `Minimum ${sym}1,242 (about $1.00), paid as airtime to your phone · up to about $19 per order`;
     return `Minimum ${sym}5,000 (about $3.50) to a bank account · up to $500 per order`;
   }
-  if (mode === "buy") return `Minimum buy about $${(m.buyMinUsd || 1).toFixed(2)}`;
   return `Minimum sale about $${(m.sellMinUsd || 1).toFixed(2)}`;
 }
 /** Fonbnk's own delivery claim for a corridor, attributed —
  *  never a Fluid promise (the route is unmeasured). */
 export function fonbnkDeliveryLine(code, channel) {
-  if (String(code).toUpperCase() === "ZA" && channel === "bank") return "Fonbnk warns South African bank payouts can take up to two business days — a Friday order may only settle on Monday or Tuesday. Fluid has not measured this route yet.";
   return "Fonbnk says payouts land minutes after the deposit arrives. Fluid has not measured this route end to end yet, so treat that as Fonbnk's claim, not a Fluid promise.";
 }
-/** The ramp-sheet row note for one side of one Fonbnk
- *  corridor: minimums, the KYC truth for that side, the
- *  delivery attribution, and the capture line. */
+/** The ramp-sheet row note for a Fonbnk SELL corridor (the
+ *  only side Fluid ships — see the KYC paragraph above):
+ *  the floor, the no-ID truth, the delivery attribution, and
+ *  the capture line. Nigeria's note also labels the open
+ *  sub-₦5,000 gap, per the owner's floor-restatement order. */
 export function fonbnkRouteNote(code, mode) {
   const c = fonbnkCountry(code);
-  if (!c) return "";
+  if (!c || mode !== "sell") return "";
   const up = String(code).toUpperCase();
-  const chans = (mode === "buy" ? c.buy : c.sell).map(ch => FONBNK_CHANNEL_NAMES[ch] || ch).join(" or ");
+  const chans = c.sell.map(ch => FONBNK_CHANNEL_NAMES[ch] || ch).join(" or ");
   const capture = "Fluid earns a merchant fee on this route, set on Fluid's Fonbnk account and shown in your quote before you pay";
-  if (up === "NG" && mode === "buy") return `Buy inside Fluid with Fonbnk — pay by bank transfer from ₦1,408 (about $1), up to $500 per order · your BVN is required before your first buy, at any amount — Fonbnk checks it against the national registry, and there is no buy here without it · the crypto lands in your Fluid wallet · ${capture}`;
-  if (up === "NG") return `Sell inside Fluid with Fonbnk — no ID and no BVN needed to sell · from $1.00 paid as airtime to your phone, or from ₦5,000 (about $3.50) to your bank account · Fonbnk says payouts land minutes after your crypto arrives — Fluid hasn't measured this route yet · ${capture}`;
-  if (mode === "buy") return `Buy inside Fluid with Fonbnk — pay by ${chans.toLowerCase()} from about $1 · Fonbnk verifies buyers with a ${c.buyKycDoc || "national ID number"} before the first buy · the crypto lands in your Fluid wallet · ${capture}`;
-  const sellId = up === "ZA" ? "South Africa is the one Fonbnk country where selling also needs ID verification · bank payouts can take up to two business days" : "no ID needed to sell here · Fonbnk says payouts land minutes after your crypto arrives — Fluid hasn't measured this route yet";
+  if (up === "NG") return `Sell inside Fluid with Fonbnk — no ID and no BVN needed to sell · from ₦5,000 (about $3.50) to your bank account, up to $500 per order · smaller fiat sells aren't covered yet — that gap is open, and Fluid's own desk is the planned fix · Fonbnk says payouts land minutes after your crypto arrives — Fluid hasn't measured this route yet · ${capture}`;
   const min = fonbnkMinLine(up, "sell") || "from about $1";
-  return `Sell inside Fluid with Fonbnk — get paid by ${chans.toLowerCase()} ${min.startsWith("Minimum") ? min.replace(/^Minimum sale /, "from ") : min} · ${sellId} · ${capture}`;
+  return `Sell inside Fluid with Fonbnk — get paid by ${chans.toLowerCase()} ${min.startsWith("Minimum") ? min.replace(/^Minimum sale /, "from ") : min} · no ID needed to sell here · Fonbnk says payouts land minutes after your crypto arrives — Fluid hasn't measured this route yet · ${capture}`;
 }
 
 /** Echo-verified capture read of one quote (the Soroswap
@@ -8878,9 +8903,12 @@ export async function fonbnkKycState({ email, country, depositCurrencyType, payo
   ]);
   return fonbnkRequest("GET", `/api/v2/user/kyc?${qs}`, undefined, fetchImpl);
 }
-export async function fonbnkSubmitKyc({ email, documentId, country, fields }, fetchImpl) {
-  return fonbnkRequest("POST", "/api/v2/user/kyc", { userEmail: email, documentId, countryIsoCode: country, kycCountryIsoCode: country, userFields: fields }, fetchImpl);
-}
+/* There is deliberately NO KYC-submit call here (owner's
+ * order, 2026-11-16: "Anything KYC, I don't want it"). The
+ * KYC state read above survives only so the sheet can REFUSE
+ * an order Fonbnk tries to ID-check — Fluid never collects
+ * or submits identity documents, and the signing proxy does
+ * not allowlist the submit path either. */
 export async function fonbnkCreateQuote(body, fetchImpl) { return fonbnkRequest("POST", "/api/v2/quote", body, fetchImpl); }
 export async function fonbnkCreateOrder(body, fetchImpl) { return fonbnkRequest("POST", "/api/v2/order", body, fetchImpl); }
 export async function fonbnkGetOrder({ orderId, orderParams }, fetchImpl) {
@@ -8901,7 +8929,7 @@ export function fonbnkErrorCopy(err) {
   const code = err && err.code, msg = (err && err.message) || "";
   if (code === "FONBNK_NOT_CONFIGURED") return "Fonbnk trades open here as soon as Fluid's merchant account is switched on — nothing was taken.";
   if (code === "FONBNK_CAPABILITY_OFF") return "Fluid's Fonbnk account can price orders but can't create them yet — Fonbnk support has to switch on order creation first. Nothing was taken.";
-  if (code === "NG_BVN_REQUIRED") return "Fonbnk refused the order: buying in Nigeria needs your BVN verified first. Complete the BVN step, then try again.";
+  if (code === "NG_BVN_REQUIRED") return "Fonbnk refused this order with a BVN demand. Fluid doesn't do BVN or ID checks — no order can be placed while that demand stands. Nothing was taken.";
   if (code === "ROUTE_NOT_AVAILABLE") return "Fonbnk has no live offer for this pair right now — try again in a little while.";
   if (code === "FONBNK_UNREACHABLE") return msg;
   return msg || "Something went wrong with Fonbnk just now — try again.";

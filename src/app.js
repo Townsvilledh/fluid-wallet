@@ -7,7 +7,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine,
   dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
-  mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fonbnkConfig, fonbnkConfigured, fonbnkCountry, fonbnkAsset, FONBNK_COUNTRIES, FONBNK_ASSETS, FONBNK_CHANNEL_NAMES, FONBNK_FIAT_SYMBOLS, fonbnkBuyKycLine, fonbnkMinLine, fonbnkDeliveryLine, fonbnkQuoteCapture, fonbnkCaptureRefusal, fonbnkOrderStatusCopy, fonbnkOrderFinal, fonbnkPair, fonbnkQuoteBody, fonbnkErrorCopy, fonbnkCurrencies, fonbnkOrderLimits, fonbnkKycState, fonbnkSubmitKyc, fonbnkCreateQuote, fonbnkCreateOrder, fonbnkGetOrder, fonbnkConfirmOrder, fonbnkCancelOrder, fonbnkIntermediateAction, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
+  mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fonbnkConfig, fonbnkConfigured, fonbnkCountry, fonbnkAsset, FONBNK_COUNTRIES, FONBNK_ASSETS, FONBNK_CHANNEL_NAMES, fonbnkMinLine, fonbnkDeliveryLine, fonbnkQuoteCapture, fonbnkCaptureRefusal, fonbnkOrderStatusCopy, fonbnkOrderFinal, fonbnkPair, fonbnkQuoteBody, fonbnkErrorCopy, fonbnkOrderLimits, fonbnkKycState, fonbnkCreateQuote, fonbnkCreateOrder, fonbnkGetOrder, fonbnkConfirmOrder, fonbnkCancelOrder, fonbnkIntermediateAction, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -8042,19 +8042,24 @@ function openPeerBuySheet(fiat) {
   paint();
 }
 
-// ---------- Fonbnk: form-style buy/sell (2026-11-16) ----------
+// ---------- Fonbnk: form-style SELL (2026-11-16) ----------
 // Fluid's own form on Fonbnk's merchant API (wallet-core holds
 // the client, the country/asset tables and the capture gate;
 // the signing secret lives in the fluid-fonbnk-proxy Worker —
-// never here). The sheet renders fully while the merchant
-// account is unconfigured: minimums, the NG BVN line and every
+// never here). SELL-ONLY since the owner's scrap orders of
+// 2026-11-16 17:15/17:16 WAT: every buy row carried an ID
+// check ("Anything KYC, I don't want it") and the airtime
+// sell destination was phone credit, not fiat — both are out,
+// and the KYC step below is a refusal guard, not a check the
+// user can complete. The sheet renders fully while the
+// merchant account is unconfigured: minimums and every
 // control are live, and the quote action answers with the
 // activation-pending explanation instead of dying silently.
 // Orders persist locally and poll Fonbnk for status; a
 // completed order writes one Activity entry.
 const FONBNK_ORDERS_KEY = "fluid_fonbnk_orders_v1";
 const FONBNK_EMAIL_KEY = "fluid_fonbnk_email";
-let fbPollTimer = null, fbCurrenciesCache = null;
+let fbPollTimer = null;
 function fbFmt(n, d = 2) { const v = Number(n); return Number.isFinite(v) ? v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d }) : "—"; }
 function fbOwnAddress(fluidKey) {
   if (fluidKey === "solana") return solAddr;
@@ -8127,14 +8132,19 @@ function fbFeeLines(quote) {
   }
   return lines.join("");
 }
-/** The KYC step: Fonbnk's live state for THIS order's amounts
- *  decides what (if anything) the user must do. Basic checks
- *  with form fields render as a form; Nigeria's advanced check
- *  is a hosted photo-ID link; support-locked states say so. */
+/** The no-ID guard (owner's order, 2026-11-16: "Anything
+ *  KYC, I don't want it"). Fonbnk's live state for THIS
+ *  order's amounts is read for exactly one purpose: to prove
+ *  no ID check stands on the order. If Fonbnk demands
+ *  anything — a document check, a hosted photo-ID page, a
+ *  BVN state — the order is REFUSED in plain language. Fluid
+ *  never renders ID fields, never submits documents, and
+ *  never sends the user to a verification page; there is no
+ *  KYC flow in this sheet to complete. */
 async function fbRunKyc(st) {
   const box = $("fbKyc");
   if (!box) return;
-  box.innerHTML = `<p class="tag">Checking what Fonbnk needs for this order…</p>`;
+  box.innerHTML = `<p class="tag">Checking this order needs no ID…</p>`;
   try {
     const q = st.quote;
     const state = await fonbnkKycState({
@@ -8143,58 +8153,15 @@ async function fbRunKyc(st) {
       depositAmountUsd: q.deposit.cashout.amountBeforeFeesUsd, payoutAmountUsd: q.payout.cashout.amountAfterFeesUsd,
     });
     st.kyc = state;
-    if (st.code === "NG" && st.mode === "sell" && state.isNgBvnBlocked) {
-      // Fonbnk reports the NG BVN block for both directions;
-      // its own docs scope it to buying. Selling stays open.
-      box.innerHTML = `<p class="tag">✓ No ID check needed to sell in Nigeria — the BVN block Fonbnk reports applies to buying only.</p>`;
-      st.kycDone = true;
-    } else if (state.isNgBvnBlocked) {
-      box.innerHTML = `<p class="tag">Fonbnk has a block on this account's BVN. Message Fonbnk support to clear it — Fluid can't lift it, and no order can be placed until it's cleared. Nothing was taken.</p>`;
+    if (state.isNgBvnBlocked || state.isNgBvnSupportLocked || state.reachedKycLimit) {
+      box.innerHTML = `<p class="tag">Fonbnk has a verification block on this email. Fluid doesn't do BVN or ID checks, so no order can be placed while that block stands — and Fluid won't ask you for ID documents to clear it. Nothing was taken.</p>`;
       st.kycDone = false;
-    } else if (state.isNgBvnSupportLocked) {
-      box.innerHTML = `<p class="tag">Fonbnk needs support to finish this account's verification. Message Fonbnk support — Fluid can't complete it from here. Nothing was taken.</p>`;
+    } else if (state.requiredKycType) {
+      box.innerHTML = `<p class="tag">Fonbnk is asking for an ID check on this order. Fluid doesn't do ID checks — not here, not on a hosted page — so this order can't be placed. Nothing was taken.</p>`;
       st.kycDone = false;
-    } else if (state.reachedKycLimit) {
-      box.innerHTML = `<p class="tag">This email has used its three lifetime verification attempts at Fonbnk. Only Fonbnk support can free a slot — no order can be placed until then. Nothing was taken.</p>`;
-      st.kycDone = false;
-    } else if (!state.requiredKycType) {
-      box.innerHTML = `<p class="tag">✓ Fonbnk needs no ID check for this order.</p>`;
-      st.kycDone = true;
-    } else if (state.requiredKycType === "basic") {
-      const doc = (state.kycDocuments || []).find(d => (d.requiredFields || []).length) || (state.kycDocuments || [])[0];
-      if (doc && (doc.requiredFields || []).length) {
-        st.kycDoc = doc;
-        box.innerHTML = `<p class="tag"><b>One ID check, once.</b> Fonbnk verifies these details against the national registry — it takes seconds, and a passed check covers later orders too.</p>` +
-          doc.requiredFields.map(f => fonbnkFieldHtml({ key: `kyc_${f.key}`, label: f.label, type: f.type, required: f.required }, "")).join("") +
-          `<button class="btn" id="fbKycSubmit">Verify</button><p class="tag" id="fbKycMsg"></p>`;
-        $("fbKycSubmit").onclick = async () => {
-          const fields = {};
-          doc.requiredFields.forEach(f => { const el = $(`fbf_kyc_${f.key}`); if (el && el.value.trim()) fields[f.key] = el.value.trim(); });
-          const missing = doc.requiredFields.filter(f => f.required && !fields[f.key]);
-          const msg = $("fbKycMsg");
-          if (missing.length) { if (msg) msg.textContent = `Fill in: ${missing.map(f => f.label).join(", ")}.`; return; }
-          try {
-            const r = await fonbnkSubmitKyc({ email: st.email, documentId: doc._id, country: st.code, fields });
-            if (r && r.status && String(r.status).startsWith("approved")) { fbRunKyc(st); }
-            else if (msg) msg.textContent = "Fonbnk couldn't verify those details — check them against your document and try again. A rejected check uses one of three lifetime attempts, so don't guess.";
-          } catch (e) { if (msg) msg.textContent = fonbnkErrorCopy(e); }
-        };
-      } else if (state.kycUrls && state.kycUrls.basic) {
-        box.innerHTML = `<p class="tag">Fonbnk runs this check on its own hosted page:</p><button class="btn ghost" id="fbKycHosted">Open Fonbnk's verification</button> <button class="btn" id="fbKycRecheck">I've done it — re-check</button>`;
-        $("fbKycHosted").onclick = () => window.open(state.kycUrls.basic, "_blank", "noopener");
-        $("fbKycRecheck").onclick = () => fbRunKyc(st);
-        st.kycDone = false;
-      } else {
-        box.innerHTML = `<p class="tag">Fonbnk needs a basic ID check for this order but didn't offer a way to complete it here. Nothing was taken.</p>`;
-        st.kycDone = false;
-      }
     } else {
-      const url = (state.kycUrls && state.kycUrls.advanced) || ((state.kycDocuments || [])[0] && (state.kycDocuments || [])[0].verificationUrl);
-      box.innerHTML = `<p class="tag"><b>A photo-ID check applies to this order</b> (in Nigeria, from $15). Fonbnk runs it on its own hosted page — you take a photo of your ID there; Fluid never sees it.</p>` +
-        (url ? `<button class="btn ghost" id="fbKycHosted">Open Fonbnk's photo-ID check</button> <button class="btn" id="fbKycRecheck">I've done it — re-check</button>` : `<p class="tag">Fonbnk didn't return its verification link just now — re-check in a moment.</p><button class="btn" id="fbKycRecheck">Re-check</button>`);
-      if (url) $("fbKycHosted").onclick = () => window.open(url, "_blank", "noopener");
-      $("fbKycRecheck").onclick = () => fbRunKyc(st);
-      st.kycDone = false;
+      box.innerHTML = `<p class="tag">✓ No ID check on this order — and if Fonbnk ever asks for one, the order stops here instead.</p>`;
+      st.kycDone = true;
     }
   } catch (e) {
     box.innerHTML = `<p class="tag">${esc(fonbnkErrorCopy(e))}</p>`;
@@ -8316,7 +8283,7 @@ function fbRenderQuote(st) {
     ${cap.collecting ? `<p class="tag">✓ Fluid's merchant fee (${fbFmt(cap.settingPct)}%) is inside this quote — capture verified in the quote itself.</p>` : `<p class="tag">This quote carries no verified merchant fee for Fluid — the order button below will explain before anything is created.</p>`}
     <p class="tag">${esc(fonbnkDeliveryLine(st.code, st.channel))}</p></div>
     ${fields.length ? `<h4>Your details — Fonbnk asks, Fluid only passes them on</h4>${fields.map(f => fonbnkFieldHtml(f, prefill[f.key])).join("")}` : ""}
-    <div id="fbKyc"><button class="btn ghost" id="fbKycBtn">Check what Fonbnk needs for this order</button></div>
+    <div id="fbKyc"><button class="btn ghost" id="fbKycBtn">Confirm no ID is needed for this order</button></div>
     <button class="btn" id="fbCreate" disabled>Create my order</button>
     <p class="tag" id="fbCreateMsg"></p>`;
   $("fbKycBtn").onclick = () => fbRunKyc(st);
@@ -8326,9 +8293,8 @@ async function fbCreateOrder(st) {
   const msg = $("fbCreateMsg");
   const cap = fonbnkQuoteCapture(st.quote);
   if (!cap.collecting) { if (msg) msg.textContent = fonbnkCaptureRefusal(cap.verdict); return; }
-  if (!st.kycDone) { if (msg) msg.textContent = "Run the check above first — Fonbnk won't take the order until it clears."; return; }
+  if (!st.kycDone) { if (msg) msg.textContent = "Run the no-ID check above first — the order only proceeds once it confirms no ID is needed."; return; }
   const fields = fbGatherFields();
-  Object.keys(fields).forEach(k => { if (k.startsWith("kyc_")) delete fields[k]; });
   const required = [...(st.quote.deposit.fieldsToCreateOrder || []), ...(st.quote.payout.fieldsToCreateOrder || [])].filter(f => f.required && !fields[f.key]);
   if (required.length) { if (msg) msg.textContent = `Fill in: ${required.map(f => f.label).join(", ")}.`; return; }
   st.orderParams = `fluid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -8364,26 +8330,22 @@ function openFonbnkSheet(mode, countryCode) {
   const meta = RAMP_COUNTRIES.find(c => c.code === code);
   if (!country || !(mode === "buy" ? country.buy : country.sell).length) { showSheetError("Fonbnk doesn't cover this side here."); return; }
   if (fbPollTimer) { clearInterval(fbPollTimer); fbPollTimer = null; }
-  const sym = FONBNK_FIAT_SYMBOLS[country.fiat] || "";
   const channels = mode === "buy" ? country.buy : country.sell;
   const st = {
-    mode, code, country, email: "", channel: channels[0], carrierCode: null,
+    mode, code, country, email: "", channel: channels[0],
     asset: "POLYGON_USDT", amountLeg: "deposit",
-    quote: null, kyc: null, kycDone: false, kycDoc: null, order: null, orderParams: null, historyWritten: false,
+    quote: null, kyc: null, kycDone: false, order: null, orderParams: null, historyWritten: false,
   };
   try { st.email = localStorage.getItem(FONBNK_EMAIL_KEY) || ""; } catch { /* storage blocked — the field just starts empty */ }
   const countryName = meta ? meta.name.split(" · ")[0] : code;
   openSheet(`
     <h3>${mode === "buy" ? "Buy" : "Sell"} with Fonbnk — ${esc(countryName)}</h3>
     <p class="tag">${mode === "buy" ? "You pay from your own bank or mobile money, on this page — no Fonbnk account, nothing to install. The crypto lands in this Fluid wallet." : "You send crypto from this wallet and Fonbnk pays your bank or mobile money — no Fonbnk account, nothing to install."}</p>
-    ${mode === "buy" && fonbnkBuyKycLine(code) ? `<div class="box"><p class="tag">${esc(fonbnkBuyKycLine(code))}</p></div>` : ""}
-    ${code === "ZA" && mode === "sell" ? `<div class="box"><p class="tag">South Africa is the one Fonbnk country where selling also needs ID verification — Fonbnk checks before your first sale, and bank payouts can take up to two business days.</p></div>` : ""}
-    ${!fonbnkConfigured() ? `<div class="box"><p class="tag"><b>Not switched on yet.</b> Fluid's Fonbnk merchant account is being set up. Everything on this page — the minimums, the ID rules, the form — is Fonbnk's real shape; quotes and orders open the moment the account lands. Nothing can be taken from you here until then.</p></div>` : ""}
+    ${!fonbnkConfigured() ? `<div class="box"><p class="tag"><b>Not switched on yet.</b> Fluid's Fonbnk merchant account is being set up. Everything on this page — the minimums, the form — is Fonbnk's real shape; quotes and orders open the moment the account lands. Nothing can be taken from you here until then.</p></div>` : ""}
     <div class="fld"><label for="fbAsset">${mode === "buy" ? "You receive" : "You sell"}</label><select id="fbAsset">${FONBNK_ASSETS.map(a => `<option value="${esc(a.code)}"${a.code === st.asset ? " selected" : ""}>${esc(a.asset)} · ${esc(FB_NETWORK_NAMES[a.network] || a.network)}</option>`).join("")}</select></div>
     <div class="fld"><label for="fbChannel">${mode === "buy" ? "You pay by" : "You get paid by"}</label><select id="fbChannel">${channels.map(ch => `<option value="${esc(ch)}">${esc(FONBNK_CHANNEL_NAMES[ch] || ch)}</option>`).join("")}</select></div>
-    <div class="fld" id="fbCarrierWrap" hidden><label for="fbCarrier">Mobile network (for the airtime)</label><select id="fbCarrier"></select></div>
     <p class="tag" id="fbMin"></p>
-    <div class="fld"><label for="fbEmail">Your email — Fonbnk sends your receipt and runs any ID check against it</label><input id="fbEmail" type="email" value="${esc(st.email)}" autocomplete="email"></div>
+    <div class="fld"><label for="fbEmail">Your email — Fonbnk sends your receipt to it</label><input id="fbEmail" type="email" value="${esc(st.email)}" autocomplete="email"></div>
     <div class="fld"><label id="fbAmtLabel" for="fbAmt">Amount</label><input id="fbAmt" type="number" min="0" step="any" placeholder="0.00"></div>
     <p class="tag"><button class="btn small ghost" id="fbLegA"></button> <button class="btn small ghost" id="fbLegB"></button></p>
     <button class="btn" id="fbQuoteBtn">Get my quote</button>
@@ -8408,21 +8370,6 @@ function openFonbnkSheet(mode, countryCode) {
     if (la) la.textContent = mode === "buy" ? "Enter what I pay" : "Enter what I sell";
     if (lb) lb.textContent = "Enter what I receive";
   };
-  const loadCarriers = async () => {
-    const wrap = $("fbCarrierWrap"), sel = $("fbCarrier");
-    if (!wrap || !sel) return;
-    if (st.channel !== "airtime") { wrap.hidden = true; st.carrierCode = null; return; }
-    wrap.hidden = false;
-    if (!fonbnkConfigured()) { sel.innerHTML = `<option value="">The network list loads when Fonbnk is switched on</option>`; return; }
-    sel.innerHTML = `<option value="">Loading networks…</option>`;
-    try {
-      if (!fbCurrenciesCache) fbCurrenciesCache = await fonbnkCurrencies();
-      const entry = (fbCurrenciesCache || []).find(x => x.paymentChannel === "airtime" && x.currencyCode === country.fiat && x.currencyDetails && x.currencyDetails.countryIsoCode === code);
-      const carriers = (entry && entry.carriers) || [];
-      sel.innerHTML = carriers.length ? carriers.map(c => `<option value="${esc(c.code)}">${esc(c.name)}</option>`).join("") : `<option value="">No airtime network is live right now</option>`;
-      st.carrierCode = sel.value || null;
-    } catch { sel.innerHTML = `<option value="">Couldn't load the networks — the bank option still works</option>`; }
-  };
   const paintOrders = () => {
     const wrap = $("fbOrders");
     if (!wrap) return;
@@ -8438,8 +8385,7 @@ function openFonbnkSheet(mode, countryCode) {
     });
   };
   $("fbAsset").onchange = () => { st.asset = $("fbAsset").value; paintAmtLabel(); };
-  $("fbChannel").onchange = () => { st.channel = $("fbChannel").value; paintMin(); loadCarriers(); };
-  $("fbCarrier").onchange = () => { st.carrierCode = $("fbCarrier").value || null; };
+  $("fbChannel").onchange = () => { st.channel = $("fbChannel").value; paintMin(); };
   $("fbLegA").onclick = () => { st.amountLeg = "deposit"; paintAmtLabel(); };
   $("fbLegB").onclick = () => { st.amountLeg = "payout"; paintAmtLabel(); };
   $("fbQuoteBtn").onclick = async () => {
@@ -8451,7 +8397,7 @@ function openFonbnkSheet(mode, countryCode) {
     const box = $("fbQuote");
     if (box) box.innerHTML = `<p class="tag">Getting your quote from Fonbnk…</p>`;
     try {
-      const pair = fonbnkPair({ mode, countryCode: code, assetCode: st.asset, channel: st.channel, carrierCode: st.carrierCode || undefined });
+      const pair = fonbnkPair({ mode, countryCode: code, assetCode: st.asset, channel: st.channel });
       const quote = await fonbnkCreateQuote(fonbnkQuoteBody({ ...pair, amount: amt, amountLeg: st.amountLeg }));
       st.quote = quote;
       st.kycDone = false;
@@ -8461,7 +8407,6 @@ function openFonbnkSheet(mode, countryCode) {
   };
   paintMin();
   paintAmtLabel();
-  loadCarriers();
   paintOrders();
 }
 
