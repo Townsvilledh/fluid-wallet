@@ -26747,7 +26747,508 @@ async function getSwapRoutesCascade(args, { needGas = false } = {}) {
  *  ranked by merit and Mayan competes as a candidate like any
  *  other. The cascade's own failure still surfaces when nothing
  *  can serve. */
-async function getSwapRoutesDirect(args) {
+/* ================= token trust: Verified / Scam tags + the
+ * scam swap block (2026-11-17, research:
+ * research_notes/fluid-token-trust-20261117/report.md) ========
+ * Ethuram's rule: real tokens are tagged Verified, scam tokens
+ * are tagged Scam on the balance itself, and a scam-tagged
+ * token does not swap inside Fluid in EITHER direction (the
+ * trap is swapping INTO one). Sends are never gated; a scam
+ * token stays visible with its tag, never hidden.
+ *
+ * EVIDENCE STANDARD (binding): SCAM — the only verdict that
+ * blocks swaps — requires PROOF-GRADE evidence: a confirmed
+ * honeypot simulation (honeypot.is, or GoPlus is_honeypot), an
+ * authority/creator GoPlus itself flags malicious_address, a
+ * registry blacklist (TonAPI verification=blacklist,
+ * StellarExpert #malicious), or Fluid's own repo-pinned scam
+ * list below. Heuristic scores (RugCheck's number) and mere
+ * traits NEVER count: Solana USDC is freezable and BSC USDT is
+ * mintable, and both are verified real — only the malicious
+ * FLAG on an authority is evidence. VERIFIED comes from any
+ * registry (GoPlus trust_list / trusted_token, Jupiter
+ * isVerified, TonAPI whitelist, StellarExpert listing with a
+ * home domain) or Fluid's human-vetted pinned token tables.
+ * Everything else carries NO tag and stays swappable.
+ * Families with no proof-grade source (Aptos, Tron, Cosmos,
+ * NEAR, Polkadot, Tezos, Hedera, Algorand, Stacks) get
+ * pinned-table Verified only — no invented verdicts.
+ *
+ * CONTAINMENT: verdicts are cached per chain+contract with
+ * per-class TTLs (simulation scams 1 h — a token that stops
+ * simulating as a honeypot clears itself; list/authority/
+ * registry scams 24 h; Verified 7 days; unknown 6 h). The
+ * swap gate re-checks at search time in getSwapRoutes AND
+ * getSwapRoutesDirect (compositions inherit it per leg), in
+ * both directions. Display fails open (a failed tag fetch
+ * shows no tag, never a fake verdict); the gate falls back to
+ * the last cached verdict when sources are down, so a cached
+ * Scam stays blocked offline and the pinned list below never
+ * goes down. The override lists beat every API verdict in
+ * both directions and ship with ordinary releases, so a
+ * wrongful tag is correctable by the operator alone. */
+/** Fluid's own repo-pinned scam list: entries
+ *  { chainKey, address, reason } — chainKey is a NETWORKS key
+ *  or a family key ("solana", "sui", "ton", "stellar", ...);
+ *  address is the contract / mint / coin type / jetton master
+ *  / Stellar issuer. An entry here is SCAM regardless of any
+ *  API verdict. EMPTY at ship: entries are added by operator
+ *  review only, never by automation. */
+export const TOKEN_TRUST_SCAM_LIST = [];
+/** The allowlist: entries { chainKey, address } — a token
+ *  here is treated as NOT scam whatever any API says (the
+ *  correction path for a wrongful third-party flag). EMPTY at
+ *  ship, operator-reviewed like the scam list. */
+export const TOKEN_TRUST_ALLOW_LIST = [];
+export const TOKEN_TRUST_CACHE_KEY = "fluid_token_trust_v1";
+const TRUST_TTL_VERIFIED_MS = 7 * 24 * 3600 * 1000;
+const TRUST_TTL_SCAM_MS = 24 * 3600 * 1000;
+const TRUST_TTL_SIM_SCAM_MS = 3600 * 1000;
+const TRUST_TTL_UNKNOWN_MS = 6 * 3600 * 1000;
+const TRUST_TTL_FAILED_MS = 5 * 60 * 1000;
+/** The cache lifetime of one verdict record, by class.
+ *  Simulation-derived scams expire fastest (1 h): honeypot
+ *  status can be a launch-window artefact, and the swap-time
+ *  re-check re-simulates, so a cleared token unblocks itself.
+ *  A failed lookup (sources down) is re-tried within minutes,
+ *  never held for the unknown TTL. Pure. */
+export function tokenTrustTtlMs(rec) {
+  if (!rec) return 0;
+  if (rec.failed) return TRUST_TTL_FAILED_MS;
+  if (rec.verdict === "verified") return TRUST_TTL_VERIFIED_MS;
+  if (rec.verdict === "scam") return rec.source === "honeypot.is" ? TRUST_TTL_SIM_SCAM_MS : TRUST_TTL_SCAM_MS;
+  return TRUST_TTL_UNKNOWN_MS;
+}
+export function tokenTrustFresh(rec, now = Date.now()) {
+  return !!rec && Number.isFinite(rec.at) && now - rec.at < tokenTrustTtlMs(rec);
+}
+/** Identity normalisation per family: EVM contract addresses
+ *  compare case-insensitively; Sui coin types keep their case
+ *  (module/struct names are case-significant) with the 0x2
+ *  prefix canonicalised; a Stellar token id reduces to its
+ *  ISSUER account (the directory tags issuers, and the swap
+ *  layer's "CODE:ISSUER" form carries it after the colon);
+ *  Solana mints and TON friendly addresses are exact. */
+export function tokenTrustNormId(chainKey, tokenId) {
+  if (tokenId == null) return "";
+  const id = String(tokenId);
+  if (NETWORKS[chainKey]) return id.toLowerCase();
+  if (chainKey === "sui") return id.replace(/^0x0+2::/, "0x2::");
+  if (chainKey === "stellar") { const i = id.lastIndexOf(":"); return i >= 0 ? id.slice(i + 1) : id; }
+  return id;
+}
+export function tokenTrustKey(chainKey, tokenId) {
+  return String(chainKey || "") + "|" + tokenTrustNormId(chainKey, tokenId);
+}
+let _trustNativeSentinels = null;
+function trustNativeSentinels() {
+  // Built lazily: several families' native-token constants
+  // are declared further down this module, so a module-level
+  // Set would hit their temporal dead zone at load.
+  if (!_trustNativeSentinels) _trustNativeSentinels = new Set([
+    NATIVE_TOKEN_ADDRESS, TRON_SWAP_NATIVE_TOKEN, SOLANA_SWAP_NATIVE_TOKEN, SUI_SWAP_NATIVE_TOKEN,
+    NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN,
+    BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, CARDANO_SWAP_NATIVE_TOKEN, ZCASH_SWAP_NATIVE_TOKEN,
+    DASH_SWAP_NATIVE_TOKEN, STELLAR_SWAP_NATIVE_TOKEN, TON_SWAP_NATIVE_TOKEN,
+    TEZOS_SWAP_NATIVE_TOKEN, HEDERA_SWAP_NATIVE_TOKEN, STACKS_SWAP_NATIVE_TOKEN, ALGORAND_SWAP_NATIVE_TOKEN,
+  ]);
+  return _trustNativeSentinels;
+}
+/** A family's native asset (or a chain with no token concept
+ *  at all — Bitcoin, Lightning, Arkade) needs no verdict: it
+ *  is the asset itself. */
+export function tokenTrustIsNative(chainKey, tokenId) {
+  if (tokenId == null || tokenId === "") return true;
+  if (chainKey === "bitcoin" || chainKey === "lightning" || chainKey === "arkade") return true;
+  return trustNativeSentinels().has(String(tokenId));
+}
+function trustListHit(list, chainKey, tokenId) {
+  if (!Array.isArray(list) || tokenId == null) return null;
+  const key = tokenTrustKey(chainKey, tokenId);
+  return list.find(e => e && tokenTrustKey(e.chainKey, e.address) === key) || null;
+}
+/** The build-time override verdict, or null: the allowlist
+ *  beats any API scam verdict, the scam list beats any API
+ *  verified verdict. Pure — the lists are parameters so the
+ *  precedence itself is pinnable in tests. */
+export function tokenTrustOverrideVerdict(chainKey, tokenId, scamList = TOKEN_TRUST_SCAM_LIST, allowList = TOKEN_TRUST_ALLOW_LIST) {
+  if (trustListHit(allowList, chainKey, tokenId)) return { verdict: "verified", source: "fluid-override", reasonClass: null, reason: null };
+  const hit = trustListHit(scamList, chainKey, tokenId);
+  if (hit) return { verdict: "scam", source: "fluid-list", reasonClass: "fluid-list", reason: hit.reason || "It's on Fluid's scam list." };
+  return null;
+}
+/** Membership in Fluid's human-vetted pinned token tables —
+ *  itself a Verified signal (the tables are curated per
+ *  release). Covers the families whose surfaces are pinned
+ *  tables; returns false for anything unlisted. */
+export function tokenTrustPinned(chainKey, tokenId) {
+  if (tokenId == null || tokenId === "") return false;
+  const id = tokenTrustNormId(chainKey, tokenId);
+  const inTable = (table, norm) => Array.isArray(table) && table.some(t => t && t.address != null && norm(t.address) === id);
+  if (NETWORKS[chainKey]) return inTable(NETWORKS[chainKey].tokens, a => String(a).toLowerCase());
+  switch (chainKey) {
+    case "solana": return inTable(SOLANA_TOKENS, a => String(a));
+    case "sui": return inTable(SUI_TOKENS, a => String(a).replace(/^0x0+2::/, "0x2::"));
+    case "tron": return inTable(TRON_TOKENS, a => String(a));
+    case "aptos": return inTable(APTOS_TOKENS, a => String(a).toLowerCase());
+    case "near": return inTable(NEAR_TOKENS, a => String(a));
+    case "polkadot": return inTable(DOT_TOKENS, a => String(a));
+    case "ton": try { return tonAddressEquals(String(tokenId), TON_USDT_MASTER); } catch { return false; }
+    case "stellar": return Array.isArray(STELLAR_SWAP_ASSETS) && STELLAR_SWAP_ASSETS.some(e => e && e.issuer === id);
+    default: return false;
+  }
+}
+/* ---------- verdict cache (memory + localStorage mirror) ---------- */
+const _trustCache = new Map();
+let _trustCacheLoaded = false;
+function trustStorage() { try { return globalThis.localStorage || null; } catch { return null; } }
+function trustCacheLoad() {
+  if (_trustCacheLoaded) return;
+  _trustCacheLoaded = true;
+  const store = trustStorage();
+  if (!store) return;
+  try {
+    const raw = store.getItem(TOKEN_TRUST_CACHE_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    if (obj && typeof obj === "object") for (const [k, v] of Object.entries(obj)) if (v && v.verdict) _trustCache.set(k, v);
+  } catch { /* a corrupt cache is no cache — lookups fail open */ }
+}
+function trustCacheSave() {
+  const store = trustStorage();
+  if (!store) return;
+  try {
+    const obj = {};
+    for (const [k, v] of _trustCache) obj[k] = v;
+    store.setItem(TOKEN_TRUST_CACHE_KEY, JSON.stringify(obj));
+  } catch { /* persistence is best-effort; the memory cache still serves this session */ }
+}
+function trustCacheGet(key) { trustCacheLoad(); return _trustCache.get(key) || null; }
+function trustCacheSet(key, rec) { trustCacheLoad(); _trustCache.set(key, rec); trustCacheSave(); }
+export function resetTokenTrustCache() { _trustCache.clear(); _trustCacheLoaded = true; trustCacheSave(); }
+/* ---------- source parsers (pure; fixtures in the suite) ---------- */
+/** Deep scan for GoPlus's own malicious flag: any authority,
+ *  creator or capability entry carrying malicious_address 1.
+ *  The flag is the evidence — the mere PRESENCE of a mint or
+ *  freeze authority is not (USDC has both, flagged 0). */
+export function goplusMaliciousFlagPresent(obj, depth = 0) {
+  if (!obj || typeof obj !== "object" || depth > 6) return false;
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "malicious_address" && (v === 1 || v === "1" || v === true)) return true;
+    if (v && typeof v === "object" && goplusMaliciousFlagPresent(v, depth + 1)) return true;
+  }
+  return false;
+}
+/** GoPlus EVM token_security entry → partial verdict.
+ *  is_honeypot 1 is a confirmed honeypot (proof-grade);
+ *  honeypot_with_same_creator 1 ties the token to a known
+ *  honeypot's creator; trust_list 1 is GoPlus's verified
+ *  registry. is_mintable / is_blacklisted-capable / taxes are
+ *  deliberately NOT read as scam signals. */
+export function parseGoPlusEvmTokenSecurity(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (String(entry.is_honeypot) === "1") return { verdict: "scam", source: "goplus", reasonClass: "honeypot", reason: "It can't be sold once bought (honeypot)." };
+  if (String(entry.honeypot_with_same_creator) === "1") return { verdict: "scam", source: "goplus", reasonClass: "malicious-authority", reason: "Its creator also made a known honeypot token." };
+  if (String(entry.trust_list) === "1") return { verdict: "verified", source: "goplus", reasonClass: null, reason: null };
+  return null;
+}
+/** honeypot.is simulation → { isHoneypot } when the
+ *  simulation actually ran, null when it did not (a token
+ *  with no pair cannot be simulated — that is NO evidence,
+ *  never scam evidence). */
+export function parseHoneypotIsResult(data) {
+  if (!data || typeof data !== "object" || !data.honeypotResult) return null;
+  if (data.simulationSuccess === false) return null;
+  return { isHoneypot: data.honeypotResult.isHoneypot === true };
+}
+/** GoPlus Solana token_security entry → partial verdict:
+ *  any authority flagged malicious is proof; trusted_token
+ *  is their verified registry. Freezable/mintable status
+ *  alone (USDC carries both) is not evidence. */
+export function parseGoPlusSolanaTokenSecurity(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (goplusMaliciousFlagPresent(entry)) return { verdict: "scam", source: "goplus", reasonClass: "malicious-authority", reason: "Its contract is controlled by a flagged scam address." };
+  if (String(entry.trusted_token) === "1") return { verdict: "verified", source: "goplus", reasonClass: null, reason: null };
+  return null;
+}
+/** GoPlus Sui token_security entry → partial verdict: same
+ *  standard — a GoPlus malicious flag on any capability or
+ *  the creator is proof; blacklist/mintable/upgradeable
+ *  capabilities by themselves are not. */
+export function parseGoPlusSuiTokenSecurity(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (goplusMaliciousFlagPresent(entry)) return { verdict: "scam", source: "goplus", reasonClass: "malicious-authority", reason: "Its contract is controlled by a flagged scam address." };
+  if (String(entry.trusted_token) === "1") return { verdict: "verified", source: "goplus", reasonClass: null, reason: null };
+  return null;
+}
+/** Jupiter Tokens API v2 search payload → verified when the
+ *  exact mint carries isVerified. Absence means nothing. */
+export function parseJupiterTokenVerdict(data, mint) {
+  if (!Array.isArray(data)) return null;
+  const hit = data.find(e => e && e.id === mint);
+  if (hit && hit.isVerified === true) return { verdict: "verified", source: "jupiter", reasonClass: null, reason: null };
+  return null;
+}
+/** RugCheck summary → the NAMED risks, for display on the
+ *  token page only. The numeric score is never returned as a
+ *  verdict input: it drifts with age and liquidity, and new
+ *  legitimate tokens score badly for being new. */
+export function parseRugCheckRisks(data) {
+  if (!data || !Array.isArray(data.risks)) return [];
+  return data.risks.filter(r => r && r.name).map(r => ({ name: String(r.name), level: r.level ? String(r.level) : null, description: r.description ? String(r.description) : null }));
+}
+/** TonAPI jetton → verification is the registry verdict:
+ *  blacklist is proof-grade scam; whitelist is verified;
+ *  "none" is no evidence. */
+export function parseTonApiJetton(data) {
+  if (!data || typeof data !== "object") return null;
+  if (data.verification === "blacklist") return { verdict: "scam", source: "tonapi", reasonClass: "registry", reason: "It's on a scam registry." };
+  if (data.verification === "whitelist") return { verdict: "verified", source: "tonapi", reasonClass: null, reason: null };
+  return null;
+}
+/** StellarExpert directory record for an issuer → a
+ *  "malicious" tag is proof-grade scam; a listing with a
+ *  home domain and no malicious tag is verified (the
+ *  directory's own curation). No record = no evidence. */
+export function parseStellarExpertDirectory(data) {
+  if (!data || typeof data !== "object" || !data.address) return null;
+  const tags = Array.isArray(data.tags) ? data.tags.map(t => String(t).toLowerCase()) : [];
+  if (tags.includes("malicious")) return { verdict: "scam", source: "stellarexpert", reasonClass: "registry", reason: "It's on a scam registry." };
+  if (data.domain) return { verdict: "verified", source: "stellarexpert", reasonClass: null, reason: null };
+  return null;
+}
+/** The one-line reason a scam verdict carries, in the
+ *  refusal and on the token page. */
+export function tokenTrustReasonLine(rec) {
+  if (!rec || rec.verdict !== "scam") return "";
+  if (rec.reason) return rec.reason;
+  switch (rec.reasonClass) {
+    case "honeypot": return "It can't be sold once bought (honeypot).";
+    case "malicious-authority": return "Its contract is controlled by a flagged scam address.";
+    case "registry": return "It's on a scam registry.";
+    case "fluid-list": return "It's on Fluid's scam list.";
+    default: return "It's flagged as a scam.";
+  }
+}
+export function tokenTrustRefusalMessage(rec) {
+  return "Fluid won't swap this token — it's flagged as a scam. " + tokenTrustReasonLine(rec);
+}
+export function tokenTrustSourceLabel(source) {
+  switch (source) {
+    case "goplus": return "GoPlus";
+    case "honeypot.is": return "honeypot.is";
+    case "jupiter": return "Jupiter";
+    case "tonapi": return "TonAPI";
+    case "stellarexpert": return "StellarExpert";
+    case "fluid-list": return "Fluid's scam list";
+    case "fluid-override": return "Fluid";
+    case "fluid-table": return "Fluid's verified list";
+    default: return "";
+  }
+}
+/* ---------- live fetchers (fail-soft: null = no answer) ---------- */
+async function trustFetchJson(url, fetchImpl, timeoutMs = 8000) {
+  try {
+    const F = fetchImpl || fetch;
+    const res = await F(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res || !res.ok) return null;
+    return await res.json().catch(() => null);
+  } catch { return null; }
+}
+async function fetchGoPlusEvmEntries(chainId, addresses, fetchImpl) {
+  const data = await trustFetchJson(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${addresses.join(",")}`, fetchImpl);
+  if (!data || data.code !== 1 || !data.result || typeof data.result !== "object") return null;
+  return data.result;
+}
+/** Combine one token's fetched partial with the static
+ *  signals into the record to cache. Scam beats Verified
+ *  beats pinned-table beats unknown; a fetch that never
+ *  answered keeps the stale cached record (the gate's
+ *  offline rule) and otherwise records a short-lived failed
+ *  unknown so an outage is retried in minutes, not hours. */
+function trustCombine(chainKey, tokenId, partial, { fetched, cached, risks } = {}) {
+  const pinned = tokenTrustPinned(chainKey, tokenId);
+  let rec = null;
+  if (partial && partial.verdict === "scam") rec = { ...partial };
+  else if (partial && partial.verdict === "verified") rec = { ...partial };
+  else if (pinned) rec = { verdict: "verified", source: "fluid-table", reasonClass: null, reason: null };
+  else if (!fetched && cached) return cached;
+  else if (cached && cached.verdict === "scam" && cached.source === "honeypot.is") return cached; // a simulation verdict is re-checked by the simulator at swap time — a display fetch with no entry for the token does not clear it
+  else rec = { verdict: "unknown", source: partial ? partial.source : null, reasonClass: null, reason: null, ...(fetched ? {} : { failed: true }) };
+  rec.at = Date.now();
+  if (risks && risks.length) rec.risks = risks;
+  trustCacheSet(tokenTrustKey(chainKey, tokenId), rec);
+  return rec;
+}
+/** The synchronous verdict for rendering: native → override
+ *  lists → a cached scam (a demotion is never hidden by table
+ *  membership) → pinned table → the last cached verdict →
+ *  null (nothing known; rows render untagged). Never fetches,
+ *  never throws. */
+export function resolveTokenTrustSync(chainKey, tokenId) {
+  try {
+    if (tokenTrustIsNative(chainKey, tokenId)) return { verdict: "verified", source: "native", reasonClass: null, reason: null, at: Date.now() };
+    const ov = tokenTrustOverrideVerdict(chainKey, tokenId);
+    if (ov) return { ...ov, at: Date.now() };
+    const cached = trustCacheGet(tokenTrustKey(chainKey, tokenId));
+    if (cached && cached.verdict === "scam") return cached;
+    if (tokenTrustPinned(chainKey, tokenId)) return { verdict: "verified", source: "fluid-table", reasonClass: null, reason: null, at: Date.now() };
+    return cached;
+  } catch { return null; }
+}
+/** Resolve one token's verdict, fetching its family's
+ *  sources when the cache has no fresh answer. NEVER throws:
+ *  a source outage resolves to the stale cached verdict or
+ *  unknown — tagging fails open, always. */
+export async function fetchTokenTrust(chainKey, tokenId, opts = {}) {
+  try {
+    if (tokenTrustIsNative(chainKey, tokenId)) return { verdict: "verified", source: "native", reasonClass: null, reason: null, at: Date.now() };
+    const ov = tokenTrustOverrideVerdict(chainKey, tokenId);
+    if (ov) return { ...ov, at: Date.now() };
+    const key = tokenTrustKey(chainKey, tokenId);
+    const cached = trustCacheGet(key);
+    if (cached && tokenTrustFresh(cached) && !opts.force) {
+      if (cached.verdict !== "unknown") return cached;
+      if (!tokenTrustPinned(chainKey, tokenId)) return cached;
+    }
+    const F = opts.fetchImpl;
+    let partial = null, risks = null, fetched = false;
+    if (NETWORKS[chainKey]) {
+      const result = await fetchGoPlusEvmEntries(NETWORKS[chainKey].chainId, [String(tokenId)], F);
+      if (result) { fetched = true; partial = parseGoPlusEvmTokenSecurity(result[tokenTrustNormId(chainKey, tokenId)] || null); }
+    } else if (chainKey === "solana") {
+      const [gp, jup, rug] = await Promise.all([
+        trustFetchJson(`https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(String(tokenId))}`, F),
+        trustFetchJson(`https://api.jup.ag/tokens/v2/search?query=${encodeURIComponent(String(tokenId))}`, F),
+        trustFetchJson(`https://api.rugcheck.xyz/v1/tokens/${encodeURIComponent(String(tokenId))}/report/summary`, F),
+      ]);
+      if (gp || jup || rug) fetched = true;
+      const entry = gp && gp.code === 1 && gp.result ? (gp.result[String(tokenId)] || null) : null;
+      partial = parseGoPlusSolanaTokenSecurity(entry) || parseJupiterTokenVerdict(jup, String(tokenId));
+      risks = parseRugCheckRisks(rug);
+    } else if (chainKey === "sui") {
+      const gp = await trustFetchJson(`https://api.gopluslabs.io/api/v1/sui/token_security?contract_addresses=${encodeURIComponent(String(tokenId))}`, F);
+      if (gp) { fetched = true; const entry = gp.code === 1 && gp.result ? (gp.result[String(tokenId)] || Object.values(gp.result)[0] || null) : null; partial = parseGoPlusSuiTokenSecurity(entry); }
+    } else if (chainKey === "ton") {
+      const data = await trustFetchJson(`https://tonapi.io/v2/jettons/${encodeURIComponent(String(tokenId))}`, F);
+      if (data) { fetched = true; partial = parseTonApiJetton(data); }
+    } else if (chainKey === "stellar") {
+      const issuer = tokenTrustNormId(chainKey, tokenId);
+      const data = await trustFetchJson(`https://api.stellar.expert/explorer/directory/${encodeURIComponent(issuer)}`, F);
+      if (data) { fetched = true; partial = parseStellarExpertDirectory(data); }
+    } else {
+      // No proof-grade source exists for this family: the
+      // pinned table (in trustCombine) is the only signal.
+      fetched = true;
+    }
+    return trustCombine(chainKey, tokenId, partial, { fetched, cached, risks });
+  } catch { return resolveTokenTrustSync(chainKey, tokenId) || { verdict: "unknown", source: null, reasonClass: null, reason: null, at: Date.now() }; }
+}
+/** Batch resolution for the home lists: EVM tokens are
+ *  grouped into ONE GoPlus call per chain (the endpoint
+ *  takes many addresses); the other families resolve
+ *  individually. Returns a Map of tokenTrustKey → record.
+ *  Fire-and-forget by design — callers repaint when it lands;
+ *  balances never wait on it. */
+export async function fetchTokenTrustBatch(entries, opts = {}) {
+  const out = new Map();
+  const list = Array.isArray(entries) ? entries.filter(e => e && e.chainKey && e.tokenId != null && e.tokenId !== "") : [];
+  const todo = [];
+  for (const e of list) {
+    const sync = resolveTokenTrustSync(e.chainKey, e.tokenId);
+    const cached = trustCacheGet(tokenTrustKey(e.chainKey, e.tokenId));
+    if (sync && sync.source !== "fluid-table" && cached && tokenTrustFresh(cached)) { out.set(tokenTrustKey(e.chainKey, e.tokenId), cached); continue; }
+    if (sync && (sync.source === "native" || sync.source === "fluid-override" || sync.source === "fluid-list")) { out.set(tokenTrustKey(e.chainKey, e.tokenId), sync); continue; }
+    if (cached && tokenTrustFresh(cached) && cached.verdict !== "unknown") { out.set(tokenTrustKey(e.chainKey, e.tokenId), cached); continue; }
+    todo.push(e);
+  }
+  const evmGroups = new Map();
+  const others = [];
+  for (const e of todo) {
+    if (NETWORKS[e.chainKey]) {
+      const cid = NETWORKS[e.chainKey].chainId;
+      if (!evmGroups.has(cid)) evmGroups.set(cid, []);
+      evmGroups.get(cid).push(e);
+    } else others.push(e);
+  }
+  const jobs = [];
+  for (const [chainId, group] of evmGroups) {
+    jobs.push((async () => {
+      for (let i = 0; i < group.length; i += 20) {
+        const chunk = group.slice(i, i + 20);
+        const result = await fetchGoPlusEvmEntries(chainId, chunk.map(e => String(e.tokenId)), opts.fetchImpl);
+        for (const e of chunk) {
+          const entry = result ? (result[tokenTrustNormId(e.chainKey, e.tokenId)] || null) : null;
+          const partial = entry ? parseGoPlusEvmTokenSecurity(entry) : null;
+          trustCombine(e.chainKey, e.tokenId, partial, { fetched: !!result, cached: trustCacheGet(tokenTrustKey(e.chainKey, e.tokenId)) });
+        }
+      }
+    })());
+  }
+  for (const e of others) jobs.push(fetchTokenTrust(e.chainKey, e.tokenId, opts).catch(() => null));
+  await Promise.all(jobs);
+  for (const e of list) out.set(tokenTrustKey(e.chainKey, e.tokenId), resolveTokenTrustSync(e.chainKey, e.tokenId));
+  return out;
+}
+/** The swap-time verdict: the cached/fetched verdict PLUS,
+ *  for an unpinned EVM token, the honeypot.is live simulation
+ *  as second opinion (cached 1 h under the token's own key
+ *  when it flags; a clean simulation is cached as a negative
+ *  marker so repeat swaps inside the hour don't re-simulate).
+ *  Pinned majors skip the simulation — their registry +
+ *  table verdicts are the evidence, and a simulator tripping
+ *  on a legitimate transfer restriction must never brand
+ *  them. Never throws. */
+export async function tokenTrustSwapCheck(chainKey, tokenId, opts = {}) {
+  const rec = await fetchTokenTrust(chainKey, tokenId, opts);
+  if (!rec || rec.verdict === "scam") return rec;
+  try {
+    if (!NETWORKS[chainKey] || tokenId == null) return rec;
+    if (tokenTrustIsNative(chainKey, tokenId) || tokenTrustPinned(chainKey, tokenId) || tokenTrustOverrideVerdict(chainKey, tokenId)) return rec;
+    const key = tokenTrustKey(chainKey, tokenId);
+    const neg = trustCacheGet(key + "#simneg");
+    if (neg && Date.now() - neg.at < TRUST_TTL_SIM_SCAM_MS) return rec;
+    const data = await trustFetchJson(`https://api.honeypot.is/v2/IsHoneypot?address=${encodeURIComponent(String(tokenId))}&chainID=${NETWORKS[chainKey].chainId}`, opts.fetchImpl);
+    const sim = parseHoneypotIsResult(data);
+    if (sim && sim.isHoneypot) {
+      const scamRec = { verdict: "scam", source: "honeypot.is", reasonClass: "honeypot", reason: "It can't be sold once bought (honeypot).", at: Date.now() };
+      trustCacheSet(key, scamRec);
+      return scamRec;
+    }
+    if (sim) trustCacheSet(key + "#simneg", { verdict: "unknown", source: "honeypot.is", reasonClass: null, reason: null, at: Date.now() });
+    return rec;
+  } catch { return rec; }
+}
+/** The swap gate: throws an Error carrying .scamBlocked when
+ *  EITHER side of a swap resolves to a proof-grade Scam
+ *  verdict — swapping INTO a scam token is the trap, so the
+ *  destination is checked exactly like the source. Any other
+ *  failure inside the check fails OPEN (an outage must never
+ *  freeze all swapping); only the scam error propagates. */
+export async function assertSwapTokensNotScam(args, opts = {}) {
+  const sides = [
+    ["from", args?.fromChainKey, args?.fromTokenAddress],
+    ["to", args?.toChainKey, args?.toTokenAddress],
+  ];
+  const hits = await Promise.all(sides.map(async ([side, chainKey, tokenId]) => {
+    if (!chainKey || tokenId == null) return null;
+    const rec = await tokenTrustSwapCheck(chainKey, tokenId, opts).catch(() => null);
+    return rec && rec.verdict === "scam" ? { side, chainKey, tokenId, rec } : null;
+  }));
+  const hit = hits.find(Boolean);
+  if (hit) {
+    const err = new Error(tokenTrustRefusalMessage(hit.rec));
+    err.scamBlocked = { side: hit.side, chainKey: hit.chainKey, tokenAddress: hit.tokenId, source: hit.rec.source, reasonClass: hit.rec.reasonClass, reason: tokenTrustReasonLine(hit.rec) };
+    throw err;
+  }
+}
+
+export async function getSwapRoutesDirect(args) {
+  // Scam swap block (token trust, 2026-11-17): before any
+  // venue is queried, both sides resolve their trust verdicts
+  // — a proof-grade Scam on either side refuses the search
+  // outright. Composition legs call this function per leg, so
+  // composed routes inherit the block leg by leg.
+  await assertSwapTokensNotScam(args);
   let gasPlan = null;
   try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
   const planArgs = gasPlan ? { ...args, gasDrop: gasPlan } : args;
@@ -26885,6 +27386,12 @@ export function applyLnFirstReceiveCost(routes, { firstReceive = false, btcUsd =
  *  the composition search, whose milestoneAddressFor consults
  *  it for intermediate chains (see there). */
 export async function getSwapRoutes(args, { directSearch = null, compositionSearch = null } = {}) {
+  // Scam swap block (token trust, 2026-11-17): the sheet's
+  // entry point checks too, so the refusal lands before the
+  // direct search or any composition machinery runs (the
+  // per-leg check inside getSwapRoutesDirect is the second
+  // layer, and the one compositions actually pass through).
+  await assertSwapTokensNotScam(args);
   const directFn = directSearch || getSwapRoutesDirect;
   const composeFn = compositionSearch || ((a) => searchMilestoneCompositions(a, { searchLeg: (x) => getSwapRoutesDirect(x) }));
   let routes = null, directErr = null;

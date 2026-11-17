@@ -42,6 +42,7 @@ import {
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  fetchTokenTrust, fetchTokenTrustBatch, resolveTokenTrustSync, tokenTrustSwapCheck, assertSwapTokensNotScam, tokenTrustReasonLine, tokenTrustSourceLabel,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
@@ -1763,27 +1764,37 @@ function heroTotal() {
     + (ltcLoadFailed ? 0 : ltcBal) * (prices.LTC || 0) + (dogeLoadFailed ? 0 : dogeBal) * (prices.DOGE || 0) + (bchLoadFailed ? 0 : bchBal) * (prices.BCH || 0)
     + (adaLoadFailed ? 0 : adaBal) * (prices.ADA || 0)
     + (zecLoadFailed ? 0 : zecBal) * (prices.ZEC || 0) + (dashLoadFailed ? 0 : dashBal) * (prices.DASH || 0);
+  // Token trust (§146): a Scam-tagged token is EXCLUDED from
+  // the total — its pairs quote fantasy prices, and letting
+  // them inflate the hero figure would break the live-prices
+  // rule in spirit. The token still shows on its row, untotalled.
   for (const b of balances) {
+    if (b.address && trustScamActive(networkKey, b.address)) continue;
     const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of tronBalances) {
+    if (b.address && trustScamActive("tron", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of solBalances) {
+    if (b.address && trustScamActive("solana", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of suiBalances) {
+    if (b.address && trustScamActive("sui", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of stellarBalances) {
+    if (b.issuer && trustScamActive("stellar", b.issuer)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of tonBalances) {
+    if (b.address && trustScamActive("ton", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -1805,6 +1816,7 @@ function heroTotal() {
     if (p != null) t += Number(b.amount) * p;
   }
   for (const b of aptosBalances) {
+    if (b.address && trustScamActive("aptos", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
     if (p != null) t += Number(b.amount) * p;
   }
@@ -1841,6 +1853,9 @@ function familyUsdTotals() {
   // verification walk, and every family had the same hole on
   // a partial failure.
   const sumRows = (rows, priceFn) => familyRowsTotalUsd(rows, (b) => priceOfRow(b, priceFn(b)));
+  // Token trust (§146): a Scam-tagged row prices as null here,
+  // so family subtotals exclude it exactly like the hero total.
+  const sumTrustRows = (rows, fam, idOf, priceFn) => familyRowsTotalUsd(rows, (b) => { const id = idOf(b); return id && trustScamActive(fam, id) ? null : priceOfRow(b, priceFn(b)); });
   const m = {};
   // A failed Bitcoin load is unknown, not $0.00: the card total is
   // null (renders "—") and the unknown rows stay out of the total.
@@ -1866,19 +1881,19 @@ function familyUsdTotals() {
   m.zcash = (zecLoadFailed || !famLoaded.has("zcash")) ? null : zecBal * (prices.ZEC || 0);
   m.dash = (dashLoadFailed || !famLoaded.has("dash")) ? null : dashBal * (prices.DASH || 0);
   const net = NETWORKS[networkKey];
-  m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumRows(balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
-  m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumRows(tronBalances, (b) => prices[b.symbol]);
-  m.solana = !famLoaded.has("solana") ? null : sumRows(solBalances, (b) => prices[b.symbol]);
-  m.sui = !famLoaded.has("sui") ? null : sumRows(suiBalances, (b) => prices[b.symbol]);
-  m.stellar = (stellarLoadFailed || !famLoaded.has("stellar")) ? null : sumRows(stellarBalances, (b) => prices[b.symbol]);
-  m.ton = (tonLoadFailed || !famLoaded.has("ton")) ? null : sumRows(tonBalances, (b) => prices[b.symbol]);
+  m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumTrustRows(balances, networkKey, (b) => b.address, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
+  m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumTrustRows(tronBalances, "tron", (b) => b.address, (b) => prices[b.symbol]);
+  m.solana = !famLoaded.has("solana") ? null : sumTrustRows(solBalances, "solana", (b) => b.address, (b) => prices[b.symbol]);
+  m.sui = !famLoaded.has("sui") ? null : sumTrustRows(suiBalances, "sui", (b) => b.address, (b) => prices[b.symbol]);
+  m.stellar = (stellarLoadFailed || !famLoaded.has("stellar")) ? null : sumTrustRows(stellarBalances, "stellar", (b) => b.issuer, (b) => prices[b.symbol]);
+  m.ton = (tonLoadFailed || !famLoaded.has("ton")) ? null : sumTrustRows(tonBalances, "ton", (b) => b.address, (b) => prices[b.symbol]);
   m.near = (nearLoadFailed || !famLoaded.has("near")) ? null : sumRows(nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
   m.algorand = (algoLoadFailed || !famLoaded.has("algorand")) ? null : sumRows(algoBalances, (b) => prices[b.symbol]);
   m.tezos = (tezLoadFailed || !famLoaded.has("tezos")) ? null : sumRows(tezBalances, (b) => prices[b.symbol]);
   m.hedera = (hbaLoadFailed || !famLoaded.has("hedera")) ? null : sumRows(hbaBalances, (b) => prices[b.symbol]);
   m.xrpl = (xrpLoadFailed || !famLoaded.has("xrpl")) ? null : sumRows(xrpBalances, (b) => prices[b.symbol]);
   m.polkadot = (dotLoadFailed || !famLoaded.has("polkadot")) ? null : sumRows(dotBalances, (b) => prices[b.symbol]);
-  m.aptos = (aptosLoadFailed || !famLoaded.has("aptos")) ? null : sumRows(aptosBalances, (b) => prices[b.symbol]);
+  m.aptos = (aptosLoadFailed || !famLoaded.has("aptos")) ? null : sumTrustRows(aptosBalances, "aptos", (b) => b.address, (b) => prices[b.symbol]);
   m.stacks = (stacksLoadFailed || stacksScanFailed || !famLoaded.has("stacks")) ? null : sumRows(stacksBalances, (b) => prices[b.symbol]);
   m.lightning = lnSession ? (Number(lnSession.balance().spendableMsat || 0) / 1e11) * (prices.BTC || 0) : null;
   for (const r of cosmosRows) m[r.key] = r.amount == null ? null : Number(r.amount) * (prices[r.symbol] || 0);
@@ -2070,12 +2085,82 @@ function paintHeader() {
 // and fully usable under a collapsed "Other tokens (N)" group per
 // family. Token-derived strings are escaped (see esc): a token's
 // name is attacker-controlled data.
+// ---------- token trust tags (§146, 2026-11-17) ----------
+// Verdicts live in wallet-core (proof-grade evidence standard,
+// per-chain+contract cache); this layer only renders them and
+// keeps them fresh. Refresh is fire-and-forget AFTER balances
+// paint — tagging never delays the 1–2 s balance standard —
+// and a verdict change repaints once (the signature guard
+// stops any loop: a settled batch reproduces its signature).
+let trustSig = "";
+let trustRefreshTimer = null;
+let trustRefreshRunning = false;
+/** The trust identity of one balance row, or null when the
+ *  row has no verdict surface (native assets, scalar coins,
+ *  families without a token id on the row). */
+function rowTrustId(famKey, b) {
+  if (!b) return null;
+  if (famKey === "evm") return b.address ? { chainKey: networkKey, tokenId: b.address } : null;
+  if (famKey === "stellar") return b.issuer ? { chainKey: "stellar", tokenId: b.issuer } : null;
+  if (["solana", "sui", "ton", "tron", "aptos", "near", "polkadot"].includes(famKey)) return b.address ? { chainKey: famKey, tokenId: b.address } : null;
+  return null;
+}
+function trustChipHtml(chainKey, tokenId) {
+  const v = resolveTokenTrustSync(chainKey, tokenId);
+  if (!v || v.source === "native") return "";
+  if (v.verdict === "scam") return ` <span class="tchip scam">Scam</span>`;
+  if (v.verdict === "verified") return ` <span class="tchip verified">Verified</span>`;
+  return "";
+}
+function trustScamActive(chainKey, tokenId) {
+  if (tokenId == null) return false;
+  const v = resolveTokenTrustSync(chainKey, tokenId);
+  return !!v && v.verdict === "scam";
+}
+function heldTrustEntries() {
+  const out = [];
+  const push = (chainKey, id, amount) => { if (id && Number(amount) > 0) out.push({ chainKey, tokenId: id }); };
+  for (const b of balances) push(networkKey, b.address, b.amount);
+  for (const b of solBalances) push("solana", b.address, b.amount);
+  for (const b of suiBalances) push("sui", b.address, b.amount);
+  for (const b of tonBalances) push("ton", b.address, b.amount);
+  for (const b of stellarBalances) push("stellar", b.issuer, b.amount);
+  for (const b of tronBalances) push("tron", b.address, b.amount);
+  for (const b of aptosBalances) push("aptos", b.address, b.amount);
+  return out;
+}
+function scheduleTrustRefresh() {
+  if (trustRefreshTimer || trustRefreshRunning) return;
+  trustRefreshTimer = setTimeout(async () => {
+    trustRefreshTimer = null;
+    const entries = heldTrustEntries();
+    if (!entries.length) return;
+    trustRefreshRunning = true;
+    try {
+      const map = await fetchTokenTrustBatch(entries);
+      const sig = [...map.entries()].map(([k, v]) => k + "=" + (v ? v.verdict + "/" + (v.source || "") : "null")).sort().join(";");
+      if (sig !== trustSig) { trustSig = sig; paintAssets(); }
+    } catch { /* tagging fails open — balances never depend on it */ }
+    trustRefreshRunning = false;
+  }, 350);
+}
+
 function tokenRowHtml(b, v, sub, dataAttr, famKey) {
   // §4.5 anatomy: logo | name (+ UNVERIFIED chip) / "SYMBOL · Network"
   // (ONE network mention — the standard moves to the asset sheet) |
   // amount / USD, tabular, right-aligned.
   const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
   const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
+  // Token trust (§146): the Verified / Scam badge rides the
+  // name line — the one annotation class the design carries
+  // besides UNVERIFIED. A Scam-tagged token shows NO fiat
+  // figure (its pairs quote fantasy prices) — the amount
+  // alone, exactly the unpriced treatment — and heroTotal /
+  // familyUsdTotals exclude it from every total.
+  const tid = rowTrustId(famKey, b);
+  const tchip = tid ? trustChipHtml(tid.chainKey, tid.tokenId) : "";
+  const scamRow = tid ? trustScamActive(tid.chainKey, tid.tokenId) : false;
+  if (scamRow) v = null;
   // amount null = the read failed: the balance is unknown, and the
   // row says so instead of dressing a placeholder zero as fact.
   // Prices live SILENTLY (spec rev5 §7): a held amount with no
@@ -2097,7 +2182,7 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
     ? `<br><small class="addrchip" data-copyaddr="${esc(b.address)}" title="Copy address">${esc(shortAddr(b.address))} ⧉</small>` : "";
   return `<div class="row"${dataAttr ? " " + dataAttr : ""}>
       <span class="logowrap">${tokenLogoHtml(b, famKey)}${badgeHtml(b, famKey)}</span>
-      <span class="grow"><b class="rname">${esc(title)}${chip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small>${addrLine}</span>
+      <span class="grow"><b class="rname">${esc(title)}${chip}${tchip}</b><small>${esc(b.symbol)} · ${esc(sub)}</small>${addrLine}</span>
       <span class="amt">${amt}</span></div>`;
 }
 // ---------- zero-balance collapse + skeletons (§4.5/§4.13) ----------
@@ -2691,6 +2776,7 @@ function paintAssets() {
   }
   if (homeSearchQuery) paintHomeSearch();
   if (tokenPageState) { refreshTokenPageDesc(); renderTokenPage(); }
+  scheduleTrustRefresh(); // §146: verdicts land after the paint, never in front of it
 }
 
 
@@ -2965,6 +3051,46 @@ function closeTokenPage() {
   if (st && st.returnTo === "explore" && ev) { ev.classList.remove("hidden"); return; }
   if (hm) hm.classList.remove("hidden");
 }
+/** The trust identity of a token-page descriptor (§146):
+ *  the family + the on-chain id the verdict cache keys on. */
+function tokenPageTrustId(d) {
+  if (!d) return null;
+  if (d.family === "evm") return d.ident ? { chainKey: networkKey, tokenId: d.ident } : null;
+  if (d.family === "stellar") { const iss = (d.row && d.row.issuer) || null; return iss ? { chainKey: "stellar", tokenId: iss } : null; }
+  if (["solana", "sui", "ton", "tron", "aptos", "near", "polkadot"].includes(d.family)) return d.ident ? { chainKey: d.family, tokenId: d.ident } : null;
+  return null;
+}
+/** The token page's trust line (§146): the badge, WHICH
+ *  source flagged or verified the token (a report to the
+ *  operator is checkable in one look), the one-line reason,
+ *  and RugCheck's named risks on Solana — displayed, never
+ *  scored into the verdict. A fresh fetch lands async; if it
+ *  changes the verdict the page re-renders so the scam price
+ *  suppression below follows the newest word. */
+function paintTokenTrust(st) {
+  const id = tokenPageTrustId(st.desc);
+  if (!id) return;
+  const paint = () => {
+    const host = $("tdTrust");
+    if (!host || tokenPageState !== st) return;
+    const v = resolveTokenTrustSync(id.chainKey, id.tokenId);
+    if (!v || v.source === "native" || v.verdict === "unknown") { host.innerHTML = ""; return; }
+    if (v.verdict === "scam") {
+      host.innerHTML = `<p class="tag" style="margin-top:10px"><span class="tchip scam">Scam</span> Flagged by ${esc(tokenTrustSourceLabel(v.source) || "a trust registry")} — ${esc(tokenTrustReasonLine(v))} Fluid won't swap this token; you can still send it.</p>`;
+    } else {
+      const risks = Array.isArray(v.risks) && v.risks.length ? `<br>Risks noted by RugCheck: ${v.risks.map(r => esc(r.name)).join(", ")}.` : "";
+      host.innerHTML = `<p class="tag" style="margin-top:10px"><span class="tchip verified">Verified</span>${tokenTrustSourceLabel(v.source) ? ` Verified by ${esc(tokenTrustSourceLabel(v.source))}.` : ""}${risks}</p>`;
+    }
+  };
+  paint();
+  const before = resolveTokenTrustSync(id.chainKey, id.tokenId);
+  fetchTokenTrust(id.chainKey, id.tokenId).then(() => {
+    if (tokenPageState !== st) return;
+    const after = resolveTokenTrustSync(id.chainKey, id.tokenId);
+    if ((after && after.verdict) !== (before && before.verdict)) { renderTokenPage(); return; }
+    paint();
+  }).catch(() => {});
+}
 function renderTokenPage() {
   const st = tokenPageState; if (!st) return;
   const d = st.desc, b = d.row;
@@ -2973,8 +3099,13 @@ function renderTokenPage() {
   const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
   const held = b.amount != null && Number(b.amount) > 0;
   const failed = b.amount == null;
-  const valLine = d.price != null && held ? usd(Number(b.amount) * d.price) : null;
-  const hasExtrasRoute = !!(d.extras && (d.extras.address || d.extras.cgId));
+  // Token trust (§146): a Scam-tagged token shows no fiat
+  // value, no price line and no chart — its pairs quote
+  // fantasy prices, and none of them are presented as fact.
+  const trustId = tokenPageTrustId(d);
+  const pageScam = trustId ? trustScamActive(trustId.chainKey, trustId.tokenId) : false;
+  const valLine = !pageScam && d.price != null && held ? usd(Number(b.amount) * d.price) : null;
+  const hasExtrasRoute = !!(!pageScam && d.extras && (d.extras.address || d.extras.cgId));
   const decimals = b.decimals != null ? Number(b.decimals) : null;
   host.innerHTML = `
     <div class="xhead"><button class="xback" id="tdBack" aria-label="Back">‹</button><b class="t-title">${esc(title)}</b>${b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : ""}</div>
@@ -2982,13 +3113,14 @@ function renderTokenPage() {
     <p style="margin:12px 0 2px"><b style="font-size:22px">${failed ? "—" : fmt(b.amount)} ${esc(b.symbol)}</b></p>
     ${failed ? `<p class="tag">This balance couldn't load right now.</p>` : (valLine ? `<p class="tag">${esc(valLine)}</p>` : "")}
     ${!held && !failed ? `<p class="tag">Not held</p>` : ""}
-    ${d.price != null ? `<p class="tag">Price: <b>${esc(tdPriceText(d.price))}</b> per ${esc(b.symbol)}</p>` : ""}
+    ${!pageScam && d.price != null ? `<p class="tag">Price: <b>${esc(tdPriceText(d.price))}</b> per ${esc(b.symbol)}</p>` : ""}
     <div id="tdChart">${hasExtrasRoute ? (st.chartDone === st.rangeDays ? (st.chartHtml || "") : `<p class="tag">Loading price chart…</p>`) : ""}</div>
     <div id="tdMarket">${st.chartDone === st.rangeDays ? (st.marketHtml || "") : ""}</div>
     ${d.ident ? `<label class="tag" style="display:block;margin-top:12px">${esc(d.identLabel || "Contract address")}</label>
       <p class="seed" id="tdIdent" style="word-break:break-all;cursor:pointer" title="Tap to copy">${esc(d.ident)}</p>
       ${decimals != null ? `<p class="tag">Decimals: ${decimals}</p>` : ""}`
     : `<p class="tag" style="margin-top:12px">This is the network's native asset — it has no contract address.</p>`}
+    <div id="tdTrust"></div>
     <div id="tdMoves"></div>
     <div style="margin-top:16px">
       ${d.swap ? `<button class="btn" id="tdSwap" style="width:100%">Swap</button>` : ""}
@@ -3012,6 +3144,7 @@ function renderTokenPage() {
   };
   if (d.movePair) paintTokenMoves(d.movePair);
   if (hasExtrasRoute) { wireTdRanges(st); if (st.chartDone !== st.rangeDays) loadTokenChart(seq, st); }
+  paintTokenTrust(st);
 }
 /** Range-switch wiring for the token page chart (24H/7D/1M/1Y):
  * switching re-renders the page, which reloads the chart for the
@@ -10375,7 +10508,7 @@ $("actSwap").onclick = () => {
     // auto-retried — the user taps Retry.
     if (!entry || (!entry.full && !entry.failed)) ensureSwapList(netKey).catch(() => {});
     const rowHtml = list.map(t => `<button class="netitem" data-pick="${side}" data-addr="${esc(t.address)}">
-          <span>${t.verified === false ? "⚠ " : ""}${esc(t.symbol)}<br><small style="color:var(--dim)">${esc(t.name || "")}</small></span>
+          <span>${t.verified === false ? "⚠ " : ""}${esc(t.symbol)}${t.address ? trustChipHtml(netKey, t.address) : ""}<br><small style="color:var(--dim)">${esc(t.name || "")}</small></span>
           <span>${t.priceUSD != null ? usd(t.priceUSD) : ""}</span></button>`).join("");
     const state = pickerListState(entry, list.length);
     $(P[side].list).innerHTML =
@@ -10731,6 +10864,13 @@ $("actSwap").onclick = () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
         pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        // Token-trust re-check (§146, 2026-11-17): the search
+        // gate ran at quote time; a token flagged SINCE the
+        // quote is stopped here, before the review and before
+        // anything can sign. Only the scam refusal is handled
+        // — the check otherwise fails open by design.
+        try { await assertSwapTokensNotScam({ fromChainKey: fromKey, toChainKey: toKey, fromTokenAddress: fromTok.address, toTokenAddress: toTok.address }); }
+        catch (e) { if (e && e.scamBlocked) { pendingSwap = null; return msg("wMsg", e.message); } throw e; }
         // Execution balance gate (2026-11-14): preview ends here.
         // A fresh read decides whether Confirm may arm — a short
         // or unreadable balance leaves the review on screen with
@@ -10963,7 +11103,12 @@ $("actSwap").onclick = () => {
       });
     } catch (e) {
       if (stale()) return; // a newer search owns the sheet now
-      if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && netSel.to === "bitcoin") {
+      if (e && e.scamBlocked) {
+        // Token trust (§146): the refusal IS the message — no
+        // "route search failed" framing, no diagnosis. Fluid
+        // won't swap this token, in either direction, by rule.
+        msg("wMsg", e.message);
+      } else if (e && e.satoraBelowFloor && e.satoraBelowFloor.destKey === "bitcoin" && netSel.to === "bitcoin") {
         paintBtcFloorWayThrough(e.satoraBelowFloor);
         msg("wMsg", "");
       } else if (e && e.lnBtcBelowFloor && netSel.from === "lightning" && netSel.to === "bitcoin") {

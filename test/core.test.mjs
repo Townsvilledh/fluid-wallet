@@ -22,6 +22,7 @@ import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relay
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
 import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { GAME_HONOUR_LADDER, gameHonoursForCounts, gameTitleForCounts, fluidStorageKeysToWipe } from "../src/wallet-core.js";
+import { TOKEN_TRUST_SCAM_LIST, TOKEN_TRUST_ALLOW_LIST, tokenTrustTtlMs, tokenTrustFresh, tokenTrustKey, tokenTrustIsNative, tokenTrustPinned, tokenTrustOverrideVerdict, goplusMaliciousFlagPresent, parseGoPlusEvmTokenSecurity, parseHoneypotIsResult, parseGoPlusSolanaTokenSecurity, parseGoPlusSuiTokenSecurity, parseJupiterTokenVerdict, parseRugCheckRisks, parseTonApiJetton, parseStellarExpertDirectory, tokenTrustRefusalMessage, resolveTokenTrustSync, fetchTokenTrust, fetchTokenTrustBatch, tokenTrustSwapCheck, assertSwapTokensNotScam, resetTokenTrustCache, getSwapRoutesDirect } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
 import { fetchPinnedAsset, LnAssetError, sha256Hex } from "../src/ln-download.js";
 import { MAYAN_SDK_VERSION, MAYAN_FORWARDER, MAYAN_REFERRER_SOLANA, MAYAN_REFERRER_EVM, MAYAN_SWAPS_STORAGE_KEY, mayanChainNameOf, mayanTokenOf, mayanSupportsPair, buildMayanQuoteBody, parseMayanQuote, getMayanSwapRoute, executeMayanSwapRoute, mayanReferrerFor, buildMayanEvmTxPayload, checkMayanEvmTxBounds, buildMayanSolanaInstructions, checkMayanSolanaSwapBounds, decodeMayanJupiterSwapArgs, mayanJupiterDestAccountIndex, computeMayanSwiftOrderHash, mayanProxyWrap, mayanProxyUnwrap, loadMayanSwapRecords, saveMayanSwapRecord, fetchMayanSwapStatus, mayanSwapPhase, mayanSwapHistoryLine, pollMayanSwapStatuses, formatMayanRefundNote, MAYAN_SUI_FAST_MCTP_STATE, MAYAN_SUI_USDC_CURRENCY_ID, MAYAN_SUI_CCTP_V2_TOKEN_PACKAGE, MAYAN_SUI_CCTP_V2_TOKEN_STATE, MAYAN_SUI_CCTP_V2_HANDLER_PACKAGE, MAYAN_SUI_CCTP_V2_HANDLER_STATE, MAYAN_SUI_CCTP_V2_CORE_STATE, MAYAN_SUI_USDC_TREASURY, MAYAN_SUI_DENY_LIST, mayanSuiUsdcCoinType, composeMayanSuiFastMctpTx, checkMayanSuiPtbSafety, MAYAN_SUI_SERVER_ROUTER_PACKAGE, MAYAN_SUI_SERVER_ROUTER_DATA_TYPE, MAYAN_SUI_SERVER_FEE_CONFIG_OBJECT, MAYAN_SUI_SERVER_TREASURY_OBJECT, MAYAN_SUI_SERVER_ROUTER_FIXED_U64, MAYAN_SUI_SERVER_CETUS_VENUES, MAYAN_SUI_SERVER_WRAPPER_VENUES, checkMayanSuiServerPtbSafety, composeMayanSuiServerSwapTx, fetchMayanSuiSwapSlice, mayanSuiOutCoinArgument, mayanFractionalAmount } from "../src/wallet-core.js";
@@ -5025,7 +5026,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcEvm.includes("if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;"));
   ok("evm load-failed: failed rows render as couldn't-load, chain total as nothing (rev5 §3 — no dash posing as a figure)",
     appSrcEvm.includes("? [{ symbol: net.symbol, amount: null, address: null, verified: true },")
-    && appSrcEvm.includes("m.evm = (evmLoadFailed || !famLoaded.has(\"evm\")) ? null : sumRows(")
+    && appSrcEvm.includes("m.evm = (evmLoadFailed || !famLoaded.has(\"evm\")) ? null : sumTrustRows(")
     && appSrcEvm.includes('totalVal == null ? "" : usd(totalVal || 0)'));
   ok("evm load-failed: hydrate never merges rows over a failed load",
     appSrcEvm.includes("if (evmLoadFailed) return;\n  const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;"));
@@ -22250,6 +22251,218 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     app145.includes("rowRefs.get(Number(r.dataset.evmrow))") && app145.includes("rowRefs.get(Number(r.dataset.tron))")
     && app145.includes("const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));")
     && !app145.includes("arr[Number(r.dataset[attr.slice(5)])]"));
+}
+
+// §146 — TOKEN TRUST (2026-11-17): Verified / Scam tags on a
+// proof-grade evidence standard, and the scam swap block in
+// both dispatchers, both directions. Fixtures are trimmed
+// from responses recorded live on 2026-11-17 (GoPlus EVM /
+// Solana / Sui, honeypot.is, Jupiter v2, RugCheck, TonAPI,
+// StellarExpert — see research_notes/fluid-token-trust-20261117);
+// variants that flip one recorded field are marked as such.
+{
+  const core146 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const app146 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const USDT_BSC = "0x55d398326f99059fF775485246999027B3197955";
+  const USDC_BSC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+  const SQUID_BSC = "0x87230146E138d3F296a9a77e497A2A83012e9Bc5";
+  const USDC_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDC_STELLAR_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+  // Recorded: BSC USDT — trust_list 1 AND is_mintable 1.
+  const GP_EVM_USDT = { is_honeypot: "0", honeypot_with_same_creator: "0", trust_list: "1", is_mintable: "1", is_blacklisted: "0", buy_tax: "0", sell_tax: "0", token_name: "Tether USD", token_symbol: "USDT" };
+  // Recorded schema, is_honeypot flipped to 1.
+  const GP_EVM_HONEYPOT = { is_honeypot: "1", honeypot_with_same_creator: "0", is_mintable: "1", token_name: "Squid Game", token_symbol: "SQUID" };
+  const GP_EVM_SAME_CREATOR = { is_honeypot: "0", honeypot_with_same_creator: "1", token_symbol: "SQUID2" };
+  // Recorded: Solana USDC — freezable + mintable, authorities flagged 0, trusted_token 1.
+  const GP_SOL_USDC = { freezable: { status: "1", authority: [{ address: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar", malicious_address: 0 }] }, mintable: { status: "1", authority: [{ address: "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG", malicious_address: 0 }] }, trusted_token: 1, holder_count: 9535207 };
+  // Recorded schema, one authority's malicious_address flipped to 1.
+  const GP_SOL_MALICIOUS = { freezable: { status: "1", authority: [{ address: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar", malicious_address: 1 }] }, mintable: { status: "1", authority: [] } };
+  // Recorded: SUI — capabilities inert, trusted_token "1".
+  const GP_SUI_SUI = { blacklist: { cap_owner: "", value: "0" }, contract_upgradeable: { cap_owner: "", value: "0" }, mintable: { cap_owner: "", value: "0" }, creator: "0x0000000000000000000000000000000000000000000000000000000000000000", trusted_token: "1", holder_count: 27360514 };
+  const HP_CLEAN = { simulationSuccess: true, honeypotResult: { isHoneypot: false }, simulationResult: { buyTax: 0, sellTax: 0, transferTax: 0 } };
+  const HP_TRUE = { simulationSuccess: true, honeypotResult: { isHoneypot: true } };
+  const JUP_USDC = [{ id: "FakeUSDC1111111111111111111111111111111111", symbol: "USDC", isVerified: false, tags: [] }, { id: USDC_SOL, symbol: "USDC", isVerified: true, tags: ["stable", "strict", "verified"] }];
+  const RUG_USDC = { score: 1, score_normalised: 1, risks: [] };
+  const RUG_RISKY = { score: 95000, score_normalised: 99, risks: [{ name: "High holder concentration", level: "danger", description: "Top holders control most of the supply." }] };
+  const TON_NOT = { verification: "whitelist", mintable: true, holders_count: 2855913 };
+  const TON_BLACKLIST = { verification: "blacklist", mintable: true, holders_count: 12 };
+  const SE_USDC = { address: USDC_STELLAR_ISSUER, name: "Centre", domain: "centre.io", tags: ["anchor", "issuer"] };
+  const SE_MALICIOUS = { address: "GBADSCAMISSUER1111111111111111111111111111111111111111", name: null, domain: null, tags: ["malicious"] };
+  const trustResp = (payload) => ({ ok: true, status: 200, json: async () => payload });
+
+  // ---- parsers: the evidence standard itself ----
+  ok("§146: GoPlus EVM — trust_list verifies, and is_mintable on the same entry does NOT scam (BSC USDT is mintable and real)",
+    parseGoPlusEvmTokenSecurity(GP_EVM_USDT)?.verdict === "verified" && parseGoPlusEvmTokenSecurity(GP_EVM_USDT)?.source === "goplus");
+  ok("§146: GoPlus EVM — is_honeypot 1 is a proof-grade scam (honeypot class)",
+    parseGoPlusEvmTokenSecurity(GP_EVM_HONEYPOT)?.verdict === "scam" && parseGoPlusEvmTokenSecurity(GP_EVM_HONEYPOT)?.reasonClass === "honeypot");
+  ok("§146: GoPlus EVM — honeypot_with_same_creator 1 is a proof-grade scam (malicious-authority class)",
+    parseGoPlusEvmTokenSecurity(GP_EVM_SAME_CREATOR)?.verdict === "scam" && parseGoPlusEvmTokenSecurity(GP_EVM_SAME_CREATOR)?.reasonClass === "malicious-authority");
+  ok("§146: GoPlus EVM — traits alone are no verdict (mintable/blacklist-capable/taxes without a proof signal parse to null)",
+    parseGoPlusEvmTokenSecurity({ is_mintable: "1", is_blacklisted: "1", buy_tax: "0.3" }) === null && parseGoPlusEvmTokenSecurity({}) === null && parseGoPlusEvmTokenSecurity(null) === null);
+  ok("§146: honeypot.is — a ran simulation answers; a FAILED simulation is no evidence even when its flag says true",
+    parseHoneypotIsResult(HP_CLEAN)?.isHoneypot === false && parseHoneypotIsResult(HP_TRUE)?.isHoneypot === true
+    && parseHoneypotIsResult({ simulationSuccess: false, honeypotResult: { isHoneypot: true } }) === null && parseHoneypotIsResult(null) === null);
+  ok("§146: GoPlus Solana — freezable + mintable with CLEAN authorities verifies (USDC carries both); trusted_token is the registry word",
+    parseGoPlusSolanaTokenSecurity(GP_SOL_USDC)?.verdict === "verified" && goplusMaliciousFlagPresent(GP_SOL_USDC) === false);
+  ok("§146: GoPlus Solana — an authority flagged malicious_address 1 is a proof-grade scam",
+    parseGoPlusSolanaTokenSecurity(GP_SOL_MALICIOUS)?.verdict === "scam" && parseGoPlusSolanaTokenSecurity(GP_SOL_MALICIOUS)?.reasonClass === "malicious-authority"
+    && goplusMaliciousFlagPresent({ a: [{ b: { malicious_address: "1" } }] }) === true);
+  ok("§146: GoPlus Sui — trusted_token verifies; inert capabilities are not evidence",
+    parseGoPlusSuiTokenSecurity(GP_SUI_SUI)?.verdict === "verified" && parseGoPlusSuiTokenSecurity({ blacklist: { cap_owner: "0xabc", value: "1" }, mintable: { cap_owner: "0xabc", value: "1" } }) === null);
+  ok("§146: Jupiter — isVerified on the EXACT mint verifies; a same-symbol impostor in the same payload earns nothing",
+    parseJupiterTokenVerdict(JUP_USDC, USDC_SOL)?.verdict === "verified" && parseJupiterTokenVerdict(JUP_USDC, "FakeUSDC1111111111111111111111111111111111") === null);
+  ok("§146: RugCheck — named risks parse for DISPLAY; the score is never a verdict (USDC: score 1, zero risks)",
+    parseRugCheckRisks(RUG_USDC).length === 0 && parseRugCheckRisks(RUG_RISKY)[0]?.name === "High holder concentration" && parseRugCheckRisks(null).length === 0);
+  ok("§146: TonAPI — whitelist verifies, blacklist is a proof-grade registry scam, none is no evidence",
+    parseTonApiJetton(TON_NOT)?.verdict === "verified" && parseTonApiJetton(TON_BLACKLIST)?.verdict === "scam" && parseTonApiJetton(TON_BLACKLIST)?.reasonClass === "registry"
+    && parseTonApiJetton({ verification: "none" }) === null);
+  ok("§146: StellarExpert — a directory listing with a home domain verifies; a malicious tag is a proof-grade registry scam",
+    parseStellarExpertDirectory(SE_USDC)?.verdict === "verified" && parseStellarExpertDirectory(SE_MALICIOUS)?.verdict === "scam"
+    && parseStellarExpertDirectory(SE_MALICIOUS)?.reasonClass === "registry" && parseStellarExpertDirectory(null) === null);
+
+  // ---- identity, pinned tables, overrides, TTLs ----
+  ok("§146: pinned-table membership — BSC USDT, Solana USDC and the Stellar USDC issuer verify from Fluid's own tables; SQUID is in none",
+    tokenTrustPinned("bsc", USDT_BSC) === true && tokenTrustPinned("solana", USDC_SOL) === true
+    && tokenTrustPinned("stellar", "USDC:" + USDC_STELLAR_ISSUER) === true && tokenTrustPinned("bsc", SQUID_BSC) === false);
+  ok("§146: natives need no verdict — the zero address, family sentinels and the token-less chains are native",
+    tokenTrustIsNative("bsc", NATIVE_TOKEN_ADDRESS) === true && tokenTrustIsNative("solana", SOLANA_SWAP_NATIVE_TOKEN) === true
+    && tokenTrustIsNative("bitcoin", "bitcoin") === true && tokenTrustIsNative("bsc", USDT_BSC) === false);
+  ok("§146: override precedence — the allowlist beats the scam list, the scam list beats silence, and both beat any API word by construction of the resolver order",
+    tokenTrustOverrideVerdict("bsc", SQUID_BSC, [{ chainKey: "bsc", address: SQUID_BSC, reason: "x" }], [{ chainKey: "bsc", address: SQUID_BSC }])?.verdict === "verified"
+    && tokenTrustOverrideVerdict("bsc", SQUID_BSC, [{ chainKey: "bsc", address: SQUID_BSC, reason: "operator-confirmed" }], [])?.verdict === "scam"
+    && tokenTrustOverrideVerdict("bsc", SQUID_BSC, [], []) === null
+    && Array.isArray(TOKEN_TRUST_SCAM_LIST) && Array.isArray(TOKEN_TRUST_ALLOW_LIST));
+  ok("§146: TTL classes — simulation scams 1 h, list/authority/registry scams 24 h, verified 7 d, unknown 6 h, failed lookups 5 min",
+    tokenTrustTtlMs({ verdict: "scam", source: "honeypot.is", at: 0 }) === 3600 * 1000
+    && tokenTrustTtlMs({ verdict: "scam", source: "goplus", at: 0 }) === 24 * 3600 * 1000
+    && tokenTrustTtlMs({ verdict: "verified", source: "goplus", at: 0 }) === 7 * 24 * 3600 * 1000
+    && tokenTrustTtlMs({ verdict: "unknown", source: null, at: 0 }) === 6 * 3600 * 1000
+    && tokenTrustTtlMs({ verdict: "unknown", source: null, failed: true, at: 0 }) === 5 * 60 * 1000
+    && tokenTrustFresh({ verdict: "scam", source: "honeypot.is", at: 1000 }, 1000 + 3600 * 1000 - 1) === true
+    && tokenTrustFresh({ verdict: "scam", source: "honeypot.is", at: 1000 }, 1000 + 3600 * 1000) === false);
+
+  // ---- resolver behaviour over stubbed sources ----
+  resetTokenTrustCache();
+  const solStub = async (url) => {
+    const u = String(url);
+    if (u.includes("solana/token_security")) return trustResp({ code: 1, result: { [USDC_SOL]: GP_SOL_USDC } });
+    if (u.includes("api.jup.ag")) return trustResp(JUP_USDC);
+    if (u.includes("rugcheck")) return trustResp(RUG_USDC);
+    throw new Error("offline in test");
+  };
+  ok("§146: resolver — Solana USDC verifies live from GoPlus (Jupiter agrees; RugCheck rides along as display data)",
+    (await fetchTokenTrust("solana", USDC_SOL, { fetchImpl: solStub }))?.verdict === "verified");
+  resetTokenTrustCache();
+  const solRiskyStub = async (url) => {
+    const u = String(url);
+    if (u.includes("solana/token_security")) return trustResp({ code: 1, result: {} });
+    if (u.includes("api.jup.ag")) return trustResp([]);
+    if (u.includes("rugcheck")) return trustResp(RUG_RISKY);
+    throw new Error("offline in test");
+  };
+  const riskyRec = await fetchTokenTrust("solana", "RiskyMint1111111111111111111111111111111111", { fetchImpl: solRiskyStub });
+  ok("§146: resolver — a RugCheck danger risk and a bad score WITHOUT a proof-grade signal stay UNTAGGED (never scam), risks attached for display",
+    riskyRec?.verdict === "unknown" && Array.isArray(riskyRec.risks) && riskyRec.risks[0]?.name === "High holder concentration");
+  resetTokenTrustCache();
+  const tonStub = async (url) => trustResp(String(url).includes("BLACKLISTJETTON") ? TON_BLACKLIST : TON_NOT);
+  ok("§146: resolver — a TonAPI-blacklisted jetton is scam (registry); the whitelisted NOT jetton verifies",
+    (await fetchTokenTrust("ton", "BLACKLISTJETTONMASTER", { fetchImpl: tonStub }))?.verdict === "scam"
+    && (await fetchTokenTrust("ton", "EQAvlWFDxGF2lXm67y4yzC17wYKD9A0guwPkMs1gOsM__NOT", { fetchImpl: tonStub }))?.verdict === "verified");
+  resetTokenTrustCache();
+  const seStub = async (url) => trustResp(String(url).includes("GBADSCAM") ? SE_MALICIOUS : SE_USDC);
+  ok("§146: resolver — a StellarExpert-malicious issuer is scam (registry); Centre (USDC) verifies",
+    (await fetchTokenTrust("stellar", "GBADSCAMISSUER1111111111111111111111111111111111111111", { fetchImpl: seStub }))?.verdict === "scam"
+    && (await fetchTokenTrust("stellar", USDC_STELLAR_ISSUER, { fetchImpl: seStub }))?.verdict === "verified");
+  resetTokenTrustCache();
+  const deadStub = async () => { throw new Error("offline in test"); };
+  const deadRec = await fetchTokenTrust("bsc", SQUID_BSC, { fetchImpl: deadStub });
+  ok("§146: resolver fails OPEN — with every source down an unpinned token is unknown (never scam), marked failed for a fast retry",
+    deadRec?.verdict === "unknown" && deadRec?.failed === true && resolveTokenTrustSync("bsc", SQUID_BSC)?.verdict !== "scam");
+  resetTokenTrustCache();
+  let gpCalls = 0;
+  const countingStub = async (url) => { if (String(url).includes("token_security/56")) { gpCalls++; return trustResp({ code: 1, result: { "0x2222222222222222222222222222222222222222": GP_EVM_USDT } }); } throw new Error("offline in test"); };
+  await fetchTokenTrust("bsc", "0x2222222222222222222222222222222222222222", { fetchImpl: countingStub });
+  await fetchTokenTrust("bsc", "0x2222222222222222222222222222222222222222", { fetchImpl: countingStub });
+  ok("§146: verdict cache — a fresh verdict is served from cache, not refetched (registries are stable inside their TTL)",
+    gpCalls === 1);
+
+  // ---- swap-time second opinion + the gate ----
+  resetTokenTrustCache();
+  const simStub = async (url) => {
+    const u = String(url);
+    if (u.includes("token_security/56")) return trustResp({ code: 1, result: {} });
+    if (u.includes("api.honeypot.is")) return trustResp(HP_TRUE);
+    throw new Error("offline in test");
+  };
+  const simRec = await tokenTrustSwapCheck("bsc", SQUID_BSC, { fetchImpl: simStub });
+  ok("§146: swap check — GoPlus silent but the honeypot.is simulation confirms: scam, sourced to the simulation (1 h TTL class)",
+    simRec?.verdict === "scam" && simRec?.source === "honeypot.is" && simRec?.reasonClass === "honeypot");
+  resetTokenTrustCache();
+  const seenUrls = [];
+  const pinnedStub = async (url) => { seenUrls.push(String(url)); if (String(url).includes("token_security/56")) return trustResp({ code: 1, result: { [USDT_BSC.toLowerCase()]: GP_EVM_USDT } }); throw new Error("offline in test"); };
+  const pinnedRec = await tokenTrustSwapCheck("bsc", USDT_BSC, { fetchImpl: pinnedStub });
+  ok("§146: swap check — a pinned major never pays for a simulation (registry + table are its evidence; a simulator false-trip must not brand it)",
+    pinnedRec?.verdict === "verified" && !seenUrls.some(u => u.includes("honeypot.is")));
+  resetTokenTrustCache();
+  const realFetch146 = globalThis.fetch;
+  const gateFetch = async (url) => {
+    const u = String(url);
+    if (u.includes("api.gopluslabs.io/api/v1/token_security/56")) {
+      const addrs = new URL(u).searchParams.get("contract_addresses").split(",");
+      const result = {};
+      for (const a of addrs) result[a.toLowerCase()] = a.toLowerCase() === SQUID_BSC.toLowerCase() ? GP_EVM_HONEYPOT : GP_EVM_USDT;
+      return trustResp({ code: 1, message: "OK", result });
+    }
+    if (u.includes("api.honeypot.is")) return trustResp(HP_CLEAN);
+    throw new Error("offline in test");
+  };
+  globalThis.fetch = gateFetch;
+  try {
+    let fromErr = null;
+    try { await getSwapRoutesDirect({ fromChainKey: "bsc", toChainKey: "bsc", fromTokenAddress: SQUID_BSC, toTokenAddress: USDT_BSC, fromAmount: "1000000000000000000", fromAddress: "0x0000000000000000000000000000000000000001", toAddress: "0x0000000000000000000000000000000000000001" }); } catch (e) { fromErr = e; }
+    ok("§146: GATE (direct) — a honeypot on the FROM side refuses the search before any venue, with the refusal copy and no no-quote misclassification",
+      !!fromErr?.scamBlocked && fromErr.scamBlocked.side === "from" && fromErr.scamBlocked.reasonClass === "honeypot"
+      && fromErr.message.startsWith("Fluid won't swap this token — it's flagged as a scam.") && isNoQuoteSwapError(fromErr) === false);
+    resetTokenTrustCache();
+    let toErr = null;
+    try { await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "bsc", fromTokenAddress: USDT_BSC, toTokenAddress: SQUID_BSC, fromAmount: "1000000", fromAddress: "0x0000000000000000000000000000000000000001", toAddress: "0x0000000000000000000000000000000000000001" }); } catch (e) { toErr = e; }
+    ok("§146: GATE (sheet entry) — swapping INTO a scam token is refused exactly like swapping out of one (the destination is the trap)",
+      !!toErr?.scamBlocked && toErr.scamBlocked.side === "to" && tokenTrustRefusalMessage({ verdict: "scam", reasonClass: "registry", reason: null }).includes("scam registry"));
+    resetTokenTrustCache();
+    let cleanErr = null, cleanRes = null;
+    try { cleanRes = await getSwapRoutesDirect({ fromChainKey: "bsc", toChainKey: "bsc", fromTokenAddress: USDT_BSC, toTokenAddress: USDC_BSC, fromAmount: "1000000", fromAddress: "0x0000000000000000000000000000000000000001", toAddress: "0x0000000000000000000000000000000000000001" }); } catch (e) { cleanErr = e; }
+    ok("§146: GATE — a clean verified pair passes the gate untouched (any later failure is the venues', never a scam refusal)",
+      (Array.isArray(cleanRes) || cleanErr != null) && !(cleanErr && cleanErr.scamBlocked));
+    let nativeErr = null;
+    try { await assertSwapTokensNotScam({ fromChainKey: "bitcoin", fromTokenAddress: "bitcoin", toChainKey: "bsc", toTokenAddress: USDT_BSC }, { fetchImpl: deadStub }); } catch (e) { nativeErr = e; }
+    ok("§146: GATE — native legs and pinned destinations pass with every source down (the gate fails open, never freezes swapping)",
+      nativeErr === null);
+  } finally { globalThis.fetch = realFetch146; }
+  resetTokenTrustCache();
+  let batchCalls = 0;
+  const batchStub = async (url) => {
+    const u = String(url);
+    if (u.includes("token_security/56")) { batchCalls++; const addrs = new URL(u).searchParams.get("contract_addresses").split(","); const result = {}; for (const a of addrs) result[a.toLowerCase()] = a.toLowerCase() === SQUID_BSC.toLowerCase() ? GP_EVM_HONEYPOT : GP_EVM_USDT; return trustResp({ code: 1, result }); }
+    throw new Error("offline in test");
+  };
+  const batchMap = await fetchTokenTrustBatch([{ chainKey: "bsc", tokenId: USDT_BSC }, { chainKey: "bsc", tokenId: SQUID_BSC }], { fetchImpl: batchStub });
+  ok("§146: batch — one GoPlus call covers a whole chain's held tokens; verdicts land per contract (USDT verified, SQUID scam)",
+    batchCalls === 1 && batchMap.get(tokenTrustKey("bsc", USDT_BSC))?.verdict === "verified" && batchMap.get(tokenTrustKey("bsc", SQUID_BSC))?.verdict === "scam");
+  resetTokenTrustCache();
+
+  // ---- wiring pins: both dispatchers, sends untouched, UI surfaces ----
+  const directBody = core146.slice(core146.indexOf("export async function getSwapRoutesDirect"), core146.indexOf("export function applyLnFirstReceiveCost"));
+  const sheetBody = core146.slice(core146.indexOf("export async function getSwapRoutes("), core146.indexOf("export const SWAP_FLOOR_PROBE_USD"));
+  const sendBody = core146.slice(core146.indexOf("export async function executeSend"), core146.indexOf("export async function executeSend") + 3000);
+  ok("§146: the gate sits in BOTH dispatchers (getSwapRoutes for the sheet, getSwapRoutesDirect for every composition leg)",
+    directBody.includes("await assertSwapTokensNotScam(args);") && sheetBody.includes("await assertSwapTokensNotScam(args);"));
+  ok("§146: sends are NEVER gated — executeSend carries no trust call, and the refusal copy is the sheet's verbatim message",
+    !sendBody.includes("assertSwapTokensNotScam") && !sendBody.includes("tokenTrust")
+    && core146.includes("Fluid won't swap this token — it's flagged as a scam."));
+  ok("§146: UI — rows and pickers carry the badge words, the token page names its source, and the sheet shows the refusal verbatim + re-checks at execution",
+    app146.includes('<span class="tchip scam">Scam</span>') && app146.includes('<span class="tchip verified">Verified</span>')
+    && app146.includes("Flagged by ${esc(tokenTrustSourceLabel(v.source)") && app146.includes('if (e && e.scamBlocked)')
+    && app146.includes('catch (e) { if (e && e.scamBlocked) { pendingSwap = null; return msg("wMsg", e.message); } throw e; }'));
 }
 
 console.log(`\n${passed} checks passed`);
