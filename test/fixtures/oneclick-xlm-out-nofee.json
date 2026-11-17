@@ -1,0 +1,41 @@
+{
+ "quote": {
+  "amountIn": "1000000000",
+  "amountInFormatted": "100.0",
+  "amountInUsd": "13.788800000000",
+  "minAmountIn": "1000000000",
+  "amountOut": "13734373",
+  "amountOutFormatted": "13.734373",
+  "amountOutUsd": "13.728645766459",
+  "minAmountOut": "13597029",
+  "timeEstimate": 29,
+  "refundFee": "11000000",
+  "withdrawFee": "2400",
+  "deadline": "2026-11-20T22:16:11.287Z",
+  "timeWhenInactive": "2026-11-20T22:16:11.287Z",
+  "depositAddress": "GDJ4JZXZELZD737NVFORH4PSSQDWFDZTKW3AIDKHYQG23ZXBPDGGQBJK",
+  "depositMemo": "242502775"
+ },
+ "quoteRequest": {
+  "dry": false,
+  "depositMode": "MEMO",
+  "swapType": "EXACT_INPUT",
+  "slippageTolerance": 100,
+  "originAsset": "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz",
+  "depositType": "ORIGIN_CHAIN",
+  "destinationAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "amount": "1000000000",
+  "refundTo": "GBZ5OACEDX3HX5BORP6BKNTGXLFQ23CV72IJ37FMRWAS2P32X4UPZGMT",
+  "refundType": "ORIGIN_CHAIN",
+  "recipient": "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34",
+  "recipientType": "DESTINATION_CHAIN",
+  "deadline": "2026-11-17T22:16:11.287Z",
+  "confidentiality": "public",
+  "quoteWaitingTimeMs": 0,
+  "insured": false,
+  "appFees": []
+ },
+ "signature": "ed25519:XjCMgELCB5ZjJofhKanETMXhCkkqFQXrPEHvYrhKk47D29DHKVJHAAyrz6DLBzxWvt7YpGTmAFyEnGCSkL9CGRY",
+ "timestamp": "2026-11-17T20:16:13.550Z",
+ "correlationId": "211c8f8e-106a-4b2e-bd59-1e4310dc5446"
+}

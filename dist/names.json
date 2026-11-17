@@ -646,5 +646,45 @@
     "sol": "H3DQj9VmDhBN7bjyLnB9shQgxy8ctW1Y9mxVJ1dXhCFS",
     "tron": "TSEwJ8gyVi1iuvtLsY72eQHaUsActMGVTo",
     "sui": "0x7a1bb1e185c61a8b71f0167aadcfadbc572bd57ced6749427ec685533dfbee48"
+  },
+  "verifyow45354891": {
+    "evm": "0xBa3fD7353805A4781f98A7503b7955Ae6B1c1c9f",
+    "btc": "bc1qyuj96z5m7uz4p5czvzurm5jytu7war75s6697a",
+    "algo": "DMT63VOACJQM7O2GTVFDC6IRKRIPWK3KLLD7FZZONE5M452CVXZOCRFOWE",
+    "sol": "Hc7uvNdeYNNRLVsL25RR9rd1WhB1MCP6EaoS97LyP5xU",
+    "tron": "TSx1ATyqBGoahakNMmSyTUJye6PWKX2oPY",
+    "sui": "0x3205222053d1fe58bec6c1181df4e6b5afb7e20ca265d1fe0dac9a0d087ab620"
+  },
+  "verifypr45653361": {
+    "evm": "0x06a9E31135821C63E9a9352748B826442fC4C693",
+    "btc": "bc1q3up72nmvn76xacv6x36uas3ea20s8nw0rhkguc",
+    "algo": "PMRV3Y473CDGHRCE5TW6OUWAFWYH7QHMMRFGI7ADAD2MTXXGHRZCKVWSWY",
+    "sol": "HYfNRZfgAnT9qs7NmW2RQaC3yxyby9bsErdRyakNosc5",
+    "tron": "TAaSaAVEfnhbTidKPVGiNqMGwShPaBjcA7",
+    "sui": "0xf1701234255ad8362e4f036f243242202bb3e89d9b77eaff6a724904aeb6b40d"
+  },
+  "verifyow45526032": {
+    "evm": "0xc1DD6e2562Bf7d79b8cB07A49D221524C5d3f9c0",
+    "btc": "bc1qwkm5lpr8482xe304la923k883kk35swq96hpfs",
+    "algo": "IUYYA2BWWYEAF2NMABZNZHR3I7FSRKQ2CGGFOBKWLZ5U5HCSF2V2Y6PSY4",
+    "sol": "7fZNnvpVT6x7iDkggvVrGay56A8KSR8fGsW3xUzkEM4f",
+    "tron": "TTeGgKsydHs2zEi5Lq32gRMe6fuKWvM1hH",
+    "sui": "0x95122d1115e56524478fcc7aa3f83c51e78631fa4787c1ac37f58c226292f12e"
+  },
+  "verifyow45828990": {
+    "evm": "0x1565662f1a392b66543b7CC3577F11334cdd40E7",
+    "btc": "bc1qkrw744a743qxgvkzjfx0lfn9633g30wyz7stua",
+    "algo": "6KBAMLON7LFW4JS2OG2PCFGEKT3TSTPUSKSVSDMO3CC2W32BVZNBKZ4HRA",
+    "sol": "A6L2p3odsUnKUrCiai1NZ1TTHdcZBEQ56hc35KvGyL2u",
+    "tron": "TBvLfRZgj6huUQSyTyUiioMcy5gaBHfCcW",
+    "sui": "0xe4eb7b96ad329f909c71a229e59ae8aefa4570ad96f49d1cd9a2d57292955636"
+  },
+  "verifyow45706869": {
+    "evm": "0x2FB487C41c8bafF7434a76653496E08289B53285",
+    "btc": "bc1qhqsl6yelnmfzk8jffw07l5hqqu6vphd26jykvs",
+    "algo": "7VYNV5RQAX4XYHRKSHFKBFAUS43F32QOA72TZ2PA3QNXQM6C22YANQGMUU",
+    "sol": "7meMrVTrr8tE9ZVD4kK6PRmM6WEUmPrTAb6ezR4DQseU",
+    "tron": "TEKT2YRrempLGCYE9KkPWvULm8txy3V4j6",
+    "sui": "0x74e9a919b3abd89dde8e2f69465b7d019689f44e16779a637f030e8cd4129c74"
   }
 }

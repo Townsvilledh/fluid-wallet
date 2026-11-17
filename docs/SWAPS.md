@@ -230,11 +230,11 @@ in; DOT-out quoting-only until a broker is live).
   gated family as the swap destination stands a plain
   warning in the sheet before any search, the no-route
   diagnosis answers with the pause itself ("Swaps into
-  Stellar are paused in Fluid: Fluid can't swap back out
-  of Stellar yet…"), and the family's token pages carry
+  Polkadot are paused in Fluid: Fluid can't swap back out
+  of Polkadot yet…"), and the family's token pages carry
   the same note.
 - **Closed as destinations today (derived, 2026-11-17):**
-  stellar, polkadot — the two offered traps — plus the
+  polkadot — the one offered trap left — plus the
   presence-only / intra-only chains whose inbound was
   never offered and now cannot open as a trap either:
   algorand, aurora, b2, bitlayer, core, cronoszkevm,
@@ -245,18 +245,18 @@ in; DOT-out quoting-only until a broker is live).
   wired, so the gate passes it; its open caveat is
   separate and environmental — the unverified broadcast
   link (see the Cardano section), not coverage.
-- **The exits that reopen the two traps.** Stellar-out is
-  QUOTE-PROVEN buildable on 1Click: the rail now accepts
-  Stellar as an origin (live dry quotes XLM → USDC on Base
-  down to 2 XLM, XLM → BTC, Stellar USDC → Base USDC, the
-  MEMO deposit issued rail-side — the old memo blocker is
-  gone) and is queued as the next build; the gate lifts
-  Stellar automatically in that release. DOT-out waits on
-  a Chainflip broker: the hosted Broker-as-a-Service
-  (chainflip-broker.io) is the chosen path and its
-  registration is being driven separately; a self-hosted
-  broker was rejected (FLIP funding plus a persistent
-  node). Exit research: `research_notes/fluid-exit-research-20261117/`.
+- **The exits that reopen the two traps.** STELLAR-OUT IS
+  WIRED (2026-11-17, §150 — see the Stellar section): the
+  rail accepts Stellar as an origin in MEMO deposit mode,
+  the wiring flipped the planner's coverage predicates,
+  and the gate lifted Stellar from coverage alone — no
+  gate edit was made for it; the §150 pins prove the
+  inbound routes returned on the same derivation. DOT-out
+  still waits on a Chainflip broker: the hosted
+  Broker-as-a-Service (chainflip-broker.io) is the chosen
+  path and its registration is being driven separately; a
+  self-hosted broker was rejected (FLIP funding plus a
+  persistent node). Exit research: `research_notes/fluid-exit-research-20261117/`.
 
 ## Polkadot as a swap destination (2026-11-14)
 
@@ -1244,6 +1244,13 @@ rejected on measured bundle weight (+~2.75 MB, +43%).
   are slow-class by construction (the deposit must confirm
   on Cardano before the solver leg starts), so their cards
   floor at five minutes and never wear the fast badge.
+  **Echo drift (2026-11-17, §150):** the rail's echo has
+  since changed shape fleet-wide — a request of F bps now
+  echoes a single entry at F/2 (Fluid's net, matching the
+  transform) instead of the two entries summing to F, so
+  the shipped verifier no longer proves the total and
+  charged quotes fall back fee-free until the total is
+  re-proven. Full finding in the Stellar section.
 - **Broadcast is the one unverified link.** Koios POST —
   including /submittx — never answered from the build
   environment (45–240 s windows, while its GETs answer in
@@ -1637,20 +1644,19 @@ builder.
   pattern in the quote fetch, so thin liquidity reads as
   no-route on every 1Click pair, not just DASH-in.
 
-## Stellar swaps — Soroswap intra-chain + 1Click in (audit gap #9, 2026-11-15)
+## Stellar swaps — Soroswap intra-chain + 1Click both ways (audit gap #9, 2026-11-15; Stellar-out §150, 2026-11-17)
 
-> **2026-11-17:** swaps INTO Stellar are paused by the
-> one-way trap gate ("No one-way swap traps" above) until
-> a Stellar exit is wired. A quote-proven exit now exists
-> — 1Click accepts Stellar as an origin — and is queued
-> as the next build; the gate lifts automatically then.
-> Intra-Stellar swaps (Soroswap) are unaffected.
+> **2026-11-17 (§150):** Stellar-OUT is wired (1Click,
+> MEMO deposit mode — see the last bullet), so Stellar has
+> an executable exit and the one-way trap gate lifted it
+> from coverage alone; swaps INTO Stellar are offered
+> again. Intra-Stellar swaps (Soroswap) are unaffected.
 
 Stellar gains both swap directions this slice, on two
 different rails: swaps WITHIN Stellar (XLM ↔ USDC) ride the
 Soroswap Aggregator, and swaps INTO Stellar from other
 chains ride 1Click with XLM as a destination. Stellar as a
-cross-chain SOURCE stays an honest no-route (below).
+cross-chain SOURCE rode 1Click too from §150 (below).
 
 - **The Soroswap shape.** A REST port in the OpenOcean
   mould: `POST /quote` (assets as SAC contract addresses —
@@ -1761,16 +1767,53 @@ cross-chain SOURCE stays an honest no-route (below).
   **collecting=false until the operator sets
   `ONECLICK_FEE_RECIPIENT`**, displayed exactly as the other
   1Click families display it.
-- **Stellar OUT via 1Click stays an honest no-route**, for
-  two independent reasons, either of which is enough: the
-  rail refuses Stellar-origin quotes outright ("Quoting for
-  this pair is not available" — probed live, including with
-  `depositMode=MEMO` set correctly), and its deposits would
-  need a MEMO that Fluid's `sendStellar` cannot carry. The
-  pair support check therefore excludes a Stellar origin
-  structurally, so the sheet presents the honest no-route
-  rather than a quote that can only fail at execution; the
-  executor's memo guard remains as defence in depth.
+- **Stellar OUT via 1Click is WIRED (§150, 2026-11-17).**
+  The rail began accepting Stellar as an ORIGIN (its
+  catalogue carries exactly two Stellar assets — XLM and
+  Circle's USDC, both HOT-omni `nep245:` ids at 7 decimals;
+  both are in the 1Click table, USDC in the stable class).
+  Live dry quotes on wiring day: XLM → USDC on Base at
+  100 / 10 / 2 XLM (minimum ≤ 2 XLM ≈ $0.27), XLM → BTC,
+  Stellar USDC → USDC on Base. The origin works ONLY in
+  MEMO deposit mode (SIMPLE is refused outright): a
+  non-dry quote returns HOT's pooled deposit address and
+  a numeric `depositMemo`, and execution is one ordinary
+  Stellar payment to that address carrying the memo —
+  `sendStellar` now attaches it as a **text** memo (real
+  deposits to the pooled account carry the same value as
+  text and as id memos; the watcher matches the string).
+  The fail-closed discipline: a Stellar-origin quote
+  without a memo is no quote at all (the route search
+  returns nothing), the swap gate refuses a Stellar route
+  whose memo was stripped, and the executor refuses
+  before sending rather than deposit memo-less. Refunds
+  return to the sender's own Stellar address (a Stellar
+  origin's refund address must be able to hold the asset
+  — a real holder's own address does by construction).
+- **Capture on Stellar-origin routes: collecting=false,
+  honestly.** Same fleet-wide posture as every 1Click
+  route today — `ONECLICK_FEE_RECIPIENT` ships empty (no
+  NEAR-form fee address for the DripBot wallet exists in
+  the pinned records; none was invented), so the charged
+  pass never runs. **The fee-echo finding (live re-probe
+  2026-11-17):** requesting an appFee of F bps now echoes
+  back a SINGLE `appFees` entry naming Fluid's recipient
+  at ceil(F/2) — the two-entry echo summing to F (the
+  2026-11-14 captures) is no longer returned on any origin
+  probed (Stellar, Base, NEAR all behave the same). Per
+  1Click's fee-config docs the requested fee is split
+  50/50 with 1Click (its half floored at 20 bps, 1 bp for
+  the stable class), so Fluid's predicted NET (the
+  transform's `expectedFluidBps` = F/2) matches the echoed
+  entry exactly — but the echo no longer proves the TOTAL
+  was charged, so the shipped verifier
+  (`verifyOneClickFeeEcho`, which requires the two-entry
+  total) fails it and the two-pass search falls back to
+  the fee-free quote: fail-safe, never an unverified
+  charge. Re-proving the total (a fresh capture against a
+  configured recipient, or 1Click confirming the echo
+  contract) is the step that turns capture on for the
+  whole 1Click fleet at once.
 
 ## Aptos CCTP V2 — the native USDC crossing (audit gap #10, 2026-11-15)
 

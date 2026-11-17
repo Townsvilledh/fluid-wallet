@@ -122,7 +122,7 @@ import { AggregatorClient as CetusAggregatorClient, getAllProviders as cetusAllP
 import {
   Keypair as StellarKeypair, Account as StellarAccount,
   TransactionBuilder as StellarTxBuilder, Operation as StellarOperation,
-  Asset as StellarAsset, Networks as StellarNetworks,
+  Asset as StellarAsset, Networks as StellarNetworks, Memo as StellarMemo,
   Address as StellarAddress, scValToNative as stellarScValToNative,
 } from "@stellar/stellar-sdk/base";
 import {
@@ -4907,10 +4907,16 @@ function stellarParseAmount(amount) {
 /** Build, sign LOCALLY with the derived Stellar keypair, and submit a
  *  payment (or an account creation, when XLM goes to an unfunded
  *  address). `token` is null for native XLM, otherwise the row's
- *  {code, issuer}. Every Stellar rule — activation, trustlines,
- *  minimum reserve — is enforced here in code before signing, with a
- *  plain message, whatever the UI showed. Returns {hash}. */
-export async function sendStellar(phrase, { to, amount, token = null }) {
+ *  {code, issuer}. `memo` (optional, §150) rides as a TEXT memo —
+ *  the form 1Click's MEMO-mode deposits are matched by (real
+ *  deposits to the rail's pooled account carry the same value
+ *  as text and as id memos; the watcher matches the string) —
+ *  and a memo that cannot ride (over the network's 28-byte
+ *  text limit) refuses here, before signing. Every Stellar
+ *  rule — activation, trustlines, minimum reserve — is
+ *  enforced here in code before signing, with a plain
+ *  message, whatever the UI showed. Returns {hash}. */
+export async function sendStellar(phrase, { to, amount, token = null, memo = null }) {
   if (!isValidStellarAddress(to)) throw new Error("That is not a valid Stellar address (it starts with G).");
   const kp = stellarKeypair(phrase);
   const from = kp.publicKey();
@@ -4955,6 +4961,12 @@ export async function sendStellar(phrase, { to, amount, token = null }) {
     }
     tb.addOperation(StellarOperation.payment({ destination: to, asset: new StellarAsset(token.code, token.issuer), amount: stroopsToXlm(raw) }));
     if (senderXlm - fee < minBal) throw new Error(reserveMsg);
+  }
+  if (memo != null && String(memo) !== "") {
+    const m = String(memo);
+    if (new TextEncoder().encode(m).length > 28)
+      throw new Error("That memo is too long to attach to a Stellar payment (28 bytes at most) — nothing was sent.");
+    tb.addMemo(StellarMemo.text(m));
   }
   const tx = tb.setTimeout(120).build();
   tx.sign(kp);
@@ -9729,25 +9741,50 @@ export async function getRelaySwapRoute(args) {
  * is live, the fee is honestly zero, never assumed (the
  * Chainflip broker precedent, CHAINFLIP_BROKER_ACCOUNT).
  *
- * Stellar via 1Click (audit gap #9, 2026-11-15): the
- * re-probe overturned half of this section's original verdict
- * — INTO Stellar now quotes (USDC on Base $5 -> 34.9064438
- * XLM, $20 -> 142.9257757 XLM, ~52 s estimate, fixtures in
- * research_notes/fluid-stellar-soroswap-20261115/), so XLM is
- * wired as a DESTINATION below through the ordinary machinery
- * (the delivery needs no memo on Fluid's side — the solver
- * network pays the user's own Stellar address). Stellar as an
- * ORIGIN still refuses at the rail ("Quoting for this pair is
- * not available", even with depositMode=MEMO set correctly)
- * AND its deposits would need MEMO-mode deposits Fluid's
- * sendStellar cannot carry, so oneClickSupportsPair excludes
- * a Stellar origin explicitly: the pair is an honest
- * no-route, and the executor's memo guard below remains as
- * defence in depth. TON via 1Click stays NOT WIRED (quotes
- * fail; Relay remains TON's rail). If a quote for a wired
- * family ever returns a depositMemo its send cannot carry,
- * the executor refuses BEFORE broadcast with the reason
- * named — the guard is built now, ahead of the case existing.
+ * ECHO DRIFT (live re-probe 2026-11-17, §150): the API now
+ * echoes a charged request as a SINGLE appFees entry —
+ * Fluid's recipient at ceil(F/2) — on every origin probed
+ * (Stellar, Base, NEAR). The second entry itemising 1Click's
+ * half, present in the 2026-11-14 captures the echo verifier
+ * was built against, is no longer returned. The documented
+ * semantics are unchanged (a 50/50 split; 1Click's half
+ * floored at 20 bps, 1 bp for the stable class), and the
+ * transform's prediction of Fluid's NET still matches the
+ * echoed entry exactly — what the echo no longer proves is
+ * the TOTAL. verifyOneClickFeeEcho therefore fails charged
+ * quotes against today's echo shape and the two-pass search
+ * falls back to the fee-free quote: capture fails SAFE,
+ * never unverified. Collection stays off until the recipient
+ * config lands AND the echo is re-verified against it.
+ *
+ * Stellar via 1Click (audit gap #9, 2026-11-15; ORIGIN
+ * wired 2026-11-17, §150): INTO Stellar quotes through the
+ * ordinary machinery (USDC on Base $5 -> 34.9064438 XLM,
+ * ~52 s estimate, fixtures in
+ * research_notes/fluid-stellar-soroswap-20261115/; the
+ * delivery needs no memo on Fluid's side — the solver
+ * network pays the user's own Stellar address). The
+ * 2026-11-17 re-probe (research_notes/
+ * fluid-exit-research-20261117/) overturned the gap-#9
+ * origin refusal: the rail now accepts Stellar as an ORIGIN
+ * through HOT omni tokens, in MEMO deposit mode only
+ * (SIMPLE is refused: "Incorrect depositMode for
+ * originAsset from stellar chain"). A non-dry quote returns
+ * HOT's pooled deposit address plus a numeric depositMemo;
+ * the deposit is one ordinary Stellar payment carrying that
+ * memo as a TEXT memo — proven on-chain: real deposits to
+ * the pooled account carry the same memo value as text and
+ * as id memos, and the watcher matches the string. Fluid's
+ * sendStellar carries the memo (§150), the quote fetch
+ * treats a memo-less Stellar quote as no quote at all, and
+ * the executor refuses a memo-less Stellar route BEFORE
+ * signing — a memo-less deposit could never be matched.
+ * The catalogue carries exactly two Stellar assets (XLM,
+ * Circle USDC), both wired below. TON via 1Click stays NOT
+ * WIRED (quotes fail; Relay remains TON's rail). If a quote
+ * for any other wired family returns a depositMemo its send
+ * cannot carry, the executor refuses BEFORE broadcast with
+ * the reason named.
  *
  * FLOORS are read from the rail's own refusals (the FIX-B
  * rule): XRP carries a hard 2 XRP bridge floor the API states
@@ -9810,14 +9847,19 @@ const ONECLICK_ASSETS = [
   // research probe; both chains are transparent/native-only.
   { chainKey: "zcash", address: ZCASH_SWAP_NATIVE_TOKEN, asset: "nep141:zec.omft.near", symbol: "ZEC", decimals: 8, native: true },
   { chainKey: "dash", address: DASH_SWAP_NATIVE_TOKEN, asset: "nep141:dash.omft.near", symbol: "DASH", decimals: 8, native: true },
-  // Stellar (audit gap #9, 2026-11-15): DESTINATION ONLY —
-  // oneClickSupportsPair excludes a Stellar origin (see the
-  // header). The asset id is a nep245 HOT-omni id, NOT the
+  // Stellar (audit gap #9, 2026-11-15; origin wired
+  // 2026-11-17, §150): both directions — see the header. The
+  // asset ids are nep245 HOT-omni ids, NOT the
   // nep141:xlm.omft.near shape the other families use — read
-  // off 1Click's live token catalogue in the gap-#9 research
-  // probe and pinned by the live $5/$20 IN-quote fixtures;
-  // 7 decimals, like every classic Stellar asset.
+  // off 1Click's live token catalogue (2026-11-14 for XLM,
+  // re-read 2026-11-17: the catalogue carries EXACTLY these
+  // two Stellar assets) and pinned by live quote fixtures in
+  // both directions; 7 decimals, like every classic Stellar
+  // asset. The USDC row's swap-space address mirrors the
+  // balance rows exactly ("USDC:" + issuer, the
+  // STELLAR_SWAP_ASSETS form).
   { chainKey: "stellar", address: STELLAR_SWAP_NATIVE_TOKEN, asset: "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz", symbol: "XLM", decimals: 7, native: true },
+  { chainKey: "stellar", address: "USDC:" + STELLAR_USDC_ISSUER, asset: "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu", symbol: "USDC", decimals: 7, stable: true },
   { chainKey: "aptos", address: APTOS_SWAP_NATIVE_TOKEN, asset: "nep141:aptos.omft.near", symbol: "APT", decimals: 8, native: true },
   { chainKey: "aptos", address: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", asset: "nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near", symbol: "USDC", decimals: 6, stable: true },
   { chainKey: "aptos", address: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", asset: "nep141:aptos-88cb7619440a914fe6400149a12b443c3ac21d59.omft.near", symbol: "USDT", decimals: 6, stable: true },
@@ -9873,13 +9915,6 @@ export function oneClickSupportsPair(args) {
   const to = oneClickAssetFor(args.toChainKey, args.toTokenAddress);
   if (!from || !to) return null;
   if (from.asset === to.asset) return null;
-  // Stellar is DESTINATION-ONLY on this rail (audit gap #9,
-  // 2026-11-15): the rail refuses Stellar-origin quotes
-  // outright, and its deposits would need a MEMO Fluid's
-  // sendStellar cannot carry — so a Stellar origin is no
-  // pair at all here, an honest no-route rather than a quote
-  // that can only fail at execution.
-  if (from.chainKey === "stellar") return null;
   return { from, to };
 }
 /** The exact inverse of 1Click's measured fee split (probe
@@ -9923,17 +9958,19 @@ export function verifyOneClickFeeEcho(quoteJson, expected, recipient) {
   return { ok: total === expected.expectedTotalBps && fluid === expected.expectedFluidBps, totalBps: total, fluidBps: fluid };
 }
 /** The quote request body (probe notes §2): EXACT_INPUT,
- *  SIMPLE deposit mode (every wired family's mode — XRPL is
- *  SIMPLE by the API's own table, the UTXO families and NEAR
- *  and Aptos default to it; Stellar's MEMO mode is exactly
- *  why Stellar is not wired), refund and payout both on their
+ *  SIMPLE deposit mode for every wired family but one (XRPL
+ *  is SIMPLE by the API's own table, the UTXO families and
+ *  NEAR and Aptos default to it) — a STELLAR origin is
+ *  MEMO-mode only (§150: SIMPLE is refused for a Stellar
+ *  origin asset, and the returned depositMemo is the
+ *  deposit's identity), refund and payout both on their
  *  own chains, the deadline requested at +2h (the API returns
  *  its own ~3-day window — the RETURNED deadline is what the
  *  route and record carry, never the requested one). */
 export function buildOneClickQuoteBody({ fromEntry, toEntry, amountRaw, refundTo, recipient, feeRequest = null, feeRecipient = null, nowMs = Date.now() }) {
   const body = {
     dry: false,
-    depositMode: "SIMPLE",
+    depositMode: fromEntry?.chainKey === "stellar" ? "MEMO" : "SIMPLE",
     swapType: "EXACT_INPUT",
     slippageTolerance: 100,
     originAsset: fromEntry.asset,
@@ -9988,6 +10025,13 @@ async function fetchOneClickQuote(ctx, { feeRequest = null, feeRecipient = null,
   if (!q || typeof q.depositAddress !== "string" || !q.depositAddress
     || String(q.amountIn ?? "") !== String(ctx.amountRaw)
     || !Number.isFinite(Date.parse(q.deadline || ""))) return null;
+  // A Stellar-origin deposit is MEMO-mode (§150): the memo
+  // is the deposit's identity at HOT's pooled deposit
+  // account, so a Stellar quote without one can never be
+  // matched to the swap — it is no quote at all. Fail closed
+  // here; the executor refuses the same shape again before
+  // signing, so a memo-less Stellar deposit is never sent.
+  if (ctx.fromEntry.chainKey === "stellar" && !(typeof q.depositMemo === "string" && q.depositMemo)) return null;
   return data;
 }
 /** Parse a quote response into the common route shape. The
@@ -10290,6 +10334,7 @@ function oneClickDepositAddressOk(chainKey, address) {
     case "aptos": return isValidAptosAddress(address);
     case "bitcoin": return isValidBitcoinAddress(address);
     case "solana": return isValidSolanaAddress(address);
+    case "stellar": return isValidStellarAddress(address);
     case "tron": return isValidTronAddress(address);
     case "sui": { try { return !!normalizeSuiAddress(address); } catch { return false; } }
     default: return NETWORKS[chainKey] ? /^0x[0-9a-fA-F]{40}$/.test(address) : false;
@@ -10305,6 +10350,9 @@ function oneClickDepositToken(entry) {
   if (entry.chainKey === "solana") { const t = byAddress(SOLANA_TOKENS); return t ? { address: entry.address, decimals: entry.decimals, symbol: entry.symbol, ...(t.program ? { program: t.program } : {}) } : { address: entry.address, decimals: entry.decimals, symbol: entry.symbol }; }
   if (entry.chainKey === "sui") return byAddress(SUI_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
   if (entry.chainKey === "tron") return byAddress(TRON_TOKENS) || { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
+  // Stellar: sendStellar's token is the classic {code,
+  // issuer} pair behind the swap-table entry (§150).
+  if (entry.chainKey === "stellar") { const s = stellarSwapAssetFor(entry.address); return s ? { code: s.code, issuer: s.issuer } : { address: entry.address, decimals: entry.decimals, symbol: entry.symbol }; }
   return { address: entry.address, decimals: entry.decimals, symbol: entry.symbol };
 }
 /** The default deposit leg: a PLAIN TRANSFER of exactly the
@@ -10313,13 +10361,18 @@ function oneClickDepositToken(entry) {
  *  use, with the same local signing. NEAR's deposit is native
  *  NEAR even though the quoted asset is wrap.near (the intents
  *  side wraps it; a wNEAR pick instead sends the FT itself). */
-async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTag = null }) {
+async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTag = null, memo = null }) {
   const phrase = wallet?.mnemonic?.phrase || (typeof wallet === "string" ? wallet : null);
   const human = swapRawToAmount(String(amountRaw), entry.decimals);
   const token = oneClickDepositToken(entry);
   const hashOf = (r) => typeof r === "string" ? r : (r?.hash || r?.txid || null);
   switch (entry.chainKey) {
     case "near": return hashOf(await sendNear(phrase, { to, amount: human, token }));
+    // Stellar (§150): the deposit is an ordinary Stellar
+    // payment to the quote's deposit address CARRYING THE
+    // QUOTE'S MEMO — the executor has already verified the
+    // memo exists and matches the route before this runs.
+    case "stellar": return hashOf(await sendStellar(phrase, { to, amount: human, token, memo }));
     case "xrpl": return hashOf(await sendXrpl(phrase, { to, amount: human, token: null, destinationTag }));
     case "litecoin": return hashOf(await sendLitecoin(phrase, { to, amountLtc: Number(human) }));
     case "dogecoin": return hashOf(await sendDogecoin(phrase, { to, amountDoge: Number(human) }));
@@ -10357,12 +10410,16 @@ async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTa
  *  Fluid executor — the gate re-runs, the route's asset must
  *  still be the table's asset, the deposit address must pass
  *  the family's own validation, the amount must round-trip
- *  exactly through the family's decimals, and a depositMemo
- *  the family's send cannot carry refuses BEFORE anything is
- *  sent (an XRPL numeric memo is the one carriable case: it
- *  rides as the destination tag, and is persisted on the
- *  record for the status reads). The record is saved BEFORE
- *  the send; the history hook fires at the deposit broadcast. */
+ *  exactly through the family's decimals, and the deposit
+ *  instructions are verified against the quote immediately
+ *  before signing: a Stellar route (§150) MUST carry its
+ *  quote's memo — a memo-less Stellar deposit can never be
+ *  matched, so its absence refuses here, before anything is
+ *  sent — an XRPL numeric memo rides as the destination tag,
+ *  and any other family's memo refuses the same way. The
+ *  memo is persisted on the record for the status reads. The
+ *  record is saved BEFORE the send; the history hook fires
+ *  at the deposit broadcast. */
 export async function executeOneClickSwapRoute(wallet, route, onProgress = () => {}, { storage = null, sendImpl = null, submitImpl = null, onDeposit = null } = {}) {
   const gate = swapRouteExecutable(route);
   if (!gate.ok) throw new Error(gate.reason || "That route can't be executed — search again and pick another route.");
@@ -10370,8 +10427,12 @@ export async function executeOneClickSwapRoute(wallet, route, onProgress = () =>
   const entry = oneClickAssetFor(route.fromChainKey, route.fromToken?.address);
   if (!entry || entry.asset !== oc.originAsset)
     throw new Error("That route's asset no longer matches 1Click's table — search again, nothing was sent.");
-  let destinationTag = null;
-  if (oc.depositMemo) {
+  let destinationTag = null, depositMemo = null;
+  if (route.fromChainKey === "stellar") {
+    if (!(typeof oc.depositMemo === "string" && oc.depositMemo))
+      throw new Error("1Click quoted this Stellar swap without a deposit memo — a Stellar deposit without its memo can't be matched to your swap, so Fluid refused before anything was sent. Nothing was sent; search again.");
+    depositMemo = String(oc.depositMemo);
+  } else if (oc.depositMemo) {
     if (route.fromChainKey === "xrpl" && /^\d+$/.test(String(oc.depositMemo)) && Number(oc.depositMemo) <= 4294967295) {
       destinationTag = Number(oc.depositMemo);
     } else {
@@ -10414,7 +10475,7 @@ export async function executeOneClickSwapRoute(wallet, route, onProgress = () =>
   if (storage) saveOneClickSwapRecord(storage, record);
   onProgress(`Sending exactly ${human} ${entry.symbol} to 1Click's deposit address…`);
   const send = sendImpl || oneClickDepositSend;
-  const sent = await send(wallet, { entry, chainKey: route.fromChainKey, to: oc.depositAddress, amountRaw: String(route.fromAmount), amountHuman: human, token: oneClickDepositToken(entry), destinationTag });
+  const sent = await send(wallet, { entry, chainKey: route.fromChainKey, to: oc.depositAddress, amountRaw: String(route.fromAmount), amountHuman: human, token: oneClickDepositToken(entry), destinationTag, memo: depositMemo });
   const hash = typeof sent === "string" ? sent : (sent?.hash || sent?.txid || null);
   if (!hash) throw new Error(`The deposit send returned no transaction hash — check your ${destChainName(route.fromChainKey)} wallet before retrying; the swap record keeps watching the deposit address.`);
   record.depositTxHash = hash;
@@ -27273,13 +27334,17 @@ export async function assertSwapTokensNotScam(args, opts = {}) {
  * offer a swap route INTO a family it cannot swap back OUT
  * of — a user who swaps value in and finds no swap path
  * back has been trapped; their only exit would be a plain
- * send to an external wallet. Today the trap is real on
- * exactly two families (pair-matrix sweep,
+ * send to an external wallet. The trap was real on exactly
+ * two families (pair-matrix sweep,
  * research_notes/fluid-oneway-sweep-20261117/): Stellar
- * (1Click quotes IN; a Stellar origin is refused by the
- * rail and Soroswap is intra-only and config-gated off) and
- * Polkadot (Chainflip executes IN; DOT-out is quoting-only
- * until Fluid's Chainflip broker is live).
+ * (1Click quoted IN; no executable route out) and Polkadot
+ * (Chainflip executes IN; DOT-out is quoting-only until
+ * Fluid's Chainflip broker is live). Stellar's exit shipped
+ * on 2026-11-17 (§150: 1Click takes a Stellar origin in
+ * MEMO deposit mode), so this derivation now finds Stellar's
+ * exit on its own and its inbound routes are offered again
+ * — no gate edit, exactly as designed. Polkadot remains
+ * closed until its exit wires.
  *
  * The gate is DATA-DRIVEN, never a hand-maintained family
  * list: a family "has an exit" when the planner's OWN pair
@@ -28499,6 +28564,11 @@ export function swapRouteExecutable(route) {
     const dl = Date.parse(oc.deadline || "");
     if (!Number.isFinite(dl) || dl <= Date.now()) return { ok: false, reason: "This 1Click quote has expired — search again for a fresh one." };
     if (!oc.refundTo || !oc.recipient) return { ok: false, reason: incomplete };
+    // A Stellar-origin route is a MEMO deposit (§150):
+    // without the quote's memo the deposit can never be
+    // matched, so the route is incomplete by construction.
+    if (route.fromChainKey === "stellar" && !(typeof oc.depositMemo === "string" && oc.depositMemo))
+      return { ok: false, reason: "This 1Click route is missing its Stellar deposit memo — pick another route." };
     if (route.platformFeeCollecting && oc.feeVerified !== true)
       return { ok: false, reason: "This 1Click route's fee could not be verified against its quote — pick another route." };
     return { ok: true, oneclick: true };

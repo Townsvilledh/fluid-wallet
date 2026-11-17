@@ -17266,10 +17266,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // Planner coverage: the table, the hub grammar, and
   // composition through the milestone search.
   {
-    ok("oneclick planner: the table serves the six families both ways and refuses Stellar, TON and same-asset pairs",
+    ok("oneclick planner: the table serves the six families both ways and refuses TON and same-asset pairs (a Stellar origin is served since §150 — its own pins carry it)",
       !!oneClickSupportsPair({ fromChainKey: "near", toChainKey: "base", fromTokenAddress: "near", toTokenAddress: USDC_BASE_117 })
       && !!oneClickSupportsPair({ fromChainKey: "base", toChainKey: "aptos", fromTokenAddress: USDC_BASE_117, toTokenAddress: "apt" })
-      && !oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: USDC_BASE_117 })
+      && !!oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: USDC_BASE_117 })
       && !oneClickSupportsPair({ fromChainKey: "ton", toChainKey: "base", fromTokenAddress: "gram", toTokenAddress: USDC_BASE_117 })
       && !oneClickSupportsPair({ fromChainKey: "near", toChainKey: "near", fromTokenAddress: "near", toTokenAddress: "wrap.near" }));
     ok("oneclick planner: NEAR and Aptos join the hub grammar; XRPL, LTC, DOGE and BCH honestly have no hub token",
@@ -19963,16 +19963,18 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
 
   // 1Click Stellar-IN (live-capture fixtures): XLM is a
-  // destination through the ordinary machinery; a Stellar
-  // ORIGIN is excluded structurally, and the rail's own
-  // refusal fixture reads as no-route.
+  // destination through the ordinary machinery. (A Stellar
+  // ORIGIN was excluded structurally at gap #9; the rail
+  // began accepting one in MEMO mode and §150 wired it —
+  // the origin pins live there. The rail's old refusal
+  // fixture still reads as no-route wherever it surfaces.)
   const ocIn5129 = fixture129("oneclick-usdc5-stellar-in.json");
   const ocIn20129 = fixture129("oneclick-usdc20-stellar-in.json");
-  ok("gap9 1click: the asset row is the catalogue's nep245 XLM id at 7 decimals, destination-only",
+  ok("gap9 1click: the asset row is the catalogue's nep245 XLM id at 7 decimals, and the pair serves both directions (the origin since §150)",
     oneClickAssetFor("stellar", "xlm")?.asset === "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz"
     && oneClickAssetFor("stellar", "xlm")?.decimals === 7
     && !!oneClickSupportsPair({ fromChainKey: "base", fromTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", toChainKey: "stellar", toTokenAddress: "xlm" })
-    && oneClickSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }) === null);
+    && !!oneClickSupportsPair({ fromChainKey: "stellar", fromTokenAddress: "xlm", toChainKey: "base", toTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }));
   ok("gap9 1click parse (live captures): $5 -> 34.9064438 XLM and $20 -> 142.9257757 XLM at the API's 52 s estimate",
     (() => { const ctx = { fromEntry: oneClickAssetFor("base", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), toEntry: oneClickAssetFor("stellar", "xlm"), amountRaw: "5000000", refundTo: "0x1111111111111111111111111111111111111111", recipient: OWNER129 };
       const r5 = parseOneClickQuote(ocIn5129, ctx, { collecting: false });
@@ -22734,11 +22736,15 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
 // reopens the family's inbound routes with no gate edit.
 // The pair-matrix sweep
 // (research_notes/fluid-oneway-sweep-20261117/) confirms the
-// offered-inbound-without-exit set is exactly {Stellar,
+// offered-inbound-without-exit set was exactly {Stellar,
 // Polkadot}; the wider closed set below is families whose
 // inbound was never offered at all (presence-only /
 // intra-only chains) — the gate covers them by construction
 // so a future inbound rail cannot open a trap there either.
+// STELLAR'S EXIT SHIPPED the same day (§150): the pins
+// below now carry Polkadot as the remaining offered trap,
+// and §150 proves the gate lifted Stellar from coverage
+// alone — no gate edit was made for it.
 {
   const { swapFamilyHasExecutableExit, swapInboundClosedFamilies, swapInboundGate, swapInboundPaused,
     swapFamilyProbeAssets, chainflipDirectionExecutable, oneClickSupportsPair, getSwapRoutes, getSwapRoutesDirect,
@@ -22749,9 +22755,9 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     BSC_USDT149 = "0x55d398326f99059fF775485246999027B3197955", DOT_ADDR149 = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo";
 
   // --- the derivation: exits read off the planner's own coverage ---
-  ok("§149: Stellar and Polkadot have NO executable exit — 1Click refuses a Stellar origin in its own predicate, and Chainflip's out direction is quotable but not executable",
-    swapFamilyHasExecutableExit("stellar") === false && swapFamilyHasExecutableExit("polkadot") === false
-    && oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC149 }) === null
+  ok("§149: Polkadot has NO executable exit — Chainflip's out direction is quotable but not executable; Stellar's exit is wired (§150), so the same derivation now finds one",
+    swapFamilyHasExecutableExit("polkadot") === false && swapFamilyHasExecutableExit("stellar") === true
+    && oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC149 }) !== null
     && oneClickSupportsPair({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm" }) !== null
     && chainflipDirectionExecutable("in") === true && chainflipDirectionExecutable("out") === false);
   ok("§149: the families users swap between all keep their exits (the gate closes nothing that was ever a two-way family)",
@@ -22760,12 +22766,12 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       .every(k => swapFamilyHasExecutableExit(k) === true));
   ok("§149: Cardano is NOT closed — both 1Click directions are wired; its broadcast doubt is environmental, and the gate is coverage-driven, not doubt-driven",
     swapFamilyHasExecutableExit("cardano") === true && swapInboundPaused("cardano") === false);
-  ok("§149: the closed set is exactly the no-exit families — the two offered traps plus the presence/intra-only chains whose inbound was never offered",
+  ok("§149: the closed set is exactly the no-exit families — Polkadot plus the presence/intra-only chains whose inbound was never offered (Stellar left the set when its exit shipped, §150)",
     JSON.stringify([...swapInboundClosedFamilies()].sort()) === JSON.stringify(
       ["algorand", "aurora", "b2", "bitlayer", "core", "cronoszkevm", "flare", "filecoin", "fuse", "hedera",
-       "injectiveevm", "kaia", "kava", "moonriver", "polkadot", "rootstock", "seievm", "stacks", "stellar",
+       "injectiveevm", "kaia", "kava", "moonriver", "polkadot", "rootstock", "seievm", "stacks",
        "tac", "taiko", "tezos"].sort())
-    && swapInboundClosedFamilies().length === 22
+    && swapInboundClosedFamilies().length === 21
     && ["stellar", "polkadot", "base", "bitcoin", "cosmoshub", "tezos"].every(k => SWAP_FAMILY_KEYS.includes(k)));
   ok("§149: probe assets are the family's own canonical liquid assets, read from its pinned tables",
     swapFamilyProbeAssets("stellar").includes("xlm") && swapFamilyProbeAssets("polkadot").includes("dot")
@@ -22773,25 +22779,24 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && swapFamilyProbeAssets("base").includes(BASE_USDC149));
 
   // --- the gate function ---
-  ok("§149: the gate fires cross-family into a no-exit family, and only there — intra-family and exit-family searches are untouched",
-    swapInboundGate({ fromChainKey: "base", toChainKey: "stellar" })?.destChainKey === "stellar"
+  ok("§149: the gate fires cross-family into a no-exit family, and only there — intra-family and exit-family searches are untouched (Stellar is an exit family since §150)",
+    swapInboundGate({ fromChainKey: "base", toChainKey: "stellar" }) === null
     && swapInboundGate({ fromChainKey: "bsc", toChainKey: "polkadot" })?.destChainKey === "polkadot"
     && swapInboundGate({ fromChainKey: "base", toChainKey: "arbitrum" }) === null
     && swapInboundGate({ fromChainKey: "stellar", toChainKey: "stellar" }) === null
     && swapInboundGate({ fromChainKey: "bsc", toChainKey: "bsc" }) === null
-    && swapInboundPaused("stellar") === true && swapInboundPaused("polkadot") === true && swapInboundPaused("base") === false);
+    && swapInboundPaused("stellar") === false && swapInboundPaused("polkadot") === true && swapInboundPaused("base") === false);
 
   // --- (a) production path: a route into a no-exit family is never offered ---
   const realFetch149 = globalThis.fetch;
   try {
     const seen149 = [];
     globalThis.fetch = async (url) => { seen149.push(String(url)); throw new Error("no network in the §149 gate pin"); };
-    const stellarIn = await getSwapRoutes({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM149, toAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
     const dotInDirect = await getSwapRoutesDirect({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
     const dotIn = await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
-    ok("§149: production searches into Stellar and Polkadot return the honest empty — and no rail is ever quoted for a gated destination (no 1Click, no Chainflip call)",
-      stellarIn.length === 0 && dotInDirect.length === 0 && dotIn.length === 0
-      && !seen149.some(u => u.includes("1click")) && !seen149.some(u => u.includes("chainflip")));
+    ok("§149: production searches into Polkadot return the honest empty — and no rail is ever quoted for a gated destination (no Chainflip call)",
+      dotInDirect.length === 0 && dotIn.length === 0
+      && !seen149.some(u => u.includes("chainflip")));
   } finally { globalThis.fetch = realFetch149; }
 
   // --- (b) production path: a route into a family WITH an exit is offered exactly as before ---
@@ -22829,18 +22834,16 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   // --- (c) the paused copy: diagnosis verdict, message, sheet + token page wiring ---
   let probeCalls149 = 0;
   const vPaused = await diagnoseNoRouteSwap(
-    { fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM149, toAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
-    { fromDecimals: 6, fromPriceUsd: 1, search: async () => { probeCalls149++; return []; } });
-  const msgPaused = formatSwapNoRouteMessage({ fromSymbol: "USDC", toSymbol: "XLM", verdict: vPaused, destName: "Stellar" });
+    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 },
+    { fromDecimals: 18, fromPriceUsd: null, search: async () => { probeCalls149++; return []; } });
+  const msgPaused = formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", verdict: vPaused, destName: "Polkadot" });
   ok("§149: a gated pair diagnoses as inbound-paused with NO probe ladder spent — the gate's verdict, not an unconnected-pair label",
     vPaused.kind === "inbound-paused" && probeCalls149 === 0
-    && msgPaused.startsWith("Swaps into Stellar are paused in Fluid")
-    && msgPaused.includes("can't swap back out of Stellar yet")
-    && msgPaused.includes("hold, send and receive XLM as normal")
+    && msgPaused.startsWith("Swaps into Polkadot are paused in Fluid")
+    && msgPaused.includes("can't swap back out of Polkadot yet")
+    && msgPaused.includes("hold, send and receive DOT as normal")
     && !msgPaused.includes("isn't connected yet"));
-  const vDotPaused = await diagnoseNoRouteSwap(
-    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 },
-    { fromDecimals: 18, fromPriceUsd: null, search: async () => [] });
+  const vDotPaused = vPaused;
   ok("§149: a DOT-in search diagnoses as inbound-paused too (no rail floor on the error — the gate's own verdict)",
     vDotPaused.kind === "inbound-paused");
   ok("§149 app: the sheet carries the standing pause line beside the Arkade warning, synced on open / network pick / flip, and the diagnosis renders with the destination's own name",
@@ -22849,6 +22852,192 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && app149.includes("destName: swapChainName(toKey)"));
   ok("§149 app: the token page states the pause on a no-exit family's own page — the destination's other swap entry point — while its Swap button stays (outbound attempts get the honest search)",
     app149.includes("swapInboundPaused(pk)") && app149.includes("Swaps into ${esc(d.chainLabel)} are paused in Fluid"));
+}
+
+// §150 — STELLAR-OUT VIA 1CLICK (2026-11-17). The rail
+// began accepting Stellar as an ORIGIN (HOT omni tokens,
+// MEMO deposit mode only — research_notes/
+// fluid-exit-research-20261117/, live probes 2026-11-17):
+// a non-dry quote returns HOT's pooled deposit address and
+// a numeric depositMemo, and the deposit is one ordinary
+// Stellar payment carrying that memo as a TEXT memo (real
+// deposits to the pooled account carry the same value as
+// text and as id memos — the watcher matches the string).
+// Wiring it flips oneClickSupportsPair's coverage, and the
+// §149 gate — unedited — lifts Stellar from that alone.
+// Fixtures are LIVE captures of 2026-11-17 (the XLM-out and
+// USDC-out quotes, and a charged quote whose echo pins the
+// fee semantics below).
+{
+  const { oneClickAssetFor, oneClickSupportsPair, buildOneClickQuoteBody, getOneClickSwapRoute,
+    getSwapRoutes, getSwapRoutesDirect, executeOneClickSwapRoute, swapRouteExecutable,
+    verifyOneClickFeeEcho, oneClickFeeRequest, swapInboundGate, diagnoseNoRouteSwap,
+    stellarAddressFromPhrase, sendStellar, loadOneClickSwapRecords,
+    STELLAR_USDC_ISSUER } = await import("../src/wallet-core.js");
+  const fixture150 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const clone150 = (x) => JSON.parse(JSON.stringify(x));
+  const jsonRes150 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const memStorage150 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+  const ABANDON150 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const STELLAR_OWN150 = stellarAddressFromPhrase(ABANDON150);
+  const EVM150 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const BASE_USDC150 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const SUSDC150 = "USDC:" + STELLAR_USDC_ISSUER;
+  const FEE_RECIPIENT150 = "0123456789abcdef".repeat(4);
+  const fxOut = fixture150("oneclick-xlm-out-nofee.json");
+  const fxUsdcOut = fixture150("oneclick-usdc-stellar-out-nofee.json");
+  const fxOutFee = fixture150("oneclick-xlm-out-fee50.json");
+  const fxIn = fixture150("oneclick-usdc5-stellar-in.json");
+  // The executor refuses expired quotes, so the served
+  // copies carry a fresh deadline (the captures' own
+  // deadlines were ~3 days from capture, the API's window).
+  const freshFx = (fx) => { const c = clone150(fx); c.quote.deadline = new Date(Date.now() + 864e5).toISOString(); return c; };
+
+  // --- the table: exactly the catalogue's two Stellar assets, both directions ---
+  ok("§150: the 1Click table carries exactly the catalogue's two Stellar assets — XLM and Circle USDC (nep245 ids, 7 decimals, USDC in the stable class)",
+    oneClickAssetFor("stellar", "xlm")?.asset === "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz"
+    && oneClickAssetFor("stellar", SUSDC150)?.asset === "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu"
+    && oneClickAssetFor("stellar", SUSDC150)?.decimals === 7 && oneClickAssetFor("stellar", SUSDC150)?.stable === true);
+  ok("§150: Stellar-origin pairs are served — XLM and Stellar USDC out to Base USDC, XLM out to Bitcoin",
+    !!oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150 })
+    && !!oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: SUSDC150, toTokenAddress: BASE_USDC150 })
+    && !!oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "bitcoin", fromTokenAddress: "xlm", toTokenAddress: "btc" }));
+
+  // --- (e) control + quote mode: Stellar origins request MEMO, everyone else SIMPLE as before ---
+  ok("§150: a Stellar-origin quote body requests MEMO deposit mode; a NEAR-origin body requests SIMPLE exactly as before (the control is unchanged)",
+    buildOneClickQuoteBody({ fromEntry: oneClickAssetFor("stellar", "xlm"), toEntry: oneClickAssetFor("base", BASE_USDC150), amountRaw: "1000000000", refundTo: STELLAR_OWN150, recipient: EVM150 }).depositMode === "MEMO"
+    && buildOneClickQuoteBody({ fromEntry: oneClickAssetFor("near", "near"), toEntry: oneClickAssetFor("base", BASE_USDC150), amountRaw: "1000000000000000000000000", refundTo: FEE_RECIPIENT150, recipient: EVM150 }).depositMode === "SIMPLE"
+    && !!oneClickSupportsPair({ fromChainKey: "near", toChainKey: "base", fromTokenAddress: "near", toTokenAddress: BASE_USDC150 }));
+
+  // --- (a) Stellar-origin routes are offered by the production planner path ---
+  const realFetch150 = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("1click.chaindefuser.com")) {
+        const body = JSON.parse(init.body);
+        if (body.originAsset === oneClickAssetFor("stellar", "xlm").asset) return jsonRes150(freshFx(fxOut));
+        if (body.originAsset === oneClickAssetFor("stellar", SUSDC150).asset) return jsonRes150(freshFx(fxUsdcOut));
+        return jsonRes150({ message: "Quoting for this pair is not available" }, false, 400);
+      }
+      throw new Error("no network in the §150 planner pin");
+    };
+    const outXlm = await getSwapRoutesDirect({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 });
+    const ocXlm = outXlm.find(r => r.provider === "oneclick");
+    ok("§150: the production search offers XLM -> USDC(Base) as a 1Click route carrying the quote's deposit address and memo",
+      !!ocXlm && ocXlm.fromChainKey === "stellar" && ocXlm.oneclick.depositAddress === fxOut.quote.depositAddress
+      && ocXlm.oneclick.depositMemo === fxOut.quote.depositMemo && ocXlm.toAmount === fxOut.quote.amountOut);
+    const outUsdc = await getSwapRoutesDirect({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: SUSDC150, toTokenAddress: BASE_USDC150, fromAmount: "20000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 });
+    const ocUsdc = outUsdc.find(r => r.provider === "oneclick");
+    ok("§150: the production search offers Stellar USDC -> USDC(Base) the same way (the stable-class crossing)",
+      !!ocUsdc && ocUsdc.oneclick.depositMemo === fxUsdcOut.quote.depositMemo && ocUsdc.toAmount === fxUsdcOut.quote.amountOut);
+  } finally { globalThis.fetch = realFetch150; }
+
+  // --- (b) the §149 gate lifts Stellar from coverage alone ---
+  const fxInLive150 = freshFx(fxIn); fxInLive150.quote.depositAddress = "0x1111111111111111111111111111111111111111";
+  try {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("1click.chaindefuser.com")) {
+        const body = JSON.parse(init.body);
+        if (body.destinationAsset === oneClickAssetFor("stellar", "xlm").asset && body.originAsset === oneClickAssetFor("base", BASE_USDC150).asset)
+          return jsonRes150(fxInLive150);
+        return jsonRes150({ message: "Quoting for this pair is not available" }, false, 400);
+      }
+      throw new Error("no network in the §150 gate-lift pin");
+    };
+    // (The served fixture above is the dry IN capture plus
+    // the deposit field a live non-dry answer returns.)
+    const inRoutes = await getSwapRoutesDirect({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC150, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM150, toAddress: STELLAR_OWN150 });
+    ok("§150: Stellar-IN forms a route search again — Base USDC -> XLM returns the 1Click route, not the §149 paused empty",
+      inRoutes.some(r => r.provider === "oneclick" && r.toChainKey === "stellar") && swapInboundGate({ fromChainKey: "base", toChainKey: "stellar" }) === null);
+    const vIn = await diagnoseNoRouteSwap(
+      { fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC150, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM150, toAddress: STELLAR_OWN150 },
+      { fromDecimals: 6, fromPriceUsd: 1, search: async () => [] });
+    ok("§150: a Stellar-in search no longer diagnoses as inbound-paused (Polkadot still does — §149 carries it)",
+      vIn.kind !== "inbound-paused");
+  } finally { globalThis.fetch = realFetch150; }
+
+  // --- (c) memo-less deposit instructions fail closed, at quote time and at execution ---
+  {
+    const noMemoFx = freshFx(fxOut); delete noMemoFx.quote.depositMemo;
+    const rNone = await getOneClickSwapRoute(
+      { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
+      { fetchImpl: async () => jsonRes150(noMemoFx) });
+    ok("§150: a Stellar-origin quote WITHOUT a deposit memo is no quote at all — the route search returns nothing",
+      rNone === null);
+    const route = await getOneClickSwapRoute(
+      { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
+      { fetchImpl: async () => jsonRes150(freshFx(fxOut)) });
+    const storage150 = memStorage150();
+    let sentArgs = null;
+    const exec = await executeOneClickSwapRoute({ mnemonic: { phrase: ABANDON150 } }, route, () => {}, {
+      storage: storage150,
+      sendImpl: async (w, a) => { sentArgs = a; return { hash: "150hash" }; },
+      submitImpl: async () => true,
+    });
+    ok("§150: execution sends the deposit to the quote's address, for the quote's amount, CARRYING THE QUOTE'S MEMO — and the record persists the memo for the status reads",
+      exec.hashes[0] === "150hash" && sentArgs.to === fxOut.quote.depositAddress && sentArgs.memo === fxOut.quote.depositMemo
+      && String(sentArgs.amountRaw) === "1000000000"
+      && loadOneClickSwapRecords(storage150)[0]?.depositMemo === fxOut.quote.depositMemo);
+    const routeNoMemo = clone150(route); routeNoMemo.oneclick = { ...route.oneclick, depositMemo: null };
+    let sendCalled = false, threw150 = null;
+    try {
+      await executeOneClickSwapRoute({ mnemonic: { phrase: ABANDON150 } }, routeNoMemo, () => {}, {
+        storage: memStorage150(),
+        sendImpl: async () => { sendCalled = true; return { hash: "x" }; },
+        submitImpl: async () => true,
+      });
+    } catch (e) { threw150 = e; }
+    ok("§150: a Stellar route whose memo is stripped refuses BEFORE anything is sent — the gate and the executor both fail it closed",
+      swapRouteExecutable(routeNoMemo).ok === false && !!threw150 && /memo/i.test(threw150.message) && sendCalled === false);
+  }
+
+  // --- sendStellar carries the memo as a TEXT memo (Horizon stubbed) ---
+  try {
+    let submitted = null;
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("/transactions") && init?.method === "POST") { submitted = init.body; return jsonRes150({ hash: "150stellarhash" }); }
+      if (u.includes("/fee_stats")) return jsonRes150({ fee_charged: { p50: "100" } });
+      if (u.includes("/accounts/")) return jsonRes150({ account_id: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", sequence: "123", subentry_count: 0, balances: [{ asset_type: "native", balance: "100.0000000" }] });
+      throw new Error("unexpected url in the §150 sendStellar pin: " + u);
+    };
+    const sent = await sendStellar(ABANDON150, { to: fxOut.quote.depositAddress, amount: "50", memo: fxOut.quote.depositMemo });
+    const envelope = Buffer.from(decodeURIComponent(String(submitted).slice(3)), "base64");
+    ok("§150: sendStellar attaches the quote's memo as a TEXT memo — the memo's ASCII bytes ride in the signed envelope (an id memo would encode as binary)",
+      sent.hash === "150stellarhash" && envelope.includes(Buffer.from(fxOut.quote.depositMemo, "ascii")));
+    let threwLong = null;
+    try { await sendStellar(ABANDON150, { to: fxOut.quote.depositAddress, amount: "50", memo: "x".repeat(29) }); } catch (e) { threwLong = e; }
+    ok("§150: a memo over Stellar's 28-byte text limit refuses in sendStellar, before signing",
+      !!threwLong && /too long/.test(threwLong.message));
+  } finally { globalThis.fetch = realFetch150; }
+
+  // --- (d) the fee echo, pinned as established live on 2026-11-17 ---
+  ok("§150: the live charged echo is a SINGLE appFees entry — Fluid's recipient at ceil(F/2) for a fee=50 request (the two-entry echo of the 2026-11-14 captures is no longer returned, on any origin probed)",
+    JSON.stringify(fxOutFee.quoteRequest.appFees) === JSON.stringify([{ recipient: FEE_RECIPIENT150, fee: 25 }])
+    && oneClickFeeRequest(50).expectedFluidBps === 25);
+  {
+    const v = verifyOneClickFeeEcho(fxOutFee, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT150);
+    ok("§150: Fluid's predicted NET matches the echoed entry exactly (25 of 50) — but the echo no longer proves the TOTAL, so the shipped verifier fails it and capture falls back fee-free, never unverified",
+      v.fluidBps === 25 && v.ok === false);
+    const bodies150 = [];
+    const twoPass150 = async (url, opts) => {
+      const b = JSON.parse(opts.body); bodies150.push(b);
+      return jsonRes150(Array.isArray(b.appFees) && b.appFees.length ? freshFx(fxOutFee) : freshFx(fxOut));
+    };
+    const charged = await getOneClickSwapRoute(
+      { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
+      { feeRecipient: FEE_RECIPIENT150, fetchImpl: twoPass150 });
+    ok("§150: with a recipient configured, a Stellar-origin route still ships collecting=false on today's echo — the fee-free quote stands (ONECLICK_FEE_RECIPIENT also ships empty, so the charged pass does not run in production at all)",
+      !!charged && charged.platformFeeCollecting === false && charged.oneclick.feeVerified === false);
+    let calls150 = 0;
+    const free = await getOneClickSwapRoute(
+      { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
+      { fetchImpl: async () => { calls150++; return jsonRes150(freshFx(fxOut)); } });
+    ok("§150: in the shipped config (no fee recipient) the Stellar-origin route ships fee-free in ONE pass, collecting=false — the route is live, the fee honestly zero",
+      !!free && free.platformFeeCollecting === false && calls150 === 1);
+  }
 }
 
 console.log(`\n${passed} checks passed`);
