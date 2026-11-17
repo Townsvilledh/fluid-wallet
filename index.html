@@ -147,6 +147,36 @@
   .addrchip:active{ color:var(--brand-1); }
   .lnrow{ display:flex; align-items:center; gap:12px; width:100%; text-align:left; color:var(--txt); }
   .lncoin{ background:#f7931a; }
+  /* home restructure (spec rev5): the Assets tab is a pager */
+  .wtab{ display:flex; flex-direction:column; height:calc(100dvh - 114px); }
+  #homeMain{ display:flex; flex-direction:column; flex:1; min-height:0; }
+  .homesearch{ padding:10px 0 2px; display:flex; flex-direction:column; min-height:0; }
+  .hsbox{ display:flex; align-items:center; gap:8px; background:var(--surface-2); border:1px solid var(--hairline); border-radius:999px; padding:0 8px 0 14px; flex:0 0 auto; }
+  .hsbox input{ flex:1; width:auto; background:none; border:0; box-shadow:none; color:var(--txt); font-size:14px; padding:11px 0; }
+  .hsbox input:focus{ border:0; box-shadow:none; }
+  #homeSearchClear{ background:none; color:var(--dim); width:32px; height:32px; font-size:14px; flex:0 0 auto; }
+  #homeSearchResults{ overflow-y:auto; min-height:0; margin-top:6px; }
+  .wtab.searching #homePager, .wtab.searching #swipeBar{ display:none; }
+  .swipebar{ display:flex; align-items:center; justify-content:space-between; padding:6px 2px 2px; flex:0 0 auto; }
+  .swchev{ background:none; color:var(--txt); font-size:24px; line-height:1; width:38px; height:38px; }
+  .swchev.dim{ color:var(--faint); }
+  .swmid{ text-align:center; min-width:0; }
+  .swname{ font-size:13px; font-weight:700; letter-spacing:.08em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+  .swdots{ display:flex; gap:5px; justify-content:center; margin-top:4px; flex-wrap:wrap; max-width:220px; }
+  .swdot{ width:6px; height:6px; border-radius:50%; background:var(--surface-3); flex:0 0 auto; }
+  .swdot.on{ background:var(--brand-1); }
+  .swlabel{ font-size:9px; letter-spacing:.3em; color:var(--faint); margin-top:3px; }
+  .pager{ display:flex; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory; flex:1; min-height:0; scrollbar-width:none; }
+  .pager::-webkit-scrollbar{ display:none; }
+  .hpage{ flex:0 0 100%; width:100%; overflow-y:auto; scroll-snap-align:start; min-height:0; }
+  .expline{ display:flex; justify-content:space-between; align-items:center; width:100%; background:none; color:var(--dim); padding:14px 16px; font-size:13px; font-weight:600; }
+  .xview{ overflow-y:auto; flex:1; min-height:0; }
+  .xhead{ display:flex; align-items:center; gap:10px; padding:10px 0 4px; }
+  .xback{ background:var(--surface-2); color:var(--txt); width:34px; height:34px; border-radius:50%; font-size:17px; flex:0 0 auto; }
+  .tdranges{ display:flex; gap:6px; margin:10px 0 2px; }
+  .tdranges button{ flex:1; background:var(--surface-2); color:var(--dim); border:1px solid var(--hairline); border-radius:999px; padding:6px 0; font-size:12px; font-weight:700; }
+  .tdranges button.on{ color:#000; background:var(--brand-1); border-color:var(--brand-1); }
+  .pagetotal{ padding:2px 16px 8px; color:var(--dim); font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
   /* skeletons (§4.13) */
   .skelrow{ display:flex; align-items:center; gap:12px; min-height:68px; padding:12px 16px; }
   .skel{ background:var(--surface-2); border-radius:8px; position:relative; overflow:hidden; }
@@ -327,7 +357,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="e31bfd507f"></head>
+<meta name="fluid-build" content="d5785fb91b"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -411,8 +441,8 @@
 
   <!-- APP -->
   <section id="app" class="hidden">
-    <!-- WALLET TAB -->
-    <div id="tab-wallet">
+    <!-- WALLET TAB (the Assets tab — home restructure, spec rev5) -->
+    <div id="tab-wallet" class="wtab">
       <header class="apphead">
         <span class="avatar"><svg><use href="#i-drop-w"/></svg></span>
         <span class="hdrcol">
@@ -458,17 +488,44 @@
           <button class="btn ghost" id="homeReceive" style="flex:1;margin:0">Receive</button>
         </div>
       </div>
-      <div id="assetList">Loading assets…</div>
-      <button class="card lnrow" id="lightningRow">
-        <span class="logowrap"><span class="coin lncoin"><svg class="ic ic-wht"><use href="#i-bolt"/></svg></span></span>
-        <span class="grow"><b class="rname">Bitcoin Lightning</b><small class="lnNodeStatusText">Your own Lightning node — pay, receive and manage channels</small></span>
-        <span style="color:var(--dim)"><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></span>
-      </button>
-      <div class="card game">
-        <b><svg class="ic ic-sm"><use href="#i-ball"/></svg> OGO ERA</b> <span class="pill soon">IN DEVELOPMENT</span>
-        <p class="tag" style="color:var(--dim);margin:8px 0">A game world in the making — many games, one universe. Grow your Companion, earn RAIN — claimed straight into this wallet.</p>
-        <button class="btn ghost" id="playJump">See how it works →</button>
+      <div id="homeMain">
+        <div class="homesearch">
+          <div class="hsbox">
+            <svg class="ic ic-sm" style="color:var(--dim);flex:0 0 auto"><use href="#i-search"/></svg>
+            <input id="homeSearch" type="search" placeholder="Search tokens or chains" autocomplete="off" autocapitalize="none" spellcheck="false">
+            <button id="homeSearchClear" class="hidden" aria-label="Clear search">✕</button>
+          </div>
+          <div id="homeSearchResults" class="hidden"></div>
+        </div>
+        <div class="swipebar" id="swipeBar">
+          <button class="swchev dim" id="swPrev" aria-label="Previous chain">‹</button>
+          <div class="swmid">
+            <div class="swname" id="swName">ALL</div>
+            <div class="swdots" id="swDots"></div>
+            <div class="swlabel">SWIPE</div>
+          </div>
+          <button class="swchev dim" id="swNext" aria-label="Next chain">›</button>
+        </div>
+        <div class="pager" id="homePager">
+          <section class="hpage" data-page="all">
+            <div id="assetList">Loading assets…</div>
+            <button class="card lnrow" id="lightningRow">
+              <span class="logowrap"><span class="coin lncoin"><svg class="ic ic-wht"><use href="#i-bolt"/></svg></span></span>
+              <span class="grow"><b class="rname">Bitcoin Lightning</b><small class="lnNodeStatusText">Your own Lightning node — pay, receive and manage channels</small></span>
+              <span style="color:var(--dim)"><svg class="ic ic-sm"><use href="#i-chev-r"/></svg></span>
+            </button>
+            <button class="expline" id="exploreLine"><span>Explore all tokens and chains</span><span>›</span></button>
+            <p class="tag hidden" id="chainsAppearLine" style="text-align:center;margin:2px 0 10px">Chains appear here when they hold something.</p>
+            <div class="card game">
+              <b><svg class="ic ic-sm"><use href="#i-ball"/></svg> OGO ERA</b> <span class="pill soon">IN DEVELOPMENT</span>
+              <p class="tag" style="color:var(--dim);margin:8px 0">A game world in the making — many games, one universe. Grow your Companion, earn RAIN — claimed straight into this wallet.</p>
+              <button class="btn ghost" id="playJump">See how it works →</button>
+            </div>
+          </section>
+        </div>
       </div>
+      <div id="exploreView" class="xview hidden"></div>
+      <div id="tokenView" class="xview hidden"></div>
     </div>
 
     <!-- PLAY TAB -->
@@ -661,7 +718,7 @@
     </div>
 
     <nav class="tabs">
-      <button class="tab on" data-tab="wallet"><span class="ti"><svg class="ic"><use href="#i-wallet"/></svg></span>Wallet</button>
+      <button class="tab on" data-tab="wallet"><span class="ti"><svg class="ic"><use href="#i-wallet"/></svg></span>Assets</button>
       <button class="tab" data-tab="play"><span class="ti"><svg class="ic"><use href="#i-ball"/></svg></span>Play</button>
       <button class="tab" data-tab="activity"><span class="ti"><svg class="ic"><use href="#i-activity"/></svg></span>Activity<span class="navdot hidden" id="activityDot"></span></button>
       <button class="tab" data-tab="scan"><span class="ti"><svg class="ic"><use href="#i-search"/></svg></span>Scan</button>
@@ -692,6 +749,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=e31bfd507f"></script>
+<script src="app.bundle.js?v=d5785fb91b"></script>
 </body>
 </html>
