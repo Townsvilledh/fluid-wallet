@@ -26188,6 +26188,18 @@ export function chainflipSupportsPair(args) {
   }
   return null;
 }
+/** Whether a Chainflip direction is EXECUTABLE today, as
+ *  opposed to merely quotable: "in" executes through the BSC
+ *  vault; "out" is quoting-only until Fluid's Chainflip
+ *  broker is live (see the section header). This helper is
+ *  the ONE place that fact lives — swapRouteExecutable's
+ *  Chainflip branch reads it, and the one-way trap gate
+ *  (§149) reads it when deriving Polkadot's outbound
+ *  coverage, so the day the broker ships and this flips,
+ *  execution and the gate open together. Pure. */
+export function chainflipDirectionExecutable(direction) {
+  return direction === "in";
+}
 function chainflipFloorError({ srcSymbol, destSymbol, minRaw, decimals }) {
   const human = ethers.formatUnits(BigInt(minRaw), decimals).replace(/\.0$/, "");
   const e = new Error(`No route at that size: Chainflip's own minimum for ${srcSymbol} → ${destSymbol} is ${human} ${srcSymbol} — the floor is Chainflip's, not Fluid's, and it is shown before you commit. Swap at least ${human} ${srcSymbol}.`);
@@ -27255,6 +27267,192 @@ export async function assertSwapTokensNotScam(args, opts = {}) {
   }
 }
 
+/* ================= one-way swap trap gate (§149,
+ * 2026-11-17) =================
+ * Ethuram's rule: NO ONE-WAY SWAP TRAPS. Fluid must never
+ * offer a swap route INTO a family it cannot swap back OUT
+ * of — a user who swaps value in and finds no swap path
+ * back has been trapped; their only exit would be a plain
+ * send to an external wallet. Today the trap is real on
+ * exactly two families (pair-matrix sweep,
+ * research_notes/fluid-oneway-sweep-20261117/): Stellar
+ * (1Click quotes IN; a Stellar origin is refused by the
+ * rail and Soroswap is intra-only and config-gated off) and
+ * Polkadot (Chainflip executes IN; DOT-out is quoting-only
+ * until Fluid's Chainflip broker is live).
+ *
+ * The gate is DATA-DRIVEN, never a hand-maintained family
+ * list: a family "has an exit" when the planner's OWN pair
+ * coverage — the same *SupportsPair predicates the cascade
+ * and the direct search consult, plus each rail's own
+ * executability fact where a direction is quotable but not
+ * executable (chainflipDirectionExecutable) — serves at
+ * least one EXECUTABLE route from one of the family's
+ * canonical liquid assets (its native coin, its pinned
+ * USDC/USDT) to a canonical asset of a DIFFERENT family.
+ * The day an exit ships — 1Click accepting a Stellar
+ * origin, the Chainflip broker going live — the predicates
+ * flip and the family's inbound routes return on their
+ * own, with no gate edit.
+ *
+ * Scope, stated plainly: the gate binds CROSS-family
+ * routes into a no-exit family (direct searches here, and
+ * every composition leg, which passes through this same
+ * function). Intra-family swaps are untouched — swapping
+ * XLM to USDC inside Stellar moves value the user already
+ * holds there; it traps nothing new. A gated family stays
+ * fully usable for hold / send / receive; only swap routes
+ * INTO it leave the offered set, and the sheet says why
+ * (diagnoseNoRouteSwap's "inbound-paused" verdict) — never
+ * a silent absence. */
+/** The swap universe's chain keys for coverage derivation:
+ *  the picker's own enumeration (the app's swapNets list) —
+ *  every NETWORKS chain except the Sepolia testnet, plus
+ *  the non-EVM families. This enumerates where coverage is
+ *  MEASURED; it carries no verdicts. */
+export const SWAP_FAMILY_KEYS = [
+  ...Object.keys(NETWORKS).filter(k => k !== "sepolia"),
+  "tron", "solana", "sui", "arkade", "lightning", "bitcoin", "polkadot", "ton", "near",
+  "xrpl", "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble",
+  "celestia", "injective", "dydx", "cardano", "zcash", "dash", "stellar", "stacks",
+  "algorand", "tezos", "hedera",
+].filter((k, i, a) => a.indexOf(k) === i);
+/** A family's canonical liquid assets in swap space — its
+ *  native coin plus the USDC/USDT its pinned tables carry —
+ *  read from the same tables the picker and the planner
+ *  read (NETWORKS token lists, the family tables, Skip's
+ *  asset table, the 1Click table, the Stellar swap table).
+ *  These are the assets an exit route would be quoted in;
+ *  an exit that exists only for an exotic token is no exit
+ *  for the user who swapped into the family's liquid asset.
+ *  Pure. */
+export function swapFamilyProbeAssets(chainKey) {
+  const out = [];
+  const push = (a) => {
+    if (a == null || a === "") return;
+    const s = String(a);
+    if (!out.some(x => x.toLowerCase() === s.toLowerCase())) out.push(s);
+  };
+  // The Bitcoin family names its native coin "btc" in swap
+  // space (the Satora source predicates' own convention).
+  if (chainKey === "bitcoin" || chainKey === "lightning" || chainKey === "arkade") { push("btc"); return out; }
+  const native = destNativeTokenAddress(chainKey);
+  if (native != null) push(native);
+  const stablesOf = (tokens) => {
+    for (const t of tokens || []) {
+      if (!t || (t.symbol !== "USDC" && t.symbol !== "USDT" && t.symbol !== "USDt")) continue;
+      push(t.address ?? t.mint ?? t.denom);
+    }
+  };
+  if (NETWORKS[chainKey]) stablesOf(NETWORKS[chainKey].tokens);
+  else if (chainKey === "solana") stablesOf(SOLANA_TOKENS);
+  else if (chainKey === "sui") stablesOf(SUI_TOKENS);
+  else if (chainKey === "tron") stablesOf(TRON_TOKENS);
+  else if (chainKey === "aptos") stablesOf(APTOS_TOKENS);
+  else if (chainKey === "near") stablesOf(NEAR_TOKENS);
+  else if (chainKey === "polkadot") stablesOf(DOT_TOKENS);
+  else if (chainKey === "stellar") stablesOf(STELLAR_SWAP_ASSETS);
+  else if (chainKey === "tezos") stablesOf(TEZOS_SWAP_TOKENS);
+  else if (chainKey === "hedera") stablesOf(HEDERA_SWAP_TOKENS);
+  else if (chainKey === "stacks") stablesOf(STACKS_TOKENS);
+  else if (chainKey === "algorand") stablesOf(ALGORAND_SWAP_TOKENS);
+  for (const a of SKIP_ASSETS) if (a.chainKey === chainKey) push(a.denom);
+  for (const e of ONECLICK_ASSETS) if (e.chainKey === chainKey && e.stable) push(e.address);
+  return out;
+}
+/** Shape-valid stand-in addresses for the coverage probes:
+ *  a few predicates (Mayan's) ask that a source address
+ *  EXIST and parse, because the production search always
+ *  carries the user's own. The probe asks the pair question
+ *  — "would you serve this pair for a real user?" — so it
+ *  supplies the shape, never a real user's address. */
+function swapProbeAddressFor(chainKey) {
+  if (NETWORKS[chainKey]) return "0x0000000000000000000000000000000000000001";
+  if (chainKey === "sui") return "0x0000000000000000000000000000000000000000000000000000000000000001";
+  if (chainKey === "solana") return "11111111111111111111111111111111";
+  return "fluid-coverage-probe";
+}
+/** Whether ANY rail the planner consults serves this pair
+ *  EXECUTABLY — the disjunction of the production pair
+ *  predicates (the cascade's and the direct search's own),
+ *  with each rail's executability fact applied where a
+ *  predicate alone would overstate coverage (Chainflip's
+ *  quotable-but-not-executable "out" direction). A predicate
+ *  that throws on a probe shape serves nothing. Pure. */
+function swapPairServedExecutable(args) {
+  const T = (fn) => { try { return !!fn(); } catch { return false; } };
+  if (T(() => satoraSupportsPair(args))) return true;
+  if (T(() => satoraArkadeSourceSupportsPair(args))) return true;
+  if (T(() => arkadeOffboardSupportsPair(args))) return true;
+  if (T(() => satoraLnSourceSupportsPair(args))) return true;
+  if (T(() => satoraBtcSourceSupportsPair(args))) return true;
+  if (T(() => { const c = chainflipSupportsPair(args); return !!c && chainflipDirectionExecutable(c.direction); })) return true;
+  if (T(() => relaySupportsPair(args.fromChainKey, args.toChainKey))) return true;
+  if (T(() => acrossSupportsPair(args))) return true;
+  if (T(() => mayanSupportsPair(args))) return true;
+  if (T(() => oneClickSupportsPair(args))) return true;
+  if (T(() => skipSupportsPair(args))) return true;
+  if (T(() => cctpAptosSupportsPair(args))) return true;
+  if (T(() => jupiterSupportsPair(args))) return true;
+  if (T(() => cetusSupportsPair(args))) return true;
+  if (T(() => sunswapSupportsPair(args))) return true;
+  if (T(() => openOceanSupportsPair(args))) return true;
+  if (T(() => soroswapSupportsPair(args))) return true;
+  if (T(() => bitflowSupportsPair(args))) return true;
+  if (T(() => algoSwapSupportsPair(args))) return true;
+  return false;
+}
+const _familyExitCache = new Map();
+/** Whether a family has an executable outbound swap route
+ *  today — DERIVED from the planner's own coverage (see the
+ *  section header), never listed by hand. Memoised per
+ *  session: the inputs are build-time tables and config,
+ *  constant within a build. Pure in effect. */
+export function swapFamilyHasExecutableExit(chainKey) {
+  if (!chainKey) return false;
+  if (_familyExitCache.has(chainKey)) return _familyExitCache.get(chainKey);
+  const fromAssets = swapFamilyProbeAssets(chainKey);
+  const fromAddress = swapProbeAddressFor(chainKey);
+  let has = false;
+  outer: for (const toKey of SWAP_FAMILY_KEYS) {
+    if (toKey === chainKey) continue;
+    const toAssets = swapFamilyProbeAssets(toKey);
+    if (!toAssets.length) continue;
+    for (const fromTokenAddress of fromAssets) {
+      for (const toTokenAddress of toAssets) {
+        if (swapPairServedExecutable({ fromChainKey: chainKey, toChainKey: toKey, fromTokenAddress, toTokenAddress, fromAddress, toAddress: swapProbeAddressFor(toKey) })) { has = true; break outer; }
+      }
+    }
+  }
+  _familyExitCache.set(chainKey, has);
+  return has;
+}
+/** Every family in the swap universe the gate currently
+ *  closes as a swap DESTINATION (no executable exit),
+ *  derived the same way. SWAPS.md's closed list is written
+ *  from this function's output. */
+export function swapInboundClosedFamilies() {
+  return SWAP_FAMILY_KEYS.filter(k => !swapFamilyHasExecutableExit(k));
+}
+/** The gate itself: non-null when this search's DESTINATION
+ *  is a cross-family move into a family with no executable
+ *  exit. Intra-family searches (from === to) are never
+ *  gated — they move value already inside the family. */
+export function swapInboundGate(args) {
+  if (!args || !args.toChainKey || !args.fromChainKey) return null;
+  if (args.fromChainKey === args.toChainKey) return null;
+  if (swapFamilyHasExecutableExit(args.toChainKey)) return null;
+  return { destChainKey: args.toChainKey, reason: "no-executable-exit" };
+}
+/** The UI-facing form of the gate: swaps INTO this chain
+ *  are paused (it has no executable swap exit). The swap
+ *  sheet and the token page render the paused copy from
+ *  this — the same derivation the planner enforces. */
+export function swapInboundPaused(chainKey) {
+  if (!chainKey) return false;
+  return !swapFamilyHasExecutableExit(chainKey);
+}
+
 export async function getSwapRoutesDirect(args) {
   // Scam swap block (token trust, 2026-11-17): before any
   // venue is queried, both sides resolve their trust verdicts
@@ -27262,6 +27460,16 @@ export async function getSwapRoutesDirect(args) {
   // outright. Composition legs call this function per leg, so
   // composed routes inherit the block leg by leg.
   await assertSwapTokensNotScam(args);
+  // One-way trap gate (§149, 2026-11-17): a cross-family
+  // route INTO a family with no executable outbound swap
+  // route is never offered — the search returns the honest
+  // empty before any venue is queried, and the sheet's
+  // diagnosis names the pause. The rails stay wired behind
+  // the gate (their own tests still exercise them); they
+  // simply never quote for a gated destination. Composition
+  // legs call this function per leg, so composed routes
+  // inherit the gate leg by leg.
+  if (swapInboundGate(args)) return [];
   let gasPlan = null;
   try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
   const planArgs = gasPlan ? { ...args, gasDrop: gasPlan } : args;
@@ -27405,6 +27613,17 @@ export async function getSwapRoutes(args, { directSearch = null, compositionSear
   // per-leg check inside getSwapRoutesDirect is the second
   // layer, and the one compositions actually pass through).
   await assertSwapTokensNotScam(args);
+  // One-way trap gate (§149, 2026-11-17): the sheet's entry
+  // point checks too, so a gated destination returns the
+  // honest empty before the direct search or any composition
+  // machinery runs — no rail is quoted and no composition is
+  // priced into a family the user could not swap back out
+  // of. The check binds the PRODUCTION planner: injected
+  // searches (the documented test seam) replace the planner
+  // wholesale and carry their own answers. The per-leg check
+  // inside getSwapRoutesDirect is the second layer, and the
+  // one production compositions pass through.
+  if (!directSearch && !compositionSearch && swapInboundGate(args)) return [];
   const directFn = directSearch || getSwapRoutesDirect;
   const composeFn = compositionSearch || ((a) => searchMilestoneCompositions(a, { searchLeg: (x) => getSwapRoutesDirect(x) }));
   let routes = null, directErr = null;
@@ -27661,6 +27880,25 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
       if (human > 0) return { kind: "below-minimum", floor: { found: true, usd: Number(fromPriceUsd) > 0 ? Math.round(human * Number(fromPriceUsd) * 100) / 100 : null, amountRaw: String(cfFloor.minRaw), amountHuman: human }, market: null };
     } catch { /* fall through to the ladder */ }
   }
+  // One-way trap gate (§149, 2026-11-17): when the
+  // destination family has no executable outbound swap
+  // route AND a rail would otherwise serve this pair into
+  // it, the pause IS the diagnosis — stated here, before
+  // any probe. The two error-carried verdicts above outrank
+  // it deliberately: they describe a search that actually
+  // RAN and a rail that actually spoke (only possible for
+  // ungated pairs — a gated search returns the honest empty
+  // and carries no error). The served-check keeps the
+  // verdict honest for the never-connected families: a pair
+  // no rail serves at all (XTZ → HBAR — Hedera has no rails
+  // in either direction) keeps the classic verdicts below,
+  // because "isn't connected yet" is the truth there; the
+  // pause is claimed only where a route exists and the gate
+  // is the thing withholding it. The floor ladder and the
+  // market probe below must not speak for a paused pair:
+  // they would mislabel it unconnected, and burn rail quota
+  // proving a verdict the gate already holds.
+  if (swapInboundGate(args) && swapPairServedExecutable(args)) return { kind: "inbound-paused", floor: null, market: null, destChainKey: args.toChainKey };
   const floor = await findSwapRouteFloor(args, { fromDecimals, fromPriceUsd, search: run });
   if (floor.found) return { kind: "below-minimum", floor, market: null };
   let market = null, marketBlind = false;
@@ -27728,10 +27966,19 @@ function probedCeilingText(v) {
  *  destNote (a destination-side fact the sheet verified, e.g.
  *  a Sui gas requirement) rides as a final sentence. Pure;
  *  the sheet renders, tests pin. */
-export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol = "the other token", amountText = "", verdict = null, floorText = "", nativeSymbol = "", destNote = "" } = {}) {
+export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol = "the other token", amountText = "", verdict = null, floorText = "", nativeSymbol = "", destNote = "", destName = "" } = {}) {
   const amt = amountText ? ` at ${amountText}` : "";
   let s;
-  if (verdict?.kind === "below-minimum" && verdict.floor?.found) {
+  if (verdict?.kind === "inbound-paused") {
+    // One-way trap gate (§149, 2026-11-17): the destination
+    // is paused BY RULE, not unconnected — the sentence says
+    // so plainly, names what still works (hold / send /
+    // receive), and states the exit the user would otherwise
+    // be trapped without. destName is the destination
+    // chain's display name, rendered by the sheet.
+    const dn = destName || toSymbol;
+    s = `Swaps into ${dn} are paused in Fluid: Fluid can't swap back out of ${dn} yet, so value swapped in could only leave again by a plain send to another wallet. You can still hold, send and receive ${toSymbol} as normal — and swaps in open again on their own as soon as Fluid can swap out of ${dn}.`;
+  } else if (verdict?.kind === "below-minimum" && verdict.floor?.found) {
     if (verdict.composedLeg) {
       s = `No route for ${fromSymbol} → ${toSymbol}${amt} — this pair is connected, but the composed route's ${verdict.composedLeg.fromSymbol} → ${verdict.composedLeg.toSymbol} leg has a minimum of its own: at least ${verdict.composedLeg.minHuman} ${verdict.composedLeg.asset} must go into that leg, and this swap puts less than that into it. Raise the amount and search again.`;
     } else {
@@ -28170,7 +28417,7 @@ export function swapRouteExecutable(route) {
   // (the universal capture law; see the Chainflip section).
   if (route?.provider === "chainflip") {
     const c = route.chainflip;
-    if (c?.direction === "out")
+    if (c && !chainflipDirectionExecutable(c.direction))
       return { ok: false, reason: "Swaps out of Polkadot are quoting only until Fluid's Chainflip broker is live — the fee on this direction can only ride a deposit channel Fluid operates, and that service is not live yet. The quote is real; execution opens with the broker." };
     const complete = !!c && c.direction === "in"
       && Number(route.fromChainId) === NETWORKS.bsc.chainId && Number(route.toChainId) === POLKADOT_SWAP_CHAIN_ID

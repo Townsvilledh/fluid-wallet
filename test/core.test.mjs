@@ -15712,11 +15712,17 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     catch (e) { outFloorErr = e; }
     ok("chainflip: a DOT-out below-minimum refusal names the API's own floor (5 DOT) in DOT terms",
       !!outFloorErr && outFloorErr.message.includes("Chainflip's own minimum for DOT → USDT is 5 DOT"));
-    // The cascade serves the pair end to end.
+    // The cascade serves the pair end to end — at the RAIL
+    // level (every pin above). The PLANNER no longer offers
+    // it: the one-way trap gate (§149, 2026-11-17) withdraws
+    // DOT-in from the route search because DOT-out is
+    // quoting-only — Polkadot has no executable exit, so a
+    // route in would trap the user's value. The rail stays
+    // wired behind the gate; §149's pins carry the gate.
     resetPricesCache();
     const viaSearch = await getSwapRoutes(CF_ARGS10);
-    ok("chainflip: the live route search serves BSC USDT -> DOT through the cascade",
-      Array.isArray(viaSearch) && viaSearch.some(r => r.provider === "chainflip" && r.toAmount === "120943821642"));
+    ok("chainflip: the rail serves BSC USDT -> DOT, but the live route search no longer offers it — the §149 one-way gate (DOT has no executable exit)",
+      Array.isArray(viaSearch) && viaSearch.length === 0);
     var CF_R10 = r10;
   } finally { globalThis.fetch = realFetchCf; }
 
@@ -16713,10 +16719,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("fixb: the refusal sentence names the pair's real minimum in the FROM token (and values it when a price exists)",
     formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: vCf, floorText: "10 USDT" }).includes("below the minimum for this pair. The smallest swap that works right now is about 10 USDT.")
     && formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: { ...vCf, floor: { ...vCf.floor, usd: 10 } }, floorText: "10 USDT (≈ $10)" }).includes("about 10 USDT (≈ $10)"));
-  ok("fixb: without the rail's floor on the error, the diagnosis is exactly as before (the ladder and its verdicts are untouched)",
+  ok("fixb: without the rail's floor on the error, a BSC -> DOT diagnosis is the §149 one-way pause (2026-11-17: DOT has no executable exit, so the pair is paused by rule — the ladder verdicts themselves are untouched, as the §148 XTZ -> HBAR pin still proves)",
     (await diagnoseNoRouteSwap(
       { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: "0xC66626790039681d22B96302415896a0574C0F4e", toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" },
-      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] })).kind === "no-route-yet");
+      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] })).kind === "inbound-paused");
   ok("fixb app: the sheet passes the search's own error into the diagnosis and renders the floor with or without a USD value",
     appSrc115.includes("searchError: routeErr,")
     && appSrc115.includes("Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : \"\""));
@@ -22716,6 +22722,133 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && app148.includes('if (sc.btcBal > 0 || sc.btcTrBal > 0) evidenceFams.add("bitcoin");')
     && app148.includes('if (cached.evm.rows.some(r => r && Number(r.amount) > 0)) evidenceFams.add("evm");')
     && app148.includes('if (evmChainEvidence(networkKey)) evidenceFams.add("evm");'));
+}
+
+// §149 — ONE-WAY SWAP TRAP GATE (2026-11-17). Ethuram's
+// rule: Fluid never offers a swap route INTO a family it
+// cannot swap back OUT of. The gate is derived from the
+// planner's own pair coverage (the production *SupportsPair
+// predicates + each rail's executability fact), never a
+// hand-maintained family list — so the release that wires
+// an exit (1Click Stellar origin; the Chainflip broker)
+// reopens the family's inbound routes with no gate edit.
+// The pair-matrix sweep
+// (research_notes/fluid-oneway-sweep-20261117/) confirms the
+// offered-inbound-without-exit set is exactly {Stellar,
+// Polkadot}; the wider closed set below is families whose
+// inbound was never offered at all (presence-only /
+// intra-only chains) — the gate covers them by construction
+// so a future inbound rail cannot open a trap there either.
+{
+  const { swapFamilyHasExecutableExit, swapInboundClosedFamilies, swapInboundGate, swapInboundPaused,
+    swapFamilyProbeAssets, chainflipDirectionExecutable, oneClickSupportsPair, getSwapRoutes, getSwapRoutesDirect,
+    diagnoseNoRouteSwap, formatSwapNoRouteMessage, SWAP_FAMILY_KEYS } = await import("../src/wallet-core.js");
+  const app149 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const EVM149 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34";
+  const BASE_USDC149 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", ARB_USDC149 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    BSC_USDT149 = "0x55d398326f99059fF775485246999027B3197955", DOT_ADDR149 = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo";
+
+  // --- the derivation: exits read off the planner's own coverage ---
+  ok("§149: Stellar and Polkadot have NO executable exit — 1Click refuses a Stellar origin in its own predicate, and Chainflip's out direction is quotable but not executable",
+    swapFamilyHasExecutableExit("stellar") === false && swapFamilyHasExecutableExit("polkadot") === false
+    && oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC149 }) === null
+    && oneClickSupportsPair({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm" }) !== null
+    && chainflipDirectionExecutable("in") === true && chainflipDirectionExecutable("out") === false);
+  ok("§149: the families users swap between all keep their exits (the gate closes nothing that was ever a two-way family)",
+    ["ethereum", "base", "arbitrum", "bsc", "polygon", "avalanche", "solana", "sui", "tron", "ton", "near", "xrpl",
+     "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "bitcoin", "lightning", "arkade"]
+      .every(k => swapFamilyHasExecutableExit(k) === true));
+  ok("§149: Cardano is NOT closed — both 1Click directions are wired; its broadcast doubt is environmental, and the gate is coverage-driven, not doubt-driven",
+    swapFamilyHasExecutableExit("cardano") === true && swapInboundPaused("cardano") === false);
+  ok("§149: the closed set is exactly the no-exit families — the two offered traps plus the presence/intra-only chains whose inbound was never offered",
+    JSON.stringify([...swapInboundClosedFamilies()].sort()) === JSON.stringify(
+      ["algorand", "aurora", "b2", "bitlayer", "core", "cronoszkevm", "flare", "filecoin", "fuse", "hedera",
+       "injectiveevm", "kaia", "kava", "moonriver", "polkadot", "rootstock", "seievm", "stacks", "stellar",
+       "tac", "taiko", "tezos"].sort())
+    && swapInboundClosedFamilies().length === 22
+    && ["stellar", "polkadot", "base", "bitcoin", "cosmoshub", "tezos"].every(k => SWAP_FAMILY_KEYS.includes(k)));
+  ok("§149: probe assets are the family's own canonical liquid assets, read from its pinned tables",
+    swapFamilyProbeAssets("stellar").includes("xlm") && swapFamilyProbeAssets("polkadot").includes("dot")
+    && swapFamilyProbeAssets("bitcoin").join() === "btc" && swapFamilyProbeAssets("cosmoshub").includes("uatom")
+    && swapFamilyProbeAssets("base").includes(BASE_USDC149));
+
+  // --- the gate function ---
+  ok("§149: the gate fires cross-family into a no-exit family, and only there — intra-family and exit-family searches are untouched",
+    swapInboundGate({ fromChainKey: "base", toChainKey: "stellar" })?.destChainKey === "stellar"
+    && swapInboundGate({ fromChainKey: "bsc", toChainKey: "polkadot" })?.destChainKey === "polkadot"
+    && swapInboundGate({ fromChainKey: "base", toChainKey: "arbitrum" }) === null
+    && swapInboundGate({ fromChainKey: "stellar", toChainKey: "stellar" }) === null
+    && swapInboundGate({ fromChainKey: "bsc", toChainKey: "bsc" }) === null
+    && swapInboundPaused("stellar") === true && swapInboundPaused("polkadot") === true && swapInboundPaused("base") === false);
+
+  // --- (a) production path: a route into a no-exit family is never offered ---
+  const realFetch149 = globalThis.fetch;
+  try {
+    const seen149 = [];
+    globalThis.fetch = async (url) => { seen149.push(String(url)); throw new Error("no network in the §149 gate pin"); };
+    const stellarIn = await getSwapRoutes({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM149, toAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
+    const dotInDirect = await getSwapRoutesDirect({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
+    const dotIn = await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
+    ok("§149: production searches into Stellar and Polkadot return the honest empty — and no rail is ever quoted for a gated destination (no 1Click, no Chainflip call)",
+      stellarIn.length === 0 && dotInDirect.length === 0 && dotIn.length === 0
+      && !seen149.some(u => u.includes("1click")) && !seen149.some(u => u.includes("chainflip")));
+  } finally { globalThis.fetch = realFetch149; }
+
+  // --- (b) production path: a route into a family WITH an exit is offered exactly as before ---
+  try {
+    const RELAY_QUOTE149 = {
+      requestId: "0x149",
+      steps: [
+        { id: "approve", kind: "transaction", items: [{ status: "incomplete", data: { from: EVM149, to: BASE_USDC149, data: "0x095ea7b30000000000000000000000004cd00e387622c35bddb9b4c962c136462338bc3100000000000000000000000000000000000000000000000000000000004c4b40", value: "0", chainId: 8453, gas: "73112", maxFeePerGas: "6500000", maxPriorityFeePerGas: "1000000" } }] },
+        { id: "deposit", kind: "transaction", items: [{ status: "incomplete", data: { from: EVM149, to: "0x4cd00e387622c35bddb9b4c962c136462338bc31", data: "0xe80179520000000000000000000000009780504dee2cdcd003484816a3731eb48be8ee34000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291300000000000000000000000000000000000000000000000000000000004c4b40eec44d2440310e29e71d76ffbd114ab3ee3e5bd7427703a17ac10abcac44395d", value: "0", chainId: 8453, gas: "76194", maxFeePerGas: "6500000", maxPriorityFeePerGas: "1000000" } }] },
+      ],
+      fees: {
+        gas: { currency: { chainId: 8453, address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18 }, amount: "496052710134", amountFormatted: "0.000000496052710134", amountUsd: "0.001102", minimumAmount: "496052710134" },
+        app: { currency: { chainId: 8453, address: BASE_USDC149, symbol: "USDC", decimals: 6 }, amount: "25000", amountFormatted: "0.025", amountUsd: "0.024994", minimumAmount: "25000" },
+      },
+      details: {
+        operation: "swap", sender: EVM149, recipient: EVM149,
+        currencyIn: { currency: { chainId: 8453, address: BASE_USDC149, symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "5000000", amountFormatted: "5.0", amountUsd: "4.998895", minimumAmount: "5000000" },
+        currencyOut: { currency: { chainId: 42161, address: ARB_USDC149, symbol: "USDC", name: "USD Coin", decimals: 6 }, amount: "4950786", amountFormatted: "4.950786", amountUsd: "4.949722", minimumAmount: "4851771" },
+        timeEstimate: 1,
+        expandedPriceImpact: { swap: { usd: "-0.000470" }, execution: { usd: "-0.023709" }, relay: { usd: "0" }, app: { usd: "-0.024994" } },
+        totalImpact: { usd: "-0.049173", percent: "-0.98" },
+      },
+    };
+    let relayCalls149 = 0;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.relay.link")) { relayCalls149++; return { ok: true, status: 200, json: async () => structuredClone(RELAY_QUOTE149) }; }
+      throw new Error("unexpected url in the §149 control pin: " + u);
+    };
+    const control = await getSwapRoutes({ fromChainKey: "base", toChainKey: "arbitrum", fromTokenAddress: BASE_USDC149, toTokenAddress: ARB_USDC149, fromAmount: "5000000", fromAddress: EVM149, toAddress: EVM149 });
+    ok("§149: the control pair (Base USDC -> Arbitrum USDC — Arbitrum has an exit) is offered exactly as before the gate: one Relay route off the production search",
+      control.length === 1 && control[0].provider === "relay" && relayCalls149 === 2);
+  } finally { globalThis.fetch = realFetch149; }
+
+  // --- (c) the paused copy: diagnosis verdict, message, sheet + token page wiring ---
+  let probeCalls149 = 0;
+  const vPaused = await diagnoseNoRouteSwap(
+    { fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM149, toAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+    { fromDecimals: 6, fromPriceUsd: 1, search: async () => { probeCalls149++; return []; } });
+  const msgPaused = formatSwapNoRouteMessage({ fromSymbol: "USDC", toSymbol: "XLM", verdict: vPaused, destName: "Stellar" });
+  ok("§149: a gated pair diagnoses as inbound-paused with NO probe ladder spent — the gate's verdict, not an unconnected-pair label",
+    vPaused.kind === "inbound-paused" && probeCalls149 === 0
+    && msgPaused.startsWith("Swaps into Stellar are paused in Fluid")
+    && msgPaused.includes("can't swap back out of Stellar yet")
+    && msgPaused.includes("hold, send and receive XLM as normal")
+    && !msgPaused.includes("isn't connected yet"));
+  const vDotPaused = await diagnoseNoRouteSwap(
+    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 },
+    { fromDecimals: 18, fromPriceUsd: null, search: async () => [] });
+  ok("§149: a DOT-in search diagnoses as inbound-paused too (no rail floor on the error — the gate's own verdict)",
+    vDotPaused.kind === "inbound-paused");
+  ok("§149 app: the sheet carries the standing pause line beside the Arkade warning, synced on open / network pick / flip, and the diagnosis renders with the destination's own name",
+    app149.includes('id="wOneWayWarn"') && app149.includes("function syncOneWayWarn()")
+    && app149.includes("swapInboundPaused(netSel.to)") && app149.includes("syncOneWayWarn();")
+    && app149.includes("destName: swapChainName(toKey)"));
+  ok("§149 app: the token page states the pause on a no-exit family's own page — the destination's other swap entry point — while its Swap button stays (outbound attempts get the honest search)",
+    app149.includes("swapInboundPaused(pk)") && app149.includes("Swaps into ${esc(d.chainLabel)} are paused in Fluid"));
 }
 
 console.log(`\n${passed} checks passed`);

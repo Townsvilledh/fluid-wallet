@@ -41,7 +41,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapInboundPaused,
   fetchTokenTrust, fetchTokenTrustBatch, resolveTokenTrustSync, tokenTrustSwapCheck, assertSwapTokensNotScam, tokenTrustReasonLine, tokenTrustSourceLabel,
   formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
@@ -3372,6 +3372,7 @@ function renderTokenPage() {
     : `<p class="tag" style="margin-top:12px">This is the network's native asset — it has no contract address.</p>`}
     <div id="tdTrust"></div>
     <div id="tdMoves"></div>
+    ${(() => { const pk = d.family === "evm" ? String(d.scopeKey || "").replace(/^evm:/, "") : d.family; return swapInboundPaused(pk) ? `<p class="tag" style="color:var(--warn);margin-top:12px">Swaps into ${esc(d.chainLabel)} are paused in Fluid: Fluid can't swap back out of ${esc(d.chainLabel)} yet, so value swapped in could only leave again by a plain send. Holding, sending and receiving work as normal.</p>` : ""; })()}
     <div style="margin-top:16px">
       ${d.swap ? `<button class="btn" id="tdSwap" style="width:100%">Swap</button>` : ""}
       <div style="display:flex;gap:8px;margin-top:8px">
@@ -10121,6 +10122,7 @@ $("actSwap").onclick = () => {
       <input id="wDestAddr" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     </div>
     <p class="tag hidden" id="wArkWarn" style="color:var(--warn);margin:8px 0 0"></p>
+    <p class="tag hidden" id="wOneWayWarn" style="color:var(--warn);margin:8px 0 0"></p>
     <button class="btn" id="wRoutes">Get routes</button>
     <div id="wList"></div>
     <details id="wHow" style="margin:10px 0">
@@ -10185,6 +10187,7 @@ $("actSwap").onclick = () => {
     ensureSwapList(key);
     if (side === "to") syncDestRow();
     syncArkadeWarn();
+    syncOneWayWarn();
   }
   function updatePickBtn(side) {
     const t = pick[side];
@@ -10264,6 +10267,21 @@ $("actSwap").onclick = () => {
       || (r?.milestone?.legs || []).some(l => l.fromChainKey === "arkade" || l.toChainKey === "arkade"));
     if (netSel.from === "arkade" || netSel.to === "arkade" || viaArkade) {
       el.textContent = "⚠ Arkade is a Bitcoin layer-2 with operator-assisted exits: sats there sit in Arkade VTXOs under your own keys, exits back to Bitcoin mainnet are batched by the Arkade operator rather than sent on-chain directly, and unmaintained VTXOs expire — the Bitcoin bridge tab tracks your Arkade wallet.";
+      el.classList.remove("hidden");
+    } else el.classList.add("hidden");
+  }
+  // ONE-WAY PAUSE (§149, 2026-11-17): whenever the TO side
+  // names a family Fluid cannot swap back out of, the pause
+  // stands in the sheet BEFORE any search — the same
+  // always-warn posture as Arkade's framing above. The
+  // planner enforces the gate (core's swapInboundGate); this
+  // line is the user being told why, never a silent absence.
+  // The destination stays fully usable for hold/send/receive.
+  function syncOneWayWarn() {
+    const el = $("wOneWayWarn"); if (!el) return;
+    if (swapInboundPaused(netSel.to)) {
+      const dn = swapChainName(netSel.to);
+      el.textContent = `⚠ Swaps into ${dn} are paused in Fluid: Fluid can't swap back out of ${dn} yet, so value swapped in could only leave again by a plain send to another wallet. You can still hold, send and receive on ${dn} as normal.`;
       el.classList.remove("hidden");
     } else el.classList.add("hidden");
   }
@@ -10967,6 +10985,7 @@ $("actSwap").onclick = () => {
   setPick("to", defaultTok("to", toKey0));
   syncDestRow();
   syncArkadeWarn();
+  syncOneWayWarn();
   // Detail preselect (item F): apply the tapped token as the From
   // pick — instantly when the picker's base list already carries
   // it, else once the chain's full list lands. A token the picker
@@ -11000,6 +11019,7 @@ $("actSwap").onclick = () => {
     ensureSwapList(fn).then(() => { const nt = findTok(fn, fTok); if (nt) setPick("to", nt); });
     syncDestRow();
     syncArkadeWarn();
+    syncOneWayWarn();
     msg("wMsg", "");
   };
   // Refusal-diagnosis cadence (repair batch, 2026-11-15): the
@@ -11202,6 +11222,7 @@ $("actSwap").onclick = () => {
               fromSymbol: fromTok.symbol, toSymbol: toTok.symbol,
               amountText: `${amount} ${fromTok.symbol}`,
               verdict, floorText, nativeSymbol,
+              destName: swapChainName(toKey),
             });
             refusalDiagState = {
               key: refusalKey,

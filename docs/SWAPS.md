@@ -159,7 +159,9 @@ a rate limit would burn quota and manufacture a verdict.
 ## Coverage, honestly
 
 - Swaps route on and between the EVM networks, Solana and Tron,
-  plus USDC into Sui (Mayan Fast MCTP), Sui same-chain swaps
+  TON in both directions via Relay (GRAM; the Relay-from-TON
+  executor rebuilds and bounds-checks the deposit message
+  locally), plus USDC into Sui (Mayan Fast MCTP), Sui same-chain swaps
   (direct Cetus aggregator port, 2026-11-13), Tron same-chain
   swaps (direct SunSwap V2 port, 2026-11-14) and the Satora
   exits to Lightning/Bitcoin — and, since 2026-11-14, Satora
@@ -180,17 +182,87 @@ a rate limit would burn quota and manufacture a verdict.
   Sui, Bitcoin and Lightning destinations.
 - Bitcoin-family, Cosmos and the other send/receive families
   (`docs/CHAINS.md`) exit through the routed families above.
-- Polkadot Asset Hub is a swap destination since 2026-11-14
+- Polkadot Asset Hub became a swap destination on 2026-11-14
   (Chainflip, next-but-one section): BSC USDT or BNB in, DOT
   out at your own Asset Hub address, composable from any
   origin that can reach a BSC anchor. DOT as a source is
-  quoted but not yet executable — the section says why.
+  quoted but not yet executable — and since 2026-11-17 the
+  inbound direction is PAUSED by the one-way trap gate
+  (next section): a route in whose value cannot swap back
+  out is not offered. The rail stays wired behind the gate.
 - Arkade is a swap endpoint in its own right (2026-11-14) — see
   the next section.
 - Some source chains cannot be quoted from every network environment;
   when that happens the sheet shows an honest refusal, not a fake zero.
 
+## No one-way swap traps — the inbound gate (2026-11-17)
+
+Ethuram's rule: **Fluid never offers a swap route INTO a
+family it cannot swap back OUT of.** A user who swaps value
+in and finds no swap path back has been trapped — their
+only exit would be a plain send to an external wallet.
+Two live traps made the rule: Stellar (1Click quoted in;
+no executable route out) and Polkadot (Chainflip executed
+in; DOT-out quoting-only until a broker is live).
+
+- **The gate is data-driven, never a hand-maintained list.**
+  A family "has an exit" when the planner's own pair
+  coverage — the same `*SupportsPair` predicates the
+  cascade and the direct search consult, with each rail's
+  executability fact applied where a direction is quotable
+  but not executable (`chainflipDirectionExecutable`) —
+  serves at least one executable route from one of the
+  family's canonical liquid assets (native coin, pinned
+  USDC/USDT) to a canonical asset of a different family
+  (`swapFamilyHasExecutableExit` in `src/wallet-core.js`,
+  §149 pins). The release that wires an exit flips the
+  predicates and the family's inbound routes return on
+  their own — no gate edit.
+- **What is gated.** Cross-family routes into a no-exit
+  family leave the offered set — in the direct search and
+  in every composition leg (legs pass through the same
+  search). The rails stay in code behind the gate, still
+  exercised by their own pins. Intra-family swaps are
+  untouched (they move value already inside the family).
+  A gated family stays fully usable for hold, send and
+  receive.
+- **What the user sees.** Never a silent absence: picking a
+  gated family as the swap destination stands a plain
+  warning in the sheet before any search, the no-route
+  diagnosis answers with the pause itself ("Swaps into
+  Stellar are paused in Fluid: Fluid can't swap back out
+  of Stellar yet…"), and the family's token pages carry
+  the same note.
+- **Closed as destinations today (derived, 2026-11-17):**
+  stellar, polkadot — the two offered traps — plus the
+  presence-only / intra-only chains whose inbound was
+  never offered and now cannot open as a trap either:
+  algorand, aurora, b2, bitlayer, core, cronoszkevm,
+  flare, filecoin, fuse, hedera, injectiveevm, kaia, kava,
+  moonriver, rootstock, seievm, stacks, tac, taiko, tezos.
+  (Full pair matrix: `research_notes/fluid-oneway-sweep-20261117/`.)
+- **Cardano is NOT closed.** Both 1Click directions are
+  wired, so the gate passes it; its open caveat is
+  separate and environmental — the unverified broadcast
+  link (see the Cardano section), not coverage.
+- **The exits that reopen the two traps.** Stellar-out is
+  QUOTE-PROVEN buildable on 1Click: the rail now accepts
+  Stellar as an origin (live dry quotes XLM → USDC on Base
+  down to 2 XLM, XLM → BTC, Stellar USDC → Base USDC, the
+  MEMO deposit issued rail-side — the old memo blocker is
+  gone) and is queued as the next build; the gate lifts
+  Stellar automatically in that release. DOT-out waits on
+  a Chainflip broker: the hosted Broker-as-a-Service
+  (chainflip-broker.io) is the chosen path and its
+  registration is being driven separately; a self-hosted
+  broker was rejected (FLIP funding plus a persistent
+  node). Exit research: `research_notes/fluid-exit-research-20261117/`.
+
 ## Polkadot as a swap destination (2026-11-14)
+
+> **2026-11-17:** swaps INTO Polkadot are paused by the
+> one-way trap gate (previous section) until DOT-out is
+> executable — the rail below stays wired behind the gate.
 
 DOT on Asset Hub joins the swap universe through Chainflip.
 Fluid already held, sent and received DOT; what was missing
@@ -1566,6 +1638,13 @@ builder.
   no-route on every 1Click pair, not just DASH-in.
 
 ## Stellar swaps — Soroswap intra-chain + 1Click in (audit gap #9, 2026-11-15)
+
+> **2026-11-17:** swaps INTO Stellar are paused by the
+> one-way trap gate ("No one-way swap traps" above) until
+> a Stellar exit is wired. A quote-proven exit now exists
+> — 1Click accepts Stellar as an origin — and is queued
+> as the next build; the gate lifts automatically then.
+> Intra-Stellar swaps (Soroswap) are unaffected.
 
 Stellar gains both swap directions this slice, on two
 different rails: swaps WITHIN Stellar (XLM ↔ USDC) ride the

@@ -614,5 +614,37 @@
     "sol": "9UbMKeNERXbWYsd1E4vWr8kL9q6Qt6uqHkdBjJN8pFPr",
     "tron": "TExyaxS9iYBghNQvXZcpo576CgkgcvWZtY",
     "sui": "0xfa54ddb2a3f6e8d79dcf7fb6f91447d50ba9ad19144a9e2ba84fcdbc8a20ff04"
+  },
+  "verifyg151314": {
+    "evm": "0xFC82B287A8c7bfDA7a2D7C43452F22d053B93561",
+    "btc": "bc1qye067x3mgdlg63e7v2dhqa029epw4qfqw86qkh",
+    "algo": "VGJNU3OXL6XSFQDLX26JVZH635IQZW3NOYBDCYA3GOKXDR4QPTVI4PHQNU",
+    "sol": "HeUuYZpsPMUN2JTm54KKfyfAFTgDSSgtsCmuVZMuBbhW",
+    "tron": "TYzMrQwcMAiK6nyaKja54UE7LUJk7Ne23D",
+    "sui": "0xd9f0a22fd7f73243b2a99b718c73ba24dcb64fc176b22fae42d923364a04e9b8"
+  },
+  "verifyg316490": {
+    "evm": "0x7d77fF183Adc9668b67794aB8B4bD5514e00ee96",
+    "btc": "bc1q0vpjxmea4pdkv52nnh3yel489z3h45rrjh8j28",
+    "algo": "7J62YF4MC6TW2FU3LQMKIQ2U7EFOLLN4DYFJGGISD6VCRLYN7P7UP4YKLE",
+    "sol": "A3rEVXn6cJNgCNNqH8NhM3zZh9fUtQCEpAqKY7fw6kc",
+    "tron": "TMQdDYAvgBFSHLMACyXgsLhD9hz9pfqn1g",
+    "sui": "0xa585ab3e1a7616aa0d8906c664b731454859d9a9cf697cfb93f50c1d3200f9e4"
+  },
+  "verifyg311736": {
+    "evm": "0x771c7A3fc378F234f1e47Cfae255481491E0BC0e",
+    "btc": "bc1q77hsgtrluax40gwhr7w6cs4dpw7tpr80hl5fyg",
+    "algo": "IISLVLEAEXUZAT3HCMY3KS6JDKIFD5CIE6UCT4TVJTXHZCO24FZLUCUQXY",
+    "sol": "CB4tjiG6FrEJSTZZVqM2JdSpMvCuQgkGqfE9hKb5meXq",
+    "tron": "TLq1XYK52xEMBpqgdRwDJpFVQaKcRJPzdu",
+    "sui": "0xadff4b59e52804c63eb505be9a11eeecf8b92e393309fe900f45963a1446082d"
+  },
+  "verifyg612130": {
+    "evm": "0xB27b8Ebb1f5F420f492C3Da68ef13685a6D248da",
+    "btc": "bc1qakucvczaghgx70sk0nxs7v87ya90yvvwdn2xa0",
+    "algo": "HBFI4K2BZF2JPY7F3KZGF4RYEOGPVHGMDZGNHAPH3CHLGI44ZLBBNO4OMU",
+    "sol": "H3DQj9VmDhBN7bjyLnB9shQgxy8ctW1Y9mxVJ1dXhCFS",
+    "tron": "TSEwJ8gyVi1iuvtLsY72eQHaUsActMGVTo",
+    "sui": "0x7a1bb1e185c61a8b71f0167aadcfadbc572bd57ced6749427ec685533dfbee48"
   }
 }
