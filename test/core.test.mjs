@@ -11284,7 +11284,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // F4: the app wires rows → detail, chips → copy (unambiguous),
   // and detail Send/Swap into the shipped flows pre-selected.
   ok("F: EVM rows carry a token-page tap and every token row its copyable address chip",
-    app.includes('data-evmrow="${i}"') && app.includes('data-copyaddr="${esc(b.address)}"')
+    app.includes('data-evmrow="${rowRefFor(b)}"') && app.includes('data-copyaddr="${esc(b.address)}"')
     && app.includes("e.stopPropagation()") && app.includes('openTokenPage(evmDetailDesc(b), "home")'));
   ok("F: token page sources fields honestly and reuses the shipped send/swap flows (rev5 §6)",
     app.includes("function renderTokenPage()") && app.includes("fetchTokenMarketExtras({ ...d.extras, days: st.rangeDays })")
@@ -22231,6 +22231,25 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     app145.includes('if (!q) { host.innerHTML = ""; return; }') && !app145.includes("EVM NETWORKS") && !app145.includes("OTHER NETWORKS"));
   ok("§145: home rows wire through the scoped wireHomeRows (pager, search and Explore share it)",
     app145.includes("function wireHomeRows(root)") && app145.includes("wireHomeRows(pagerEl)") && app145.includes("wireHomeRows(host)"));
+  // The 2026-11-17 search-row defect: the pin above passed while
+  // live search rows were dead — it proved the helper exists, not
+  // that the rendered rows carry anything the helper can bind.
+  // The pins below cover the production render path itself.
+  ok("§145: search held rows render from the same homeGroups items as the All page, and the search host is wired AFTER its html lands (chain-jump + unheld wired in the same pass)",
+    (() => { const s = app145.slice(app145.indexOf("function paintHomeSearch()"), app145.indexOf("function clearHomeSearch()"));
+      return s.includes("heldHtml.push(it.render())")
+        && s.indexOf("host.innerHTML = html") >= 0 && s.indexOf("host.innerHTML = html") < s.indexOf("wireHomeRows(host)")
+        && s.includes('host.querySelectorAll("[data-chainjump]")') && s.includes('host.querySelectorAll("[data-unheld]")')
+        && s.includes('openTokenPage(u.desc, "home")'); })());
+  ok("§145: every family row render carries a row-registry reference (never a live-array index — a failed EVM load's rows are in no array, and rebuilt arrays orphan identity indexes)",
+    app145.includes("function rowRefFor(b)") && app145.includes("rowRefs.clear(); rowRefSeq = 0;")
+    && (app145.match(/rowRefFor\(b\)/g) || []).length >= 15
+    && app145.includes('data-evmrow="${rowRefFor(b)}"') && app145.includes('data-stellar="${rowRefFor(b)}"')
+    && !app145.includes("Balances.indexOf(b)") && !app145.includes("const i = balances.indexOf(b);"));
+  ok("§145: wireHomeRows resolves row references through the registry at wire time (EVM direct, families via sheetWire) — the object the row was rendered from, not whatever sits at an array index now",
+    app145.includes("rowRefs.get(Number(r.dataset.evmrow))") && app145.includes("rowRefs.get(Number(r.dataset.tron))")
+    && app145.includes("const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));")
+    && !app145.includes("arr[Number(r.dataset[attr.slice(5)])]"));
 }
 
 console.log(`\n${passed} checks passed`);

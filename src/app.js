@@ -2290,6 +2290,7 @@ function scalarAmtHtml(failed, bal, price) {
 }
 
 function paintAssets() {
+  rowRefs.clear(); rowRefSeq = 0; // rendered-row registry: this paint's renders re-register (see rowRefFor)
   badgeAllCtx = false; // group html is chain-page html: no All-page chain badges
   paintHeader();
   const net = NETWORKS[networkKey];
@@ -2332,10 +2333,7 @@ function paintAssets() {
   // null) — never an empty list under a $0.00 header.
   {
     const rows = [];
-    const render = ({ b, v }) => {
-      const i = balances.indexOf(b);
-      return tokenRowHtml(b, v, net.name, i >= 0 ? `data-evmrow="${i}"` : "", "evm");
-    };
+    const render = ({ b, v }) => tokenRowHtml(b, v, net.name, `data-evmrow="${rowRefFor(b)}"`, "evm");
     const evmRows = evmLoadFailed
       ? [{ symbol: net.symbol, amount: null, address: null, verified: true },
          ...net.tokens.map(t => ({ ...t, amount: null }))]
@@ -2349,7 +2347,7 @@ function paintAssets() {
   // Tron family rows (tap a row to send on Tron)
   if (tronBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Tron", `data-tron="${tronBalances.indexOf(b)}"`, "tron");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Tron", `data-tron="${rowRefFor(b)}"`, "tron");
     const fi = familyRowItems("tron", tronBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("tron", `<p class="tag" style="margin:12px 0 2px">Tron</p>`, rows, fi.items);
@@ -2357,7 +2355,7 @@ function paintAssets() {
   // Solana family rows (tap a row to send on Solana)
   if (solBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Solana", `data-sol="${solBalances.indexOf(b)}"`, "solana");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Solana", `data-sol="${rowRefFor(b)}"`, "solana");
     const fi = familyRowItems("solana", solBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("solana", `<p class="tag" style="margin:12px 0 2px">Solana</p>`, rows, fi.items);
@@ -2365,7 +2363,7 @@ function paintAssets() {
   // Sui family rows (tap a row to send on Sui)
   if (suiBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Sui", `data-sui="${suiBalances.indexOf(b)}"`, "sui");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Sui", `data-sui="${rowRefFor(b)}"`, "sui");
     const fi = familyRowItems("sui", suiBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("sui", `<p class="tag" style="margin:12px 0 2px">Sui</p>`, rows, fi.items);
@@ -2373,7 +2371,7 @@ function paintAssets() {
   // Stellar family rows (tap a row to send on Stellar)
   if (stellarBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Stellar", `data-stellar="${stellarBalances.indexOf(b)}"`, "stellar");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Stellar", `data-stellar="${rowRefFor(b)}"`, "stellar");
     const fi = familyRowItems("stellar", stellarBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("stellar", `<p class="tag" style="margin:12px 0 2px">Stellar</p>`, rows, fi.items);
@@ -2381,7 +2379,7 @@ function paintAssets() {
   // TON family rows (Phase 4; tap a row to send on TON)
   if (tonBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "TON", `data-ton="${tonBalances.indexOf(b)}"`, "ton");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "TON", `data-ton="${rowRefFor(b)}"`, "ton");
     const fi = familyRowItems("ton", tonBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("ton", `<p class="tag" style="margin:12px 0 2px">TON</p>`, rows, fi.items);
@@ -2389,7 +2387,7 @@ function paintAssets() {
   // NEAR family rows (Phase 4; tap a row to send on NEAR)
   if (nearBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "NEAR", `data-near="${nearBalances.indexOf(b)}"`, "near");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "NEAR", `data-near="${rowRefFor(b)}"`, "near");
     const fi = familyRowItems("near", nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol], render);
     rows.push(fi.html);
     grp("near", `<p class="tag" style="margin:12px 0 2px">NEAR</p>`, rows, fi.items);
@@ -2397,7 +2395,7 @@ function paintAssets() {
   // Algorand family rows (Phase 4; tap a row to send on Algorand)
   if (algoBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Algorand", `data-algo="${algoBalances.indexOf(b)}"`, "algorand");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Algorand", `data-algo="${rowRefFor(b)}"`, "algorand");
     const fi = familyRowItems("algorand", algoBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows, fi.items);
@@ -2405,7 +2403,7 @@ function paintAssets() {
   // Tezos family rows (gap #16; tap a row to send on Tezos)
   if (tezBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Tezos", `data-tez="${tezBalances.indexOf(b)}"`, "tezos");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Tezos", `data-tez="${rowRefFor(b)}"`, "tezos");
     const fi = familyRowItems("tezos", tezBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("tezos", `<p class="tag" style="margin:12px 0 2px">Tezos</p>`, rows, fi.items);
@@ -2413,7 +2411,7 @@ function paintAssets() {
   // Hedera family rows (gap #16; tap a row to send on Hedera)
   if (hbaBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Hedera", `data-hba="${hbaBalances.indexOf(b)}"`, "hedera");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Hedera", `data-hba="${rowRefFor(b)}"`, "hedera");
     const fi = familyRowItems("hedera", hbaBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("hedera", `<p class="tag" style="margin:12px 0 2px">Hedera</p>`, rows, fi.items);
@@ -2421,7 +2419,7 @@ function paintAssets() {
   // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
   if (xrpBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "XRP Ledger", `data-xrp="${xrpBalances.indexOf(b)}"`, "xrpl");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "XRP Ledger", `data-xrp="${rowRefFor(b)}"`, "xrpl");
     const fi = familyRowItems("xrpl", xrpBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("xrpl", `<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`, rows, fi.items);
@@ -2429,7 +2427,7 @@ function paintAssets() {
   // Polkadot Asset Hub family rows (Phase 4; tap a row to send)
   if (dotBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Polkadot Asset Hub", `data-dot="${dotBalances.indexOf(b)}"`, "polkadot");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Polkadot Asset Hub", `data-dot="${rowRefFor(b)}"`, "polkadot");
     const fi = familyRowItems("polkadot", dotBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("polkadot", `<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`, rows, fi.items);
@@ -2437,7 +2435,7 @@ function paintAssets() {
   // Aptos family rows (Phase 5; tap a row to send on Aptos)
   if (aptosBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Aptos", `data-aptos="${aptosBalances.indexOf(b)}"`, "aptos");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Aptos", `data-aptos="${rowRefFor(b)}"`, "aptos");
     const fi = familyRowItems("aptos", aptosBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("aptos", `<p class="tag" style="margin:12px 0 2px">Aptos</p>`, rows, fi.items);
@@ -2445,7 +2443,7 @@ function paintAssets() {
   // Stacks family rows (Bitcoin L2; tap a row to send on Stacks)
   if (stacksBalances.length) {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, "Stacks", `data-stacks="${stacksBalances.indexOf(b)}"`, "stacks");
+    const render = ({ b, v }) => tokenRowHtml(b, v, "Stacks", `data-stacks="${rowRefFor(b)}"`, "stacks");
     const fi = familyRowItems("stacks", stacksBalances, (b) => prices[b.symbol], render);
     rows.push(fi.html);
     grp("stacks", `<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`, rows, fi.items);
@@ -2782,6 +2780,23 @@ function pagerCommit(idx) {
   if (next) next.onclick = () => { const w = $("homePager"); if (w && w.clientWidth) pagerGoTo(Math.round(w.scrollLeft / w.clientWidth) + 1); };
 }
 
+/** Rendered-row references: a row's data-* value is a registry
+ * id for the exact balance object the row was rendered from —
+ * never an index into a live balances array. The arrays are
+ * rebuilt on every refresh (fresh object identities), and a
+ * failed EVM load renders native + curated rows that were never
+ * in `balances` at all; an index resolved by identity at render
+ * time comes back -1 for those rows, the attribute is dropped
+ * or points nowhere, and the tap is dead (the 2026-11-17
+ * search-row defect: the rows rendered correctly and wired to
+ * nothing). The registry resets at the top of every
+ * paintAssets; wireHomeRows resolves each id to its object at
+ * wire time and captures the object in the click handler, so a
+ * later repaint can never retarget a live row. */
+const rowRefs = new Map();
+let rowRefSeq = 0;
+function rowRefFor(b) { const id = ++rowRefSeq; rowRefs.set(id, b); return id; }
+
 /** Row wiring for the home surfaces (spec rev5): every row tap
  * lands on the token page (detail-capable families) or the
  * family's own pre-scoped sheet, exactly as the old list wired
@@ -2798,7 +2813,7 @@ function wireHomeRows(root) {
     toast("Address copied");
   });
   root.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
-    const b = balances[Number(r.dataset.evmrow)];
+    const b = rowRefs.get(Number(r.dataset.evmrow));
     if (b) openTokenPage(evmDetailDesc(b), "home");
   });
   root.querySelectorAll("#btcRow").forEach(el => el.onclick = () => openTokenPage(scalarTokenDesc("bitcoin"), "home"));
@@ -2807,31 +2822,31 @@ function wireHomeRows(root) {
   scalarWire("data-ada", "cardano"); scalarWire("data-zec", "zcash"); scalarWire("data-dash", "dash");
   const lnEl = root.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   root.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
-    const b = tronBalances[Number(r.dataset.tron)];
+    const b = rowRefs.get(Number(r.dataset.tron));
     if (b) openTokenPage(tronDetailDesc(b), "home");
   });
   root.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
-    const b = solBalances[Number(r.dataset.sol)];
+    const b = rowRefs.get(Number(r.dataset.sol));
     if (b) openTokenPage(solanaDetailDesc(b), "home");
   });
   root.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
-    const b = suiBalances[Number(r.dataset.sui)];
+    const b = rowRefs.get(Number(r.dataset.sui));
     if (b) openTokenPage(suiDetailDesc(b), "home");
   });
-  const sheetWire = (attr, arr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => r.onclick = () => {
-    const b = arr[Number(r.dataset[attr.slice(5)])];
+  const sheetWire = (attr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => r.onclick = () => {
+    const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));
     if (b) fn(b);
   });
-  sheetWire("data-stellar", stellarBalances, (b) => openTokenPage(familyTokenDesc("stellar", b), "home"));
-  sheetWire("data-ton", tonBalances, (b) => openTokenPage(familyTokenDesc("ton", b), "home"));
-  sheetWire("data-near", nearBalances, (b) => openTokenPage(familyTokenDesc("near", b), "home"));
-  sheetWire("data-algo", algoBalances, (b) => openTokenPage(familyTokenDesc("algorand", b), "home"));
-  sheetWire("data-tez", tezBalances, (b) => openTokenPage(familyTokenDesc("tezos", b), "home"));
-  sheetWire("data-hba", hbaBalances, (b) => openTokenPage(familyTokenDesc("hedera", b), "home"));
-  sheetWire("data-xrp", xrpBalances, (b) => openTokenPage(familyTokenDesc("xrpl", b), "home"));
-  sheetWire("data-dot", dotBalances, (b) => openTokenPage(familyTokenDesc("polkadot", b), "home"));
-  sheetWire("data-aptos", aptosBalances, (b) => openTokenPage(familyTokenDesc("aptos", b), "home"));
-  sheetWire("data-stacks", stacksBalances, (b) => openTokenPage(familyTokenDesc("stacks", b), "home"));
+  sheetWire("data-stellar", (b) => openTokenPage(familyTokenDesc("stellar", b), "home"));
+  sheetWire("data-ton", (b) => openTokenPage(familyTokenDesc("ton", b), "home"));
+  sheetWire("data-near", (b) => openTokenPage(familyTokenDesc("near", b), "home"));
+  sheetWire("data-algo", (b) => openTokenPage(familyTokenDesc("algorand", b), "home"));
+  sheetWire("data-tez", (b) => openTokenPage(familyTokenDesc("tezos", b), "home"));
+  sheetWire("data-hba", (b) => openTokenPage(familyTokenDesc("hedera", b), "home"));
+  sheetWire("data-xrp", (b) => openTokenPage(familyTokenDesc("xrpl", b), "home"));
+  sheetWire("data-dot", (b) => openTokenPage(familyTokenDesc("polkadot", b), "home"));
+  sheetWire("data-aptos", (b) => openTokenPage(familyTokenDesc("aptos", b), "home"));
+  sheetWire("data-stacks", (b) => openTokenPage(familyTokenDesc("stacks", b), "home"));
   root.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
     if (row) openTokenPage(familyTokenDesc(row.key, row), "home");
