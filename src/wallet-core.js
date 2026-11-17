@@ -33417,10 +33417,11 @@ const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "
 const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal", "zecBal", "dashBal"];
 
 /** Serialise a balance snapshot for the cache. `snap` is the app's
- *  plain-data balance state: { evmNetwork, evmRows, rows: {family:
- *  [...]}, scalars: {btcBal, ...}, cosmosRows, prices }. Anything
- *  not on the fixed field list is dropped. Returns a JSON string,
- *  or null when the snapshot carries nothing worth caching. */
+ *  plain-data balance state: { evmNetwork, evmRows, evmChains:
+ *  {netKey: [...]}, rows: {family: [...]}, scalars: {btcBal, ...},
+ *  cosmosRows, prices }. Anything not on the fixed field list is
+ *  dropped. Returns a JSON string, or null when the snapshot
+ *  carries nothing worth caching. */
 export function packBalanceCache(address, snap, now = Date.now()) {
   if (!address || !snap || typeof snap !== "object") return null;
   const out = { v: 2, address: String(address), t: Number(now) || 0, fams: {} };
@@ -33432,6 +33433,17 @@ export function packBalanceCache(address, snap, now = Date.now()) {
   if (Array.isArray(snap.cosmosRows)) { out.fams.cosmos = snap.cosmosRows; any = true; }
   if (typeof snap.evmNetwork === "string" && Array.isArray(snap.evmRows)) {
     out.evm = { network: snap.evmNetwork, rows: snap.evmRows }; any = true;
+  }
+  // Per-network EVM rows for NON-active chains (§147): the All
+  // page reads every evidence-bearing EVM chain at open, and its
+  // last-known rows cache under the same discipline as families —
+  // they paint instantly on the next open, flagged "Updating…"
+  // until that chain's live read lands, and are written only from
+  // a successful live read of that chain.
+  if (snap.evmChains && typeof snap.evmChains === "object") {
+    const chains = {};
+    for (const [k, v] of Object.entries(snap.evmChains)) if (typeof k === "string" && Array.isArray(v)) chains[k] = v;
+    if (Object.keys(chains).length) { out.evmChains = chains; any = true; }
   }
   const sc = snap.scalars || {};
   const scalars = {};
@@ -33459,6 +33471,10 @@ export function unpackBalanceCache(json, address) {
   if (!o.fams || typeof o.fams !== "object") return null;
   for (const k of Object.keys(o.fams)) if (!Array.isArray(o.fams[k])) return null;
   if (o.evm != null && (typeof o.evm !== "object" || typeof o.evm.network !== "string" || !Array.isArray(o.evm.rows))) return null;
+  if (o.evmChains != null) {
+    if (typeof o.evmChains !== "object" || Array.isArray(o.evmChains)) return null;
+    for (const k of Object.keys(o.evmChains)) if (!Array.isArray(o.evmChains[k])) return null;
+  }
   return o;
 }
 
@@ -33584,6 +33600,82 @@ export function flattenHeldRows(items) {
     if (ds !== 0) return ds;
     return p[1] - q[1];
   }).map(([x]) => x);
+}
+
+/* ================= Per-network EVM reads for the All page (§147, 2026-11-17) =================
+ * The All page promises every chain's holdings, so every EVM
+ * chain with on-device evidence (an ever-held or custom token
+ * record) gets a real balance read at open — not only the active
+ * network. These helpers own the row shapes that discipline
+ * needs, pure so the rules are unit-testable; the app performs
+ * the reads and stores one entry per network. */
+
+/** The couldn't-load shape for ONE EVM chain whose balance read
+ *  failed: the native coin, the chain's curated tokens, AND the
+ *  chain's on-device held/custom token records — every row at
+ *  amount null (unknown, never zero). The records matter most:
+ *  a non-curated held token (the LADYS case) is exactly the row
+ *  a curated-only failure shape silently dropped, even on the
+ *  token's own chain page. Records duplicating the native or a
+ *  curated token collapse into that row. Pure. */
+export function evmChainFailureRows(netKey, heldTokens, customTokens) {
+  const net = NETWORKS[netKey];
+  if (!net) return [];
+  const rows = [{ symbol: net.symbol, amount: null, address: null, verified: true },
+    ...(net.tokens || []).map(t => ({ ...t, amount: null }))];
+  const seen = new Set(rows.map(r => String(r.address || "").toLowerCase()).filter(Boolean));
+  const add = (t, custom) => {
+    if (!t || !t.address) return;
+    const k = String(t.address).toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    rows.push({ symbol: t.symbol || "TOKEN", name: t.name || t.symbol || "Token", amount: null,
+      address: t.address, decimals: t.decimals, verified: false, priceUsd: null, ...(custom ? { custom: true } : {}) });
+  };
+  for (const t of customTokens || []) add(t, true);
+  for (const t of heldTokens || []) add(t, false);
+  return rows;
+}
+
+/** Merge a chain's known-token read rows (ever-held + custom
+ *  records, read via the small known-token scan) into its base
+ *  rows (native + curated from the balance read). The base read
+ *  owns the native and curated identities — a known row never
+ *  duplicates one; address-less rows never merge. Pure. */
+export function mergeEvmChainRows(baseRows, knownRows) {
+  const out = [...(Array.isArray(baseRows) ? baseRows : [])];
+  const seen = new Set(out.map(b => String((b && b.address) || "").toLowerCase()).filter(Boolean));
+  for (const r of knownRows || []) {
+    if (!r || !r.address) continue;
+    const k = String(r.address).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
+/** The EVM contribution to a cross-chain total, summed over
+ *  EVERY read chain — the active network and each per-network
+ *  read alike. A chain whose read FAILED contributes nothing:
+ *  its holdings are unknown, and an unknown must never enter a
+ *  total as a proven zero (its rows are null-amount and skipped
+ *  in any case; the failed flag keeps even a partially-shaped
+ *  entry out). priceFor(netKey, row) returns the row's effective
+ *  price or null (unpriced, or excluded — e.g. a scam verdict);
+ *  null-amount rows never contribute. Pure. */
+export function sumEvmChainsUsd(chains, priceFor) {
+  if (typeof priceFor !== "function") return 0;
+  let t = 0;
+  for (const c of chains || []) {
+    if (!c || c.failed || !Array.isArray(c.rows)) continue;
+    for (const b of c.rows) {
+      if (!b || b.amount == null) continue;
+      const p = priceFor(c.key, b);
+      if (p != null) t += Number(b.amount) * p;
+    }
+  }
+  return t;
 }
 
 /* ================= Canonical-bridge moves (LADYS class, 2026-11-15) =================

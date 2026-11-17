@@ -5025,7 +5025,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("evm load-failed: family alert names the active network",
     appSrcEvm.includes("if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;"));
   ok("evm load-failed: failed rows render as couldn't-load, chain total as nothing (rev5 §3 — no dash posing as a figure)",
-    appSrcEvm.includes("? [{ symbol: net.symbol, amount: null, address: null, verified: true },")
+    appSrcEvm.includes("? evmChainFailureRows(networkKey, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))")
+    && readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8").includes("const rows = [{ symbol: net.symbol, amount: null, address: null, verified: true },")
     && appSrcEvm.includes("m.evm = (evmLoadFailed || !famLoaded.has(\"evm\")) ? null : sumTrustRows(")
     && appSrcEvm.includes('totalVal == null ? "" : usd(totalVal || 0)'));
   ok("evm load-failed: hydrate never merges rows over a failed load",
@@ -22077,7 +22078,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && sl144("function gameOnSwapSync(", "A swap still in flight").includes('"tx:" + hash'));
   ok("§144: Lightning receives count at the node event funnel's payment_received, on-chain receives at the proven-balance snapshot",
     sl144("function lnHandleEvents(").includes('ev.type === "payment_received")) gameOnReceive();')
-    && sl144("function persistBalanceCache(").includes("gameOnBalanceSnapshot(rows, scalars, evm, cosmosRowsSnap);"));
+    && sl144("function persistBalanceCache(", "async function renderMain(").includes("gameOnBalanceSnapshot(rows, scalars, evm, cosmosRowsSnap);"));
   ok("§144: the boot overlay runs on the unlock transition only (definition + the unlock handler's one call), time-bounded at 1.4 s and tap-to-skip",
     (appSrc144.match(/gameBootSequence\(\)/g) || []).length === 2
     && sl144("function gameBootSequence(", "achievement toasts").includes("setTimeout(gameBootDismiss, 1400)")
@@ -22463,6 +22464,122 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     app146.includes('<span class="tchip scam">Scam</span>') && app146.includes('<span class="tchip verified">Verified</span>')
     && app146.includes("Flagged by ${esc(tokenTrustSourceLabel(v.source)") && app146.includes('if (e && e.scamBlocked)')
     && app146.includes('catch (e) { if (e && e.scamBlocked) { pendingSwap = null; return msg("wMsg", e.message); } throw e; }'));
+}
+
+// §147 — PER-NETWORK EVM READS FOR THE ALL PAGE (2026-11-17).
+// Ethuram's live complaint: the All page showed only the ACTIVE
+// network's EVM rows (Solana + Algorand + BNB dust ≈ $0.17) while
+// his Arbitrum holdings (LADYS > $5 + ETH) never appeared — they
+// were never REQUESTED: the EVM group, the All flatten and the
+// grand total all consumed the single active-network `balances`
+// array, and a non-active chain's census entry was a record-only
+// placeholder (totalUsd null, page = permanent skeleton). Worse,
+// the active chain's failure shape covered only native + curated
+// tokens and hydrateEvmTokens early-returns on failure, so a
+// non-curated held token vanished even on its OWN chain's page
+// when a read failed. §147: every EVM chain with on-device
+// evidence gets a bounded read at open (native + curated +
+// held/custom records via the small known-token scan — never
+// the full list scan); its rows feed All, its pager page and
+// the grand total; a failed chain shapes couldn't-load rows
+// INCLUDING its held/custom records and enters the census as
+// failed; the header stays "Updating…" while any evidence-
+// bearing chain is unread; the balance cache carries the
+// per-network rows under the family discipline.
+{
+  const { evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd, heldScopes, flattenHeldRows, packBalanceCache, unpackBalanceCache } = await import("../src/wallet-core.js");
+  const app147 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const sl147 = (a, b) => { const i = app147.indexOf(a); if (i < 0) return ""; const j = b ? app147.indexOf(b, i + a.length) : -1; return app147.slice(i, j < 0 ? i + 6000 : j); };
+  const LADYS_ARB = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+  const USDC_ARB = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+
+  // --- the failure shape includes held-token records ---
+  const failRows = evmChainFailureRows("arbitrum",
+    [{ address: LADYS_ARB, symbol: "LADYS", name: "Milady Meme Coin", decimals: 18 },
+     { address: USDC_ARB, symbol: "USDC", decimals: 6 }],
+    [{ address: "0x1111111111111111111111111111111111111111", symbol: "CSTM", name: "Custom Token", decimals: 18 }]);
+  ok("§147: a chain's failure shape is native + curated + held/custom records, every row unknown (amount null)",
+    failRows.length === 5 && failRows.every(r => r.amount === null)
+    && failRows[0].symbol === "ETH" && failRows[0].address === null
+    && failRows.some(r => r.symbol === "USDT"));
+  ok("§147: the failure shape carries the non-curated HELD token (the LADYS hole) and the custom record, curated duplicates collapsed",
+    failRows.filter(r => (r.address || "").toLowerCase() === USDC_ARB.toLowerCase()).length === 1
+    && failRows.some(r => (r.address || "") === LADYS_ARB && r.symbol === "LADYS")
+    && failRows.some(r => r.symbol === "CSTM" && r.custom === true));
+
+  // --- known-token rows merge into the base read ---
+  const merged147 = mergeEvmChainRows(
+    [{ symbol: "ETH", amount: "0.5", address: null }, { symbol: "USDC", amount: "5", address: USDC_ARB }],
+    [{ symbol: "LADYS", amount: "100", address: LADYS_ARB }, { symbol: "USDC", amount: "999", address: USDC_ARB }]);
+  ok("§147: mergeEvmChainRows adds known-token rows without duplicating the base read's curated rows",
+    merged147.length === 3 && merged147.find(r => r.symbol === "USDC").amount === "5"
+    && merged147.some(r => r.symbol === "LADYS" && r.amount === "100"));
+
+  // --- the grand total sums every read chain; a failed chain is excluded as unknown ---
+  const total147 = sumEvmChainsUsd([
+    { key: "bsc", failed: false, rows: [{ symbol: "BNB", amount: "2", address: null }] },
+    { key: "arbitrum", failed: false, rows: [{ symbol: "ETH", amount: "0.5", address: null }, { symbol: "LADYS", amount: "100", address: LADYS_ARB }, { symbol: "USDC", amount: null, address: USDC_ARB }] },
+    { key: "ethereum", failed: true, rows: [{ symbol: "ETH", amount: "10", address: null }] },
+  ], (k, b) => ({ BNB: 500, ETH: 3000, LADYS: 0.5, USDC: 1 })[b.symbol] ?? null);
+  ok("§147: sumEvmChainsUsd sums multiple EVM networks (1000 + 1500 + 50) and excludes a failed chain's holdings entirely",
+    total147 === 2550);
+
+  // --- All includes held rows from ≥2 EVM networks ---
+  const flat147 = flattenHeldRows([
+    { chain: "bsc", symbol: "BNB", amount: "0.002", valueUsd: 1.2 },
+    { chain: "arbitrum", symbol: "LADYS", amount: "1041558458", valueUsd: 5.4 },
+    { chain: "arbitrum", symbol: "USDC", amount: null, valueUsd: null },
+    { chain: "bsc", symbol: "DUST", amount: "0", valueUsd: 0 },
+  ]).map(x => x.symbol);
+  ok("§147: the All flatten keeps held rows from two EVM networks at once, failed reads first, zeros dropped",
+    flat147.join() === "USDC,LADYS,BNB");
+
+  // --- a failed non-active chain earns a failed census entry ---
+  const scopes147 = heldScopes([
+    { key: "bsc", name: "BNB Chain", held: true, failed: false, inFlight: false, totalUsd: 3 },
+    { key: "evm:arbitrum", name: "Arbitrum", held: false, failed: true, inFlight: false, totalUsd: null },
+    { key: "evm:polygon", name: "Polygon", held: true, failed: false, inFlight: false, totalUsd: null },
+  ]).map(s => s.key);
+  ok("§147: heldScopes keeps a failed non-active EVM chain's page, pinned in the failed tier ahead of unpriced holdings",
+    scopes147.includes("evm:arbitrum")
+    && scopes147.indexOf("evm:arbitrum") > scopes147.indexOf("bsc")
+    && scopes147.indexOf("evm:arbitrum") < scopes147.indexOf("evm:polygon"));
+
+  // --- the balance cache carries per-network rows ---
+  const ADDR147 = "0x2222222222222222222222222222222222222222";
+  const packed147 = packBalanceCache(ADDR147, { rows: {}, scalars: {}, evmChains: { arbitrum: [{ symbol: "LADYS", amount: "5", address: LADYS_ARB }], bogus: "nope" } });
+  const unpacked147 = unpackBalanceCache(packed147, ADDR147);
+  ok("§147: pack/unpack round-trips per-network EVM rows (non-array chain entries dropped at pack)",
+    !!unpacked147 && Array.isArray(unpacked147.evmChains.arbitrum) && unpacked147.evmChains.arbitrum[0].symbol === "LADYS"
+    && unpacked147.evmChains.bogus === undefined);
+  ok("§147: a malformed evmChains field rejects the cache outright (the honesty envelope is not partial)",
+    unpackBalanceCache(JSON.stringify({ v: 2, address: ADDR147, fams: {}, evmChains: { arbitrum: "nope" } }), ADDR147) === null);
+
+  // --- production wiring (source pins, the §134 discipline) ---
+  ok("§147: renderMain arms the pending set from evidence and fires the per-network pass at render end",
+    app147.includes("if (evmChainEvidence(k) || evmChainState.has(k)) evmChainsPending.add(k);")
+    && app147.includes("hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)"));
+  ok("§147: a per-network read is the balance read + the small known-token scan — never the full CoinGecko list scan",
+    sl147("async function readEvmChainRows(").includes("const base = await getBalances(w, k);")
+    && sl147("async function readEvmChainRows(").includes("scanEvmTokenBalances(k, w.address, known)")
+    && !sl147("async function readEvmChainRows(", "async function hydrateEvmChains(").includes("cgTokensForChain"));
+  ok("§147: a failed per-network read shapes its failure from the chain's held/custom records",
+    sl147("async function hydrateEvmChains(").includes("evmChainFailureRows(k, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))"));
+  ok("§147: paintAssets builds one group per read chain and the census takes the chain's real state + total",
+    app147.includes('grp("evm:" + k, "", [fi.html], fi.items);')
+    && app147.includes('failed: st.status === "failed",')
+    && app147.includes("totalUsd: evmTotals[k] != null ? evmTotals[k] : null"));
+  ok("§147: heroTotal sums the per-network chains through core's rule",
+    sl147("function heroTotal(").includes("sumEvmChainsUsd(evmChainsForTotal,"));
+  ok("§147: the header stays Updating… while any evidence-bearing EVM chain is unread, and the couldn't-load note sees per-chain failures",
+    sl147("function paintHeader(").includes("|| evmChainsPending.size > 0;")
+    && sl147("function balancesUnloadedInView(").includes("[...evmChainState.values()].some("));
+  ok("§147: an evm:<key> pager page renders its read rows — the commit-only skeleton is gone",
+    sl147("const renderChainPage = ").includes("const g = groups.find(x => x.key === scope.key);")
+    && !app147.includes("its rows load when the page commits"));
+  ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read",
+    app147.includes('evmChainState.set(k, { status: "cached", rows });')
+    && app147.includes('if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows;'));
 }
 
 console.log(`\n${passed} checks passed`);

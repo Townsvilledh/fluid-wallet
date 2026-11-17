@@ -68,6 +68,7 @@ import {
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
   heldScopes, flattenHeldRows,
+  evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
   FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
   newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
@@ -198,6 +199,26 @@ const UNVERIFIED_CAUTION = "This token isn't on a verified list — check the co
 const expandedOther = new Set();  // family keys whose "Other tokens" group is expanded
 let familyScanFailed = {};        // tron/solana/sui -> true when the all-token read fell back to curated rows
 let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|failed, for the ACTIVE chain
+// Per-network EVM reads (§147, 2026-11-17): the All page promises
+// every chain's holdings, so each NON-active EVM chain with
+// on-device evidence (an ever-held or custom token record) gets
+// its own bounded balance read at open. evmChainState maps
+// netKey -> { status: "cached"|"ok"|"failed", rows } ("cached" =
+// last-known rows from the balance cache, shown under the
+// "Updating…" flag until the live read lands); evmChainOk is the
+// cache-provenance set (chains whose LIVE read succeeded this
+// render); evmChainsPending holds evidence-bearing chains whose
+// live read has not settled yet — the header's "Updating…" stays
+// up while it is non-empty, so the grand total never presents
+// itself as final over an unread held chain.
+let evmChainState = new Map();
+let evmChainOk = new Set();
+const evmChainsPending = new Set();
+// Render context for EVM rows painted from a NON-active chain's
+// read: the chain whose native-coin badge and token-trust chain
+// a row belongs to. Set inside those rows' render closures only;
+// null everywhere else (the active network is the default).
+let evmRowCtxKey = null;
 let renderSeq = 0; // increments per renderMain run — stale renders must not adopt late reads
 const EVM_LATE_ADOPT_MS = 120000; // bounded window in which a rescued EVM read may still repaint its scan
 let evmLoadFailed = false; // the curated EVM balance load failed — rows are UNKNOWN, never zero (DOGE precedent)
@@ -1008,7 +1029,7 @@ let badgeAllCtx = null;
 function badgeHtml(b, famKey) {
   const allCtx = badgeAllCtx != null ? badgeAllCtx : viewKey === "all";
   if (!allCtx || !b || !dupSymbols.has(b.symbol)) return "";
-  const nat = famKey === "evm" ? NETWORKS[networkKey].symbol : FAMILY_NATIVE_SYM[famKey];
+  const nat = famKey === "evm" ? NETWORKS[evmRowCtxKey || networkKey].symbol : FAMILY_NATIVE_SYM[famKey];
   const u = nat ? spothqUrl(nat) : null;
   return u ? `<img class="coin-badge" src="${esc(u)}" width="14" height="14" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">` : "";
 }
@@ -1179,6 +1200,16 @@ function hydrateBalanceCache(w) {
     balances = cached.evm.rows;
     famLoaded.add("evm"); hydratedFams.add("evm");
   }
+  // Per-network EVM rows (§147): last-known rows for non-active
+  // chains paint instantly under the "Updating…" flag (their
+  // chains sit in the pending set until the live read lands) —
+  // never presented as live, exactly the family discipline.
+  if (cached.evmChains && typeof cached.evmChains === "object") {
+    for (const [k, rows] of Object.entries(cached.evmChains)) {
+      if (k === networkKey || !NETWORKS[k] || !Array.isArray(rows)) continue;
+      evmChainState.set(k, { status: "cached", rows });
+    }
+  }
   const sc = cached.scalars || {};
   // Scalars hydrate ONLY as stored finite numbers — never coerced
   // (Number(null) is 0, and a coerced unknown would paint as a
@@ -1198,7 +1229,7 @@ function hydrateBalanceCache(w) {
   if (isNum(sc.zecBal)) { zecBal = sc.zecBal; famLoaded.add("zcash"); hydratedFams.add("zcash"); }
   if (isNum(sc.dashBal)) { dashBal = sc.dashBal; famLoaded.add("dash"); hydratedFams.add("dash"); }
   cachePaint = hydratedFams.size > 0;
-  if (cachePaint) paintAssets();
+  if (cachePaint || evmChainState.size) paintAssets();
 }
 
 let lastCacheWrite = 0;
@@ -1252,11 +1283,23 @@ function persistBalanceCache() {
     const evm = liveOkFams.has("evm")
       ? { network: networkKey, rows: balances.filter(b => !b.scanned && !b.custom) }
       : (prev && prev.evm ? prev.evm : null);
+    // Per-network EVM rows (§147), same provenance gate: a
+    // chain's entry is written only when ITS live read succeeded
+    // this render (evmChainOk); a failed or unread chain's
+    // previous entry stands untouched. The active network's rows
+    // travel in the evm slot above, never duplicated here.
+    const evmChainsSnap = { ...(prev && prev.evmChains ? prev.evmChains : {}) };
+    for (const [k, st] of evmChainState) {
+      if (k === networkKey) { delete evmChainsSnap[k]; continue; }
+      if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows;
+    }
+    for (const k of Object.keys(evmChainsSnap)) if (!NETWORKS[k]) delete evmChainsSnap[k];
     const cosmosRowsSnap = liveOkFams.has("cosmos") ? cosmosRows
       : (prev && prev.fams && Array.isArray(prev.fams.cosmos) ? prev.fams.cosmos : null);
     const packed = packBalanceCache(wallet.address, {
       rows, scalars,
       ...(evm ? { evmNetwork: evm.network, evmRows: evm.rows } : {}),
+      ...(Object.keys(evmChainsSnap).length ? { evmChains: evmChainsSnap } : {}),
       ...(cosmosRowsSnap ? { cosmosRows: cosmosRowsSnap } : {}),
       prices,
     }, now);
@@ -1302,6 +1345,15 @@ async function renderMain() {
   cacheWriteNeeded = false;
   hydratedFams.clear();
   cachePaint = false;
+  // Per-network EVM state (§147) resets with the render, like
+  // every family's; the cache hydration below re-seeds the
+  // last-known rows, and the evidence pass after it arms the
+  // pending set BEFORE any family settle can paint — so the
+  // header's "Updating…" covers the chain reads from the first
+  // paint, not just from when they happen to land.
+  evmChainState = new Map();
+  evmChainOk = new Set();
+  evmChainsPending.clear();
   paintHeader();
   // Prices NO LONGER GATE the render (2026-11-09 load fix): this
   // function used to await getPrices() — raced against a 10 s
@@ -1321,6 +1373,15 @@ async function renderMain() {
   // prices stay — display-only either way; sends re-verify prices
   // independently.
   hydrateBalanceCache(w);
+  // Per-network EVM reads (§147): every NON-active EVM chain
+  // with on-device evidence — an ever-held or custom token
+  // record, or last-known rows in the cache — joins the pending
+  // set now; hydrateEvmChains (fired at the end of this render)
+  // works the set with bounded concurrency.
+  for (const k of Object.keys(NETWORKS)) {
+    if (k === networkKey) continue;
+    if (evmChainEvidence(k) || evmChainState.has(k)) evmChainsPending.add(k);
+  }
   const cachedPriceSnapshot = { ...prices };
   (async () => {
     try {
@@ -1746,12 +1807,12 @@ async function renderMain() {
   markLoaded("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
+  hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)
   renderHistory();
   discoverChains(); // background, non-blocking; no-ops while the cache is fresh
 }
 
 function heroTotal() {
-  const net = NETWORKS[networkKey];
   // A failed Bitcoin load is unknown, not $0.00: its contribution
   // stays out of the total (same discipline as the EVM family).
   // A failed scalar load is UNKNOWN, not its cached value: BTC's
@@ -1768,11 +1829,21 @@ function heroTotal() {
   // the total — its pairs quote fantasy prices, and letting
   // them inflate the hero figure would break the live-prices
   // rule in spirit. The token still shows on its row, untotalled.
-  for (const b of balances) {
-    if (b.address && trustScamActive(networkKey, b.address)) continue;
-    const p = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
-    if (p != null) t += Number(b.amount) * p;
+  // Per-network reads (§147): the EVM contribution sums EVERY
+  // read chain — the active network plus each evidence-bearing
+  // chain read at open — never the active network alone. A
+  // chain whose read failed is excluded as unknown (core's
+  // sumEvmChainsUsd owns the rule), not silently zeroed into
+  // a total labelled "Across all networks".
+  const evmChainsForTotal = [{ key: networkKey, rows: balances, failed: evmLoadFailed }];
+  for (const [k, st] of evmChainState) {
+    if (k !== networkKey && st) evmChainsForTotal.push({ key: k, rows: st.rows, failed: st.status === "failed" });
   }
+  t += sumEvmChainsUsd(evmChainsForTotal, (k, b) => {
+    if (b.address && trustScamActive(k, b.address)) return null;
+    const n = NETWORKS[k];
+    return priceOfRow(b, b.address ? prices[b.symbol] : prices[n.priceSym]);
+  });
   for (const b of tronBalances) {
     if (b.address && trustScamActive("tron", b.address)) continue;
     const p = priceOfRow(b, prices[b.symbol]);
@@ -1995,6 +2066,11 @@ function balancesUnloadedInView() {
   const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
   if (viewKey === "all") {
     return evmLoadFailed || rowNull(balances)
+      // Per-network EVM reads (§147): a failed non-active chain —
+      // or a null row inside one — is part of this view's truth
+      // too; the header note must not clear while an entire held
+      // chain stands unread behind it.
+      || [...evmChainState.values()].some(st => st && (st.status === "failed" || (st.rows || []).some(b => b && b.amount == null)))
       || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed || adaLoadFailed || zecLoadFailed || dashLoadFailed
       || tronLoadFailed || rowNull(tronBalances)
       || stellarLoadFailed || rowNull(stellarBalances)
@@ -2061,7 +2137,12 @@ function paintHeader() {
     // with no disclosure while every family was still
     // loading, which reads as "all my balances are zero".
     const updating = !HOME_FAMILIES.every((k) => famLoaded.has(k))
-      || (cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k)));
+      || (cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k)))
+      // Per-network EVM reads (§147): an evidence-bearing EVM
+      // chain whose read has not settled is part of the promised
+      // total — the header stays "Updating…" until it lands, so
+      // a partial sum never presents as the finished figure.
+      || evmChainsPending.size > 0;
     sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`)
       + (balancesUnloadedInView() ? " + some balances couldn't load" : "")
       + (updating ? " · Updating…" : "");
@@ -2100,7 +2181,7 @@ let trustRefreshRunning = false;
  *  families without a token id on the row). */
 function rowTrustId(famKey, b) {
   if (!b) return null;
-  if (famKey === "evm") return b.address ? { chainKey: networkKey, tokenId: b.address } : null;
+  if (famKey === "evm") return b.address ? { chainKey: evmRowCtxKey || networkKey, tokenId: b.address } : null;
   if (famKey === "stellar") return b.issuer ? { chainKey: "stellar", tokenId: b.issuer } : null;
   if (["solana", "sui", "ton", "tron", "aptos", "near", "polkadot"].includes(famKey)) return b.address ? { chainKey: famKey, tokenId: b.address } : null;
   return null;
@@ -2121,6 +2202,7 @@ function heldTrustEntries() {
   const out = [];
   const push = (chainKey, id, amount) => { if (id && Number(amount) > 0) out.push({ chainKey, tokenId: id }); };
   for (const b of balances) push(networkKey, b.address, b.amount);
+  for (const [k, st] of evmChainState) if (st && st.rows) for (const b of st.rows) push(k, b.address, b.amount);
   for (const b of solBalances) push("solana", b.address, b.amount);
   for (const b of suiBalances) push("sui", b.address, b.amount);
   for (const b of tonBalances) push("ton", b.address, b.amount);
@@ -2224,6 +2306,13 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
  * flattens items and drops the grouping entirely. */
 function familyRowItems(famKey, rowsArr, priceOf, renderItem) {
   if (!famLoaded.has(famKey)) return { items: [], html: skeletonRowsHtml() };
+  return familyRowItemsNow(famKey, rowsArr, priceOf, renderItem);
+}
+/** familyRowItems without the family-loaded gate: for row sets
+ *  whose loaded state is their own fact, not the family's — the
+ *  per-network EVM reads (§147), whose per-chain state IS the
+ *  settle record. */
+function familyRowItemsNow(famKey, rowsArr, priceOf, renderItem) {
   const visible = rowsArr.filter(b => b && (b.amount == null || Number(b.amount) > 0));
   const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b));
   // Items carry a RENDER closure, not finished html: the chain
@@ -2266,6 +2355,9 @@ function familyAlertMap() {
     m.evm = `Token scan is limited on ${NETWORKS[networkKey].name} (no Multicall3) — showing known tokens. Any token can still be added by contract address.`;
   else if (evmScanState.key === networkKey && evmScanState.status === "failed")
     m.evm = "Token scan unavailable right now — showing known tokens.";
+  // Per-network EVM reads (§147): a failed non-active chain gets
+  // its own alert under its "evm:<key>" scope, like any family.
+  for (const [k, st] of evmChainState) if (st && st.status === "failed") m["evm:" + k] = `${NETWORKS[k].name} balances couldn't be loaded right now.`;
   if (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null))
     m.cosmos = "Some Cosmos chains didn't answer just now — those balances couldn't load. Receiving still works on every chain.";
   return m;
@@ -2274,7 +2366,8 @@ function openFamilyAlert(key) {
   const text = familyAlertMap()[key];
   if (!text) return;
   const meta = RECEIVE_NETWORKS.find(x => x.id === key);
-  const title = key === "evm" ? NETWORKS[networkKey].name : key === "cosmos" ? "Cosmos" : (meta ? meta.name : key);
+  const title = key === "evm" ? NETWORKS[networkKey].name : key === "cosmos" ? "Cosmos"
+    : key.startsWith("evm:") && NETWORKS[key.slice(4)] ? NETWORKS[key.slice(4)].name : (meta ? meta.name : key);
   openSheet(`<h3>${esc(title)}</h3>
     <p class="tag" id="famAlertText">${esc(text)}</p>
     <button class="btn" id="famRetry">Retry</button>`);
@@ -2383,7 +2476,8 @@ function paintAssets() {
   {
     const symNets = new Map();
     const noteSym = (sym, where) => { if (!sym) return; if (!symNets.has(sym)) symNets.set(sym, new Set()); symNets.get(sym).add(where); };
-    for (const b of balances) noteSym(b.symbol, "evm");
+    for (const b of balances) noteSym(b.symbol, "evm:" + networkKey);
+    for (const [k, st] of evmChainState) if (st && st.rows) for (const b of st.rows) noteSym(b.symbol, "evm:" + k);
     for (const b of tronBalances) noteSym(b.symbol, "tron");
     for (const b of solBalances) noteSym(b.symbol, "solana");
     for (const b of suiBalances) noteSym(b.symbol, "sui");
@@ -2419,15 +2513,37 @@ function paintAssets() {
   {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, net.name, `data-evmrow="${rowRefFor(b)}"`, "evm");
+    // The failure shape (§147): native + curated + the chain's
+    // held/custom token RECORDS — a non-curated held token whose
+    // read failed pins as "couldn't load" on its own chain too,
+    // never silently absent (core's evmChainFailureRows).
     const evmRows = evmLoadFailed
-      ? [{ symbol: net.symbol, amount: null, address: null, verified: true },
-         ...net.tokens.map(t => ({ ...t, amount: null }))]
+      ? evmChainFailureRows(networkKey, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))
       : balances;
     const fi = familyRowItems("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render);
     rows.push(fi.html);
     if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
     grp("evm", "", rows, fi.items);
+  }
+  // Per-network EVM groups (§147): one items-source per READ
+  // non-active chain, parameterised by that network — these feed
+  // the All page's flatten and the chain's own pager page. The
+  // render closure carries the chain context (badge + trust +
+  // tap routing) so the rows stay correct on every surface that
+  // renders them (All, search). No Add-token button here: token
+  // management belongs to the active chain; the page's own
+  // commit switches the network first.
+  for (const [k, st] of evmChainState) {
+    if (k === networkKey || !st || !Array.isArray(st.rows)) continue;
+    const cnet = NETWORKS[k]; if (!cnet) continue;
+    const render = ({ b, v }) => {
+      evmRowCtxKey = k;
+      try { return tokenRowHtml(b, v, cnet.name, `data-evmrow="${rowRefFor(b)}" data-evmchain="${k}"`, "evm"); }
+      finally { evmRowCtxKey = null; }
+    };
+    const fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], render);
+    grp("evm:" + k, "", [fi.html], fi.items);
   }
   // Tron family rows (tap a row to send on Tron)
   if (tronBalances.length) {
@@ -2594,6 +2710,15 @@ function paintAssets() {
         if (p == null) unpricedNativeByKey.evm = { amount: fmt(row.amount), sym: row.symbol };
       }
     }
+    for (const [k, st] of evmChainState) {
+      if (!st || st.status === "failed" || !Array.isArray(st.rows)) continue;
+      const cn = NETWORKS[k]; if (!cn) continue;
+      const row = st.rows.find(b => isNativeRow("evm", b));
+      if (row && Number(row.amount) > 0) {
+        const p = priceOfRow(row, row.address ? prices[row.symbol] : prices[cn.priceSym]);
+        if (p == null) unpricedNativeByKey["evm:" + k] = { amount: fmt(row.amount), sym: row.symbol };
+      }
+    }
     const btcT = Number(btcBal) + Number(btcTrBal);
     if (!btcLoadFailed && btcT > 0 && prices.BTC == null)
       unpricedNativeByKey.bitcoin = { amount: fmt(btcT), sym: "BTC" };
@@ -2674,6 +2799,15 @@ function paintAssets() {
   // grouped rows under a quiet total line.
   const inFlight = inFlightScopes();
   const isCosmosKey = (k) => COSMOS_CHAINS.some(c => c.key === k);
+  // Per-network EVM totals (§147): a read chain's REAL total —
+  // null while failed (unknown) or while any of its rows is
+  // unknown, exactly the family rule (familyRowsTotalUsd).
+  const evmTotals = {};
+  for (const [k, st] of evmChainState) {
+    if (!st || st.status === "failed" || !Array.isArray(st.rows)) { evmTotals[k] = null; continue; }
+    const cn = NETWORKS[k]; if (!cn) { evmTotals[k] = null; continue; }
+    evmTotals[k] = familyRowsTotalUsd(st.rows, (b) => (b.address && trustScamActive(k, b.address)) ? null : priceOfRow(b, b.address ? prices[b.symbol] : prices[cn.priceSym]));
+  }
   const census = [];
   const censusPush = (scopeKey, groupKey, name) => {
     census.push({ key: scopeKey, name,
@@ -2690,6 +2824,7 @@ function paintAssets() {
   censusPush("evm", "evm", net.name);
   for (const g of groups) {
     if (["bitcoin", "evm", "lightning"].includes(g.key)) continue;
+    if (g.key.startsWith("evm:")) continue; // per-network EVM scopes are censused from their read state below
     if (isCosmosKey(g.key)) { const r = cosmosRows.find(x => x.key === g.key); censusPush(g.key, g.key, r ? r.name : g.key); continue; }
     censusPush(g.key, g.key, titleOf(g.key));
   }
@@ -2697,7 +2832,18 @@ function paintAssets() {
     if (k === networkKey) continue;
     let evidence = false;
     try { evidence = loadHeldTokens(NETWORKS[k].chainId).length > 0 || loadCustomTokens(NETWORKS[k].chainId).length > 0; } catch { evidence = false; }
-    if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, inFlight: inFlight.has("evm:" + k), totalUsd: null });
+    const st = evmChainState.get(k);
+    if (st) {
+      // The chain was READ at open (§147): its census entry is
+      // its real state — held from its rows, failed from its
+      // read, total from its rows — never the record-only
+      // placeholder this loop used to hard-code.
+      census.push({ key: "evm:" + k, name: NETWORKS[k].name,
+        held: (st.rows || []).some(b => Number(b && b.amount) > 0),
+        failed: st.status === "failed",
+        inFlight: inFlight.has("evm:" + k),
+        totalUsd: evmTotals[k] != null ? evmTotals[k] : null });
+    } else if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, inFlight: inFlight.has("evm:" + k), totalUsd: null });
   }
   if (lnSession || inFlight.has("lightning")) census.push({ key: "lightning", name: "Lightning", held: !!lnSession, failed: false, inFlight: inFlight.has("lightning"), totalUsd: totals.lightning });
   const scopes = heldScopes(census);
@@ -2719,7 +2865,20 @@ function paintAssets() {
   const renderChainPage = (sec, scope) => {
     let inner;
     if (scope.key.startsWith("evm:")) {
-      inner = skeletonRowsHtml(2); // its rows load when the page commits (the network switch re-reads)
+      // The chain's own read rows (§147): the per-network read at
+      // open feeds this page directly — held rows, or couldn't-
+      // load rows when its read failed — instead of a skeleton
+      // that only the page commit (network switch) could fill.
+      // The skeleton remains only while the read is in flight.
+      const k = scope.key.slice(4);
+      const g = groups.find(x => x.key === scope.key);
+      if (g) {
+        const totalTxt = cardTotalHtml(scope.key, evmTotals[k]);
+        const chip = alerts[scope.key] ? ` <button class="falert" data-famalert="${scope.key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : "";
+        inner = `<div class="pagetotal">${totalTxt}${chip}</div>` + g.html;
+      } else {
+        inner = skeletonRowsHtml(2);
+      }
     } else {
       const gkey = scope.key === "evm" ? "evm" : scope.key;
       const g = groups.find(x => x.key === gkey);
@@ -2768,6 +2927,7 @@ function paintAssets() {
     const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal + zecBal + dashBal) > 0
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, tezBalances, hbaBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
+      || [...evmChainState.values()].some(st => st && (st.rows || []).some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
     const zeroShow = viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal && scopedTotal() === 0;
     hz.classList.toggle("hidden", !zeroShow);
@@ -2900,7 +3060,10 @@ function wireHomeRows(root) {
   });
   root.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
     const b = rowRefs.get(Number(r.dataset.evmrow));
-    if (b) openTokenPage(evmDetailDesc(b), "home");
+    if (!b) return;
+    const ck = r.dataset.evmchain;
+    if (ck && ck !== networkKey) openTokenPage(evmChainRowDesc(ck, b), "home");
+    else openTokenPage(evmDetailDesc(b), "home");
   });
   root.querySelectorAll("#btcRow").forEach(el => el.onclick = () => openTokenPage(scalarTokenDesc("bitcoin"), "home"));
   const scalarWire = (attr, key) => { const el = root.querySelector(`[${attr}]`); if (el) el.onclick = () => openTokenPage(scalarTokenDesc(key), "home"); };
@@ -3011,6 +3174,27 @@ function evmCatalogDesc(netKey, t) {
     extras: t.address ? { cgPlatform: cgPlatformForChain(net.chainId), address: t.address, cgId: null } : { cgId: cgIdForSymbol(net.priceSym || t.symbol) },
     send: async () => { await selectNetwork(netKey); openEvmSendSheet({ address: t.address || null }); },
     swap: async () => { await selectNetwork(netKey); pendingSwapFrom = { netKey, address: t.address || null }; $("actSwap").click(); },
+  };
+}
+
+/** A token-page descriptor for a HELD row on a NON-active EVM
+ *  chain (§147 — the All page's per-network rows): the page shows
+ *  the balance the per-network read proved; Send/Swap switch the
+ *  network first (which re-reads the chain live), then open the
+ *  pre-scoped flow — the same discipline as the catalogue
+ *  descriptor, carrying the real held row instead of a zero. */
+function evmChainRowDesc(netKey, b) {
+  const net = NETWORKS[netKey];
+  const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
+  return {
+    family: "evm", row: b, chainLabel: net.name, scopeKey: "evm:" + netKey,
+    identLabel: b.address ? "Contract address" : null, ident: b.address || null,
+    price: price != null ? price : null,
+    extras: b.address
+      ? { cgPlatform: cgPlatformForChain(net.chainId), address: b.address, cgId: b.verified === false ? null : cgIdForSymbol(b.symbol) }
+      : { cgId: cgIdForSymbol(net.priceSym || b.symbol) },
+    send: async () => { await selectNetwork(netKey); openEvmSendSheet({ address: b.address || null }); },
+    swap: async () => { await selectNetwork(netKey); pendingSwapFrom = { netKey, address: b.address || null }; $("actSwap").click(); },
   };
 }
 
@@ -3255,15 +3439,20 @@ function paintHomeSearch() {
     const heldHere = (homeGroups.find(g => g.key === m.id)?.items || []).some(it => it.b && it.b.symbol === nat && !it.b.address);
     if (!heldHere) pushUnheld(familyTokenDesc(m.id, { symbol: nat, name: m.name, amount: "0", verified: true }), nat, m.name, m.name);
   }
+  const heldOnChain = (kk, addr) => {
+    const rows = kk === networkKey ? balances : ((evmChainState.get(kk) || {}).rows || []);
+    return rows.some(b => b.address && b.address.toLowerCase() === addr);
+  };
   for (const k of Object.keys(NETWORKS)) {
     const net = NETWORKS[k];
     for (const t of net.tokens || []) {
       if (!matches(t.symbol, t.symbol)) continue;
-      if (k === networkKey && balances.some(b => b.address && t.address && b.address.toLowerCase() === t.address.toLowerCase())) continue;
+      if (t.address && heldOnChain(k, t.address.toLowerCase())) continue;
       pushUnheld(evmCatalogDesc(k, t), t.symbol, t.symbol, net.name);
     }
     const natSym = net.symbol;
-    if (matches(natSym, net.name) && k !== networkKey) {
+    if (matches(natSym, net.name) && k !== networkKey
+      && !((evmChainState.get(k) || {}).rows || []).some(b => !b.address && Number(b.amount) > 0)) {
       pushUnheld(evmCatalogDesc(k, { symbol: natSym, name: net.name, address: null, decimals: 18 }), natSym, net.name, net.name);
     }
   }
@@ -3331,7 +3520,7 @@ function exploreChains() {
   const out = [];
   const heldKeys = new Set(homeGroups.filter(g => (g.items || []).some(it => it.amount == null || Number(it.amount) > 0)).map(g => g.key));
   for (const k of Object.keys(NETWORKS)) {
-    out.push({ key: "evm:" + k, name: NETWORKS[k].name, held: k === networkKey ? heldKeys.has("evm") : false, scopeKey: k === networkKey ? "evm" : "evm:" + k, netKey: k, familyId: "evm" });
+    out.push({ key: "evm:" + k, name: NETWORKS[k].name, held: k === networkKey ? heldKeys.has("evm") : heldKeys.has("evm:" + k), scopeKey: k === networkKey ? "evm" : "evm:" + k, netKey: k, familyId: "evm" });
   }
   for (const m of RECEIVE_NETWORKS) {
     if (m.id === "evm" || m.id === "lightning") continue;
@@ -3521,6 +3710,90 @@ function mergeEvmRows(customRows, scannedRows) {
   balances = [...base, ...extra];
   paintAssets();
 }
+/* ---------- per-network EVM reads (§147, 2026-11-17) ----------
+ * The All page's promise is every chain's holdings, but the EVM
+ * balance machinery above reads only the ACTIVE network. These
+ * functions give every OTHER EVM chain with on-device evidence
+ * the same honest read at open: native + curated from the
+ * balance read, plus the chain's ever-held/custom records via
+ * the small known-token scan — never the full CoinGecko list
+ * scan (that stays active-chain-only, as documented there). */
+/** On-device evidence that a chain may hold something: an
+ *  ever-held or custom token record (the census's own test). */
+function evmChainEvidence(k) {
+  try { return loadHeldTokens(NETWORKS[k].chainId).length > 0 || loadCustomTokens(NETWORKS[k].chainId).length > 0; }
+  catch { return false; }
+}
+/** One non-active chain's balance read. Throws when the base
+ *  read (native + curated) fails — the caller shapes the
+ *  failure. When the base lands but the known-token scan
+ *  refuses, the known tokens come back as amount-null rows:
+ *  unknown, never silently absent. */
+async function readEvmChainRows(w, k) {
+  const net = NETWORKS[k], chainId = net.chainId;
+  const base = await getBalances(w, k);
+  const held = loadHeldTokens(chainId), custom = loadCustomTokens(chainId);
+  const baseAddrs = new Set(base.map(b => String((b && b.address) || "").toLowerCase()).filter(Boolean));
+  const knownByAddr = new Map();
+  const addKnown = (t, isCustom) => {
+    if (!t || !t.address) return;
+    const a = String(t.address).toLowerCase();
+    if (baseAddrs.has(a) || knownByAddr.has(a)) return;
+    // The quick-read set (hydrateEvmTokens' own rule): only
+    // records carrying full metadata can be read as a batch.
+    if (!t.symbol || !Number.isInteger(t.decimals)) return;
+    knownByAddr.set(a, { ...t, custom: isCustom });
+  };
+  for (const t of custom) addKnown(t, true);
+  for (const t of held) addKnown(t, false);
+  const known = [...knownByAddr.values()];
+  if (!known.length) return base;
+  let knownRows;
+  try {
+    const scan = await scanEvmTokenBalances(k, w.address, known);
+    knownRows = [];
+    for (const [addrLower, raw] of scan.balances) {
+      const t = knownByAddr.get(addrLower);
+      if (!t) continue;
+      knownRows.push({ symbol: t.symbol, name: t.name || t.symbol, amount: formatTokenAmount(raw, t.decimals),
+        address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) });
+    }
+  } catch {
+    knownRows = known.map(t => ({ symbol: t.symbol, name: t.name || t.symbol, amount: null,
+      address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) }));
+  }
+  return mergeEvmChainRows(base, knownRows);
+}
+/** Work the pending set with bounded concurrency (2): the
+ *  active network and the families keep priority for the 1–2 s
+ *  standard; these settle progressively behind them, each
+ *  settle repainting. Stale renders (lock, switch, supersede)
+ *  adopt nothing — the current render's own pass owns the set. */
+async function hydrateEvmChains(w, myRenderSeq) {
+  const keys = [...evmChainsPending];
+  if (!keys.length) return;
+  let next = 0;
+  const runOne = async (k) => {
+    const stale = () => wallet !== w || renderSeq !== myRenderSeq;
+    try {
+      const rows = await readEvmChainRows(w, k);
+      if (stale()) return;
+      evmChainState.set(k, { status: "ok", rows });
+      evmChainOk.add(k);
+    } catch {
+      if (stale()) return;
+      const net = NETWORKS[k];
+      evmChainState.set(k, { status: "failed", rows: evmChainFailureRows(k, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId)) });
+    }
+    evmChainsPending.delete(k);
+    paintAssets();
+  };
+  const workers = Array.from({ length: Math.min(2, keys.length) }, async () => {
+    while (next < keys.length) { const k = keys[next++]; await runOne(k); }
+  });
+  await Promise.all(workers);
+}
+
 async function hydrateEvmTokens() {
   if (!wallet) return;
   // The curated load failed: nothing the scan reads is trustworthy
