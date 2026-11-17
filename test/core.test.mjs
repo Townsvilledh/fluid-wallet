@@ -17011,6 +17011,13 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const memStorage117 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
   const own117 = { evm: EVM_117, near: nearAddressFromPhrase(ABANDON), xrpl: xrplAddressFromPhrase(ABANDON), litecoin: litecoinAddress(ABANDON), dogecoin: dogecoinAddress(ABANDON), bitcoincash: bitcoinCashAddress(ABANDON), aptos: aptosAddressFromPhrase(ABANDON) };
   const clone117 = (x) => JSON.parse(JSON.stringify(x));
+  // The executor and the executability gate refuse expired
+  // quotes (correctly), and the captures' own deadlines are
+  // real timestamps from 2026-11-14 — so the copies EXECUTED
+  // or gate-checked below carry a deadline relative to the
+  // test's own now (the §150 freshFx pattern). Parse and
+  // echo pins keep the raw captures untouched.
+  const freshFx117 = (fx) => { const c = clone117(fx); c.quote.deadline = new Date(Date.now() + 3600e3).toISOString(); return c; };
 
   // The §6 inverse transform, table-pinned (general class:
   // total = max(F, 20), Fluid keeps F/2 at F >= 40 and grosses
@@ -17093,7 +17100,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       const storage = memStorage117();
       const seen = [];
       let atSend = null;
-      const fx = fixture117(fxName);
+      const fx = freshFx117(fixture117(fxName));
       const route = parseOneClickQuote(fx, { fromEntry, toEntry, amountRaw, refundTo, recipient: EVM_117 }, {});
       const out = await executeOneClickSwapRoute({}, route, () => {}, {
         storage,
@@ -17126,7 +17133,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // numeric XRPL memo rides as the destination tag.
   {
     const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
-    const xrpRoute = parseOneClickQuote(fixture117("quote-xrp-out-nofee.json"), { fromEntry: oneClickAssetFor("xrpl", "xrp"), toEntry: usdcBase, amountRaw: "16000000", refundTo: own117.xrpl, recipient: EVM_117 }, {});
+    const xrpRoute = parseOneClickQuote(freshFx117(fixture117("quote-xrp-out-nofee.json")), { fromEntry: oneClickAssetFor("xrpl", "xrp"), toEntry: usdcBase, amountRaw: "16000000", refundTo: own117.xrpl, recipient: EVM_117 }, {});
     let sent = 0;
     const countingSend = async () => { sent++; return { hash: "cd".repeat(32) }; };
     const tagRoute = clone117(xrpRoute); tagRoute.oneclick.depositMemo = "678";
@@ -17137,7 +17144,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     let threwTag = null;
     try { await executeOneClickSwapRoute({}, badTag, () => {}, { storage: memStorage117(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwTag = e; }
     ok("oneclick memo: a non-numeric XRPL memo refuses pre-broadcast with the reason named", !!threwTag && /can't carry one/.test(threwTag.message) && sent === 0);
-    const nearRoute = parseOneClickQuote(fixture117("quote-near-out-nofee.json"), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
+    const nearRoute = parseOneClickQuote(freshFx117(fixture117("quote-near-out-nofee.json")), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
     const memoNear = clone117(nearRoute); memoNear.oneclick.depositMemo = "999";
     let threwNear = null;
     try { await executeOneClickSwapRoute({}, memoNear, () => {}, { storage: memStorage117(), sendImpl: countingSend, submitImpl: async () => true }); } catch (e) { threwNear = e; }
@@ -17147,7 +17154,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // The execution gate over 1Click routes.
   {
     const usdcBase = oneClickAssetFor("base", USDC_BASE_117);
-    const route = parseOneClickQuote(fixture117("quote-near-out-fee50.json"), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
+    const route = parseOneClickQuote(freshFx117(fixture117("quote-near-out-fee50.json")), { fromEntry: oneClickAssetFor("near", "near"), toEntry: usdcBase, amountRaw: "4800000000000000000000000", refundTo: own117.near, recipient: EVM_117 }, {});
     ok("oneclick gate: a well-formed fixture route is executable", swapRouteExecutable(route).ok === true && swapRouteExecutable(route).oneclick === true);
     const expired = clone117(route); expired.oneclick.deadline = "2020-01-01T00:00:00.000Z";
     const gExp = swapRouteExecutable(expired);
@@ -17786,6 +17793,13 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const ADA_ADDR_120 = "addr1qy8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mq4afdhv";
   const jsonRes120 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body, text: async () => (typeof body === "string" ? body : JSON.stringify(body ?? "")) });
   const clone120 = (x) => JSON.parse(JSON.stringify(x));
+  // The executor refuses expired quotes (correctly), and
+  // the captures' own deadlines are real timestamps from
+  // 2026-11-15 — so the copy EXECUTED below carries a
+  // deadline relative to the test's own now (the §150
+  // freshFx pattern). Parse and echo pins keep the raw
+  // captures untouched.
+  const freshFx120 = (fx) => { const c = clone120(fx); c.quote.deadline = new Date(Date.now() + 3600e3).toISOString(); return c; };
   const memStorage120 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
 
   // Derivation: the CIP-0003 Icarus vector and both
@@ -18022,7 +18036,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const storage = memStorage120();
     const seen = [];
     let atSend = null;
-    const fx = fixture120("quote-ada-out-fee50.json");
+    const fx = freshFx120(fixture120("quote-ada-out-fee50.json"));
     const execRoute = parseOneClickQuote(fx, { fromEntry: oneClickAssetFor("cardano", "ada"), toEntry: oneClickAssetFor("base", USDC_BASE_120), amountRaw: "100000000", refundTo: ADA_ADDR_120, recipient: EVM_120 }, {});
     const out = await executeOneClickSwapRoute({}, execRoute, () => {}, {
       storage,
@@ -19423,6 +19437,13 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const jsonRes128 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
   const memStorage128 = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
   const clone128 = (x) => JSON.parse(JSON.stringify(x));
+  // The executor refuses expired quotes (correctly), and
+  // the captures' own deadlines are real timestamps from
+  // 2026-11-15 — so the copy EXECUTED below carries a
+  // deadline relative to the test's own now (the §150
+  // freshFx pattern; §128 fixtures wrap the body in
+  // .response). Parse and echo pins keep the raw captures.
+  const freshFx128 = (fx) => { const c = clone128(fx); c.response.quote.deadline = new Date(Date.now() + 3600e3).toISOString(); return c; };
 
   // Derivation vectors (cross-checked in scratch against a
   // hand-rolled base58check over noble hash160 — an independent
@@ -19686,7 +19707,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // refuses pre-broadcast.
   {
     const usdcBase = oneClickAssetFor("base", USDC_BASE_128);
-    const route = parseOneClickQuote(fixture128("quote-zec-out-fee.json").response,
+    const route = parseOneClickQuote(freshFx128(fixture128("quote-zec-out-fee.json")).response,
       { fromEntry: oneClickAssetFor("zcash", "zec"), toEntry: usdcBase, amountRaw: "2200000", refundTo: "t1bhfB9xWGBfWCbpB28JZWP5wV34frTsZ4b", recipient: EVM128 }, {});
     const storage = memStorage128();
     const seen = [];
