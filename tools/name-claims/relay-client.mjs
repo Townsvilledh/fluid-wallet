@@ -24,12 +24,29 @@ export function queryEvents(url, filter, timeoutMs = 25000) {
     const events = [];
     let done = false;
     let ws;
+    let timer;
     const subId = "nc" + Math.random().toString(36).slice(2, 10);
-    const finish = () => { if (!done) { done = true; try { ws.close(); } catch { /* already closed */ } resolve(events); } };
+    // Teardown (2026-11-17): destroy the socket NOW instead of
+    // waiting for the peer's close frame. close() leaves the socket
+    // — and the proxy agent's in-flight TLS handshake — alive after
+    // the query is done, and a late RST on it surfaces as an
+    // unhandled TLSSocket error at process teardown, crashing the
+    // processor with exit 1 after all work succeeded (four runs
+    // on 2026-11-17). terminate() destroys the socket immediately,
+    // and clearing the timer here (not only at the call sites) means
+    // no 25 s timer keeps the event loop — and the process — alive
+    // past the run's end either.
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { if (ws) ws.terminate(); } catch { /* already gone */ }
+      resolve(events);
+    };
     try {
       ws = new WebSocket(url, agent ? { agent, handshakeTimeout: 15000 } : { handshakeTimeout: 15000 });
     } catch { return resolve(events); }
-    const timer = setTimeout(finish, timeoutMs);
+    timer = setTimeout(finish, timeoutMs);
     ws.on("open", () => { try { ws.send(JSON.stringify(["REQ", subId, filter])); } catch { clearTimeout(timer); finish(); } });
     ws.on("message", (data) => {
       try {

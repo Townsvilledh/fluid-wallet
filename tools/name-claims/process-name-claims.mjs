@@ -100,6 +100,29 @@ const HEALTH_PATH = join(STATE_DIR, "name-claims-health.json");
 const SKIP_LOUD_AFTER_SECS = 3600;
 const SSH_ENV = { ...process.env, GIT_SSH_COMMAND: "ssh -F /home/hatch/.ssh/config" };
 
+/** Teardown-socket errors (2026-11-17): the relay queries run
+ *  through `ws` + https-proxy-agent, whose tls.connect() returns a
+ *  TLSSocket with no 'error' listener in the window before Node's
+ *  HTTP machinery attaches one — and `ws` stops listening for
+ *  request errors once a handshake is aborted. A relay/proxy RST
+ *  landing in that window throws an unhandled 'error' on the
+ *  TLSSocket and crashes the process AFTER all work is done
+ *  (four runs exited 1 this way on 2026-11-17, most recently
+ *  19:36 and 19:46 WAT). Once the scan + commit + gh-pages publish
+ *  have all succeeded, such a late disconnect is noise, not a
+ *  failure: swallow it and exit 0. Before that point the run still
+ *  fails loud, so a scan-phase socket failure keeps its existing
+ *  failure reporting. */
+const TEARDOWN_SOCKET_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ERR_SOCKET_CLOSED"]);
+export function isTeardownSocketError(err) {
+  if (!err || typeof err !== "object") return false;
+  if (TEARDOWN_SOCKET_CODES.has(err.code)) return true;
+  const msg = String((err && err.message) || err);
+  return /socket disconnected before secure TLS connection/i.test(msg)
+    || /socket hang up/i.test(msg)
+    || /Client network socket disconnected/i.test(msg);
+}
+
 /** Two registry entries are "the same claim" when every field the
  *  registry carries matches (EVM case-insensitively, the rest
  *  exactly — the same comparison findNameForAddresses documents). */
@@ -337,6 +360,24 @@ function syncGhPagesNames(label) {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const now = Math.floor(Date.now() / 1000);
+  // Teardown guard (see isTeardownSocketError above): installed
+  // here, not at module top, so unit tests importing the pure
+  // helpers never inherit process-level handlers. runSettled flips
+  // true only once every substantive step has succeeded — the
+  // gh-pages publish (or, for a dry run, the fetch + decide +
+  // print). A late relay-socket disconnect after that point exits
+  // 0; anything else still fails loud with exit 1, as before.
+  let runSettled = false;
+  const onFatalSocketError = (err) => {
+    if (runSettled && isTeardownSocketError(err)) {
+      console.warn("name-claims: ignoring late relay-socket disconnect after publish confirmed —", (err && err.message) || err);
+      process.exit(0);
+    }
+    console.error("name-claims: FAILED —", (err && err.message) || err);
+    process.exit(1);
+  };
+  process.on("uncaughtException", onFatalSocketError);
+  process.on("unhandledRejection", onFatalSocketError);
   let state = { processed: {}, winners: {}, lastQuerySince: null };
   if (existsSync(STATE_PATH)) {
     try { state = { ...state, ...JSON.parse(readFileSync(STATE_PATH, "utf8")) }; } catch { /* corrupt state must not wedge the run — decisions still enforce registry FCFS */ }
@@ -420,6 +461,7 @@ async function main() {
 
   if (dryRun) {
     console.log("name-claims: dry run — no state written, no git operations performed.");
+    runSettled = true; // fetch + decide + print all done; a late socket error is teardown noise
     return;
   }
 
@@ -474,6 +516,7 @@ async function main() {
   // — but the record above is already durable when it does.
   try {
     syncGhPagesNames(commitLabel ? `names: ${commitLabel}${claimSuffix}` : undefined);
+    runSettled = true; // scan + commit + publish all succeeded — late socket errors are teardown noise from here
   } catch (e) {
     console.error("name-claims: gh-pages sync FAILED (decisions + state already recorded) —", e.message || e);
     process.exitCode = 1;
