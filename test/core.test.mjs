@@ -5361,8 +5361,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("load speed: the balance cache is wired (hydrate in renderMain, persist in paintAssets)",
     appSrcHome.includes("hydrateBalanceCache(w);") && appSrcHome.includes("persistBalanceCache();")
     && appSrcHome.includes("BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,"));
-  ok("load speed: the hero marks a cache paint as updating until every family is live",
-    appSrcHome.includes("cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k))"));
+  ok("load speed: the hero's Updating… gate is the evidence gate (§148 rework of the all-family form — an evidence family's cache paint still waits on its live read, via liveFams)",
+    appSrcHome.includes("pendingGateScopes(evidenceFams, HOME_FAMILIES, evmChainsPending.size > 0)")
+    && appSrcHome.includes("gateScopes.some((k) => !liveFams.has(k))")
+    && !appSrcHome.includes("cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k))"));
   ok("home order: paintAssets renders the pager through heldScopes + flattenHeldRows (rev5)",
     appSrcHome.includes("const flat = flattenHeldRows(items);")
     && appSrcHome.includes("heldScopes, flattenHeldRows,"));
@@ -22559,9 +22561,9 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§147: renderMain arms the pending set from evidence and fires the per-network pass at render end",
     app147.includes("if (evmChainEvidence(k) || evmChainState.has(k)) evmChainsPending.add(k);")
     && app147.includes("hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)"));
-  ok("§147: a per-network read is the balance read + the small known-token scan — never the full CoinGecko list scan",
+  ok("§147: a per-network read is the balance read + the small known-token scan — never the full CoinGecko list scan (§148: the known-token scan rides the balance attempt budget)",
     sl147("async function readEvmChainRows(").includes("const base = await getBalances(w, k);")
-    && sl147("async function readEvmChainRows(").includes("scanEvmTokenBalances(k, w.address, known)")
+    && sl147("async function readEvmChainRows(").includes("scanEvmTokenBalances(k, w.address, known, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS })")
     && !sl147("async function readEvmChainRows(", "async function hydrateEvmChains(").includes("cgTokensForChain"));
   ok("§147: a failed per-network read shapes its failure from the chain's held/custom records",
     sl147("async function hydrateEvmChains(").includes("evmChainFailureRows(k, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))"));
@@ -22580,6 +22582,140 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read",
     app147.includes('evmChainState.set(k, { status: "cached", rows });')
     && app147.includes('if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows;'));
+}
+
+// §148 — BALANCE SPEED: bounded scan, evidence-gated header,
+// real-figure ceilings (2026-11-17). Ethuram's standard: every
+// held token on every chain visible within 1–2 s of opening.
+// §147 made the reads EXIST; this round fixes their SHAPE:
+// (1) the active chain's deep scan rode the 30 s per-attempt
+// default, started immediately, and repainted the whole tab
+// per chunk — it is now a deferred, budgeted, batch-painted
+// discovery tail behind the known-token reads; (2) the
+// header's "Updating…" was all-or-nothing across ~21 families,
+// so the slowest zero-holding family (ZEC/Blockchair, DOT's
+// 30 s connect) decided when the page looked done — the gate
+// is now holding EVIDENCE (pendingGateScopes), with §147's
+// honesty preserved (evidence + unread = still Updating;
+// evidence + failed = settled, the couldn't-load note speaks;
+// cold start gates on everything); (3) the no-route diagnosis
+// rendered a tiny source's probed ceiling as "up to about $0
+// either" (XTZ 0.1 → HBAR, seen live) — ceilings now render
+// as real figures or the clause is dropped.
+{
+  const { pendingGateScopes, scanEvmTokenBalances, registerNetworks, formatSwapNoRouteMessage, diagnoseNoRouteSwap, destNativeTokenAddress, SCAN_ATTEMPT_TIMEOUT_MS, SCAN_DEADLINE_MS, BALANCE_READ_ATTEMPT_MS } = await import("../src/wallet-core.js");
+  const app148 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const sl148 = (a, b) => { const i = app148.indexOf(a); if (i < 0) return ""; const j = b ? app148.indexOf(b, i + a.length) : -1; return app148.slice(i, j < 0 ? i + 6000 : j); };
+  const ALL22 = ["bitcoin", "evm", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "tezos", "hedera", "xrpl", "polkadot", "aptos", "stacks", "cosmos", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"];
+
+  // --- the header gate is evidence (pure) ---
+  ok("§148: pendingGateScopes gates exactly the evidence scopes — zero-evidence families never hold the flag",
+    pendingGateScopes(["solana", "zcash"], ALL22, false).join() === "solana,zcash"
+    && pendingGateScopes(["bitcoin"], ALL22, false).join() === "bitcoin");
+  ok("§148: pendingGateScopes cold start (no evidence, no chain pending) gates on EVERY scope — nothing may present as final",
+    pendingGateScopes([], ALL22, false).join() === ALL22.join());
+  ok("§148: pendingGateScopes with only a §147 chain pending gates on no family — the chains carry the flag themselves",
+    pendingGateScopes([], ALL22, true).length === 0
+    && pendingGateScopes(["sui"], ALL22, true).join() === "sui");
+  ok("§148: pendingGateScopes dedupes evidence and drops keys that are not scopes",
+    pendingGateScopes(["sui", "sui", "bogus"], ALL22, false).join() === "sui");
+
+  // --- the scan budgets are the shipped constants ---
+  ok("§148: scan budgets — attempts bounded in the balance spirit, the whole scan wall-clock capped",
+    SCAN_ATTEMPT_TIMEOUT_MS === 10000 && SCAN_DEADLINE_MS === 60000 && BALANCE_READ_ATTEMPT_MS === 2500);
+
+  // --- the deadline stops the scan and reports partial, honestly ---
+  registerNetworks({ c777001: { name: "Stub148", chainId: 777001, symbol: "S48", priceSym: null,
+    rpc: "https://rpc-stub148.invalid", explorer: null, tokens: [] } });
+  const { FetchRequest: FR148, FetchResponse: FResp148 } = await import("ethers");
+  const prevGetUrl148 = FR148.createGetUrlFunc();
+  const realFetch148 = globalThis.fetch;
+  const toks600 = Array.from({ length: 600 }, (_, i) => ({
+    symbol: "D" + i, decimals: 18, address: "0x" + String(i + 1).padStart(40, "0"),
+  }));
+  const balHex148 = "0x" + (1000n).toString(16).padStart(64, "0");
+  try {
+    FR148.registerGetUrl(async (req) => {
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (r) => ({ jsonrpc: "2.0", id: r.id,
+        result: r.method === "eth_chainId" ? "0xbd7a9" : r.method === "net_version" ? "777001" : r.method === "eth_getCode" ? "0x" : balHex148 });
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FResp148(200, "OK", { "content-type": "application/json" },
+        new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("rpc-stub148.invalid")) {
+        await new Promise(r => setTimeout(r, 80)); // a slow-but-healthy endpoint: ~80 ms per batch round
+        const parsed = JSON.parse(opts.body);
+        const payload = parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: balHex148 }));
+        return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetch148(url, opts);
+    };
+    const full148 = await scanEvmTokenBalances("c777001", "0x00000000000000000000000000000000000000ff", toks600);
+    ok("§148: an undeadlined scan completes and says so",
+      full148.method === "batch" && full148.complete === true && full148.balances.size === 600);
+    const capped148 = await scanEvmTokenBalances("c777001", "0x00000000000000000000000000000000000000ff", toks600, { deadlineMs: 150 });
+    ok("§148: a deadline-stopped scan returns its real finds marked incomplete — never the full set dressed as done",
+      capped148.method === "batch" && capped148.complete === false
+      && capped148.balances.size >= 150 && capped148.balances.size < 600);
+  } finally {
+    FR148.registerGetUrl(prevGetUrl148);
+    globalThis.fetch = realFetch148;
+  }
+
+  // --- the no-route ceiling renders as a real figure (production copy path) ---
+  const msgTiny = formatSwapNoRouteMessage({ fromSymbol: "XTZ", toSymbol: "HBAR",
+    verdict: { kind: "no-route-yet", floor: { found: false, probedUpToUsd: 0.09 } } });
+  ok("§148: a tiny source's probed ceiling renders as a real figure — $0.09, never $0",
+    msgTiny.includes("none at any size up to about $0.09 either") && !msgTiny.includes("about $0 either"));
+  const msgSubCent = formatSwapNoRouteMessage({ fromSymbol: "XTZ", toSymbol: "ALGO",
+    verdict: { kind: "no-route-yet", floor: { found: false, probedUpToUsd: 0.004 } } });
+  ok("§148: a sub-cent ceiling still renders a real figure ($0.004)",
+    msgSubCent.includes("up to about $0.004 either"));
+  const msgNoFigure = formatSwapNoRouteMessage({ fromSymbol: "XTZ", toSymbol: "HBAR",
+    verdict: { kind: "no-route-yet", floor: { found: false, probedUpToUsd: 0 } } });
+  const msgNullFigure = formatSwapNoRouteMessage({ fromSymbol: "XTZ", toSymbol: "HBAR",
+    verdict: { kind: "no-route-yet", floor: { found: false, probedUpToUsd: null } } });
+  ok("§148: when no real figure exists (0 / null) the ceiling clause is dropped, not dressed up",
+    !msgNoFigure.includes("up to about") && !msgNullFigure.includes("up to about")
+    && msgNoFigure.startsWith("No route exists for XTZ → HBAR yet."));
+  const verdictTiny = await diagnoseNoRouteSwap(
+    { fromChainKey: "tezos", toChainKey: "hedera", fromTokenAddress: destNativeTokenAddress("tezos"),
+      toTokenAddress: destNativeTokenAddress("hedera"), fromAddress: "tz1burnburnburnburnburnburnburjAYjjX", fromAmount: "100000" },
+    { fromDecimals: 6, fromPriceUsd: 0.9, search: async () => [] });
+  const msgTinyE2E = formatSwapNoRouteMessage({ fromSymbol: "XTZ", toSymbol: "HBAR", verdict: verdictTiny });
+  ok("§148: end to end (0.1 XTZ, answered-empty probes) the diagnosis renders the probed ceiling as a real figure — the live defect's exact shape",
+    verdictTiny.kind === "no-route-yet" && verdictTiny.floor.probedUpToUsd === 0.09
+    && msgTinyE2E.includes("up to about $0.09 either") && !msgTinyE2E.includes("about $0 either"));
+
+  // --- production wiring (source pins) ---
+  const hydrate148 = sl148("async function hydrateEvmTokens()", "// ---------- token detail");
+  ok("§148: the deep scan rides its bounded budgets and reports a deadline stop as limited, never done",
+    hydrate148.includes("attemptTimeoutMs: SCAN_ATTEMPT_TIMEOUT_MS")
+    && hydrate148.includes("deadlineMs: SCAN_DEADLINE_MS")
+    && app148.includes('const scanStatus = scan.complete === false ? "limited" : "done";'));
+  ok("§148: known-token reads ride the balance budget — quick read and custom reads alike",
+    hydrate148.includes("attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS")
+    && app148.includes("getEvmTokenBalance(wallet, myKey, ct, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS })"));
+  ok("§148: the deep scan defers behind this render's per-network known reads (bounded), before the list fetch",
+    app148.includes("evmChainsPassPromise = hydrateEvmChains(w, myRenderSeq);")
+    && app148.includes("await Promise.race([evmChainsPassPromise, new Promise(r => setTimeout(r, EVM_SCAN_DEFER_MS))]);")
+    && app148.indexOf("EVM_SCAN_DEFER_MS))]);") > app148.indexOf("scanEvmTokenBalances(myKey, wallet.address, quickTokens")
+    && app148.indexOf("const list = await cgTokensForChain(chainId);", app148.indexOf("EVM_SCAN_DEFER_MS))];")) > app148.indexOf("EVM_SCAN_DEFER_MS))];"));
+  ok("§148: scan finds merge in batches — the tail cannot repaint-storm the settled list",
+    app148.includes("scanFlushTimer = setTimeout(flushScanRows, SCAN_PAINT_BATCH_MS);")
+    && app148.includes("if (scannedRows.length !== before) scheduleScanFlush();")
+    && app148.includes("cancelScanFlush();"));
+  ok("§148: the active chain's known-token phase holds the header flag until it settles",
+    app148.includes("evmKnownPending = true;")
+    && app148.includes('if (evmKnownSeq === seq) { evmKnownPending = false; paintHeader(); }')
+    && sl148("function paintHeader(").includes("|| evmKnownPending"));
+  ok("§148: evidence is populated from prior balances — positive cached rows and scalars, held/custom records on the active chain",
+    app148.includes("if (f[key].some(r => r && Number(r.amount) > 0)) evidenceFams.add(key);")
+    && app148.includes('if (sc.btcBal > 0 || sc.btcTrBal > 0) evidenceFams.add("bitcoin");')
+    && app148.includes('if (cached.evm.rows.some(r => r && Number(r.amount) > 0)) evidenceFams.add("evm");')
+    && app148.includes('if (evmChainEvidence(networkKey)) evidenceFams.add("evm");'));
 }
 
 console.log(`\n${passed} checks passed`);

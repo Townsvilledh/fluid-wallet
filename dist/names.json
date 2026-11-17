@@ -598,5 +598,21 @@
     "sol": "A16AKupuPV4QzsejmujSxmcj3Ciz2gxTUUWTvnNQ2sF2",
     "tron": "TH9oz44qfsvdyRYBZSyTSVzGRRi51p2a9u",
     "sui": "0x253b3478746b50c4e7cf318970ff78d9bc5cee2dc3b8de890357c5b316a7c879"
+  },
+  "verifyg125324": {
+    "evm": "0x60751187703830133fc8816F231af7645a21DeFA",
+    "btc": "bc1qpmq28d3tjdgv0qd5evntrylgznrjmxz9v7daqs",
+    "algo": "GVPSO4XOPWB4TSS772M7RR5FTOTTH2MEYIRH3IPVNJGW2RICMV2RA2HPKI",
+    "sol": "E9s9WeQCykx5FsSZy7r3K55oL3NMkptRG3mxyZGM9ZAG",
+    "tron": "TJmE7XyNRqWQvMjhpeiBsNP95dmDy3GsoG",
+    "sui": "0x17a6db29b20ba4cfba4db60fc59ad65ed4890ddfc78a1941f2fbc36786e4fe26"
+  },
+  "verifyg722544": {
+    "evm": "0x36CD6E1FE3655793EC7546F1e17f85AB9A1185BC",
+    "btc": "bc1q3wqghp5nq2n42dhcgn06eqzuqpt2h7eug7avw6",
+    "algo": "EI5X5DHOSWGRS4B5Z3R2BJLUC46U2IEG26UJQX322Y7P24MIS63HASSJ54",
+    "sol": "9UbMKeNERXbWYsd1E4vWr8kL9q6Qt6uqHkdBjJN8pFPr",
+    "tron": "TExyaxS9iYBghNQvXZcpo576CgkgcvWZtY",
+    "sui": "0xfa54ddb2a3f6e8d79dcf7fb6f91447d50ba9ad19144a9e2ba84fcdbc8a20ff04"
   }
 }

@@ -866,9 +866,22 @@ export const EVM_PROVIDER_ATTEMPT_TIMEOUT_MS = 30000;
  *  handful of parallel calls (readBalances fans its token reads
  *  out), so a healthy endpoint answers it in well under this
  *  budget; an endpoint that cannot is raced past, not waited
- *  out. Long reads (token scans) keep the 30 s default above —
- *  they pass no budget and are not held to the paint standard. */
+ *  out. Token scans pass their own bounded budgets (below) —
+ *  they are not held to the paint standard, but they are no
+ *  longer unbounded either. */
 export const BALANCE_READ_ATTEMPT_MS = 2500;
+/** Budgets for the DEEP token scan (balance-speed round,
+ *  2026-11-17): the scan is a discovery tail behind the known-
+ *  token reads, not a paint-path read — but the unbounded 30 s
+ *  per-attempt default let one hung endpoint hold it (and its
+ *  repaint storm) over the settled list for minutes. Its
+ *  attempts now race a bounded budget in the same spirit as
+ *  the balance read, and the whole scan carries a wall-clock
+ *  deadline: past it the scan stops starting new rounds and
+ *  reports what it found, marked incomplete — discovery
+ *  resumes on the next open, the settled list never waits. */
+export const SCAN_ATTEMPT_TIMEOUT_MS = 10000;
+export const SCAN_DEADLINE_MS = 60000;
 /** Run `fn` against an ethers provider built on the network's
  *  read endpoints, RACED (loading-speed round 2): the first
  *  endpoint starts at once, the next starts when the previous
@@ -27693,6 +27706,21 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
   if (floor.blind || marketBlind) return { kind: "unreachable", floor, market };
   return { kind: "no-route-yet", floor, market };
 }
+/** A probed USD ceiling as display text — "$250", "$0.09",
+ *  "$0.004" — or null when the value carries no real figure
+ *  (null / non-finite / ≤ 0), in which case the caller drops
+ *  the clause that would have quoted it. Whole dollars at
+ *  ≥ $1 (the established rendering), cents below, significant
+ *  figures below a cent: a ceiling is a measured bound, and
+ *  rounding it to "$0" would state the opposite of the probe. */
+function probedCeilingText(v) {
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1) return "$" + n.toFixed(0);
+  if (n >= 0.01) return "$" + n.toFixed(2);
+  return "$" + Number(n.toPrecision(2)).toString();
+}
 /** The swap sheet's no-route sentences — one plain statement
  *  per honest case, from diagnoseNoRouteSwap's verdict, never
  *  the bare router error. floorText/nativeSymbol are rendered
@@ -27719,7 +27747,16 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
     // the no-route-yet case below, which answered probes earn.
     s = `No route could be checked for ${fromSymbol} → ${toSymbol}${amt} — the route services didn't answer just now (a network or rate-limit problem, not this pair). The pair may be connected; give it a moment and search again.`;
   } else if (verdict?.kind === "no-route-yet") {
-    const upTo = verdict.floor?.probedUpToUsd != null ? ` — none at this amount, and none at any size up to about $${Number(verdict.floor.probedUpToUsd).toFixed(0)} either` : "";
+    // The probed ceiling must render as a REAL figure
+    // (balance-speed round copy fix, 2026-11-17): whole-dollar
+    // rounding turned a tiny source's ceiling (0.1 XTZ ≈ $0.09)
+    // into "up to about $0 either" — a figure that says
+    // nothing. Sub-dollar ceilings render to the cent (and
+    // sub-cent to significant figures); when no real figure
+    // exists (null, non-finite, ≤ 0) the clause is dropped
+    // rather than dressed up.
+    const ceiling = probedCeilingText(verdict.floor?.probedUpToUsd);
+    const upTo = ceiling ? ` — none at this amount, and none at any size up to about ${ceiling} either` : "";
     s = `No route exists for ${fromSymbol} → ${toSymbol} yet${upTo}. The route for this pair isn't connected yet; try a different destination for now.`;
   } else {
     s = `No route found for ${fromSymbol} → ${toSymbol}${amt}. Try a different pair or a larger amount.`;
@@ -29871,21 +29908,28 @@ const ERC20_META_ABI = [
 const ERC20_META_B32_ABI = ["function name() view returns (bytes32)", "function symbol() view returns (bytes32)"];
 const _multicall3Cache = new Map(); // networkKey -> boolean
 /** Does this chain have Multicall3 at its canonical address? One
- *  eth_getCode per chain per session. */
-export async function hasMulticall3(networkKey) {
+ *  eth_getCode per chain per session. The probe rides the
+ *  caller's attempt budget when one is given (balance-speed
+ *  round, 2026-11-17): a probe on the unbounded default was a
+ *  30 s × endpoints prerequisite standing in front of every
+ *  budgeted scan. */
+export async function hasMulticall3(networkKey, attemptTimeoutMs = null) {
   if (_multicall3Cache.has(networkKey)) return _multicall3Cache.get(networkKey);
   let ok = false;
   try {
-    const code = await withEvmProvider(networkKey, (p) => p.getCode(MULTICALL3_ADDRESS));
+    const code = await withEvmProvider(networkKey, (p) => p.getCode(MULTICALL3_ADDRESS),
+      attemptTimeoutMs != null ? { attemptTimeoutMs } : {});
     ok = !!code && code !== "0x";
   } catch { ok = false; }
   _multicall3Cache.set(networkKey, ok);
   return ok;
 }
 /** Scan a token list for an owner's positive balances on one chain.
- *  Returns { balances: Map(lowercasedAddress -> BigInt raw), method }
- *  where method is "multicall3" | "batch" | "direct" — the path that
- *  actually ran, so the app can report scan quality honestly.
+ *  Returns { balances: Map(lowercasedAddress -> BigInt raw), method,
+ *  complete } where method is "multicall3" | "batch" | "direct" —
+ *  the path that actually ran, so the app can report scan quality
+ *  honestly — and complete is false when the caller's deadline
+ *  stopped the scan early (the balances are real but partial).
  *  Strategy: Multicall3 aggregate3 in chunks of 250 when deployed;
  *  else raw JSON-RPC batch eth_call in chunks of 50; else direct
  *  eth_call in chunks of 25 — but a list longer than 800 with no
@@ -29916,9 +29960,22 @@ export function orderEvmScanList(tokens, priorityAddresses) {
 /** How many independent chunk rounds of a token scan may be
  *  in flight at once (see scanEvmTokenBalances). */
 export const SCAN_CHUNK_CONCURRENCY = 3;
-export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250, onChunk = null } = {}) {
+export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { chunkSize = 250, onChunk = null, attemptTimeoutMs = null, deadlineMs = null } = {}) {
   const net = NETWORKS[networkKey];
   if (!net) throw new Error("Unknown network: " + networkKey);
+  // Bounded scan budgets (balance-speed round, 2026-11-17):
+  // attemptTimeoutMs races each provider attempt (and each
+  // batch round) — callers on the paint path pass the balance
+  // budget, the deep scan passes SCAN_ATTEMPT_TIMEOUT_MS;
+  // null keeps the fleet default. deadlineMs is a wall-clock
+  // cap over the WHOLE scan, across strategies: once it
+  // passes, no new chunk round starts, the scan returns what
+  // it has with complete:false, and the caller reconciles
+  // honestly (the scan reads "limited", never "done").
+  const attemptMs = attemptTimeoutMs != null ? attemptTimeoutMs : EVM_PROVIDER_ATTEMPT_TIMEOUT_MS;
+  const deadlineAt = deadlineMs != null ? Date.now() + deadlineMs : Infinity;
+  let deadlineHit = false;
+  let groupsDone = 0;
   // Progressive surfacing (item E): after each chunk round the
   // caller hears about every balance found SO FAR, so held rows can
   // paint in seconds while the long tail keeps scanning behind
@@ -29932,7 +29989,7 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
   // a discovered token row beside the native row.
   const list = (tokens || []).filter(t => t && ethers.isAddress(t.address) && !/^0x0{40}$/i.test(t.address) && !isNativePredeploy(net.chainId, t.address));
   const balances = new Map();
-  if (!list.length) return { balances, method: "none" };
+  if (!list.length) return { balances, method: "none", complete: true };
   const iface = new ethers.Interface(ERC20_BALANCE_ABI);
   const callData = iface.encodeFunctionData("balanceOf", [ownerAddress]);
   // Bounded-parallel chunk rounds (2026-11-13 performance
@@ -29946,8 +30003,15 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
   // free public RPC from being stormed.
   const runChunks = async (groups, fn) => {
     let next = 0;
+    groupsDone = 0;
     const workers = Array.from({ length: Math.max(1, Math.min(SCAN_CHUNK_CONCURRENCY, groups.length)) }, async () => {
-      while (next < groups.length) { const g = groups[next++]; await fn(g); }
+      while (next < groups.length) {
+        // Deadline gate: a round that has not STARTED when the
+        // cap passes never starts — rounds already in flight
+        // finish and their finds count.
+        if (Date.now() >= deadlineAt) { deadlineHit = true; return; }
+        const g = groups[next++]; await fn(g); groupsDone++;
+      }
     });
     await Promise.all(workers);
   };
@@ -29955,9 +30019,9 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
   // list with rotation (2026-11-14): a scan makes many rounds,
   // and a single refusing endpoint used to fail or silently
   // empty the whole scan.
-  if (await hasMulticall3(networkKey)) {
+  if (await hasMulticall3(networkKey, attemptMs)) {
     try {
-      return await withEvmProvider(networkKey, async (provider) => {
+      const res = await withEvmProvider(networkKey, async (provider) => {
         const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
         await runChunks(chunkArray(list, chunkSize), async (grp) => {
           const calls = grp.map(t => ({ target: t.address, allowFailure: true, callData }));
@@ -29972,7 +30036,12 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
           await emitChunk();
         });
         return { balances, method: "multicall3" };
-      });
+      }, { attemptTimeoutMs: attemptMs });
+      // A deadline stop is a RESULT, not a failure: the finds
+      // stand, marked incomplete — no fall-through to a second
+      // strategy that would blow the same cap again.
+      if (deadlineHit) return { ...res, complete: false };
+      return { ...res, complete: true };
     } catch { /* every endpoint refused the Multicall3 rounds — try the batch path */ }
   }
   try {
@@ -29983,7 +30052,7 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
       // endpoint down, so later rounds skip it instead of paying
       // its refusal latency again; it throws only when every
       // endpoint failed the round.
-      const out = await evmRpcFetchJson(networkKey, payload, { timeoutMs: 30000 });
+      const out = await evmRpcFetchJson(networkKey, payload, { timeoutMs: attemptMs });
       if (!Array.isArray(out)) throw new Error("batch unsupported");
       for (const item of out) {
         const t = item && grp[item.id];
@@ -29992,16 +30061,18 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
       }
       await emitChunk();
     });
-    return { balances, method: "batch" };
+    if (deadlineHit) return { balances, method: "batch", complete: false };
+    return { balances, method: "batch", complete: true };
   } catch { /* batching refused — direct calls or an honest "limited" */ }
   if (list.length > 800) throw new Error("Token scan is limited on this chain (no Multicall3 deployment).");
-  return withEvmProvider(networkKey, async (provider) => {
+  const directRes = await withEvmProvider(networkKey, async (provider) => {
     // Liveness probe first: a dead endpoint must fail the
     // attempt (and rotate) instead of silently zeroing every
     // row — the per-token catch below cannot tell a dead
     // endpoint from an unheld token.
     await provider.getBlockNumber();
     for (const grp of chunkArray(list, 25)) {
+      if (Date.now() >= deadlineAt) { deadlineHit = true; break; }
       await Promise.all(grp.map(async (t) => {
         try {
           const v = await new ethers.Contract(t.address, ERC20_BALANCE_ABI, provider).balanceOf(ownerAddress);
@@ -30011,19 +30082,23 @@ export async function scanEvmTokenBalances(networkKey, ownerAddress, tokens, { c
       await emitChunk();
     }
     return { balances, method: "direct" };
-  });
+  }, { attemptTimeoutMs: attemptMs });
+  return { ...directRes, complete: !deadlineHit };
 }
 /** One EVM balance for targeted checks (swap sheet, custom-token
  *  rows): the native coin when `token` is null or the zero address,
- *  else that contract's balanceOf. Returns a formatted string. */
-export async function getEvmTokenBalance(wallet, networkKey, token = null) {
+ *  else that contract's balanceOf. Returns a formatted string.
+ *  Callers on the balance paint path pass the balance attempt
+ *  budget (balance-speed round, 2026-11-17); the default stays
+ *  the fleet attempt budget for sheet-time checks. */
+export async function getEvmTokenBalance(wallet, networkKey, token = null, { attemptTimeoutMs = EVM_PROVIDER_ATTEMPT_TIMEOUT_MS } = {}) {
   return withEvmProvider(networkKey, async (provider) => {
     if (!token || !token.address || /^0x0{40}$/i.test(token.address)) {
       return ethers.formatEther(await provider.getBalance(wallet.address));
     }
     const c = new ethers.Contract(token.address, ERC20_BALANCE_ABI, provider);
     return ethers.formatUnits(await c.balanceOf(wallet.address), token.decimals ?? 18);
-  });
+  }, { attemptTimeoutMs });
 }
 /** Read a would-be ERC-20's metadata + the owner's balance straight
  *  from the contract (custom-token add: nothing is taken on trust
@@ -33562,6 +33637,35 @@ export function sortHomeRows(items, amountOf, valueOf) {
  * with no known total next (they outrank quiet unpriced holdings:
  * a problem the user must see); then the rest — held but carrying
  * no fiat total, and in-flight-only scopes — by name A–Z. */
+/** Which scopes GATE the home header's done state (balance-
+ *  speed round, 2026-11-17). The header's "Updating…" used to
+ *  be all-or-nothing across every family: the slowest family
+ *  — Zcash behind Blockchair, a chain the user has never held
+ *  a cent on — decided when the page looked done, so the hero
+ *  total sat flagged long after everything the user actually
+ *  holds had settled. The gate is now EVIDENCE: a scope gates
+ *  iff the device carries evidence it may hold something —
+ *  prior balances in the cache, held/custom token records,
+ *  per-chain EVM reads (§147). Zero-evidence scopes still read
+ *  and still paint when they land; they just don't hold the
+ *  flag. The honesty line is preserved exactly: an evidence-
+ *  bearing scope that is unread keeps the flag up (the total
+ *  never presents as final over it), and one that FAILED is
+ *  settled-as-failed — the flag drops and the couldn't-load
+ *  note speaks instead. Cold start is the special case: no
+ *  evidence anywhere and no chain read pending means nothing
+ *  is known at all, so EVERY scope gates — a first open must
+ *  not present a bare $0.00 as final (incident I2's shape).
+ *  Pure: evidenceKeys/allKeys are key lists, anyChainPending
+ *  is the §147 pending set's non-emptiness. Returns the list
+ *  of scope keys whose live settle the header waits on. */
+export function pendingGateScopes(evidenceKeys, allKeys, anyChainPending) {
+  const all = Array.isArray(allKeys) ? allKeys : [];
+  const ev = [...new Set(evidenceKeys || [])].filter(k => all.includes(k));
+  if (ev.length || anyChainPending) return ev;
+  return [...all];
+}
+
 export function heldScopes(entries) {
   const keep = (Array.isArray(entries) ? entries : []).filter(e => e && e.key && (e.held || e.failed || e.inFlight));
   const valued = (e) => typeof e.totalUsd === "number" && Number.isFinite(e.totalUsd) && e.totalUsd > 0;

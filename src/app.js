@@ -67,8 +67,9 @@ import {
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
-  heldScopes, flattenHeldRows,
+  heldScopes, flattenHeldRows, pendingGateScopes,
   evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd,
+  BALANCE_READ_ATTEMPT_MS, SCAN_ATTEMPT_TIMEOUT_MS, SCAN_DEADLINE_MS,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
   FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
   newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
@@ -132,6 +133,16 @@ const famLoaded = new Set();      // families whose balance read settled this re
 const liveFams = new Set();
 const hydratedFams = new Set();
 let cachePaint = false;
+// Holding EVIDENCE per family (balance-speed round, 2026-11-17):
+// families whose cached paint carries a positive balance — the
+// device has seen this family hold something. Together with the
+// §147 per-chain evidence it decides which scopes GATE the
+// header's "Updating…" (core's pendingGateScopes): evidence
+// scopes hold the flag until their LIVE read settles; zero-
+// evidence families settle in the background without holding
+// it. Populated by hydrateBalanceCache + the renderMain
+// evidence pass; reset every render.
+const evidenceFams = new Set();
 const markLoaded = (k) => { famLoaded.add(k); liveFams.add(k); };
 // Cache-honesty provenance (2026-11-14): liveOkFams tracks families
 // whose LIVE read this render actually SUCCEEDED — whole, or in the
@@ -214,6 +225,19 @@ let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|
 let evmChainState = new Map();
 let evmChainOk = new Set();
 const evmChainsPending = new Set();
+// The current render's per-network pass (§147), kept as a
+// promise so the active chain's DEEP scan can defer its start
+// until those known-token reads settle (balance-speed round,
+// 2026-11-17): known reads first, discovery behind them.
+let evmChainsPassPromise = null;
+// The active chain's KNOWN-token reads (custom + quick read in
+// hydrateEvmTokens) are part of the visible list: while they
+// are in flight the header keeps "Updating…" — the total must
+// not present as final over held records that are still
+// unread. evmKnownSeq ties the flag to one hydrate invocation
+// so a superseded run can never clear a newer run's flag.
+let evmKnownPending = false;
+let evmKnownSeq = 0;
 // Render context for EVM rows painted from a NON-active chain's
 // read: the chain whose native-coin badge and token-trust chain
 // a row belongs to. Set inside those rows' render closures only;
@@ -221,6 +245,17 @@ const evmChainsPending = new Set();
 let evmRowCtxKey = null;
 let renderSeq = 0; // increments per renderMain run — stale renders must not adopt late reads
 const EVM_LATE_ADOPT_MS = 120000; // bounded window in which a rescued EVM read may still repaint its scan
+// Deep-scan paint discipline (balance-speed round, 2026-11-17):
+// the discovery tail merges its finds at most once per batch
+// window — a chunk landing every few hundred ms must not
+// repaint the whole tab each time and visually disturb the
+// settled list above it.
+const SCAN_PAINT_BATCH_MS = 1000;
+// How long the deep scan's start waits for this render's
+// per-network known-token reads before starting anyway —
+// deferral is a priority rule, not a dependency: discovery
+// must never be held hostage by a hung chain.
+const EVM_SCAN_DEFER_MS = 15000;
 let evmLoadFailed = false; // the curated EVM balance load failed — rows are UNKNOWN, never zero (DOGE precedent)
 // Bitcoin has TWO balance reads (SegWit + Taproot) feeding one row:
 // each account tracks its own failure, and the family flag is the
@@ -1181,7 +1216,12 @@ function hydrateBalanceCache(w) {
     prices = { ...prices, ...cached.prices };
   }
   const f = cached.fams || {};
-  const put = (key, apply) => { if (Array.isArray(f[key])) { apply(f[key]); famLoaded.add(key); hydratedFams.add(key); } };
+  // A cached family whose rows carry a positive balance is
+  // holding EVIDENCE (balance-speed round): it gates the
+  // header's done state until its live read settles. A cached
+  // all-zero family is proven-quiet, not evidence — it settles
+  // in the background like any zero-evidence scope.
+  const put = (key, apply) => { if (Array.isArray(f[key])) { apply(f[key]); famLoaded.add(key); hydratedFams.add(key); if (f[key].some(r => r && Number(r.amount) > 0)) evidenceFams.add(key); } };
   put("tron", (rows) => { tronBalances = rows; });
   put("solana", (rows) => { solBalances = rows; });
   put("sui", (rows) => { suiBalances = rows; });
@@ -1199,6 +1239,7 @@ function hydrateBalanceCache(w) {
   if (cached.evm && cached.evm.network === networkKey && Array.isArray(cached.evm.rows)) {
     balances = cached.evm.rows;
     famLoaded.add("evm"); hydratedFams.add("evm");
+    if (cached.evm.rows.some(r => r && Number(r.amount) > 0)) evidenceFams.add("evm");
   }
   // Per-network EVM rows (§147): last-known rows for non-active
   // chains paint instantly under the "Updating…" flag (their
@@ -1221,13 +1262,14 @@ function hydrateBalanceCache(w) {
   if (isNum(sc.btcBal) && isNum(sc.btcTrBal)) {
     btcBal = sc.btcBal; btcTrBal = sc.btcTrBal;
     famLoaded.add("bitcoin"); hydratedFams.add("bitcoin");
+    if (sc.btcBal > 0 || sc.btcTrBal > 0) evidenceFams.add("bitcoin");
   }
-  if (isNum(sc.ltcBal)) { ltcBal = sc.ltcBal; famLoaded.add("litecoin"); hydratedFams.add("litecoin"); }
-  if (isNum(sc.dogeBal)) { dogeBal = sc.dogeBal; famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); }
-  if (isNum(sc.bchBal)) { bchBal = sc.bchBal; famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); }
-  if (isNum(sc.adaBal)) { adaBal = sc.adaBal; famLoaded.add("cardano"); hydratedFams.add("cardano"); }
-  if (isNum(sc.zecBal)) { zecBal = sc.zecBal; famLoaded.add("zcash"); hydratedFams.add("zcash"); }
-  if (isNum(sc.dashBal)) { dashBal = sc.dashBal; famLoaded.add("dash"); hydratedFams.add("dash"); }
+  if (isNum(sc.ltcBal)) { ltcBal = sc.ltcBal; famLoaded.add("litecoin"); hydratedFams.add("litecoin"); if (sc.ltcBal > 0) evidenceFams.add("litecoin"); }
+  if (isNum(sc.dogeBal)) { dogeBal = sc.dogeBal; famLoaded.add("dogecoin"); hydratedFams.add("dogecoin"); if (sc.dogeBal > 0) evidenceFams.add("dogecoin"); }
+  if (isNum(sc.bchBal)) { bchBal = sc.bchBal; famLoaded.add("bitcoincash"); hydratedFams.add("bitcoincash"); if (sc.bchBal > 0) evidenceFams.add("bitcoincash"); }
+  if (isNum(sc.adaBal)) { adaBal = sc.adaBal; famLoaded.add("cardano"); hydratedFams.add("cardano"); if (sc.adaBal > 0) evidenceFams.add("cardano"); }
+  if (isNum(sc.zecBal)) { zecBal = sc.zecBal; famLoaded.add("zcash"); hydratedFams.add("zcash"); if (sc.zecBal > 0) evidenceFams.add("zcash"); }
+  if (isNum(sc.dashBal)) { dashBal = sc.dashBal; famLoaded.add("dash"); hydratedFams.add("dash"); if (sc.dashBal > 0) evidenceFams.add("dash"); }
   cachePaint = hydratedFams.size > 0;
   if (cachePaint || evmChainState.size) paintAssets();
 }
@@ -1344,6 +1386,7 @@ async function renderMain() {
   liveOkFams.clear();
   cacheWriteNeeded = false;
   hydratedFams.clear();
+  evidenceFams.clear();
   cachePaint = false;
   // Per-network EVM state (§147) resets with the render, like
   // every family's; the cache hydration below re-seeds the
@@ -1354,6 +1397,8 @@ async function renderMain() {
   evmChainState = new Map();
   evmChainOk = new Set();
   evmChainsPending.clear();
+  evmChainsPassPromise = null;
+  evmKnownPending = false;
   paintHeader();
   // Prices NO LONGER GATE the render (2026-11-09 load fix): this
   // function used to await getPrices() — raced against a 10 s
@@ -1382,6 +1427,10 @@ async function renderMain() {
     if (k === networkKey) continue;
     if (evmChainEvidence(k) || evmChainState.has(k)) evmChainsPending.add(k);
   }
+  // The ACTIVE chain's held/custom records are holding evidence
+  // too (balance-speed round): its known-token reads gate the
+  // header through evmKnownPending while they run.
+  if (evmChainEvidence(networkKey)) evidenceFams.add("evm");
   const cachedPriceSnapshot = { ...prices };
   (async () => {
     try {
@@ -1807,7 +1856,7 @@ async function renderMain() {
   markLoaded("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
-  hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)
+  evmChainsPassPromise = hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)
   renderHistory();
   discoverChains(); // background, non-blocking; no-ops while the cache is fresh
 }
@@ -2136,8 +2185,25 @@ function paintHeader() {
     // before this, a cold reopen showed a bare hero figure
     // with no disclosure while every family was still
     // loading, which reads as "all my balances are zero".
-    const updating = !HOME_FAMILIES.every((k) => famLoaded.has(k))
-      || (cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k)))
+    // Balance-speed round (2026-11-17): the gate is EVIDENCE,
+    // not the whole family list (core's pendingGateScopes).
+    // The all-or-nothing form held the flag on the slowest
+    // family alive — Zcash behind Blockchair, Polkadot's 30 s
+    // connect — long after everything the user actually holds
+    // had settled, training the eye to ignore the flag. Now:
+    // a scope with holding evidence (prior balances, held/
+    // custom records, a §147 chain read) holds the flag until
+    // its LIVE read settles — settled-as-failed included, the
+    // couldn't-load note below then speaks for it — and zero-
+    // evidence scopes settle in the background. A cold start
+    // (no evidence anywhere) still gates on every family:
+    // nothing is known, so nothing may present as final.
+    const gateScopes = pendingGateScopes(evidenceFams, HOME_FAMILIES, evmChainsPending.size > 0);
+    const updating = gateScopes.some((k) => !liveFams.has(k))
+      // The active chain's known-token reads (custom + quick
+      // read) are visible-list reads: held records still
+      // unread keep the flag up (§148).
+      || evmKnownPending
       // Per-network EVM reads (§147): an evidence-bearing EVM
       // chain whose read has not settled is part of the promised
       // total — the header stays "Updating…" until it lands, so
@@ -3750,7 +3816,9 @@ async function readEvmChainRows(w, k) {
   if (!known.length) return base;
   let knownRows;
   try {
-    const scan = await scanEvmTokenBalances(k, w.address, known);
+    // A known-token read is a paint-path read (§148): it rides
+    // the balance attempt budget, never the 30 s scan default.
+    const scan = await scanEvmTokenBalances(k, w.address, known, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS });
     knownRows = [];
     for (const [addrLower, raw] of scan.balances) {
       const t = knownByAddr.get(addrLower);
@@ -3804,14 +3872,26 @@ async function hydrateEvmTokens() {
   const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;
   const seq = ++evmHydrateSeq;
   const alive = () => seq === evmHydrateSeq && networkKey === myKey && !!wallet;
+  // Known-token phase (balance-speed round, 2026-11-17): steps
+  // 1–2 below — custom reads + the quick read over curated /
+  // custom / ever-held records — ARE the visible list. The
+  // header holds "Updating…" while they run (evmKnownPending),
+  // and the discovery tail (steps 3–4) does not start until
+  // they settle: a slow scan must never delay, block, or
+  // visually disturb the list the user is looking at.
+  evmKnownSeq = seq;
+  evmKnownPending = true;
+  paintHeader();
   // 1) Custom tokens: few, read directly, merged immediately.
   const customRows = [];
   for (const ct of loadCustomTokens(chainId)) {
     // A failed custom-token read is unknown (amount null — the
     // row renders "couldn't load"), never a fabricated zero
-    // (2026-11-14 silent-zero fix).
+    // (2026-11-14 silent-zero fix). The read rides the balance
+    // attempt budget (§148): a custom token is a known token,
+    // not a scan.
     let amount = null;
-    try { amount = await getEvmTokenBalance(wallet, myKey, ct); } catch { /* stays null — unknown, not zero */ }
+    try { amount = await getEvmTokenBalance(wallet, myKey, ct, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS }); } catch { /* stays null — unknown, not zero */ }
     customRows.push({ symbol: ct.symbol, name: ct.name, amount, address: ct.address, decimals: ct.decimals, custom: true, verified: false, priceUsd: null });
   }
   if (!alive()) return;
@@ -3853,7 +3933,12 @@ async function hydrateEvmTokens() {
     evmScanState = { key: myKey, status: "scanning" };
     paintAssets();
     try {
+      // The quick read is a KNOWN-token read (§148): one small
+      // round over the priority set, riding the balance attempt
+      // budget — a hung endpoint is raced past in 2.5 s, not
+      // waited out for the scan's 30 s default.
       const quick = await scanEvmTokenBalances(myKey, wallet.address, quickTokens, {
+        attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS,
         onChunk: async (balMap) => {
           if (!alive()) return;
           const before = quickRows.length;
@@ -3870,6 +3955,19 @@ async function hydrateEvmTokens() {
         saveHeldTokens(chainId, quickRows);
       }
     } catch { /* the full scan below remains the fallback */ }
+  }
+  // Known-token phase settled: the visible list is now as
+  // complete as this render's reads can make it, and the
+  // header may stop holding the flag for it.
+  if (evmKnownSeq === seq) { evmKnownPending = false; paintHeader(); }
+  // Discovery deferral (§148): the list fetch + deep scan are
+  // a tail, and this render's per-network known-token reads
+  // (§147) outrank them — the scan starts when that pass
+  // settles, or after EVM_SCAN_DEFER_MS at the latest: a hung
+  // chain delays discovery briefly, never blocks it.
+  if (evmChainsPassPromise) {
+    await Promise.race([evmChainsPassPromise, new Promise(r => setTimeout(r, EVM_SCAN_DEFER_MS))]);
+    if (!alive()) return;
   }
   // 3) The chain's CoinGecko list (24h on-device cache when it fits).
   const list = await cgTokensForChain(chainId);
@@ -3900,6 +3998,13 @@ async function hydrateEvmTokens() {
   // they land. The held snapshot is complete within seconds; the
   // long tail keeps scanning behind it (skeleton rows stay up
   // until it finishes — never a blank, never a fake zero).
+  // Balance-speed shape (§148, 2026-11-17): the scan is a
+  // DISCOVERY tail now, bounded on every axis — its attempts
+  // race SCAN_ATTEMPT_TIMEOUT_MS, its whole run is capped at
+  // SCAN_DEADLINE_MS (past which it reports incomplete and the
+  // chain reads "limited", never "done"), and its finds merge
+  // in batches (SCAN_PAINT_BATCH_MS) so a chunk landing every
+  // few hundred ms cannot repaint-storm the settled list.
   evmScanState = { key: myKey, status: "scanning" };
   paintAssets();
   const priority = [
@@ -3920,18 +4025,32 @@ async function hydrateEvmTokens() {
                          address: t.address, decimals: t.decimals, verified: chainTokenVerified(t), priceUsd: t.priceUSD, logoURI: t.logoURI || null });
     }
   };
+  let scanFlushTimer = null;
+  const flushScanRows = () => {
+    scanFlushTimer = null;
+    if (!alive()) return;
+    mergeEvmRows(customRows, [...quickRows, ...scannedRows]);
+  };
+  const scheduleScanFlush = () => {
+    if (scanFlushTimer != null) return;
+    scanFlushTimer = setTimeout(flushScanRows, SCAN_PAINT_BATCH_MS);
+  };
+  const cancelScanFlush = () => { if (scanFlushTimer != null) { clearTimeout(scanFlushTimer); scanFlushTimer = null; } };
   let scan;
   try {
     scan = await scanEvmTokenBalances(myKey, wallet.address, orderedList, {
+      attemptTimeoutMs: SCAN_ATTEMPT_TIMEOUT_MS,
+      deadlineMs: SCAN_DEADLINE_MS,
       onChunk: async (balMap) => {
         if (!alive()) return;
         const before = scannedRows.length;
         rowsFromBalances(balMap);
-        if (scannedRows.length !== before) mergeEvmRows(customRows, [...quickRows, ...scannedRows]);
+        if (scannedRows.length !== before) scheduleScanFlush();
       },
     });
   }
   catch {
+    cancelScanFlush();
     if (!alive()) return;
     // A failed scan reconciles DOWN (2026-11-12 phantom fix):
     // long-tail rows merged earlier this session are dropped rather
@@ -3948,6 +4067,7 @@ async function hydrateEvmTokens() {
     paintAssets();
     return;
   }
+  cancelScanFlush();
   if (!alive()) return;
   rowsFromBalances(scan.balances);
   // Enrich quick-read rows with the list's verification + price
@@ -3973,9 +4093,14 @@ async function hydrateEvmTokens() {
       if (d && d.priceUsd != null) r.priceUsd = d.priceUsd;
     }
   }
-  evmScanCache.set(chainId, { at: Date.now(), status: "done", rows: allScannedRows });
+  // A deadline-stopped scan is honest about its tail (§148):
+  // its finds stand and are cached, but the chain reads
+  // "limited" — discovery resumes on the next open — never
+  // "done" over chunks that never ran.
+  const scanStatus = scan.complete === false ? "limited" : "done";
+  evmScanCache.set(chainId, { at: Date.now(), status: scanStatus, rows: allScannedRows });
   mergeEvmRows(customRows, allScannedRows);
-  evmScanState = { key: myKey, status: "done" };
+  evmScanState = { key: myKey, status: scanStatus };
   paintAssets();
 }
 
