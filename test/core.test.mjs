@@ -18821,7 +18821,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   // authority (a built-in's pins do not depend on the list).
   {
     const realFetch7 = globalThis.fetch;
-    const cgReal7 = JSON.parse(readFileSync(new URL("../research_notes/fluid-robinhood-chain-20261115/fixtures/coingecko-robinhood-tokenlist.json", import.meta.url), "utf8"));
+    const cgReal7 = JSON.parse(readFileSync(new URL("./fixtures/coingecko-robinhood-tokenlist.json", import.meta.url), "utf8"));
     try {
       globalThis.fetch = async (url) => String(url).includes("tokens.coingecko.com/robinhood/")
         ? { ok: true, status: 200, json: async () => cgReal7 } : { ok: true, status: 200, json: async () => ({ tokens: [] }) };
