@@ -1417,120 +1417,73 @@ endpoints with the official RPC first.
   aliases, and send-cap valuations keep using the separate
   verified-price path.
 
-## Canonical-bridge moves — the LADYS class (2026-11-15)
+## Canonical-bridge moves — pair table EMPTY (machinery dormant since 2026-11-17)
 
 A Move is not a swap, and it never travels through a swap
 rail. Some tokens exist on an L2 only as the canonical
 bridged form of an L1 token — the L2 contract was deployed
 by the chain's own token bridge and is redeemable 1:1
-against the L1 escrow. Selling the bridged form into a
-market swap hands the user the L2 market price: for LADYS
-(Arbitrum → Ethereum) that was measured at −86.55% impact
-on ~$100 and −96.06% on ~$1,000 (2026-11-14 probe), because
-the two forms trade at different prices. The canonical
-bridge is the true 1:1.
+against the L1 escrow. For a token that genuinely has that
+shape, selling the bridged form into a market swap hands
+the user the L2 market price, and the canonical bridge is
+the true 1:1. Fluid's Move machinery (initiation through
+the GatewayRouter, a persisted pending record, probe-driven
+claim readiness, and the L1 Outbox claim) exists for such
+pairs — and every Move surface in the app is driven by one
+pair table (`BRIDGED_MOVE_PAIRS` in wallet-core).
 
-- **The pair table is the only source of Moves**
-  (`BRIDGED_MOVE_PAIRS` in wallet-core): token, origin
-  chain, bridged chain, bridge type. LADYS is the first and
-  only entry — Arbitrum `0x3b60…70E4E` ↔ Ethereum
-  `0x1297…646bf`, 18 decimals, bridge `arbitrum-canonical`.
-  A pair joins only with its own on-chain gateway
-  verification, never by analogy.
-- **The route (verified on-chain at build time):** the L2
-  GatewayRouter (`0x5288…4F933`) resolves LADYS to the
-  STANDARD L2 ERC20 Gateway (`0x09e9…51EEe` — re-read live
-  before every initiation and refused if it ever changes).
-  The standard gateway escrows by burning the L2 token
-  through its gateway-only `bridgeBurn`, so the initiation
-  is ONE call — `outboundTransfer(l1Token, to, amount,
-  "0x")` to the router, carrying no native value and empty
-  extra data (the gateway enforces both) — and there is NO
-  approval leg. The built calldata is decoded and
-  bounds-checked before signing (pinned L1 token, recipient
-  = the user's own Ethereum address, exact amount, empty
-  data), and the call is simulated before broadcast.
-- **The wait is the protocol's:** about 7 days (Arbitrum's
-  challenge period), shown up front on the confirm screen
-  with the Arbitrum-side gas estimate and the claim's
-  Ethereum-gas need (with a warning when the wallet holds
-  no ETH on Ethereum). The pending-move record is written
-  at broadcast, persists across lock/close, and shows the
-  countdown on the token page, in the swap sheet and in
-  Activity ("Move in progress — LADYS to Ethereum,
-  claimable ~<date>"). The record carries the initiation
-  receipt's full ArbSys `L2ToL1Tx` event — every field the
-  L1 Outbox execution consumes.
-- **Readiness is probed, not clocked.** The +7-day date is
-  an estimate and stays labelled with a "~". Whether a
-  move can actually be claimed is decided by an on-chain
-  probe (run lazily when a move surface renders): the
-  Outbox's `isSpent` (already claimed — including claims
-  made through any other front-end, which reconcile the
-  record to claimed), a confirmed send root covering the
-  message's `position` (found by walking L2 block headers'
-  `sendRoot`/`sendCount` against the Outbox's `roots()`),
-  a NodeInterface `constructOutboxProof` whose send/root
-  reproduce the confirmed root (with the Outbox's own
-  `calculateMerkleRoot` as a third check), and finally an
-  `eth_call` of the exact claim — success is the only
-  thing that lights the Claim button.
-- **The claim itself** is one Ethereum transaction:
-  `Outbox.executeTransaction` (pinned Outbox
-  `0x0B98…4840`, non-payable, 0 ETH) whose payload is the
-  gateway's `finalizeInboundTransfer` — executing the
-  message IS the whole claim; the L1 gateway releases the
-  token. The calldata is built entirely from the record
-  and bounds-checked before signing (position, the
-  standard gateway as L2 sender, the pinned L1 gateway as
-  destination, the pair's L1 token, from the user, to the
-  user, the exact moved amount). The claim sheet shows
-  the Ethereum gas estimated live for that exact claim
-  (real claims sampled at 152,899–180,655 gas) and checks
-  the wallet's ETH balance against it. The record is
-  marked claimed only on a successful L1 receipt; a
-  reverted claim leaves it ready and retryable.
-- **Self-healing records.** The first build's receipt
-  parser used the classic `L2ToL1Tx` ABI, but ArbOS
-  changed the event's shape (the global send index is now
-  `position`; `batchNumber`/`indexInBatch` no longer
-  exist), so records written by that build carry no claim
-  payload. Nothing is stranded: on read, such a record
-  re-derives the payload from its own initiation tx hash
-  and verifies the re-parsed fields reproduce the event's
-  item hash before trusting them.
-- **Move L2 reads rotate (walk repair, 2026-11-15).** The
-  claim verification walk found the self-heal above could
-  never complete through the primary Arbitrum RPC: that
-  endpoint refuses `eth_getTransactionReceipt` under its
-  stated unauthenticated-archive policy ("Archive requests
-  require a personal token"), for recent receipts as well
-  as old ones — a wall real users hit identically. Every
-  Move L2 read (the repair receipt fetch, the probe's
-  confirmed-size header walk, the NodeInterface proof
-  call) now rotates over the chain's primary provider, its
-  verified fallback when it has one, and an archive-capable
-  endpoint (`arb1.arbitrum.io`, proven against the walk's
-  fixture receipts), falling through on any throw or null.
-  The fail-safe is unchanged: only when every provider
-  fails does a read fail — the record stays untouched, the
-  probe reports waiting, and no claim is ever armed on a
-  failed read.
-- **State of the parts (2026-11-15):** initiation LIVE ·
-  pending tracking + countdown LIVE · claim-readiness
-  surfacing LIVE (probe-driven) · claim execution LIVE.
-  Arbitrum's official bridge (bridge.arbitrum.io, same
-  wallet) remains named in-app as an alternative way to
-  make the same claim. Nothing about a move is claimable
-  by anyone but the user's own key, before or after.
-- **Fee: none.** A canonical withdrawal is neither a swap
-  nor a ramp and has no capture surface; the only cost is
-  the Arbitrum network fee for the initiation (and, at
-  claim time, Ethereum's).
-- **Entry points:** the LADYS (Arbitrum) token page's
-  "Move to Ethereum" action, and the swap screen — where
-  the exact ARB LADYS → ETH LADYS pair presents the Move
-  instead of any market quote.
+- **The pair table is EMPTY (2026-11-17).** Its one entry —
+  LADYS Arbitrum → Ethereum, added 2026-11-15 — was
+  REMOVED after the pairing proved invalid on-chain. The
+  held Arbitrum token (`0x3b60…70E4E`) is a standalone
+  team deployment (plain ERC20 + AccessControl: no
+  bridge(), no l1Address(), no gateway link). The standard
+  gateway's calculated L2 token for L1 LADYS is a
+  DIFFERENT contract (`0x3952…cFF24`) that holders of
+  `0x3b60…70E4E` do not hold, and the router's
+  outboundTransfer reverts "burn amount exceeds balance"
+  for every amount > 0 of the held token. No canonical
+  1:1 redemption exists for it. The 2026-11-15
+  verification was fooled two ways: getGateway returns
+  the DEFAULT gateway for unregistered tokens, so its
+  answer proved nothing about this token; and the
+  zero-balance burn-revert "proof" was simulated against
+  the calculated token, not the held one.
+- **LADYS takes the market path again.** Arbitrum LADYS →
+  Ethereum LADYS is an ordinary swap-sheet route: the
+  market quote (Relay) is shown as it really is — the two
+  forms trade at different prices, measured at −86.55%
+  impact on ~$100 (2026-11-14 probe) — with the standard
+  price-impact disclosure, never dressed as a 1:1 Move.
+- **The machinery stays, dormant.** Initiation (one
+  `outboundTransfer` call, no approval leg, calldata
+  bounds-checked, gateway re-read live), the persisted
+  record + countdown, readiness probed not clocked (Outbox
+  isSpent, a confirmed send root, a NodeInterface proof,
+  an eth_call of the exact claim), and the claim itself
+  (one Outbox execution, bounds-checked, marked claimed
+  only on a successful L1 receipt) all remain in the tree
+  behind the empty table; Move L2 reads rotate over the
+  primary, the fallback and an archive-capable endpoint.
+  With no pair listed, no token page offers a Move and no
+  swap route presents one. Records written under a removed
+  pairId still load and phase; their claims refuse safely
+  (the bounds check rejects an unlisted pair).
+- **The verification standard for any future pair** — all
+  three, with the evidence recorded in the entry (the
+  suite's pair-table lint refuses an entry without it):
+  (1) `gateway.calculateL2TokenAddress(L1 token)` ==
+  the held L2 token, exactly; (2) the L2 token's own
+  `l1Address()` == the L1 token; (3) a simulation of the
+  initiation from a funded holder of that exact L2 token,
+  for an amount > 0. getGateway resolving and name/symbol
+  matching prove nothing — they are how the LADYS entry
+  passed in 2026.
+- **Fee: none** — when a pair is listed, a canonical
+  withdrawal is neither a swap nor a ramp and has no
+  capture surface; the only cost is the origin chain's
+  network fee for the initiation (and, at claim time, the
+  destination's).
 
 ## Zcash + Dash — presence + 1Click swaps (audit gap #8, 2026-11-15)
 
@@ -1841,7 +1794,8 @@ transaction against the reviewed spec before broadcast —
   at all (no protocol fee, no signer fee; the only deduction
   is the Bitcoin network fee of the signers' sweep, capped
   by the user's own max-fee), and a canonical move never
-  invents one (the LADYS precedent).
+  invents one (the Move discipline — see Canonical-bridge
+  moves above).
   - **Peg-in (BTC → sBTC)** is a plain Bitcoin send to a
     P2TR deposit address computed locally from the pinned
     script grammar (the official sBTC helper's): a deposit

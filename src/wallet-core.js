@@ -32781,7 +32781,15 @@ export function sortHomeRows(items, amountOf, valueOf) {
  * position, a NodeInterface proof whose send/root reproduce
  * the confirmed root, and an eth_call simulation of the
  * exact claim), never read off the wall clock: the +7d
- * claimableAt stays the displayed estimate only. */
+ * claimableAt stays the displayed estimate only.
+ *
+ * REMOVAL (2026-11-17): the LADYS pairing this machinery
+ * was built for proved INVALID — the held Arbitrum token
+ * is a standalone deployment, not the gateway's calculated
+ * bridged form, and no 1:1 redemption exists for it (the
+ * full account sits on BRIDGED_MOVE_PAIRS below). The
+ * machinery stays in the tree, dormant: every Move surface
+ * is driven by the pair table, and the table is empty. */
 
 export const ARBITRUM_GATEWAY_ROUTER = "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933";
 export const ARBITRUM_ERC20_GATEWAY = "0x09e9222E96E7B4AE2a407B98d48e330053351EEe";
@@ -32809,18 +32817,38 @@ export const MOVE_WAIT_MS = 7 * 24 * 3600 * 1000;
  *  actions in the app. An entry states: this token, held on
  *  the origin chain, is the canonical bridged form of that
  *  token on the destination chain, and the named bridge
- *  redeems it 1:1. LADYS is the first and only entry (added
- *  2026-11-15, gateway verified on-chain); a new pair joins
- *  only with its own on-chain gateway verification, never by
- *  analogy. */
-export const BRIDGED_MOVE_PAIRS = [
-  {
-    id: "ladys-arbitrum-ethereum", symbol: "LADYS", name: "Milady", decimals: 18,
-    fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
-    toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
-    bridge: "arbitrum-canonical",
-  },
-];
+ *  redeems it 1:1.
+ *
+ *  THE TABLE IS EMPTY (2026-11-17). Its one entry — LADYS
+ *  Arbitrum → Ethereum, added 2026-11-15 — was REMOVED:
+ *  the held Arbitrum token (0x3b60…70E4E) is a STANDALONE
+ *  team deployment (plain ERC20 + AccessControl — no
+ *  bridge(), no l1Address(), no gateway link). The standard
+ *  gateway's calculated L2 token for L1 LADYS is a
+ *  DIFFERENT contract (0x3952…cFF24), which holders of
+ *  0x3b60 do not hold, and the router's outboundTransfer
+ *  reverts "burn amount exceeds balance" for EVERY amount
+ *  > 0 of the held token. No canonical 1:1 redemption
+ *  exists for it, so the pair returns to the ordinary
+ *  market-swap path like any other token. The 2026-11-15
+ *  verification was fooled two ways: getGateway returns
+ *  the DEFAULT gateway for unregistered tokens (so the
+ *  "standard gateway" answer proved nothing about this
+ *  token), and the zero-balance burn-revert "proof" was
+ *  simulated against the CALCULATED token, not the held
+ *  one.
+ *
+ *  VERIFICATION STANDARD for any future entry — all three,
+ *  with the evidence recorded in the entry's `verification`
+ *  field (the suite refuses an entry without it):
+ *  (1) gateway.calculateL2TokenAddress(pair.toToken) ==
+ *      pair.fromToken, exactly;
+ *  (2) the L2 token's own l1Address() == pair.toToken;
+ *  (3) a simulation of the initiation FROM A FUNDED HOLDER
+ *      of that exact L2 token, for an amount > 0.
+ *  getGateway resolving, and name/symbol matching, prove
+ *  NOTHING — they are how the LADYS entry passed in 2026. */
+export const BRIDGED_MOVE_PAIRS = [];
 
 /** The Move pair for a token held on a chain, or null. */
 export function movePairForToken(chainKey, tokenAddress) {
@@ -33442,7 +33470,7 @@ export function checkClaimCalldata(record, pair, data) {
  *  Returns { state: "waiting" | "ready" | "claimed", record,
  *  proof?, size?, root?, reason? } — the record it returns
  *  is the repaired one when a repair was needed. */
-export async function probeBridgeMoveClaim(record, { l2Provider = null, l2Providers = null, l1Provider = null, storage = null } = {}) {
+export async function probeBridgeMoveClaim(record, { l2Provider = null, l2Providers = null, l1Provider = null, storage = null, pair: pairOverride = null } = {}) {
   if (record?.status === "claimed") return { state: "claimed", record };
   const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record?.fromChainKey || "arbitrum");
   const l1 = l1Provider || providerFor(record?.toChainKey || "ethereum");
@@ -33462,7 +33490,11 @@ export async function probeBridgeMoveClaim(record, { l2Provider = null, l2Provid
   try { proofRes = await fetchMoveClaimProof(rec, { l1Provider: l1, confirmed, l2Providers: l2s }); }
   catch (e) { return { state: "waiting", reason: "proof", record: rec, error: e }; }
   if (!proofRes) return { state: "waiting", reason: "unconfirmed", record: rec };
-  const pair = movePairById(rec.pairId);
+  // The pair resolves from the table unless a caller injects
+  // one (the suite's machinery fixtures do — the table is
+  // empty since 2026-11-17, and an unlisted pair refuses at
+  // the bounds check below, which is the safe direction).
+  const pair = pairOverride ?? movePairById(rec.pairId);
   const data = buildClaimCalldata(rec, proofRes.proof);
   const bounds = checkClaimCalldata(rec, pair, data);
   if (!bounds.ok) return { state: "waiting", reason: "bounds", record: rec, error: new Error(bounds.reason) };
@@ -33521,15 +33553,15 @@ export async function estimateMoveClaimGas(wallet, record, proof, provider = nul
  *  finds already spent (claimed via any other front-end,
  *  e.g. the official bridge) reconciles to claimed without
  *  broadcasting anything. */
-export async function executeBridgeMoveClaim(wallet, record, { storage = null, onProgress = () => {} } = {}) {
-  const pair = movePairById(record?.pairId);
+export async function executeBridgeMoveClaim(wallet, record, { storage = null, onProgress = () => {}, pair: pairOverride = null } = {}) {
+  const pair = pairOverride ?? movePairById(record?.pairId);
   if (!pair || pair.bridge !== "arbitrum-canonical") throw new Error("That move's pair is not a canonical-bridge move Fluid has verified.");
   const owner = wallet.address;
   if (String(record.to).toLowerCase() !== owner.toLowerCase()) throw new Error("This move belongs to a different wallet address.");
   const l1Key = record.toChainKey || pair.toChainKey;
   const l1 = providerFor(l1Key);
   onProgress("Checking this move on Ethereum…");
-  const probe = await probeBridgeMoveClaim(record, { storage });
+  const probe = await probeBridgeMoveClaim(record, { storage, pair });
   if (probe.state === "claimed") {
     const claimed = { ...probe.record, status: "claimed" };
     if (storage) saveBridgeMoveRecord(storage, claimed);

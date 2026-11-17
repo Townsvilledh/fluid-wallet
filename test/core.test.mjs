@@ -18568,16 +18568,30 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     aOutFree6?.platformFeeCollecting === false && aInFree6?.platformFeeCollecting === false);
 }
 
-// ---------- §124. Canonical-bridge Move — LADYS Arbitrum → Ethereum (2026-11-15) ----------
-// The pair's true 1:1 is the Arbitrum canonical bridge, not
-// any swap (Relay priced the market swap at −86.55% impact
-// on ~$100). Gateway facts re-verified on-chain at build
-// time (research_notes/fluid-ladys-move-20261115/): the
-// router's getGateway(L1 LADYS) is the STANDARD L2 ERC20
-// Gateway, and the standard gateway escrows by burning via
-// bridgeBurn — NO approval leg exists (a zero-balance
-// eth_call of the exact initiation calldata reverts "ERC20:
-// burn amount exceeds balance", the burn's refusal).
+// ---------- §124. Canonical-bridge Move machinery (2026-11-15; the LADYS pair REMOVED 2026-11-17) ----------
+// Built for LADYS Arbitrum → Ethereum on the belief that the
+// held Arbitrum token was the canonical bridged form of L1
+// LADYS. IT WAS NOT (proven on-chain 2026-11-17): the held
+// token 0x3b60…70E4E is a standalone team deployment with no
+// bridge link at all; the gateway's calculated L2 token for
+// L1 LADYS is a DIFFERENT contract (0x3952…cFF24) that its
+// holders do not hold; and the router's outboundTransfer
+// reverts "burn amount exceeds balance" for EVERY amount
+// > 0 of the held token — no 1:1 redemption exists for it.
+// The 2026-11-15 "verification" was vacuous: getGateway
+// returns the DEFAULT gateway for unregistered tokens (so
+// its "standard gateway" answer proved nothing about this
+// token), and the zero-balance burn-revert was simulated
+// against the CALCULATED token, not the held one. The pair
+// is REMOVED — the table pins below assert the empty table
+// and the new verification-standard lint, and LADYS returns
+// to the market swap path (Relay priced it at −86.55%
+// impact on ~$100 back in 2026-11-14; that honest quote is
+// what the sheet shows again). The machinery pins keep
+// running against a synthetic pair fixture: the code stays
+// in the tree, dormant, for a future pair that meets the
+// standard — and any record already written under this
+// pairId shape must still parse, phase and refuse safely.
 {
   const {
     BRIDGED_MOVE_PAIRS, movePairForToken, movePairForRoute,
@@ -18591,24 +18605,32 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const L1 = "0x12970E6868f88f6557B76120662c1B3E50A646bf";
   const L2 = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
   const OWNER = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
-  const pair = BRIDGED_MOVE_PAIRS[0];
-  ok("move: the pair table holds exactly the LADYS entry — bridged form on Arbitrum, original on Ethereum, canonical bridge",
-    BRIDGED_MOVE_PAIRS.length === 1 && pair.symbol === "LADYS" && pair.decimals === 18
-    && pair.fromChainKey === "arbitrum" && pair.fromToken === L2
-    && pair.toChainKey === "ethereum" && pair.toToken === L1
-    && pair.bridge === "arbitrum-canonical");
+  // The machinery pins below run against this SYNTHETIC pair
+  // fixture (the shape the removed entry had) — they exercise
+  // the dormant code, never the table.
+  const pair = {
+    id: "ladys-arbitrum-ethereum", symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: L2,
+    toChainKey: "ethereum", toToken: L1,
+    bridge: "arbitrum-canonical",
+  };
+  ok("move: the pair table is EMPTY — the LADYS entry was removed 2026-11-17 (the held Arbitrum token is a standalone deployment, not the gateway's calculated bridged form; no 1:1 redemption exists for it)",
+    BRIDGED_MOVE_PAIRS.length === 0);
+  ok("move: no Move is offered for the removed pair — the token and route lookups refuse the LADYS addresses in any case, so no token page shows a Move and the swap sheet falls through to market quotes",
+    movePairForToken("arbitrum", L2) === null
+    && movePairForToken("arbitrum", L2.toLowerCase()) === null
+    && movePairForToken("ethereum", L1) === null
+    && movePairForToken("arbitrum", null) === null
+    && movePairForRoute("arbitrum", L2, "ethereum", L1) === null
+    && movePairForRoute("ethereum", L1, "arbitrum", L2) === null);
+  ok("move: PAIR-TABLE LINT — an entry may ship only with its verification evidence recorded: the gateway's calculated L2 token IS the entry's fromToken, the L2 token's own l1Address() echoes its toToken, and a funded-holder simulation is referenced (vacuous while the table is empty; it bites the next entry)",
+    BRIDGED_MOVE_PAIRS.every(p => p.verification
+      && String(p.verification.calculatedL2Token).toLowerCase() === String(p.fromToken).toLowerCase()
+      && String(p.verification.l1Address).toLowerCase() === String(p.toToken).toLowerCase()
+      && typeof p.verification.fundedHolderSim === "string" && p.verification.fundedHolderSim.length > 0));
   ok("move: gateway pins are the on-chain-verified router + standard gateway",
     ARBITRUM_GATEWAY_ROUTER === "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933"
     && ARBITRUM_ERC20_GATEWAY === "0x09e9222E96E7B4AE2a407B98d48e330053351EEe");
-  ok("move: pair lookup by held token matches case-insensitively and refuses everything else",
-    movePairForToken("arbitrum", L2.toLowerCase())?.id === pair.id
-    && movePairForToken("arbitrum", L1) === null
-    && movePairForToken("ethereum", L1) === null
-    && movePairForToken("arbitrum", null) === null);
-  ok("move: pair lookup by exact route matches; the reversed route and a wrong destination token refuse",
-    movePairForRoute("arbitrum", L2, "ethereum", L1)?.id === pair.id
-    && movePairForRoute("ethereum", L1, "arbitrum", L2) === null
-    && movePairForRoute("arbitrum", L2, "ethereum", L2) === null);
   const amt = "100000000000000000000"; // 100 LADYS
   const data = buildMoveCalldata(pair, OWNER, amt);
   {
@@ -18716,14 +18738,14 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   {
     const appSrc124 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     const swapsSrc124 = readFileSync(new URL("../docs/SWAPS.md", import.meta.url), "utf8");
-    ok("move: the app wires both entry points — the token-page action and the swap sheet presenting the Move for the exact pair BEFORE any market route search",
+    ok("move: the app wires both entry points — the token-page action and the swap sheet presenting the Move for an exact listed pair BEFORE any market route search (the wiring stands, driven by the pair table; the table it reads is empty)",
       appSrc124.includes('id="tdMove"') && appSrc124.includes("function openMoveSheet(")
       && appSrc124.includes('id="wMoves"')
       && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") > 0
       && appSrc124.indexOf("movePairForRoute(fromKey, fromTok.address, toKey, toTok.address)") < appSrc124.indexOf("getSwapRoutes(swapArgs)"));
-    ok("move: the docs carry the Move section with every part's state stated plainly — initiation, tracking, probe-driven readiness and claim execution all LIVE",
-      swapsSrc124.includes("Canonical-bridge moves") && swapsSrc124.includes("claim execution LIVE")
-      && swapsSrc124.includes("initiation LIVE") && swapsSrc124.includes("Readiness is probed, not clocked"));
+    ok("move: the docs carry the Move section in its post-removal truth — the empty table, the LADYS removal with its root cause, and the verification standard for any future pair",
+      swapsSrc124.includes("Canonical-bridge moves") && swapsSrc124.includes("The pair table is EMPTY")
+      && swapsSrc124.includes("calculateL2TokenAddress") && swapsSrc124.includes("funded holder"));
   }
 }
 
@@ -18917,13 +18939,18 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
 // pinned here: the ArbOS L2ToL1Tx event changed shape (position
 // replaced batchNumber/indexInBatch — §124's parser matched no
 // real log), and WithdrawalInitiated indexes (from, to, exitId).
+// NOTE (2026-11-17): the LADYS pair itself was REMOVED from
+// the table (§124) — the fixture's withdrawal is a real
+// standard-gateway withdrawal of a genuinely bridged token,
+// so the claim mechanics pinned here remain true of the
+// machinery; the machinery is dormant with the empty table.
 {
   const {
     ARBITRUM_OUTBOX, ARBITRUM_L1_ERC20_GATEWAY, NODE_INTERFACE_ADDRESS, ARBITRUM_ERC20_GATEWAY,
     calculateMoveItemHash, moveMessageComplete, repairBridgeMoveRecord,
     findConfirmedSendSize, fetchMoveClaimProof, buildClaimCalldata, checkClaimCalldata,
     probeBridgeMoveClaim, bridgeMoveChainPhase, estimateMoveClaimGas,
-    parseMoveReceipt, BRIDGED_MOVE_PAIRS, loadBridgeMoveRecords, saveBridgeMoveRecord,
+    parseMoveReceipt, loadBridgeMoveRecords, saveBridgeMoveRecord,
   } = await import("../src/wallet-core.js");
   const { ethers: eth126 } = await import("ethers");
   const fx = JSON.parse(readFileSync(new URL("./fixtures/ladys-move-claim-fixture.json", import.meta.url), "utf8"));
@@ -18942,10 +18969,19 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     initiatedAt: 1793515386000, claimableAt: 1793515386000 + 7 * 24 * 3600 * 1000,
     status: "waiting", message: parsedMsg, withdrawalId: "167389",
   };
+  // The removed LADYS pair's shape, as a LOCAL fixture (the
+  // pair table is empty since 2026-11-17 — §124): the claim
+  // machinery pins exercise the dormant code, not the table.
+  const PAIR126 = {
+    id: "ladys-arbitrum-ethereum", symbol: "LADYS", name: "Milady", decimals: 18,
+    fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
+    toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
+    bridge: "arbitrum-canonical",
+  };
   // The fixture's real token (the mechanics are the pair's; the
   // token differs) — the happy-path bounds pin runs the REAL
   // claim input against a pair naming the fixture's own token.
-  const pairFx = { ...BRIDGED_MOVE_PAIRS[0], toToken: "0x808507121B80c02388fAd14726482e061B8da827" };
+  const pairFx = { ...PAIR126, toToken: "0x808507121B80c02388fAd14726482e061B8da827" };
   const OUTBOX_IFACE = new eth126.Interface([
     "function executeTransaction(bytes32[] proof, uint256 index, address l2Sender, address to, uint256 l2Block, uint256 l1Block, uint256 l2Timestamp, uint256 value, bytes data)",
     "function isSpent(uint256 index) view returns (bool)",
@@ -18985,12 +19021,12 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       && checkClaimCalldata(fxRecord, pairFx, rebuild({ l2Timestamp: BigInt(A.l2Timestamp) + 1n })).ok === false
       && checkClaimCalldata(fxRecord, pairFx, rebuild({ value: 1n })).ok === false);
     ok("claim: the bounds check refuses a tampered release — wrong token, a stranger as recipient, a changed amount — and undecodable calldata",
-      checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ l1Token: BRIDGED_MOVE_PAIRS[0].toToken }))).ok === false
+      checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ l1Token: PAIR126.toToken }))).ok === false
       && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ to: STRANGER }))).ok === false
       && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ from: STRANGER }))).ok === false
       && checkClaimCalldata(fxRecord, pairFx, rebuild({}, innerWith({ amount: BigInt(fxRecord.amountRaw) + 1n }))).ok === false
       && checkClaimCalldata(fxRecord, pairFx, "0xdeadbeef").ok === false
-      && checkClaimCalldata(fxRecord, BRIDGED_MOVE_PAIRS[0], fx.claimTxInput).ok === false);
+      && checkClaimCalldata(fxRecord, PAIR126, fx.claimTxInput).ok === false);
   }
   // --- stub providers (the raw call/send seam the core reads through) ---
   const TIP = 530000000;
@@ -19089,28 +19125,36 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     // proof stub answers with its own item hash. Reality
     // itself is pinned above: real receipt, real proof,
     // real claim input, byte-for-byte.
-    const synthData = FIN_IFACE.encodeFunctionData("finalizeInboundTransfer", [BRIDGED_MOVE_PAIRS[0].toToken, USER, USER, BigInt(fxRecord.amountRaw), "0x"]);
+    const synthData = FIN_IFACE.encodeFunctionData("finalizeInboundTransfer", [PAIR126.toToken, USER, USER, BigInt(fxRecord.amountRaw), "0x"]);
     const synthMsg = { ...parsedMsg, data: synthData };
     synthMsg.hash = calculateMoveItemHash(synthMsg);
     synthMsg.uniqueId = BigInt(synthMsg.hash).toString();
     const synthRecord = { ...fxRecord, message: synthMsg };
     const l2Synth = () => l2Stub126({ proofRes: { send: synthMsg.hash, root: fx.constructProof.root, proof: fx.constructProof.proof } });
-    const ready = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}) });
+    // The synthetic-message probes inject the fixture pair
+    // through the probe's pair seam: the record's pairId no
+    // longer resolves (the table emptied 2026-11-17), and an
+    // unlisted pair must refuse — the ready path is a
+    // listed-pair behaviour, exercised here as machinery.
+    const ready = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}), pair: PAIR126 });
     ok("claim: the probe reports READY only after isSpent, a confirmed root, the asserted proof and a successful simulation of the exact claim",
       ready.state === "ready" && ready.proof.length === 18 && ready.size === "167582");
+    const unlisted = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}) });
+    ok("claim: with NO pair injected, the same record's probe refuses at the bounds check — a record under a removed pair can never arm a claim (the post-removal production behaviour)",
+      unlisted.state === "waiting" && unlisted.reason === "bounds");
     const spentProbe = await probeBridgeMoveClaim(fxRecord, { l2Provider: l2Stub126({}), l1Provider: l1Stub126({ spent: true }) });
     ok("claim: the probe reports CLAIMED when the Outbox says the position is spent (whoever claimed it)",
       spentProbe.state === "claimed");
     const waitingProbe = await probeBridgeMoveClaim(fxRecord, { l2Provider: l2Stub126({ headers: HEADERS_WAITING }), l1Provider: l1Stub126({ confirmedRoot: null }) });
     ok("claim: the probe reports WAITING (unconfirmed) when no confirmed tree covers the position",
       waitingProbe.state === "waiting" && waitingProbe.reason === "unconfirmed");
-    const spentSim = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({ sim: "spent" }) });
+    const spentSim = await probeBridgeMoveClaim(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({ sim: "spent" }), pair: PAIR126 });
     ok("claim: an AlreadySpent simulation revert discriminates to CLAIMED — the probe never offers a claim for a spent message",
       spentSim.state === "claimed");
     const chainWaiting = await bridgeMoveChainPhase(fxRecord, { l2Provider: l2Stub126({ headers: HEADERS_WAITING }), l1Provider: l1Stub126({ confirmedRoot: null }), nowMs: fxRecord.claimableAt + 1000 });
     ok("claim: the chain phase obeys the PROBE over the clock — a clock-matured move the probe finds unconfirmed stays waiting",
       chainWaiting.phase === "waiting" && chainWaiting.source === "probe");
-    const chainReady = await bridgeMoveChainPhase(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}), nowMs: fxRecord.initiatedAt + 1000 });
+    const chainReady = await bridgeMoveChainPhase(synthRecord, { l2Provider: l2Synth(), l1Provider: l1Stub126({}), nowMs: fxRecord.initiatedAt + 1000, pair: PAIR126 });
     ok("claim: the chain phase reports ready on probe success even before the +7d estimate elapses",
       chainReady.phase === "ready" && chainReady.source === "probe");
   }
@@ -19155,7 +19199,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const {
     builtinStablePinSymbols, splitHomeRows, MOVE_L2_ARCHIVE_RPC, moveL2Providers,
     repairBridgeMoveRecord, findConfirmedSendSize, probeBridgeMoveClaim, bridgeMoveChainPhase,
-    parseMoveReceipt, calculateMoveItemHash, moveMessageComplete, BRIDGED_MOVE_PAIRS,
+    parseMoveReceipt, calculateMoveItemHash, moveMessageComplete,
     loadBridgeMoveRecords, NODE_INTERFACE_ADDRESS,
   } = await import("../src/wallet-core.js");
   const { ethers: eth127 } = await import("ethers");
@@ -19298,16 +19342,28 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   }
   {
     // Probe-level fall-through, on the §126 synthetic ready path.
-    const synthData = FIN_IFACE127.encodeFunctionData("finalizeInboundTransfer", [BRIDGED_MOVE_PAIRS[0].toToken, USER127, USER127, BigInt(fxRecord127.amountRaw), "0x"]);
+    // The L1 token address is the removed LADYS pair's (the
+    // table is empty since 2026-11-17 — §124): a literal
+    // fixture for the dormant machinery's synthetic message.
+    const synthData = FIN_IFACE127.encodeFunctionData("finalizeInboundTransfer", ["0x12970E6868f88f6557B76120662c1B3E50A646bf", USER127, USER127, BigInt(fxRecord127.amountRaw), "0x"]);
     const synthMsg = { ...parsedMsg127, data: synthData };
     synthMsg.hash = calculateMoveItemHash(synthMsg);
     synthMsg.uniqueId = BigInt(synthMsg.hash).toString();
     const synthRecord = { ...fxRecord127, message: synthMsg };
     const synthProof = { send: synthMsg.hash, root: fx.constructProof.root, proof: fx.constructProof.proof };
-    const readyWalk = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2Stub127({ proofRes: synthProof })] });
+    // The ready-path probes inject the removed pair's shape
+    // through the probe's pair seam (its pairId no longer
+    // resolves — the table emptied 2026-11-17, §124).
+    const PAIR127 = {
+      id: "ladys-arbitrum-ethereum", symbol: "LADYS", name: "Milady", decimals: 18,
+      fromChainKey: "arbitrum", fromToken: "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E",
+      toChainKey: "ethereum", toToken: "0x12970E6868f88f6557B76120662c1B3E50A646bf",
+      bridge: "arbitrum-canonical",
+    };
+    const readyWalk = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2Stub127({ proofRes: synthProof })], pair: PAIR127 });
     ok("repair127: the probe falls through a refusing provider for its header walk and still reaches READY on the healthy provider's evidence",
       readyWalk.state === "ready" && readyWalk.size === "167582");
-    const readyProof = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2Stub127({ proofRes: synthProof, proofThrows: true }), l2Stub127({ proofRes: synthProof })] });
+    const readyProof = await probeBridgeMoveClaim(synthRecord, { l1Provider: l1Stub127({}), l2Providers: [l2Stub127({ proofRes: synthProof, proofThrows: true }), l2Stub127({ proofRes: synthProof })], pair: PAIR127 });
     ok("repair127: the probe falls through a provider whose proof call throws — the proof step rotates like every other L2 read",
       readyProof.state === "ready" && readyProof.proof.length === 18);
     const downProbe = await probeBridgeMoveClaim(fxRecord127, { l1Provider: l1Stub127({}), l2Providers: [l2ArchiveRefusing127(), l2ArchiveRefusing127()] });
@@ -19320,7 +19376,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("repair127: wiring — the probe and the executor's probe run with NO explicit provider (the production rotation is the default path, not an opt-in)",
       coreSrc127.includes("rec = await repairBridgeMoveRecord(rec, null, { storage, l2Providers: l2s })")
       && coreSrc127.includes("const l2s = resolveMoveL2Providers(l2Provider, l2Providers, record?.fromChainKey || \"arbitrum\")")
-      && coreSrc127.includes("await probeBridgeMoveClaim(record, { storage })"));
+      && coreSrc127.includes("await probeBridgeMoveClaim(record, { storage, pair })"));
   }
 }
 

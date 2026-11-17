@@ -2994,6 +2994,9 @@ function evmDetailDesc(b) {
   // Canonical-bridge Move (2026-11-15): a held token that is
   // the bridged form of an L1 token (the pair table is the
   // only source) gains the Move action beside Send/Swap.
+  // The table is EMPTY since 2026-11-17 (the LADYS pair was
+  // invalid — a standalone token, not a bridged form), so
+  // no token page offers a Move today.
   const mvPair = b.address ? movePairForToken(networkKey, b.address) : null;
   return {
     family: "evm", row: b, chainLabel: net.name,
@@ -3095,7 +3098,7 @@ function openTokenDetail(d) {
   }
 }
 
-// ---------- canonical-bridge Move (LADYS class, 2026-11-15) ----------
+// ---------- canonical-bridge Move (2026-11-15; pair table EMPTY since 2026-11-17 — dormant) ----------
 // A Move is its own action, never a swap: the token page of a
 // bridged-form token offers it, the swap screen presents it
 // for the exact pair instead of a market quote, and its
@@ -9961,11 +9964,14 @@ $("actSwap").onclick = () => {
     if (fromKey === toKey && fromTok.address.toLowerCase() === toTok.address.toLowerCase())
       return msg("wMsg", "Pick two different tokens — swapping a token for itself does nothing.");
     // Canonical-bridge Move (2026-11-15): for an exact
-    // bridged-form pair (today: LADYS Arbitrum → LADYS
-    // Ethereum) the pair's true 1:1 is the canonical bridge,
-    // and a market swap — which prices the two forms
+    // bridged-form pair the pair's true 1:1 is the canonical
+    // bridge, and a market swap — which prices the two forms
     // differently — is the loss, not a route. The sheet
     // presents the Move INSTEAD of searching market quotes.
+    // No pair is listed today (the table emptied 2026-11-17
+    // when the LADYS pair proved invalid), so every route —
+    // LADYS Arbitrum → Ethereum included — falls through to
+    // the market quote search below.
     const mvPair = movePairForRoute(fromKey, fromTok.address, toKey, toTok.address);
     if (mvPair) {
       msg("wMsg", "");
