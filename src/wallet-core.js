@@ -24516,11 +24516,11 @@ export function milestoneShapes(args) {
   // from BSC (its hub leg into the destination, plus the
   // destination's own leg when the target is not the hub;
   // when BSC IS the destination, just its same-chain leg).
-  // These shapes are real but their first leg gates
-  // non-executable until Fluid's Chainflip broker is live
-  // (quoting only — see the Chainflip section), so a
-  // composition through DOT prices honestly and presents
-  // its gate reason instead of pretending to be tappable.
+  // Their first leg executes through Fluid's Chainflip
+  // broker since §151 (it was quoting-only before it — see
+  // the Chainflip section), so a composition through DOT is
+  // a real executable composition now, not a priced shape
+  // behind a gate reason.
   // Bitcoin-family and Sui destinations never reach here
   // (their branches above already returned).
   if (args.fromChainKey === "polkadot") {
@@ -26163,17 +26163,41 @@ export async function completeMilestoneSwap(wallet, recordId, progress = () => {
 // the fee-bearing quote must RECONCILE with the fee-free one
 // (checkChainflipQuoteCommission) or no route is shown.
 //
-// DOT AS A SOURCE is quoting-only in this build: Chainflip
-// serves DOT -> BSC quotes (probed), but a DOT deposit can
-// only be made through a deposit channel, deposit channels
-// are opened through a broker API, and the commission on a
-// channel can only be charged by the broker who opened it —
-// a broker Fluid does not yet operate. Shipping DOT-out
-// execution without capture would break the universal
-// capture law (the Hyperbridge precedent), so the gate
-// refuses DOT-source routes with the reason named, and the
-// reversal is this one section plus the gate branch once
-// Fluid's broker is live.
+// DOT AS A SOURCE is executable since 2026-11-17 (§151)
+// through the hosted Chainflip Broker-as-a-Service
+// (chainflip-broker.io): a DOT deposit can only be made
+// through a deposit channel, deposit channels are opened
+// through a broker API, and the commission on a channel can
+// only be charged by the broker who opened it — so the
+// channel is opened through Fluid's BaaS account, whose
+// registered commission (50 bps, plus the service's own
+// 5 bps operating fee) rides it. A self-hosted broker was
+// rejected (it needs FLIP funding plus a persistent node);
+// the BaaS account needs neither — its API key identifies
+// the broker and the commission payout is bound to the
+// Ethereum address registered with the account (the DripBot
+// EVM fee wallet), so the key's exposure in this bundle is
+// by design: it can open channels that pay Fluid's
+// registered address, and nothing else — it cannot withdraw
+// fees, change the payout address, or lower the commission
+// below the registered rate (the service's commission
+// protection). The account's ADMIN key is a different
+// credential: it is never in this codebase (a §151 pin
+// greps the shipped files for it). Capture on this
+// direction is verified twice — the broker's quote must
+// reconcile with the fee-free protocol quote at search time
+// (checkChainflipQuoteCommission, the same discipline as
+// the "in" direction), and the opened channel must echo
+// Fluid's commission in the broker's own status record
+// before the user's DOT moves (checkChainflipBaasChannelEcho)
+// — or the route refuses. The registered rate equals the
+// fee law's cap rate (50 bps); the per-route ceiling
+// arithmetic governs rails where Fluid dials its fee into
+// the quote, and on this rail the account's registered rate
+// is the rail's terms, disclosed on the route like every
+// rail. Wiring this flipped chainflipDirectionExecutable's
+// "out" answer, and the §149 one-way gate lifted Polkadot
+// from that alone — no gate edit.
 export const CHAINFLIP_API_BASE = "https://chainflip-swap.chainflip.io";
 /** The Chainflip vault contract on BSC — the only address a
  *  Chainflip deposit transaction may target. Live-encoded
@@ -26194,7 +26218,13 @@ export const CHAINFLIP_DEST_CHAIN_ENUM_ASSETHUB = 11;
  *  state-chain transaction that escrows FLIP (amount not yet
  *  verified against the live chain — do not guess it here).
  *  null until registered; while null, Chainflip routes quote
- *  at 0 bps with platformFeeCollecting false. */
+ *  at 0 bps with platformFeeCollecting false. NOTE (§151):
+ *  the hosted Broker-as-a-Service account below issues NO
+ *  SS58 — its commission is keyed by API key — so this slot
+ *  stays null for it; putting the API key here would feed a
+ *  non-SS58 string to the vault encode and break DOT-in
+ *  execution. The BaaS configuration is the broker
+ *  configuration for the "out" direction only. */
 export const CHAINFLIP_BROKER_ACCOUNT = null;
 /** Resolve the effective broker configuration (the seam
  *  the fee pass reads through, Satora's satoraFeeConfig
@@ -26204,6 +26234,33 @@ export function chainflipBrokerConfig(account = CHAINFLIP_BROKER_ACCOUNT) {
   return (typeof account === "string" && account.trim())
     ? { brokerAccount: account.trim() }
     : { brokerAccount: null };
+}
+/** The hosted Broker-as-a-Service (chainflip-broker.io) —
+ *  Fluid's Chainflip broker for DOT-source swaps (§151,
+ *  2026-11-17; see the section header for the full shape).
+ *  The API key ships in the bundle BY DESIGN: it identifies
+ *  Fluid's broker account, opens deposit channels whose
+ *  commission pays the Ethereum address registered with the
+ *  account, and authorises nothing else (fee withdrawal and
+ *  account changes sit behind the separate admin key, which
+ *  is never in this codebase). The commission is the rate
+ *  registered with the account — 50 bps to Fluid — plus the
+ *  service's own 5 bps operating fee, which the user pays
+ *  and the broker itemises inside the same BROKER fee entry;
+ *  Fluid's earned share of an itemised broker fee is
+ *  therefore 50/55 of it. */
+export const CHAINFLIP_BAAS_BASE = "https://chainflip-broker.io";
+export const CHAINFLIP_BAAS_API_KEY = "9e72f4734fbd46b9ae93ea5810df6259";
+export const CHAINFLIP_BAAS_COMMISSION_BPS = 50;
+export const CHAINFLIP_BAAS_OPERATING_BPS = 5;
+/** Resolve the effective BaaS configuration (the same seam
+ *  pattern as chainflipBrokerConfig): a non-empty key wires
+ *  the broker; anything else leaves DOT-out quoting-only. */
+export function chainflipBaasConfig(apiKey = CHAINFLIP_BAAS_API_KEY) {
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  return key
+    ? { apiKey: key, commissionBps: CHAINFLIP_BAAS_COMMISSION_BPS, operatingBps: CHAINFLIP_BAAS_OPERATING_BPS, totalBps: CHAINFLIP_BAAS_COMMISSION_BPS + CHAINFLIP_BAAS_OPERATING_BPS }
+    : { apiKey: null, commissionBps: 0, operatingBps: 0, totalBps: 0 };
 }
 /** The fill-or-kill retry window baked into every deposit,
  *  in source-chain blocks — the value the live encode
@@ -26233,8 +26290,9 @@ function chainflipIsDotToken(tokenAddress) {
 }
 /** The pairs Chainflip serves for Fluid: BSC USDT/BNB ->
  *  Asset Hub DOT ("in", executable), and Asset Hub DOT ->
- *  BSC USDT/BNB ("out", quoting only — see the section
- *  header). Returns { direction, anchor } or null. Pure. */
+ *  BSC USDT/BNB ("out", executable through the BaaS broker
+ *  since §151 — see the section header). Returns
+ *  { direction, anchor } or null. Pure. */
 export function chainflipSupportsPair(args) {
   if (!args) return null;
   if (args.fromChainKey === "bsc" && args.toChainKey === "polkadot") {
@@ -26251,15 +26309,19 @@ export function chainflipSupportsPair(args) {
 }
 /** Whether a Chainflip direction is EXECUTABLE today, as
  *  opposed to merely quotable: "in" executes through the BSC
- *  vault; "out" is quoting-only until Fluid's Chainflip
- *  broker is live (see the section header). This helper is
- *  the ONE place that fact lives — swapRouteExecutable's
- *  Chainflip branch reads it, and the one-way trap gate
- *  (§149) reads it when deriving Polkadot's outbound
- *  coverage, so the day the broker ships and this flips,
- *  execution and the gate open together. Pure. */
+ *  vault; "out" executes through a deposit channel opened by
+ *  Fluid's hosted broker (Broker-as-a-Service, §151), so it
+ *  is executable exactly while that broker is configured.
+ *  This helper is the ONE place that fact lives —
+ *  swapRouteExecutable's Chainflip branch reads it, and the
+ *  one-way trap gate (§149) reads it when deriving
+ *  Polkadot's outbound coverage, so if the broker
+ *  configuration ever leaves the build, execution and the
+ *  gate close together again. Pure. */
 export function chainflipDirectionExecutable(direction) {
-  return direction === "in";
+  if (direction === "in") return true;
+  if (direction === "out") return !!chainflipBaasConfig().apiKey;
+  return false;
 }
 function chainflipFloorError({ srcSymbol, destSymbol, minRaw, decimals }) {
   const human = ethers.formatUnits(BigInt(minRaw), decimals).replace(/\.0$/, "");
@@ -26353,7 +26415,7 @@ export function chainflipMinPriceX128(estimatedPrice, slippageTolerancePercent) 
  *  quote's intermediate amount, and (3) the output actually
  *  fell by about the commission. Anything else is not proof
  *  of capture and the route refuses. Pure. */
-export function checkChainflipQuoteCommission(qFree, qFee, bps, prices = {}) {
+export function checkChainflipQuoteCommission(qFree, qFee, bps, prices = {}, egressSide = null) {
   const no = (reason) => ({ ok: false, reason });
   if (!qFree || !qFee) return no("a quote is missing");
   if (!qFee.fees || qFee.fees.broker == null) return no("the fee-bearing quote itemises no BROKER fee");
@@ -26374,13 +26436,207 @@ export function checkChainflipQuoteCommission(qFree, qFee, bps, prices = {}) {
   let egressFree, egressFee;
   try { egressFree = BigInt(qFree.egressAmount); egressFee = BigInt(qFee.egressAmount); } catch { return no("an egress amount is not an integer"); }
   if (!(egressFee < egressFree)) return no("the fee-bearing quote does not reduce the output");
-  const dotPx = Number(prices?.DOT);
-  if (Number.isFinite(dotPx) && dotPx > 0) {
-    const dropUsd = (Number(egressFree - egressFee) / 1e10) * dotPx;
+  // The egress side: DOT (10 dp, DOT-priced) for the "in"
+  // direction — the original behaviour, kept as the default;
+  // the BSC anchor asset (18 dp, its own price) for "out"
+  // (§151), passed explicitly by that direction's caller.
+  const egressDecimals = egressSide ? Number(egressSide.decimals) : 10;
+  const egressPx = egressSide ? Number(egressSide.priceUsd) : Number(prices?.DOT);
+  if (Number.isFinite(egressPx) && egressPx > 0) {
+    const dropUsd = (Number(egressFree - egressFee) / (10 ** egressDecimals)) * egressPx;
     if (!(dropUsd >= brokerUsd * 0.5 && dropUsd <= brokerUsd * 2))
       return no("the output drop does not match the BROKER fee");
   }
   return { ok: true, brokerUsd };
+}
+/** The BaaS asset id for a DOT-out destination anchor
+ *  (the service's ticker.network form; the source of a
+ *  DOT-out swap is always dot.hub). */
+function chainflipBaasDestAssetId(cfAsset) {
+  return cfAsset === "BNB" ? "bnb.bsc" : "usdt.bsc";
+}
+async function chainflipBaasFetch(path, { apiKey, method = "GET" } = {}) {
+  const key = chainflipBaasConfig(apiKey).apiKey;
+  if (!key) throw new Error("Fluid's Chainflip broker is not configured.");
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${CHAINFLIP_BAAS_BASE}${path}${sep}apiKey=${encodeURIComponent(key)}`, {
+    method, signal: AbortSignal.timeout(25000),
+  });
+  const text = await res.text().catch(() => "");
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* non-JSON error body */ }
+  if (!res.ok) {
+    const e = new Error((data && (data.detail || data.message)) || `Chainflip broker request failed (HTTP ${res.status}).`);
+    e.baasStatus = res.status; e.baasCode = data?.code || null;
+    throw e;
+  }
+  return data;
+}
+/** One broker quote (native amounts). Transport and
+ *  service failures throw; the caller decides what an
+ *  unanswered broker means for the search. */
+async function chainflipBaasQuoteRaw({ destAssetId, amountRaw, apiKey = CHAINFLIP_BAAS_API_KEY }) {
+  const q = new URLSearchParams({ sourceAsset: "dot.hub", destinationAsset: destAssetId, amount: String(amountRaw) });
+  return chainflipBaasFetch(`/quotes-native?${q.toString()}`, { apiKey });
+}
+/** Parse one BaaS quote response into the SAME internal
+ *  shape parseChainflipQuote returns (so the commission
+ *  reconciliation and the route builder read one shape),
+ *  plus the broker's recommended retry window. The BaaS
+ *  response names amounts in *Native fields and fee types
+ *  in lower case; the protocol API's shape differs, hence
+ *  the separate parser. Pure; null on any shape drift. */
+export function parseChainflipBaasQuote(raw) {
+  const arr = Array.isArray(raw) ? raw : null;
+  if (!arr || !arr.length) return null;
+  const q = arr.find(x => x && String(x.type || "").toLowerCase() === "regular") || null;
+  if (!q || q.egressAmountNative == null || !Array.isArray(q.includedFees)) return null;
+  const feeOf = (t) => {
+    const f = q.includedFees.find(x => x && String(x.type || "").toLowerCase() === t);
+    return f && f.amountNative != null ? String(f.amountNative) : null;
+  };
+  const d = q.estimatedDurationsSeconds || {};
+  const summed = (Number(d.deposit) || 0) + (Number(d.swap) || 0) + (Number(d.egress) || 0);
+  return {
+    type: "REGULAR",
+    egressAmount: String(q.egressAmountNative),
+    intermediateAmount: q.intermediateAmountNative != null ? String(q.intermediateAmountNative) : null,
+    depositAmount: q.ingressAmountNative != null ? String(q.ingressAmountNative) : null,
+    estimatedPrice: q.estimatedPrice != null ? String(q.estimatedPrice) : null,
+    estimatedDurationSeconds: Number(q.estimatedDurationSeconds) || (summed > 0 ? summed : null),
+    slippageTolerancePercent: Number(q.recommendedSlippageTolerancePercent) || 0.5,
+    retryDurationInBlocks: Number(q.recommendedRetryDurationInBlocks) || null,
+    lowLiquidityWarning: q.lowLiquidityWarning === true,
+    fees: { ingress: feeOf("ingress"), network: feeOf("network"), egress: feeOf("egress"), broker: feeOf("broker") },
+  };
+}
+/** The fill-or-kill minimum price for a BaaS channel open:
+ *  the quote's estimated price less the slippage tolerance,
+ *  in exact decimal math (the service takes a human decimal
+ *  string; no float ever touches it). Null when the price
+ *  is not a plain decimal string. */
+export function chainflipBaasMinimumPrice(estimatedPrice, slippageTolerancePercent) {
+  let s = String(estimatedPrice ?? "");
+  if (/e/i.test(s)) { const n = Number(s); if (!Number.isFinite(n)) return null; s = n.toFixed(20).replace(/0+$/, "").replace(/\.$/, ""); }
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const [ip, fp = ""] = s.split(".");
+  const scale = 10n ** BigInt(fp.length);
+  const num = BigInt(ip) * scale + BigInt(fp || "0");
+  const slipBps = BigInt(Math.max(0, Math.min(9999, Math.round((Number(slippageTolerancePercent) || 0) * 100))));
+  // minimum × 10^(fp.length + 4) is EXACTLY num × (10000 −
+  // slipBps): the rendering scale and the bps denominator
+  // cancel, so the floor is exact integer math throughout.
+  const places = fp.length + 4;
+  const digits = (num * (10000n - slipBps)).toString().padStart(places + 1, "0");
+  const whole = digits.slice(0, digits.length - places) || "0";
+  const frac = digits.slice(digits.length - places).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole;
+}
+/** Open the deposit channel for a DOT-out route through
+ *  Fluid's broker: the service returns the one-time Asset
+ *  Hub deposit address and the channel's identifiers. The
+ *  request carries the route's own terms — destination,
+ *  refund (the user's own DOT account), the fill-or-kill
+ *  minimum price from the route's quote, the retry window,
+ *  and Fluid's configured commission (the service's
+ *  commission protection never lets a channel open below
+ *  the account's registered rate). */
+export async function requestChainflipBaasSwap(route, { apiKey = CHAINFLIP_BAAS_API_KEY } = {}) {
+  const c = route?.chainflip;
+  if (!c || c.direction !== "out" || !c.baas) throw new Error("That route is not a Chainflip route out of Polkadot.");
+  const minimumPrice = chainflipBaasMinimumPrice(c.quote?.estimatedPrice, c.fok?.slippageTolerancePercent);
+  if (!minimumPrice) throw new Error("The Chainflip quote's price could not be read — refusing to open a deposit channel without its fill-or-kill floor.");
+  const q = new URLSearchParams({
+    sourceAsset: "dot.hub", destinationAsset: chainflipBaasDestAssetId(c.destAsset),
+    destinationAddress: String(c.destAddress || ""), refundAddress: String(c.refundAddress || ""),
+    minimumPrice, retryDurationInBlocks: String(c.baas.retryDurationInBlocks || 150),
+    commissionBps: String(c.baas.commissionBps),
+  });
+  const data = await chainflipBaasFetch(`/swap?${q.toString()}`, { apiKey, method: "POST" });
+  const opened = parseChainflipBaasSwapOpened(data);
+  if (!opened) throw new Error("The broker's channel answer could not be read — no deposit address is trusted from it.");
+  return opened;
+}
+/** Parse the broker's channel-open answer. Pure; null on
+ *  any shape drift (a deposit address is never guessed). */
+export function parseChainflipBaasSwapOpened(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof raw.address !== "string" || !raw.address || raw.id == null) return null;
+  return {
+    swapId: raw.id,
+    depositAddress: raw.address,
+    destAddressEcho: typeof raw.destinationAddress === "string" ? raw.destinationAddress : null,
+    issuedBlock: raw.issuedBlock ?? null, network: raw.network ?? null, channelId: raw.channelId ?? null,
+    sourceExpiryBlock: raw.sourceExpiryBlock ?? null,
+    explorerUrl: typeof raw.explorerUrl === "string" ? raw.explorerUrl : null,
+  };
+}
+/** Read the broker's own record of one swap (by the id the
+ *  channel open returned). A 404 — the record is not
+ *  available yet — answers null so the executor can poll;
+ *  anything else that fails throws. */
+export async function fetchChainflipBaasSwapStatus(swapId, { apiKey = CHAINFLIP_BAAS_API_KEY } = {}) {
+  try {
+    const data = await chainflipBaasFetch(`/status-by-id?${new URLSearchParams({ swapId: String(swapId) }).toString()}`, { apiKey });
+    return parseChainflipBaasStatus(data);
+  } catch (e) {
+    if (e && e.baasStatus === 404) return null;
+    throw e;
+  }
+}
+/** Parse a broker status answer down to what the echo
+ *  check reads: the state, the destination, and the deposit
+ *  channel's own record (its address and the commission it
+ *  was opened with). Pure. */
+export function parseChainflipBaasStatus(raw) {
+  const st = raw?.status && typeof raw.status === "object" ? raw.status : null;
+  if (!st) return null;
+  const dc = st.depositChannel && typeof st.depositChannel === "object" ? st.depositChannel : null;
+  return {
+    state: typeof st.state === "string" ? st.state : null,
+    destAddress: typeof st.destinationAddress === "string" ? st.destinationAddress : null,
+    depositChannel: dc ? {
+      brokerCommissionBps: Number(dc.brokerCommissionBps),
+      depositAddress: typeof dc.depositAddress === "string" ? dc.depositAddress : null,
+    } : null,
+  };
+}
+/** The execution-time commission echo (the checkXxx pattern
+ *  of the shipped executors): the broker's own record of the
+ *  opened channel must show the channel at the deposit
+ *  address the open returned, paying the route's
+ *  destination, with Fluid's commission attached — the
+ *  recorded broker commission is Fluid's registered rate,
+ *  or that rate plus the service's operating fee (the two
+ *  shapes the record can take); anything lower is a channel
+ *  Fluid's fee does not ride, and anything higher is not
+ *  the account Fluid registered. SS58 addresses compare by
+ *  account bytes when the Polkadot module is loaded (its
+ *  string forms vary by network prefix), string-exact
+ *  otherwise. Pure. */
+export function checkChainflipBaasChannelEcho(status, { depositAddress, destAddress, commissionBps, operatingBps } = {}) {
+  const bad = (reason) => ({ ok: false, reason });
+  const dc = status?.depositChannel;
+  if (!dc) return bad("the broker's record carries no deposit channel yet");
+  const sameAccount = (a, b) => {
+    if (!a || !b) return false;
+    if (String(a) === String(b)) return true;
+    try {
+      if (!polkadotSdk) return false;
+      const ha = ethers.hexlify(polkadotSdk.decodeAddress(String(a)));
+      const hb = ethers.hexlify(polkadotSdk.decodeAddress(String(b)));
+      return ha.toLowerCase() === hb.toLowerCase();
+    } catch { return false; }
+  };
+  if (!sameAccount(dc.depositAddress, depositAddress))
+    return bad("the broker's record names a different deposit address than the channel open returned");
+  if (status.destAddress && destAddress && String(status.destAddress).toLowerCase() !== String(destAddress).toLowerCase())
+    return bad("the broker's record pays a different destination than the route's");
+  const bps = Number(dc.brokerCommissionBps);
+  const want = Number(commissionBps), op = Number(operatingBps) || 0;
+  if (!Number.isFinite(bps) || bps < want || bps > want + op)
+    return bad(`the channel's recorded commission (${Number.isFinite(bps) ? bps : "unreadable"} bps) is not Fluid's registered rate`);
+  return { ok: true, brokerCommissionBps: bps };
 }
 const chainflipUsdOf = (raw, decimals, priceUsd) => {
   const px = Number(priceUsd);
@@ -26390,9 +26646,12 @@ const chainflipUsdOf = (raw, decimals, priceUsd) => {
 /** Quote a Chainflip route. Direction "in" is the full
  *  two-pass build (fee-free quote -> fee law -> fee-bearing
  *  re-quote with reconciliation, when a broker account is
- *  configured); direction "out" quotes fee-free only and
- *  carries collecting:false — its gate refuses execution
- *  (see the section header). */
+ *  configured); direction "out" is the same two-pass shape
+ *  across two services (fee-free protocol quote -> the
+ *  broker's fee-bearing quote -> reconciliation) since the
+ *  broker wired (§151); with no broker configured it quotes
+ *  fee-free only and carries collecting:false — its gate
+ *  refuses execution (see the section header). */
 /** The Polkadot-side address of a Chainflip route
  *  (DOT-walk repair, 2026-11-14): the caller's address when
  *  it is a valid DOT address (a user's chosen external DOT
@@ -26413,7 +26672,7 @@ function chainflipDotSideAddress(args, primary) {
   if (isValidDotAddress(primary || "")) return primary;
   return swapAddressBookEntry(args && args.addresses, "polkadot");
 }
-export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT } = {}) {
+export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BROKER_ACCOUNT, baasApiKey = CHAINFLIP_BAAS_API_KEY } = {}) {
   const plan = chainflipSupportsPair(args);
   if (!plan) return null;
   // The DOT-side address resolution rides the Polkadot chunk;
@@ -26489,9 +26748,11 @@ export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BR
       },
     };
   }
-  // Direction "out" — DOT -> BSC anchor. Quoting only (see
-  // the section header): fee-free quote, collecting false,
-  // and the executability gate refuses with the reason.
+  // Direction "out" — DOT -> BSC anchor. The fee-free
+  // protocol quote comes first: it carries the protocol's
+  // own floor refusal (parsed and named by the translate
+  // above) and it is the baseline the broker's fee-bearing
+  // quote must reconcile against.
   const quoteArgs = { srcChain: "Assethub", srcAsset: "DOT", destChain: "Bsc", destAsset: anchor.cfAsset, amountRaw: fromAmount };
   let raw0;
   try { raw0 = await chainflipQuoteRaw({ ...quoteArgs, brokerBps: 0 }); }
@@ -26499,8 +26760,66 @@ export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BR
   const q0 = parseChainflipQuote(raw0);
   if (!q0 || !q0.estimatedPrice)
     throw chainflipTerminalError("Chainflip's quote could not be read — no route is shown rather than a guessed one.");
-  const slipBps = Math.round((q0.slippageTolerancePercent || 0.5) * 100);
-  const toAmountMin = (BigInt(q0.egressAmount) * BigInt(10000 - slipBps) / 10000n).toString();
+  const destPx = anchor.cfAsset === "BNB" ? prices?.BNB : 1;
+  const baasCfg = chainflipBaasConfig(baasApiKey);
+  if (!baasCfg.apiKey) {
+    // No broker configured: the quoting-only shape — a real
+    // quote, collecting false, and the executability gate
+    // refuses it (chainflipDirectionExecutable reads the
+    // same configuration). A build without the broker
+    // degrades honestly instead of pretending.
+    const slipBps = Math.round((q0.slippageTolerancePercent || 0.5) * 100);
+    const toAmountMin = (BigInt(q0.egressAmount) * BigInt(10000 - slipBps) / 10000n).toString();
+    return {
+      provider: "chainflip",
+      id: `chainflip:polkadot-dot:bsc-${anchor.cfAsset.toLowerCase()}`,
+      type: "chainflip",
+      fromChainId: POLKADOT_SWAP_CHAIN_ID, toChainId: NETWORKS.bsc.chainId,
+      fromAmount,
+      fromToken: { address: POLKADOT_DOT_TOKEN, symbol: "DOT", name: "Polkadot", decimals: 10, chainId: POLKADOT_SWAP_CHAIN_ID },
+      toToken: { address: anchor.address, symbol: anchor.symbol, name: anchor.name, decimals: anchor.decimals, chainId: NETWORKS.bsc.chainId },
+      toAmount: q0.egressAmount, toAmountMin,
+      fromAmountUSD: chainflipUsdOf(fromAmount, 10, prices?.DOT), toAmountUSD: chainflipUsdOf(q0.egressAmount, anchor.decimals, destPx),
+      gasCostUSD: (chainflipUsdOf(q0.fees.ingress, 10, prices?.DOT) || 0) + (chainflipUsdOf(q0.fees.network, 6, 1) || 0) + (chainflipUsdOf(q0.fees.egress, anchor.decimals, destPx) || 0),
+      routeFeeUsd: 0,
+      executionDuration: Math.ceil(q0.estimatedDurationSeconds || 110),
+      platformFeeBps: 0, platformFeeUsd: 0, platformFeeCollecting: false,
+      steps: [],
+      chainflip: {
+        direction: "out", srcAsset: "DOT", destAsset: anchor.cfAsset,
+        destAddress: args.toAddress || null, refundAddress: chainflipDotSideAddress(args, args.fromAddress),
+        quote: { estimatedPrice: q0.estimatedPrice, egressAmount: q0.egressAmount, intermediateAmount: q0.intermediateAmount, fees: q0.fees },
+        fok: { slippageTolerancePercent: q0.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
+        brokerBps: 0, lowLiquidityWarning: q0.lowLiquidityWarning === true,
+      },
+    };
+  }
+  // The broker's fee-bearing quote. An UNANSWERED broker is
+  // a transport failure and propagates as one (the search
+  // falls through: the direction cannot execute without the
+  // broker, and the no-route surface is the honest answer);
+  // an answered quote whose commission does not reconcile
+  // refuses the route outright — the "in" direction's
+  // discipline, verbatim.
+  const baasRaw = await chainflipBaasQuoteRaw({ destAssetId: chainflipBaasDestAssetId(anchor.cfAsset), amountRaw: fromAmount, apiKey: baasCfg.apiKey });
+  const qb = parseChainflipBaasQuote(baasRaw);
+  if (!qb || !qb.estimatedPrice)
+    throw chainflipTerminalError("The Chainflip broker's quote could not be read — no route is shown rather than a guessed one.");
+  const check = checkChainflipQuoteCommission(q0, qb, baasCfg.totalBps, prices || {}, { decimals: anchor.decimals, priceUsd: destPx });
+  if (!check.ok)
+    throw chainflipTerminalError(`The Chainflip broker's quote did not reconcile with the fee-free quote (${check.reason}), so no route is shown rather than charging an unverified fee.`);
+  // Fluid's earned share of the itemised broker fee: the
+  // user pays the total (Fluid's registered rate plus the
+  // service's operating fee); Fluid earns its own rate's
+  // fraction of it.
+  const feeUsd = check.brokerUsd * (baasCfg.commissionBps / baasCfg.totalBps);
+  const slipBps = Math.round((qb.slippageTolerancePercent || 0.5) * 100);
+  const toAmountMin = (BigInt(qb.egressAmount) * BigInt(10000 - slipBps) / 10000n).toString();
+  const fromUsd = chainflipUsdOf(fromAmount, 10, prices?.DOT);
+  const toUsd = chainflipUsdOf(qb.egressAmount, anchor.decimals, destPx);
+  const declaredUsd = (chainflipUsdOf(qb.fees.ingress, 10, prices?.DOT) || 0)
+    + (chainflipUsdOf(qb.fees.network, 6, 1) || 0)
+    + (chainflipUsdOf(qb.fees.egress, anchor.decimals, destPx) || 0);
   return {
     provider: "chainflip",
     id: `chainflip:polkadot-dot:bsc-${anchor.cfAsset.toLowerCase()}`,
@@ -26509,19 +26828,20 @@ export async function getChainflipSwapRoute(args, { brokerAccount = CHAINFLIP_BR
     fromAmount,
     fromToken: { address: POLKADOT_DOT_TOKEN, symbol: "DOT", name: "Polkadot", decimals: 10, chainId: POLKADOT_SWAP_CHAIN_ID },
     toToken: { address: anchor.address, symbol: anchor.symbol, name: anchor.name, decimals: anchor.decimals, chainId: NETWORKS.bsc.chainId },
-    toAmount: q0.egressAmount, toAmountMin,
-    fromAmountUSD: chainflipUsdOf(fromAmount, 10, prices?.DOT), toAmountUSD: chainflipUsdOf(q0.egressAmount, anchor.decimals, anchor.cfAsset === "BNB" ? prices?.BNB : 1),
-    gasCostUSD: (chainflipUsdOf(q0.fees.ingress, 10, prices?.DOT) || 0) + (chainflipUsdOf(q0.fees.network, 6, 1) || 0) + (chainflipUsdOf(q0.fees.egress, anchor.decimals, anchor.cfAsset === "BNB" ? prices?.BNB : 1) || 0),
-    routeFeeUsd: 0,
-    executionDuration: Math.ceil(q0.estimatedDurationSeconds || 110),
-    platformFeeBps: 0, platformFeeUsd: 0, platformFeeCollecting: false,
+    toAmount: qb.egressAmount, toAmountMin,
+    fromAmountUSD: fromUsd, toAmountUSD: toUsd,
+    gasCostUSD: declaredUsd,
+    routeFeeUsd: routeCostUsd(declaredUsd, fromUsd != null && toUsd != null ? fromUsd - toUsd : NaN),
+    executionDuration: Math.ceil(qb.estimatedDurationSeconds || 110),
+    platformFeeBps: baasCfg.commissionBps, platformFeeUsd: feeUsd, platformFeeCollecting: true,
     steps: [],
     chainflip: {
       direction: "out", srcAsset: "DOT", destAsset: anchor.cfAsset,
       destAddress: args.toAddress || null, refundAddress: chainflipDotSideAddress(args, args.fromAddress),
-      quote: { estimatedPrice: q0.estimatedPrice, egressAmount: q0.egressAmount, intermediateAmount: q0.intermediateAmount, fees: q0.fees },
-      fok: { slippageTolerancePercent: q0.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
-      brokerBps: 0, lowLiquidityWarning: q0.lowLiquidityWarning === true,
+      quote: { estimatedPrice: qb.estimatedPrice, egressAmount: qb.egressAmount, intermediateAmount: qb.intermediateAmount, fees: qb.fees },
+      fok: { slippageTolerancePercent: qb.slippageTolerancePercent, retryDurationBlocks: CHAINFLIP_FOK_RETRY_BLOCKS },
+      brokerBps: baasCfg.commissionBps, lowLiquidityWarning: qb.lowLiquidityWarning === true,
+      baas: { commissionBps: baasCfg.commissionBps, totalBps: baasCfg.totalBps, retryDurationInBlocks: qb.retryDurationInBlocks || 150 },
     },
   };
 }
@@ -26631,18 +26951,75 @@ export function checkChainflipVaultSwapData(route, encoded, expectedCfParameters
   } catch { return bad("the vault call could not be re-encoded"); }
   return { ok: true };
 }
+/** Execute a Chainflip route OUT of Polkadot (DOT -> BSC
+ *  anchor) through Fluid's hosted broker (§151): the broker
+ *  opens the deposit channel on the route's own terms, its
+ *  status record is read back and the commission echo
+ *  verified (checkChainflipBaasChannelEcho) BEFORE the
+ *  user's DOT moves, and only then is the deposit signed
+ *  and broadcast from the wallet's own Asset Hub account
+ *  (sendDot, which enforces the existential deposit). Any
+ *  doubt at any step refuses with nothing sent — the
+ *  channel, if one was opened, simply expires unused.
+ *  Returns the deposit tx hashes ([hash]). */
+async function executeChainflipBaasOutRoute(wallet, route, onProgress) {
+  const c = route.chainflip;
+  const phrase = wallet?.mnemonic?.phrase;
+  if (!phrase) throw new Error("The wallet is unavailable — unlock it and try again.");
+  // The refund must land on the very account that signs the
+  // deposit — the wallet's own Asset Hub account (the "in"
+  // direction's pin, mirrored).
+  const ownDot = dotAddressFromPhrase(phrase);
+  const sameAccount = (a, b) => {
+    if (!a || !b) return false;
+    if (String(a) === String(b)) return true;
+    try { return ethers.hexlify(polkadotSdk.decodeAddress(String(a))).toLowerCase() === ethers.hexlify(polkadotSdk.decodeAddress(String(b))).toLowerCase(); }
+    catch { return false; }
+  };
+  if (!sameAccount(c.refundAddress, ownDot))
+    throw new Error("The Chainflip route's refund address is not this wallet's Polkadot account — refusing to open a channel that could refund elsewhere.");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(c.destAddress || "")))
+    throw new Error("The Chainflip destination must be a plain BSC address — a name or another chain's address cannot receive the delivery.");
+  onProgress("Opening the Chainflip deposit channel through Fluid's broker…");
+  const opened = await requestChainflipBaasSwap(route);
+  if (!isValidDotAddress(opened.depositAddress))
+    throw new Error("The broker returned a deposit address that is not a valid Polkadot address — refusing to send DOT to it. Nothing was sent.");
+  if (opened.destAddressEcho && opened.destAddressEcho.toLowerCase() !== String(c.destAddress).toLowerCase())
+    throw new Error("The broker's channel pays a different destination than the route's — refusing to send DOT to it. Nothing was sent.");
+  onProgress("Verifying the channel carries Fluid's commission before any DOT moves…");
+  let echoOk = false;
+  for (let i = 0; i < 10 && !echoOk; i++) {
+    const st = await fetchChainflipBaasSwapStatus(opened.swapId).catch(() => null);
+    if (st && st.depositChannel) {
+      const chk = checkChainflipBaasChannelEcho(st, {
+        depositAddress: opened.depositAddress, destAddress: c.destAddress,
+        commissionBps: c.baas.commissionBps, operatingBps: CHAINFLIP_BAAS_OPERATING_BPS,
+      });
+      if (!chk.ok) throw new Error(`The opened channel failed verification (${chk.reason}) — refusing to send DOT against it. Nothing was sent.`);
+      echoOk = true;
+    } else if (i < 9) await new Promise(r => setTimeout(r, 3000));
+  }
+  if (!echoOk)
+    throw new Error("The broker's record of the opened channel could not be read back — refusing to send DOT against an unverified channel. Nothing was sent.");
+  onProgress("Sending DOT to the deposit channel…");
+  const { hash } = await sendDot(phrase, { to: opened.depositAddress, amount: dotPlanckToDot(route.fromAmount) });
+  onProgress("DOT sent — Chainflip delivers to your BSC address (usually about 2 minutes).");
+  return [hash];
+}
 /** Execute a Chainflip route into Polkadot: re-encode the
  *  deposit at execution time, verify every field against
  *  the quote (checkChainflipVaultSwapData), approve exactly
  *  the deposit amount when the source is USDT, then send the
  *  vault call from the user's own BSC wallet. DOT settles
  *  to the user's own Asset Hub address; a fill-or-kill miss
- *  refunds to the user's own BSC address automatically. */
+ *  refunds to the user's own BSC address automatically.
+ *  Direction "out" runs through the broker above. */
 export async function executeChainflipSwapRoute(wallet, route, onProgress = () => {}, onApprove = () => {}) {
   await loadPolkadotSdk();
   const { ok, reason } = swapRouteExecutable(route);
   if (!ok) throw new Error(reason);
   const c = route.chainflip;
+  if (c.direction === "out") return executeChainflipBaasOutRoute(wallet, route, onProgress);
   if (!isValidDotAddress(c.destAddress || ""))
     throw new Error("The Polkadot destination is not a valid Asset Hub address — refusing before anything is signed.");
   if (!c.refundAddress || String(c.refundAddress).toLowerCase() !== String(wallet.address).toLowerCase())
@@ -27338,13 +27715,18 @@ export async function assertSwapTokensNotScam(args, opts = {}) {
  * two families (pair-matrix sweep,
  * research_notes/fluid-oneway-sweep-20261117/): Stellar
  * (1Click quoted IN; no executable route out) and Polkadot
- * (Chainflip executes IN; DOT-out is quoting-only until
- * Fluid's Chainflip broker is live). Stellar's exit shipped
- * on 2026-11-17 (§150: 1Click takes a Stellar origin in
- * MEMO deposit mode), so this derivation now finds Stellar's
- * exit on its own and its inbound routes are offered again
- * — no gate edit, exactly as designed. Polkadot remains
- * closed until its exit wires.
+ * (Chainflip executed IN; DOT-out was quoting-only until
+ * Fluid's Chainflip broker went live). Stellar's exit
+ * shipped on 2026-11-17 (§150: 1Click takes a Stellar origin
+ * in MEMO deposit mode), so this derivation found Stellar's
+ * exit on its own and its inbound routes were offered again
+ * — no gate edit, exactly as designed. Polkadot's exit
+ * shipped the same day (§151: the hosted Broker-as-a-Service
+ * account wired into the Chainflip rail), and this
+ * derivation lifted Polkadot the same way — the closed set
+ * below no longer names it, again with no gate edit. As of
+ * §151 no family Fluid offers is gated: every family with
+ * inbound routes also has an executable exit.
  *
  * The gate is DATA-DRIVEN, never a hand-maintained family
  * list: a family "has an exit" when the planner's OWN pair
@@ -28474,21 +28856,33 @@ export function swapRouteExecutable(route) {
   // execution time and verifies every field against the
   // quote before signing (checkChainflipVaultSwapData), so
   // the gate is structural, exactly like the lanes above.
-  // OUT of Polkadot is quoting only until Fluid's Chainflip
-  // broker is live: a DOT deposit needs a broker-opened
-  // deposit channel, and the commission that carries
-  // Fluid's fee can only ride a channel Fluid's own broker
-  // opened — without capture the direction does not ship
-  // (the universal capture law; see the Chainflip section).
+  // OUT of Polkadot executes through a deposit channel
+  // opened by Fluid's hosted broker (§151): the route must
+  // pin the channel's terms — the BSC destination it pays,
+  // a valid Polkadot refund address, the quote the
+  // channel's fill-or-kill floor is computed from, and the
+  // broker block naming Fluid's commission — and the
+  // executor verifies the opened channel's commission echo
+  // before any DOT moves. With no broker configured the
+  // direction stays quoting-only (the refusal below): a DOT
+  // deposit needs a broker-opened channel, and the
+  // commission that carries Fluid's fee can only ride a
+  // channel Fluid's broker opened — without capture the
+  // direction does not ship (the universal capture law).
   if (route?.provider === "chainflip") {
     const c = route.chainflip;
     if (c && !chainflipDirectionExecutable(c.direction))
       return { ok: false, reason: "Swaps out of Polkadot are quoting only until Fluid's Chainflip broker is live — the fee on this direction can only ride a deposit channel Fluid operates, and that service is not live yet. The quote is real; execution opens with the broker." };
-    const complete = !!c && c.direction === "in"
+    const completeIn = !!c && c.direction === "in"
       && Number(route.fromChainId) === NETWORKS.bsc.chainId && Number(route.toChainId) === POLKADOT_SWAP_CHAIN_ID
       && !!route.fromAmount && !!route.toAmount && !!c.quote?.estimatedPrice
       && isValidDotAddress(c.destAddress || "") && !!c.refundAddress;
-    return complete
+    const completeOut = !!c && c.direction === "out"
+      && Number(route.fromChainId) === POLKADOT_SWAP_CHAIN_ID && Number(route.toChainId) === NETWORKS.bsc.chainId
+      && !!route.fromAmount && !!route.toAmount && !!c.quote?.estimatedPrice
+      && /^0x[0-9a-fA-F]{40}$/.test(String(c.destAddress || "")) && isValidDotAddress(c.refundAddress || "")
+      && !!c.baas && Number(c.baas.commissionBps) > 0;
+    return (completeIn || completeOut)
       ? { ok: true, chainflip: true }
       : { ok: false, reason: "This Chainflip route is incomplete — pick another route." };
   }

@@ -7,7 +7,7 @@ import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcro
 import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
 import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
 import { SATORA_DEVELOPER_KEY, SATORA_MIN_NET_SATS, satoraDeveloperKeyLive, satoraFeeConfig, satoraSupportsPair, parseSatoraQuote, getSatoraSwapRoute, resetSatoraCaches, satoraSwapIdentity, satoraClaimKey, classifySatoraLightningDestination, checkSatoraLightningReceivability, buildSatoraBtcCreateRequest, buildSatoraLnCreateRequest, checkSatoraCreateResponse, createSatoraSwap, fetchSatoraFundingComponents, satoraCallsHash, checkSatoraFundingComponents, satoraSwapPhase, satoraSwapHistoryLine, loadSatoraSwapRecords, saveSatoraSwapRecord, nextSatoraSwapIndex, pollSatoraSwapStatuses, formatSatoraSwapIntent, executeSatoraSwapRoute, encodeBolt11, bitcoinTaprootAddress } from "../src/wallet-core.js";
-import { chainflipSupportsPair, parseChainflipQuote, chainflipMinPriceX128, checkChainflipQuoteCommission, checkChainflipVaultSwapData, getChainflipSwapRoute, executeChainflipSwapRoute, chainflipBrokerConfig, CHAINFLIP_BROKER_ACCOUNT, CHAINFLIP_BSC_VAULT, CHAINFLIP_MIN_SWAP_INTO_DOT, POLKADOT_SWAP_CHAIN_ID, POLKADOT_DOT_TOKEN, destNativeTokenAddress } from "../src/wallet-core.js";
+import { chainflipSupportsPair, parseChainflipQuote, chainflipMinPriceX128, checkChainflipQuoteCommission, checkChainflipVaultSwapData, getChainflipSwapRoute, executeChainflipSwapRoute, chainflipBrokerConfig, CHAINFLIP_BROKER_ACCOUNT, CHAINFLIP_BSC_VAULT, CHAINFLIP_MIN_SWAP_INTO_DOT, POLKADOT_SWAP_CHAIN_ID, POLKADOT_DOT_TOKEN, destNativeTokenAddress, chainflipBaasConfig, CHAINFLIP_BAAS_API_KEY, CHAINFLIP_BAAS_COMMISSION_BPS, parseChainflipBaasQuote, chainflipBaasMinimumPrice, parseChainflipBaasSwapOpened, parseChainflipBaasStatus, checkChainflipBaasChannelEcho, chainflipDirectionExecutable } from "../src/wallet-core.js";
 import { SATORA_ARKADE_CHAIN_ID, SATORA_ARKADE_HTLC_VERSION, SATORA_LIGHTNING_CHAIN_ID, satoraArkadeSourceSupportsPair, parseSatoraArkadeSourceQuote, getSatoraArkadeSourceRoute, buildSatoraArkadeCreateRequest, buildSatoraArkadeToEvmCreateRequest, buildSatoraArkadeToLnCreateRequest, checkSatoraArkadeToEvmCreateResponse, checkSatoraArkadeToLnCreateResponse, createSatoraArkadeSourceSwap, checkSatoraRedeemCalldata, buildSatoraRedeemDigest, SATORA_REDEEM_TYPEHASH, SATORA_REDEEM_TYPE_STRING, claimSatoraArkadeEvmSwap, executeSatoraArkadeSourceRoute, formatSatoraArkadeSourceIntent } from "../src/wallet-core.js";
 import { SATORA_BITCOIN_CHAIN_ID, satoraLnSourceSupportsPair, parseSatoraLnSourceQuote, getSatoraLnSourceRoute, buildSatoraLnToEvmCreateRequest, buildSatoraLnToBtcCreateRequest, checkSatoraLnCreateResponse, createSatoraLnSourceSwap, satoraBtcHtlcLeafScripts, satoraBtcHtlcAddress, buildSatoraBtcHtlcClaimTx, SATORA_BTC_CLAIM_TX_VBYTES, claimSatoraLnEvmSwap, executeSatoraLnSourceRoute, formatSatoraLnSourceIntent } from "../src/wallet-core.js";
 import { satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceSupportsPair, parseSatoraBtcSourceQuote, getSatoraBtcSourceRoute, buildSatoraBtcToEvmCreateRequest, buildSatoraBtcToLnCreateRequest, checkSatoraBtcSourceCreateResponse, createSatoraBtcSourceSwap, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, SATORA_BTC_REFUND_TX_VBYTES, formatSatoraBtcSourceIntent } from "../src/wallet-core.js";
@@ -15529,10 +15529,12 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
 // under the $0.30 Polkadot ceiling, the two-pass commission
 // reconciliation (including tampered-commission refusals),
 // the vault-calldata verification (including a swapped
-// destination), the executability gate (in = executable,
-// out = quoting only until Fluid's broker is live),
-// composition shapes through the BSC USDT anchor, and the
-// honest slow disclosure of a ~110-second leg.
+// destination), the executability gate (in = executable;
+// out was quoting-only in the §149 era and is executable
+// through the hosted broker since §151 — its own pins sit
+// in the §151 block below), composition shapes through the
+// BSC USDT anchor, and the honest slow disclosure of a
+// ~110-second leg.
 {
   const CF_EVM = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34"; // muse ops EVM (the spec's probe wallet)
   const CF_DOT = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo"; // muse ops Asset Hub (the spec's probe wallet)
@@ -15545,6 +15547,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   const Q_USDT1000_B50 = cfFixture("chainflip-quote-usdt-dot-1000-broker50.json");
   const Q_BNB = cfFixture("chainflip-quote-bnb-dot.json");
   const Q_DOT_OUT = cfFixture("chainflip-quote-dot-usdt-20.json");
+  const Q_DOT_OUT5_FREE = cfFixture("chainflip-quote-dot-usdt-5-free.json");
+  const QB_DOT_OUT5 = cfFixture("chainflip-baas-quote-dot-usdt-5.json");
   const ENC_USDT = cfFixture("chainflip-encode-vault-usdt.json");
   const ENC_BNB = cfFixture("chainflip-encode-vault-bnb.json");
   const CFPARAMS_USDT = cfFixture("chainflip-encode-cfparams-usdt.json");
@@ -15566,11 +15570,25 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const u = String(url);
     const priced = cfPrices(u);
     if (priced) return priced;
+    if (u.includes("chainflip-broker.io")) {
+      if (tamper === "baasNoBrokerEntry") {
+        const t = JSON.parse(JSON.stringify(QB_DOT_OUT5));
+        t[0].includedFees = t[0].includedFees.filter(f => f.type !== "broker");
+        return jsonResCf(t);
+      }
+      if (tamper === "baasEgressNotReduced") {
+        const t = JSON.parse(JSON.stringify(QB_DOT_OUT5));
+        t[0].egressAmountNative = Q_DOT_OUT5_FREE[0].egressAmount;
+        return jsonResCf(t);
+      }
+      return jsonResCf(QB_DOT_OUT5);
+    }
     if (u.includes("chainflip-swap.chainflip.io/v2/quote")) {
       const sp = new URL(u).searchParams;
       if (sp.get("srcChain") === "Assethub") {
         if (sp.get("amount") === "1000000000")
           return jsonResCf({ message: "expected amount is below minimum swap amount (50000000000)" }, false, 400);
+        if (sp.get("amount") === "50000000000") return jsonResCf(Q_DOT_OUT5_FREE);
         return jsonResCf(Q_DOT_OUT);
       }
       if (sp.get("brokerCommissionBps")) {
@@ -15630,7 +15648,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     && platformFeeEcosystemOf("polkadot") === "polkadot"
     && platformFeeBpsForRoute(0.446, 10, "polkadot") === 0
     && chainflipBrokerConfig(null).brokerAccount === null && chainflipBrokerConfig(CF_BROKER).brokerAccount === CF_BROKER
-    && CHAINFLIP_BROKER_ACCOUNT === null);
+    && CHAINFLIP_BROKER_ACCOUNT === null
+    && chainflipBaasConfig().apiKey === CHAINFLIP_BAAS_API_KEY && chainflipBaasConfig().commissionBps === 50
+    && CHAINFLIP_BAAS_COMMISSION_BPS === 50 && chainflipBaasConfig().totalBps === 55 && chainflipBaasConfig("").apiKey === null
+    && chainflipDirectionExecutable("in") === true && chainflipDirectionExecutable("out") === true
+    && chainflipDirectionExecutable("sideways") === false);
 
   // -- Quote builds under the stub ----------------------------
   const realFetchCf = globalThis.fetch;
@@ -15698,13 +15720,35 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     try { await getChainflipSwapRoute({ ...CF_ARGS10, fromTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "10000000000000000" }); } catch (e) { floorErrBnb = e; }
     ok("chainflip: 0.01 BNB refuses with Chainflip's own 0.02 BNB floor named",
       !!floorErrBnb && floorErrBnb.message.includes("is 0.02 BNB") && CHAINFLIP_MIN_SWAP_INTO_DOT.BNB === "20000000000000000");
-    // DOT out: quotes build, execution gated.
+    // DOT out: since §151 the broker's fee-bearing quote
+    // reconciles against the fee-free protocol quote and the
+    // route builds EXECUTABLE with capture (the full §151
+    // pins sit in their own block below; this is the rail
+    // block's own record of the flip).
     resetPricesCache();
-    const rOut = await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "200000000000", fromAddress: CF_DOT, toAddress: CF_EVM });
+    const rOut = await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "50000000000", fromAddress: CF_DOT, toAddress: CF_EVM });
     const outGate = swapRouteExecutable(rOut);
-    ok("chainflip: DOT-out quotes are real (20 DOT -> ~15.16 USDT) but gate non-executable — quoting only until the broker is live",
-      rOut.toAmount === "15159942596541202092" && rOut.platformFeeCollecting === false && rOut.executionDuration === 112
-      && outGate.ok === false && /quoting only until Fluid's Chainflip broker is live/.test(outGate.reason));
+    ok("chainflip: DOT-out builds EXECUTABLE through the BaaS broker (§151) — the broker's egress, Fluid's 50 bps collecting, the channel terms pinned",
+      rOut.toAmount === "3005020873250737064" && rOut.platformFeeCollecting === true && rOut.platformFeeBps === 50
+      && Math.abs(rOut.platformFeeUsd - 0.016642 * 50 / 55) < 1e-9 && rOut.executionDuration === 112
+      && outGate.ok === true && outGate.chainflip === true
+      && rOut.chainflip.baas.commissionBps === 50 && rOut.chainflip.baas.totalBps === 55 && rOut.chainflip.baas.retryDurationInBlocks === 50
+      && rOut.chainflip.refundAddress === CF_DOT && rOut.chainflip.destAddress === CF_EVM);
+    resetPricesCache();
+    globalThis.fetch = cfFetch({ tamper: "baasNoBrokerEntry" });
+    let baasTamperErr = null;
+    try { await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "50000000000", fromAddress: CF_DOT, toAddress: CF_EVM }); }
+    catch (e) { baasTamperErr = e; }
+    ok("chainflip: a broker quote with NO broker fee entry refuses the DOT-out route — an unverified fee is never charged (§151)",
+      !!baasTamperErr && /did not reconcile/.test(baasTamperErr.message) && baasTamperErr.chainflipTerminal === true);
+    resetPricesCache();
+    globalThis.fetch = cfFetch({ tamper: "baasEgressNotReduced" });
+    let baasTamperErr2 = null;
+    try { await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: CF_USDT, fromAmount: "50000000000", fromAddress: CF_DOT, toAddress: CF_EVM }); }
+    catch (e) { baasTamperErr2 = e; }
+    ok("chainflip: a broker quote whose output did not fall by the commission refuses the DOT-out route (§151)",
+      !!baasTamperErr2 && /did not reconcile/.test(baasTamperErr2.message));
+    globalThis.fetch = cfFetch();
     // A DOT-out floor refusal from the API itself surfaces
     // with the API's own minimum parsed into DOT.
     let outFloorErr = null;
@@ -15712,17 +15756,16 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     catch (e) { outFloorErr = e; }
     ok("chainflip: a DOT-out below-minimum refusal names the API's own floor (5 DOT) in DOT terms",
       !!outFloorErr && outFloorErr.message.includes("Chainflip's own minimum for DOT → USDT is 5 DOT"));
-    // The cascade serves the pair end to end — at the RAIL
-    // level (every pin above). The PLANNER no longer offers
-    // it: the one-way trap gate (§149, 2026-11-17) withdraws
-    // DOT-in from the route search because DOT-out is
-    // quoting-only — Polkadot has no executable exit, so a
-    // route in would trap the user's value. The rail stays
-    // wired behind the gate; §149's pins carry the gate.
+    // The cascade serves the pair end to end. In the §149
+    // era the planner withdrew DOT-in (DOT-out was
+    // quoting-only, so a route in would have trapped the
+    // user's value); with DOT-out executable through the
+    // broker (§151) the gate lifted Polkadot by coverage
+    // alone and the search offers the route again.
     resetPricesCache();
     const viaSearch = await getSwapRoutes(CF_ARGS10);
-    ok("chainflip: the rail serves BSC USDT -> DOT, but the live route search no longer offers it — the §149 one-way gate (DOT has no executable exit)",
-      Array.isArray(viaSearch) && viaSearch.length === 0);
+    ok("chainflip: the live route search offers BSC USDT -> DOT again — the §149 gate lifted Polkadot when DOT-out became executable (§151)",
+      Array.isArray(viaSearch) && viaSearch.length === 1 && viaSearch[0].provider === "chainflip");
     var CF_R10 = r10;
   } finally { globalThis.fetch = realFetchCf; }
 
@@ -15780,10 +15823,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     const savedFetch = globalThis.fetch;
     globalThis.fetch = async () => { fetchCalls++; throw new Error("no network in the executor-refusal test"); };
     try {
-      await executeChainflipSwapRoute({ address: CF_EVM }, { provider: "chainflip", fromChainId: POLKADOT_SWAP_CHAIN_ID, toChainId: 56, fromAmount: "200000000000", chainflip: { direction: "out", srcAsset: "DOT" } });
+      await executeChainflipSwapRoute({ address: CF_EVM }, { provider: "chainflip", fromChainId: POLKADOT_SWAP_CHAIN_ID, toChainId: 56, fromAmount: "50000000000", toAmount: "3005020873250737064", chainflip: { direction: "out", srcAsset: "DOT" } });
     } catch (e) { execErr = e; } finally { globalThis.fetch = savedFetch; }
-    ok("chainflip: the executor refuses a DOT-out route at the gate, before any network call",
-      !!execErr && /quoting only/.test(execErr.message) && fetchCalls === 0);
+    ok("chainflip: the executor refuses an INCOMPLETE DOT-out route at the gate (no quote, no broker block), before any network call",
+      !!execErr && /incomplete/.test(execErr.message) && fetchCalls === 0);
   }
 
   // -- Composition shapes ---------------------------------------
@@ -16719,10 +16762,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("fixb: the refusal sentence names the pair's real minimum in the FROM token (and values it when a price exists)",
     formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: vCf, floorText: "10 USDT" }).includes("below the minimum for this pair. The smallest swap that works right now is about 10 USDT.")
     && formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", amountText: "5 USDT", verdict: { ...vCf, floor: { ...vCf.floor, usd: 10 } }, floorText: "10 USDT (≈ $10)" }).includes("about 10 USDT (≈ $10)"));
-  ok("fixb: without the rail's floor on the error, a BSC -> DOT diagnosis is the §149 one-way pause (2026-11-17: DOT has no executable exit, so the pair is paused by rule — the ladder verdicts themselves are untouched, as the §148 XTZ -> HBAR pin still proves)",
+  ok("fixb: without the rail's floor on the error, a BSC -> DOT diagnosis is NO LONGER the §149 one-way pause — DOT-out became executable in §151, so the gate lifted and the ladder verdicts decide (they are untouched, as the §148 XTZ -> HBAR pin still proves)",
     (await diagnoseNoRouteSwap(
       { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: "0x55d398326f99059fF775485246999027B3197955", toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: "0xC66626790039681d22B96302415896a0574C0F4e", toAddress: "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo" },
-      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] })).kind === "inbound-paused");
+      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] })).kind !== "inbound-paused");
   ok("fixb app: the sheet passes the search's own error into the diagnosis and renders the floor with or without a USD value",
     appSrc115.includes("searchError: routeErr,")
     && appSrc115.includes("Number(verdict.floor.usd) > 0 ? ` (≈ $${Number(verdict.floor.usd).toFixed(0)})` : \"\""));
@@ -22762,10 +22805,12 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
 // inbound was never offered at all (presence-only /
 // intra-only chains) — the gate covers them by construction
 // so a future inbound rail cannot open a trap there either.
-// STELLAR'S EXIT SHIPPED the same day (§150): the pins
-// below now carry Polkadot as the remaining offered trap,
-// and §150 proves the gate lifted Stellar from coverage
-// alone — no gate edit was made for it.
+// STELLAR'S EXIT SHIPPED the same day (§150) and
+// POLKADOT'S followed it (§151): both times the gate
+// lifted the family from coverage alone — no gate edit was
+// made for either. The pins below now carry the lifted
+// truth for Polkadot and keep a still-gated family (Tezos)
+// for the pause behaviour itself.
 {
   const { swapFamilyHasExecutableExit, swapInboundClosedFamilies, swapInboundGate, swapInboundPaused,
     swapFamilyProbeAssets, chainflipDirectionExecutable, oneClickSupportsPair, getSwapRoutes, getSwapRoutesDirect,
@@ -22776,23 +22821,23 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     BSC_USDT149 = "0x55d398326f99059fF775485246999027B3197955", DOT_ADDR149 = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo";
 
   // --- the derivation: exits read off the planner's own coverage ---
-  ok("§149: Polkadot has NO executable exit — Chainflip's out direction is quotable but not executable; Stellar's exit is wired (§150), so the same derivation now finds one",
-    swapFamilyHasExecutableExit("polkadot") === false && swapFamilyHasExecutableExit("stellar") === true
+  ok("§149: Polkadot HAS an executable exit since §151 — Chainflip's out direction executes through the hosted broker; Stellar's exit is wired (§150), so the same derivation finds both",
+    swapFamilyHasExecutableExit("polkadot") === true && swapFamilyHasExecutableExit("stellar") === true
     && oneClickSupportsPair({ fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC149 }) !== null
     && oneClickSupportsPair({ fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC149, toTokenAddress: "xlm" }) !== null
-    && chainflipDirectionExecutable("in") === true && chainflipDirectionExecutable("out") === false);
+    && chainflipDirectionExecutable("in") === true && chainflipDirectionExecutable("out") === true);
   ok("§149: the families users swap between all keep their exits (the gate closes nothing that was ever a two-way family)",
     ["ethereum", "base", "arbitrum", "bsc", "polygon", "avalanche", "solana", "sui", "tron", "ton", "near", "xrpl",
      "litecoin", "dogecoin", "bitcoincash", "aptos", "cosmoshub", "osmosis", "noble", "bitcoin", "lightning", "arkade"]
       .every(k => swapFamilyHasExecutableExit(k) === true));
   ok("§149: Cardano is NOT closed — both 1Click directions are wired; its broadcast doubt is environmental, and the gate is coverage-driven, not doubt-driven",
     swapFamilyHasExecutableExit("cardano") === true && swapInboundPaused("cardano") === false);
-  ok("§149: the closed set is exactly the no-exit families — Polkadot plus the presence/intra-only chains whose inbound was never offered (Stellar left the set when its exit shipped, §150)",
+  ok("§149: the closed set is exactly the no-exit families — the presence/intra-only chains whose inbound was never offered (Stellar left the set in §150 and Polkadot in §151, both by coverage alone)",
     JSON.stringify([...swapInboundClosedFamilies()].sort()) === JSON.stringify(
       ["algorand", "aurora", "b2", "bitlayer", "core", "cronoszkevm", "flare", "filecoin", "fuse", "hedera",
-       "injectiveevm", "kaia", "kava", "moonriver", "polkadot", "rootstock", "seievm", "stacks",
+       "injectiveevm", "kaia", "kava", "moonriver", "rootstock", "seievm", "stacks",
        "tac", "taiko", "tezos"].sort())
-    && swapInboundClosedFamilies().length === 21
+    && swapInboundClosedFamilies().length === 20
     && ["stellar", "polkadot", "base", "bitcoin", "cosmoshub", "tezos"].every(k => SWAP_FAMILY_KEYS.includes(k)));
   ok("§149: probe assets are the family's own canonical liquid assets, read from its pinned tables",
     swapFamilyProbeAssets("stellar").includes("xlm") && swapFamilyProbeAssets("polkadot").includes("dot")
@@ -22800,24 +22845,45 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && swapFamilyProbeAssets("base").includes(BASE_USDC149));
 
   // --- the gate function ---
-  ok("§149: the gate fires cross-family into a no-exit family, and only there — intra-family and exit-family searches are untouched (Stellar is an exit family since §150)",
+  ok("§149: the gate fires cross-family into a no-exit family, and only there — intra-family and exit-family searches are untouched (Stellar is an exit family since §150, Polkadot since §151; Tezos carries the still-gated case)",
     swapInboundGate({ fromChainKey: "base", toChainKey: "stellar" }) === null
-    && swapInboundGate({ fromChainKey: "bsc", toChainKey: "polkadot" })?.destChainKey === "polkadot"
+    && swapInboundGate({ fromChainKey: "bsc", toChainKey: "polkadot" }) === null
+    && swapInboundGate({ fromChainKey: "bsc", toChainKey: "tezos" })?.destChainKey === "tezos"
     && swapInboundGate({ fromChainKey: "base", toChainKey: "arbitrum" }) === null
     && swapInboundGate({ fromChainKey: "stellar", toChainKey: "stellar" }) === null
     && swapInboundGate({ fromChainKey: "bsc", toChainKey: "bsc" }) === null
-    && swapInboundPaused("stellar") === false && swapInboundPaused("polkadot") === true && swapInboundPaused("base") === false);
+    && swapInboundPaused("stellar") === false && swapInboundPaused("polkadot") === false
+    && swapInboundPaused("tezos") === true && swapInboundPaused("base") === false);
 
-  // --- (a) production path: a route into a no-exit family is never offered ---
+  // --- (a) production path: a route into a no-exit family is never offered;
+  //         a route into a family whose exit shipped IS offered again ---
   const realFetch149 = globalThis.fetch;
   try {
     const seen149 = [];
     globalThis.fetch = async (url) => { seen149.push(String(url)); throw new Error("no network in the §149 gate pin"); };
+    const tzIn = await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "tezos", fromTokenAddress: BSC_USDT149, toTokenAddress: "xtz", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL" });
+    ok("§149: production searches into a still-gated family (Tezos) return the honest empty — and no rail is ever quoted for a gated destination (no Chainflip call)",
+      tzIn.length === 0 && !seen149.some(u => u.includes("chainflip")));
+  } finally { globalThis.fetch = realFetch149; }
+  try {
+    const Q_USDT10_149 = JSON.parse(readFileSync(new URL("./fixtures/chainflip-quote-usdt-dot-10.json", import.meta.url), "utf8"));
+    const jsonRes149 = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body });
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return jsonRes149([
+        { symbol: "BTCUSDT", price: "90000" }, { symbol: "ETHUSDT", price: "3000" },
+        { symbol: "BNBUSDT", price: "890" }, { symbol: "DOTUSDT", price: "0.79" }]);
+      if (u.includes("coingecko")) return jsonRes149({});
+      if (u.includes("chainflip-swap.chainflip.io/v2/quote")) return jsonRes149(Q_USDT10_149);
+      throw new Error("unexpected fetch in the §149 lifted pin: " + u);
+    };
+    resetPricesCache();
     const dotInDirect = await getSwapRoutesDirect({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
+    resetPricesCache();
     const dotIn = await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 });
-    ok("§149: production searches into Polkadot return the honest empty — and no rail is ever quoted for a gated destination (no Chainflip call)",
-      dotInDirect.length === 0 && dotIn.length === 0
-      && !seen149.some(u => u.includes("chainflip")));
+    ok("§149: production searches into Polkadot offer the Chainflip route again — the gate lifted by coverage when DOT-out became executable (§151), with no gate edit",
+      dotInDirect.some(r => r.provider === "chainflip")
+      && dotIn.length === 1 && dotIn[0].provider === "chainflip");
   } finally { globalThis.fetch = realFetch149; }
 
   // --- (b) production path: a route into a family WITH an exit is offered exactly as before ---
@@ -22853,20 +22919,33 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   } finally { globalThis.fetch = realFetch149; }
 
   // --- (c) the paused copy: diagnosis verdict, message, sheet + token page wiring ---
+  // The paused verdict arms only for a pair a rail actually
+  // SERVES into a no-exit family (diagnose requires
+  // swapPairServedExecutable alongside the gate) — that set
+  // was exactly {Stellar-in, Polkadot-in}, and both exits
+  // have now shipped (§150, §151), so no live pair produces
+  // the verdict today: it stands armed for the next inbound
+  // rail that opens into a family without an exit. The copy
+  // itself is pinned from the gate's verdict shape, and a
+  // gated-but-never-served pair (Tezos) honestly diagnoses
+  // as no-route-yet — its inbound was never offered, so
+  // there is no trap to pause.
   let probeCalls149 = 0;
-  const vPaused = await diagnoseNoRouteSwap(
-    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 },
+  const vTz149 = await diagnoseNoRouteSwap(
+    { fromChainKey: "bsc", toChainKey: "tezos", fromTokenAddress: BSC_USDT149, toTokenAddress: "xtz", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: "tz1VQA4RP4fLjEEMW2FR4pE9kAg5abb5h5GL" },
     { fromDecimals: 18, fromPriceUsd: null, search: async () => { probeCalls149++; return []; } });
-  const msgPaused = formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "DOT", verdict: vPaused, destName: "Polkadot" });
-  ok("§149: a gated pair diagnoses as inbound-paused with NO probe ladder spent — the gate's verdict, not an unconnected-pair label",
-    vPaused.kind === "inbound-paused" && probeCalls149 === 0
-    && msgPaused.startsWith("Swaps into Polkadot are paused in Fluid")
-    && msgPaused.includes("can't swap back out of Polkadot yet")
-    && msgPaused.includes("hold, send and receive DOT as normal")
+  const msgPaused = formatSwapNoRouteMessage({ fromSymbol: "USDT", toSymbol: "XTZ", verdict: { kind: "inbound-paused", floor: null, market: null, destChainKey: "tezos" }, destName: "Tezos" });
+  ok("§149: the paused copy renders from the gate's verdict — and a gated-but-never-served pair (Tezos) diagnoses as no-route-yet, not paused: the verdict arms only where a rail would otherwise serve the trap",
+    vTz149.kind === "no-route-yet"
+    && msgPaused.startsWith("Swaps into Tezos are paused in Fluid")
+    && msgPaused.includes("can't swap back out of Tezos yet")
+    && msgPaused.includes("hold, send and receive XTZ as normal")
     && !msgPaused.includes("isn't connected yet"));
-  const vDotPaused = vPaused;
-  ok("§149: a DOT-in search diagnoses as inbound-paused too (no rail floor on the error — the gate's own verdict)",
-    vDotPaused.kind === "inbound-paused");
+  const vDotIn = await diagnoseNoRouteSwap(
+    { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: BSC_USDT149, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM149, toAddress: DOT_ADDR149 },
+    { fromDecimals: 18, fromPriceUsd: null, search: async () => [] });
+  ok("§149: a DOT-in search no longer diagnoses as inbound-paused — the pause verdict is gone with the gate's lift (§151)",
+    vDotIn.kind !== "inbound-paused");
   ok("§149 app: the sheet carries the standing pause line beside the Arkade warning, synced on open / network pick / flip, and the diagnosis renders with the destination's own name",
     app149.includes('id="wOneWayWarn"') && app149.includes("function syncOneWayWarn()")
     && app149.includes("swapInboundPaused(netSel.to)") && app149.includes("syncOneWayWarn();")
@@ -22975,7 +23054,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     const vIn = await diagnoseNoRouteSwap(
       { fromChainKey: "base", toChainKey: "stellar", fromTokenAddress: BASE_USDC150, toTokenAddress: "xlm", fromAmount: "5000000", fromAddress: EVM150, toAddress: STELLAR_OWN150 },
       { fromDecimals: 6, fromPriceUsd: 1, search: async () => [] });
-    ok("§150: a Stellar-in search no longer diagnoses as inbound-paused (Polkadot still does — §149 carries it)",
+    ok("§150: a Stellar-in search no longer diagnoses as inbound-paused (Polkadot joined it in §151 — §149 carries both lifts)",
       vIn.kind !== "inbound-paused");
   } finally { globalThis.fetch = realFetch150; }
 
@@ -23059,6 +23138,185 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     ok("§150: in the shipped config (no fee recipient) the Stellar-origin route ships fee-free in ONE pass, collecting=false — the route is live, the fee honestly zero",
       !!free && free.platformFeeCollecting === false && calls150 === 1);
   }
+}
+
+// §151 — DOT-OUT VIA THE CHAINFLIP BROKER-AS-A-SERVICE
+// (2026-11-17). Fluid's Chainflip broker is the hosted BaaS
+// account (chainflip-broker.io): its API key identifies the
+// broker and opens deposit channels whose commission pays
+// the Ethereum address registered with the account; the
+// ADMIN key is a separate credential that never ships (pin
+// (d) below greps the shipped files for it). Registration
+// set Fluid's commission at 50 bps; the service adds its
+// own 5 bps operating fee, so the user pays 55 total and
+// Fluid earns 50/55 of the itemised broker fee. Wiring the
+// broker flipped chainflipDirectionExecutable("out"), and
+// the §149 gate — unedited — lifted Polkadot from that
+// alone: the last one-way trap is closed. Fixtures: the
+// matched 5 DOT quote pair (protocol fee-free + broker
+// fee-bearing) are LIVE captures of 2026-11-17; the channel
+// open / status pair are the API docs' own shapes (a
+// channel open is never probed from the suite — it would
+// open a real channel — with documentation stand-in
+// addresses). Live protocol facts the walk re-checks: the
+// DOT-source protocol minimum measured 4 DOT on 2026-11-17
+// and DOT->BSC liquidity is thin (10 DOT already refused
+// for insufficient liquidity on both APIs that day).
+{
+  const { createHash } = await import("node:crypto");
+  const { chainflipBaasConfig, CHAINFLIP_BAAS_API_KEY, parseChainflipBaasQuote, chainflipBaasMinimumPrice,
+    parseChainflipBaasSwapOpened, parseChainflipBaasStatus, checkChainflipBaasChannelEcho,
+    getChainflipSwapRoute, executeChainflipSwapRoute, swapInboundClosedFamilies, getSwapRoutes,
+    swapRouteExecutable, swapInboundPaused, swapFamilyHasExecutableExit, diagnoseNoRouteSwap } = await import("../src/wallet-core.js");
+  const EVM151 = "0x9780504dEE2cDcD003484816a3731eb48bE8Ee34"; // muse ops EVM
+  const DOT151 = "16PaYuRJxLGN3D7CjQ1CXJwCgTrWeErTHXAYUngWACPD28vo"; // muse ops Asset Hub
+  const USDT151 = "0x55d398326f99059fF775485246999027B3197955"; // USDT on BSC
+  const ABANDON151 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const ABANDON_DOT151 = "13KVd4f2a4S5pLp4gTTFezyXdPWx27vQ9vS6xBXJ9yWVd7xo"; // dotAddressFromPhrase(ABANDON151), pinned in the Polkadot block
+  const fx151 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const QB151 = fx151("chainflip-baas-quote-dot-usdt-5.json");
+  const QF151 = fx151("chainflip-quote-dot-usdt-5-free.json");
+  const QIN151 = fx151("chainflip-quote-usdt-dot-10.json");
+  const OPEN151 = fx151("chainflip-baas-swap-dot-usdt.json");
+  const STATUS151 = fx151("chainflip-baas-status-dot-usdt.json");
+  const jsonRes151 = (body, okFlag = true, status = 200) => ({
+    ok: okFlag, status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+    json: async () => (typeof body === "string" ? JSON.parse(body) : body),
+  });
+  const fetch151 = ({ tamperStatus = null } = {}) => async (url) => {
+    const u = String(url);
+    if (u.includes("api.binance.com")) return jsonRes151([
+      { symbol: "BTCUSDT", price: "90000" }, { symbol: "ETHUSDT", price: "3000" },
+      { symbol: "BNBUSDT", price: "890" }, { symbol: "DOTUSDT", price: "2.18" }]);
+    if (u.includes("coingecko")) return jsonRes151({});
+    if (u.includes("chainflip-swap.chainflip.io/v2/quote")) {
+      const sp = new URL(u).searchParams;
+      if (sp.get("amount") === "1000000000")
+        return jsonRes151({ message: "expected amount is below minimum swap amount (50000000000)" }, false, 400);
+      if (sp.get("srcChain") === "Assethub") return jsonRes151(QF151);
+      return jsonRes151(QIN151);
+    }
+    if (u.includes("chainflip-broker.io/quotes-native")) return jsonRes151(QB151);
+    if (u.includes("chainflip-broker.io/swap?")) return jsonRes151(OPEN151);
+    if (u.includes("chainflip-broker.io/status-by-id"))
+      return jsonRes151(tamperStatus ? tamperStatus(JSON.parse(JSON.stringify(STATUS151))) : STATUS151);
+    throw new Error("unexpected fetch in the §151 stub: " + u);
+  };
+
+  // --- the broker configuration seam ---
+  ok("§151: the BaaS seam — the shipped key configures the broker at Fluid's registered 50 bps (+ the service's 5); an empty key leaves DOT-out unconfigured, and the SS58 broker slot stays null (the BaaS account issues no SS58 — the key must never be fed to the vault encode)",
+    chainflipBaasConfig().apiKey === CHAINFLIP_BAAS_API_KEY && chainflipBaasConfig().commissionBps === 50
+    && chainflipBaasConfig().operatingBps === 5 && chainflipBaasConfig().totalBps === 55
+    && chainflipBaasConfig("").apiKey === null && CHAINFLIP_BROKER_ACCOUNT === null);
+
+  // --- quote parsing + reconciliation (pure) ---
+  const qb151 = parseChainflipBaasQuote(QB151), qf151 = parseChainflipQuote(QF151);
+  ok("§151: the broker's quote parses into the rail's own shape — egress, intermediate, the itemised BROKER fee, the channel retry window",
+    qb151.egressAmount === "3005020873250737064" && qb151.intermediateAmount === "3009091" && qb151.fees.broker === "16642"
+    && qb151.fees.ingress === "197300000" && qb151.fees.network === "500000" && qb151.retryDurationInBlocks === 50
+    && qb151.estimatedPrice === "0.6046239185478647" && qb151.lowLiquidityWarning === true
+    && parseChainflipBaasQuote(null) === null && parseChainflipBaasQuote([{ type: "REGULAR" }]) === null);
+  const rec151 = checkChainflipQuoteCommission(qf151, qb151, 55, {}, { decimals: 18, priceUsd: 1 });
+  ok("§151 (c): the broker's quote reconciles against the fee-free protocol quote at the TOTAL 55 bps — the itemised broker fee matches the output drop",
+    rec151.ok === true && Math.abs(rec151.brokerUsd - 0.016642) < 1e-9);
+  const qbStripped = parseChainflipBaasQuote((() => { const t = JSON.parse(JSON.stringify(QB151)); t[0].includedFees = t[0].includedFees.filter(f => f.type !== "broker"); return t; })());
+  ok("§151 (c): a broker quote with the commission entry stripped fails reconciliation — capture is verified, never assumed",
+    qbStripped !== null && qbStripped.fees.broker === null
+    && checkChainflipQuoteCommission(qf151, qbStripped, 55, {}, { decimals: 18, priceUsd: 1 }).ok === false);
+  ok("§151: the channel's fill-or-kill minimum price is exact decimal math on the quote's own price (no float touches it)",
+    chainflipBaasMinimumPrice("0.6046241195802541", 0.5) === "0.6016009989823528295"
+    && chainflipBaasMinimumPrice("0.001037524029062", 0.5) === "0.00103233640891669"
+    && chainflipBaasMinimumPrice("junk", 0.5) === null && chainflipBaasMinimumPrice(null, 0.5) === null);
+
+  // --- the channel echo (pure) ---
+  const opened151 = parseChainflipBaasSwapOpened(OPEN151);
+  const status151 = parseChainflipBaasStatus(STATUS151);
+  ok("§151 (c): the opened channel and the broker's status record parse — deposit address, destination, the commission echo field",
+    opened151.depositAddress === "15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5" && opened151.swapId === 193482
+    && opened151.destAddressEcho === EVM151
+    && status151.depositChannel.brokerCommissionBps === 55 && status151.destAddress === EVM151
+    && parseChainflipBaasSwapOpened({ id: 1 }) === null && parseChainflipBaasStatus(null) === null);
+  const echoArgs151 = { depositAddress: opened151.depositAddress, destAddress: EVM151, commissionBps: 50, operatingBps: 5 };
+  ok("§151 (c): the channel echo verifies — the broker's own record shows Fluid's commission (50 + the service's 5) on the very channel the open returned, paying the route's destination",
+    checkChainflipBaasChannelEcho(status151, echoArgs151).ok === true);
+  const stWrongBps = JSON.parse(JSON.stringify(STATUS151)); stWrongBps.status.depositChannel.brokerCommissionBps = 5;
+  const stWrongAddr = JSON.parse(JSON.stringify(STATUS151)); stWrongAddr.status.depositChannel.depositAddress = DOT151;
+  const stWrongDest = JSON.parse(JSON.stringify(STATUS151)); stWrongDest.status.destinationAddress = "0x0000000000000000000000000000000000000001";
+  ok("§151 (c): an echo at the wrong commission, a different deposit address, or a different destination all REFUSE — no DOT moves against any of them",
+    checkChainflipBaasChannelEcho(parseChainflipBaasStatus(stWrongBps), echoArgs151).ok === false
+    && checkChainflipBaasChannelEcho(parseChainflipBaasStatus(stWrongAddr), echoArgs151).ok === false
+    && checkChainflipBaasChannelEcho(parseChainflipBaasStatus(stWrongDest), echoArgs151).ok === false
+    && checkChainflipBaasChannelEcho(null, echoArgs151).ok === false
+    && checkChainflipBaasChannelEcho({ state: "WAITING_FOR_DEPOSIT", destAddress: EVM151, depositChannel: null }, echoArgs151).ok === false);
+
+  // --- (a)+(b) production planner, and the executor's echo gate ---
+  const realFetch151 = globalThis.fetch;
+  try {
+    globalThis.fetch = fetch151();
+    resetPricesCache();
+    const routes151 = await getSwapRoutes({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: USDT151, fromAmount: "50000000000", fromAddress: DOT151, toAddress: EVM151 });
+    const r151 = routes151.find(r => r.provider === "chainflip");
+    ok("§151 (a): the production planner offers DOT -> BSC USDT as an EXECUTABLE Chainflip route — the broker's egress, Fluid's 50 bps collecting, the channel terms pinned on the route",
+      !!r151 && swapRouteExecutable(r151).ok === true && swapRouteExecutable(r151).chainflip === true
+      && r151.toAmount === "3005020873250737064" && r151.platformFeeCollecting === true && r151.platformFeeBps === 50
+      && Math.abs(r151.platformFeeUsd - 0.016642 * 50 / 55) < 1e-9
+      && r151.chainflip.baas.commissionBps === 50 && r151.chainflip.baas.totalBps === 55
+      && r151.chainflip.destAddress === EVM151 && r151.chainflip.refundAddress === DOT151);
+    resetPricesCache();
+    const inRoutes151 = await getSwapRoutes({ fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: USDT151, toTokenAddress: "dot", fromAmount: "10000000000000000000", fromAddress: EVM151, toAddress: DOT151 });
+    const vIn151 = await diagnoseNoRouteSwap(
+      { fromChainKey: "bsc", toChainKey: "polkadot", fromTokenAddress: USDT151, toTokenAddress: "dot", fromAmount: "5000000000000000000", fromAddress: EVM151, toAddress: DOT151 },
+      { fromDecimals: 18, fromPriceUsd: null, search: async () => [] });
+    ok("§151 (b): DOT-in is offered again and the paused verdict is gone — the §149 gate lifted Polkadot by coverage, with no gate edit",
+      inRoutes151.length === 1 && inRoutes151[0].provider === "chainflip"
+      && swapInboundPaused("polkadot") === false && vIn151.kind !== "inbound-paused"
+      && !swapInboundClosedFamilies().includes("polkadot") && swapInboundClosedFamilies().length === 20);
+    let floor151 = null;
+    try { await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: USDT151, fromAmount: "1000000000", fromAddress: DOT151, toAddress: EVM151 }); }
+    catch (e) { floor151 = e; }
+    ok("§151: a sub-minimum DOT-out gets the protocol's own floor verdict in DOT terms, never a broken route (the stub preserves the captured refusal; the live floor measured 4 DOT on 2026-11-17)",
+      !!floor151 && floor151.message.includes("Chainflip's own minimum for DOT → USDT is 5 DOT") && floor151.chainflipTerminal === true);
+    // The executor against a tampered channel record: the
+    // route is built by the production builder (refund
+    // pinned to the executing wallet's own DOT account),
+    // the channel opens, the echo reads back the SERVICE's
+    // 5 bps only — and the executor must refuse before any
+    // DOT send is attempted.
+    resetPricesCache();
+    const execRoute151 = await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: USDT151, fromAmount: "50000000000", fromAddress: ABANDON_DOT151, toAddress: EVM151 });
+    globalThis.fetch = fetch151({ tamperStatus: (t) => { t.status.depositChannel.brokerCommissionBps = 5; return t; } });
+    let exec151Err = null;
+    try { await executeChainflipSwapRoute({ mnemonic: { phrase: ABANDON151 }, address: EVM151 }, execRoute151); }
+    catch (e) { exec151Err = e; }
+    ok("§151 (c): the executor refuses a channel whose recorded commission is not Fluid's — before any DOT is sent",
+      !!exec151Err && /failed verification/.test(exec151Err.message) && /Nothing was sent/.test(exec151Err.message));
+  } finally { globalThis.fetch = realFetch151; }
+
+  // --- (e) control pair: unchanged by the wiring ---
+  ok("§151 (e): control — a two-way family's coverage is untouched by the broker wiring (Base keeps its exit; the closed set holds exactly the never-offered families)",
+    swapFamilyHasExecutableExit("base") === true && swapInboundPaused("base") === false
+    && swapInboundClosedFamilies().includes("tezos") && swapInboundClosedFamilies().includes("hedera"));
+
+  // --- (d) the admin key never ships ---
+  // The pin carries only the admin key's SHA-256 (computed
+  // from the operator's key file at pin-writing time); it
+  // scans every 32-hex token in the shipped sources and the
+  // built bundle and asserts none of them IS the admin key.
+  // The API key, by contrast, is present in source BY
+  // DESIGN (it identifies the broker; payouts are bound to
+  // the registered address; see the Chainflip section).
+  const ADMIN_SHA256_151 = "803f43ba137119f5cce7785e22ee47ee6242146941a58cda83acb955cda12713";
+  const shipped151 = {
+    "src/wallet-core.js": readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8"),
+    "src/app.js": readFileSync(new URL("../src/app.js", import.meta.url), "utf8"),
+  };
+  try { shipped151["dist/app.bundle.js"] = readFileSync(new URL("../dist/app.bundle.js", import.meta.url), "utf8"); }
+  catch { /* dist is built at release; the release flow rebuilds it before this suite's clean-checkout run */ }
+  const hexTokens151 = new Set();
+  for (const text of Object.values(shipped151)) for (const m of text.matchAll(/\b[0-9a-f]{32}\b/g)) hexTokens151.add(m[0]);
+  const adminPresent151 = [...hexTokens151].some(t => createHash("sha256").update(t).digest("hex") === ADMIN_SHA256_151);
+  ok("§151 (d): the BaaS ADMIN key appears NOWHERE in the shipped sources or the built bundle (hash-compared, never embedded) — while the API key ships in source by design",
+    adminPresent151 === false && shipped151["src/wallet-core.js"].includes(CHAINFLIP_BAAS_API_KEY));
 }
 
 console.log(`\n${passed} checks passed`);

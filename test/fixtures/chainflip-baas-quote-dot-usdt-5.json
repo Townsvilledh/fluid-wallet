@@ -1,0 +1,83 @@
+[
+  {
+    "type": "regular",
+    "ingressAsset": "dot.hub",
+    "ingressAmount": 5,
+    "ingressAmountNative": "50000000000",
+    "intermediateAsset": "usdc.eth",
+    "intermediateAmount": 3.009091,
+    "intermediateAmountNative": "3009091",
+    "egressAsset": "usdt.bsc",
+    "egressAmount": 3.005020873250737064,
+    "egressAmountNative": "3005020873250737064",
+    "includedFees": [
+      {
+        "type": "ingress",
+        "asset": "dot.hub",
+        "amount": 0.01973,
+        "amountNative": "197300000"
+      },
+      {
+        "type": "network",
+        "asset": "usdc.eth",
+        "amount": 0.5,
+        "amountNative": "500000"
+      },
+      {
+        "type": "broker",
+        "asset": "usdc.eth",
+        "amount": 0.016642,
+        "amountNative": "16642"
+      },
+      {
+        "type": "egress",
+        "asset": "usdt.bsc",
+        "amount": 0.006169489575636886,
+        "amountNative": "6169489575636886"
+      },
+      {
+        "type": "liquidity",
+        "asset": "dot.hub",
+        "amount": 0,
+        "amountNative": "0"
+      },
+      {
+        "type": "liquidity",
+        "asset": "usdc.eth",
+        "amount": 0,
+        "amountNative": "0"
+      }
+    ],
+    "recommendedSlippageTolerancePercent": 0.5,
+    "recommendedRetryDurationInBlocks": 50,
+    "lowLiquidityWarning": true,
+    "poolInfo": [
+      {
+        "baseAsset": "dot.hub",
+        "quoteAsset": "usdc.eth",
+        "fee": {
+          "asset": "dot.hub",
+          "amount": 0,
+          "amountNative": "0"
+        }
+      },
+      {
+        "baseAsset": "usdt.bsc",
+        "quoteAsset": "usdc.eth",
+        "fee": {
+          "asset": "usdc.eth",
+          "amount": 0,
+          "amountNative": "0"
+        }
+      }
+    ],
+    "estimatedDurationSeconds": 111.225,
+    "estimatedDurationsSeconds": {
+      "deposit": 9,
+      "swap": 12,
+      "egress": 90.225
+    },
+    "estimatedPrice": 0.60462391854786466396,
+    "platform": "chainflip"
+  }
+]

@@ -185,11 +185,13 @@ a rate limit would burn quota and manufacture a verdict.
 - Polkadot Asset Hub became a swap destination on 2026-11-14
   (Chainflip, next-but-one section): BSC USDT or BNB in, DOT
   out at your own Asset Hub address, composable from any
-  origin that can reach a BSC anchor. DOT as a source is
-  quoted but not yet executable — and since 2026-11-17 the
-  inbound direction is PAUSED by the one-way trap gate
-  (next section): a route in whose value cannot swap back
-  out is not offered. The rail stays wired behind the gate.
+  origin that can reach a BSC anchor. DOT as a source became
+  executable on 2026-11-17 through Fluid's hosted Chainflip
+  broker (§151, same section) — during the hours before it
+  landed, the one-way trap gate (next section) paused the
+  inbound direction rather than offer a route in whose
+  value could not swap back out; the gate lifted Polkadot
+  by coverage the moment the exit wired, with no gate edit.
 - Arkade is a swap endpoint in its own right (2026-11-14) — see
   the next section.
 - Some source chains cannot be quoted from every network environment;
@@ -203,7 +205,10 @@ in and finds no swap path back has been trapped — their
 only exit would be a plain send to an external wallet.
 Two live traps made the rule: Stellar (1Click quoted in;
 no executable route out) and Polkadot (Chainflip executed
-in; DOT-out quoting-only until a broker is live).
+in; DOT-out quoting-only until a broker is live). Both
+exits shipped on 2026-11-17 (§150, §151 below), and the
+gate lifted both families from coverage alone — as of
+§151 no family Fluid offers is gated.
 
 - **The gate is data-driven, never a hand-maintained list.**
   A family "has an exit" when the planner's own pair
@@ -230,39 +235,50 @@ in; DOT-out quoting-only until a broker is live).
   gated family as the swap destination stands a plain
   warning in the sheet before any search, the no-route
   diagnosis answers with the pause itself ("Swaps into
-  Polkadot are paused in Fluid: Fluid can't swap back out
-  of Polkadot yet…"), and the family's token pages carry
-  the same note.
-- **Closed as destinations today (derived, 2026-11-17):**
-  polkadot — the one offered trap left — plus the
-  presence-only / intra-only chains whose inbound was
-  never offered and now cannot open as a trap either:
-  algorand, aurora, b2, bitlayer, core, cronoszkevm,
-  flare, filecoin, fuse, hedera, injectiveevm, kaia, kava,
-  moonriver, rootstock, seievm, stacks, tac, taiko, tezos.
+  <family> are paused in Fluid: Fluid can't swap back out
+  of <family> yet…"), and the family's token pages carry
+  the same note. The verdict arms only for a pair a rail
+  actually serves into a no-exit family — that set was
+  exactly {Stellar, Polkadot} and is empty since §151, so
+  the pause stands armed for the next inbound rail that
+  opens into a family without an exit.
+- **Closed as destinations today (derived, 2026-11-17,
+  post-§151):** none that was ever offered. The derived
+  closed set holds only the presence-only / intra-only
+  chains whose inbound was never offered and now cannot
+  open as a trap either: algorand, aurora, b2, bitlayer,
+  core, cronoszkevm, flare, filecoin, fuse, hedera,
+  injectiveevm, kaia, kava, moonriver, rootstock, seievm,
+  stacks, tac, taiko, tezos.
   (Full pair matrix: `research_notes/fluid-oneway-sweep-20261117/`.)
 - **Cardano is NOT closed.** Both 1Click directions are
   wired, so the gate passes it; its open caveat is
   separate and environmental — the unverified broadcast
   link (see the Cardano section), not coverage.
-- **The exits that reopen the two traps.** STELLAR-OUT IS
-  WIRED (2026-11-17, §150 — see the Stellar section): the
-  rail accepts Stellar as an origin in MEMO deposit mode,
-  the wiring flipped the planner's coverage predicates,
-  and the gate lifted Stellar from coverage alone — no
-  gate edit was made for it; the §150 pins prove the
-  inbound routes returned on the same derivation. DOT-out
-  still waits on a Chainflip broker: the hosted
-  Broker-as-a-Service (chainflip-broker.io) is the chosen
-  path and its registration is being driven separately; a
-  self-hosted broker was rejected (FLIP funding plus a
-  persistent node). Exit research: `research_notes/fluid-exit-research-20261117/`.
+- **The exits that reopened the two traps.** STELLAR-OUT
+  IS WIRED (2026-11-17, §150 — see the Stellar section):
+  the rail accepts Stellar as an origin in MEMO deposit
+  mode, the wiring flipped the planner's coverage
+  predicates, and the gate lifted Stellar from coverage
+  alone — no gate edit was made for it; the §150 pins
+  prove the inbound routes returned on the same
+  derivation. DOT-OUT IS WIRED (2026-11-17, §151 — see
+  the Polkadot section): Fluid's broker is the hosted
+  Broker-as-a-Service (chainflip-broker.io); a self-hosted
+  broker was rejected (FLIP funding plus a persistent
+  node). Its wiring flipped the one executability
+  predicate (`chainflipDirectionExecutable`), and the gate
+  lifted Polkadot from that alone — again no gate edit;
+  the §151 pins prove the DOT-out route executable and the
+  DOT-in routes returned. Exit research: `research_notes/fluid-exit-research-20261117/`.
 
 ## Polkadot as a swap destination (2026-11-14)
 
-> **2026-11-17:** swaps INTO Polkadot are paused by the
-> one-way trap gate (previous section) until DOT-out is
-> executable — the rail below stays wired behind the gate.
+> **2026-11-17 (§151):** DOT-out is executable through
+> Fluid's hosted Chainflip broker (below), so the one-way
+> trap gate has lifted Polkadot — swaps in are offered
+> again, and swaps out execute with Fluid's commission
+> verified twice before your DOT moves.
 
 DOT on Asset Hub joins the swap universe through Chainflip.
 Fluid already held, sent and received DOT; what was missing
@@ -301,23 +317,49 @@ refuses before funding.
 - **Fee capture.** Chainflip pays broker commission in
   bps, itemised as a BROKER fee in the quote and taken out
   of the output; Fluid's fee law applies under the Polkadot
-  ceiling ($0.30 total route cost). Collecting needs
-  Fluid's registered Chainflip broker account — an operator
-  setup item that is not live yet — so until it lands,
-  Chainflip routes quote with the fee at exactly zero and
-  the card's collecting flag says so. When the account is
-  registered, a fee-bearing quote must reconcile with the
-  fee-free one (commission itemised, output reduced by
-  about the commission) or no route is shown.
-- **DOT as a source is quoting only, for now.** Chainflip
-  serves DOT → BSC quotes, but a DOT deposit can only be
-  made through a deposit channel opened by a broker, and
-  the commission that carries Fluid's fee can only ride a
-  channel Fluid's own broker opened. Shipping the direction
-  without capture would break the rule that a surface that
-  cannot return Fluid's fees does not ship — so DOT-out
-  routes display their quote with the reason named and are
-  not tappable, until the broker is live. Bitcoin and
+  ceiling ($0.30 total route cost). The two directions
+  collect through different broker shapes. INTO DOT, the
+  commission names Fluid's registered Chainflip broker
+  account (an SS58 account) — an operator setup item that
+  is not live yet — so DOT-in routes quote with the fee at
+  exactly zero and the card's collecting flag says so,
+  honestly. OUT of DOT, capture is LIVE since 2026-11-17
+  (§151) through the hosted broker below, and is verified,
+  not assumed: the broker's fee-bearing quote must
+  reconcile with the fee-free protocol quote (commission
+  itemised, output reduced by about the commission) or no
+  route is shown, and the opened channel must echo the
+  commission in the broker's own record before any DOT
+  moves or nothing is sent.
+- **DOT as a source is executable (§151, 2026-11-17).** A
+  DOT deposit can only be made through a deposit channel
+  opened by a broker, and the commission that carries
+  Fluid's fee can only ride a channel Fluid's own broker
+  opened — so the channel is opened through Fluid's
+  hosted Broker-as-a-Service account (chainflip-broker.io).
+  Its API key ships in the app by design: it identifies
+  the broker and opens channels whose commission pays the
+  Ethereum address registered with the account (the
+  DripBot fee wallet); it cannot withdraw fees, move the
+  payout address, or lower the commission below the
+  registered rate, and the account's separate admin key
+  never ships (a test pin greps the shipped bundle for
+  it). Registration set Fluid's commission at 50 bps; the
+  service adds its own 5 bps operating fee, so the user
+  pays 55 bps total inside the one itemised BROKER fee and
+  Fluid earns 50/55 of it. Execution: the broker opens the
+  channel on the route's own terms (your BSC destination,
+  your own DOT account as the refund, a fill-or-kill
+  minimum price computed from the quote in exact decimal
+  math), Fluid reads the channel back and verifies the
+  recorded commission, deposit address and destination —
+  and only then signs the DOT deposit from your own Asset
+  Hub account. Any failed check sends nothing; an opened
+  channel simply expires unused. Floors are the protocol's
+  own (the DOT-source minimum measured 4 DOT on
+  2026-11-17; DOT→BSC liquidity is thin — larger sizes can
+  meet the protocol's insufficient-liquidity refusal,
+  which surfaces honestly as no route). Bitcoin and
   Lightning origins likewise do not compose into DOT yet:
   no rail in the planner carries their value into a BSC
   anchor.
