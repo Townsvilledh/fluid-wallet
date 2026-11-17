@@ -9720,18 +9720,20 @@ export async function getRelaySwapRoute(args) {
  * as the X-API-Key header and nothing else changes.
  *
  * FEE REALITY (live probes override 1Click's docs): asking
- * for F bps of app fee charges max(F, 20) bps TOTAL, split
- * with 1Click keeping max(20, F/2) — so at the fee law's
- * 50 bps target Fluid nets 25 bps, and asking for a small F
- * hoping for a small charge backfires (F=10 charges 25 total).
+ * for F bps of app fee charges a TOTAL of Fluid's echoed
+ * share plus 1Click's own share, 1Click keeping max(20, the
+ * other half) in the general class — so at the fee law's
+ * 50 bps target the total is 50 and Fluid nets 25, and
+ * asking for a small F hoping for a small charge backfires
+ * (F=10 charges 25 total: 5 to Fluid, 20 to 1Click).
  * oneClickFeeRequest is the exact inverse transform of the
- * law's target T (the TOTAL the user may be charged), with the
- * T<40 gross-up, and every charged quote's echoed appFees are
- * verified against the transform's prediction before the route
- * is offered as collecting: a mismatch (or a charged total
- * cost outside the destination ceiling) falls back to the
- * fee-free quote with collecting=false — an unverified capture
- * never ships (the TON collecting=false precedent). The
+ * law's target T (the TOTAL the user may be charged), with
+ * the T<40 gross-up, and every charged quote is verified by
+ * verifyOneClickFeeCharge before the route is offered as
+ * collecting: a mismatch (or a charged total cost outside
+ * the destination ceiling) falls back to the fee-free quote
+ * with collecting=false — an unverified capture never ships
+ * (the TON collecting=false precedent). The
  * stable/same-asset class (USDC->USDC, USDT->USDT) has a 1 bp
  * floor instead of 20, with the same halving split.
  * ONECLICK_FEE_RECIPIENT is build-time config — the implicit
@@ -9740,22 +9742,35 @@ export async function getRelaySwapRoute(args) {
  * unset, quotes run fee-free with collecting=false: the route
  * is live, the fee is honestly zero, never assumed (the
  * Chainflip broker precedent, CHAINFLIP_BROKER_ACCOUNT).
+ * It ships SET since §152 (see the constant).
  *
- * ECHO DRIFT (live re-probe 2026-11-17, §150): the API now
- * echoes a charged request as a SINGLE appFees entry —
- * Fluid's recipient at ceil(F/2) — on every origin probed
- * (Stellar, Base, NEAR). The second entry itemising 1Click's
- * half, present in the 2026-11-14 captures the echo verifier
- * was built against, is no longer returned. The documented
- * semantics are unchanged (a 50/50 split; 1Click's half
- * floored at 20 bps, 1 bp for the stable class), and the
- * transform's prediction of Fluid's NET still matches the
- * echoed entry exactly — what the echo no longer proves is
- * the TOTAL. verifyOneClickFeeEcho therefore fails charged
- * quotes against today's echo shape and the two-pass search
- * falls back to the fee-free quote: capture fails SAFE,
- * never unverified. Collection stays off until the recipient
- * config lands AND the echo is re-verified against it.
+ * ECHO DRIFT (live re-probe 2026-11-17, §150; resolved
+ * §152): the API now echoes a charged request as a SINGLE
+ * appFees entry — Fluid's recipient at ceil(F/2) — on every
+ * origin probed (Stellar, Base, NEAR). The second entry
+ * itemising 1Click's half, present in the 2026-11-14
+ * captures the echo verifier was built against, is no
+ * longer returned. The documented semantics are unchanged
+ * (a 50/50 split; 1Click's half floored at 20 bps, 1 bp for
+ * the stable class), and the transform's prediction of
+ * Fluid's NET still matches the echoed entry exactly — what
+ * the echo no longer proves is the TOTAL.
+ * verifyOneClickFeeEcho (the echo-only check) therefore
+ * still fails the new shape, by design. The two-pass search
+ * instead runs verifyOneClickFeeCharge (§152), which proves
+ * the total from the AMOUNTS: the fee-free pass's amountOut
+ * already embeds 1Click's standing floor (20 bps general,
+ * 1 bp stable — the 2026-11-14 fee-free captures echo
+ * exactly that entry), so turning the fee on must reduce
+ * the charged quote's amountOut by the predicted delta
+ * (expectedTotalBps minus the floor), measured live across
+ * seven fee levels on NEAR -> USDC (F=10..200: delta =
+ * F/2 at F<=40, F-20 above) and on the stable class
+ * (delta = total - 1). The old two-entry shape, if it ever
+ * reappears, still proves its total from the echo alone
+ * and is accepted on that path. Anything else — a fee
+ * pointed elsewhere, a short charge, amounts inconsistent
+ * with the claimed total — falls back fee-free.
  *
  * Stellar via 1Click (audit gap #9, 2026-11-15; ORIGIN
  * wired 2026-11-17, §150): INTO Stellar quotes through the
@@ -9795,11 +9810,16 @@ export async function getRelaySwapRoute(args) {
  * durations on the card, slow disclosure where slow. */
 export const ONECLICK_API = "https://1click.chaindefuser.com/v0";
 /** Build-time config: the implicit NEAR account (64-hex) of a
- *  Fluid fee key — every 1Click app fee settles there. Empty
- *  until the operator sets it (derive the fee wallet's NEAR
- *  address — the implicit hex of its key — and put it here);
- *  while empty, 1Click quotes run fee-free, collecting=false. */
-export const ONECLICK_FEE_RECIPIENT = "";
+ *  Fluid fee key — every 1Click app fee settles there. Set
+ *  since §152 (2026-11-17): the DripBot fee wallet's NEAR
+ *  implicit account, derived from that wallet's own seed via
+ *  Fluid's SLIP-0010 path (m/44'/397'/0'/0'/0' — the hex of
+ *  its NEAR public key, nearAddressFromPhrase) and proven by
+ *  cross-check: the same seed reproduces the wallet's
+ *  recorded EVM, Solana, Sui and Tron addresses exactly, and
+ *  an independent ed25519-hd-key derivation agrees. While it
+ *  were empty, 1Click quotes ran fee-free, collecting=false. */
+export const ONECLICK_FEE_RECIPIENT = "4c7f4d95f3be00ee018a54a3f3fd7b14eba920e56d0470b28f077677b202f1d4";
 /** Build-time config: the partner JWT from
  *  partners.near-intents.org, when the operator has one.
  *  Empty = keyless operation (the launch posture). */
@@ -9918,25 +9938,32 @@ export function oneClickSupportsPair(args) {
   return { from, to };
 }
 /** The exact inverse of 1Click's measured fee split (probe
- *  notes §6): given the fee law's target T — the TOTAL bps the
- *  user may be charged — the app-fee bps to REQUEST so the
- *  total lands exactly on T, and what Fluid then nets.
- *  General class: total = max(F, 20), Fluid nets F/2 (F>=40),
- *  T-20 (20<T<40, via the gross-up F = 2(T-20)), or nothing
- *  (T<=20: request 0 — the rail's own 20 bps floor rides
- *  inside the route cost either way, and requesting a small
- *  F would charge MORE than T). Stable class (same-symbol
- *  USDC/USDT pairs): the floor is 1 bp, so F = T nets T/2 for
- *  T>=2. Pure; pinned against the probe's measured table. */
+ *  notes §6; re-measured 2026-11-17, §152): given the fee
+ *  law's target T — the TOTAL bps the user may be charged —
+ *  the app-fee bps to REQUEST so the total lands exactly on
+ *  T, and what Fluid then nets. Fluid's echoed share is
+ *  ceil(F/2) at every F probed (10..200, both classes).
+ *  General class: Fluid nets F/2 (F>=40), T-20 (20<T<40, via
+ *  the gross-up F = 2(T-20)), or nothing (T<=20: request 0 —
+ *  the rail's own 20 bps floor rides inside the route cost
+ *  either way, and requesting a small F would charge MORE
+ *  than T). Stable class (same-symbol USDC/USDT pairs): the
+ *  floor is 1 bp, so F = T nets ceil(T/2) for T>=2.
+ *  expectedDeltaBps is the reduction the charge must show
+ *  in the charged quote's amountOut against the fee-free
+ *  quote's: the fee-free quote already embeds the rail's
+ *  standing floor (20 general / 1 stable), so the visible
+ *  delta is the total minus that floor (§152 probes). Pure;
+ *  pinned against the probes' measured tables. */
 export function oneClickFeeRequest(targetBps, { stablePair = false } = {}) {
   const T = Math.max(0, Math.floor(Number(targetBps) || 0));
   if (stablePair) {
-    if (T < 2) return { requestBps: 0, expectedTotalBps: 1, expectedFluidBps: 0, collecting: false };
-    return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.floor(T / 2), collecting: true };
+    if (T < 2) return { requestBps: 0, expectedTotalBps: 1, expectedFluidBps: 0, expectedDeltaBps: 0, collecting: false };
+    return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.ceil(T / 2), expectedDeltaBps: T - 1, collecting: true };
   }
-  if (T <= 20) return { requestBps: 0, expectedTotalBps: 20, expectedFluidBps: 0, collecting: false };
-  if (T < 40) return { requestBps: 2 * (T - 20), expectedTotalBps: T, expectedFluidBps: T - 20, collecting: true };
-  return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.floor(T / 2), collecting: true };
+  if (T <= 20) return { requestBps: 0, expectedTotalBps: 20, expectedFluidBps: 0, expectedDeltaBps: 0, collecting: false };
+  if (T < 40) return { requestBps: 2 * (T - 20), expectedTotalBps: T, expectedFluidBps: T - 20, expectedDeltaBps: T - 20, collecting: true };
+  return { requestBps: T, expectedTotalBps: T, expectedFluidBps: Math.ceil(T / 2), expectedDeltaBps: T - 20, collecting: true };
 }
 /** Verify a charged quote's echoed appFees against the
  *  transform's prediction: the response's quoteRequest.appFees
@@ -9944,7 +9971,12 @@ export function oneClickFeeRequest(targetBps, { stablePair = false } = {}) {
  *  Fluid's recipient must sum to Fluid's expected share. Any
  *  drift — a missing echo, a different split, a fee pointed
  *  elsewhere — fails verification and the route ships
- *  collecting=false on the fee-free quote instead. Pure. */
+ *  collecting=false on the fee-free quote instead. Pure.
+ *  This is the ECHO-ONLY check: it proves the total only
+ *  when the echo itemises every share (the 2026-11-14
+ *  two-entry shape). Today's single-entry echo fails it by
+ *  design — the two-pass search uses verifyOneClickFeeCharge
+ *  (§152), which adds the amounts proof. */
 export function verifyOneClickFeeEcho(quoteJson, expected, recipient) {
   const fees = quoteJson?.quoteRequest?.appFees;
   if (!Array.isArray(fees) || !expected || !recipient) return { ok: false, totalBps: 0, fluidBps: 0 };
@@ -9956,6 +9988,53 @@ export function verifyOneClickFeeEcho(quoteJson, expected, recipient) {
     if (String(f?.recipient || "").toLowerCase() === String(recipient).toLowerCase()) fluid += bps;
   }
   return { ok: total === expected.expectedTotalBps && fluid === expected.expectedFluidBps, totalBps: total, fluidBps: fluid };
+}
+/** Verify a CHARGED quote end to end (§152): Fluid's share
+ *  from the echo, the TOTAL from the echo when it itemises
+ *  every share (the pre-§150 two-entry shape) and otherwise
+ *  from the AMOUNTS — the charged quote's amountOut against
+ *  the fee-free pass's, for the same input. The fee-free
+ *  quote already embeds the rail's standing floor (20 bps
+ *  general / 1 bp stable), so the charged quote must come
+ *  back lighter by the transform's expectedDeltaBps, inside
+ *  a tolerance band sized from the measured solver-repricing
+ *  noise (max(8 bps, 20% of the delta): the 2026-11-17 burst
+ *  probes landed within ~3.5 bps of prediction at $5-$166,
+ *  and a fee dropped entirely or doubled lands far outside
+ *  the band). Any other shape — entries naming a third
+ *  party that do not sum to the total, a share pointed
+ *  elsewhere, amounts inconsistent with the claimed total —
+ *  fails, and the route ships collecting=false on the
+ *  fee-free quote. Pure. */
+export function verifyOneClickFeeCharge(chargedJson, freeJson, expected, recipient) {
+  const fail = { ok: false, totalBps: 0, fluidBps: 0, impliedDeltaBps: null, via: null };
+  const fees = chargedJson?.quoteRequest?.appFees;
+  if (!Array.isArray(fees) || !expected || !recipient) return fail;
+  let total = 0, fluid = 0;
+  for (const f of fees) {
+    const bps = Number(f?.fee);
+    if (!Number.isFinite(bps)) return fail;
+    total += bps;
+    if (String(f?.recipient || "").toLowerCase() === String(recipient).toLowerCase()) fluid += bps;
+  }
+  if (fluid !== expected.expectedFluidBps) return { ...fail, totalBps: total, fluidBps: fluid };
+  // The echo itemises the whole charge (the two-entry
+  // shape): the sum IS the total, proven by the echo alone.
+  if (total === expected.expectedTotalBps) return { ok: true, totalBps: total, fluidBps: fluid, impliedDeltaBps: null, via: "echo" };
+  // Today's shape echoes only Fluid's entry. Entries naming
+  // anyone else that do not sum to the total are a fee
+  // leaking somewhere unaccounted — fail, never guess.
+  if (total !== fluid) return { ...fail, totalBps: total, fluidBps: fluid };
+  let freeOut, chargedOut;
+  try {
+    freeOut = BigInt(String(freeJson?.quote?.amountOut ?? ""));
+    chargedOut = BigInt(String(chargedJson?.quote?.amountOut ?? ""));
+  } catch { return { ...fail, totalBps: total, fluidBps: fluid }; }
+  if (!(freeOut > 0n) || !(chargedOut > 0n)) return { ...fail, totalBps: total, fluidBps: fluid };
+  const impliedDeltaBps = Number((freeOut - chargedOut) * 1000000n / freeOut) / 100;
+  const tol = Math.max(8, 0.2 * (Number(expected.expectedDeltaBps) || 0));
+  const ok = Math.abs(impliedDeltaBps - (Number(expected.expectedDeltaBps) || 0)) <= tol;
+  return { ok, totalBps: ok ? expected.expectedTotalBps : total, fluidBps: fluid, impliedDeltaBps, via: "amounts" };
 }
 /** The quote request body (probe notes §2): EXACT_INPUT,
  *  SIMPLE deposit mode for every wired family but one (XRPL
@@ -10112,9 +10191,11 @@ export function parseOneClickQuote(json, ctx, fee = {}) {
  *  Relay two-pass discipline: pass 1 quotes fee-free and reads
  *  the route's own cost; the law's target T runs through the
  *  inverse transform; pass 2 re-quotes with the requested fee
- *  and its echo is verified field-by-field. Any failure of
- *  pass 2 or of the verification falls back to pass 1's
- *  executable fee-free quote with collecting=false. Returns
+ *  and the charge is verified end to end (verifyOneClickFeeCharge:
+ *  Fluid's share from the echo, the total from the echo or the
+ *  amounts). Any failure of pass 2 or of the verification falls
+ *  back to pass 1's executable fee-free quote with
+ *  collecting=false. Returns
  *  null when the pair is unsupported or unquotable; the
  *  below-minimum error propagates (it names the rail's floor). */
 export async function getOneClickSwapRoute(args, { feeRecipient = undefined, jwt = undefined, fetchImpl = null } = {}) {
@@ -10138,8 +10219,8 @@ export async function getOneClickSwapRoute(args, { feeRecipient = undefined, jwt
   try { charged = await fetchOneClickQuote(ctx, { feeRequest: transform, feeRecipient: cfg.feeRecipient, jwt: cfg.jwt, fetchImpl }); }
   catch { charged = null; }
   if (!charged) return firstRoute;
-  const echo = verifyOneClickFeeEcho(charged, transform, cfg.feeRecipient);
-  if (!echo.ok) return firstRoute;
+  const charge = verifyOneClickFeeCharge(charged, first, transform, cfg.feeRecipient);
+  if (!charge.ok) return firstRoute;
   const chargedRoute = parseOneClickQuote(charged, ctx, { collecting: true });
   if (!chargedRoute) return firstRoute;
   // The charged quote's total cost must still sit inside the

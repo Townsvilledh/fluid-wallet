@@ -1286,13 +1286,14 @@ rejected on measured bundle weight (+~2.75 MB, +43%).
   are slow-class by construction (the deposit must confirm
   on Cardano before the solver leg starts), so their cards
   floor at five minutes and never wear the fast badge.
-  **Echo drift (2026-11-17, §150):** the rail's echo has
-  since changed shape fleet-wide — a request of F bps now
-  echoes a single entry at F/2 (Fluid's net, matching the
-  transform) instead of the two entries summing to F, so
-  the shipped verifier no longer proves the total and
-  charged quotes fall back fee-free until the total is
-  re-proven. Full finding in the Stellar section.
+  **Echo drift (2026-11-17, §150; resolved §152):** the
+  rail's echo changed shape fleet-wide — a request of
+  F bps now echoes a single entry at ceil(F/2) (Fluid's
+  net, matching the transform) instead of the two entries
+  summing to F. The total is now proven from the quotes'
+  amounts (`verifyOneClickFeeCharge`) and the recipient
+  ships set, so ADA routes collect like the rest of the
+  fleet. Full finding in the Stellar section.
 - **Broadcast is the one unverified link.** Koios POST —
   including /submittx — never answered from the build
   environment (45–240 s windows, while its GETs answer in
@@ -1665,11 +1666,12 @@ builder.
   flow and echo verification as the families before it.
   Capture was probed live: the fee-50 echo verifies for ZEC
   in both directions and for DASH out (Fluid 25 / 1Click
-  25). Production collecting stays **false** fleet-wide
-  until the operator sets `ONECLICK_FEE_RECIPIENT` — the
-  same standing operator item as LTC/DOGE/BCH/ADA; the
-  mechanism ships proven and the display says collecting is
-  off, exactly as the existing families do.
+  25). Production collecting is **on** fleet-wide since
+  §152 — `ONECLICK_FEE_RECIPIENT` ships set to the DripBot
+  fee wallet's NEAR implicit account and the total is
+  proven from the quotes' amounts under the new
+  single-entry echo (`verifyOneClickFeeCharge`; see the
+  Stellar section for the full finding).
 - **Floors and speeds are 1Click's own, named before the
   user commits.** ZEC out: floor 0.00132 ZEC (~$1.22) at a
   ~457 s estimate — SLOW CLASS, disclosed as slow, never
@@ -1804,11 +1806,11 @@ cross-chain SOURCE rode 1Click too from §150 (below).
   $5 → 34.9064438 XLM, $20 → 142.9257757 XLM, ~52 s
   estimate, 1.1 XLM withdraw fee inside the quote). It is
   wired through the ordinary 1Click machinery — same
-  two-pass fee flow and echo verification as every family —
-  and its capture posture is the fleet-wide one:
-  **collecting=false until the operator sets
-  `ONECLICK_FEE_RECIPIENT`**, displayed exactly as the other
-  1Click families display it.
+  two-pass fee flow and charge verification as every
+  family — and its capture posture is the fleet-wide one:
+  **collecting since §152** (`ONECLICK_FEE_RECIPIENT` set,
+  the total proven from the amounts), displayed exactly as
+  the other 1Click families display it.
 - **Stellar OUT via 1Click is WIRED (§150, 2026-11-17).**
   The rail began accepting Stellar as an ORIGIN (its
   catalogue carries exactly two Stellar assets — XLM and
@@ -1832,30 +1834,50 @@ cross-chain SOURCE rode 1Click too from §150 (below).
   return to the sender's own Stellar address (a Stellar
   origin's refund address must be able to hold the asset
   — a real holder's own address does by construction).
-- **Capture on Stellar-origin routes: collecting=false,
-  honestly.** Same fleet-wide posture as every 1Click
-  route today — `ONECLICK_FEE_RECIPIENT` ships empty (no
-  NEAR-form fee address for the DripBot wallet exists in
-  the pinned records; none was invented), so the charged
-  pass never runs. **The fee-echo finding (live re-probe
-  2026-11-17):** requesting an appFee of F bps now echoes
-  back a SINGLE `appFees` entry naming Fluid's recipient
-  at ceil(F/2) — the two-entry echo summing to F (the
-  2026-11-14 captures) is no longer returned on any origin
-  probed (Stellar, Base, NEAR all behave the same). Per
-  1Click's fee-config docs the requested fee is split
-  50/50 with 1Click (its half floored at 20 bps, 1 bp for
-  the stable class), so Fluid's predicted NET (the
-  transform's `expectedFluidBps` = F/2) matches the echoed
-  entry exactly — but the echo no longer proves the TOTAL
-  was charged, so the shipped verifier
-  (`verifyOneClickFeeEcho`, which requires the two-entry
-  total) fails it and the two-pass search falls back to
-  the fee-free quote: fail-safe, never an unverified
-  charge. Re-proving the total (a fresh capture against a
-  configured recipient, or 1Click confirming the echo
-  contract) is the step that turns capture on for the
-  whole 1Click fleet at once.
+- **Capture on Stellar-origin routes: COLLECTING (§152,
+  2026-11-17).** `ONECLICK_FEE_RECIPIENT` ships set to the
+  DripBot fee wallet's NEAR implicit account — derived
+  from that wallet's own seed via Fluid's SLIP-0010 NEAR
+  path (the hex of its NEAR public key) and proven by the
+  seed reproducing the wallet's recorded EVM, Solana, Sui
+  and Tron addresses exactly, with an independent
+  ed25519-hd-key derivation agreeing. **The fee-echo
+  finding (live re-probe 2026-11-17, §150):** requesting
+  an appFee of F bps now echoes back a SINGLE `appFees`
+  entry naming Fluid's recipient at ceil(F/2) — the
+  two-entry echo summing to F (the 2026-11-14 captures) is
+  no longer returned on any origin probed (Stellar, Base,
+  NEAR all behave the same). Per 1Click's fee-config docs
+  the requested fee is split 50/50 with 1Click (its half
+  floored at 20 bps, 1 bp for the stable class), so
+  Fluid's predicted NET matches the echoed entry exactly —
+  but the echo alone no longer proves the TOTAL was
+  charged, and the echo-only verifier
+  (`verifyOneClickFeeEcho`) still fails the new shape by
+  design. **The resolution (§152):** the two-pass search
+  runs `verifyOneClickFeeCharge`, which proves the total
+  from the AMOUNTS — the fee-free quote already embeds
+  the rail's standing floor (20 bps general / 1 bp
+  stable, exactly the entry the 2026-11-14 fee-free
+  captures echo), so the charged quote's amountOut must
+  come back lighter than the fee-free quote's by the
+  predicted delta (total minus the floor), inside a
+  tolerance band sized from measured solver-repricing
+  noise. The amounts law was measured live across seven
+  fee levels (NEAR → USDC, F=10..200: delta = F/2 at
+  F≤40, F−20 above; stable class: delta = total − 1),
+  and the §152 fixtures are matched live capture pairs
+  (NEAR pair delta 33.28 vs predicted 30; stable pair
+  49.65 vs 49; the §150 XLM pair itself: 30.06 vs 30).
+  The old two-entry shape, if it reappears, still proves
+  its total from the echo alone and is accepted on that
+  path. Anything else — a fee pointed elsewhere, a short
+  charge, a third-party leak, amounts inconsistent with
+  the claimed total — falls back to the fee-free quote:
+  fail-safe, never an unverified charge. This switch-on
+  is fleet-wide: every 1Click family (NEAR, XRPL, LTC,
+  DOGE, BCH, ADA, ZEC, DASH, Stellar, Aptos and the hub
+  legs) collects under the same verification.
 
 ## Aptos CCTP V2 — the native USDC crossing (audit gap #10, 2026-11-15)
 

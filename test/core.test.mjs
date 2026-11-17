@@ -17126,12 +17126,13 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       fell.platformFeeCollecting === false && fell.oneclick.feeVerified === false && fell.provider === "oneclick");
     let calls = 0;
     const onePass = async () => { calls++; return jsonRes117(nofee); };
-    const free = await getOneClickSwapRoute(args117, { fetchImpl: onePass });
-    ok("oneclick capture: with no fee recipient configured the route ships fee-free in ONE pass (the shipped config state)",
+    const free = await getOneClickSwapRoute(args117, { feeRecipient: "", fetchImpl: onePass });
+    ok("oneclick capture: with the recipient seam empty the route ships fee-free in ONE pass",
       free.platformFeeCollecting === false && calls === 1);
-    ok("oneclick config: the fee recipient ships unset and the JWT unset — keyless launch, both addable as config",
-      ONECLICK_FEE_RECIPIENT === "" && oneClickConfig().feeRecipient === null && oneClickConfig().jwt === null
-      && oneClickConfig({ feeRecipient: FEE_RECIPIENT_117 }).feeRecipient === FEE_RECIPIENT_117);
+    ok("oneclick config: the fee recipient ships SET to the DripBot fee wallet's NEAR implicit account (§152) and the JWT unset — keyless launch",
+      ONECLICK_FEE_RECIPIENT === "4c7f4d95f3be00ee018a54a3f3fd7b14eba920e56d0470b28f077677b202f1d4" && oneClickConfig().feeRecipient === ONECLICK_FEE_RECIPIENT && oneClickConfig().jwt === null
+      && oneClickConfig({ feeRecipient: FEE_RECIPIENT_117 }).feeRecipient === FEE_RECIPIENT_117
+      && oneClickConfig({ feeRecipient: "" }).feeRecipient === null);
   }
 
   // The executor seam per family: a stubbed send captures
@@ -18068,8 +18069,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       route.platformFeeCollecting === true && route.platformFeeBps === 25 && route.oneclick.feeVerified === true && route.oneclick.requestedFeeBps === 50 && route.oneclick.totalFeeBps === 50);
     let calls = 0;
     const onePass = async () => { calls++; return jsonRes120(nofee); };
-    const free = await getOneClickSwapRoute(args120, { fetchImpl: onePass });
-    ok("cardano 1click capture: with no fee recipient configured the ADA route ships fee-free in ONE pass (the shipped config state)",
+    const free = await getOneClickSwapRoute(args120, { feeRecipient: "", fetchImpl: onePass });
+    ok("cardano 1click capture: with the recipient seam empty the ADA route ships fee-free in ONE pass",
       free.platformFeeCollecting === false && calls === 1);
     let floorErr = null;
     const floorFetch = async () => jsonRes120(fixture120("quote-ada-out-1-nofee.json"), false, 400);
@@ -19718,8 +19719,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     ok("oneclick gap8 capture: ZEC-out two-pass verifies and collects 25 bps at the 457 s estimate",
       bodies.length === 2 && route.platformFeeCollecting === true && route.platformFeeBps === 25
       && route.oneclick.feeVerified === true && route.executionDuration === 457);
-    const free = await getOneClickSwapRoute(zecArgs, { fetchImpl: async () => jsonRes128(nofee) });
-    ok("oneclick gap8 capture: with no recipient configured (the shipped state) the ZEC route ships fee-free",
+    const free = await getOneClickSwapRoute(zecArgs, { feeRecipient: "", fetchImpl: async () => jsonRes128(nofee) });
+    ok("oneclick gap8 capture: with the recipient seam empty the ZEC route ships fee-free",
       free.platformFeeCollecting === false && free.provider === "oneclick");
     // Floors: the tiny-quote bodies are 1Click's own minimums.
     const floorFetch = (msg) => async () => jsonRes128({ message: msg }, false, 400);
@@ -23119,7 +23120,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && oneClickFeeRequest(50).expectedFluidBps === 25);
   {
     const v = verifyOneClickFeeEcho(fxOutFee, { expectedTotalBps: 50, expectedFluidBps: 25 }, FEE_RECIPIENT150);
-    ok("§150: Fluid's predicted NET matches the echoed entry exactly (25 of 50) — but the echo no longer proves the TOTAL, so the shipped verifier fails it and capture falls back fee-free, never unverified",
+    ok("§150: Fluid's predicted NET matches the echoed entry exactly (25 of 50) — but the echo ALONE no longer proves the TOTAL, so the echo-only verifier fails it (§152's charge verifier adds the amounts proof; the pin below carries the collecting state)",
       v.fluidBps === 25 && v.ok === false);
     const bodies150 = [];
     const twoPass150 = async (url, opts) => {
@@ -23129,15 +23130,102 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     const charged = await getOneClickSwapRoute(
       { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
       { feeRecipient: FEE_RECIPIENT150, fetchImpl: twoPass150 });
-    ok("§150: with a recipient configured, a Stellar-origin route still ships collecting=false on today's echo — the fee-free quote stands (ONECLICK_FEE_RECIPIENT also ships empty, so the charged pass does not run in production at all)",
-      !!charged && charged.platformFeeCollecting === false && charged.oneclick.feeVerified === false);
+    ok("§152: with a recipient configured, a Stellar-origin route now COLLECTS on today's echo — the single entry proves Fluid's share and the pair's amountOut delta (30.06 bps) proves the total (the §150 fail-safe state, superseded by the charge verifier)",
+      !!charged && charged.platformFeeCollecting === true && charged.oneclick.feeVerified === true && charged.platformFeeBps === 25 && charged.oneclick.totalFeeBps === 50);
     let calls150 = 0;
     const free = await getOneClickSwapRoute(
       { fromChainKey: "stellar", toChainKey: "base", fromTokenAddress: "xlm", toTokenAddress: BASE_USDC150, fromAmount: "1000000000", fromAddress: STELLAR_OWN150, toAddress: EVM150 },
-      { fetchImpl: async () => { calls150++; return jsonRes150(freshFx(fxOut)); } });
-    ok("§150: in the shipped config (no fee recipient) the Stellar-origin route ships fee-free in ONE pass, collecting=false — the route is live, the fee honestly zero",
+      { feeRecipient: "", fetchImpl: async () => { calls150++; return jsonRes150(freshFx(fxOut)); } });
+    ok("§150: with the recipient seam empty the Stellar-origin route ships fee-free in ONE pass, collecting=false — the route is live, the fee honestly zero (the shipped config sets the recipient since §152; its block carries the collecting state)",
       !!free && free.platformFeeCollecting === false && calls150 === 1);
   }
+}
+
+// §152 — 1CLICK CAPTURE SWITCHED ON (2026-11-17). Two
+// halves: ONECLICK_FEE_RECIPIENT ships set to the DripBot
+// fee wallet's NEAR implicit account (derived from that
+// wallet's own seed via the wallet's SLIP-0010 NEAR path —
+// the hex of its NEAR public key — and proven by the seed
+// reproducing the wallet's recorded EVM/Solana/Sui/Tron
+// addresses exactly, plus an independent ed25519-hd-key
+// derivation agreeing), and verifyOneClickFeeCharge proves
+// the TOTAL under today's single-entry echo from the
+// amounts. Fixtures are LIVE captures of 2026-11-17 taken
+// seconds apart with the real recipient in the request.
+{
+  const { ONECLICK_FEE_RECIPIENT, oneClickConfig, oneClickFeeRequest, verifyOneClickFeeCharge,
+    getOneClickSwapRoute } = await import("../src/wallet-core.js");
+  const fixture152 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const clone152 = (x) => JSON.parse(JSON.stringify(x));
+  const jsonRes152 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const RECIP152 = ONECLICK_FEE_RECIPIENT;
+  const EVM152 = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const USDC_BASE152 = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  // Captures are served with a fresh deadline (the §150
+  // freshFx pattern) so the pins never rot on the clock.
+  const freshFx152 = (fx) => { const c = clone152(fx); c.quote.deadline = new Date(Date.now() + 864e5).toISOString(); return c; };
+
+  ok("§152: ONECLICK_FEE_RECIPIENT ships set to the DripBot fee wallet's NEAR implicit account — 64-hex, the hex of its recorded NEAR public key (SLIP-0010 m/44'/397'/0'/0'/0') — and the config seam resolves it",
+    RECIP152 === "4c7f4d95f3be00ee018a54a3f3fd7b14eba920e56d0470b28f077677b202f1d4"
+    && /^[0-9a-f]{64}$/.test(RECIP152) && oneClickConfig().feeRecipient === RECIP152);
+  ok("§152: the transform predicts the visible amountOut delta — the total minus the rail's standing floor (general 20, stable 1)",
+    oneClickFeeRequest(50).expectedDeltaBps === 30 && oneClickFeeRequest(30).expectedDeltaBps === 10
+    && oneClickFeeRequest(200).expectedDeltaBps === 180 && oneClickFeeRequest(40).expectedDeltaBps === 20
+    && oneClickFeeRequest(50, { stablePair: true }).expectedDeltaBps === 49 && oneClickFeeRequest(10, { stablePair: true }).expectedDeltaBps === 9);
+  ok("§152: Fluid's echoed share rounds UP at odd requests (ceil(F/2), as probed live at F=7/25/45) — the transform's net prediction matches the echo at odd targets too",
+    oneClickFeeRequest(45).expectedFluidBps === 23 && oneClickFeeRequest(45, { stablePair: true }).expectedFluidBps === 23
+    && oneClickFeeRequest(50).expectedFluidBps === 25 && oneClickFeeRequest(39).expectedFluidBps === 19);
+
+  const nearFree152 = fixture152("oneclick-near-out-20261117-nofee.json");
+  const nearFee152 = fixture152("oneclick-near-out-20261117-fee50.json");
+  const t50 = oneClickFeeRequest(50);
+  const vNear152 = verifyOneClickFeeCharge(nearFee152, nearFree152, t50, RECIP152);
+  ok("§152: the live NEAR charged quote verifies — the echo proves Fluid's 25 and the amounts prove the total (the pair's delta sits in the predicted band)",
+    vNear152.ok === true && vNear152.via === "amounts" && vNear152.fluidBps === 25 && vNear152.totalBps === 50
+    && Math.abs(vNear152.impliedDeltaBps - 30) <= 8);
+  const stFree152 = fixture152("oneclick-usdc-base-eth-20261117-nofee.json");
+  const stFee152 = fixture152("oneclick-usdc-base-eth-20261117-fee50.json");
+  const vSt152 = verifyOneClickFeeCharge(stFee152, stFree152, oneClickFeeRequest(50, { stablePair: true }), RECIP152);
+  ok("§152: the live stable-class charged quote verifies the same way (delta = total - 1)",
+    vSt152.ok === true && vSt152.via === "amounts" && vSt152.fluidBps === 25 && Math.abs(vSt152.impliedDeltaBps - 49) <= 9.8);
+
+  const wrongRecip152 = clone152(nearFee152); wrongRecip152.quoteRequest.appFees[0].recipient = "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd";
+  ok("§152: an echo naming a different recipient fails — a fee pointed away from Fluid is never collected on",
+    verifyOneClickFeeCharge(wrongRecip152, nearFree152, t50, RECIP152).ok === false);
+  const wrongBps152 = clone152(nearFee152); wrongBps152.quoteRequest.appFees[0].fee = 20;
+  ok("§152: an echo at the wrong bps fails (Fluid's share short of the transform's prediction)",
+    verifyOneClickFeeCharge(wrongBps152, nearFree152, t50, RECIP152).ok === false);
+  const leak152 = clone152(nearFee152); leak152.quoteRequest.appFees.push({ recipient: "1111111111111111111111111111111111111111111111111111111111111111", fee: 5 });
+  ok("§152: an extra entry leaking fee to a third party fails — shares that do not sum to the claimed total are unaccounted, never shipped",
+    verifyOneClickFeeCharge(leak152, nearFree152, t50, RECIP152).ok === false);
+  const noDelta152 = clone152(nearFee152); noDelta152.quote.amountOut = nearFree152.quote.amountOut;
+  ok("§152: amounts inconsistent with the claimed total fail — a 'charged' quote costing the user nothing extra proves nothing was charged",
+    verifyOneClickFeeCharge(noDelta152, nearFree152, t50, RECIP152).ok === false);
+  const bigDelta152 = clone152(nearFee152); bigDelta152.quote.amountOut = String(BigInt(nearFree152.quote.amountOut) * 9000n / 10000n);
+  ok("§152: an amountOut delta far beyond the claimed total fails too — an over-charge is a verification failure, not a bonus",
+    verifyOneClickFeeCharge(bigDelta152, nearFree152, t50, RECIP152).ok === false);
+
+  const RECIP117_152 = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+  const oldFee152 = fixture152("quote-near-out-fee50.json");
+  const oldFree152 = fixture152("quote-near-out-nofee.json");
+  const vOld152 = verifyOneClickFeeCharge(oldFee152, oldFree152, t50, RECIP117_152);
+  ok("§152: the pre-§150 two-entry echo, if it reappears, still verifies — its entries itemise the total, so the echo alone proves it",
+    vOld152.ok === true && vOld152.via === "echo" && vOld152.totalBps === 50 && vOld152.fluidBps === 25);
+  const oldSwapped152 = clone152(oldFee152); oldSwapped152.quoteRequest.appFees[0].recipient = "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd";
+  ok("§152: the two-entry shape with Fluid's entry repointed at 1Click's account fails — Fluid's share is gone, whatever the sum",
+    verifyOneClickFeeCharge(oldSwapped152, oldFree152, t50, RECIP117_152).ok === false);
+
+  const args152 = { fromChainKey: "near", toChainKey: "base", fromTokenAddress: "near", toTokenAddress: USDC_BASE152, fromAmount: "5000000000000000000000000", fromAddress: RECIP152, toAddress: EVM152 };
+  const bodies152 = [];
+  const twoPass152 = async (url, opts) => { const b = JSON.parse(opts.body); bodies152.push(b); return jsonRes152(Array.isArray(b.appFees) && b.appFees.length ? freshFx152(nearFee152) : freshFx152(nearFree152)); };
+  const route152 = await getOneClickSwapRoute(args152, { fetchImpl: twoPass152 });
+  ok("§152: in the SHIPPED config (no seam override) the two-pass search requests the fee to the shipped recipient and the route COLLECTS — 25 of 50, charge verified end to end",
+    bodies152.length === 2 && bodies152[1].appFees?.[0]?.recipient === RECIP152 && bodies152[1].appFees?.[0]?.fee === 50
+    && route152.platformFeeCollecting === true && route152.platformFeeBps === 25 && route152.oneclick.feeVerified === true && route152.oneclick.totalFeeBps === 50);
+  const twoPassBad152 = async (url, opts) => { const b = JSON.parse(opts.body); if (Array.isArray(b.appFees) && b.appFees.length) { const t = freshFx152(nearFee152); t.quote.amountOut = nearFree152.quote.amountOut; return jsonRes152(t); } return jsonRes152(freshFx152(nearFree152)); };
+  const fell152 = await getOneClickSwapRoute(args152, { fetchImpl: twoPassBad152 });
+  ok("§152: when the amounts contradict the claimed total, the search falls back to the fee-free quote — collecting=false, the route itself still live",
+    fell152.platformFeeCollecting === false && fell152.oneclick.feeVerified === false && fell152.provider === "oneclick");
 }
 
 // §151 — DOT-OUT VIA THE CHAINFLIP BROKER-AS-A-SERVICE
