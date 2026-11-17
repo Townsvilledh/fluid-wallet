@@ -149,6 +149,14 @@ export const NETWORKS = {
   ethereum: {
     name: "Ethereum", chainId: 1, symbol: "ETH", priceSym: "ETH",
     rpc: "https://ethereum-rpc.publicnode.com", explorer: "https://etherscan.io",
+    rpcs: [
+      "https://ethereum-rpc.publicnode.com",
+      "https://eth.drpc.org",
+      "https://1rpc.io/eth",
+      "https://eth.merkle.io",
+      "https://eth-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://eth.drpc.org",
     tokens: [USDC("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), USDT("0xdAC17F958D2ee523a2206206994597C13D831ec7")],
   },
   bsc: {
@@ -175,69 +183,173 @@ export const NETWORKS = {
       "https://bsc-dataseed2.binance.org",
     ],
     rpcFallback: "https://bsc-dataseed.binance.org/",
-    tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18)],
+    // BTCB (Binance's bridged Bitcoin, 18 dp) is curated since
+    // 2026-11-17: as a scan-only token its balance waited on the
+    // CoinGecko list + a multi-thousand Multicall scan and painted
+    // in ~30–60 s while BNB painted instantly (the owner's live
+    // benchmark). Curated, it rides the same first read as
+    // USDC/USDT. The contract is the swap-picker ranking pin
+    // (0x7130d2A1…, see the picker section).
+    tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18),
+      { symbol: "BTCB", address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", decimals: 18 }],
   },
+  // Endpoint deepening (2026-11-17, loading-speed round 2): the
+  // chains below carried ONE read endpoint each (Base two), so a
+  // single endpoint's burst refusal or hang decided the whole
+  // family's paint. Each now carries 4–6 keyless public endpoints
+  // across independent operators (PublicNode, dRPC, 1RPC,
+  // BlastAPI, Merkle, and the chains' own official nodes), raced
+  // by withEvmProvider (see the resilience section): the first
+  // good answer wins, so depth converts directly into the 1–2 s
+  // balance-paint standard. `rpc` stays the historical primary;
+  // the lists only widen the rotation.
   base: {
     name: "Base", chainId: 8453, symbol: "ETH", priceSym: "ETH",
     rpc: "https://base-rpc.publicnode.com", explorer: "https://basescan.org",
     // Fallback for the balance read (live-verified 2026-11-08: HTTP 200,
     // CORS allows the Fluid origin): same 429 story as BNB Chain.
+    rpcs: [
+      "https://base-rpc.publicnode.com",
+      "https://mainnet.base.org",
+      "https://base.drpc.org",
+      "https://1rpc.io/base",
+      "https://base-mainnet.public.blastapi.io",
+    ],
     rpcFallback: "https://mainnet.base.org",
     tokens: [USDC("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), USDT("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2")],
   },
   arbitrum: {
     name: "Arbitrum", chainId: 42161, symbol: "ETH", priceSym: "ETH",
     rpc: "https://arbitrum-one-rpc.publicnode.com", explorer: "https://arbiscan.io",
+    rpcs: [
+      "https://arbitrum-one-rpc.publicnode.com",
+      "https://arb1.arbitrum.io/rpc",
+      "https://arbitrum.drpc.org",
+      "https://1rpc.io/arb",
+      "https://arb-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://arb1.arbitrum.io/rpc",
     tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")],
   },
   optimism: {
     name: "OP Mainnet", chainId: 10, symbol: "ETH", priceSym: "ETH",
     rpc: "https://optimism-rpc.publicnode.com", explorer: "https://optimistic.etherscan.io",
+    rpcs: [
+      "https://optimism-rpc.publicnode.com",
+      "https://mainnet.optimism.io",
+      "https://optimism.drpc.org",
+      "https://1rpc.io/op",
+      "https://op-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://mainnet.optimism.io",
     tokens: [USDC("0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"), USDT("0x94b008aA00579c1307B0EF2c499aD98a8ce58e58")],
   },
   polygon: {
     name: "Polygon", chainId: 137, symbol: "POL", priceSym: "POL",
     rpc: "https://polygon-bor-rpc.publicnode.com", explorer: "https://polygonscan.com",
+    rpcs: [
+      "https://polygon-bor-rpc.publicnode.com",
+      "https://polygon-rpc.com",
+      "https://polygon.drpc.org",
+      "https://1rpc.io/matic",
+      "https://polygon-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://polygon-rpc.com",
     tokens: [USDC("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"), USDT("0xc2132D05D31c914a87C6611C10748AEb04B58e8F")],
   },
   avalanche: {
     name: "Avalanche", chainId: 43114, symbol: "AVAX", priceSym: "AVAX",
     rpc: "https://avalanche-c-chain-rpc.publicnode.com", explorer: "https://snowtrace.io",
+    rpcs: [
+      "https://avalanche-c-chain-rpc.publicnode.com",
+      "https://api.avax.network/ext/bc/C/rpc",
+      "https://avalanche.drpc.org",
+      "https://1rpc.io/avax/c",
+      "https://avalanche-c-chain-rpc.public.blastapi.io",
+    ],
+    rpcFallback: "https://api.avax.network/ext/bc/C/rpc",
     tokens: [USDC("0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"), USDT("0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7")],
   },
   zksync: {
     name: "zkSync Era", chainId: 324, symbol: "ETH", priceSym: "ETH",
     rpc: "https://mainnet.era.zksync.io", explorer: "https://era.zksync.network",
+    rpcs: [
+      "https://mainnet.era.zksync.io",
+      "https://zksync.drpc.org",
+      "https://1rpc.io/zksync2-era",
+      "https://zksync-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://zksync.drpc.org",
     tokens: [USDC("0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"), USDT("0x493257fD37EDB34451f62EDf8D2a0C418852bA4c")],
   },
   linea: {
     name: "Linea", chainId: 59144, symbol: "ETH", priceSym: "ETH",
     rpc: "https://linea-rpc.publicnode.com", explorer: "https://lineascan.build",
+    rpcs: [
+      "https://linea-rpc.publicnode.com",
+      "https://rpc.linea.build",
+      "https://linea.drpc.org",
+      "https://1rpc.io/linea",
+    ],
+    rpcFallback: "https://rpc.linea.build",
     tokens: [USDC("0x176211869cA2b568f2A7D4EE941E073a821EE1ff"), USDT("0xA219439258ca9da29E9Cc4cE5596924745e12B93")],
   },
   scroll: {
     name: "Scroll", chainId: 534352, symbol: "ETH", priceSym: "ETH",
     rpc: "https://scroll-rpc.publicnode.com", explorer: "https://scrollscan.com",
+    rpcs: [
+      "https://scroll-rpc.publicnode.com",
+      "https://rpc.scroll.io",
+      "https://scroll.drpc.org",
+      "https://scroll-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://rpc.scroll.io",
     tokens: [],
   },
   mantle: {
     name: "Mantle", chainId: 5000, symbol: "MNT", priceSym: "MNT",
     rpc: "https://rpc.mantle.xyz", explorer: "https://mantlescan.xyz",
+    rpcs: [
+      "https://rpc.mantle.xyz",
+      "https://mantle-rpc.publicnode.com",
+      "https://mantle.drpc.org",
+      "https://1rpc.io/mantle",
+    ],
+    rpcFallback: "https://mantle-rpc.publicnode.com",
     tokens: [],
   },
   gnosis: {
     name: "Gnosis", chainId: 100, symbol: "xDAI", priceSym: "DAI",
     rpc: "https://gnosis-rpc.publicnode.com", explorer: "https://gnosisscan.io",
+    rpcs: [
+      "https://gnosis-rpc.publicnode.com",
+      "https://rpc.gnosischain.com",
+      "https://gnosis.drpc.org",
+      "https://1rpc.io/gnosis",
+    ],
+    rpcFallback: "https://rpc.gnosischain.com",
     tokens: [],
   },
   celo: {
     name: "Celo", chainId: 42220, symbol: "CELO", priceSym: "CELO",
     rpc: "https://forno.celo.org", explorer: "https://celoscan.io",
+    rpcs: [
+      "https://forno.celo.org",
+      "https://celo.drpc.org",
+      "https://1rpc.io/celo",
+      "https://celo-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://celo.drpc.org",
     tokens: [USDC("0xcebA9300f2b948710d2653dD7B07f33A8B32118C"), USDT("0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e")],
   },
   fuse: {
     name: "Fuse", chainId: 122, symbol: "FUSE", priceSym: null,
     rpc: "https://rpc.fuse.io", explorer: "https://explorer.fuse.io",
+    rpcs: [
+      "https://rpc.fuse.io",
+      "https://fuse.drpc.org",
+    ],
+    rpcFallback: "https://fuse.drpc.org",
     tokens: [],
   },
   // B² Network (Bitcoin L2) is pinned as a built-in, live-verified
@@ -394,6 +506,8 @@ export const NETWORKS = {
     rpcs: [
       "https://public-node.rsk.co",
       "https://mycrypto.rsk.co",
+      "https://rootstock.drpc.org",
+      "https://rootstock-mainnet.public.blastapi.io",
     ],
     rpcFallback: "https://mycrypto.rsk.co",
     tokens: [USDT("0x779dED0C9e1022225F8e0630b35A9B54Be713736")],
@@ -409,6 +523,11 @@ export const NETWORKS = {
   flare: {
     name: "Flare", chainId: 14, symbol: "FLR", priceSym: "FLR",
     rpc: "https://flare.drpc.org", explorer: "https://flare-explorer.flare.network",
+    rpcs: [
+      "https://flare.drpc.org",
+      "https://flare-api.flare.network/ext/C/rpc",
+    ],
+    rpcFallback: "https://flare-api.flare.network/ext/C/rpc",
     tokens: [USDT("0xe7cd86e13ac4309349f30b3435a9d337750fc82d")],
   },
   // Kaia (8217): presence only. Relay refuses the chain
@@ -420,6 +539,12 @@ export const NETWORKS = {
   kaia: {
     name: "Kaia", chainId: 8217, symbol: "KAIA", priceSym: "KAIA",
     rpc: "https://kaia.drpc.org", explorer: "https://kaiscan.io",
+    rpcs: [
+      "https://kaia.drpc.org",
+      "https://public-en.node.kaia.io",
+      "https://kaia-mainnet.public.blastapi.io",
+    ],
+    rpcFallback: "https://public-en.node.kaia.io",
     tokens: [],
   },
   // Filecoin FEVM (314): presence only; no rail lists it
@@ -429,6 +554,11 @@ export const NETWORKS = {
   filecoin: {
     name: "Filecoin", chainId: 314, symbol: "FIL", priceSym: "FIL",
     rpc: "https://filecoin.drpc.org", explorer: "https://filfox.info",
+    rpcs: [
+      "https://filecoin.drpc.org",
+      "https://api.node.glif.io/rpc/v1",
+    ],
+    rpcFallback: "https://api.node.glif.io/rpc/v1",
     tokens: [],
   },
   // Taiko (167000): presence only. Across refuses it
@@ -438,6 +568,12 @@ export const NETWORKS = {
   taiko: {
     name: "Taiko", chainId: 167000, symbol: "ETH", priceSym: "ETH",
     rpc: "https://taiko.drpc.org", explorer: "https://taikoscan.io",
+    rpcs: [
+      "https://taiko.drpc.org",
+      "https://rpc.mainnet.taiko.xyz",
+      "https://taiko-rpc.publicnode.com",
+    ],
+    rpcFallback: "https://rpc.mainnet.taiko.xyz",
     tokens: [],
   },
   // Core (1116): presence only; no rail lists it anywhere
@@ -446,6 +582,11 @@ export const NETWORKS = {
   core: {
     name: "Core", chainId: 1116, symbol: "CORE", priceSym: "CORE",
     rpc: "https://rpc.coredao.org", explorer: "https://scan.coredao.org",
+    rpcs: [
+      "https://rpc.coredao.org",
+      "https://core.drpc.org",
+    ],
+    rpcFallback: "https://core.drpc.org",
     tokens: [],
   },
   // Kava (2222): presence only. OpenOcean's token list
@@ -456,6 +597,11 @@ export const NETWORKS = {
   kava: {
     name: "Kava", chainId: 2222, symbol: "KAVA", priceSym: "KAVA",
     rpc: "https://kava.drpc.org", explorer: "https://kavascan.io",
+    rpcs: [
+      "https://kava.drpc.org",
+      "https://evm.kava.io",
+    ],
+    rpcFallback: "https://evm.kava.io",
     tokens: [USDT("0x919C1c267BC06a7039e03fcc2eF738525769109c")],
   },
   // Cronos zkEVM (388): presence only; no rail lists it.
@@ -466,6 +612,11 @@ export const NETWORKS = {
   cronoszkevm: {
     name: "Cronos zkEVM", chainId: 388, symbol: "zkCRO", priceSym: "CRO",
     rpc: "https://cronos-zkevm.drpc.org", explorer: "https://explorer.zkevm.cronos.org",
+    rpcs: [
+      "https://cronos-zkevm.drpc.org",
+      "https://mainnet.zkevm.cronos.org",
+    ],
+    rpcFallback: "https://mainnet.zkevm.cronos.org",
     tokens: [],
   },
   // Aurora (1313161554): presence only. OpenOcean's token
@@ -476,6 +627,11 @@ export const NETWORKS = {
   aurora: {
     name: "Aurora", chainId: 1313161554, symbol: "ETH", priceSym: "ETH",
     rpc: "https://aurora.drpc.org", explorer: "https://explorer.aurora.dev",
+    rpcs: [
+      "https://aurora.drpc.org",
+      "https://mainnet.aurora.dev",
+    ],
+    rpcFallback: "https://mainnet.aurora.dev",
     tokens: [USDC("0xB12BFcA5A55806AaF64E99521918A4bf0fC40802"), USDT("0x4988a896b1227218e4A686fdE5EabdcAbd91571f")],
   },
   // Moonriver (1285): presence only. OpenOcean's token list
@@ -487,6 +643,11 @@ export const NETWORKS = {
   moonriver: {
     name: "Moonriver", chainId: 1285, symbol: "MOVR", priceSym: "MOVR",
     rpc: "https://moonriver.drpc.org", explorer: "https://moonriver.moonscan.io",
+    rpcs: [
+      "https://moonriver.drpc.org",
+      "https://rpc.api.moonriver.moonbeam.network",
+    ],
+    rpcFallback: "https://rpc.api.moonriver.moonbeam.network",
     tokens: [],
   },
   // Bitlayer (200901): presence only; no rail lists it.
@@ -612,15 +773,65 @@ export function resetEvmRpcHealth() {
   _evmRpcGood.clear();
 }
 
+/** Hedged race across a list of async attempts (loading-speed
+ *  round 2, 2026-11-17): attempt 0 starts at once; the next
+ *  attempt starts when the previous one fails OR when it has had
+ *  `staggerMs` without settling — the first success wins and the
+ *  rest are abandoned (their late rejections are swallowed by the
+ *  attempt wrappers). Sequential failover made one hung endpoint
+ *  cost its whole timeout before the healthy endpoint behind it
+ *  was even asked; racing makes endpoint depth convert directly
+ *  into answer latency. When every attempt fails, the LAST error
+ *  is thrown — the honesty contract is unchanged. */
+async function raceEndpointAttempts(attempts, staggerMs) {
+  if (!attempts.length) throw new Error("No endpoint attempts to race.");
+  if (attempts.length === 1) return attempts[0]();
+  return await new Promise((resolve, reject) => {
+    let started = 0, settled = 0, finished = false, lastErr = null, timer = null;
+    const startNext = () => {
+      if (finished || started >= attempts.length) return;
+      const idx = started++;
+      let p;
+      try { p = Promise.resolve(attempts[idx]()); } catch (e) { p = Promise.reject(e); }
+      p.then(
+        (out) => { if (finished) return; finished = true; if (timer) clearTimeout(timer); resolve(out); },
+        (err) => {
+          if (finished) return;
+          // A DEFINITIVE chain answer (noRotate — e.g. NEAR's
+          // UNKNOWN_ACCOUNT) ends the race at once: every other
+          // endpoint would say the same, and asking them would
+          // only delay the verdict (and break the family's
+          // exactly-one-endpoint-asked contract).
+          if (err && err.noRotate) { finished = true; if (timer) clearTimeout(timer); reject(err); return; }
+          settled++; lastErr = err;
+          if (settled >= attempts.length) { finished = true; reject(lastErr || new Error("Every endpoint attempt failed.")); return; }
+          if (started === settled) startNext(); // all in-flight attempts failed — pull the next forward now
+        },
+      );
+      if (started < attempts.length) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(startNext, staggerMs);
+        if (timer && typeof timer.unref === "function") timer.unref();
+      }
+    };
+    startNext();
+  });
+}
+/** The hedge stagger for endpoint races: long enough that a
+ *  healthy first endpoint is normally the ONLY call made (the
+ *  2026-11-14 rotation pins demand exactly that), short enough
+ *  that a hung first endpoint costs a fraction of a second
+ *  before its sibling is asked. */
+export const EVM_RACE_STAGGER_MS = 300;
+
 /** One JSON-RPC POST (a single request object, or a batch
- *  array) against a network's read endpoints, rotating as
+ *  array) against a network's read endpoints, racing as
  *  described above. Returns the parsed reply. Throws the last
  *  error when every endpoint fails. */
 export async function evmRpcFetchJson(networkKey, body, { timeoutMs = 20000 } = {}) {
   const urls = evmRpcOrder(networkKey);
   if (!urls.length) throw new Error("No RPC endpoint is configured for " + networkKey + ".");
-  let lastErr = null;
-  for (const url of urls) {
+  const attempts = urls.map((url) => async () => {
     try {
       const res = await fetch(url, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -634,9 +845,9 @@ export async function evmRpcFetchJson(networkKey, body, { timeoutMs = 20000 } = 
       if (Array.isArray(body) && !Array.isArray(data)) throw new Error("RPC batch reply was not an array from " + url);
       evmRpcNoteSuccess(networkKey, url);
       return data;
-    } catch (e) { lastErr = e; evmRpcNoteFailure(url); }
-  }
-  throw lastErr || new Error("Every RPC endpoint failed for " + networkKey + ".");
+    } catch (e) { evmRpcNoteFailure(url); throw e; }
+  });
+  return raceEndpointAttempts(attempts, EVM_RACE_STAGGER_MS);
 }
 
 /** Per-attempt budget for one endpoint inside withEvmProvider
@@ -649,30 +860,42 @@ export async function evmRpcFetchJson(networkKey, body, { timeoutMs = 20000 } = 
  *  just another rotation trigger. 30 s leaves room for the slow
  *  but real ~25 s Multicall-class calls the sweep captured. */
 export const EVM_PROVIDER_ATTEMPT_TIMEOUT_MS = 30000;
-/** Run `fn` against an ethers provider built on the first of
- *  the network's read endpoints that serves it, rotating on
- *  any throw — including an attempt that outlives its budget.
- *  `fn` must be a pure read: on rotation it is re-run from the
- *  start against the next endpoint. Throws the last error when
- *  every endpoint fails. */
+/** Per-attempt budget for the BALANCE read (loading-speed round
+ *  2, 2026-11-17): the owner's standard is every held balance
+ *  painted live within 1–2 s of open. A balance attempt is a
+ *  handful of parallel calls (readBalances fans its token reads
+ *  out), so a healthy endpoint answers it in well under this
+ *  budget; an endpoint that cannot is raced past, not waited
+ *  out. Long reads (token scans) keep the 30 s default above —
+ *  they pass no budget and are not held to the paint standard. */
+export const BALANCE_READ_ATTEMPT_MS = 2500;
+/** Run `fn` against an ethers provider built on the network's
+ *  read endpoints, RACED (loading-speed round 2): the first
+ *  endpoint starts at once, the next starts when the previous
+ *  fails or has had EVM_RACE_STAGGER_MS without settling, and
+ *  the first success wins. Each attempt still races its own
+ *  budget (attemptTimeoutMs); a timeout is a rotation trigger,
+ *  as before. `fn` must be a pure read: it may run on several
+ *  endpoints at once and is re-run from the start per attempt.
+ *  Throws the last error when every endpoint fails. */
 export async function withEvmProvider(networkKey, fn, { attemptTimeoutMs = EVM_PROVIDER_ATTEMPT_TIMEOUT_MS } = {}) {
   const net = NETWORKS[networkKey];
   if (!net) throw new Error("Unknown network: " + networkKey);
   const urls = evmRpcOrder(networkKey);
   if (!urls.length) throw new Error("No RPC endpoint is configured for " + networkKey + ".");
-  let lastErr = null;
-  for (const url of urls) {
+  const attempts = urls.map((url) => async () => {
+    // staticNetwork: the registry already pins the chainId, and
+    // a provider left polling network detection after a refusal
+    // (ethers retries it every second, forever) is a battery
+    // and bandwidth leak on a phone — a refused endpoint must
+    // fail its read fast and let rotation move on.
+    const attempt = (async () => fn(new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true })))();
+    // A timed-out or losing attempt keeps running in the
+    // background and may reject later; that rejection is
+    // expected, never a crash.
+    attempt.catch(() => {});
+    let timer = null;
     try {
-      // staticNetwork: the registry already pins the chainId, and
-      // a provider left polling network detection after a refusal
-      // (ethers retries it every second, forever) is a battery
-      // and bandwidth leak on a phone — a refused endpoint must
-      // fail its read fast and let rotation move on.
-      const attempt = (async () => fn(new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true })))();
-      // A timed-out attempt keeps running in the background and
-      // may reject later; that rejection is expected, never a crash.
-      attempt.catch(() => {});
-      let timer = null;
       const out = await Promise.race([
         attempt,
         new Promise((_, reject) => {
@@ -680,12 +903,12 @@ export async function withEvmProvider(networkKey, fn, { attemptTimeoutMs = EVM_P
           if (timer && typeof timer.unref === "function") timer.unref();
         }),
       ]);
-      if (timer) clearTimeout(timer);
       evmRpcNoteSuccess(networkKey, url);
       return out;
-    } catch (e) { lastErr = e; evmRpcNoteFailure(url); }
-  }
-  throw lastErr || new Error("Every RPC endpoint failed for " + networkKey + ".");
+    } catch (e) { evmRpcNoteFailure(url); throw e; }
+    finally { if (timer) clearTimeout(timer); }
+  });
+  return raceEndpointAttempts(attempts, EVM_RACE_STAGGER_MS);
 }
 
 /* ---------- Family endpoint rotation (2026-11-14 silent-zero fix) ----------
@@ -723,25 +946,62 @@ export function familyRpcOrder(key, urls, now = Date.now()) {
   const tail = list.filter(u => !head.includes(u) && cooling(u));
   return [...head, ...mid, ...tail];
 }
+/** Per-attempt budget for family BALANCE reads (loading-speed
+ *  round 2, 2026-11-17): the same 1–2 s paint standard as the
+ *  EVM read. Read wrappers pass it to withFamilyEndpoints, which
+ *  then RACES the family's endpoints (first good answer wins)
+ *  instead of walking them one timeout at a time. Callers that
+ *  pass no budget (sends, broadcasts, claims — anything whose
+ *  attempt must run to its own conclusion exactly once) keep
+ *  the sequential rotation below, byte for byte. */
+export const FAMILY_READ_ATTEMPT_MS = 2500;
 /** Run `attempt(url)` against a family's endpoints in rotation
  *  order until one returns; rethrows the last error when every
  *  endpoint throws. An attempt error carrying `noRotate` is a
  *  DEFINITIVE chain answer (e.g. NEAR's UNKNOWN_ACCOUNT): it is
- *  rethrown at once — every other endpoint would say the same. */
-export async function withFamilyEndpoints(key, urls, attempt) {
+ *  rethrown at once — every other endpoint would say the same.
+ *  With `{ attemptTimeoutMs }` (balance reads), the attempts
+ *  instead race under that per-attempt budget: a timed-out
+ *  attempt counts as a failure and is cooled down, and a
+ *  `noRotate` error still wins instantly over the race. */
+export async function withFamilyEndpoints(key, urls, attempt, { attemptTimeoutMs = 0 } = {}) {
   const order = familyRpcOrder(key, urls);
   if (!order.length) throw new Error("No endpoint is configured for " + key + ".");
+  const noteOk = (url) => { _familyRpcGood.set(key, { url, at: Date.now() }); _familyRpcCooldown.delete(key + "|" + url); };
+  const noteBad = (url) => { _familyRpcCooldown.set(key + "|" + url, Date.now() + FAMILY_RPC_COOLDOWN_MS); };
+  if (attemptTimeoutMs > 0 && order.length > 1) {
+    const attempts = order.map((url) => async () => {
+      let timer = null;
+      try {
+        const p = (async () => attempt(url))();
+        p.catch(() => {}); // a losing/timed-out attempt may reject later — expected, never a crash
+        const out = await Promise.race([
+          p,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Family read timed out on " + url)), attemptTimeoutMs);
+            if (timer && typeof timer.unref === "function") timer.unref();
+          }),
+        ]);
+        noteOk(url);
+        return out;
+      } catch (e) {
+        if (e && e.noRotate) throw e;
+        noteBad(url);
+        throw e;
+      } finally { if (timer) clearTimeout(timer); }
+    });
+    return raceEndpointAttempts(attempts, EVM_RACE_STAGGER_MS);
+  }
   let lastErr = null;
   for (const url of order) {
     try {
       const out = await attempt(url);
-      _familyRpcGood.set(key, { url, at: Date.now() });
-      _familyRpcCooldown.delete(key + "|" + url);
+      noteOk(url);
       return out;
     } catch (e) {
       if (e && e.noRotate) throw e;
       lastErr = e;
-      _familyRpcCooldown.set(key + "|" + url, Date.now() + FAMILY_RPC_COOLDOWN_MS);
+      noteBad(url);
     }
   }
   throw lastErr || new Error("Every endpoint failed for " + key + ".");
@@ -847,19 +1107,25 @@ export function validatePassword(pw) {
 
 async function readBalances(wallet, networkKey, provider) {
   const net = NETWORKS[networkKey];
-  const out = [];
-  const native = await provider.getBalance(wallet.address);
-  out.push({ symbol: net.symbol, amount: ethers.formatEther(native), address: null });
-  for (const t of net.tokens) {
-    // GAP-1: a listed token that IS the chain's native-asset
-    // predeploy (Arc's USDC) is the same funds as the native row
-    // above — never emit it as a second row, or totals double.
-    if (isNativePredeploy(net.chainId, t.address)) continue;
-    const c = new ethers.Contract(t.address, ERC20, provider);
-    const bal = await c.balanceOf(wallet.address);
-    out.push({ symbol: t.symbol, amount: ethers.formatUnits(bal, t.decimals), address: t.address, decimals: t.decimals });
-  }
-  return out;
+  // The native read and every curated-token read are independent
+  // calls: they fly together (loading-speed round 2, 2026-11-17).
+  // Sequentially awaited, one slow token's round trip stacked on
+  // the native's and the whole attempt outlived the balance
+  // budget on endpoints that were merely ordinary, not dead.
+  const tokens = net.tokens.filter(t => !isNativePredeploy(net.chainId, t.address));
+  const [native, tokenBals] = await Promise.all([
+    provider.getBalance(wallet.address),
+    Promise.all(tokens.map(async (t) => {
+      const c = new ethers.Contract(t.address, ERC20, provider);
+      const bal = await c.balanceOf(wallet.address);
+      return { symbol: t.symbol, amount: ethers.formatUnits(bal, t.decimals), address: t.address, decimals: t.decimals };
+    })),
+  ]);
+  // GAP-1: a listed token that IS the chain's native-asset
+  // predeploy (Arc's USDC) is the same funds as the native row —
+  // never emit it as a second row, or totals double (the filter
+  // above drops it before any call is made for it).
+  return [{ symbol: net.symbol, amount: ethers.formatEther(native), address: null }, ...tokenBals];
 }
 
 export async function getBalances(wallet, networkKey) {
@@ -871,8 +1137,11 @@ export async function getBalances(wallet, networkKey) {
   // through withEvmProvider and rotates across the network's
   // whole endpoint list before failing. When every endpoint
   // fails the read throws: a failed read must surface as
-  // "couldn't load", never as a zero.
-  return withEvmProvider(networkKey, (provider) => readBalances(wallet, networkKey, provider));
+  // "couldn't load", never as a zero. The balance read carries
+  // the tight per-attempt budget (BALANCE_READ_ATTEMPT_MS): it
+  // is the read the 1–2 s paint standard is measured on.
+  return withEvmProvider(networkKey, (provider) => readBalances(wallet, networkKey, provider),
+    { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS });
 }
 
 /** The home-screen greeting (Ethuram's requirement, 2026-11-06): the
@@ -1417,22 +1686,30 @@ const BLOCKSTREAM = "https://blockstream.info/api";
  *  precedent). Fallback verified live 2026-11-08: Blockstream's
  *  /address/ answered HTTP 200 for a bc1q address with the Fluid
  *  origin (BlockCypher's BTC balance endpoint also answered 200). */
+/** Per-source budget for the Bitcoin balance race (loading-
+ *  speed round 2, 2026-11-17): this fetch previously carried NO
+ *  timeout at all — a hung Esplora host stalled the BTC row
+ *  indefinitely. Both hosts are now asked under this budget and
+ *  RACED; the first finite answer wins. */
+export const BTC_BALANCE_FETCH_MS = 2500;
 export async function getBitcoinBalance(address) {
-  for (const base of [MEMPOOL, BLOCKSTREAM]) {
-    try {
-      const res = await fetch(`${base}/address/${address}`);
-      if (!res.ok) continue;
-      const d = await res.json();
-      const funded = Number(d?.chain_stats?.funded_txo_sum) + Number(d?.mempool_stats?.funded_txo_sum || 0);
-      const spent = Number(d?.chain_stats?.spent_txo_sum) + Number(d?.mempool_stats?.spent_txo_sum || 0);
-      const bal = (funded - spent) / 1e8;
-      // A body that parses but carries no real sums is a FAILED
-      // source (the arithmetic is NaN), never a balance — fall
-      // through to the next source; both failing throws above.
-      if (Number.isFinite(bal)) return bal;
-    } catch { /* this source failed — try the next one */ }
+  const read = async (base) => {
+    const res = await fetch(`${base}/address/${address}`, { signal: AbortSignal.timeout(BTC_BALANCE_FETCH_MS) });
+    if (!res.ok) throw new Error("Bitcoin balance HTTP " + res.status + " from " + base);
+    const d = await res.json();
+    const funded = Number(d?.chain_stats?.funded_txo_sum) + Number(d?.mempool_stats?.funded_txo_sum || 0);
+    const spent = Number(d?.chain_stats?.spent_txo_sum) + Number(d?.mempool_stats?.spent_txo_sum || 0);
+    const bal = (funded - spent) / 1e8;
+    // A body that parses but carries no real sums is a FAILED
+    // source (the arithmetic is NaN), never a balance.
+    if (!Number.isFinite(bal)) throw new Error("Bitcoin balance reply carried no sums from " + base);
+    return bal;
+  };
+  try {
+    return await raceEndpointAttempts([MEMPOOL, BLOCKSTREAM].map((base) => () => read(base)), EVM_RACE_STAGGER_MS);
+  } catch {
+    throw new Error("Bitcoin balance lookup failed.");
   }
-  throw new Error("Bitcoin balance lookup failed.");
 }
 
 /* Fee-rate resolution (audit H1, 2026-11-06): a fee oracle is an input
@@ -1976,14 +2253,20 @@ export function parseBlockcypherBalance(d) {
  *  answers from a browser Origin — verified live 2026-11-08 from the
  *  live Fluid origin, where dogechain/chain.so are CORS-blocked —
  *  which is why it is the fallback for both UTXO altcoin reads. */
+/** Per-fetch budget for the UTXO altcoin balance reads
+ *  (loading-speed round 2, 2026-11-17): these fetches carried no
+ *  timeout at all, so one hung host stalled its row past every
+ *  standard. The fallback chain still decides the outcome — a
+ *  timed-out primary simply reaches its fallback sooner. */
+export const UTXO_READ_FETCH_MS = 2500;
 async function blockcypherBalance(coin, address) {
-  const res = await fetch(`https://api.blockcypher.com/v1/${coin}/main/addrs/${address}/balance`);
+  const res = await fetch(`https://api.blockcypher.com/v1/${coin}/main/addrs/${address}/balance`, { signal: AbortSignal.timeout(UTXO_READ_FETCH_MS) });
   if (!res.ok) throw new Error("BlockCypher balance lookup failed (HTTP " + res.status + ").");
   return parseBlockcypherBalance(await res.json());
 }
 export async function getLitecoinBalance(address) {
   try {
-    const res = await fetch(`${LTC_API}/address/${address}`);
+    const res = await fetch(`${LTC_API}/address/${address}`, { signal: AbortSignal.timeout(UTXO_READ_FETCH_MS) });
     if (!res.ok) throw new Error("Litecoin balance lookup failed (HTTP " + res.status + ").");
     const d = await res.json();
     const funded = Number(d?.chain_stats?.funded_txo_sum) + Number(d?.mempool_stats?.funded_txo_sum || 0);
@@ -2099,7 +2382,7 @@ export const DOGE_MIN_OUTPUT = 0.01;
 const DOGECHAIN_API = "https://dogechain.com/api";
 export async function getDogecoinBalance(address) {
   try {
-    const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`);
+    const res = await fetch(`${DOGECHAIN_API}/v1/address/balance/${address}`, { signal: AbortSignal.timeout(UTXO_READ_FETCH_MS) });
     const d = await res.json();
     const bal = d?.balance ?? d?.data?.balance;
     if (bal == null || !Number.isFinite(Number(bal))) throw new Error("Dogecoin balance lookup failed.");
@@ -2266,7 +2549,7 @@ export function parseBlockchairDashboard(d) {
 }
 async function fetchBlockchairDashboard(chain, address) {
   const res = await fetch(`https://api.blockchair.com/${chain}/dashboards/address/${encodeURIComponent(address)}`,
-    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(UTXO_READ_FETCH_MS) });
   const d = await res.json().catch(() => null);
   if (!res.ok || !d || d.data == null) throw new Error(`Blockchair ${chain} read failed (HTTP ${res.status}).`);
   return parseBlockchairDashboard(d);
@@ -2939,7 +3222,7 @@ export function buildSignedBchTx({ inputs, outputs, privateKey, publicKey, ownSc
 
 const HASKOIN_BCH = "https://api.haskoin.com/bch"; // keyless, verified live 2026-11-06
 export async function getBitcoinCashBalance(address) {
-  const res = await fetch(`${HASKOIN_BCH}/address/${address}/balance`);
+  const res = await fetch(`${HASKOIN_BCH}/address/${address}/balance`, { signal: AbortSignal.timeout(UTXO_READ_FETCH_MS) });
   if (!res.ok) throw new Error("Bitcoin Cash balance lookup failed (HTTP " + res.status + ").");
   const d = await res.json();
   if (d?.confirmed == null) throw new Error("Bitcoin Cash balance lookup failed.");
@@ -3646,10 +3929,10 @@ export function isValidTronAddress(address) {
 export function tronSunToTrx(sun) { return ethers.formatUnits(BigInt(sun), 6); }
 export function tronTrxToSun(amount) { return ethers.parseUnits(String(amount), 6); }
 
-async function tronPost(path, body) {
+async function tronPost(path, body, timeoutMs = 20000) {
   const res = await fetch(TRONGRID + path, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+    body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error("Tron network error (HTTP " + res.status + ").");
@@ -3670,7 +3953,7 @@ async function tronTrc20Balance(ownerAddress, token) {
   const data = await tronPost("/wallet/triggerconstantcontract", {
     owner_address: ownerHex, contract_address: tronAddressToHex(token.address),
     function_selector: "balanceOf(address)", parameter,
-  });
+  }, FAMILY_READ_ATTEMPT_MS);
   const out = data && data.constant_result && data.constant_result[0];
   if (!out) throw new Error("Empty Tron balance reply.");
   return BigInt("0x" + out);
@@ -3682,7 +3965,7 @@ async function tronTrc20Balance(ownerAddress, token) {
 export async function getTronBalances(address) {
   if (!isValidTronAddress(address)) throw new Error("That is not a valid Tron address.");
   const out = [{ symbol: "TRX", amount: "0", address: null, decimals: 6 }];
-  const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(20000) });
+  const res = await fetch(`${TRONGRID}/v1/accounts/${address}`, { signal: AbortSignal.timeout(FAMILY_READ_ATTEMPT_MS) });
   if (!res.ok) throw new Error("Tron balance lookup failed (HTTP " + res.status + ").");
   const data = await res.json().catch(() => null);
   // A 200 with an unreadable body is a FAILED read, not an empty
@@ -3848,23 +4131,33 @@ export function solSolToLamports(amount) { return ethers.parseUnits(String(amoun
  *  time. */
 const SOLANA_RPCS = ["https://solana-rpc.publicnode.com", SOLANA_RPC];
 let _solRpcGood = 0;
+/** Pure-read methods race the endpoint pair under the family
+ *  read budget (loading-speed round 2, 2026-11-17). Writes
+ *  (sendTransaction) and simulations keep the sequential walk —
+ *  a submission must happen exactly once, in order. */
+const SOLANA_RACY_METHODS = new Set(["getBalance", "getAccountInfo", "getTokenAccountsByOwner", "getSignatureStatuses", "getLatestBlockhash", "getRecentPrioritizationFees"]);
 async function solanaRpc(method, params) {
+  const attempt = (idx, timeoutMs) => async () => {
+    const res = await fetch(SOLANA_RPCS[idx], {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new Error("Solana network error (HTTP " + res.status + ").");
+    const data = await res.json().catch(() => null);
+    if (!data) throw new Error("Solana returned an unreadable reply.");
+    if (data.error) throw new Error("Solana rejected the request: " + (data.error.message || "unknown error"));
+    _solRpcGood = idx;
+    return data.result;
+  };
+  if (SOLANA_RACY_METHODS.has(method) && SOLANA_RPCS.length > 1) {
+    const order = SOLANA_RPCS.map((_, n) => (_solRpcGood + n) % SOLANA_RPCS.length);
+    return raceEndpointAttempts(order.map(idx => attempt(idx, FAMILY_READ_ATTEMPT_MS)), EVM_RACE_STAGGER_MS);
+  }
   let lastErr = null;
   for (let n = 0; n < SOLANA_RPCS.length; n++) {
     const idx = (_solRpcGood + n) % SOLANA_RPCS.length;
-    try {
-      const res = await fetch(SOLANA_RPCS[idx], {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) throw new Error("Solana network error (HTTP " + res.status + ").");
-      const data = await res.json().catch(() => null);
-      if (!data) throw new Error("Solana returned an unreadable reply.");
-      if (data.error) throw new Error("Solana rejected the request: " + (data.error.message || "unknown error"));
-      _solRpcGood = idx;
-      return data.result;
-    } catch (e) { lastErr = e; }
+    try { return await attempt(idx, 20000)(); } catch (e) { lastErr = e; }
   }
   throw lastErr || new Error("Solana network error.");
 }
@@ -4490,7 +4783,7 @@ async function horizonJson(path) {
         throw err;
       }
       return { status: res.status, data };
-    });
+    }, { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS });
   } catch (e) {
     if (e && e.horizonResult) return e.horizonResult;
     throw e;
@@ -4793,7 +5086,7 @@ async function cosmosRestJson(chain, path) {
     const data = await res.json().catch(() => null);
     if (!data) throw new Error(`${chain.name} returned an unreadable reply.`);
     return data;
-  });
+  }, { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS });
 }
 export function cosmosChain(chainKey) {
   return COSMOS_CHAINS.find(c => c.key === chainKey) || null;
@@ -28758,10 +29051,10 @@ export async function getSolanaTokenBalance(address, mint = null, decimals = 6) 
 
 // ----- Sui: every coin type, via the public GraphQL endpoint -----
 const SUI_GRAPHQL = "https://graphql.mainnet.sui.io/graphql";
-async function suiGraphql(query) {
+async function suiGraphql(query, timeoutMs = 20000) {
   const res = await fetch(SUI_GRAPHQL, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }), signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({ query }), signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error("Sui network error (HTTP " + res.status + ").");
   const data = await res.json().catch(() => null);
@@ -28807,7 +29100,7 @@ export async function getSuiAllBalances(address) {
   while (pages < 4) {
     const after = cursor ? `, after: ${JSON.stringify(cursor)}` : "";
     const data = await suiGraphql(
-      `query { address(address: ${JSON.stringify(owner)}) { balances(first: 50${after}) { nodes { coinType { repr } totalBalance } pageInfo { hasNextPage endCursor } } } }`);
+      `query { address(address: ${JSON.stringify(owner)}) { balances(first: 50${after}) { nodes { coinType { repr } totalBalance } pageInfo { hasNextPage endCursor } } } }`, FAMILY_READ_ATTEMPT_MS);
     const conn = data && data.address && data.address.balances;
     if (!conn) break;
     for (const n of conn.nodes || []) {
@@ -29636,7 +29929,7 @@ export function nearIsImplicit(address) { return /^[0-9a-f]{64}$/.test(String(ad
 export function nearYoctoToNear(yocto) { return ethers.formatUnits(BigInt(yocto), 24); }
 export function nearNearToYocto(amount) { return ethers.parseUnits(String(amount), 24); }
 
-async function nearRpc(method, params) {
+async function nearRpc(method, params, { readRace = false } = {}) {
   return withFamilyEndpoints("near", NEAR_RPCS, async (url) => {
     const res = await fetch(url, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -29658,10 +29951,10 @@ async function nearRpc(method, params) {
       throw err;
     }
     return data.result;
-  });
+  }, readRace ? { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS } : {});
 }
 async function nearQuery(requestType, args) {
-  return nearRpc("query", { request_type: requestType, finality: "final", ...args });
+  return nearRpc("query", { request_type: requestType, finality: "final", ...args }, { readRace: true });
 }
 function nearQueryErrorIs(error, name) {
   return error?.nearCause === name || String(error?.message || "").includes(name);
@@ -29972,7 +30265,7 @@ async function algodJson(path) {
         throw err;
       }
       return { status: res.status, data };
-    });
+    }, { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS });
   } catch (e) {
     if (e && e.algodResult) return e.algodResult;
     throw e;
@@ -30252,8 +30545,8 @@ export function tezosXtzToMutez(amount) { return ethers.parseUnits(String(amount
 
 /** One TzKT read (keyless). Throws on transport/HTTP failure —
  *  a failed read is "couldn't load", never a zero. */
-async function tzktJson(path) {
-  const res = await fetch(TZKT_API + path, { signal: AbortSignal.timeout(20000) });
+async function tzktJson(path, timeoutMs = 20000) {
+  const res = await fetch(TZKT_API + path, { signal: AbortSignal.timeout(timeoutMs) });
   const data = await res.json().catch(() => null);
   if (!res.ok || data == null) throw new Error("Tezos read failed (HTTP " + res.status + ").");
   return data;
@@ -30295,10 +30588,10 @@ export function parseTezosBalances(acctData, tokenData) {
 /** The full Tezos account state via TzKT. */
 export async function getTezosAccount(address) {
   if (!isValidTezosAddress(address)) throw new Error("That is not a valid Tezos address.");
-  const acct = await tzktJson("/accounts/" + address);
+  const acct = await tzktJson("/accounts/" + address, FAMILY_READ_ATTEMPT_MS);
   let tokens = [];
   try {
-    const t = await tzktJson("/tokens/balances?account=" + address + "&balance.gt=0&limit=1000");
+    const t = await tzktJson("/tokens/balances?account=" + address + "&balance.gt=0&limit=1000", FAMILY_READ_ATTEMPT_MS);
     if (Array.isArray(t)) tokens = t;
   } catch { /* token list is additive — the native read already landed */ }
   return parseTezosBalances(acct, tokens);
@@ -30573,8 +30866,8 @@ export function hederaTinyToWei(tiny) { return BigInt(tiny) * 10000000000n; }
 /** One mirror-node read. 404 is a state (account not yet
  *  created), returned not thrown; anything else failing
  *  throws — a failed read is "couldn't load", never a zero. */
-async function hederaMirrorJson(path) {
-  const res = await fetch(HEDERA_MIRROR_API + path, { signal: AbortSignal.timeout(20000) });
+async function hederaMirrorJson(path, timeoutMs = 20000) {
+  const res = await fetch(HEDERA_MIRROR_API + path, { signal: AbortSignal.timeout(timeoutMs) });
   if (res.status === 404) return { status: 404, data: null };
   const data = await res.json().catch(() => null);
   if (!res.ok || data == null) throw new Error("Hedera read failed (HTTP " + res.status + ").");
@@ -30603,7 +30896,7 @@ export function parseHederaAccount(data) {
  *  USDT[hts], which is never verified and never the pin. */
 export async function getHederaAccount(address) {
   const id = hederaNormalizeAddress(address) || String(address || "").trim();
-  const { status, data } = await hederaMirrorJson("/accounts/" + id);
+  const { status, data } = await hederaMirrorJson("/accounts/" + id, FAMILY_READ_ATTEMPT_MS);
   const acct = status === 404 ? { exists: false, accountId: null, hbarTiny: "0", tokens: [] } : parseHederaAccount(data);
   const balances = [{ symbol: "HBAR", name: "Hedera", amount: hederaTinyToHbar(acct.hbarTiny), address: null, decimals: 8, verified: true }];
   let usdcAmount = "0";
@@ -30616,7 +30909,7 @@ export async function getHederaAccount(address) {
   for (const t of others) {
     let meta = null;
     try {
-      const r = await hederaMirrorJson("/tokens/" + t.tokenId);
+      const r = await hederaMirrorJson("/tokens/" + t.tokenId, FAMILY_READ_ATTEMPT_MS);
       if (r.data) meta = { symbol: r.data.symbol || null, name: r.data.name || null, decimals: Number(r.data.decimals ?? 0) };
     } catch { /* the row still surfaces, labelled by id */ }
     const decimals = meta && Number.isFinite(meta.decimals) ? meta.decimals : 0;
@@ -31120,7 +31413,7 @@ export function withDeadline(promise, ms, label) {
  *  On timeout the cached promise is dropped, so the next call
  *  retries fresh instead of awaiting the same corpse. The
  *  deadline is a parameter so tests can drive it short. */
-export function dotApi(timeoutMs = 30000) {
+export function dotApi(timeoutMs = 12000) {
   if (!dotApiPromise) {
     const attempt = (async () => {
       const { ApiPromise, HttpProvider, cryptoWaitReady } = await loadPolkadotSdk();
@@ -31143,7 +31436,7 @@ function dotNativeRow(amount) {
  *  community assets; Fluid checks the two verified stables — the
  *  chain gives no cheap "all assets of one account" query without
  *  an indexer, and inventing one from partial data would lie. */
-export async function getDotAccount(address, timeoutMs = 30000) {
+export async function getDotAccount(address, timeoutMs = 12000) {
   await loadPolkadotSdk();
   if (!isValidDotAddress(address)) throw new Error("That is not a valid Polkadot address.");
   const api = await dotApi(timeoutMs);
@@ -31387,7 +31680,7 @@ export function aptosAmountToRaw(amount, decimals = 8) { return ethers.parseUnit
  *  non-OK status — including a fullnode 500 — came back as data
  *  null and several readers read that as "account doesn't
  *  exist": a quiet zero by another door.) */
-async function aptosRest(path, { method = "GET", body = null } = {}) {
+async function aptosRest(path, { method = "GET", body = null, raceRead = false } = {}) {
   try {
     return await withFamilyEndpoints("aptos", APTOS_NODES, async (base) => {
       const res = await fetch(base + path, {
@@ -31403,7 +31696,7 @@ async function aptosRest(path, { method = "GET", body = null } = {}) {
         throw err;
       }
       return { status: res.status, ok: res.ok, data };
-    });
+    }, raceRead ? { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS } : {});
   } catch (e) {
     if (e && e.aptosResult) return e.aptosResult;
     throw e;
@@ -31413,7 +31706,7 @@ async function aptosRest(path, { method = "GET", body = null } = {}) {
  *  non-200 (a missing account/resource is a chain answer, and the
  *  caller decides what it means). */
 async function aptosView(fn, typeArguments, args) {
-  const r = await aptosRest("/view", { method: "POST", body: { function: fn, type_arguments: typeArguments, arguments: args } });
+  const r = await aptosRest("/view", { method: "POST", body: { function: fn, type_arguments: typeArguments, arguments: args }, raceRead: true });
   if (!r.ok || !Array.isArray(r.data)) {
     throw new Error("Aptos view " + fn + " failed (HTTP " + r.status + ").");
   }
@@ -31435,7 +31728,7 @@ export async function aptosAssetBalanceRaw(owner, token = null) {
  *  post-migration truth), legacy CoinStore resource as fallback. */
 async function aptosAptBalanceRaw(owner) {
   try { return await aptosAssetBalanceRaw(owner, null); } catch { /* fall through to the legacy read */ }
-  const r = await aptosRest(`/accounts/${owner}/resource/0x1::coin::CoinStore%3C0x1::aptos_coin::AptosCoin%3E`);
+  const r = await aptosRest(`/accounts/${owner}/resource/0x1::coin::CoinStore%3C0x1::aptos_coin::AptosCoin%3E`, { raceRead: true });
   if (r.ok && r.data && r.data.data && r.data.data.coin) return String(r.data.data.coin.amount ?? "0");
   throw new Error("Aptos balance lookup failed (HTTP " + r.status + ").");
 }
@@ -31463,7 +31756,7 @@ async function aptosIndexerBalances(owner) {
  *  created account always carries its 0x1::account::Account resource;
  *  an uncreated one has an empty list. */
 async function aptosAccountExists(owner) {
-  const r = await aptosRest(`/accounts/${owner}/resources`);
+  const r = await aptosRest(`/accounts/${owner}/resources`, { raceRead: true });
   if (!r.ok || !Array.isArray(r.data)) throw new Error("Aptos account lookup failed (HTTP " + r.status + ").");
   return r.data.some(x => x && x.type === "0x1::account::Account");
 }
@@ -32727,6 +33020,65 @@ export function sortHomeRows(items, amountOf, valueOf) {
   }).map(([x]) => x);
 }
 
+/* ================= Assets pager census + All-page rows (2026-11-17) =================
+ * The Assets tab's pager (home restructure, spec §1/§2): page 0 is
+ * always All; a chain earns a page only when the user has a reason
+ * to look at it — it holds something (a balance > 0), its read
+ * failed (unknown is not zero, and the page is its Retry card), or
+ * a send / milestone swap on it is still in flight (the user must
+ * be able to watch it finish). The census is a pure function of
+ * the caller's per-scope facts so the rule is unit-testable; the
+ * app assembles the facts from its live family state.
+ * entries: [{ key, name, totalUsd (number|null — the scope's USD
+ * total when a current figure exists, else null), held, failed,
+ * inFlight }]. Returns the page list with the All scope first:
+ * [{ key: "all" }, ...chain entries in pager order]. Order:
+ * valued holdings by USD total descending (a failed scope whose
+ * last known total is a number keeps the place that total earns —
+ * pinned in place, never re-sorted out of sight); failed scopes
+ * with no known total next (they outrank quiet unpriced holdings:
+ * a problem the user must see); then the rest — held but carrying
+ * no fiat total, and in-flight-only scopes — by name A–Z. */
+export function heldScopes(entries) {
+  const keep = (Array.isArray(entries) ? entries : []).filter(e => e && e.key && (e.held || e.failed || e.inFlight));
+  const valued = (e) => typeof e.totalUsd === "number" && Number.isFinite(e.totalUsd) && e.totalUsd > 0;
+  const tier = (e) => valued(e) ? 0 : (e.failed ? 1 : 2);
+  const byName = (a, b) => String(a.name || a.key).localeCompare(String(b.name || b.key));
+  const ordered = keep.map((e, i) => [e, i]).sort((p, q) => {
+    const ta = tier(p[0]), tb = tier(q[0]);
+    if (ta !== tb) return ta - tb;
+    if (ta === 0) { const d = q[0].totalUsd - p[0].totalUsd; if (d !== 0) return d; }
+    if (ta === 2) { const d = byName(p[0], q[0]); if (d !== 0) return d; }
+    return p[1] - q[1];
+  }).map(([e]) => e);
+  return [{ key: "all" }, ...ordered];
+}
+
+/** The All page's flat held-only row list (home restructure, spec
+ * §2): a row appears iff its amount is a real number > 0, or its
+ * amount is null (a failed read — the balance is unknown, and the
+ * row must say so rather than vanish or pose as zero). Zero-balance
+ * rows NEVER appear — not held is not listed, here or anywhere on
+ * Home/Assets. Order is the honesty order: failed reads first,
+ * then priced holdings by USD value descending, then holdings
+ * with no current figure by amount descending; symbol A–Z breaks
+ * ties inside a tier, then the given order. Items are the
+ * caller's row descriptors ({ amount, valueUsd, symbol, ... });
+ * they are returned unmodified, filtered and sorted. */
+export function flattenHeldRows(items) {
+  const keep = (Array.isArray(items) ? items : []).filter(x => x && (x.amount == null || Number(x.amount) > 0));
+  const tier = (x) => x.amount == null ? 0 : (x.valueUsd != null ? 1 : 2);
+  return keep.map((x, i) => [x, i]).sort((p, q) => {
+    const ta = tier(p[0]), tb = tier(q[0]);
+    if (ta !== tb) return ta - tb;
+    if (ta === 1) { const d = Number(q[0].valueUsd) - Number(p[0].valueUsd); if (d !== 0) return d; }
+    if (ta === 2) { const d = Number(q[0].amount) - Number(p[0].amount); if (d !== 0) return d; }
+    const ds = String(p[0].symbol || "").localeCompare(String(q[0].symbol || ""));
+    if (ds !== 0) return ds;
+    return p[1] - q[1];
+  }).map(([x]) => x);
+}
+
 /* ================= Canonical-bridge moves (LADYS class, 2026-11-15) =================
  * A MOVE is not a swap. Some tokens exist on an L2 only as the
  * canonical bridged form of an L1 token (the L2 contract was
@@ -33869,12 +34221,13 @@ async function stacksCallRead(api, contract, fn, sender) {
     const r = await fetch(`${base}/v2/contracts/call-read/${addr}/${name}/${fn}`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ sender, arguments: [] }),
+      signal: AbortSignal.timeout(20000),
     });
     if (!r.ok) throw new Error(`call-read ${fn} HTTP ${r.status}`);
     const j = await r.json();
     if (!j || j.okay !== true || typeof j.result !== "string") throw new Error(`call-read ${fn} failed`);
     return hexToBytesB(j.result.replace(/^0x/, ""));
-  });
+  }, { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS });
 }
 /** Parse a Clarity (ok <string-ascii|utf8>) or (ok <uint>) call-read result. Hostile-input safe: returns null on anything unexpected. */
 export function parseStacksCallReadValue(bytes) {
@@ -33914,13 +34267,13 @@ export async function fetchStacksAccount(address, network = "mainnet") {
     const apis = network === "testnet" ? [net.api] : STACKS_APIS;
     const got = await withFamilyEndpoints("stacks", apis, async (api) => {
       const [br, ar] = await Promise.all([
-        fetch(`${api}/extended/v1/address/${address}/balances`),
-        fetch(`${api}/v2/accounts/${address}`),
+        fetch(`${api}/extended/v1/address/${address}/balances`, { signal: AbortSignal.timeout(20000) }),
+        fetch(`${api}/v2/accounts/${address}`, { signal: AbortSignal.timeout(20000) }),
       ]);
       if (!br.ok) throw new Error(`Hiro balances HTTP ${br.status}`);
       if (!ar.ok) throw new Error(`Hiro account HTTP ${ar.status}`);
       return { balances: await br.json(), account: await ar.json(), api };
-    });
+    }, { attemptTimeoutMs: FAMILY_READ_ATTEMPT_MS });
     balances = got.balances; account = got.account; servedApi = got.api;
   } catch (e) {
     return { address, exists: false, nonce: 0, stxUstx: "0", tokens: [], scanFailed: true, error: String(e.message || e) };

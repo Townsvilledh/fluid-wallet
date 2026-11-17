@@ -66,6 +66,7 @@ import {
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
+  heldScopes, flattenHeldRows,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
   FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
   newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
@@ -114,12 +115,9 @@ const HISTORY_MAX = 100; // §4.9: history storage cap (was 20)
 // in networkKey, behaviour unchanged) | a family id from
 // RECEIVE_NETWORKS / COSMOS_CHAINS. Persisted per device.
 const VIEW_KEY_LS = "fluid_view_v1";
-const SHOW_ZERO_LS = "fluid_show_zero_v1";
+const SHOW_ZERO_LS = "fluid_show_zero_v1"; // legacy key only: the zero-balance toggle is RETIRED (rev5 §3) — the constant stays so the retirement is greppable; nothing reads it
 let viewKey = "all";
 try { const v = localStorage.getItem(VIEW_KEY_LS); if (v) viewKey = v; } catch { /* storage unavailable */ }
-let showZeroBalances = false;
-try { showZeroBalances = localStorage.getItem(SHOW_ZERO_LS) === "1"; } catch { /* storage unavailable */ }
-const expandedZero = new Set();   // family keys whose "Zero balances" group is expanded
 const famLoaded = new Set();      // families whose balance read settled this render (§4.13 skeletons)
 // Balance-cache paint state (2026-11-09 load fix): liveFams tracks
 // families whose LIVE read settled this render (famLoaded also
@@ -1000,8 +998,15 @@ let dupSymbols = new Set();
 const FAMILY_NATIVE_SYM = { bitcoin: "BTC", litecoin: "LTC", dogecoin: "DOGE", bitcoincash: "BCH", cardano: "ADA", zcash: "ZEC", dash: "DASH",
   tron: "TRX", solana: "SOL", sui: "SUI", stellar: "XLM", ton: "TON", near: "NEAR",
   algorand: "ALGO", tezos: "XTZ", hedera: "HBAR", xrpl: "XRP", polkadot: "DOT", aptos: "APT", stacks: "STX" };
+/** Badge render context (home restructure, spec rev5 §2): chain
+ *  badges belong on the All page's rows (and on Assets search
+ *  results) — a chain's own page never badges its own rows, since
+ *  the page already says which chain it is. Renderers set this
+ *  while they paint; null falls back to the committed view. */
+let badgeAllCtx = null;
 function badgeHtml(b, famKey) {
-  if (viewKey !== "all" || !b || !dupSymbols.has(b.symbol)) return "";
+  const allCtx = badgeAllCtx != null ? badgeAllCtx : viewKey === "all";
+  if (!allCtx || !b || !dupSymbols.has(b.symbol)) return "";
   const nat = famKey === "evm" ? NETWORKS[networkKey].symbol : FAMILY_NATIVE_SYM[famKey];
   const u = nat ? spothqUrl(nat) : null;
   return u ? `<img class="coin-badge" src="${esc(u)}" width="14" height="14" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">` : "";
@@ -1891,12 +1896,13 @@ function scopedTotal() {
   return m[viewKey] != null ? m[viewKey] : null;
 }
 
-/** Unpriced-holdings signal for the hero (2026-11-09 unpriced-native
- *  fix): holdings the totals CANNOT value — a nonzero balance whose
- *  price never arrived. The priced total stays the priced total; this
- *  only drives the "+ holdings with no live price" note, so the hero
- *  never presents a bare $0.00 as the whole story while the wallet
- *  holds something. The price lookups mirror heroTotal() exactly
+/** Unpriced-holdings signal (2026-11-09 unpriced-native fix):
+ *  holdings the totals CANNOT value — a nonzero balance whose
+ *  price never arrived. The priced total stays the priced total.
+ *  (The hero note this once drove is RETIRED by rev5 §7: prices
+ *  live silently, so the sub no longer annotates unpriced
+ *  holdings; the counter stays for the surfaces that still ask.)
+ *  The price lookups mirror heroTotal() exactly
  *  (row priceUsd wins, EVM natives read the network symbol, wNEAR
  *  reads NEAR, Cosmos reads its symbol table); failed reads (amount
  *  null / load-failed flags) are unknown, not unpriced, and never
@@ -2042,7 +2048,6 @@ function paintHeader() {
     const updating = !HOME_FAMILIES.every((k) => famLoaded.has(k))
       || (cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k)));
     sub.textContent = (viewKey === "all" ? "Across all networks" : `${viewDisplayName()} only`)
-      + (hasUnpricedHoldings() ? " + holdings with no live price" : "")
       + (balancesUnloadedInView() ? " + some balances couldn't load" : "")
       + (updating ? " · Updating…" : "");
   }
@@ -2072,14 +2077,16 @@ function tokenRowHtml(b, v, sub, dataAttr, famKey) {
   const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
   const chip = b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : "";
   // amount null = the read failed: the balance is unknown, and the
-  // row says so instead of dressing a placeholder zero as fact. A
-  // HELD amount with NO live price says "price unavailable" — never
-  // a blank where a $0.00 could be read into it. A true zero keeps
-  // its $0.00: 0 is worth $0.00 at any price, so that one is a fact.
+  // row says so instead of dressing a placeholder zero as fact.
+  // Prices live SILENTLY (spec rev5 §7): a held amount with no
+  // price shows the amount alone — no "price unavailable" text,
+  // no $0.00 where a value could be read into it. A true zero
+  // (reachable only outside the held-only home lists, e.g. inside
+  // a send sheet) keeps its $0.00: 0 is worth $0.00 at any price.
   const amt = b.amount == null
     ? `<b>—</b><small>couldn't load</small>`
     : (v != null ? `<b>${fmt(b.amount)}</b><small>${usd(v)}</small>`
-        : (Number(b.amount) > 0 ? `<b>${fmt(b.amount)}</b><small>price unavailable</small>`
+        : (Number(b.amount) > 0 ? `<b>${fmt(b.amount)}</b><small></small>`
             : `<b>${fmt(b.amount)}</b><small>${usd(0)}</small>`));
   // Contract/mint/coin-type chip (item F addendum, 2026-11-12):
   // every token row carries its on-chain identifier, tap-to-copy —
@@ -2101,38 +2108,46 @@ function isNativeRow(famKey, b) {
 function isCuratedStableEvm(b) {
   return (b.symbol === "USDC" || b.symbol === "USDT") && b.verified !== false && !b.custom;
 }
-function zeroGroupHtml(famKey, items, renderItem) {
-  if (!items.length) return "";
-  const open = expandedZero.has(famKey);
-  return `<div class="row" data-zero="${famKey}">
-      <span class="coin" style="background:#3b4a7a">…</span>
-      <span class="grow"><b>Zero balances (${items.length})</b><small>Not held right now — tap to ${open ? "hide" : "show"}.</small></span>
-      <span>${open ? "▾" : "▸"}</span></div>` + (open ? items.map(renderItem).join("") : "");
-}
+/* The collapsed zero-balances group is RETIRED (home
+ * restructure, spec rev5 §3, Ethuram 2026-11-17 ~00:58 WAT):
+ * zero-balance tokens render NOWHERE on Home/Assets — not as
+ * rows, not under a group. Unheld assets live in Explore and in
+ * search results only. familyRowsHtml below is held-only by
+ * construction now; there is no mode that brings zeros back. */
 function skeletonRowsHtml(n = 3) {
   return Array.from({ length: n }, () => `<div class="skelrow"><span class="skel skelc"></span><span class="skelbars"><span class="skel skelb1"></span><span class="skel skelb2"></span></span></div>`).join("");
 }
 /** One family's list body: skeleton while loading; otherwise the
- *  verified/priced main rows, the "Other tokens" group, and the
- *  collapsed "Zero balances" group (§4.5) — in that order. */
+ *  HELD rows only (spec rev5 §3) — a row renders iff its amount
+ *  is a real number > 0, or null (a failed read: the balance is
+ *  unknown, and the row stays as "couldn't load" rather than
+ *  vanishing or posing as zero). Zero-balance rows are dropped
+ *  here, at the single choke point every home list flows
+ *  through — natives and curated stables included, no exceptions
+ *  on this surface. Verified/priced rows form the main list;
+ *  unverified or unpriced HELD rows keep the "Other tokens"
+ *  group (held is held — the group hides nothing unheld). */
 function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
-  if (!famLoaded.has(famKey)) return skeletonRowsHtml();
-  let visible = rowsArr, zero = [];
-  if (!showZeroBalances) {
-    visible = []; zero = [];
-    for (const b of rowsArr) {
-      // amount null is a FAILED read (unknown), never a zero: it
-      // stays visible as a "couldn't load" row instead of hiding
-      // inside the collapsed Zero balances group.
-      if (b.amount != null && Number(b.amount) === 0 && !isNativeRow(famKey, b) && !(famKey === "evm" && isCuratedStableEvm(b))) zero.push(b);
-      else visible.push(b);
-    }
-  }
+  return familyRowItems(famKey, rowsArr, priceOf, renderItem).html;
+}
+/** The same pass, also returning the flat held ITEMS (spec rev5
+ * §2): the All page's cross-chain list is built from these — one
+ * item per held row across every family, each carrying its
+ * pre-rendered row html plus the fields core's flattenHeldRows
+ * orders by (amount, valueUsd, symbol). The chain page keeps the
+ * grouped html (with its "Other tokens" group); the All page
+ * flattens items and drops the grouping entirely. */
+function familyRowItems(famKey, rowsArr, priceOf, renderItem) {
+  if (!famLoaded.has(famKey)) return { items: [], html: skeletonRowsHtml() };
+  const visible = rowsArr.filter(b => b && (b.amount == null || Number(b.amount) > 0));
   const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b));
-  let html = sp.main.map(renderItem).join("");
-  html += otherGroupHtml(famKey, sp.other, renderItem);
-  if (zero.length) html += zeroGroupHtml(famKey, zero.map(b => ({ b, v: rowUsdValue(b, priceOf(b)) })), renderItem);
-  return html;
+  // Items carry a RENDER closure, not finished html: the chain
+  // badge belongs on All-page rows only, so each surface renders
+  // its items under its own badge context (badgeAllCtx).
+  const mk = ({ b, v }) => ({ b, famKey, amount: b.amount, valueUsd: v, symbol: b.symbol, render: () => renderItem({ b, v }) });
+  const main = sp.main.map(mk), other = sp.other.map(mk);
+  const html = main.map(x => x.render()).join("") + otherGroupHtml(famKey, sp.other, renderItem);
+  return { items: [...main, ...other], html };
 }
 // Load/scan problems surface as a small alert in the group header
 // (§4.5) — the message + Retry live in a sheet, never as list prose.
@@ -2255,17 +2270,27 @@ function otherGroupHtml(famKey, items, renderItem) {
  *  a failed read renders the same "couldn't load" state as a null
  *  token row (tokenRowHtml) — the balance is unknown, never a
  *  dressed-up zero. */
+/** One scalar-family row (LTC/DOGE/BCH/ADA/ZEC/DASH — a single
+ *  coin per chain), shared by the chain page and the All page's
+ *  flat list so the two can never drift (home restructure). */
+function scalarRowHtml({ attr, sym, name, sub, failed, bal, price, famKey }) {
+  return `<div class="row" ${attr}>
+      <span class="logowrap">${tokenLogoHtml({ symbol: sym }, famKey)}${badgeHtml({ symbol: sym }, famKey)}</span>
+      <span class="grow"><b class="rname">${name}</b><small>${sym} · ${sub}</small></span>
+      <span class="amt">${scalarAmtHtml(failed, bal, price)}</span></div>`;
+}
 function scalarAmtHtml(failed, bal, price) {
   if (failed) return `<b>—</b><small>couldn't load</small>`;
-  // A held scalar coin with no live price shows its amount with an
-  // honest "price unavailable" — the old `price || 0` printed a
-  // $0.00 under a real balance. A true zero keeps its $0.00: that
-  // one is a fact, not a missing price.
-  if (price == null && Number(bal) > 0) return `<b>${fmt(bal, 8)}</b><small>price unavailable</small>`;
+  // Prices live silently (spec rev5 §7): a held scalar coin with
+  // no price shows its amount alone — never a $0.00 under a real
+  // balance (the old `price || 0` printed exactly that). A true
+  // zero keeps its $0.00: that one is a fact, not a missing price.
+  if (price == null && Number(bal) > 0) return `<b>${fmt(bal, 8)}</b><small></small>`;
   return `<b>${fmt(bal, 8)}</b><small>${usd(bal * (price || 0))}</small>`;
 }
 
 function paintAssets() {
+  badgeAllCtx = false; // group html is chain-page html: no All-page chain badges
   paintHeader();
   const net = NETWORKS[networkKey];
   // Chain-badge census (§4.5): symbols living on more than one network.
@@ -2292,12 +2317,14 @@ function paintAssets() {
   // §4.2: rows are built per family ONCE into groups, then rendered
   // per viewKey (All = fixed family order; scoped = that group only).
   const groups = [];
-  const grp = (key, header, rowsArr) => groups.push({ key, header, html: rowsArr.join("") });
+  const grp = (key, header, rowsArr, items = []) => groups.push({ key, header, html: rowsArr.join(""), items });
   // Bitcoin group (tap the row for the Bitcoin sheet)
-  grp("bitcoin", "", [famLoaded.has("bitcoin") ? `<div class="row" id="btcRow">
+  const btcRowHtml = () => `<div class="row" id="btcRow">
       <span class="logowrap">${tokenLogoHtml({ symbol: "BTC" }, "bitcoin")}${badgeHtml({ symbol: "BTC" }, "bitcoin")}</span>
       <span class="grow"><b class="rname">Bitcoin</b><small>BTC · SegWit + Taproot</small></span>
-      <span class="amt">${scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)}</span></div>` : skeletonRowsHtml(1)]);
+      <span class="amt">${scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)}</span></div>`;
+  grp("bitcoin", "", [famLoaded.has("bitcoin") ? btcRowHtml() : skeletonRowsHtml(1)],
+    [{ famKey: "bitcoin", amount: btcLoadFailed ? null : btcBal + btcTrBal, valueUsd: prices.BTC != null ? (btcBal + btcTrBal) * prices.BTC : null, symbol: "BTC", render: btcRowHtml }]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first. A failed load
@@ -2313,101 +2340,115 @@ function paintAssets() {
       ? [{ symbol: net.symbol, amount: null, address: null, verified: true },
          ...net.tokens.map(t => ({ ...t, amount: null }))]
       : balances;
-    rows.push(familyRowsHtml("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render));
+    const fi = familyRowItems("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render);
+    rows.push(fi.html);
     if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
-    grp("evm", "", rows);
+    grp("evm", "", rows, fi.items);
   }
   // Tron family rows (tap a row to send on Tron)
   if (tronBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Tron", `data-tron="${tronBalances.indexOf(b)}"`, "tron");
-    rows.push(familyRowsHtml("tron", tronBalances, (b) => prices[b.symbol], render));
-    grp("tron", `<p class="tag" style="margin:12px 0 2px">Tron</p>`, rows);
+    const fi = familyRowItems("tron", tronBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("tron", `<p class="tag" style="margin:12px 0 2px">Tron</p>`, rows, fi.items);
   }
   // Solana family rows (tap a row to send on Solana)
   if (solBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Solana", `data-sol="${solBalances.indexOf(b)}"`, "solana");
-    rows.push(familyRowsHtml("solana", solBalances, (b) => prices[b.symbol], render));
-    grp("solana", `<p class="tag" style="margin:12px 0 2px">Solana</p>`, rows);
+    const fi = familyRowItems("solana", solBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("solana", `<p class="tag" style="margin:12px 0 2px">Solana</p>`, rows, fi.items);
   }
   // Sui family rows (tap a row to send on Sui)
   if (suiBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Sui", `data-sui="${suiBalances.indexOf(b)}"`, "sui");
-    rows.push(familyRowsHtml("sui", suiBalances, (b) => prices[b.symbol], render));
-    grp("sui", `<p class="tag" style="margin:12px 0 2px">Sui</p>`, rows);
+    const fi = familyRowItems("sui", suiBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("sui", `<p class="tag" style="margin:12px 0 2px">Sui</p>`, rows, fi.items);
   }
   // Stellar family rows (tap a row to send on Stellar)
   if (stellarBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Stellar", `data-stellar="${stellarBalances.indexOf(b)}"`, "stellar");
-    rows.push(familyRowsHtml("stellar", stellarBalances, (b) => prices[b.symbol], render));
-    grp("stellar", `<p class="tag" style="margin:12px 0 2px">Stellar</p>`, rows);
+    const fi = familyRowItems("stellar", stellarBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("stellar", `<p class="tag" style="margin:12px 0 2px">Stellar</p>`, rows, fi.items);
   }
   // TON family rows (Phase 4; tap a row to send on TON)
   if (tonBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "TON", `data-ton="${tonBalances.indexOf(b)}"`, "ton");
-    rows.push(familyRowsHtml("ton", tonBalances, (b) => prices[b.symbol], render));
-    grp("ton", `<p class="tag" style="margin:12px 0 2px">TON</p>`, rows);
+    const fi = familyRowItems("ton", tonBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("ton", `<p class="tag" style="margin:12px 0 2px">TON</p>`, rows, fi.items);
   }
   // NEAR family rows (Phase 4; tap a row to send on NEAR)
   if (nearBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "NEAR", `data-near="${nearBalances.indexOf(b)}"`, "near");
-    rows.push(familyRowsHtml("near", nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol], render));
-    grp("near", `<p class="tag" style="margin:12px 0 2px">NEAR</p>`, rows);
+    const fi = familyRowItems("near", nearBalances, (b) => b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("near", `<p class="tag" style="margin:12px 0 2px">NEAR</p>`, rows, fi.items);
   }
   // Algorand family rows (Phase 4; tap a row to send on Algorand)
   if (algoBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Algorand", `data-algo="${algoBalances.indexOf(b)}"`, "algorand");
-    rows.push(familyRowsHtml("algorand", algoBalances, (b) => prices[b.symbol], render));
-    grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows);
+    const fi = familyRowItems("algorand", algoBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("algorand", `<p class="tag" style="margin:12px 0 2px">Algorand</p>`, rows, fi.items);
   }
   // Tezos family rows (gap #16; tap a row to send on Tezos)
   if (tezBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Tezos", `data-tez="${tezBalances.indexOf(b)}"`, "tezos");
-    rows.push(familyRowsHtml("tezos", tezBalances, (b) => prices[b.symbol], render));
-    grp("tezos", `<p class="tag" style="margin:12px 0 2px">Tezos</p>`, rows);
+    const fi = familyRowItems("tezos", tezBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("tezos", `<p class="tag" style="margin:12px 0 2px">Tezos</p>`, rows, fi.items);
   }
   // Hedera family rows (gap #16; tap a row to send on Hedera)
   if (hbaBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Hedera", `data-hba="${hbaBalances.indexOf(b)}"`, "hedera");
-    rows.push(familyRowsHtml("hedera", hbaBalances, (b) => prices[b.symbol], render));
-    grp("hedera", `<p class="tag" style="margin:12px 0 2px">Hedera</p>`, rows);
+    const fi = familyRowItems("hedera", hbaBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("hedera", `<p class="tag" style="margin:12px 0 2px">Hedera</p>`, rows, fi.items);
   }
   // XRP Ledger family rows (Phase 4; tap a row to send on XRPL)
   if (xrpBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "XRP Ledger", `data-xrp="${xrpBalances.indexOf(b)}"`, "xrpl");
-    rows.push(familyRowsHtml("xrpl", xrpBalances, (b) => prices[b.symbol], render));
-    grp("xrpl", `<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`, rows);
+    const fi = familyRowItems("xrpl", xrpBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("xrpl", `<p class="tag" style="margin:12px 0 2px">XRP Ledger</p>`, rows, fi.items);
   }
   // Polkadot Asset Hub family rows (Phase 4; tap a row to send)
   if (dotBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Polkadot Asset Hub", `data-dot="${dotBalances.indexOf(b)}"`, "polkadot");
-    rows.push(familyRowsHtml("polkadot", dotBalances, (b) => prices[b.symbol], render));
-    grp("polkadot", `<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`, rows);
+    const fi = familyRowItems("polkadot", dotBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("polkadot", `<p class="tag" style="margin:12px 0 2px">Polkadot Asset Hub</p>`, rows, fi.items);
   }
   // Aptos family rows (Phase 5; tap a row to send on Aptos)
   if (aptosBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Aptos", `data-aptos="${aptosBalances.indexOf(b)}"`, "aptos");
-    rows.push(familyRowsHtml("aptos", aptosBalances, (b) => prices[b.symbol], render));
-    grp("aptos", `<p class="tag" style="margin:12px 0 2px">Aptos</p>`, rows);
+    const fi = familyRowItems("aptos", aptosBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("aptos", `<p class="tag" style="margin:12px 0 2px">Aptos</p>`, rows, fi.items);
   }
   // Stacks family rows (Bitcoin L2; tap a row to send on Stacks)
   if (stacksBalances.length) {
     const rows = [];
     const render = ({ b, v }) => tokenRowHtml(b, v, "Stacks", `data-stacks="${stacksBalances.indexOf(b)}"`, "stacks");
-    rows.push(familyRowsHtml("stacks", stacksBalances, (b) => prices[b.symbol], render));
-    grp("stacks", `<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`, rows);
+    const fi = familyRowItems("stacks", stacksBalances, (b) => prices[b.symbol], render);
+    rows.push(fi.html);
+    grp("stacks", `<p class="tag" style="margin:12px 0 2px">Stacks · Bitcoin L2</p>`, rows, fi.items);
   }
   // Cosmos family rows (Phase 3a): one phrase, seven chains — a row
   // per chain showing that chain's native asset. An unavailable read
@@ -2417,13 +2458,14 @@ function paintAssets() {
   // under one shared header.
   cosmosRows.forEach((r, i) => {
     const p = prices[r.symbol];
-    const rowHtml = (r.amount == null && !famLoaded.has("cosmos")) ? skeletonRowsHtml(1) : `<div class="row" data-cosmos="${r.key}">
+    const cosmosRowHtml = () => (r.amount == null && !famLoaded.has("cosmos")) ? skeletonRowsHtml(1) : `<div class="row" data-cosmos="${r.key}">
         <span class="logowrap">${tokenLogoHtml({ symbol: r.symbol }, r.key)}</span>
         <span class="grow"><b class="rname">${esc(r.name)}${r.legacy ? " (legacy)" : ""}</b><small>${esc(r.symbol)} · Cosmos</small></span>
         <span class="amt">${r.amount == null
           ? `<b>—</b><small>couldn't load</small>`
-          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "price unavailable" : usd(0))}</small>`}</span></div>`;
-    grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [rowHtml]);
+          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "" : usd(0))}</small>`}</span></div>`;
+    grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [cosmosRowHtml()],
+      [{ famKey: r.key, amount: r.amount, valueUsd: p != null && r.amount != null ? Number(r.amount) * p : null, symbol: r.symbol, render: cosmosRowHtml }]);
   });
   // Lightning scoped view (§4.2): no token rows — one row into the
   // Lightning panel (the Wallet tab's Lightning button covers All).
@@ -2432,30 +2474,23 @@ function paintAssets() {
       <span class="grow"><b class="rname">Bitcoin Lightning</b><small class="lnNodeStatusText">Your own node — pay invoices, offers and Lightning addresses</small></span>
       <span>›</span></div>`]);
   // Bitcoin-family rows (Phase 2a): Litecoin, Dogecoin, Bitcoin Cash
-  grp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`, [famLoaded.has("litecoin") ? `<div class="row" data-ltc="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "LTC" }, "litecoin")}${badgeHtml({ symbol: "LTC" }, "litecoin")}</span>
-      <span class="grow"><b class="rname">Litecoin</b><small>LTC · Native SegWit</small></span>
-      <span class="amt">${scalarAmtHtml(ltcLoadFailed, ltcBal, prices.LTC)}</span></div>` : skeletonRowsHtml(1)]);
-  grp("dogecoin", "", [famLoaded.has("dogecoin") ? `<div class="row" data-doge="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "DOGE" }, "dogecoin")}${badgeHtml({ symbol: "DOGE" }, "dogecoin")}</span>
-      <span class="grow"><b class="rname">Dogecoin</b><small>DOGE · Legacy</small></span>
-      <span class="amt">${scalarAmtHtml(dogeLoadFailed, dogeBal, prices.DOGE)}</span></div>` : skeletonRowsHtml(1)]);
-  grp("bitcoincash", "", [famLoaded.has("bitcoincash") ? `<div class="row" data-bch="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "BCH" }, "bitcoincash")}${badgeHtml({ symbol: "BCH" }, "bitcoincash")}</span>
-      <span class="grow"><b class="rname">Bitcoin Cash</b><small>BCH · CashAddr</small></span>
-      <span class="amt">${scalarAmtHtml(bchLoadFailed, bchBal, prices.BCH)}</span></div>` : skeletonRowsHtml(1)]);
-  grp("cardano", "", [famLoaded.has("cardano") ? `<div class="row" data-ada="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "ADA" }, "cardano")}${badgeHtml({ symbol: "ADA" }, "cardano")}</span>
-      <span class="grow"><b class="rname">Cardano</b><small>ADA · Shelley</small></span>
-      <span class="amt">${scalarAmtHtml(adaLoadFailed, adaBal, prices.ADA)}</span></div>` : skeletonRowsHtml(1)]);
-  grp("zcash", "", [famLoaded.has("zcash") ? `<div class="row" data-zec="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "ZEC" }, "zcash")}${badgeHtml({ symbol: "ZEC" }, "zcash")}</span>
-      <span class="grow"><b class="rname">Zcash</b><small>ZEC · Transparent</small></span>
-      <span class="amt">${scalarAmtHtml(zecLoadFailed, zecBal, prices.ZEC)}</span></div>` : skeletonRowsHtml(1)]);
-  grp("dash", "", [famLoaded.has("dash") ? `<div class="row" data-dash="1">
-      <span class="logowrap">${tokenLogoHtml({ symbol: "DASH" }, "dash")}${badgeHtml({ symbol: "DASH" }, "dash")}</span>
-      <span class="grow"><b class="rname">Dash</b><small>DASH · Legacy</small></span>
-      <span class="amt">${scalarAmtHtml(dashLoadFailed, dashBal, prices.DASH)}</span></div>` : skeletonRowsHtml(1)]);
+  const scalarGrp = (key, header, cfg) => {
+    const render = () => scalarRowHtml(cfg);
+    grp(key, header, [famLoaded.has(key) ? render() : skeletonRowsHtml(1)],
+      [{ famKey: key, amount: cfg.failed ? null : cfg.bal, valueUsd: cfg.price != null ? cfg.bal * cfg.price : null, symbol: cfg.sym, render }]);
+  };
+  scalarGrp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`,
+    { attr: `data-ltc="1"`, sym: "LTC", name: "Litecoin", sub: "Native SegWit", failed: ltcLoadFailed, bal: ltcBal, price: prices.LTC, famKey: "litecoin" });
+  scalarGrp("dogecoin", "",
+    { attr: `data-doge="1"`, sym: "DOGE", name: "Dogecoin", sub: "Legacy", failed: dogeLoadFailed, bal: dogeBal, price: prices.DOGE, famKey: "dogecoin" });
+  scalarGrp("bitcoincash", "",
+    { attr: `data-bch="1"`, sym: "BCH", name: "Bitcoin Cash", sub: "CashAddr", failed: bchLoadFailed, bal: bchBal, price: prices.BCH, famKey: "bitcoincash" });
+  scalarGrp("cardano", "",
+    { attr: `data-ada="1"`, sym: "ADA", name: "Cardano", sub: "Shelley", failed: adaLoadFailed, bal: adaBal, price: prices.ADA, famKey: "cardano" });
+  scalarGrp("zcash", "",
+    { attr: `data-zec="1"`, sym: "ZEC", name: "Zcash", sub: "Transparent", failed: zecLoadFailed, bal: zecBal, price: prices.ZEC, famKey: "zcash" });
+  scalarGrp("dash", "",
+    { attr: `data-dash="1"`, sym: "DASH", name: "Dash", sub: "Legacy", failed: dashLoadFailed, bal: dashBal, price: prices.DASH, famKey: "dash" });
   // Render per viewKey (§4.5): each family is its OWN card with a
   // header (name + subtotal + alert) in the All view; a scoped view
   // renders its single group without the header. The seven Cosmos
@@ -2498,9 +2533,13 @@ function paintAssets() {
       if (Number(r.amount) > 0 && prices[r.symbol] == null) { unpricedNativeByKey[r.key] = { amount: fmt(r.amount), sym: r.symbol }; unpricedNativeByKey.cosmos = unpricedNativeByKey[r.key]; }
   }
   const cardTotalHtml = (key, totalVal) => {
+    // Prices live silently (spec rev5 §3/§7): an unpriced native
+    // holding shows as the native amount alone ("0.42 SOL"), and
+    // an unknown total shows NOTHING — no "no live price" text,
+    // no dash posing as a figure.
     const un = unpricedNativeByKey[key];
-    if (un && !(totalVal > 0)) return `<span class="unpriced-total">${esc(un.amount)} ${esc(un.sym)} · no live price</span>`;
-    return totalVal == null ? "—" : usd(totalVal || 0);
+    if (un && !(totalVal > 0)) return `<span class="unpriced-total">${esc(un.amount)} ${esc(un.sym)}</span>`;
+    return totalVal == null ? "" : usd(totalVal || 0);
   };
   // Held is a RAW-balance fact (2026-11-09 ordering fix): any
   // nonzero amount in a family marks it held for sortHomeFamilies,
@@ -2540,159 +2579,703 @@ function paintAssets() {
     const head = titled ? `<div class="ghead"><span class="t-strong">${esc(titleOf(key))}</span><span class="gsub">${cardTotalHtml(key, totalVal)}${alerts[key] ? ` <button class="falert" data-famalert="${key}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : ""}</span></div>` : "";
     return `<div class="card groupcard">${head}${innerHtml}</div>`;
   };
-  let html = "";
-  if (viewKey === "all") {
-    const cards = [];
-    let cosmosBuf = [];
-    const flushCosmos = () => {
-      if (!cosmosBuf.length) return;
-      // The shared Cosmos card header follows the D2 rule at
-      // chain granularity (re-walk FIX-A, 2026-11-14): the
-      // rollup is core's familyRollupTotalUsd — ANY chain
-      // whose read failed makes the family total unknown
-      // ("—"), never a bare figure summed over whichever
-      // chains loaded. (The every/loaded-sum split this
-      // replaces painted "$0.00" over couldn't-load chains
-      // in partially degraded windows.)
-      const total = familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]));
-      // The seven chain rows inside the shared Cosmos card follow
-      // the same within-family order as every other family.
-      const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join("");
-      cards.push({ key: "cosmos", totalUsd: total, failed: famFailed.cosmos, held: heldMap.cosmos, html: cardFor("cosmos", inner, true, total) });
-      cosmosBuf = [];
-    };
-    for (const g of groups) {
-      if (g.key === "lightning") continue;
-      if (COSMOS_CHAINS.some(c => c.key === g.key)) {
-        const r = cosmosRows.find(x => x.key === g.key);
-        cosmosBuf.push({ html: g.html, amount: r ? r.amount : null, valueUsd: totals[g.key] });
-        continue;
-      }
-      flushCosmos();
-      cards.push({ key: g.key, totalUsd: totals[g.key], failed: !!famFailed[g.key], held: !!heldMap[g.key], html: cardFor(g.key, g.html, true, totals[g.key]) });
-    }
-    flushCosmos();
-    html = sortHomeFamilies(cards).map(c => c.html).join("");
-  } else {
-    const g = groups.find(x => x.key === viewKey);
-    html = g ? cardFor(g.key, g.html, false, totals[g.key]) : "";
+  // ---- home restructure (spec rev5): census -> pager -> pages ----
+  // A scope earns a page iff it holds something, its read failed,
+  // or a send/swap touching it is in flight (core's heldScopes
+  // owns the rule and the order). The ACTIVE EVM network is the
+  // "evm" scope; any OTHER EVM chain earns a page only on
+  // on-device evidence (an ever-held or custom token record) --
+  // its scope key is "evm:<netKey>" and committing the page
+  // switches the network through the normal path. Page 0 (All)
+  // is the flat held-only list; chain pages keep their family's
+  // grouped rows under a quiet total line.
+  const inFlight = inFlightScopes();
+  const isCosmosKey = (k) => COSMOS_CHAINS.some(c => c.key === k);
+  const census = [];
+  const censusPush = (scopeKey, groupKey, name) => {
+    census.push({ key: scopeKey, name,
+      held: groupKey === "evm" ? heldMap.evm
+        : isCosmosKey(groupKey) ? Number((cosmosRows.find(r => r.key === groupKey) || {}).amount) > 0
+        : !!heldMap[groupKey],
+      failed: groupKey === "evm" ? evmLoadFailed
+        : isCosmosKey(groupKey) ? (famLoaded.has("cosmos") && (cosmosRows.find(r => r.key === groupKey) || {}).amount == null)
+        : !!famFailed[groupKey],
+      inFlight: inFlight.has(scopeKey),
+      totalUsd: scopeKey === "evm" ? totals.evm : (groupKey ? totals[groupKey] : null) });
+  };
+  censusPush("bitcoin", "bitcoin", "Bitcoin");
+  censusPush("evm", "evm", net.name);
+  for (const g of groups) {
+    if (["bitcoin", "evm", "lightning"].includes(g.key)) continue;
+    if (isCosmosKey(g.key)) { const r = cosmosRows.find(x => x.key === g.key); censusPush(g.key, g.key, r ? r.name : g.key); continue; }
+    censusPush(g.key, g.key, titleOf(g.key));
   }
-  html += `<button class="btn ghost" id="zeroToggle">${showZeroBalances ? "Hide zero balances" : "Show zero balances"}</button>`;
-  $("assetList").innerHTML = html || `<p class="tag">Nothing here yet.</p>`;
-  // The static Lightning row under the list is the All view's
-  // entry into the panel; the Lightning scoped view renders its
-  // OWN Lightning row inside the list. Showing both stacked two
-  // identical node-status cards on one screen (owner screenshot,
-  // 2026-11-10) — in the Lightning view the static row hides, so
-  // the status card renders exactly once per view.
-  const lrRow = $("lightningRow");
-  if (lrRow) lrRow.classList.toggle("hidden", viewKey === "lightning");
+  for (const k of Object.keys(NETWORKS)) {
+    if (k === networkKey) continue;
+    let evidence = false;
+    try { evidence = loadHeldTokens(NETWORKS[k].chainId).length > 0 || loadCustomTokens(NETWORKS[k].chainId).length > 0; } catch { evidence = false; }
+    if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, inFlight: inFlight.has("evm:" + k), totalUsd: null });
+  }
+  if (lnSession || inFlight.has("lightning")) census.push({ key: "lightning", name: "Lightning", held: !!lnSession, failed: false, inFlight: inFlight.has("lightning"), totalUsd: totals.lightning });
+  const scopes = heldScopes(census);
+  homeScopes = scopes;
+  homeGroups = groups;
+  // Page 0: the flat held-only list across every chain (failed
+  // reads first, then value, then amount -- core's order), each
+  // row badged with its chain. No family cards, no group headers.
+  const renderAllPage = () => {
+    const listEl = $("assetList"); if (!listEl) return;
+    const items = [];
+    for (const g of groups) { if (g.key === "lightning") continue; for (const it of g.items || []) items.push(it); }
+    badgeAllCtx = true;
+    const flat = flattenHeldRows(items);
+    listEl.innerHTML = flat.length ? flat.map(it => it.render()).join("")
+      : (HOME_FAMILIES.every(k => famLoaded.has(k)) ? "" : skeletonRowsHtml(3));
+    badgeAllCtx = null;
+  };
+  const renderChainPage = (sec, scope) => {
+    let inner;
+    if (scope.key.startsWith("evm:")) {
+      inner = skeletonRowsHtml(2); // its rows load when the page commits (the network switch re-reads)
+    } else {
+      const gkey = scope.key === "evm" ? "evm" : scope.key;
+      const g = groups.find(x => x.key === gkey);
+      const alertKey = scope.key === "evm" ? "evm" : (isCosmosKey(scope.key) ? "cosmos" : scope.key);
+      const totalTxt = cardTotalHtml(gkey, scope.key === "evm" ? totals.evm : totals[scope.key]);
+      const chip = alerts[alertKey] ? ` <button class="falert" data-famalert="${alertKey}" aria-label="Network note">${icon("alert", "ic ic-sm")}</button>` : "";
+      inner = `<div class="pagetotal">${totalTxt}${chip}</div>` + (g ? g.html : "");
+    }
+    if (sec._h !== inner) { sec.innerHTML = inner; sec._h = inner; }
+  };
+  const pagerEl = $("homePager");
+  if (pagerEl) {
+    const sig = scopes.map(s => s.key).join("|");
+    if (sig !== pagerSig) {
+      pagerSig = sig;
+      const keep = new Map();
+      pagerEl.querySelectorAll(".hpage").forEach(p => keep.set(p.dataset.page, p.scrollTop));
+      pagerEl.querySelectorAll('.hpage:not([data-page="all"])').forEach(p => p.remove());
+      for (const s of scopes.slice(1)) {
+        const sec = document.createElement("section");
+        sec.className = "hpage"; sec.dataset.page = s.key;
+        pagerEl.appendChild(sec);
+      }
+      pagerScrollRestore = keep;
+      requestAnimationFrame(() => pagerGoTo(scopeIndexForView(homeScopes), true));
+    }
+    const activeIdx = scopeIndexForView(scopes);
+    for (let i = 0; i < scopes.length; i++) {
+      if (Math.abs(i - activeIdx) > 1) continue; // only the active page and its neighbours render rows
+      const sec = pagerEl.querySelector(`[data-page="${CSS.escape(scopes[i].key)}"]`);
+      if (!sec) continue;
+      if (scopes[i].key === "all") renderAllPage(); else renderChainPage(sec, scopes[i]);
+      if (pagerScrollRestore && pagerScrollRestore.has(scopes[i].key)) sec.scrollTop = pagerScrollRestore.get(scopes[i].key);
+    }
+    pagerScrollRestore = null;
+    paintSwipeBar(activeIdx);
+  }
   paintLnNodeStatus();
   persistBalanceCache();
-  document.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
-  const zt = $("zeroToggle");
-  if (zt) zt.onclick = () => {
-    showZeroBalances = !showZeroBalances;
-    try { localStorage.setItem(SHOW_ZERO_LS, showZeroBalances ? "1" : "0"); } catch { /* best effort */ }
-    paintAssets();
-  };
+  if (pagerEl) wireHomeRows(pagerEl);
   // §4.13 home zero state: one compact card, All view only, and only
-  // once balances have actually loaded with nothing anywhere.
+  // once balances have actually loaded with nothing anywhere. The
+  // fresh-wallet line rides the same condition (spec rev5 §8).
   const hz = $("homeZero");
   if (hz) {
     const anyBal = (btcBal + btcTrBal + ltcBal + dogeBal + bchBal + adaBal + zecBal + dashBal) > 0
       || [balances, tronBalances, solBalances, suiBalances, stellarBalances, tonBalances, nearBalances, algoBalances, tezBalances, hbaBalances, xrpBalances, dotBalances, aptosBalances, stacksBalances]
         .some(a => a.some(b => Number(b.amount) > 0))
       || cosmosRows.some(r => Number(r.amount) > 0);
-    hz.classList.toggle("hidden", !(viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal && scopedTotal() === 0));
+    const zeroShow = viewKey === "all" && famLoaded.has("evm") && !evmLoadFailed && !btcLoadFailed && !ltcLoadFailed && !dogeLoadFailed && !bchLoadFailed && !adaLoadFailed && !zecLoadFailed && !dashLoadFailed && !anyBal && scopedTotal() === 0;
+    hz.classList.toggle("hidden", !zeroShow);
+    const cal = $("chainsAppearLine");
+    if (cal) cal.classList.toggle("hidden", !zeroShow);
   }
+  if (homeSearchQuery) paintHomeSearch();
+  if (tokenPageState) { refreshTokenPageDesc(); renderTokenPage(); }
+}
+
+
+// ---------- home restructure: pager, search, Explore, token pages ----------
+// (spec rev5) The Assets tab's interactive machinery. paintAssets
+// owns the census + page rendering; this block owns navigation
+// between pages, the pinned search, the Explore view and the
+// token page that replaced the old detail sheet.
+let homeScopes = [{ key: "all" }];
+let homeGroups = [];
+let pagerSig = "";
+let pagerScrollRestore = null;
+let homeSearchQuery = "";
+let tokenPageState = null; // { desc, rangeDays, returnTo }
+let tokenPageSeq = 0;
+
+/** Scopes with a send/swap in flight (unfinished milestone
+ * records): each leg's chain maps to its pager scope — EVM chains
+ * to the active network's page when active, else their own
+ * "evm:<key>" page; Arkade rides the Bitcoin page. Best-effort:
+ * unreadable records simply earn no pages. */
+function inFlightScopes() {
+  const out = new Set();
+  try {
+    for (const r of loadMilestoneRecords(localStorage)) {
+      if (!r || r.state === "done") continue;
+      for (const l of r.legs || []) {
+        for (const ck of [l.fromChainKey, l.toChainKey]) {
+          if (!ck) continue;
+          if (NETWORKS[ck]) out.add(ck === networkKey ? "evm" : "evm:" + ck);
+          else if (ck === "arkade") out.add("bitcoin");
+          else out.add(ck);
+        }
+      }
+    }
+  } catch { /* records unreadable — no in-flight pages */ }
+  return out;
+}
+/** The pager index matching the committed view (page 0 = All). */
+function scopeIndexForView(scopes) {
+  const i = scopes.findIndex(s => s.key === "all" ? viewKey === "all"
+    : s.key === "evm" ? viewKey === "evm"
+    : s.key.startsWith("evm:") ? (viewKey === "evm" && networkKey === s.key.slice(4))
+    : s.key === viewKey);
+  return i < 0 ? 0 : i;
+}
+function paintSwipeBar(activeIdx) {
+  const s = homeScopes[activeIdx] || homeScopes[0];
+  const nameEl = $("swName"), dotsEl = $("swDots");
+  if (nameEl) nameEl.textContent = !s || s.key === "all" ? "ALL" : String(s.name || s.key).toUpperCase();
+  if (dotsEl) dotsEl.innerHTML = homeScopes.map((x, i) => `<span class="swdot${i === activeIdx ? " on" : ""}"></span>`).join("");
+  const prev = $("swPrev"), next = $("swNext");
+  if (prev) prev.classList.toggle("dim", activeIdx <= 0);
+  if (next) next.classList.toggle("dim", activeIdx >= homeScopes.length - 1);
+}
+function pagerGoTo(idx, instant = false) {
+  const pagerEl = $("homePager"); if (!pagerEl) return;
+  const w = pagerEl.clientWidth; if (!w) return;
+  const clamped = Math.max(0, Math.min(homeScopes.length - 1, idx));
+  pagerEl.scrollTo({ left: clamped * w, behavior: instant ? "auto" : "smooth" });
+}
+/** Commit a settled pager page: the scope becomes the view (the
+ * hero, the pill and every scoped surface follow viewKey), and a
+ * non-active EVM page switches the network through the normal
+ * selectNetwork path. renderMain re-reads and re-paints. */
+function pagerCommit(idx) {
+  const s = homeScopes[idx]; if (!s) return;
+  if (s.key === "all") { if (viewKey !== "all") { viewKey = "all"; saveViewKey(); renderMain(); } return; }
+  if (s.key === "evm") { if (viewKey !== "evm") { viewKey = "evm"; saveViewKey(); renderMain(); } return; }
+  if (s.key.startsWith("evm:")) { viewKey = "evm"; saveViewKey(); selectNetwork(s.key.slice(4)); return; }
+  if (viewKey !== s.key) { viewKey = s.key; saveViewKey(); renderMain(); }
+}
+{
+  const pagerEl = $("homePager");
+  if (pagerEl) {
+    let settleTimer = null;
+    pagerEl.addEventListener("scroll", () => {
+      const w = pagerEl.clientWidth; if (!w) return;
+      const idx = Math.round(pagerEl.scrollLeft / w);
+      paintSwipeBar(Math.max(0, Math.min(homeScopes.length - 1, idx))); // the indicator follows the finger
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => { if (idx !== scopeIndexForView(homeScopes)) pagerCommit(idx); }, 140);
+    }, { passive: true });
+  }
+  const prev = $("swPrev"), next = $("swNext");
+  if (prev) prev.onclick = () => { const w = $("homePager"); if (w && w.clientWidth) pagerGoTo(Math.round(w.scrollLeft / w.clientWidth) - 1); };
+  if (next) next.onclick = () => { const w = $("homePager"); if (w && w.clientWidth) pagerGoTo(Math.round(w.scrollLeft / w.clientWidth) + 1); };
+}
+
+/** Row wiring for the home surfaces (spec rev5): every row tap
+ * lands on the token page (detail-capable families) or the
+ * family's own pre-scoped sheet, exactly as the old list wired
+ * them — scoped to the subtree being painted so the pager, the
+ * search results and Explore never double-wire. */
+function wireHomeRows(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
   // Address chips copy WITHOUT opening the row's destination —
   // the two taps are unambiguous (chip = copy, row = detail).
-  document.querySelectorAll("[data-copyaddr]").forEach(el => el.onclick = (e) => {
+  root.querySelectorAll("[data-copyaddr]").forEach(el => el.onclick = (e) => {
     e.stopPropagation();
     copyText(el.dataset.copyaddr, el);
     toast("Address copied");
   });
-  document.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
     const b = balances[Number(r.dataset.evmrow)];
-    if (b) openTokenDetail(evmDetailDesc(b));
+    if (b) openTokenPage(evmDetailDesc(b), "home");
   });
-  const btcRowEl = $("btcRow"); if (btcRowEl) btcRowEl.onclick = openBtcSheet;
-  const ltcEl = document.querySelector("[data-ltc]"); if (ltcEl) ltcEl.onclick = openLtcSheet;
-  const dogeEl = document.querySelector("[data-doge]"); if (dogeEl) dogeEl.onclick = openDogeSheet;
-  const bchEl = document.querySelector("[data-bch]"); if (bchEl) bchEl.onclick = openBchSheet;
-  const adaEl = document.querySelector("[data-ada]"); if (adaEl) adaEl.onclick = openCardanoSheet;
-  const zecEl = document.querySelector("[data-zec]"); if (zecEl) zecEl.onclick = openZecSheet;
-  const dashEl = document.querySelector("[data-dash]"); if (dashEl) dashEl.onclick = openDashSheet;
-  const lnEl = document.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
-  document.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("#btcRow").forEach(el => el.onclick = () => openTokenPage(scalarTokenDesc("bitcoin"), "home"));
+  const scalarWire = (attr, key) => { const el = root.querySelector(`[${attr}]`); if (el) el.onclick = () => openTokenPage(scalarTokenDesc(key), "home"); };
+  scalarWire("data-ltc", "litecoin"); scalarWire("data-doge", "dogecoin"); scalarWire("data-bch", "bitcoincash");
+  scalarWire("data-ada", "cardano"); scalarWire("data-zec", "zcash"); scalarWire("data-dash", "dash");
+  const lnEl = root.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
+  root.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
     const b = tronBalances[Number(r.dataset.tron)];
-    if (b) openTokenDetail(tronDetailDesc(b));
+    if (b) openTokenPage(tronDetailDesc(b), "home");
   });
-  document.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
     const b = solBalances[Number(r.dataset.sol)];
-    if (b) openTokenDetail(solanaDetailDesc(b));
+    if (b) openTokenPage(solanaDetailDesc(b), "home");
   });
-  document.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
     const b = suiBalances[Number(r.dataset.sui)];
-    if (b) openTokenDetail(suiDetailDesc(b));
+    if (b) openTokenPage(suiDetailDesc(b), "home");
   });
-  document.querySelectorAll("[data-stellar]").forEach(r => r.onclick = () => {
-    const b = stellarBalances[Number(r.dataset.stellar)];
-    if (b) openStellarSheet(b);
+  const sheetWire = (attr, arr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => r.onclick = () => {
+    const b = arr[Number(r.dataset[attr.slice(5)])];
+    if (b) fn(b);
   });
-  document.querySelectorAll("[data-ton]").forEach(r => r.onclick = () => {
-    const b = tonBalances[Number(r.dataset.ton)];
-    if (b) openTonSheet(b);
-  });
-  document.querySelectorAll("[data-near]").forEach(r => r.onclick = () => {
-    const b = nearBalances[Number(r.dataset.near)];
-    if (b) openNearSheet(b);
-  });
-  document.querySelectorAll("[data-algo]").forEach(r => r.onclick = () => {
-    const b = algoBalances[Number(r.dataset.algo)];
-    if (b) openAlgoSheet(b);
-  });
-  document.querySelectorAll("[data-tez]").forEach(r => r.onclick = () => {
-    const b = tezBalances[Number(r.dataset.tez)];
-    if (b) openTezosSheet(b);
-  });
-  document.querySelectorAll("[data-hba]").forEach(r => r.onclick = () => {
-    const b = hbaBalances[Number(r.dataset.hba)];
-    if (b) openHederaSheet(b);
-  });
-  document.querySelectorAll("[data-xrp]").forEach(r => r.onclick = () => {
-    const b = xrpBalances[Number(r.dataset.xrp)];
-    if (b) openXrplSheet(b);
-  });
-  document.querySelectorAll("[data-dot]").forEach(r => r.onclick = () => {
-    const b = dotBalances[Number(r.dataset.dot)];
-    if (b) openDotSheet(b);
-  });
-  document.querySelectorAll("[data-aptos]").forEach(r => r.onclick = () => {
-    const b = aptosBalances[Number(r.dataset.aptos)];
-    if (b) openAptosSheet(b);
-  });
-  document.querySelectorAll("[data-stacks]").forEach(r => r.onclick = () => {
-    const b = stacksBalances[Number(r.dataset.stacks)];
-    if (b) openStacksSheet(b);
-  });
-  document.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
+  sheetWire("data-stellar", stellarBalances, (b) => openTokenPage(familyTokenDesc("stellar", b), "home"));
+  sheetWire("data-ton", tonBalances, (b) => openTokenPage(familyTokenDesc("ton", b), "home"));
+  sheetWire("data-near", nearBalances, (b) => openTokenPage(familyTokenDesc("near", b), "home"));
+  sheetWire("data-algo", algoBalances, (b) => openTokenPage(familyTokenDesc("algorand", b), "home"));
+  sheetWire("data-tez", tezBalances, (b) => openTokenPage(familyTokenDesc("tezos", b), "home"));
+  sheetWire("data-hba", hbaBalances, (b) => openTokenPage(familyTokenDesc("hedera", b), "home"));
+  sheetWire("data-xrp", xrpBalances, (b) => openTokenPage(familyTokenDesc("xrpl", b), "home"));
+  sheetWire("data-dot", dotBalances, (b) => openTokenPage(familyTokenDesc("polkadot", b), "home"));
+  sheetWire("data-aptos", aptosBalances, (b) => openTokenPage(familyTokenDesc("aptos", b), "home"));
+  sheetWire("data-stacks", stacksBalances, (b) => openTokenPage(familyTokenDesc("stacks", b), "home"));
+  root.querySelectorAll("[data-cosmos]").forEach(r => r.onclick = () => {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
-    if (row) openCosmosSheet(row);
+    if (row) openTokenPage(familyTokenDesc(row.key, row), "home");
   });
-  document.querySelectorAll("[data-other]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-other]").forEach(r => r.onclick = () => {
     const k = r.dataset.other;
     if (expandedOther.has(k)) expandedOther.delete(k); else expandedOther.add(k);
     paintAssets();
   });
-  document.querySelectorAll("[data-zero]").forEach(r => r.onclick = () => {
-    const k = r.dataset.zero;
-    if (expandedZero.has(k)) expandedZero.delete(k); else expandedZero.add(k);
-    paintAssets();
-  });
-  const atb = $("addTokBtn");
+  const atb = root.querySelector("#addTokBtn");
   if (atb) atb.onclick = openAddTokenSheet;
+}
+
+/** A token-page descriptor for the scalar families (one coin per
+ * chain): the page's Send opens the family's own sheet; Swap
+ * pre-selects the coin in the swap sheet. */
+function scalarTokenDesc(key) {
+  const table = {
+    bitcoin: { sym: "BTC", name: "Bitcoin", bal: () => btcBal + btcTrBal, failed: () => btcLoadFailed, send: () => openBtcSheet() },
+    litecoin: { sym: "LTC", name: "Litecoin", bal: () => ltcBal, failed: () => ltcLoadFailed, send: () => openLtcSheet() },
+    dogecoin: { sym: "DOGE", name: "Dogecoin", bal: () => dogeBal, failed: () => dogeLoadFailed, send: () => openDogeSheet() },
+    bitcoincash: { sym: "BCH", name: "Bitcoin Cash", bal: () => bchBal, failed: () => bchLoadFailed, send: () => openBchSheet() },
+    cardano: { sym: "ADA", name: "Cardano", bal: () => adaBal, failed: () => adaLoadFailed, send: () => openCardanoSheet() },
+    zcash: { sym: "ZEC", name: "Zcash", bal: () => zecBal, failed: () => zecLoadFailed, send: () => openZecSheet() },
+    dash: { sym: "DASH", name: "Dash", bal: () => dashBal, failed: () => dashLoadFailed, send: () => openDashSheet() },
+  };
+  const t = table[key];
+  const row = { symbol: t.sym, name: t.name, amount: t.failed() ? null : String(t.bal()), decimals: 8, verified: true };
+  return {
+    family: key, row, chainLabel: t.name, scopeKey: key,
+    identLabel: null, ident: null,
+    price: prices[t.sym] != null ? prices[t.sym] : null,
+    extras: { cgId: cgIdForSymbol(t.sym) },
+    send: t.send,
+    swap: () => { pendingSwapFrom = { netKey: key, address: null }; $("actSwap").click(); },
+  };
+}
+/** A token-page descriptor for the sheet families and the Cosmos
+ * chains: Send opens the family's pre-scoped sheet with the row;
+ * Swap pre-selects the chain + token in the swap sheet. Price and
+ * chart extras follow the same rules as the EVM descriptors
+ * (coin route for natives, contract route where CoinGecko can
+ * address the asset, otherwise no chart). */
+function familyTokenDesc(key, b) {
+  const meta = (RECEIVE_NETWORKS.find(x => x.id === key) || {});
+  const isCosmos = COSMOS_CHAINS.some(c => c.key === key);
+  const chainLabel = isCosmos ? (b.name || key) : (meta.name || key);
+  const senders = {
+    stellar: () => openStellarSheet(b), ton: () => openTonSheet(b), near: () => openNearSheet(b),
+    algorand: () => openAlgoSheet(b), tezos: () => openTezosSheet(b), hedera: () => openHederaSheet(b),
+    xrpl: () => openXrplSheet(b), polkadot: () => openDotSheet(b), aptos: () => openAptosSheet(b),
+    stacks: () => openStacksSheet(b),
+  };
+  const price = priceOfRow(b, b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol]);
+  return {
+    family: key, row: b, chainLabel, scopeKey: key,
+    identLabel: b.address ? "Token" : (b.contract ? "Contract" : null),
+    ident: b.address || b.contract || null,
+    price: price != null ? price : null,
+    extras: !b.address && !b.contract ? { cgId: cgIdForSymbol(b.symbol) } : {},
+    send: isCosmos ? () => openCosmosSheet(b) : senders[key],
+    swap: () => { pendingSwapFrom = { netKey: key, address: b.address || null }; $("actSwap").click(); },
+  };
+}
+/** A descriptor for an EVM token on a NON-active chain (Explore /
+ * search catalogue entries): the token page shows it not-held;
+ * Send/Swap switch the network first, then open the pre-scoped
+ * flow on the freshly loaded chain. */
+function evmCatalogDesc(netKey, t) {
+  const net = NETWORKS[netKey];
+  const row = { symbol: t.symbol, name: t.name || t.symbol, amount: "0", address: t.address || null, decimals: t.decimals, verified: t.verified !== false };
+  return {
+    family: "evm", row, chainLabel: net.name, scopeKey: "evm:" + netKey,
+    identLabel: t.address ? "Contract address" : null, ident: t.address || null,
+    price: null,
+    extras: t.address ? { cgPlatform: cgPlatformForChain(net.chainId), address: t.address, cgId: null } : { cgId: cgIdForSymbol(net.priceSym || t.symbol) },
+    send: async () => { await selectNetwork(netKey); openEvmSendSheet({ address: t.address || null }); },
+    swap: async () => { await selectNetwork(netKey); pendingSwapFrom = { netKey, address: t.address || null }; $("actSwap").click(); },
+  };
+}
+
+/** Refresh an open token page's descriptor from the freshest
+ * rows (spec §6: the price refreshes while the page is open).
+ * Descriptors for the detail-capable families rebuild from the
+ * current balance arrays by address + symbol; scalars rebuild
+ * from their live globals. Anything else keeps its descriptor. */
+function refreshTokenPageDesc() {
+  const st = tokenPageState; if (!st || !st.desc || !st.desc.row) return;
+  const d = st.desc;
+  const same = (b) => b && (b.address || null) === (d.row.address || null) && b.symbol === d.row.symbol;
+  try {
+    if (d.family === "evm" && !String(d.scopeKey || "").startsWith("evm:")) { const b = balances.find(same); if (b) st.desc = evmDetailDesc(b); }
+    else if (d.family === "tron") { const b = tronBalances.find(same); if (b) st.desc = tronDetailDesc(b); }
+    else if (d.family === "solana") { const b = solBalances.find(same); if (b) st.desc = solanaDetailDesc(b); }
+    else if (d.family === "sui") { const b = suiBalances.find(same); if (b) st.desc = suiDetailDesc(b); }
+    else if (["bitcoin", "litecoin", "dogecoin", "bitcoincash", "cardano", "zcash", "dash"].includes(d.family)) st.desc = scalarTokenDesc(d.family);
+  } catch { /* keep the existing descriptor */ }
+}
+/** Open the token page (spec rev5 §6) for a descriptor shaped
+ * like the detail descriptors above. The page replaces the home
+ * surface inside the Assets tab; Back returns to where the tap
+ * came from (home / Explore / search). */
+function openTokenPage(desc, returnTo = "home") {
+  tokenPageState = { desc, rangeDays: 1, returnTo };
+  renderTokenPage();
+  const tv = $("tokenView"), hm = $("homeMain"), ev = $("exploreView");
+  if (tv) tv.classList.remove("hidden");
+  if (hm) hm.classList.add("hidden");
+  if (ev) ev.classList.add("hidden"); // closeTokenPage restores it when returnTo is "explore"
+  if (tv) tv.scrollTop = 0;
+}
+function closeTokenPage() {
+  const st = tokenPageState; tokenPageState = null; tokenPageSeq++;
+  const tv = $("tokenView"), hm = $("homeMain"), ev = $("exploreView");
+  if (tv) tv.classList.add("hidden");
+  if (st && st.returnTo === "explore" && ev) { ev.classList.remove("hidden"); return; }
+  if (hm) hm.classList.remove("hidden");
+}
+function renderTokenPage() {
+  const st = tokenPageState; if (!st) return;
+  const d = st.desc, b = d.row;
+  const host = $("tokenView"); if (!host) return;
+  const seq = ++tokenPageSeq;
+  const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
+  const held = b.amount != null && Number(b.amount) > 0;
+  const failed = b.amount == null;
+  const valLine = d.price != null && held ? usd(Number(b.amount) * d.price) : null;
+  const hasExtrasRoute = !!(d.extras && (d.extras.address || d.extras.cgId));
+  const decimals = b.decimals != null ? Number(b.decimals) : null;
+  host.innerHTML = `
+    <div class="xhead"><button class="xback" id="tdBack" aria-label="Back">‹</button><b class="t-title">${esc(title)}</b>${b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : ""}</div>
+    <p class="tag" style="margin:2px 0 0">${esc(b.symbol)} · ${esc(d.chainLabel)}</p>
+    <p style="margin:12px 0 2px"><b style="font-size:22px">${failed ? "—" : fmt(b.amount)} ${esc(b.symbol)}</b></p>
+    ${failed ? `<p class="tag">This balance couldn't load right now.</p>` : (valLine ? `<p class="tag">${esc(valLine)}</p>` : "")}
+    ${!held && !failed ? `<p class="tag">Not held</p>` : ""}
+    ${d.price != null ? `<p class="tag">Price: <b>${esc(tdPriceText(d.price))}</b> per ${esc(b.symbol)}</p>` : ""}
+    <div id="tdChart">${hasExtrasRoute ? (st.chartDone === st.rangeDays ? (st.chartHtml || "") : `<p class="tag">Loading price chart…</p>`) : ""}</div>
+    <div id="tdMarket">${st.chartDone === st.rangeDays ? (st.marketHtml || "") : ""}</div>
+    ${d.ident ? `<label class="tag" style="display:block;margin-top:12px">${esc(d.identLabel || "Contract address")}</label>
+      <p class="seed" id="tdIdent" style="word-break:break-all;cursor:pointer" title="Tap to copy">${esc(d.ident)}</p>
+      ${decimals != null ? `<p class="tag">Decimals: ${decimals}</p>` : ""}`
+    : `<p class="tag" style="margin-top:12px">This is the network's native asset — it has no contract address.</p>`}
+    <div id="tdMoves"></div>
+    <div style="margin-top:16px">
+      ${d.swap ? `<button class="btn" id="tdSwap" style="width:100%">Swap</button>` : ""}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn ghost" id="tdSend" style="flex:1">Send</button>
+        <button class="btn ghost" id="tdReceive" style="flex:1">Receive</button>
+        ${d.move ? `<button class="btn ghost" id="tdMove" style="flex:1">Move to ${esc(NETWORKS[d.movePair.toChainKey]?.name || "Ethereum")}</button>` : ""}
+      </div>
+    </div>`;
+  $("tdBack").onclick = () => closeTokenPage();
+  const identEl = $("tdIdent");
+  if (identEl) identEl.onclick = () => { copyText(d.ident, identEl); toast("Address copied"); };
+  $("tdSend").onclick = () => d.send();
+  const swapBtn = $("tdSwap");
+  if (swapBtn && d.swap) swapBtn.onclick = () => d.swap();
+  const moveBtn = $("tdMove");
+  if (moveBtn && d.move) moveBtn.onclick = () => d.move();
+  $("tdReceive").onclick = () => {
+    if (d.scopeKey && d.scopeKey !== viewKey && !String(d.scopeKey).startsWith("evm:")) { viewKey = d.scopeKey; saveViewKey(); renderMain(); }
+    $("actReceive").click();
+  };
+  if (d.movePair) paintTokenMoves(d.movePair);
+  if (hasExtrasRoute) { wireTdRanges(st); if (st.chartDone !== st.rangeDays) loadTokenChart(seq, st); }
+}
+/** Range-switch wiring for the token page chart (24H/7D/1M/1Y):
+ * switching re-renders the page, which reloads the chart for the
+ * new range (the settled range's html is cached on the state, so
+ * balance-driven repaints never refetch). */
+function wireTdRanges(st) {
+  const host = $("tokenView"); if (!host) return;
+  host.querySelectorAll("[data-tdrange]").forEach(btn => btn.onclick = () => {
+    st.rangeDays = Number(btn.dataset.tdrange);
+    renderTokenPage();
+  });
+}
+/** The token page's chart block: range-switchable (24H/7D/1M/1Y)
+ * via core's market-extras fetch (CoinGecko market_chart days).
+ * An unpriced token gets NO chart section at all (spec §6/§7) —
+ * the block simply empties. */
+function loadTokenChart(seq, st) {
+  const d = st.desc;
+  fetchTokenMarketExtras({ ...d.extras, days: st.rangeDays }).then(x => {
+    if (seq !== tokenPageSeq || !tokenPageState || tokenPageState !== st) return;
+    // The settled range's html is cached on the state: repaint
+    // cycles (every family read repaints) reuse it instead of
+    // refetching, and an unpriced token settles to NO chart
+    // section at all (spec §6/§7).
+    if (x.history && x.history.length) {
+      const vals = x.history.map(p => p.p);
+      const label = st.rangeDays === 1 ? "last 24 hours" : st.rangeDays === 7 ? "last 7 days" : st.rangeDays === 30 ? "last 30 days" : "last year";
+      st.chartHtml = `<div class="tdranges">${[[1, "24H"], [7, "7D"], [30, "1M"], [365, "1Y"]].map(([dd, ll]) =>
+        `<button data-tdrange="${dd}" class="${st.rangeDays === dd ? "on" : ""}">${ll}</button>`).join("")}</div>`
+        + `<label class="tag" style="display:block;margin-top:6px">Price — ${label}</label>`
+        + sparklineSvg(x.history)
+        + `<p class="tag">Low ${esc(tdPriceText(Math.min(...vals)))} · High ${esc(tdPriceText(Math.max(...vals)))}</p>`;
+    } else st.chartHtml = "";
+    const lines = [];
+    if (x.marketCapUsd != null) lines.push(`Market cap: <b>${esc(usd(x.marketCapUsd))}</b>`);
+    if (x.volume24hUsd != null) lines.push(`Volume (24h): <b>${esc(usd(x.volume24hUsd))}</b>`);
+    st.marketHtml = lines.length ? `<p class="tag">${lines.join("<br>")}</p>` : "";
+    st.chartDone = st.rangeDays;
+    const chartHost = $("tdChart"), mktHost = $("tdMarket");
+    if (chartHost) { chartHost.innerHTML = st.chartHtml; wireTdRanges(st); }
+    if (mktHost) mktHost.innerHTML = st.marketHtml;
+  }).catch(() => {
+    if (seq === tokenPageSeq && tokenPageState === st) { st.chartDone = st.rangeDays; st.chartHtml = ""; st.marketHtml = ""; }
+    if (seq === tokenPageSeq && $("tdChart")) $("tdChart").innerHTML = "";
+  });
+}
+
+/** Assets search (spec rev5 §5): token name/symbol across all
+ * chains + chain names. Held results first with live balances,
+ * then unheld (curated catalogues + family natives); a chain-name
+ * match leads with a row that jumps the pager to that chain's
+ * page. Results exist only while a query is typed. */
+function paintHomeSearch() {
+  const host = $("homeSearchResults"); if (!host) return;
+  const q = homeSearchQuery.trim().toLowerCase();
+  const tab = $("tab-wallet");
+  if (!q) { host.classList.add("hidden"); host.innerHTML = ""; if (tab) tab.classList.remove("searching"); return; }
+  host.classList.remove("hidden");
+  if (tab) tab.classList.add("searching");
+  const matches = (sym, name) => String(sym || "").toLowerCase().includes(q) || String(name || "").toLowerCase().includes(q);
+  let html = "";
+  // Chain-name matches first: tapping jumps the pager (a chain
+  // with no page yet gets its context created — an EVM chain
+  // switches the network, a family opens its Explore chain view).
+  const chainHits = homeScopes.filter(s => s.key !== "all" && String(s.name || "").toLowerCase().includes(q))
+    .map(s => ({ key: s.key, name: s.name || s.key }));
+  for (const k of Object.keys(NETWORKS)) {
+    if (k === networkKey || chainHits.some(h => h.key === "evm:" + k)) continue;
+    if (NETWORKS[k].name.toLowerCase().includes(q)) chainHits.push({ key: "evm:" + k, name: NETWORKS[k].name });
+  }
+  for (const m of RECEIVE_NETWORKS) {
+    if (m.id === "evm" || m.id === "lightning" || chainHits.some(h => h.key === m.id)) continue;
+    if (String(m.name || "").toLowerCase().includes(q)) chainHits.push({ key: "xplore:" + m.id, name: m.name });
+  }
+  for (const s of chainHits) {
+    html += `<div class="row" data-chainjump="${esc(s.key)}">
+      <span class="logowrap"><span class="coin" style="background:#3b4a7a">${esc(String(s.name || s.key).slice(0, 1).toUpperCase())}</span></span>
+      <span class="grow"><b class="rname">${esc(s.name || s.key)}</b><small>Chain — tap to open its page</small></span>
+      <span>›</span></div>`;
+  }
+  // Held tokens (from the last paint's groups), badged + wired
+  // exactly like the All page's rows.
+  badgeAllCtx = true;
+  const heldHtml = [];
+  for (const g of homeGroups) {
+    if (g.key === "lightning") continue;
+    for (const it of g.items || []) {
+      const b = it.b || {};
+      if (matches(b.symbol, b.name)) heldHtml.push(it.render());
+    }
+  }
+  badgeAllCtx = null;
+  if (heldHtml.length) html += `<p class="tag" style="margin:10px 0 2px">Held</p>` + heldHtml.join("");
+  // Unheld: family natives not currently held + the curated EVM
+  // catalogues (active chain's rows are the held ones above; the
+  // other chains' catalogues are Explore's source too).
+  const unheld = [];
+  const seen = new Set();
+  const pushUnheld = (desc, sym, name, chainLabel) => {
+    const k = (desc.family || "") + "|" + (desc.row.address || desc.row.symbol || "") + "|" + chainLabel;
+    if (seen.has(k)) return; seen.add(k);
+    unheld.push({ desc, sym, name, chainLabel });
+  };
+  for (const m of RECEIVE_NETWORKS) {
+    if (m.id === "evm" || m.id === "lightning") continue;
+    const nat = FAMILY_NATIVE_SYM[m.id];
+    if (!nat || !matches(nat, m.name)) continue;
+    const heldHere = (homeGroups.find(g => g.key === m.id)?.items || []).some(it => it.b && it.b.symbol === nat && !it.b.address);
+    if (!heldHere) pushUnheld(familyTokenDesc(m.id, { symbol: nat, name: m.name, amount: "0", verified: true }), nat, m.name, m.name);
+  }
+  for (const k of Object.keys(NETWORKS)) {
+    const net = NETWORKS[k];
+    for (const t of net.tokens || []) {
+      if (!matches(t.symbol, t.symbol)) continue;
+      if (k === networkKey && balances.some(b => b.address && t.address && b.address.toLowerCase() === t.address.toLowerCase())) continue;
+      pushUnheld(evmCatalogDesc(k, t), t.symbol, t.symbol, net.name);
+    }
+    const natSym = net.symbol;
+    if (matches(natSym, net.name) && k !== networkKey) {
+      pushUnheld(evmCatalogDesc(k, { symbol: natSym, name: net.name, address: null, decimals: 18 }), natSym, net.name, net.name);
+    }
+  }
+  if (unheld.length) {
+    html += `<p class="tag" style="margin:10px 0 2px">Not held</p>` + unheld.map((u, i) => `<div class="row" data-unheld="${i}">
+      <span class="logowrap">${tokenLogoHtml({ symbol: u.sym, address: u.desc.row.address }, u.desc.family === "evm" ? "evm" : u.desc.family)}</span>
+      <span class="grow"><b class="rname">${esc(u.name || u.sym)}</b><small>${esc(u.sym)} · ${esc(u.chainLabel)}</small></span>
+      <span class="amt"><b>0</b><small></small></span></div>`).join("");
+  }
+  host.innerHTML = html || `<p class="tag" style="padding:10px 0">No tokens or chains match.</p>`;
+  wireHomeRows(host);
+  host.querySelectorAll("[data-chainjump]").forEach(r => r.onclick = () => {
+    const key = r.dataset.chainjump;
+    const idx = homeScopes.findIndex(s => s.key === key);
+    clearHomeSearch();
+    if (idx >= 0) { pagerGoTo(idx); pagerCommit(idx); }
+    else if (key.startsWith("evm:")) selectNetwork(key.slice(4));
+    else if (key.startsWith("xplore:")) { openExplore(); renderExploreChain(key.slice(7)); }
+  });
+  host.querySelectorAll("[data-unheld]").forEach(r => r.onclick = () => {
+    const u = unheld[Number(r.dataset.unheld)];
+    if (u) openTokenPage(u.desc, "home");
+  });
+}
+function clearHomeSearch() {
+  homeSearchQuery = "";
+  const inp = $("homeSearch"); if (inp) inp.value = "";
+  const clr = $("homeSearchClear"); if (clr) clr.classList.add("hidden");
+  paintHomeSearch();
+}
+{
+  const inp = $("homeSearch");
+  if (inp) inp.addEventListener("input", () => {
+    homeSearchQuery = inp.value;
+    const clr = $("homeSearchClear"); if (clr) clr.classList.toggle("hidden", !inp.value);
+    paintHomeSearch();
+  });
+  const clr = $("homeSearchClear");
+  if (clr) clr.onclick = () => clearHomeSearch();
+  const line = $("exploreLine");
+  if (line) line.onclick = () => openExplore();
+}
+
+/** Explore (spec rev5 §9): the ONLY surface besides search that
+ * enumerates chains — two exhaustive A–Z sections (chains you
+ * hold, chains you don't), each chain row opening a chain view
+ * listing its curated tokens (held first with balances, then the
+ * rest) with the pager's jump for chains that have a page. */
+function openExplore() {
+  const ev = $("exploreView"), hm = $("homeMain"), tv = $("tokenView");
+  if (!ev) return;
+  renderExplore();
+  ev.classList.remove("hidden");
+  if (hm) hm.classList.add("hidden");
+  if (tv) tv.classList.add("hidden");
+  ev.scrollTop = 0;
+}
+function closeExplore() {
+  const ev = $("exploreView"), hm = $("homeMain");
+  if (ev) ev.classList.add("hidden");
+  if (hm) hm.classList.remove("hidden");
+}
+function exploreChains() {
+  // { key, name, held, scopeKey|null, netKey|null, familyId }
+  const out = [];
+  const heldKeys = new Set(homeGroups.filter(g => (g.items || []).some(it => it.amount == null || Number(it.amount) > 0)).map(g => g.key));
+  for (const k of Object.keys(NETWORKS)) {
+    out.push({ key: "evm:" + k, name: NETWORKS[k].name, held: k === networkKey ? heldKeys.has("evm") : false, scopeKey: k === networkKey ? "evm" : "evm:" + k, netKey: k, familyId: "evm" });
+  }
+  for (const m of RECEIVE_NETWORKS) {
+    if (m.id === "evm" || m.id === "lightning") continue;
+    out.push({ key: m.id, name: m.name, held: heldKeys.has(m.id), scopeKey: m.id, netKey: null, familyId: m.id });
+  }
+  for (const c of COSMOS_CHAINS) out.push({ key: c.key, name: c.name, held: heldKeys.has(c.key), scopeKey: c.key, netKey: null, familyId: c.key });
+  return out;
+}
+function renderExplore() {
+  const host = $("exploreView"); if (!host) return;
+  const chains = exploreChains();
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const held = chains.filter(c => c.held).sort(byName);
+  const rest = chains.filter(c => !c.held).sort(byName);
+  const rowFor = (c) => `<div class="row" data-xchain="${esc(c.key)}">
+      <span class="logowrap"><span class="coin" style="background:#3b4a7a">${esc(c.name.slice(0, 1).toUpperCase())}</span></span>
+      <span class="grow"><b class="rname">${esc(c.name)}</b><small>${c.held ? "Held" : "Not held"}</small></span>
+      <span>›</span></div>`;
+  host.innerHTML = `
+    <div class="xhead"><button class="xback" id="xBack" aria-label="Back">‹</button><b class="t-title">Explore</b></div>
+    ${held.length ? `<p class="tag" style="margin:10px 0 2px">Chains you hold</p>` + held.map(rowFor).join("") : ""}
+    <p class="tag" style="margin:10px 0 2px">Chains you don't hold yet</p>
+    ${rest.map(rowFor).join("")}`;
+  $("xBack").onclick = () => closeExplore();
+  host.querySelectorAll("[data-xchain]").forEach(r => r.onclick = () => renderExploreChain(r.dataset.xchain));
+}
+function renderExploreChain(key) {
+  const host = $("exploreView"); if (!host) return;
+  const c = exploreChains().find(x => x.key === key);
+  if (!c) return;
+  let rowsHtml = "";
+  let jumpKey = null;
+  if (c.netKey) {
+    const net = NETWORKS[c.netKey];
+    const isActive = c.netKey === networkKey;
+    const heldToks = isActive ? balances.filter(b => b.address) : [];
+    const heldAddrs = new Set(heldToks.map(b => (b.address || "").toLowerCase()));
+    badgeAllCtx = false;
+    rowsHtml = heldToks.map(b => tokenRowHtml(b, rowUsdValue(b, b.address ? prices[b.symbol] : prices[net.priceSym]), net.name, `data-xevm="${balances.indexOf(b)}"`, "evm")).join("");
+    badgeAllCtx = null;
+    rowsHtml += (net.tokens || []).filter(t => !heldAddrs.has((t.address || "").toLowerCase())).map((t, i) => `<div class="row" data-xunheld="${i}">
+      <span class="logowrap">${tokenLogoHtml({ symbol: t.symbol, address: t.address }, "evm")}</span>
+      <span class="grow"><b class="rname">${esc(t.symbol)}</b><small>${esc(t.symbol)} · ${esc(net.name)}</small></span>
+      <span class="amt"><b>0</b><small></small></span></div>`).join("");
+    if (!heldToks.length && !(net.tokens || []).length) rowsHtml = `<p class="tag" style="padding:10px 0">No curated tokens listed for this chain yet.</p>`;
+    jumpKey = c.scopeKey;
+    host.innerHTML = `
+      <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(net.name)}</b></div>
+      ${rowsHtml}
+      ${jumpKey && homeScopes.some(s => s.key === jumpKey) ? `<button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(net.name)} page</button>` : ""}`;
+    $("xBack2").onclick = () => renderExplore();
+    host.querySelectorAll("[data-xevm]").forEach(r => r.onclick = () => {
+      const b = balances[Number(r.dataset.xevm)];
+      if (b) openTokenPage(evmDetailDesc(b), "explore");
+    });
+    host.querySelectorAll("[data-xunheld]").forEach(r => r.onclick = () => {
+      const t = (net.tokens || []).filter(x => !heldAddrs.has((x.address || "").toLowerCase()))[Number(r.dataset.xunheld)];
+      if (t) openTokenPage(evmCatalogDesc(c.netKey, t), "explore");
+    });
+  } else {
+    const g = homeGroups.find(x => x.key === c.key);
+    badgeAllCtx = false;
+    rowsHtml = g ? g.html : "";
+    badgeAllCtx = null;
+    if (!rowsHtml || !c.held) {
+      const nat = FAMILY_NATIVE_SYM[c.familyId];
+      rowsHtml = nat ? `<div class="row" data-xnat="1">
+        <span class="logowrap">${tokenLogoHtml({ symbol: nat }, c.familyId)}</span>
+        <span class="grow"><b class="rname">${esc(nat)}</b><small>${esc(nat)} · ${esc(c.name)}</small></span>
+        <span class="amt"><b>0</b><small></small></span></div>` : `<p class="tag" style="padding:10px 0">Nothing listed here yet.</p>`;
+      host.innerHTML = `
+        <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(c.name)}</b></div>
+        ${rowsHtml}`;
+      $("xBack2").onclick = () => renderExplore();
+      const natEl = host.querySelector("[data-xnat]");
+      if (natEl && nat) natEl.onclick = () => openTokenPage(familyTokenDesc(c.familyId, { symbol: nat, name: c.name, amount: "0", verified: true }), "explore");
+      wireHomeRows(host);
+      return;
+    }
+    host.innerHTML = `
+      <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(c.name)}</b></div>
+      ${rowsHtml}
+      ${homeScopes.some(s => s.key === c.scopeKey) ? `<button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(c.name)} page</button>` : ""}`;
+    $("xBack2").onclick = () => renderExplore();
+    wireHomeRows(host);
+  }
+  const jump = $("xJump");
+  if (jump) jump.onclick = () => {
+    const idx = homeScopes.findIndex(s => s.key === jumpKey || s.key === c.scopeKey);
+    closeExplore();
+    if (idx >= 0) { pagerGoTo(idx); pagerCommit(idx); }
+  };
 }
 
 // ---------- chain discovery (Phase 0: gated EVM auto-discovery) ----------
@@ -3046,58 +3629,6 @@ function tronDetailDesc(b) {
     swap: () => { pendingSwapFrom = { netKey: "tron", address: b.address || null }; $("actSwap").click(); },
   };
 }
-function openTokenDetail(d) {
-  const b = d.row;
-  const seq = ++tokenDetailSeq;
-  const title = b.name && b.name !== b.symbol ? b.name : b.symbol;
-  const valLine = d.price != null && b.amount != null ? usd(Number(b.amount) * d.price)
-    : (Number(b.amount) > 0 ? "price unavailable" : null);
-  const hasExtrasRoute = !!(d.extras && (d.extras.address || d.extras.cgId));
-  openSheet(`<h3>${esc(title)}${b.verified === false ? ` <span class="vchip">UNVERIFIED</span>` : ""}</h3>
-    <p class="tag">${esc(b.symbol)} · ${esc(d.chainLabel)}</p>
-    <p style="margin:10px 0 2px"><b style="font-size:20px">${b.amount == null ? "—" : fmt(b.amount)} ${esc(b.symbol)}</b></p>
-    ${b.amount == null ? `<p class="tag">This balance couldn't load right now.</p>` : (valLine ? `<p class="tag">${valLine}</p>` : "")}
-    ${d.price != null ? `<p class="tag">Price: <b>${esc(tdPriceText(d.price))}</b> per ${esc(b.symbol)}</p>` : `<p class="tag">No live price available for this token right now.</p>`}
-    <div id="tdChart">${hasExtrasRoute ? `<p class="tag">Loading price chart…</p>` : ""}</div>
-    <div id="tdMarket"></div>
-    ${d.ident ? `<label class="tag" style="display:block;margin-top:10px">${esc(d.identLabel)}</label>
-      <p class="seed" style="word-break:break-all">${esc(d.ident)}</p>
-      <button class="btn ghost" id="tdCopyIdent">Copy ${esc(String(d.identLabel).toLowerCase())}</button>`
-    : `<p class="tag" style="margin-top:10px">This is the network's native asset — it has no contract address.</p>`}
-    <div id="tdMoves"></div>
-    <div style="display:flex;gap:8px;margin-top:14px">
-      <button class="btn" id="tdSend" style="flex:1">Send</button>
-      ${d.swap ? `<button class="btn" id="tdSwap" style="flex:1">Swap</button>` : ""}
-      ${d.move ? `<button class="btn" id="tdMove" style="flex:1">Move to ${esc(NETWORKS[d.movePair.toChainKey]?.name || "Ethereum")}</button>` : ""}
-    </div>`);
-  const copyBtn = $("tdCopyIdent");
-  if (copyBtn) copyBtn.onclick = () => { copyText(d.ident, copyBtn); toast("Address copied"); };
-  $("tdSend").onclick = () => d.send();
-  const swapBtn = $("tdSwap");
-  if (swapBtn && d.swap) swapBtn.onclick = () => d.swap();
-  const moveBtn = $("tdMove");
-  if (moveBtn && d.move) moveBtn.onclick = () => d.move();
-  if (d.movePair) paintTokenMoves(d.movePair);
-  if (hasExtrasRoute) {
-    fetchTokenMarketExtras(d.extras).then(x => {
-      if (seq !== tokenDetailSeq || !$("tdChart")) return; // a different sheet owns the screen now
-      const chartHost = $("tdChart"), mktHost = $("tdMarket");
-      if (x.history) {
-        const vals = x.history.map(p => p.p);
-        chartHost.innerHTML = `<label class="tag" style="display:block;margin-top:10px">Price — last 24 hours</label>`
-          + sparklineSvg(x.history)
-          + `<p class="tag">Low ${esc(tdPriceText(Math.min(...vals)))} · High ${esc(tdPriceText(Math.max(...vals)))}</p>`;
-      } else chartHost.innerHTML = "";
-      const lines = [];
-      if (x.marketCapUsd != null) lines.push(`Market cap: <b>${esc(usd(x.marketCapUsd))}</b>`);
-      if (x.volume24hUsd != null) lines.push(`Volume (24h): <b>${esc(usd(x.volume24hUsd))}</b>`);
-      if (lines.length && mktHost) mktHost.innerHTML = `<p class="tag">${lines.join("<br>")}</p>`;
-    }).catch(() => {
-      if (seq === tokenDetailSeq && $("tdChart")) $("tdChart").innerHTML = "";
-    });
-  }
-}
-
 // ---------- canonical-bridge Move (2026-11-15; pair table EMPTY since 2026-11-17 — dormant) ----------
 // A Move is its own action, never a swap: the token page of a
 // bridged-form token offers it, the swap screen presents it
@@ -3516,62 +4047,73 @@ async function selectNetwork(key) {
   networkKey = key; closeSheet(); renderMain();
 }
 $("netBtn").onclick = () => {
-  // §4.2 universal picker: All networks / EVM networks / Other
-  // networks (every family + each Cosmos chain). Search matches EVM
-  // rows on name as today, family rows via the receive alias matcher
-  // (receiveNetworkMatches — "btc" finds Bitcoin, not Bitcoin Cash).
+  // Search-first picker (home restructure, spec rev5 §10): the
+  // sheet opens with a search box and NOTHING enumerated — no
+  // pre-rendered chain list on any surface. Results appear only
+  // while a query is typed: chains that have a pager page jump
+  // the pager to it; other EVM networks switch through the normal
+  // path; families open their page or their Explore chain view.
   openSheet(`<h3>Network</h3>
     <input id="netSearch" placeholder="Search networks…" autocapitalize="none">
     <div id="netList"></div>
     <p class="msg err" id="netMsg"></p>`);
-  const totals = familyUsdTotals();
-  const total = (v) => v == null ? "—" : usd(v);
-  const check = `<svg class="ic ic-sm ic-brand"><use href="#i-check"/></svg>`;
   const paint = () => {
     const q = $("netSearch").value.trim().toLowerCase();
-    // SECURITY (audit M3): discovered-chain names/symbols are registry
-    // data — escaped here even though gateChains also sanitises them.
-    const item = (k, label, sub) => {
-      const sel = viewKey === "evm" && k === networkKey;
-      return `<button class="netitem${sel ? " sel" : ""}" data-net="${k}"><span>${esc(label)}${sub ? ` <small style="color:var(--dim)">${esc(sub)}</small>` : ""}</span><span class="vtotal">${k === networkKey ? total(totals.evm) : "—"}${sel ? " " + check : ""}</span></button>`;
-    };
+    const host = $("netList");
+    if (!q) { host.innerHTML = ""; return; }
+    const totals = familyUsdTotals();
+    const total = (v) => v == null ? "—" : usd(v);
+    const check = `<svg class="ic ic-sm ic-brand"><use href="#i-check"/></svg>`;
     let html = "";
     if (receiveNetworkMatches({ name: "All networks", aliases: ["all", "everything", "networks"] }, q)) {
       const sel = viewKey === "all";
       html += `<button class="netitem${sel ? " sel" : ""}" data-viewall="1"><span><svg class="ic ic-sm"><use href="#i-layers"/></svg> All networks</span><span class="vtotal">${total(heroTotal())}${sel ? " " + check : ""}</span></button>`;
     }
-    let evmHtml = BUILTIN_NETWORK_KEYS
-      .filter(k => !q || NETWORKS[k].name.toLowerCase().includes(q))
-      .map(k => item(k, NETWORKS[k].name)).join("");
-    // Display-tier chains are listed outright; discoverable-tier chains
-    // surface as soon as the user starts searching.
-    const disc = Object.values(discoveredChains).filter(d =>
-      (q ? true : d.tier === "display") &&
-      (!q || d.name.toLowerCase().includes(q) || d.symbol.toLowerCase() === q));
-    if (disc.length) {
-      evmHtml += `<p class="tag" style="margin:12px 0 4px">More networks — discovered automatically, checked live before switching</p>` +
-        disc.map(d => item(d.key, d.name, d.symbol)).join("");
+    // Chains with a pager page: jump the pager to the page.
+    for (const s of homeScopes) {
+      if (s.key === "all") continue;
+      if (!String(s.name || "").toLowerCase().includes(q)) continue;
+      const sel = scopeIndexForView(homeScopes) === homeScopes.indexOf(s);
+      html += `<button class="netitem${sel ? " sel" : ""}" data-jump="${esc(s.key)}"><span>${esc(s.name || s.key)}</span><span class="vtotal">${s.key === "evm" ? total(totals.evm) : total(totals[s.key])}${sel ? " " + check : ""}</span></button>`;
     }
-    if (evmHtml) html += `<p class="tag vgroup">EVM NETWORKS</p>` + evmHtml;
-    const fams = RECEIVE_NETWORKS.filter(m => m.id !== "evm" && receiveNetworkMatches(m, q));
-    if (fams.length) {
-      html += `<p class="tag vgroup">OTHER NETWORKS</p>` + fams.map(m => {
+    // EVM networks without a page: switch (the switch creates
+    // the page). SECURITY (audit M3): discovered-chain names are
+    // registry data — escaped even though gateChains sanitises.
+    const evmKeys = [...BUILTIN_NETWORK_KEYS, ...Object.keys(discoveredChains)];
+    for (const k of evmKeys) {
+      if (k === networkKey || homeScopes.some(s => s.key === "evm:" + k)) continue;
+      const n = NETWORKS[k]; if (!n) continue;
+      if (!n.name.toLowerCase().includes(q) && String(n.symbol || "").toLowerCase() !== q) continue;
+      html += `<button class="netitem" data-net="${k}"><span>${esc(n.name)}${n.symbol ? ` <small style="color:var(--dim)">${esc(n.symbol)}</small>` : ""}</span><span class="vtotal">—</span></button>`;
+    }
+    // Families: jump when paged, else their Explore chain view.
+    for (const m of RECEIVE_NETWORKS) {
+      if (m.id === "evm" || m.id === "lightning") continue;
+      if (!receiveNetworkMatches(m, q)) continue;
+      if (homeScopes.some(s => s.key === m.id)) {
         const sel = viewKey === m.id;
-        return `<button class="netitem${sel ? " sel" : ""}" data-viewfam="${m.id}"><span>${esc(m.name)}${m.sub ? ` <small style="color:var(--dim)">${esc(m.sub)}</small>` : ""}</span><span class="vtotal">${total(totals[m.id])}${sel ? " " + check : ""}</span></button>`;
-      }).join("");
+        html += `<button class="netitem${sel ? " sel" : ""}" data-jump="${m.id}"><span>${esc(m.name)}</span><span class="vtotal">${total(totals[m.id])}${sel ? " " + check : ""}</span></button>`;
+      } else {
+        html += `<button class="netitem" data-xplore="${m.id}"><span>${esc(m.name)}${m.sub ? ` <small style="color:var(--dim)">${esc(m.sub)}</small>` : ""}</span><span class="vtotal">—</span></button>`;
+      }
     }
-    $("netList").innerHTML = html || `<p class="tag">No networks match.</p>`;
-    document.querySelectorAll("[data-net]").forEach(b => b.onclick = async () => {
+    host.innerHTML = html || `<p class="tag">No networks match.</p>`;
+    host.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => {
+      const idx = homeScopes.findIndex(s => s.key === b.dataset.jump);
+      closeSheet();
+      if (idx >= 0) { goTab("wallet"); pagerGoTo(idx); pagerCommit(idx); }
+    });
+    host.querySelectorAll("[data-net]").forEach(b => b.onclick = async () => {
       viewKey = "evm"; saveViewKey();
       const before = networkKey;
       await selectNetwork(b.dataset.net);
       if (networkKey === before) { closeSheet(); renderMain(); } // same network: selectNetwork only closed the sheet
     });
-    document.querySelectorAll("[data-viewall]").forEach(b => b.onclick = () => {
+    host.querySelectorAll("[data-viewall]").forEach(b => b.onclick = () => {
       viewKey = "all"; saveViewKey(); closeSheet(); renderMain();
     });
-    document.querySelectorAll("[data-viewfam]").forEach(b => b.onclick = () => {
-      viewKey = b.dataset.viewfam; saveViewKey(); closeSheet(); renderMain();
+    host.querySelectorAll("[data-xplore]").forEach(b => b.onclick = () => {
+      closeSheet(); goTab("wallet"); openExplore(); renderExploreChain(b.dataset.xplore);
     });
   };
   $("netSearch").addEventListener("input", paint);
@@ -11188,7 +11730,9 @@ for (const id of ["createPw", "createPw2"]) {
     if (validatePassword(pw) && (pw2 === "" || pw === pw2)) msg("onboardMsg", "");
   });
 }
+let createCeremonyInFlight = false; // re-entry guard (seed-card fix, 2026-11-17): a second Create tap mid-ceremony must not rewrite the vault or the backup state under the first ceremony
 $("createBtn").onclick = async () => {
+  if (createCeremonyInFlight) return;
   const pw = $("createPw").value;
   if (!validatePassword(pw)) return msg("onboardMsg", "Password needs at least 12 characters.");
   if (pw !== $("createPw2").value) return msg("onboardMsg", "Passwords do not match.");
@@ -11206,6 +11750,8 @@ $("createBtn").onclick = async () => {
   // adoptRegistryNameIfMine) — say so instead of a dead end.
   if (taken) return msg("onboardMsg", "That username is already claimed. If it's yours from a wallet you already have, import or unlock that wallet instead — Fluid will attach the name to it automatically.");
   pendingName = wantName;
+  createCeremonyInFlight = true;
+  $("createBtn").disabled = true;
   msg("onboardMsg", "Creating your wallet… (encrypting takes a few seconds)", true);
   const v = await createVault(pw);
   localStorage.setItem(VAULT_KEY, v.keystore);
@@ -11237,9 +11783,20 @@ $("createBtn").onclick = async () => {
   // unconfirmed, home reminder standing). The name claim below is
   // part of creation either way — deferring the backup check never
   // defers the name, and the quiz never bricks the wallet.
+  let finishCreateStarted = false;
   const finishCreate = async (backupConfirmed) => {
+    if (finishCreateStarted) return; // the ceremony enters the wallet exactly once, whichever quiz path fires
+    finishCreateStarted = true;
     if (backupConfirmed) { try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ } }
     wallet = await unlockVault(v.keystore, pw);
+    // Seed-card fix (2026-11-17): re-assert "confirmed" AFTER the
+    // unlock as well. The walk's wallet had passed the quiz yet
+    // reopened with the state still "pending" — the single early
+    // write was lost with the wedged session, and the card then
+    // accused a user who HAD confirmed. The pass is now written
+    // at the quiz click itself, here before the unlock, and here
+    // again after it; any one surviving write ends the matter.
+    if (backupConfirmed) { try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ } }
     // H-A (2026-11-15): the ceremony is complete — the seed
     // words, the quiz's word options and the create passwords
     // leave the page now, not at some later lock.
@@ -11274,7 +11831,11 @@ $("createBtn").onclick = async () => {
     show("seedWordsView", false);
     show("seedQuizBox", true);
     mountSeedQuiz($("seedQuizBox"), v.phrase, {
-      onPass: () => finishCreate(true),
+      // The "confirmed" write happens HERE, in the pass click's
+      // own task — before finishCreate's awaits — so a session
+      // that dies anywhere later in the ceremony can no longer
+      // strand a passed quiz as "pending" (seed-card fix).
+      onPass: () => { try { localStorage.setItem(BACKUP_STATE_KEY, "confirmed"); } catch { /* storage unavailable */ } finishCreate(true); },
       onLater: () => finishCreate(false),
       onWords: () => { show("seedQuizBox", false); show("seedWordsView", true); },
     });

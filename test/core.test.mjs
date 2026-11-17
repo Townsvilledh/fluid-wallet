@@ -1962,9 +1962,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcAlt.includes("m.dogecoin = \"Dogecoin balances couldn't be loaded right now.\"")
     && appSrcAlt.includes("m.bitcoincash = \"Bitcoin Cash balances couldn't be loaded right now.\""));
   ok("altcoin honesty: failed reads render the couldn't-load row state, not zero",
-    appSrcAlt.includes("scalarAmtHtml(ltcLoadFailed, ltcBal, prices.LTC)")
-    && appSrcAlt.includes("scalarAmtHtml(dogeLoadFailed, dogeBal, prices.DOGE)")
-    && appSrcAlt.includes("scalarAmtHtml(bchLoadFailed, bchBal, prices.BCH)"));
+    appSrcAlt.includes("scalarAmtHtml(failed, bal, price)")
+    && appSrcAlt.includes("failed: ltcLoadFailed, bal: ltcBal, price: prices.LTC")
+    && appSrcAlt.includes("failed: dogeLoadFailed, bal: dogeBal, price: prices.DOGE")
+    && appSrcAlt.includes("failed: bchLoadFailed, bal: bchBal, price: prices.BCH"));
   ok("tron honesty: total read failure marks the curated rows unknown and alerts on the load, not the scan",
     appSrcAlt.includes("m.tron = \"Main Tron balances couldn't be loaded right now.\"")
     && appSrcAlt.includes("tronBalances = tronBalances.map(b => ({ ...b, amount: null }))"));
@@ -3769,9 +3770,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("ui-p0: hero caption is the one-line scope caption, census deleted",
     appSrc.includes('"Across all networks"')
     && !appSrc.includes("on this network + Bitcoin + Litecoin"));
-  ok("ui-p0: picker offers All / EVM / Other sections with totals",
-    appSrc.includes('data-viewall="1"') && appSrc.includes("EVM NETWORKS") && appSrc.includes("OTHER NETWORKS")
-    && appSrc.includes('data-viewfam="${m.id}"'));
+  ok("ui-p0: picker is search-first (rev5 §10): no enumerated sections, results only on a query, page jumps + network switches",
+    appSrc.includes('data-viewall="1"') && !appSrc.includes("EVM NETWORKS") && !appSrc.includes("OTHER NETWORKS")
+    && appSrc.includes('data-jump="${esc(s.key)}"') && appSrc.includes('data-xplore="${m.id}"')
+    && appSrc.includes('if (!q) { host.innerHTML = ""; return; }'));
   ok("ui-p0: selecting an EVM row keeps selectNetwork (probe path intact)",
     appSrc.includes("await selectNetwork(b.dataset.net)"));
   ok("ui-p0: receive preselects the current view's entry",
@@ -3859,9 +3861,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrc.includes("function familyRowsHtml(") && appSrc.includes("groupcard")
     && appSrc.includes("data-famalert=") && appSrc.includes("function familyAlertMap(")
     && appSrc.includes("function openFamilyAlert("));
-  ok("ui-p1: zero balances collapse behind the persisted global toggle + per-family group",
-    appSrc.includes('const SHOW_ZERO_LS = "fluid_show_zero_v1"') && appSrc.includes("Zero balances (")
-    && appSrc.includes('id="zeroToggle"') && appSrc.includes("function zeroGroupHtml("));
+  ok("ui-p1: zero balances render NOWHERE on Home/Assets (rev5 §3): no group, no toggle — held-only at the familyRowsHtml choke point",
+    !appSrc.includes("Zero balances (") && !appSrc.includes('id="zeroToggle"') && !appSrc.includes("function zeroGroupHtml(")
+    && appSrc.includes("b.amount == null || Number(b.amount) > 0"));
   ok("ui-p1: unloaded families render skeleton rows, driven by famLoaded",
     appSrc.includes("function skeletonRowsHtml(") && appSrc.includes("const famLoaded = new Set()")
     && appSrc.includes('markLoaded("evm")') && appSrc.includes('markLoaded("cosmos")')
@@ -4943,7 +4945,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && NETWORKS.base.rpcFallback === "https://mainnet.base.org");
   ok("evm fallback: providerForFallback builds for bsc/base, null without one",
     !!providerForFallback("bsc") && !!providerForFallback("base")
-    && providerForFallback("ethereum") === null);
+    && providerForFallback("b2") === null);
   // NOTE: ethers v6 on Node does NOT use globalThis.fetch — its
   // JsonRpcProvider goes through FetchRequest's getUrl (Node http/https).
   // Stubbing global fetch therefore cannot intercept it (a debug run
@@ -4983,9 +4985,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     FetchRequest.registerGetUrl(rpcGetUrl(false));
     let rows = await getBalances(wallet, "bsc");
     ok("evm balances: healthy primary reads native + tokens",
-      rows.length === 3 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
+      rows.length === 4 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
       && rows[1].symbol === "USDC" && rows[1].amount === "2.0"
-      && rows[2].symbol === "USDT" && rows[2].amount === "3.0");
+      && rows[2].symbol === "USDT" && rows[2].amount === "3.0"
+      && rows[3].symbol === "BTCB" && rows[3].amount === "3.0");
     ok("evm balances: healthy primary never calls the fallback",
       calls.every(u => u.includes("bsc-rpc.publicnode.com")));
     // Primary 429s (transport rejects, the way a rate limit surfaces):
@@ -4994,18 +4997,18 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     FetchRequest.registerGetUrl(rpcGetUrl(true));
     rows = await getBalances(wallet, "bsc");
     ok("evm balances: dead primary falls back to the dataseed",
-      rows.length === 3 && rows[0].amount === "1.0" && rows[1].amount === "2.0");
+      rows.length === 4 && rows[0].amount === "1.0" && rows[1].amount === "2.0");
     ok("evm balances: fallback was attempted after the primary failed",
       calls.some(u => u.includes("bsc-rpc.publicnode.com")) && calls.some(u => u.includes("bsc-dataseed.binance.org")));
     // Both dead: the read rejects — the app shows "couldn't load".
     FetchRequest.registerGetUrl(async () => { throw new Error("Failed to fetch"); });
     await assert.rejects(() => getBalances(wallet, "bsc"));
     ok("evm balances: total failure throws instead of returning a fake zero", true);
-    // No fallback on the network: a dead primary throws straight away.
+    // Every endpoint dead: the read throws, never a fake zero.
     let ethCalls = 0;
     FetchRequest.registerGetUrl(async () => { ethCalls++; throw new Error("Failed to fetch"); });
     await assert.rejects(() => getBalances(wallet, "ethereum"));
-    ok("evm balances: a network without a fallback throws on primary failure", ethCalls > 0);
+    ok("evm balances: every endpoint failing throws instead of returning a fake zero", ethCalls > 0);
   } finally {
     FetchRequest.registerGetUrl(defaultGetUrl);
   }
@@ -5020,10 +5023,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     !appSrcEvm.includes("Could not load balances (network busy"));
   ok("evm load-failed: family alert names the active network",
     appSrcEvm.includes("if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;"));
-  ok("evm load-failed: failed rows render as couldn't-load, total as —",
+  ok("evm load-failed: failed rows render as couldn't-load, chain total as nothing (rev5 §3 — no dash posing as a figure)",
     appSrcEvm.includes("? [{ symbol: net.symbol, amount: null, address: null, verified: true },")
     && appSrcEvm.includes("m.evm = (evmLoadFailed || !famLoaded.has(\"evm\")) ? null : sumRows(")
-    && appSrcEvm.includes('totalVal == null ? "—" : usd(totalVal || 0)'));
+    && appSrcEvm.includes('totalVal == null ? "" : usd(totalVal || 0)'));
   ok("evm load-failed: hydrate never merges rows over a failed load",
     appSrcEvm.includes("if (evmLoadFailed) return;\n  const myKey = networkKey, chainId = NETWORKS[networkKey].chainId;"));
   ok("evm load-failed: send sheet says the load failed, not \"Enter an amount.\"",
@@ -5127,7 +5130,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     resetEvmRpcHealth();
     const rowsRpc = await getBalances({ address: "0x0000000000000000000000000000000000000001" }, "bsc");
     ok("evm balances: an HTTP-403 primary rotates and the load succeeds",
-      rowsRpc.length === 3 && rowsRpc[0].amount === "1.0"
+      rowsRpc.length === 4 && rowsRpc[0].amount === "1.0"
       && seenRpc[0] === BSC_URLS[0] && seenRpc.some(u => u === BSC_URLS[1]));
   } finally { FetchRequest.registerGetUrl(prevGetUrlRpc); resetEvmRpcHealth(); }
 
@@ -5347,8 +5350,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // app.js wiring (source pins, as in sections 61/62).
   const appSrcHome = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("home order: paintAssets passes the raw-balance held map into the cards",
-    appSrcHome.includes("held: !!heldMap[g.key]") && appSrcHome.includes("held: heldMap.cosmos")
+  ok("home order: paintAssets passes the raw-balance held map into the page census (rev5)",
+    appSrcHome.includes(": !!heldMap[groupKey]") && appSrcHome.includes("const scopes = heldScopes(census);")
     && appSrcHome.includes("bitcoin: (Number(btcBal) + Number(btcTrBal)) > 0,"));
   ok("load speed: renderMain no longer awaits prices before balance loads",
     !appSrcHome.includes("prices = await Promise.race(")
@@ -5358,9 +5361,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcHome.includes("BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache,"));
   ok("load speed: the hero marks a cache paint as updating until every family is live",
     appSrcHome.includes("cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k))"));
-  ok("home order: paintAssets renders the All view through sortHomeFamilies",
-    appSrcHome.includes("html = sortHomeFamilies(cards).map(c => c.html).join(\"\");")
-    && appSrcHome.includes("sortHomeFamilies, sortHomeRows,"));
+  ok("home order: paintAssets renders the pager through heldScopes + flattenHeldRows (rev5)",
+    appSrcHome.includes("const flat = flattenHeldRows(items);")
+    && appSrcHome.includes("heldScopes, flattenHeldRows,"));
   ok("home order: family failure is read from the load-failed flags",
     appSrcHome.includes("bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,")
     && appSrcHome.includes("cosmos: famLoaded.has(\"cosmos\") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),"));
@@ -5369,13 +5372,13 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     coreSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };")
     && appSrcHome.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
     && !appSrcHome.includes("main.sort((x, y) => y.v - x.v);"));
-  ok("home order: Cosmos rows sort inside their shared card",
-    appSrcHome.includes("const inner = sortHomeRows(cosmosBuf, (x) => x.amount, (x) => x.valueUsd).map(x => x.html).join(\"\");"));
-  ok("home order: a null amount is never classified as a zero balance",
-    appSrcHome.includes("if (b.amount != null && Number(b.amount) === 0 && !isNativeRow(famKey, b)"));
-  ok("home order: ordering helpers are used by the home list only (send sheets untouched)",
-    (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 1
-    && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 1
+  ok("home order: each Cosmos chain is its own pager scope (rev5 — no shared Cosmos card)",
+    appSrcHome.includes("if (isCosmosKey(g.key)) { const r = cosmosRows.find(x => x.key === g.key); censusPush(g.key, g.key, r ? r.name : g.key); continue; }"));
+  ok("home order: a null amount is never classified as a zero balance (rev5: null = failed read, stays visible)",
+    appSrcHome.includes("const visible = rowsArr.filter(b => b && (b.amount == null || Number(b.amount) > 0));"));
+  ok("home order: the card-era ordering helpers no longer render the home list (rev5 pager model; splitHomeRows still splits within a family)",
+    (appSrcHome.match(/sortHomeFamilies\(/g) || []).length === 0
+    && (appSrcHome.match(/sortHomeRows\(/g) || []).length === 0
     && (appSrcHome.match(/splitHomeRows\(/g) || []).length === 1);
 }
 
@@ -8420,16 +8423,16 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("unpriced native: splitRows delegates to splitHomeRows with the family native test",
       appSrc72.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
       && appSrc72.includes("splitRows(visible, priceOf, (b) => isNativeRow(famKey, b))"));
-    ok("unpriced native: token rows and scalar rows carry the 'price unavailable' marker",
-      appSrc72.includes(`<small>price unavailable</small>`)
+    ok("unpriced native: prices live SILENTLY (rev5 §7) — token rows and scalar rows show the amount alone, no marker text anywhere",
+      !appSrc72.includes(`<small>price unavailable</small>`) && !appSrc72.includes("No live price available")
       && appSrc72.includes("if (price == null && Number(bal) > 0)"));
-    ok("unpriced native: a true-zero token row keeps its truthful $0.00, not the unavailable marker",
-      appSrc72.includes(`Number(b.amount) > 0 ? \`<b>\${fmt(b.amount)}</b><small>price unavailable</small>\``));
-    ok("unpriced native: family card headers use cardTotalHtml with the native amount + 'no live price'",
-      appSrc72.includes("cardTotalHtml(key, totalVal)") && appSrc72.includes("· no live price")
+    ok("unpriced native: a true-zero token row keeps its truthful $0.00 (rev5: zero is a fact, unpriced-held is blank)",
+      appSrc72.includes(`Number(b.amount) > 0 ? \`<b>\${fmt(b.amount)}</b><small></small>\``));
+    ok("unpriced native: chain totals use cardTotalHtml with the native amount ALONE (rev5 §3 — no 'no live price' text)",
+      appSrc72.includes("cardTotalHtml(key, totalVal)") && !appSrc72.includes("· no live price")
       && appSrc72.includes("unpricedNativeByKey"));
-    ok("unpriced native: the hero sub carries the '+ holdings with no live price' note",
-      appSrc72.includes(`+ holdings with no live price`) && appSrc72.includes("hasUnpricedHoldings()"));
+    ok("unpriced native: the hero sub carries NO price note (rev5 §7 — the priced total simply excludes the unpriced)",
+      !appSrc72.includes(`+ holdings with no live price`));
     ok("unpriced native: scalar rows treat a missing price (null or undefined) as unavailable, never $0.00 for a held coin",
       appSrc72.includes("if (price == null && Number(bal) > 0)")
       && appSrc72.includes("scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)"));
@@ -9952,8 +9955,9 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("lnreach: publish itself waits out a dropped connection before failing, in plain words",
     appR.includes("if (!offer) offer = await lnAwaitOffer(30000);")
     && appR.includes("it's still connecting to the Lightning network"));
-  ok("lnreach: the Lightning scoped view hides the static row (status card renders once per view)",
-    appR.includes('lrRow.classList.toggle("hidden", viewKey === "lightning")'));
+  ok("lnreach: the Lightning status row renders once per surface (rev5: the static row lives inside the All page; the Lightning page carries its own)",
+    readFileSync(new URL("../src/index.html", import.meta.url), "utf8").includes('id="lightningRow"') && appR.includes('data-ln="1"')
+    && !appR.includes('lrRow.classList.toggle'));
 }
 
 // ---------- Arkade composition bridge (Lightning -> Arkade -> BTC) ----------
@@ -10164,7 +10168,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("TS-F2: failed families report a null (—) header total, not $0.00",
     appSrcBatch.includes("m.tron = (tronLoadFailed || !famLoaded.has(\"tron\")) ? null :") && appSrcBatch.includes("m.xrpl = (xrpLoadFailed || !famLoaded.has(\"xrpl\")) ? null :")
     && appSrcBatch.includes("m.bitcoincash = (bchLoadFailed || !famLoaded.has(\"bitcoincash\")) ? null :") && appSrcBatch.includes("m.polkadot = (dotLoadFailed || !famLoaded.has(\"polkadot\")) ? null :")
-    && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]))"));
+    && appSrcBatch.includes("r.amount == null ? null : Number(r.amount)") && appSrcBatch.includes("totalUsd: scopeKey === \"evm\" ? totals.evm : (groupKey ? totals[groupKey] : null)"));
 
   // P1-16: transaction-id shapes route to a transaction lookup.
   ok("P1-16: a 0x transaction hash is detected as an EVM txid (not a Sui address)",
@@ -10588,9 +10592,12 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     appSrc.includes('localStorage.setItem(BACKUP_STATE_KEY, "pending")'));
   ok("P1-1: the seed button mounts the quiz; pass and later both enter the wallet (never bricked)",
     appSrc.includes("mountSeedQuiz($(\"seedQuizBox\"), v.phrase, {")
-    && appSrc.includes("onPass: () => finishCreate(true)")
     && appSrc.includes("onLater: () => finishCreate(false)")
     && appSrc.includes('localStorage.setItem(BACKUP_STATE_KEY, "confirmed")'));
+  ok("P1-1b: seed-card fix (2026-11-17) — the pass writes 'confirmed' in the quiz click itself, finishCreate re-asserts it after unlock, and the ceremony cannot re-enter",
+    appSrc.includes("onPass: () => { try { localStorage.setItem(BACKUP_STATE_KEY, \"confirmed\"); } catch { /* storage unavailable */ } finishCreate(true); }")
+    && appSrc.includes("if (finishCreateStarted) return;")
+    && appSrc.includes("if (createCeremonyInFlight) return;"));
   ok("P1-1: the quiz offers the words-again path back to the phrase view",
     appSrc.includes('onWords: () => { show("seedQuizBox", false); show("seedWordsView", true); }'));
   ok("P1-1: the home reminder card exists in the shell with check + dismiss actions",
@@ -11276,11 +11283,11 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
 
   // F4: the app wires rows → detail, chips → copy (unambiguous),
   // and detail Send/Swap into the shipped flows pre-selected.
-  ok("F: EVM rows carry a detail tap and every token row its copyable address chip",
+  ok("F: EVM rows carry a token-page tap and every token row its copyable address chip",
     app.includes('data-evmrow="${i}"') && app.includes('data-copyaddr="${esc(b.address)}"')
-    && app.includes("e.stopPropagation()") && app.includes("openTokenDetail(evmDetailDesc(b))"));
-  ok("F: detail screen sources fields honestly and reuses the shipped send/swap flows",
-    app.includes("function openTokenDetail(d)") && app.includes("fetchTokenMarketExtras(d.extras)")
+    && app.includes("e.stopPropagation()") && app.includes('openTokenPage(evmDetailDesc(b), "home")'));
+  ok("F: token page sources fields honestly and reuses the shipped send/swap flows (rev5 §6)",
+    app.includes("function renderTokenPage()") && app.includes("fetchTokenMarketExtras({ ...d.extras, days: st.rangeDays })")
     && app.includes("openEvmSendSheet({ address: b.address || null })")
     && app.includes("pendingSwapFrom = { netKey: networkKey, address: b.address || null }")
     && app.includes("const swapPre = pendingSwapFrom; pendingSwapFrom = null;"));
@@ -16685,8 +16692,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("fixa: a fully-unloaded rollup is unknown, and so is an empty one",
     familyRollupTotalUsd([null, null, null]) === null
     && familyRollupTotalUsd([]) === null && familyRollupTotalUsd(null) === null);
-  ok("fixa app: the Cosmos card header total is the rollup over its per-chain totals — the loaded-sum split is gone",
-    appSrc115.includes("const total = familyRollupTotalUsd(COSMOS_CHAINS.map(c => totals[c.key]));")
+  ok("fixa app: Cosmos totals are per-chain (rev5: each chain has its own page; a failed chain's total is null, never a sum over loaded siblings)",
+    appSrc115.includes("m[r.key] = r.amount == null ? null : Number(r.amount) * (prices[r.symbol] || 0)")
     && !appSrc115.includes("COSMOS_CHAINS.reduce((t, c) => t + (totals[c.key] || 0), 0)"));
 
   // --- FIX-B: the rail-confirmed floor carries into the refusal ---
@@ -21028,7 +21035,7 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
   // ---- Table-entry pins: all twelve, byte-exact ----
   ok("gap14: Rootstock entry (30, RBTC, verified RPC rotation, USDT0 pin)",
     entry136("rootstock", 30, "RBTC", "BTC", "https://public-node.rsk.co", "https://explorer.rootstock.io")
-    && JSON.stringify(NETWORKS.rootstock.rpcs) === JSON.stringify(["https://public-node.rsk.co", "https://mycrypto.rsk.co"])
+    && JSON.stringify(NETWORKS.rootstock.rpcs) === JSON.stringify(["https://public-node.rsk.co", "https://mycrypto.rsk.co", "https://rootstock.drpc.org", "https://rootstock-mainnet.public.blastapi.io"])
     && NETWORKS.rootstock.rpcFallback === "https://mycrypto.rsk.co"
     && NETWORKS.rootstock.tokens.length === 1 && NETWORKS.rootstock.tokens[0].address === RSK_USDT0
     && NETWORKS.rootstock.tokens[0].symbol === "USDT" && NETWORKS.rootstock.tokens[0].decimals === 6);
@@ -22090,6 +22097,140 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     sl144("const paintPanel = () => {", "const paintList").includes("gameDecorateReceiveQrs();")
     && sl144("function gameDecorateReceiveQrs(", "lifecycle: sheet watch").includes("game-scanline")
     && idxSrc144.includes(".game-scanline") && idxSrc144.includes("@keyframes gamescan"));
+}
+
+
+// §145 — HOME/ASSETS RESTRUCTURE (spec rev5, 2026-11-17): the
+// Assets tab IS the home surface — a pager of held-only chain
+// pages behind a pinned search; prices live silently; the
+// Network sheet is search-first; and the loading-speed round-2
+// perf contract (endpoint racing + per-attempt budgets + deepened
+// endpoint lists) that the 1–2 s paint standard stands on.
+{
+  const { heldScopes, flattenHeldRows, BALANCE_READ_ATTEMPT_MS, FAMILY_READ_ATTEMPT_MS, BTC_BALANCE_FETCH_MS, UTXO_READ_FETCH_MS, getBitcoinBalance } = await import("../src/wallet-core.js");
+  const app145 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const idx145 = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const core145 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+
+  // --- heldScopes: the page census rule ---
+  const censusFixture = [
+    { key: "solana", name: "Solana", held: true, failed: false, inFlight: false, totalUsd: 50 },
+    { key: "bsc", name: "BNB Chain", held: true, failed: false, inFlight: false, totalUsd: 120 },
+    { key: "tron", name: "Tron", held: false, failed: false, inFlight: false, totalUsd: 0 },
+    { key: "sui", name: "Sui", held: false, failed: true, inFlight: false, totalUsd: null },
+    { key: "ton", name: "TON", held: false, failed: false, inFlight: true, totalUsd: null },
+    { key: "near", name: "NEAR", held: true, failed: false, inFlight: false, totalUsd: null },
+    { key: "aptos", name: "Aptos", held: true, failed: false, inFlight: false, totalUsd: null },
+  ];
+  const scopeKeys = heldScopes(censusFixture).map(s => s.key);
+  ok("§145: heldScopes opens with the All page, then valued holdings by USD desc",
+    scopeKeys[0] === "all" && scopeKeys[1] === "bsc" && scopeKeys[2] === "solana");
+  ok("§145: heldScopes drops the unheld/quiet scope entirely (no page for a chain that holds nothing)",
+    !scopeKeys.includes("tron"));
+  ok("§145: heldScopes keeps failed and in-flight scopes, failed pinned ahead of unpriced, unpriced A–Z",
+    scopeKeys.indexOf("sui") > 2 && scopeKeys.indexOf("sui") < scopeKeys.indexOf("aptos")
+    && scopeKeys.indexOf("ton") > 2 && scopeKeys.indexOf("aptos") < scopeKeys.indexOf("near"));
+  ok("§145: a failed scope WITH a numeric total keeps its valued place (partial read with real rows)",
+    heldScopes([{ key: "evm", name: "EVM", held: true, failed: true, totalUsd: 500 }, { key: "solana", name: "Solana", held: true, totalUsd: 50 }])[1].key === "evm");
+
+  // --- flattenHeldRows: the All page's flat list rule ---
+  const flatFixture = [
+    { symbol: "AAA", amount: "5", valueUsd: 10 },
+    { symbol: "ZZZ", amount: "0", valueUsd: 0 },
+    { symbol: "BBB", amount: null, valueUsd: null },
+    { symbol: "CCC", amount: "2", valueUsd: 40 },
+    { symbol: "DDD", amount: "9", valueUsd: null },
+    { symbol: "EEE", amount: "1", valueUsd: null },
+  ];
+  const flatKeys = flattenHeldRows(flatFixture).map(x => x.symbol);
+  ok("§145: flattenHeldRows drops zero rows entirely and pins failed reads first",
+    !flatKeys.includes("ZZZ") && flatKeys[0] === "BBB");
+  ok("§145: flattenHeldRows orders priced by USD desc, then unpriced by amount desc",
+    flatKeys.join() === "BBB,CCC,AAA,DDD,EEE");
+
+  // --- perf: budgets + endpoint depth ---
+  ok("§145: balance-read budgets sit at the 1–2 s paint standard (EVM + families + BTC + UTXO)",
+    BALANCE_READ_ATTEMPT_MS === 2500 && FAMILY_READ_ATTEMPT_MS === 2500
+    && BTC_BALANCE_FETCH_MS === 2500 && UTXO_READ_FETCH_MS === 2500);
+  ok("§145: the major EVM chains carry deepened keyless endpoint lists (≥4)",
+    ["ethereum", "base", "arbitrum", "optimism", "polygon", "avalanche"].every(k => evmRpcUrls(k).length >= 4));
+  ok("§145: BTCB is curated on BSC (the 30–60 s scan-only paint symptom is closed at the source)",
+    NETWORKS.bsc.tokens.some(t => t.symbol === "BTCB" && t.address === "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c" && t.decimals === 18));
+  ok("§145: reads race their endpoints (hedged race helper feeds the EVM provider, the JSON-RPC fetch, the family rotation and the BTC read)",
+    (core145.match(/raceEndpointAttempts\(/g) || []).length >= 4 && core145.includes("EVM_RACE_STAGGER_MS = 300"));
+  ok("§145: Polkadot's stall deadlines are tightened from 30 s to 12 s",
+    core145.includes('export async function getDotAccount(address, timeoutMs = 12000)')
+    && core145.includes("export function dotApi(timeoutMs = 12000)"));
+  ok("§145: getBalances carries the tight per-attempt budget; the long scan keeps the default",
+    core145.includes("{ attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS }"));
+
+  // --- perf: the race actually wins against a hung first endpoint ---
+  {
+    const realFetch = globalThis.fetch;
+    // The hedge-stagger timer is unref'd (a library must not hold
+    // a host process open); a live app always has other work
+    // pending, so the test keeps one handle alive explicitly
+    // (the §61b withEvmProvider test documents the same hazard).
+    const keepAlive = setInterval(() => {}, 50);
+    try {
+      const BSC_URLS = evmRpcUrls("bsc");
+      globalThis.fetch = async (url) => {
+        if (String(url) === BSC_URLS[0]) return new Promise(() => {}); // hangs forever
+        return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: "0x2a" }) };
+      };
+      const t0 = Date.now();
+      const r = await evmRpcFetchJson("bsc", { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] });
+      ok("§145: a hung first EVM endpoint no longer stalls the read — the race answers from the next endpoint fast",
+        r.result === "0x2a" && Date.now() - t0 < 5000);
+      resetEvmRpcHealth();
+      globalThis.fetch = async (url) => {
+        if (String(url).includes("mempool.space")) return new Promise(() => {}); // hangs forever
+        return { ok: true, status: 200, json: async () => ({ chain_stats: { funded_txo_sum: 100000000, spent_txo_sum: 0 }, mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0 } }) };
+      };
+      const t1 = Date.now();
+      const bal = await getBitcoinBalance("bc1qkkgpmu9s9v5xece7rm5wgsmykc0qc25wf039xr");
+      ok("§145: the BTC balance races its two Esplora hosts under a timeout (it previously had none)",
+        bal === 1 && Date.now() - t1 < 5000);
+    } finally { clearInterval(keepAlive); globalThis.fetch = realFetch; resetEvmRpcHealth(); }
+  }
+
+  // --- the Assets tab shell ---
+  ok("§145: the bottom bar's first tab is renamed Assets (internal key unchanged)",
+    idx145.includes('data-tab="wallet"') && idx145.includes(">Assets</button>") && !idx145.includes(">Wallet</button>"));
+  ok("§145: the tab opens on the pager skeleton — search pinned on top, swipe bar, All page section, Explore line, fresh-wallet line",
+    idx145.includes('id="homeSearch"') && idx145.includes('id="swipeBar"') && idx145.includes('id="homePager"')
+    && idx145.includes('data-page="all"') && idx145.includes('id="exploreLine"') && idx145.includes('id="exploreView"') && idx145.includes('id="tokenView"')
+    && idx145.includes("Chains appear here when they hold something.")
+    && idx145.indexOf('id="homeSearch"') < idx145.indexOf('id="swipeBar"') && idx145.indexOf('id="swipeBar"') < idx145.indexOf('id="homePager"'));
+  ok("§145: paintAssets builds the census from held/failed/in-flight and reconciles pager sections by signature",
+    app145.includes("const census = [];") && app145.includes("inFlightScopes()") && app145.includes("sig !== pagerSig")
+    && app145.includes('"evm:" + k'));
+  ok("§145: only the active page and its neighbours render rows (lazy ±1)",
+    app145.includes("Math.abs(i - activeIdx) > 1) continue;"));
+  ok("§145: a settled swipe commits the scope (view follows the page; a foreign EVM page switches network)",
+    app145.includes("function pagerCommit(idx)") && app145.includes('selectNetwork(s.key.slice(4))'));
+
+  // --- search + Explore + token page ---
+  ok("§145: Assets search renders results only while a query is typed, held before not-held, chain jumps wired",
+    app145.includes("function paintHomeSearch()") && app145.includes('if (!q) { host.classList.add("hidden")')
+    && app145.indexOf(">Held<", app145.indexOf("function paintHomeSearch()")) < app145.indexOf(">Not held<", app145.indexOf("function paintHomeSearch()"))
+    && app145.includes("data-chainjump="));
+  ok("§145: Explore is the exhaustive A–Z enumeration (held section, then the rest) — the only chain list besides search",
+    app145.includes("Chains you hold") && app145.includes("Chains you don't hold yet")
+    && app145.includes("function renderExplore()") && app145.includes("function renderExploreChain(key)"));
+  ok("§145: the token page carries the range-switchable chart (24H/7D/1M/1Y through market-extras days)",
+    app145.includes('data-tdrange="${dd}"') && app145.includes('[1, "24H"], [7, "7D"], [30, "1M"], [365, "1Y"]')
+    && app145.includes("fetchTokenMarketExtras({ ...d.extras, days: st.rangeDays })"));
+  ok("§145: the token page layout — Swap full-width first, then Send/Receive; contract tap-to-copy with decimals; a Not held variant",
+    app145.indexOf('id="tdSwap"') < app145.indexOf('id="tdSend"') && app145.includes('id="tdSwap" style="width:100%"')
+    && app145.includes('id="tdIdent"') && app145.includes("Decimals: ${decimals}") && app145.includes("<p class=\"tag\">Not held</p>"));
+  ok("§145: prices live silently — no LIVE markers, no price-state text on any home surface",
+    !app145.includes("LIVE PRICE") && !idx145.includes("LIVE PRICE")
+    && !app145.includes("<small>price unavailable</small>") && !app145.includes("No live price available"));
+  ok("§145: the Network sheet is search-first — its list stays empty until a query is typed",
+    app145.includes('if (!q) { host.innerHTML = ""; return; }') && !app145.includes("EVM NETWORKS") && !app145.includes("OTHER NETWORKS"));
+  ok("§145: home rows wire through the scoped wireHomeRows (pager, search and Explore share it)",
+    app145.includes("function wireHomeRows(root)") && app145.includes("wireHomeRows(pagerEl)") && app145.includes("wireHomeRows(host)"));
 }
 
 console.log(`\n${passed} checks passed`);
