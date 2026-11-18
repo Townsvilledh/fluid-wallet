@@ -24065,6 +24065,42 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     const m4 = await getCgContractPrices(999999, [LADYS], stub);
     ok("§155: a chain with no CoinGecko platform prices nothing", m4.size === 0);
   }
+  {
+    // D1 follow-through: a batch that gets NO response is
+    // retried exactly once; a batch CoinGecko answered is not
+    // re-asked; a permanently dead fetch stays bounded at two
+    // attempts and still prices nothing.
+    const addrFor = (n) => "0x00000000000000000000000000000000000000" + n;
+    const bodyFor = (url) => {
+      const a = /contract_addresses=([0-9a-fx,]+)/.exec(url)[1].split(",")[0];
+      return { [a]: { usd: 2.5e-9 } };
+    };
+    let c1 = 0;
+    const flaky = async (url) => { c1++; if (c1 === 1) throw new Error("storm timeout"); return { ok: true, json: async () => bodyFor(url) }; };
+    const r1 = await getCgContractPrices(42161, [addrFor("a1")], flaky);
+    ok("§155 D1-retry: a by-contract fetch that fails once is retried and the price lands",
+      r1.get(addrFor("a1")) === 2.5e-9 && c1 === 2);
+    let c2 = 0;
+    const notOkThenOk = async (url) => { c2++; if (c2 === 1) return { ok: false, json: async () => ({}) }; return { ok: true, json: async () => bodyFor(url) }; };
+    const r2 = await getCgContractPrices(42161, [addrFor("a2")], notOkThenOk);
+    ok("§155 D1-retry: a not-ok response is retried once and the price lands",
+      r2.get(addrFor("a2")) === 2.5e-9 && c2 === 2);
+    let c3 = 0;
+    const dead = async () => { c3++; throw new Error("down"); };
+    const r3 = await getCgContractPrices(42161, [addrFor("a3")], dead);
+    ok("§155 D1-retry: a permanently failing fetch is bounded at two attempts and prices nothing",
+      r3.size === 0 && c3 === 2);
+    let c4 = 0;
+    const emptyOk = async () => { c4++; return { ok: true, json: async () => ({}) }; };
+    const r4 = await getCgContractPrices(42161, [addrFor("a4")], emptyOk);
+    ok("§155 D1-retry: an answered-but-empty response is NOT retried (CoinGecko simply doesn't track the token)",
+      r4.size === 0 && c4 === 1);
+    const appRetry = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("§155 D1-retry: settled chain reads re-price still-unpriced held rows, with a delayed second sweep armed",
+      appRetry.includes("async function repriceUnpricedHeldRows()")
+      && appRetry.includes("repriceUnpricedHeldRows().catch(() => {});\n  scheduleHeldReprice();")
+      && appRetry.includes("swapAmtPriceTried.delete(ck);"));
+  }
   // --- the bucket is abolished (D2) ---
   {
     const ladysRow = { symbol: "LADYS", name: "Milady Meme Coin", amount: "1041558458", address: LADYS, decimals: 18, verified: false, priceUsd: null };

@@ -3893,6 +3893,43 @@ async function priceHeldEvmRows(chainId, rows) {
   }
   return changed;
 }
+/* §155 D1 follow-through (2026-11-18): a held row's price gets
+ * more than one chance. The first pricing pass runs inside the
+ * open-time request storm, where one timed-out by-contract call
+ * can eat the only attempt (proven across the §155 walks: the
+ * call fired at open and never landed, while the identical call
+ * succeeded minutes later in a quiet session — the row sat
+ * unpriced for the whole session). When the EVM chain reads
+ * settle, every still-unpriced held row is priced again through
+ * the same fallback stack, and once more on a delay (past the
+ * price cache's miss TTL). Live prices only — a row that still
+ * cannot be priced keeps its honest blank fiat area. */
+async function repriceUnpricedHeldRows() {
+  if (!wallet) return;
+  const jobs = [];
+  for (const [k, st] of evmChainState) {
+    const net = NETWORKS[k];
+    if (!net || !st || !Array.isArray(st.rows)) continue;
+    const rows = st.rows.filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0);
+    if (rows.length) jobs.push(priceHeldEvmRows(net.chainId, rows));
+  }
+  const net = NETWORKS[networkKey];
+  if (net) {
+    const rows = balances.filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0);
+    if (rows.length) jobs.push(priceHeldEvmRows(net.chainId, rows));
+  }
+  if (!jobs.length) return;
+  const changed = await Promise.all(jobs).catch(() => []);
+  if (changed.some(Boolean)) paintAssets();
+}
+let lastHeldRepriceArmAt = 0;
+function scheduleHeldReprice() {
+  const now = Date.now();
+  if (now - lastHeldRepriceArmAt < 60000) return;
+  lastHeldRepriceArmAt = now;
+  const w = wallet;
+  setTimeout(() => { if (wallet === w) repriceUnpricedHeldRows().catch(() => {}); }, 45000);
+}
 /** One non-active chain's balance read. Throws when the base
  *  read (native + curated) fails — the caller shapes the
  *  failure. When the base lands but the known-token scan
@@ -4038,6 +4075,11 @@ async function hydrateEvmChains(w, myRenderSeq) {
     while (next < keys.length) { const k = keys[next++]; await runOne(k); }
   });
   await Promise.all(workers);
+  // §155 D1 follow-through: the chain reads have settled — give
+  // every still-unpriced held row its second pricing pass now,
+  // and arm one more on a delay.
+  repriceUnpricedHeldRows().catch(() => {});
+  scheduleHeldReprice();
 }
 
 async function hydrateEvmTokens() {
@@ -10550,6 +10592,16 @@ $("actSwap").onclick = () => {
         }
       }
       if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); }
+      if (p == null) {
+        // One delayed retry (§155 D1 follow-through): the first
+        // attempt can die in the open-time request storm; if the
+        // pick is unchanged when the delay lapses, the painter
+        // re-kicks the fetch.
+        setTimeout(() => {
+          swapAmtPriceTried.delete(ck);
+          if (pick.from === t) paintSwapAmtUsd();
+        }, 20000);
+      }
     })();
   }
   function paintSwapAmtUsd() {

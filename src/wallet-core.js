@@ -31148,11 +31148,25 @@ export async function getCgContractPrices(chainId, addresses, fetchImpl) {
   }
   for (const batch of chunkArray(misses, 30)) {
     let parsed = new Map();
-    try {
-      const url = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${batch.join(",")}&vs_currencies=usd`;
-      const res = await F(url, { signal: AbortSignal.timeout(8000) });
-      if (res && res.ok) parsed = parseCgTokenPrices(await res.json().catch(() => null), batch);
-    } catch { /* this batch prices nothing — the rows stay honestly unpriced */ }
+    // Two attempts (§155 D1 follow-through, 2026-11-18): the
+    // first attempt fires inside the open-time request storm,
+    // where a single 8 s timeout can eat the only chance a held
+    // token's price gets (proven in the §155 walks — the call
+    // fired at open and never landed, while the identical call
+    // succeeded minutes later in a quiet session). A batch that
+    // got NO response (throw / not-ok) is retried once after a
+    // short pause; a batch CoinGecko answered — even with no
+    // price for these contracts — is not re-asked.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let responded = false;
+      try {
+        const url = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${batch.join(",")}&vs_currencies=usd`;
+        const res = await F(url, { signal: AbortSignal.timeout(8000) });
+        if (res && res.ok) { responded = true; parsed = parseCgTokenPrices(await res.json().catch(() => null), batch); }
+      } catch { /* no response on this attempt — the retry below decides */ }
+      if (responded || attempt === 1) break;
+      await new Promise(r => setTimeout(r, 700));
+    }
     for (const a of batch) {
       const p = parsed.get(a) ?? null;
       cgContractPriceCache.set(`${chainId}:${a}`, { at: Date.now(), price: p });
