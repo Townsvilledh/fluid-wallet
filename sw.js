@@ -65,7 +65,7 @@ self.addEventListener("activate", (event) => event.waitUntil((async () => {
 
 // The build stamp, substituted by scripts/build.mjs into dist/sw.js
 // (the same stamp that versions the bundle URL in index.html).
-const FLUID_BUILD_STAMP = "deb49b6ee7";
+const FLUID_BUILD_STAMP = "67276f5c23";
 const BUNDLE_CACHE = "fluid-bundle-" + FLUID_BUILD_STAMP;
 
 // Cache-first for the stamped bundle request ONLY: a GET whose path
