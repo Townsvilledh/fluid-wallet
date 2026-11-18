@@ -3127,8 +3127,16 @@ function pagerCommit(idx) {
  * search-row defect: the rows rendered correctly and wired to
  * nothing). The registry resets at the top of every
  * paintAssets; wireHomeRows resolves each id to its object at
- * wire time and captures the object in the click handler, so a
- * later repaint can never retarget a live row. */
+ * the element's FIRST wiring and keeps the object ON the
+ * element itself (bindRow below): paintAssets re-runs
+ * wireHomeRows over the whole pager on every paint, and a
+ * section whose HTML did not change keeps its DOM across
+ * paints — resolving that kept element's id against a LATER
+ * paint's registry retargets its tap to a different token
+ * (§154 walks 1–2: the smart-wallet row opened a NEAR page,
+ * even with wire-time capture, because the pager-wide re-wire
+ * re-resolved). An element is only ever rendered for one row,
+ * so the element is the stable key. */
 const rowRefs = new Map();
 let rowRefSeq = 0;
 function rowRefFor(b) { const id = ++rowRefSeq; rowRefs.set(id, b); return id; }
@@ -3140,6 +3148,19 @@ function rowRefFor(b) { const id = ++rowRefSeq; rowRefs.set(id, b); return id; }
  * search results and Explore never double-wire. */
 function wireHomeRows(root) {
   if (!root) return;
+  // Resolve a row element's object ONCE — at the element's own
+  // first wiring — and keep it on the element (see the registry
+  // comment above): later paints re-run this function over kept
+  // DOM, and only the element itself still knows which row it
+  // was rendered for.
+  const bindRow = (r, id) => {
+    if (r._fluidRow === undefined) {
+      const b = rowRefs.get(Number(id));
+      if (!b) return null;
+      r._fluidRow = b;
+    }
+    return r._fluidRow;
+  };
   root.querySelectorAll("[data-famalert]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openFamilyAlert(b.dataset.famalert); });
   // Address chips copy WITHOUT opening the row's destination —
   // the two taps are unambiguous (chip = copy, row = detail).
@@ -3149,14 +3170,7 @@ function wireHomeRows(root) {
     toast("Address copied");
   });
   root.querySelectorAll("[data-evmrow]").forEach(r => {
-    // Capture the row object NOW, at wire time (the registry
-    // resets on the next paint; a click-time lookup could
-    // resolve this element's id against a LATER paint's rows
-    // when this element's section kept its DOM across that
-    // paint — the retarget the registry comment above rules
-    // out; §154 walk: a smart-wallet row tap opened a NEAR
-    // page after the late smart-wallet paint re-registered).
-    const b = rowRefs.get(Number(r.dataset.evmrow));
+    const b = bindRow(r, r.dataset.evmrow);
     if (!b) return;
     const ck = r.dataset.evmchain;
     r.onclick = () => {
@@ -3170,19 +3184,19 @@ function wireHomeRows(root) {
   scalarWire("data-ada", "cardano"); scalarWire("data-zec", "zcash"); scalarWire("data-dash", "dash");
   const lnEl = root.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
   root.querySelectorAll("[data-tron]").forEach(r => {
-    const b = rowRefs.get(Number(r.dataset.tron));
+    const b = bindRow(r, r.dataset.tron);
     if (b) r.onclick = () => openTokenPage(tronDetailDesc(b), "home");
   });
   root.querySelectorAll("[data-sol]").forEach(r => {
-    const b = rowRefs.get(Number(r.dataset.sol));
+    const b = bindRow(r, r.dataset.sol);
     if (b) r.onclick = () => openTokenPage(solanaDetailDesc(b), "home");
   });
   root.querySelectorAll("[data-sui]").forEach(r => {
-    const b = rowRefs.get(Number(r.dataset.sui));
+    const b = bindRow(r, r.dataset.sui);
     if (b) r.onclick = () => openTokenPage(suiDetailDesc(b), "home");
   });
   const sheetWire = (attr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => {
-    const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));
+    const b = bindRow(r, r.dataset[attr.slice(5)]);
     if (b) r.onclick = () => fn(b);
   });
   sheetWire("data-stellar", (b) => openTokenPage(familyTokenDesc("stellar", b), "home"));

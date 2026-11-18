@@ -22328,9 +22328,10 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && (app145.match(/rowRefFor\(b\)/g) || []).length >= 15
     && app145.includes('data-evmrow="${rowRefFor(b)}"') && app145.includes('data-stellar="${rowRefFor(b)}"')
     && !app145.includes("Balances.indexOf(b)") && !app145.includes("const i = balances.indexOf(b);"));
-  ok("§145: wireHomeRows resolves row references through the registry at wire time (EVM direct, families via sheetWire) — the object the row was rendered from, not whatever sits at an array index now",
-    app145.includes("rowRefs.get(Number(r.dataset.evmrow))") && app145.includes("rowRefs.get(Number(r.dataset.tron))")
-    && app145.includes("const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));")
+  ok("§145: wireHomeRows resolves row references through the registry via bindRow (EVM direct, families via sheetWire) — the object the row was rendered from, bound on the element at first wiring (§154), not whatever sits at an array index now",
+    app145.includes("const b = bindRow(r, r.dataset.evmrow);") && app145.includes("const b = bindRow(r, r.dataset.tron);")
+    && app145.includes("const b = bindRow(r, r.dataset[attr.slice(5)]);")
+    && app145.includes("const b = rowRefs.get(Number(id));")
     && !app145.includes("arr[Number(r.dataset[attr.slice(5)])]"));
 }
 
@@ -23896,10 +23897,14 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
 
   // --- (6) app wiring the live walk caught (§154 walk repairs) ---
   const app154 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("§154: home row taps capture their row object at WIRE time (the §145 design) — the registry lookup no longer sits inside the click handler, where a later paint's re-registration could retarget a kept-DOM row to a different token (the walk's smart-wallet tap opened a NEAR page)",
-    app154.includes("const b = rowRefs.get(Number(r.dataset.evmrow));\n    if (!b) return;")
-    && app154.includes("const b = rowRefs.get(Number(r.dataset.tron));\n    if (b) r.onclick")
-    && app154.includes("const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));\n    if (b) r.onclick")
+  ok("§154: home row taps bind their row object ON THE ELEMENT at its first wiring (bindRow) — paintAssets re-wires the whole pager on every paint and a kept-DOM section's ids belong to an older registry generation, so neither a click-time lookup NOR a re-wire-time re-resolution may retarget a row (walks 1–2: the smart-wallet tap opened a NEAR page under both schemes)",
+    app154.includes("if (r._fluidRow === undefined) {\n      const b = rowRefs.get(Number(id));")
+    && app154.includes("r._fluidRow = b;")
+    && app154.includes("const b = bindRow(r, r.dataset.evmrow);\n    if (!b) return;")
+    && app154.includes("const b = bindRow(r, r.dataset.tron);")
+    && app154.includes("const b = bindRow(r, r.dataset[attr.slice(5)]);")
+    && !app154.includes("const b = rowRefs.get(Number(r.dataset.evmrow));")
+    && !app154.includes("const b = rowRefs.get(Number(r.dataset.tron));")
     && !app154.includes("r.onclick = () => {\n    const b = rowRefs.get("));
   ok("§154: the smart-wallet upsert never writes into a failed base read's empty balances (the plain send sheet would list the smart-wallet row as its only option) — the failure shape carries the row for paint instead",
     app154.includes('if (networkKey !== "rootstock" || !rifSwLive || evmLoadFailed) return;'));
