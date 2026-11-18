@@ -24100,6 +24100,11 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       appRetry.includes("async function repriceUnpricedHeldRows()")
       && appRetry.includes("repriceUnpricedHeldRows().catch(() => {});\n  scheduleHeldReprice();")
       && appRetry.includes("swapAmtPriceTried.delete(ck);"));
+    ok("§155 D1-retry: the re-price loop is armed when the chain reads start and repeats while held rows stay unpriced (bounded rounds)",
+      appRetry.includes("let heldRepriceLoop = null;")
+      && appRetry.includes("function unpricedHeldRowCount()")
+      && appRetry.includes("loop.rounds < 8")
+      && (appRetry.match(/scheduleHeldReprice\(\);/g) || []).length >= 2);
   }
   // --- the bucket is abolished (D2) ---
   {

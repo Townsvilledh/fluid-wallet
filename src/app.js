@@ -3901,9 +3901,9 @@ async function priceHeldEvmRows(chainId, rows) {
  * succeeded minutes later in a quiet session — the row sat
  * unpriced for the whole session). When the EVM chain reads
  * settle, every still-unpriced held row is priced again through
- * the same fallback stack, and once more on a delay (past the
- * price cache's miss TTL). Live prices only — a row that still
- * cannot be priced keeps its honest blank fiat area. */
+ * the same fallback stack, and the loop below keeps offering
+ * further passes on a delay. Live prices only — a row that
+ * still cannot be priced keeps its honest blank fiat area. */
 async function repriceUnpricedHeldRows() {
   if (!wallet) return;
   const jobs = [];
@@ -3922,13 +3922,36 @@ async function repriceUnpricedHeldRows() {
   const changed = await Promise.all(jobs).catch(() => []);
   if (changed.some(Boolean)) paintAssets();
 }
-let lastHeldRepriceArmAt = 0;
+let heldRepriceLoop = null; // { wallet, rounds } while armed
+function unpricedHeldRowCount() {
+  let n = 0;
+  for (const [, st] of evmChainState) if (st && Array.isArray(st.rows)) n += st.rows.filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0).length;
+  if (NETWORKS[networkKey]) n += balances.filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0).length;
+  return n;
+}
+/* The re-price loop (§155 D1, completed in the follow-through
+ * release): while any held row is still unpriced, the fallback
+ * stack gets another pass on a 45 s clock — armed when the
+ * chain reads START, not only when they settle, because on a
+ * slow network the settle itself can be minutes away (the
+ * §155 walks: five runs, the price never landed inside the
+ * poll windows while every quiet-session call succeeded).
+ * Bounded at 8 rounds per wallet; stops the moment nothing
+ * held is unpriced. */
 function scheduleHeldReprice() {
-  const now = Date.now();
-  if (now - lastHeldRepriceArmAt < 60000) return;
-  lastHeldRepriceArmAt = now;
-  const w = wallet;
-  setTimeout(() => { if (wallet === w) repriceUnpricedHeldRows().catch(() => {}); }, 45000);
+  if (!wallet) return;
+  if (heldRepriceLoop && heldRepriceLoop.wallet === wallet) return;
+  const loop = { wallet, rounds: 0 };
+  heldRepriceLoop = loop;
+  const tick = async () => {
+    if (heldRepriceLoop !== loop || wallet !== loop.wallet) return;
+    loop.rounds++;
+    await repriceUnpricedHeldRows().catch(() => {});
+    if (heldRepriceLoop !== loop || wallet !== loop.wallet) return;
+    if (unpricedHeldRowCount() > 0 && loop.rounds < 8) setTimeout(tick, 45000);
+    else heldRepriceLoop = null;
+  };
+  setTimeout(tick, 45000);
 }
 /** One non-active chain's balance read. Throws when the base
  *  read (native + curated) fails — the caller shapes the
@@ -4053,6 +4076,10 @@ function upsertRifSwRow() {
  *  settle repainting. Stale renders (lock, switch, supersede)
  *  adopt nothing — the current render's own pass owns the set. */
 async function hydrateEvmChains(w, myRenderSeq) {
+  // Arm the re-price loop up front (§155 D1 follow-through):
+  // still-unpriced held rows get their repeat passes on a
+  // clock, independent of how long the reads below take.
+  scheduleHeldReprice();
   const keys = [...evmChainsPending];
   if (!keys.length) return;
   let next = 0;
