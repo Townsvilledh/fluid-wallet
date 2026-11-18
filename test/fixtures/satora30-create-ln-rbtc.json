@@ -1,0 +1,41 @@
+{
+  "direction": "lightning_to_evm",
+  "id": "35eeadf2-d1bb-4cc2-ad5d-8064141ab283",
+  "status": "pending",
+  "fee_sats": 841,
+  "hash_lock": "0xd42a6c9a128a080fddfc7233400022b16b2e9f61d163bb0da02aee4a82106290",
+  "bolt11_invoice": "lnbc500u1p40em0vpp56s4xexsj3gyqlh0uwge5qqpzk94ja8mp693mkrdq9thy4qssv2gqsp5rpmfu8phqms0sqpxk3z5lvhjkzcdjsxrge7x7qjrjr306z75urzqxqrwzqnp4qvyndeaqzman7h898jxm98dzkm0mlrsx36s93smrur7h0azyyuxc5rzjq25carzepgd4vqsyn44jrk85ezrpju92xyrk9apw4cdjh6yrwt5jgqqqqrt49lmtcqqqqqqqqqqq86qq9qcqzpudpzgek826ty8gsyc6t8dp6xu6twvus8xampwq9qyyssqeh9zu7r0zl6v283dwg4nw42s6zx4rzt6vqyagwynmp7vv8tplz28etwtnj2clj7234h6g7gm904f5v49nacqkq6lh9hn3qmeetqkt0qq895udr",
+  "invoice_expires_at": 1794975276,
+  "evm_fund_txid": null,
+  "evm_claim_txid": null,
+  "network": "bitcoin",
+  "created_at": "2026-11-18T00:14:36.834948Z",
+  "chain": "ROOTSTOCK",
+  "evm_chain_id": 30,
+  "client_evm_address": "0x6619aB7f4Ab8C9396a6Bf8819075Be3a45f3eF4f",
+  "target_evm_address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+  "evm_htlc_address": "0x21E1b489BA2f12A854DeAE6dC67091F608CdACBc",
+  "evm_htlc_version": 2,
+  "evm_htlc_kind": "native",
+  "evm_coordinator_address": "0x0000000000000000000000000000000000000000",
+  "server_evm_address": "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+  "evm_refund_locktime": 1794962676,
+  "wbtc_address": "0x0000000000000000000000000000000000000000",
+  "evm_expected_sats": "491590000000000",
+  "source_token": {
+    "token_id": "btc",
+    "symbol": "BTC",
+    "chain": "Lightning",
+    "name": "Bitcoin (Lightning)",
+    "decimals": 8
+  },
+  "target_token": {
+    "token_id": "0x0000000000000000000000000000000000000000",
+    "symbol": "RBTC",
+    "chain": "30",
+    "name": "0x0000000000000000000000000000000000000000",
+    "decimals": 18
+  },
+  "target_amount": "491590000000000",
+  "source_amount": "50000"
+}

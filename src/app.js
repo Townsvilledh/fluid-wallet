@@ -43,7 +43,7 @@ import {
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
   NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapInboundPaused,
   fetchTokenTrust, fetchTokenTrustBatch, resolveTokenTrustSync, tokenTrustSwapCheck, assertSwapTokensNotScam, tokenTrustReasonLine, tokenTrustSourceLabel,
-  formatSatoraSwapIntent, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  formatSatoraSwapIntent, satoraRifDisclosureLines, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
@@ -10447,7 +10447,8 @@ $("actSwap").onclick = () => {
       // below — the two never present as primary together.
       const rTimelockPassed = Number.isInteger(Number(r.refundLocktime)) && Number(r.refundLocktime) > 0
         && Math.floor(Date.now() / 1000) >= Number(r.refundLocktime);
-      if (!r.sourceKey && r.fundTxHash && !r.claimedAt && rPhase.phase === "refund-available" && rTimelockPassed) {
+      if (!r.sourceKey && r.fundTxHash && !r.claimedAt && rTimelockPassed
+        && (rPhase.phase === "refund-available" || (r.htlcKind === "native" && rPhase.phase !== "complete" && rPhase.phase !== "refunded"))) {
         const b = document.createElement("button");
         b.className = "btn"; b.textContent = "Refund my locked tokens (timelock reached)";
         b.onclick = () => satoraRefundEvmUnilateral(r.id, b).catch((e) => toast(e.message || String(e)));
@@ -10547,7 +10548,9 @@ $("actSwap").onclick = () => {
     record.updatedAt = Date.now();
     saveSatoraSwapRecord(localStorage, record);
     paintSatoraSwaps();
-    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
+    toast(record.htlcKind === "native"
+      ? "Payout claimed ✓ — the RBTC sits in your RIF Relay smart wallet on Rootstock, the contract wallet your own Fluid key controls there."
+      : "Payout claimed ✓ — it lands at your own address on the destination chain.");
   }
   // Claim an LN -> BTC swap's on-chain HTLC: the funding
   // output is read from the explorer at the HTLC address the
@@ -10641,7 +10644,9 @@ $("actSwap").onclick = () => {
     record.updatedAt = Date.now();
     saveSatoraSwapRecord(localStorage, record);
     paintSatoraSwaps();
-    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
+    toast(record.htlcKind === "native"
+      ? "Payout claimed ✓ — the RBTC sits in your RIF Relay smart wallet on Rootstock, the contract wallet your own Fluid key controls there."
+      : "Payout claimed ✓ — it lands at your own address on the destination chain.");
   }
   // Refund a Bitcoin-source swap's expired lock with the
   // user's OWN key (Part B, 2026-11-14): the lock address is
@@ -10731,7 +10736,9 @@ $("actSwap").onclick = () => {
     try {
       await executeSatoraUnilateralRefundEvmSwap(wallet, record, localStorage, (t) => toast(t));
       paintSatoraSwaps();
-      toast("Refund broadcast ✓ — the locked WBTC/tBTC returns to your own address on the funding chain; you paid that chain's gas for the call.");
+      toast(record.htlcKind === "native"
+        ? "Refund broadcast ✓ — the locked RBTC returns to your own Rootstock account; you paid Rootstock's gas for the call."
+        : "Refund broadcast ✓ — the locked WBTC/tBTC returns to your own address on the funding chain; you paid that chain's gas for the call.");
     } catch (e) { toast(e.message || String(e)); if (btn) btn.disabled = false; }
   }
   // Claim an Arkade -> EVM swap's payout under the user's own
@@ -10750,7 +10757,9 @@ $("actSwap").onclick = () => {
     record.updatedAt = Date.now();
     saveSatoraSwapRecord(localStorage, record);
     paintSatoraSwaps();
-    toast("Payout claimed ✓ — it lands at your own address on the destination chain.");
+    toast(record.htlcKind === "native"
+      ? "Payout claimed ✓ — the RBTC sits in your RIF Relay smart wallet on Rootstock, the contract wallet your own Fluid key controls there."
+      : "Payout claimed ✓ — it lands at your own address on the destination chain.");
   }
   paintSatoraSwaps();
   pollSatoraSwapStatuses(localStorage).then(() => paintSatoraSwaps()).catch(() => {});
@@ -11274,7 +11283,7 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}${(r.provider === "tinyman" || r.provider === "pact") ? `<br><small style="color:var(--warn)">${esc(algoDisclosureLines(r).join(" "))}</small>` : ""}</span>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "satora" && satoraRifDisclosureLines(r).length ? `<br><small style="color:var(--warn)">${esc(satoraRifDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}${(r.provider === "tinyman" || r.provider === "pact") ? `<br><small style="color:var(--warn)">${esc(algoDisclosureLines(r).join(" "))}</small>` : ""}</span>
             <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");

@@ -1,0 +1,68 @@
+{
+  "quoteFree": {
+    "exchange_rate": "1",
+    "network_fee": 300,
+    "gasless_network_fee": 0,
+    "protocol_fee": 250,
+    "protocol_fee_rate": 0.005,
+    "min_amount": 1000,
+    "max_amount": 1000000,
+    "source_amount": "50000",
+    "target_amount": "500000000000000",
+    "net_source_amount": "50000",
+    "net_target_amount": "494500000000000"
+  },
+  "quoteFee": {
+    "exchange_rate": "1",
+    "network_fee": 300,
+    "gasless_network_fee": 0,
+    "protocol_fee": 500,
+    "protocol_fee_rate": 0.01,
+    "min_amount": 1000,
+    "max_amount": 1000000,
+    "source_amount": "50000",
+    "target_amount": "500000000000000",
+    "net_source_amount": "50000",
+    "net_target_amount": "492000000000000"
+  },
+  "creation": {
+    "id": "d97950e3-1a41-4d2e-bb99-a0f17125be3e",
+    "status": "pending",
+    "fee_sats": 792,
+    "hash_lock": "0x0b625e20a54dd64f64f46aea384f2d948dc2cf0ad3e54b6d03f951faf75c41e3",
+    "bolt11_invoice": "lnbc500u1p40eukjpp5pd39ug99fhty7e85dt4rsnedjjxu9nc260j5kmgrl9gl4a6ug83ssp5pc5ej5guhf9cmryxk0l5dvgfz34el0ssz2ypc2athmcfu06ugamqxqrwzqnp4qvyndeaqzman7h898jxm98dzkm0mlrsx36s93smrur7h0azyyuxc5rzjq25carzepgd4vqsyn44jrk85ezrpju92xyrk9apw4cdjh6yrwt5jgqqqqrt49lmtcqqqqqqqqqqq86qq9qcqzpudpzgek826ty8gsyc6t8dp6xu6twvus8xampwq9qyyssq7hckjmze3sujwsceg8mqakvw6kcanxfphd2uvnmmh2zhujs7f6m482rm6wuz5ad6szmhaxjdrtczah6fnv466qykr6kv09jtrpzf09cq3acuxz",
+    "invoice_expires_at": 1794976530,
+    "evm_fund_txid": null,
+    "evm_claim_txid": null,
+    "network": "bitcoin",
+    "created_at": "2026-11-18T00:35:30.532586Z",
+    "chain": "ROOTSTOCK",
+    "evm_chain_id": 30,
+    "client_evm_address": "0x6619aB7f4Ab8C9396a6Bf8819075Be3a45f3eF4f",
+    "target_evm_address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+    "evm_htlc_address": "0x21E1b489BA2f12A854DeAE6dC67091F608CdACBc",
+    "evm_htlc_version": 2,
+    "evm_htlc_kind": "native",
+    "evm_coordinator_address": "0x0000000000000000000000000000000000000000",
+    "server_evm_address": "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    "evm_refund_locktime": 1794963930,
+    "wbtc_address": "0x0000000000000000000000000000000000000000",
+    "evm_expected_sats": "492080000000000",
+    "source_token": {
+      "token_id": "btc",
+      "symbol": "BTC",
+      "chain": "Lightning",
+      "name": "Bitcoin (Lightning)",
+      "decimals": 8
+    },
+    "target_token": {
+      "token_id": "0x0000000000000000000000000000000000000000",
+      "symbol": "RBTC",
+      "chain": "30",
+      "name": "0x0000000000000000000000000000000000000000",
+      "decimals": 18
+    },
+    "target_amount": "492080000000000",
+    "source_amount": "50000"
+  }
+}

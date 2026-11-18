@@ -6625,8 +6625,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && coreSrcSatora.includes('"x-satora-evm-erc20-htlc-version"')
     && coreSrcSatora.includes('"x-satora-bitcoin-htlc-version"')
     && coreSrcSatora.includes('"x-satora-lightning-version"')
-    && coreSrcSatora.includes('SATORA_API_SPEC_VERSION = "0.3.26"')
-    && coreSrcSatora.includes('SATORA_SERVER_TAG_PREFIX = "backend-v0.3"'));
+    && coreSrcSatora.includes('SATORA_API_SPEC_VERSION = "0.3.27"')
+    && coreSrcSatora.includes('SATORA_SERVER_TAG_PREFIX = "backend-v0.3"')
+    && coreSrcSatora.includes('"X-Lendaswap-Client": SATORA_CLIENT_HEADER')
+    && coreSrcSatora.includes('"x-satora-evm-native-htlc-version"'));
 }
 
 // 69. Satora Permit2 witness funding (2026-11-09): the official
@@ -14244,7 +14246,7 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       ["a zero recorded lock amount", { stubOpts: { locked: "0" } }, "does not state the amount"],
       ["a params amount that disagrees with the lock", { stubOpts: { params: { ...PARAMS_U, amount: "25000" } } }, "different locked amount"],
       ["a params sweep of a foreign token", { stubOpts: { params: { ...PARAMS_U, sweep_token: "0x9999999999999999999999999999999999999999" } } }, "sweep a different token"],
-      ["a native lock on the record", { rec: { ...REC_U, htlcKind: "native", htlcVersion: 2 } }, "did not lock on an ERC-20 HTLC"],
+      ["a native lock naming a foreign HTLC (§153: native refunds build only on the pinned Rootstock deployment)", { rec: { ...REC_U, htlcKind: "native", htlcVersion: 2 } }, "not the pinned Rootstock deployment"],
       ["an unpinned HTLC version on the record", { rec: { ...REC_U, htlcVersion: 6 } }, "did not lock on the pinned ERC-20 HTLC"],
       ["an unreadable hash lock on the record", { rec: { ...REC_U, hashLock: "0xzz" } }, "hash lock was unreadable"],
       ["no refund timelock on the record", { rec: { ...REC_U, refundLocktime: 0 } }, "names no refund timelock"],
@@ -21178,9 +21180,12 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
     && (() => { const p = parseOpenOceanSwap(oo14Free, { chainId: 14, fromAmountRaw: "1000000000000000000000", nativeInput: true });
       return !!p && p.to === OO_EXCHANGE136 && p.value === "1000000000000000000000" && p.outAmount === oo14Free.outAmount; })());
 
-  // ---- Satora chain 30: NOT wired, deliberately (see header) ----
-  ok("gap14: Satora refuses Rootstock pairs — execution unbuilt, so no route is offered",
-    satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: "", fromAmount: "500000000000000" }) === null
+  // ---- Satora chain 30 (§153, 2026-11-18): wired RBTC-only,
+  // both directions; the full fixture block sits at the end of
+  // this file. The §136 not-wired pin that stood here is
+  // replaced by it. ----
+  ok("gap14: Satora serves Rootstock RBTC pairs since §153 (a native plan; the EVM-source predicate itself never serves a Bitcoin source)",
+    satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: "", fromAmount: "500000000000000" })?.htlcKind === "native"
     && satoraSupportsPair({ fromChainKey: "bitcoin", toChainKey: "rootstock", fromTokenAddress: "", toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "50000" }) === null
     && relaySupportsPair("rootstock", "rootstock") === false && relaySupportsPair("kaia", "kaia") === false);
 
@@ -22833,12 +22838,12 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       .every(k => swapFamilyHasExecutableExit(k) === true));
   ok("§149: Cardano is NOT closed — both 1Click directions are wired; its broadcast doubt is environmental, and the gate is coverage-driven, not doubt-driven",
     swapFamilyHasExecutableExit("cardano") === true && swapInboundPaused("cardano") === false);
-  ok("§149: the closed set is exactly the no-exit families — the presence/intra-only chains whose inbound was never offered (Stellar left the set in §150 and Polkadot in §151, both by coverage alone)",
+  ok("§149: the closed set is exactly the no-exit families — the presence/intra-only chains whose inbound was never offered (Stellar left the set in §150, Polkadot in §151 and Rootstock in §153, all by coverage alone)",
     JSON.stringify([...swapInboundClosedFamilies()].sort()) === JSON.stringify(
       ["algorand", "aurora", "b2", "bitlayer", "core", "cronoszkevm", "flare", "filecoin", "fuse", "hedera",
-       "injectiveevm", "kaia", "kava", "moonriver", "rootstock", "seievm", "stacks",
+       "injectiveevm", "kaia", "kava", "moonriver", "seievm", "stacks",
        "tac", "taiko", "tezos"].sort())
-    && swapInboundClosedFamilies().length === 20
+    && swapInboundClosedFamilies().length === 19
     && ["stellar", "polkadot", "base", "bitcoin", "cosmoshub", "tezos"].every(k => SWAP_FAMILY_KEYS.includes(k)));
   ok("§149: probe assets are the family's own canonical liquid assets, read from its pinned tables",
     swapFamilyProbeAssets("stellar").includes("xlm") && swapFamilyProbeAssets("polkadot").includes("dot")
@@ -23358,7 +23363,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     ok("§151 (b): DOT-in is offered again and the paused verdict is gone — the §149 gate lifted Polkadot by coverage, with no gate edit",
       inRoutes151.length === 1 && inRoutes151[0].provider === "chainflip"
       && swapInboundPaused("polkadot") === false && vIn151.kind !== "inbound-paused"
-      && !swapInboundClosedFamilies().includes("polkadot") && swapInboundClosedFamilies().length === 20);
+      && !swapInboundClosedFamilies().includes("polkadot") && swapInboundClosedFamilies().length === 19); // 20 at §151; Rootstock left the set in §153, by coverage alone
     let floor151 = null;
     try { await getChainflipSwapRoute({ fromChainKey: "polkadot", toChainKey: "bsc", fromTokenAddress: "dot", toTokenAddress: USDT151, fromAmount: "1000000000", fromAddress: DOT151, toAddress: EVM151 }); }
     catch (e) { floor151 = e; }
@@ -23405,6 +23410,336 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   const adminPresent151 = [...hexTokens151].some(t => createHash("sha256").update(t).digest("hex") === ADMIN_SHA256_151);
   ok("§151 (d): the BaaS ADMIN key appears NOWHERE in the shipped sources or the built bundle (hash-compared, never embedded) — while the API key ships in source by design",
     adminPresent151 === false && shipped151["src/wallet-core.js"].includes(CHAINFLIP_BAAS_API_KEY));
+}
+
+// ============================================================
+// §153 (2026-11-18): Satora chain 30 (Rootstock) wired — RBTC
+// moves between Rootstock and the Bitcoin family in both
+// directions. EVM-source locks are HTLCNative v2 funded by the
+// user's own Rootstock account (the server refuses gasless
+// funding for them); BTC-family payouts claim through the
+// user's RIF Relay smart wallet. Every fixture below was
+// captured live from Satora's API on 2026-11-18 (backend
+// v0.3.27) with the public test phrase; creation fixtures are
+// time-proofed at load (timelocks shifted to now-relative,
+// preserving their order; the Bitcoin-source HTLC address is
+// recomputed from the fixture's own parameters after the
+// shift, exactly as the checker itself recomputes it).
+{
+  const {
+    satoraBtcSourceSupportsPair, satoraLnSourceSupportsPair, satoraArkadeSourceSupportsPair,
+    parseSatoraQuote, parseSatoraArkadeSourceQuote,
+    checkSatoraCreateResponse, checkSatoraBtcSourceCreateResponse, checkSatoraLnCreateResponse, checkSatoraArkadeToEvmCreateResponse,
+    satoraSwapIdentity, satoraClaimKey, satoraSwapClaimKey, satoraBtcSourceHtlcAddress,
+    getSatoraSwapRoute, getSatoraBtcSourceRoute, createSatoraSwap, createSatoraBtcSourceSwap, executeSatoraSwapRoute,
+    claimSatoraRifRelaySwap, rifSmartWalletAddress, buildSatoraRifRedeemData, buildSatoraRifRelayRequest,
+    checkSatoraRifRelayConfig, checkSatoraRifChainInfo, satoraRifClaimFeeWei,
+    buildSatoraNativeLockCall, buildSatoraUnilateralRefundCall, satoraRifDisclosureLines,
+    SATORA_RBTC_TOKEN, SATORA_HTLC_NATIVE_ADDRESS, SATORA_CLIENT_HEADER,
+    swapFamilyHasExecutableExit, swapInboundClosedFamilies,
+  } = await import("../src/wallet-core.js");
+  const fx153 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const PHRASE153 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const OWNER153 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const SMART153 = "0x6619aB7f4Ab8C9396a6Bf8819075Be3a45f3eF4f";
+  const ZERO153 = "0x0000000000000000000000000000000000000000";
+  const USDT0_153 = "0x779dED0C9e1022225F8e0630b35A9B54Be713736";
+  const jsonRes153 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const clone153 = (o) => JSON.parse(JSON.stringify(o));
+  // Time-proofing (the freshFx pattern): shift every recorded
+  // locktime to now-relative, preserving btc > evm > vhtlc
+  // order; recompute the Bitcoin-source HTLC address from the
+  // fixture's own parameters afterwards.
+  const fresh153 = (creation, identity) => {
+    const c = clone153(creation);
+    const now = Math.floor(Date.now() / 1000);
+    if (c.vhtlc_refund_locktime) c.vhtlc_refund_locktime = now + 3600;
+    if (c.evm_refund_locktime) c.evm_refund_locktime = now + 7200;
+    if (c.btc_refund_locktime) c.btc_refund_locktime = now + 10800;
+    if (identity && c.btc_hash_lock && c.btc_server_pk)
+      c.btc_htlc_address = satoraBtcSourceHtlcAddress({ hashLock160Hex: c.btc_hash_lock, serverClaimPkXonly: c.btc_server_pk, userRefundPkXonly: identity.claimPk, refundLocktime: c.btc_refund_locktime });
+    return c;
+  };
+  const PAIRS153 = { pairs: [
+    { source: "30", target: "Bitcoin", min_sats: 1000, max_sats: 1000000 },
+    { source: "30", target: "Lightning", min_sats: 1000, max_sats: 1000000 },
+    { source: "30", target: "Arkade", min_sats: 1000, max_sats: 1000000 },
+    { source: "Bitcoin", target: "30", min_sats: 20000, max_sats: 1000000 },
+    { source: "Lightning", target: "30", min_sats: 1000, max_sats: 1000000 },
+    { source: "Arkade", target: "30", min_sats: 1000, max_sats: 1000000 },
+  ] };
+
+  // --- (1) Satora's own chain-30 token list: RBTC only ---
+  const tokens153 = fx153("satora30-tokens.json");
+  const chain30Tokens = (tokens153.evm_tokens || []).filter(t => String(t.chain) === "30");
+  ok("§153: Satora's served chain-30 token list carries exactly ONE token — RBTC at the zero address — and Fluid's RBTC pin is that token",
+    chain30Tokens.length === 1 && chain30Tokens[0].token_id.toLowerCase() === ZERO153
+    && SATORA_RBTC_TOKEN.address === ZERO153 && SATORA_RBTC_TOKEN.decimals === Number(chain30Tokens[0].decimals));
+  ok("§153: Fluid's pinned RSK USDT0 is NOT in Satora's served list (its quote API refuses it live) — Satora predicates refuse it in both directions while the pin stays for the OpenOcean intra lane",
+    !chain30Tokens.some(t => t.token_id.toLowerCase() === USDT0_153.toLowerCase())
+    && NETWORKS.rootstock.tokens.some(t => t.address.toLowerCase() === USDT0_153.toLowerCase())
+    && satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: USDT0_153, toTokenAddress: "btc", fromAmount: "5000000" }) === null
+    && satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "rootstock", fromTokenAddress: "btc", toTokenAddress: USDT0_153, fromAmount: "50000" }) === null);
+
+  // --- (2) predicates: native plans both directions ---
+  const planOut153 = satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: ZERO153, toTokenAddress: "btc", fromAmount: "500000000000000" });
+  const planBtcIn153 = satoraBtcSourceSupportsPair({ fromChainKey: "bitcoin", toChainKey: "rootstock", fromTokenAddress: "btc", toTokenAddress: ZERO153, fromAmount: "50000" });
+  const planLnIn153 = satoraLnSourceSupportsPair({ fromChainKey: "lightning", toChainKey: "rootstock", fromTokenAddress: "btc", toTokenAddress: ZERO153, fromAmount: "50000" });
+  const planArkIn153 = satoraArkadeSourceSupportsPair({ fromChainKey: "arkade", toChainKey: "rootstock", fromTokenAddress: "btc", toTokenAddress: ZERO153, fromAmount: "50000" });
+  ok("§153: the predicates serve RBTC <-> the whole Bitcoin family as NATIVE plans (chain 30, HTLCNative grammar, BTC-priced)",
+    planOut153?.htlcKind === "native" && planOut153?.chainId === 30 && planOut153?.destKey === "bitcoin"
+    && planBtcIn153?.htlcKind === "native" && planBtcIn153?.destChainId === 30 && planBtcIn153?.destChainKey === "rootstock"
+    && planLnIn153?.htlcKind === "native" && planArkIn153?.htlcKind === "native"
+    && satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "lightning", fromTokenAddress: ZERO153, toTokenAddress: "btc", fromAmount: "500000000000000" })?.htlcKind === "native"
+    && satoraSupportsPair({ fromChainKey: "rootstock", toChainKey: "arkade", fromTokenAddress: ZERO153, toTokenAddress: "btc", fromAmount: "500000000000000" })?.htlcKind === "native");
+
+  // --- (3) quotes reconcile under the shipped parsers ---
+  const pairOut153 = fx153("satora30-pair-rbtc-btc.json");
+  const qOutFree153 = parseSatoraQuote(pairOut153.quoteFree, planOut153, { fromAmount: "500000000000000" });
+  const qOutFee153 = parseSatoraQuote(pairOut153.quoteFee, planOut153, { fromAmount: "500000000000000" }, qOutFree153);
+  ok("§153: the live RBTC -> BTC quotes reconcile — the free quote's residual identity is exact and the keyed quote attributes exactly 250 sats to Fluid",
+    !!qOutFree153 && qOutFree153.grossSats - qOutFree153.protocolFeeSats - qOutFree153.networkFeeSats === qOutFree153.netSats
+    && !!qOutFee153 && qOutFee153.fluidFeeSats === 250 && qOutFee153.netSats === 49010);
+  const pairLnIn153 = fx153("satora30-pair-ln-rbtc.json");
+  const qLnFree153 = parseSatoraArkadeSourceQuote(pairLnIn153.quoteFree, planLnIn153, { fromAmount: "50000" });
+  const qLnFee153 = parseSatoraArkadeSourceQuote(pairLnIn153.quoteFee, planLnIn153, { fromAmount: "50000" }, qLnFree153);
+  ok("§153: the live LN -> RBTC quotes reconcile in wei (target_amount is the gross in wei at rate 1; the keyed quote attributes exactly 250 sats)",
+    !!qLnFree153 && qLnFree153.grossTargetRaw === 500000000000000 && qLnFree153.netTargetRaw === 494500000000000
+    && !!qLnFee153 && qLnFee153.fluidFeeSats === 250 && qLnFee153.netTargetRaw === 492000000000000);
+
+  // --- (4) creation checkers against the matched live pairs ---
+  const id51 = satoraSwapClaimKey(PHRASE153, 51);
+  const routeOut153 = { fromChainId: 30, fromAmount: "500000000000000", fromToken: { address: ZERO153, symbol: "RBTC", decimals: 18 },
+    satora: { destKey: "bitcoin", htlcKind: "native", destInput: satoraClaimKey(PHRASE153).address, grossSats: qOutFee153.grossSats, netSats: qOutFee153.netSats, protocolFeeSats: qOutFee153.protocolFeeSats, networkFeeSats: qOutFee153.networkFeeSats, fluidFeeSats: qOutFee153.fluidFeeSats } };
+  const chkOut153 = checkSatoraCreateResponse(routeOut153, fresh153(pairOut153.creation), { identity: id51, claimPk: satoraSwapClaimKey(PHRASE153, 51).claimPk });
+  ok("§153: the live RBTC -> BTC creation verifies under the native branch (HTLCNative v2 at the pinned deployment, no coordinator, exact fee reconciliation)",
+    chkOut153.ok === true);
+  const tamperedHtlc153 = fresh153(pairOut153.creation); tamperedHtlc153.evm_htlc_address = "0x9999999999999999999999999999999999999999";
+  const tamperedKind153 = fresh153(pairOut153.creation); tamperedKind153.evm_htlc_kind = "erc20";
+  ok("§153: a native creation naming a foreign HTLC or the ERC-20 kind refuses",
+    checkSatoraCreateResponse(routeOut153, tamperedHtlc153, { identity: id51, claimPk: satoraSwapClaimKey(PHRASE153, 51).claimPk }).ok === false
+    && checkSatoraCreateResponse(routeOut153, tamperedKind153, { identity: id51, claimPk: satoraSwapClaimKey(PHRASE153, 51).claimPk }).ok === false);
+
+  const pairBtcIn153 = fx153("satora30-pair-btc-rbtc.json");
+  const id52 = satoraSwapClaimKey(PHRASE153, 52);
+  const qBtcFree153 = parseSatoraArkadeSourceQuote(pairBtcIn153.quoteFree, planBtcIn153, { fromAmount: "50000" });
+  const qBtcFee153 = parseSatoraArkadeSourceQuote(pairBtcIn153.quoteFee, planBtcIn153, { fromAmount: "50000" }, qBtcFree153);
+  const routeBtcIn153 = { fromAmount: "50000", satora: { destKey: "evm", htlcKind: "native", destChainId: 30, destInput: OWNER153, destSymbol: "RBTC", sourceSats: 50000, grossSats: qBtcFee153.grossSats, grossTargetRaw: qBtcFee153.grossTargetRaw, netTargetRaw: qBtcFee153.netTargetRaw, protocolFeeSats: qBtcFee153.protocolFeeSats, networkFeeSats: qBtcFee153.networkFeeSats, fluidFeeSats: qBtcFee153.fluidFeeSats, targetToken: { address: ZERO153, symbol: "RBTC", decimals: 18 } } };
+  const freshBtcIn153 = fresh153(pairBtcIn153.creation, id52);
+  const chkBtcIn153 = checkSatoraBtcSourceCreateResponse(routeBtcIn153, freshBtcIn153, { identity: id52, destInput: OWNER153, claimingAddress: SMART153 });
+  ok("§153: the live BTC -> RBTC creation verifies — the recomputed Bitcoin HTLC matches, the claim address is the user's RIF smart wallet, and the 11-sat fee re-price sits inside the native tolerance",
+    chkBtcIn153.ok === true && chkBtcIn153.btcHtlcAddress === freshBtcIn153.btc_htlc_address);
+  const wrongWallet153 = checkSatoraBtcSourceCreateResponse(routeBtcIn153, fresh153(pairBtcIn153.creation, id52), { identity: id52, destInput: OWNER153, claimingAddress: OWNER153 });
+  ok("§153: a BTC -> RBTC creation whose claim address is the plain EOA (not the RIF smart wallet) refuses",
+    wrongWallet153.ok === false);
+
+  const id53 = satoraSwapClaimKey(PHRASE153, 53);
+  const routeLnIn153 = { fromAmount: "50000", satora: { destKey: "evm", htlcKind: "native", destChainId: 30, destInput: OWNER153, destSymbol: "RBTC", sourceSats: 50000, grossSats: qLnFee153.grossSats, grossTargetRaw: qLnFee153.grossTargetRaw, netTargetRaw: qLnFee153.netTargetRaw, protocolFeeSats: qLnFee153.protocolFeeSats, networkFeeSats: qLnFee153.networkFeeSats, fluidFeeSats: qLnFee153.fluidFeeSats, targetToken: { address: ZERO153, symbol: "RBTC", decimals: 18 } } };
+  const chkLnIn153 = checkSatoraLnCreateResponse(routeLnIn153, fresh153(pairLnIn153.creation), { identity: id53, claimingAddress: SMART153, nowSec: 1794970000 });
+  ok("§153: the live LN -> RBTC creation verifies (invoice amount, smart-wallet claim address, native fee tolerance)",
+    chkLnIn153.ok === true);
+
+  const pairArkIn153 = fx153("satora30-pair-arkade-rbtc.json");
+  const id54 = satoraSwapClaimKey(PHRASE153, 54);
+  const qArkFree153 = parseSatoraArkadeSourceQuote(pairArkIn153.quoteFree, planArkIn153, { fromAmount: "50000" });
+  const qArkFee153 = parseSatoraArkadeSourceQuote(pairArkIn153.quoteFee, planArkIn153, { fromAmount: "50000" }, qArkFree153);
+  const routeArkIn153 = { fromAmount: "50000", satora: { destKey: "evm", htlcKind: "native", destChainId: 30, destInput: OWNER153, destSymbol: "RBTC", sourceSats: 50000, grossSats: qArkFee153.grossSats, grossTargetRaw: qArkFee153.grossTargetRaw, netTargetRaw: qArkFee153.netTargetRaw, protocolFeeSats: qArkFee153.protocolFeeSats, networkFeeSats: qArkFee153.networkFeeSats, fluidFeeSats: qArkFee153.fluidFeeSats, targetToken: { address: ZERO153, symbol: "RBTC", decimals: 18 } } };
+  const chkArkIn153 = checkSatoraArkadeToEvmCreateResponse(routeArkIn153, fresh153(pairArkIn153.creation), { identity: id54, claimingAddress: SMART153 });
+  ok("§153: the live Arkade -> RBTC creation verifies (VHTLC terms recomputed, smart-wallet claim address, native tolerances)",
+    chkArkIn153.ok === true);
+
+  // --- (5) RIF Relay: derivation, request shapes, config pins, fee math ---
+  ok("§153: the RIF smart-wallet derivation reproduces the address Satora's server itself echoes for the test owner (and the live creation fixtures carry it)",
+    rifSmartWalletAddress(OWNER153) === SMART153
+    && pairBtcIn153.creation.client_evm_address === SMART153 && pairLnIn153.creation.client_evm_address === SMART153);
+  const chainCfg153 = checkSatoraRifRelayConfig(fx153("satora30-chain-config.json"));
+  const chainInfo153 = checkSatoraRifChainInfo(fx153("satora30-rif-chain-info.json"));
+  const redeem153 = buildSatoraRifRedeemData({ preimageHex: id52.secretHex, amountRaw: pairBtcIn153.creation.evm_expected_sats, sender: pairBtcIn153.creation.server_evm_address, timelock: pairBtcIn153.creation.evm_refund_locktime });
+  ok("§153: the RIF redeem calldata is HTLCNative.redeem's own selector over (preimage, amount, server sender, timelock)",
+    redeem153.startsWith("0xd592e483") && redeem153.length === 2 + 8 + 64 * 4);
+  const relayReq153 = buildSatoraRifRelayRequest({ deployed: false, owner: OWNER153, smartWallet: SMART153, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS, redeemData: redeem153, nonce: 0n, tokenAmountWei: 14998500495000n, gasPriceWei: 30300001n, feesReceiver: chainInfo153.feesReceiver, validUntilTime: 1794970000 + 172800 });
+  ok("§153: the first-claim relay request is the DEPLOY kind — factory as forwarder and verifying contract, the fee riding as tokenAmount with its transfer gas, the payout HTLC as the call target",
+    relayReq153.kind === "deploy"
+    && relayReq153.relayData.callForwarder.toLowerCase() === "0x25c87343380eea565b6c664a8fd13b9b57c106cb"
+    && relayReq153.domain.verifyingContract.toLowerCase() === "0x25c87343380eea565b6c664a8fd13b9b57c106cb"
+    && relayReq153.request.tokenAmount === "14998500495000" && relayReq153.request.tokenGas === "10500"
+    && relayReq153.request.validUntilTime === 1794970000 + 172800
+    && relayReq153.request.to.toLowerCase() === SATORA_HTLC_NATIVE_ADDRESS.toLowerCase());
+  const relayReq153b = buildSatoraRifRelayRequest({ deployed: true, owner: OWNER153, smartWallet: SMART153, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS, redeemData: redeem153, nonce: 3n, tokenAmountWei: 0n, gasPriceWei: 30300001n, feesReceiver: chainInfo153.feesReceiver, validUntilTime: 1794970000 + 172800 });
+  ok("§153: a deployed wallet's relay request is the RELAY kind — the wallet itself as forwarder and verifying contract, the claim call's gas stated",
+    relayReq153b.kind === "relay"
+    && relayReq153b.relayData.callForwarder.toLowerCase() === SMART153.toLowerCase()
+    && relayReq153b.request.gas === "100000" && relayReq153b.request.tokenGas === "0");
+  const driftCfg153 = clone153(fx153("satora30-chain-config.json"));
+  driftCfg153.chains.find(c => String(c.chain) === "30").rif_relay.relay_hub = "0x9999999999999999999999999999999999999999";
+  ok("§153: the RIF relay config pins verify against Satora's served chain-config and the relay's own chain-info — and a drifted relay hub refuses",
+    !!chainCfg153 && chainCfg153.serverUrl === "https://mainnet.relay.rifcomputing.net"
+    && !!chainInfo153 && chainInfo153.minGasPrice > 0n && chainInfo153.feesReceiver.length === 42
+    && checkSatoraRifRelayConfig(driftCfg153) === null);
+  ok("§153: the claim fee is the estimation times the dearer of the quoted and minimum gas prices, plus the reference client's 10% — and nothing else",
+    satoraRifClaimFeeWei(450000n, 20000000n, 30300001n) === 14998500495000n
+    && satoraRifClaimFeeWei(450000n, 40000000n, 30300001n) === (450000n * 40000000n * 110n) / 100n);
+
+  // --- (6) native lock + refund call builders ---
+  const lockCall153 = buildSatoraNativeLockCall({ htlcKind: "native", htlcVersion: 2, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS, hashLock: id51.hashLock, serverEvmAddress: pairOut153.creation.server_evm_address, refundLocktime: pairOut153.creation.evm_refund_locktime, fromAmount: "500000000000000" });
+  ok("§153: the native lock call funds HTLCNative.create(hashLock, server claim address, timelock) with the swap amount as the call value — the user's own broadcast, no Permit2, no custody",
+    lockCall153.to === SATORA_HTLC_NATIVE_ADDRESS && lockCall153.value === "500000000000000"
+    && lockCall153.data.startsWith("0x292b27c1") && lockCall153.data.length === 2 + 8 + 64 * 3);
+  const refundCall153 = buildSatoraUnilateralRefundCall(
+    { htlcKind: "native", htlcVersion: 2, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS, hashLock: id51.hashLock, serverEvmAddress: pairOut153.creation.server_evm_address, refundLocktime: pairOut153.creation.evm_refund_locktime },
+    { lockedAmountRaw: "500000000000000", nowSec: pairOut153.creation.evm_refund_locktime + 1 });
+  ok("§153: the native unilateral refund call is HTLCNative.refund's FOUR-argument form (hash lock, amount, claim address, timelock) on the pinned deployment",
+    refundCall153.ok === true && refundCall153.to === SATORA_HTLC_NATIVE_ADDRESS && refundCall153.data.length === 2 + 8 + 64 * 4);
+
+  // --- (7) route getters + headers + execution seam, stubbed end to end ---
+  const realFetch153 = globalThis.fetch;
+  const seen153 = { calls: [] };
+  const creationOut153 = fresh153(pairOut153.creation);
+  creationOut153.btc_user_claim_pk = satoraClaimKey(PHRASE153).claimPk.slice(2); // the echo (x-only form) of the key the production creation sends
+  // The BTC-in creation the production path meets at the
+  // route the fee law actually quotes (Fluid's fee is 0 on
+  // this direction — see the route pin below): the live
+  // capture's server terms (HTLC, keys, addresses, locktimes)
+  // with the fee/amount fields of the FEE-FREE quote it was
+  // created from (250 protocol + 610 network = 860; net
+  // 491400000000000 wei).
+  const creationIn153 = () => {
+    const c = fresh153(pairBtcIn153.creation, id52);
+    c.fee_sats = 860; c.target_amount = "491400000000000"; c.evm_expected_sats = "491400000000000";
+    return c;
+  };
+  const stub153 = (mode) => async (url, init) => {
+    const u = String(url);
+    if (u.includes("api.coingecko.com")) return jsonRes153({ bitcoin: { usd: 100000 } });
+    if (u.includes("api.satora.io")) {
+      seen153.calls.push({ u, method: init?.method || "GET", headers: init?.headers || {}, body: init?.body ? JSON.parse(init.body) : null });
+      if (u.includes("/version")) return jsonRes153({ tag: "backend-v0.3.27" });
+      if (u.includes("/status")) return jsonRes153({ swaps_paused: false });
+      if (u.includes("/swap-pairs")) return jsonRes153(PAIRS153);
+      if (u.includes("/chain-config")) return jsonRes153(fx153("satora30-chain-config.json"));
+      if (u.includes("/quote?")) { const sp = new URL(u).searchParams; const keyed = Number(sp.get("extra_fees") || 0) > 0;
+        if (sp.get("source_chain") === "30") return jsonRes153(keyed ? pairOut153.quoteFee : pairOut153.quoteFree);
+        if (sp.get("target_chain") === "30") return jsonRes153(keyed ? pairBtcIn153.quoteFee : pairBtcIn153.quoteFree); }
+      if (u.includes("/swap/evm/bitcoin")) return jsonRes153(creationOut153);
+      if (u.includes("/swap/bitcoin/evm")) return jsonRes153(creationIn153());
+      if (u.includes("/swap/")) return jsonRes153(mode === "btc-in" ? creationIn153() : creationOut153);
+      throw new Error("unexpected satora url in §153 stub: " + u);
+    }
+    throw new Error("unexpected fetch in §153 stub: " + u);
+  };
+  try {
+    resetSatoraCaches(); resetPricesCache();
+    globalThis.fetch = stub153("out");
+    const routeLive153 = await getSatoraSwapRoute({ fromChainKey: "rootstock", toChainKey: "bitcoin", fromTokenAddress: ZERO153, toTokenAddress: "btc", fromAmount: "500000000000000", fromAddress: OWNER153, toAddress: satoraClaimKey(PHRASE153).address });
+    ok("§153: RBTC -> BTC forms a live route — native kind, executable, and COLLECTING (the two-pass fee attribution verified against the live-shaped quotes)",
+      !!routeLive153 && routeLive153.satora.htlcKind === "native" && swapRouteExecutable(routeLive153).ok === true
+      && routeLive153.platformFeeCollecting === true && routeLive153.satora.fluidFeeSats === 250);
+    ok("§153: the route card's RIF disclosure lines stay EMPTY for an EVM-source Rootstock route (the relay claim belongs to the other direction)",
+      satoraRifDisclosureLines(routeLive153).length === 0);
+
+    // Execution: the record persists, the funding seam receives
+    // the native lock call, and the creation carried the
+    // client header + native version header with gasless off.
+    const store153 = new Map();
+    const storage153 = { getItem: (k) => (store153.has(k) ? store153.get(k) : null), setItem: (k, v) => store153.set(k, String(v)), removeItem: (k) => store153.delete(k) };
+    saveSatoraSwapRecord(storage153, { id: "seed-153", index: 50, status: "clientredeemed" });
+    let lockCallSeen153 = null;
+    await executeSatoraSwapRoute({ mnemonic: { phrase: PHRASE153 }, address: OWNER153 }, routeLive153, () => {}, {
+      storage: storage153,
+      submitNativeLock: async (call) => { lockCallSeen153 = call; return "0x" + "cd".repeat(32); },
+    });
+    const funded153 = loadSatoraSwapRecords(storage153).find(r => r.htlcKind === "native");
+    ok("§153: execution funds the swap through the NATIVE lock call — record on chain 30 as rootstock, value = the swap amount, HTLCNative.create calldata",
+      !!funded153 && funded153.fromChainKey === "rootstock" && funded153.fundTxHash === "0x" + "cd".repeat(32) && !!lockCallSeen153
+      && lockCallSeen153.to === SATORA_HTLC_NATIVE_ADDRESS && lockCallSeen153.value === "500000000000000"
+      && lockCallSeen153.data.startsWith("0x292b27c1"));
+    const createCall153 = seen153.calls.find(c => c.method === "POST" && c.u.includes("/swap/evm/bitcoin"));
+    ok("§153: the chain-30 creation asks for NON-gasless funding and every Satora call carries the client header the current server demands (the drift repair — without it, EVM-target creations fail server-side today)",
+      !!createCall153 && createCall153.body.gasless === false
+      && seen153.calls.every(c => c.headers["X-Lendaswap-Client"] === SATORA_CLIENT_HEADER)
+      && createCall153.headers["x-satora-evm-native-htlc-version"] === "2");
+
+    // BTC -> RBTC: route + creation through the production path.
+    resetSatoraCaches(); resetPricesCache();
+    seen153.calls = [];
+    globalThis.fetch = stub153("btc-in");
+    const routeIn153 = await getSatoraBtcSourceRoute({ fromChainKey: "bitcoin", toChainKey: "rootstock", fromTokenAddress: "btc", toTokenAddress: ZERO153, fromAmount: "50000", fromAddress: satoraClaimKey(PHRASE153).address, toAddress: OWNER153 });
+    ok("§153: BTC -> RBTC forms a live route — native kind, executable, and its card DISCLOSES the RIF smart-wallet claim and its fee; Fluid's own fee is 0 here BY THE FEE LAW (Satora's stack alone, $0.86 at this size, busts the $0.20 EVM-destination ceiling — the same honest zero the shipped lanes show when the stack busts a ceiling; the keyed-quote attribution itself is proven in the checker pins above)",
+      !!routeIn153 && routeIn153.satora.htlcKind === "native" && swapRouteExecutable(routeIn153).ok === true
+      && routeIn153.platformFeeCollecting === false && routeIn153.satora.fluidFeeSats === 0 && routeIn153.routeFeeUsd > 0.20
+      && satoraRifDisclosureLines(routeIn153).join(" ").includes("RIF Relay smart wallet"));
+    const recIn153 = await createSatoraBtcSourceSwap(routeIn153, { phrase: PHRASE153, index: 52 });
+    ok("§153: the BTC -> RBTC record persists the native grammar — smart-wallet claim address, the expected payout kept as an exact string, the server's own EVM address",
+      recIn153.htlcKind === "native" && recIn153.claimingAddress === SMART153
+      && recIn153.expectedAmountRaw === "491400000000000"
+      && recIn153.serverEvmAddress === pairBtcIn153.creation.server_evm_address);
+  } finally { globalThis.fetch = realFetch153; }
+
+  // --- (8) the RIF claim, end to end against stubs ---
+  {
+    const creation153 = fresh153(pairBtcIn153.creation, id52);
+    const record153 = { id: creation153.id, provider: "satora", sourceKey: "bitcoin", destKey: "evm", destChainId: 30, destChainKey: "rootstock",
+      destInput: OWNER153, destSymbol: "RBTC", destDecimals: 18, htlcKind: "native", htlcVersion: 2, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS,
+      claimingAddress: SMART153, serverEvmAddress: creation153.server_evm_address, btcHashLock: creation153.btc_hash_lock,
+      expectedAmountRaw: String(creation153.evm_expected_sats), refundLocktime: creation153.evm_refund_locktime, status: "serverfunded", index: 52 };
+    const relayBodies153 = [];
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("api.satora.io")) {
+        if (u.includes("/chain-config")) return jsonRes153(fx153("satora30-chain-config.json"));
+        if (u.includes("/swap/")) return jsonRes153({ ...creation153, status: "serverfunded" });
+        throw new Error("unexpected satora url in §153 claim stub: " + u);
+      }
+      if (u.includes("rifcomputing.net")) {
+        if (u.endsWith("/chain-info")) return jsonRes153(fx153("satora30-rif-chain-info.json"));
+        if (u.endsWith("/estimate")) return jsonRes153({ gasPrice: "30300001", estimation: "450000" });
+        if (u.endsWith("/relay")) { relayBodies153.push(JSON.parse(init.body)); return jsonRes153({ txHash: "0x" + "ab".repeat(32) }); }
+        throw new Error("unexpected relay url in §153 claim stub: " + u);
+      }
+      throw new Error("unexpected fetch in §153 claim stub: " + u);
+    };
+    // Rootstock JSON-RPC runs through ethers' FetchRequest
+    // transport, NOT globalThis.fetch (the suite's standing
+    // note): stub it at ethers' own seam — undeployed smart
+    // wallet (its nonce call answers empty), factory nonce 0,
+    // instant successful receipt.
+    const defaultGetUrl153 = FetchRequest.createGetUrlFunc();
+    FetchRequest.registerGetUrl(async (req) => {
+      if (!String(req.url).includes("rsk.co")) return defaultGetUrl153(req);
+      const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+      const answer = (q) => {
+        let result;
+        if (q.method === "eth_chainId") result = "0x1e";
+        else if (q.method === "net_version") result = "30";
+        else if (q.method === "eth_blockNumber") result = "0x101";
+        else if (q.method === "eth_call") result = String(q.params?.[0]?.to || "").toLowerCase() === SMART153.toLowerCase() ? "0x" : "0x" + "0".repeat(64);
+        else if (q.method === "eth_getTransactionReceipt") result = { transactionHash: "0x" + "ab".repeat(32), transactionIndex: "0x0", blockHash: "0x" + "11".repeat(32), blockNumber: "0x100", from: SMART153, to: SATORA_HTLC_NATIVE_ADDRESS, cumulativeGasUsed: "0x5208", gasUsed: "0x5208", logs: [], logsBloom: "0x" + "00".repeat(256), status: "0x1", effectiveGasPrice: "0x1", type: "0x0", contractAddress: null };
+        else if (q.method === "eth_getTransactionByHash") result = { hash: "0x" + "ab".repeat(32), blockNumber: "0x100", blockHash: "0x" + "11".repeat(32), transactionIndex: "0x0", from: SMART153, to: SATORA_HTLC_NATIVE_ADDRESS, value: "0x0", gasPrice: "0x1", gas: "0x5208", input: "0x", nonce: "0x0", type: "0x0", chainId: "0x1e" };
+        else throw new Error("unexpected rpc method in §153 claim stub: " + q.method);
+        return { jsonrpc: "2.0", id: q.id ?? 1, result };
+      };
+      const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+      return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+    });
+    try {
+      resetSatoraCaches();
+      const claimed153 = await claimSatoraRifRelaySwap(record153, { phrase: PHRASE153 });
+      const env153 = relayBodies153[0]?.relayRequest;
+      ok("§153: the RIF claim runs end to end — the signed deploy-kind envelope pays the pinned HTLC, the fee is the stubbed estimate's exact figure taken from the payout, and the relay's transaction hash is the claim",
+        claimed153.txHash === "0x" + "ab".repeat(32) && claimed153.feeWei === "14998500495000" && claimed153.status === "clientredeemed"
+        && !!env153 && env153.request.to.toLowerCase() === SATORA_HTLC_NATIVE_ADDRESS.toLowerCase()
+        && env153.request.tokenAmount === "14998500495000" && /^0x[0-9a-f]{130}$/i.test(relayBodies153[0].metadata.signature));
+      let foreignErr153 = null;
+      try { await claimSatoraRifRelaySwap({ ...record153, destInput: "0x9999999999999999999999999999999999999999" }, { phrase: PHRASE153 }); }
+      catch (e) { foreignErr153 = e; }
+      ok("§153: a claim for a payout addressed to a different Rootstock account refuses before any relay call",
+        !!foreignErr153 && relayBodies153.length === 1);
+    } finally { globalThis.fetch = realFetch153; FetchRequest.registerGetUrl(defaultGetUrl153); }
+  }
+
+  // --- (9) the §149 gate lifts Rootstock by coverage alone ---
+  ok("§153: Rootstock has an executable exit and leaves the inbound-closed set — the gate needed no edit, it reads the same predicates this build wired",
+    swapFamilyHasExecutableExit("rootstock") === true && !swapInboundClosedFamilies().includes("rootstock"));
 }
 
 console.log(`\n${passed} checks passed`);

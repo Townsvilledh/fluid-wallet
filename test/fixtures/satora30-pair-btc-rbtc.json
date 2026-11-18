@@ -1,0 +1,73 @@
+{
+  "quoteFree": {
+    "exchange_rate": "1",
+    "network_fee": 610,
+    "gasless_network_fee": 0,
+    "protocol_fee": 250,
+    "protocol_fee_rate": 0.005,
+    "min_amount": 20000,
+    "max_amount": 1000000,
+    "source_amount": "50000",
+    "target_amount": "500000000000000",
+    "net_source_amount": "50000",
+    "net_target_amount": "491400000000000"
+  },
+  "quoteFee": {
+    "exchange_rate": "1",
+    "network_fee": 610,
+    "gasless_network_fee": 0,
+    "protocol_fee": 500,
+    "protocol_fee_rate": 0.01,
+    "min_amount": 20000,
+    "max_amount": 1000000,
+    "source_amount": "50000",
+    "target_amount": "500000000000000",
+    "net_source_amount": "50000",
+    "net_target_amount": "488900000000000"
+  },
+  "creation": {
+    "id": "2f18bd51-4832-4a5f-ab0f-3e0d8784942f",
+    "status": "pending",
+    "btc_htlc_address": "bc1pcvzpjzxa7jd6wctjv6xcfpre2jj7dndzy4h753x9jzw6qgp68y2q3l5u5g",
+    "fee_sats": 1099,
+    "evm_hash_lock": "d65ac43d0b30f7b73270d22de95623b26ecb4de4956b819746e0138403765a50",
+    "btc_hash_lock": "4bfe5c8bebc6feead588cf03dadfffe90d0fd94b",
+    "btc_server_pk": "09b8531c94e367df9a367eb1d5e9df4444860f33199a5b96411f7a257dfabee1",
+    "btc_refund_locktime": 1795048529,
+    "btc_htlc_script_version": 1,
+    "btc_fund_txid": null,
+    "btc_claim_txid": null,
+    "evm_fund_txid": null,
+    "evm_claim_txid": null,
+    "network": "bitcoin",
+    "created_at": "2026-11-18T00:35:29.587517Z",
+    "chain": "ROOTSTOCK",
+    "evm_chain_id": 30,
+    "client_evm_address": "0x6619aB7f4Ab8C9396a6Bf8819075Be3a45f3eF4f",
+    "target_evm_address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+    "evm_htlc_address": "0x21E1b489BA2f12A854DeAE6dC67091F608CdACBc",
+    "evm_htlc_version": 2,
+    "evm_htlc_kind": "native",
+    "evm_coordinator_address": "0x0000000000000000000000000000000000000000",
+    "server_evm_address": "0x5ce278AAec6d9fa67bFcaF98512fE5175dFEebac",
+    "evm_refund_locktime": 1795005329,
+    "wbtc_address": "0x0000000000000000000000000000000000000000",
+    "evm_expected_sats": "489010000000000",
+    "source_token": {
+      "token_id": "btc",
+      "symbol": "BTC",
+      "chain": "Bitcoin",
+      "name": "Bitcoin",
+      "decimals": 8
+    },
+    "target_token": {
+      "token_id": "0x0000000000000000000000000000000000000000",
+      "symbol": "RBTC",
+      "chain": "30",
+      "name": "0x0000000000000000000000000000000000000000",
+      "decimals": 18
+    },
+    "target_amount": "489010000000000",
+    "source_amount": "50000"
+  }
+}

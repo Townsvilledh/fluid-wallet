@@ -1,0 +1,11 @@
+{
+  "relayWorkerAddress": "0x28214E75C4e9B154FF5B0e99856C874aEA7541A1",
+  "feesReceiver": "0x28214E75C4e9B154FF5B0e99856C874aEA7541A1",
+  "relayManagerAddress": "0x0B27C3B1536Cf0e9783ebeBA2912c9480789Ec9F",
+  "relayHubAddress": "0xb277EF52c98E72E1F9afD4B36201d0b56368FEc8",
+  "minGasPrice": "26261092",
+  "chainId": "30",
+  "networkId": "30",
+  "ready": true,
+  "version": "2.4.2-beta.0"
+}

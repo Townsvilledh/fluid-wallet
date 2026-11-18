@@ -36,6 +36,31 @@ The sources, per pair:
   (spec 0.3.26) after a full live diff against the 2026-11-08
   audit found every depended-on behaviour identical
   (research_notes/fluid-satora-repin-20261113/REPORT.md).
+  **Rootstock (chain 30) joined the wired set on 2026-11-18
+  (spec 0.3.27).** Satora's own token list serves exactly one
+  chain-30 token — RBTC at the zero address — so Satora
+  Rootstock pairs are RBTC-only in both directions (RSK
+  stables such as USDT0 are refused by Satora's quote API and
+  stay on the OpenOcean intra lane; compositions reach them
+  through RBTC as the hub). Rootstock → Bitcoin family: the
+  lock is an HTLCNative v2 lock the user funds from their own
+  Rootstock account (the server refuses gasless funding for
+  native locks; no Permit2, no custody), and a refund returns
+  the locked RBTC itself. Bitcoin family → Rootstock: the
+  payout claims through the user's RIF Relay smart wallet —
+  a relay submits the claim and its fee comes out of the
+  payout itself (no RBTC needed to claim; the first claim
+  also deploys the smart wallet inside the same relayed
+  transaction), the exact fee is computed from the relay's
+  estimate and signed before submission, and a claim whose
+  fee would eat the payout is refused. Claimed RBTC lands in
+  the smart wallet — a contract wallet the user's own Fluid
+  key controls — which the history lines and claim toasts
+  state plainly. Server drift repaired in the same build:
+  Satora's current server requires an `X-Lendaswap-Client`
+  header on EVM-target creations; Fluid now sends
+  `fluid/1.0.0` on every Satora call (without it, creations
+  on the previously shipped chains fail server-side today).
 - **Jupiter** — Solana same-chain swaps (direct, ~10× cheaper than
   routing Solana through a general aggregator).
 - **Across** — same-asset moves between EVM majors. (No gas drop:

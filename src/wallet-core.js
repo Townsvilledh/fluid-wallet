@@ -14168,9 +14168,58 @@ export const SATORA_DEVELOPER_KEY = "lnds_1f58b4d6016ca9fc";
  * fluid-satora-repin-20261113/REPORT.md. The per-swap bounds
  * checks (HTLC v7 / BTC script v1 pins) remain the second
  * guard if the server ever drifts those. */
-export const SATORA_API_SPEC_VERSION = "0.3.26";
+export const SATORA_API_SPEC_VERSION = "0.3.27";
 export const SATORA_SERVER_TAG_PREFIX = "backend-v0.3";
 export const SATORA_ERC20_HTLC_VERSION = 7;
+/* ---- Chain 30 (Rootstock) wiring (§153, 2026-11-18) ----
+ * Satora's pair table has always carried Rootstock <-> the
+ * Bitcoin family; Fluid wired only chains 1/137/42161 because
+ * execution on 30 differs in kind, not degree (evidence:
+ * research_notes/fluid-evm-longtail-20261116/build-addendum-
+ * satora30.md; live re-probed end to end 2026-11-18 against
+ * backend-v0.3.27 — every creation grammar below was exercised
+ * unfunded against the live API before this code was written):
+ *  - Satora's own token list for chain 30 carries exactly ONE
+ *    token: RBTC in its native form (token_id = the zero
+ *    address, 18 decimals). There are NO RSK stables in the
+ *    list — the quote API rejects Fluid's pinned RSK USDT0
+ *    ("not found in token list for ROOTSTOCK", reproduced
+ *    live) — so Satora chain-30 pairs are RBTC-only in both
+ *    directions. The USDT0 pin stays for the OpenOcean
+ *    intra-Rootstock rail; compositions reach it through
+ *    RBTC as the hub asset.
+ *  - EVM-source locks are HTLCNative v2 (NOT the ERC-20 v7):
+ *    the server refuses gasless funding for them, so the user
+ *    funds the lock with a direct create() call from their
+ *    own Rootstock account, and refunds run the native
+ *    refund() after the timelock. No Permit2 anywhere on 30.
+ *  - BTC-family -> Rootstock payouts lock on the same native
+ *    HTLC with the claim address = the user's RIF Relay smart
+ *    wallet (a counterfactual EIP-1167 clone of the RIF
+ *    template, derived from the user's own Rootstock
+ *    address); claiming runs through the RSK Enveloping relay
+ *    (see the RIF section below) — the relayer's fee comes
+ *    out of the claimed RBTC, so no RBTC is needed to claim,
+ *    and a first claim deploys the smart wallet inside the
+ *    same relayed transaction.
+ *  - Server drift found while wiring (backend-v0.3.27): EVERY
+ *    EVM-target creation now requires an SDK-style client
+ *    identity header (X-Lendaswap-Client) — without it the
+ *    server answers 400 "unknown SDK version for EVM-target
+ *    swap". The shipped chains 1/137/42161 creations fail the
+ *    same way today (reproduced live), so the header rides on
+ *    every Satora request, carrying Fluid's own name/version
+ *    (accepted live). Chain-30 creations additionally require
+ *    the native-HTLC version header below. */
+export const SATORA_NATIVE_HTLC_VERSION = 2;
+export const SATORA_ROOTSTOCK_CHAIN_ID = 30;
+export const SATORA_HTLC_NATIVE_ADDRESS = "0x21E1b489BA2f12A854DeAE6dC67091F608CdACBc";
+export const SATORA_CLIENT_HEADER = "fluid/1.0.0";
+/** The one token Satora serves on chain 30: RBTC, native
+ *  form. Pinned against Satora's own served token list by the
+ *  §153 tests (fixture from the live /tokens response). */
+export const SATORA_RBTC_TOKEN = { address: NATIVE_TOKEN_ADDRESS, symbol: "RBTC", decimals: 18 };
+const SATORA_CHAIN_ID_BY_KEY = { ethereum: 1, polygon: 137, arbitrum: 42161, rootstock: SATORA_ROOTSTOCK_CHAIN_ID };
 export const SATORA_BITCOIN_HTLC_VERSION = 1;
 export const SATORA_LIGHTNING_VERSION = 1;
 export const SATORA_BITCOIN_CHAIN_ID = BITCOIN_SWAP_CHAIN_ID;
@@ -14244,10 +14293,11 @@ function satoraVersionHeaders(destKey) {
   if (destKey === "arkade") h["x-satora-arkade-vhtlc-version"] = String(SATORA_ARKADE_HTLC_VERSION);
   return h;
 }
-async function satoraFetchJson(path, { method = "GET", destKey = null, body = null, extraHeaders = null } = {}) {
+async function satoraFetchJson(path, { method = "GET", destKey = null, body = null, extraHeaders = null, nativeHtlc = false } = {}) {
   const res = await fetch(SATORA_API_BASE + path, {
     method,
-    headers: { "Content-Type": "application/json", ...satoraVersionHeaders(destKey), ...(extraHeaders || {}) },
+    headers: { "Content-Type": "application/json", "X-Lendaswap-Client": SATORA_CLIENT_HEADER, ...satoraVersionHeaders(destKey),
+      ...(nativeHtlc ? { "x-satora-evm-native-htlc-version": String(SATORA_NATIVE_HTLC_VERSION) } : {}), ...(extraHeaders || {}) },
     ...(body != null ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(20000),
   });
@@ -14261,7 +14311,7 @@ async function satoraFetchJson(path, { method = "GET", destKey = null, body = nu
 // never cached — a transient outage must not poison the session.
 let satoraVersionPromise = null;
 let satoraPairsPromise = null;
-export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; satoraIrisFeeCache = new Map(); lnArkadePairPromise = null; }
+export function resetSatoraCaches() { satoraVersionPromise = null; satoraPairsPromise = null; satoraIrisFeeCache = new Map(); lnArkadePairPromise = null; satoraRifConfigPromise = null; }
 async function satoraAssertVersion() {
   if (!satoraVersionPromise) {
     satoraVersionPromise = (async () => {
@@ -14326,6 +14376,14 @@ export function satoraSupportsPair(args) {
     : (args?.toChainKey === "lightning" || args?.toChainKey === "ln") ? "lightning"
     : args?.toChainKey === "arkade" ? "arkade" : null;
   if (!destKey) return null;
+  // Rootstock (§153): RBTC only, in its native form — Satora's
+  // chain-30 token list carries nothing else (see the §153
+  // constants block). The plan is a NATIVE plan: HTLCNative v2
+  // funding, never the Permit2 path.
+  if (args?.fromChainKey === "rootstock") {
+    if (String(args?.fromTokenAddress || "").toLowerCase() !== NATIVE_TOKEN_ADDRESS) return null;
+    return { destKey, chainId: SATORA_ROOTSTOCK_CHAIN_ID, token: { ...SATORA_RBTC_TOKEN }, htlcKind: "native", priceSymbol: "BTC" };
+  }
   const chainId = SATORA_SOURCE_CHAINS[args?.fromChainKey];
   if (chainId) {
     const net = NETWORKS[args.fromChainKey];
@@ -14537,7 +14595,7 @@ export async function getSatoraSwapRoute(args) {
   const prices = await getPrices().catch(() => null);
   const btcUsd = Number(prices?.BTC);
   if (!(btcUsd > 0)) return null; // unpriced: cannot rank or disclose honestly
-  const fromAmountUSD = Number(swapRawToAmount(args.fromAmount, plan.token.decimals)) * (Number(prices?.[plan.token.symbol]) || 1);
+  const fromAmountUSD = Number(swapRawToAmount(args.fromAmount, plan.token.decimals)) * (Number(prices?.[plan.priceSymbol || plan.token.symbol]) || 1);
   if (!(fromAmountUSD > 0)) return null;
   // Bridge sources: price the CCTP crossing from Circle's live
   // fee BEFORE the passes, because the fee law's route cost (and
@@ -14630,6 +14688,7 @@ export async function getSatoraSwapRoute(args) {
     steps: [],
     satora: {
       destKey: plan.destKey, chainId: plan.chainId,
+      htlcKind: plan.htlcKind || "erc20",
       destInput: String(args.toAddress || ""),
       grossSats: quote.grossSats, netSats: quote.netSats,
       protocolFeeSats: quote.protocolFeeSats, networkFeeSats: quote.networkFeeSats,
@@ -14655,6 +14714,13 @@ export function satoraArkadeSourceSupportsPair(args) {
   if (String(args?.fromTokenAddress || "").toLowerCase() !== "btc") return null;
   if (args?.toChainKey === "lightning" || args?.toChainKey === "ln")
     return { sourceKey: "arkade", destKey: "lightning", destChainId: SATORA_LIGHTNING_CHAIN_ID, destChainKey: null, token: null };
+  // Rootstock (§153): the RBTC target only — a NATIVE plan
+  // (HTLCNative v2 payout, RIF Relay claim), never an ERC-20
+  // plan; Satora's chain-30 list carries no RSK stable.
+  if (args?.toChainKey === "rootstock") {
+    if (String(args?.toTokenAddress || "").toLowerCase() !== NATIVE_TOKEN_ADDRESS) return null;
+    return { sourceKey: "arkade", destKey: "evm", destChainId: SATORA_ROOTSTOCK_CHAIN_ID, destChainKey: "rootstock", token: { ...SATORA_RBTC_TOKEN }, htlcKind: "native", priceSymbol: "BTC" };
+  }
   const chainId = SATORA_SOURCE_CHAINS[args?.toChainKey];
   if (!chainId) return null;
   const net = NETWORKS[args.toChainKey];
@@ -14778,7 +14844,7 @@ export async function getSatoraArkadeSourceRoute(args) {
   if (!quote) throw new Error("Satora returned no usable quote for that pair.");
   const targetUsd = (raw) => plan.destKey === "lightning"
     ? raw * btcUsd / 1e8
-    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.token.symbol]) || 1);
+    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.priceSymbol || plan.token.symbol]) || 1);
   // Route cost is the owner's measure, same as the EVM-source
   // lane: the input's fair value minus the fee-free NET output's
   // fair value (Satora's spread and its protocol + network fees
@@ -14825,6 +14891,7 @@ export async function getSatoraArkadeSourceRoute(args) {
     satora: {
       sourceKey: "arkade", destKey: plan.destKey,
       destChainKey: plan.destChainKey, destChainId: plan.destChainId,
+      htlcKind: plan.htlcKind || "erc20",
       destInput: String(args.toAddress || ""),
       sourceSats, grossTargetRaw: quote.grossTargetRaw, netTargetRaw: quote.netTargetRaw,
       protocolFeeSats: quote.protocolFeeSats, networkFeeSats: quote.networkFeeSats,
@@ -14995,6 +15062,13 @@ export function satoraLnSourceSupportsPair(args) {
   if (String(args?.fromTokenAddress || "").toLowerCase() !== "btc") return null;
   if (args?.toChainKey === "bitcoin" || args?.toChainKey === "btc")
     return { sourceKey: "lightning", destKey: "bitcoin", destChainId: SATORA_BITCOIN_CHAIN_ID, destChainKey: "bitcoin", token: null };
+  // Rootstock (§153): the RBTC target only — a NATIVE plan
+  // (HTLCNative v2 payout, RIF Relay claim), never an ERC-20
+  // plan; Satora's chain-30 list carries no RSK stable.
+  if (args?.toChainKey === "rootstock") {
+    if (String(args?.toTokenAddress || "").toLowerCase() !== NATIVE_TOKEN_ADDRESS) return null;
+    return { sourceKey: "lightning", destKey: "evm", destChainId: SATORA_ROOTSTOCK_CHAIN_ID, destChainKey: "rootstock", token: { ...SATORA_RBTC_TOKEN }, htlcKind: "native", priceSymbol: "BTC" };
+  }
   const chainId = SATORA_SOURCE_CHAINS[args?.toChainKey];
   if (!chainId) return null;
   const net = NETWORKS[args.toChainKey];
@@ -15084,7 +15158,7 @@ export async function getSatoraLnSourceRoute(args) {
   if (!quote) throw new Error("Satora returned no usable quote for that pair.");
   const targetUsd = (raw) => plan.destKey === "bitcoin"
     ? raw * btcUsd / 1e8
-    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.token.symbol]) || 1);
+    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.priceSymbol || plan.token.symbol]) || 1);
   // Route cost is the owner's measure, same as the other
   // Satora lanes: the input's fair value minus the fee-free
   // NET output's fair value (Satora's spread and its protocol
@@ -15130,6 +15204,7 @@ export async function getSatoraLnSourceRoute(args) {
     satora: {
       sourceKey: "lightning", destKey: plan.destKey,
       destChainKey: plan.destChainKey, destChainId: plan.destChainId,
+      htlcKind: plan.htlcKind || "erc20",
       destInput: String(args.toAddress || ""),
       sourceSats, grossTargetRaw: quote.grossTargetRaw, netTargetRaw: quote.netTargetRaw,
       protocolFeeSats: quote.protocolFeeSats, networkFeeSats: quote.networkFeeSats,
@@ -15157,6 +15232,13 @@ export function satoraBtcSourceSupportsPair(args) {
   if (String(args?.fromTokenAddress || "").toLowerCase() !== "btc") return null;
   if (args?.toChainKey === "lightning" || args?.toChainKey === "ln")
     return { sourceKey: "bitcoin", destKey: "lightning", destChainId: SATORA_LIGHTNING_CHAIN_ID, destChainKey: "lightning", token: null };
+  // Rootstock (§153): the RBTC target only — a NATIVE plan
+  // (HTLCNative v2 payout, RIF Relay claim), never an ERC-20
+  // plan; Satora's chain-30 list carries no RSK stable.
+  if (args?.toChainKey === "rootstock") {
+    if (String(args?.toTokenAddress || "").toLowerCase() !== NATIVE_TOKEN_ADDRESS) return null;
+    return { sourceKey: "bitcoin", destKey: "evm", destChainId: SATORA_ROOTSTOCK_CHAIN_ID, destChainKey: "rootstock", token: { ...SATORA_RBTC_TOKEN }, htlcKind: "native", priceSymbol: "BTC" };
+  }
   const chainId = SATORA_SOURCE_CHAINS[args?.toChainKey];
   if (!chainId) return null;
   const net = NETWORKS[args.toChainKey];
@@ -15226,7 +15308,7 @@ export async function getSatoraBtcSourceRoute(args) {
   if (!quote) throw new Error("Satora returned no usable quote for that pair.");
   const targetUsd = (raw) => plan.destKey === "lightning"
     ? raw * btcUsd / 1e8
-    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.token.symbol]) || 1);
+    : Number(swapRawToAmount(String(raw), plan.token.decimals)) * (Number(prices?.[plan.priceSymbol || plan.token.symbol]) || 1);
   const routeFeeUsd = routeCostUsd((quote.protocolFeeSats + quote.networkFeeSats) * btcUsd / 1e8, fromAmountUSD - targetUsd(quote.netTargetRaw));
   let usedBps = 0;
   if (satoraDeveloperKeyLive()) {
@@ -15267,6 +15349,7 @@ export async function getSatoraBtcSourceRoute(args) {
     satora: {
       sourceKey: "bitcoin", destKey: plan.destKey,
       destChainKey: plan.destChainKey, destChainId: plan.destChainId,
+      htlcKind: plan.htlcKind || "erc20",
       destInput: String(args.toAddress || ""),
       sourceSats, grossTargetRaw: quote.grossTargetRaw, netTargetRaw: quote.netTargetRaw,
       protocolFeeSats: quote.protocolFeeSats, networkFeeSats: quote.networkFeeSats,
@@ -15422,7 +15505,10 @@ export function buildSatoraBtcCreateRequest({ route, userAddress, identity, clai
     claim_pk: claimPk,
     user_id: identity.userId,
     target_address: route.satora.destInput || undefined,
-    gasless: true,
+    // Native plans (chain 30) fund by a direct lock call from
+    // the user's own account — the server refuses gasless
+    // funding for HTLCNative locks, so the creation says so.
+    gasless: route?.satora?.htlcKind === "native" ? false : true,
     ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
     ...satoraBridgeCreateFields(route),
   };
@@ -15439,7 +15525,7 @@ export function buildSatoraLnCreateRequest({ route, userAddress, userId }) {
     ...(cls.kind === "invoice" ? { lightning_invoice: cls.invoice }
       : cls.kind === "address" ? { lightning_address: cls.address, target_amount_sats: Math.round(route.satora.grossSats) }
       : { lnurl: cls.lnurl, target_amount_sats: Math.round(route.satora.grossSats) }),
-    gasless: true,
+    gasless: route?.satora?.htlcKind === "native" ? false : true,
     ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
     ...satoraBridgeCreateFields(route),
   };
@@ -15462,7 +15548,7 @@ export function buildSatoraArkadeCreateRequest({ route, userAddress, identity, c
     evm_chain_id: Number(route.fromChainId),
     user_address: userAddress,
     amount_in: String(route.fromAmount),
-    gasless: true,
+    gasless: route?.satora?.htlcKind === "native" ? false : true,
     arkade_htlc_script_version: SATORA_ARKADE_HTLC_VERSION,
     ...(fee.referralCode ? { referral_code: fee.referralCode, extra_fees: fee.extraFeesBps } : {}),
     ...satoraBridgeCreateFields(route),
@@ -15531,23 +15617,44 @@ export function checkSatoraCreateResponse(route, data, { identity = null, claimP
   const targetTol = Math.max(2, Math.floor(wantTarget * 0.001));
   if (!Number.isFinite(gotTarget) || Math.abs(gotTarget - wantTarget) > targetTol)
     return refuse("the created swap's payout differs from the quote.");
-  if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
-    return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
-  if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
-    || !ethers.isAddress(data.client_evm_address || "") || !ethers.isAddress(data.server_evm_address || ""))
-    return refuse("the created swap carried a malformed contract address.");
-  // The lock token: pinned from the creation on the Bitcoin /
-  // Lightning lanes (the funding check binds to it). The Arkade
-  // destination's creation may omit it (the reference SDK's own
-  // funding terms tolerate exactly that) — when present it must
-  // be a real address; when absent, the funding-components
-  // check adopts the payload's lock token under its own pins
-  // (see checkSatoraFundingComponents).
-  if (s.destKey === "arkade") {
-    if (data.wbtc_address != null && !ethers.isAddress(data.wbtc_address || ""))
+  if (s.htlcKind === "native") {
+    // Chain 30 (§153): the lock is HTLCNative v2 on the pinned
+    // deployment; the coordinator and the lock token are the
+    // zero address BY CONSTRUCTION (a native lock has neither —
+    // the locked asset is RBTC itself), and the client address
+    // is the user's own Rootstock account, which funds the
+    // lock directly.
+    if (String(data.evm_htlc_kind || "").toLowerCase() !== "native")
+      return refuse("the created swap does not lock on a native HTLC.");
+    if (Number(data.evm_htlc_version) !== SATORA_NATIVE_HTLC_VERSION)
+      return refuse(`the created swap uses native HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_NATIVE_HTLC_VERSION} Fluid was built against.`);
+    if (String(data.evm_htlc_address || "").toLowerCase() !== SATORA_HTLC_NATIVE_ADDRESS.toLowerCase())
+      return refuse("the created swap does not lock on the pinned Rootstock HTLC deployment.");
+    if (!/^0x0{40}$/.test(String(data.evm_coordinator_address || "")))
+      return refuse("the created swap names a coordinator for a native lock — native locks have none.");
+    if (data.wbtc_address != null && !/^0x0{40}$/.test(String(data.wbtc_address)))
+      return refuse("the created swap names a lock token for a native lock — the locked asset is RBTC itself.");
+    if (!ethers.isAddress(data.client_evm_address || "") || !ethers.isAddress(data.server_evm_address || ""))
       return refuse("the created swap carried a malformed contract address.");
-  } else if (!ethers.isAddress(data.wbtc_address || ""))
-    return refuse("the created swap carried a malformed contract address.");
+  } else {
+    if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
+      return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
+    if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
+      || !ethers.isAddress(data.client_evm_address || "") || !ethers.isAddress(data.server_evm_address || ""))
+      return refuse("the created swap carried a malformed contract address.");
+    // The lock token: pinned from the creation on the Bitcoin /
+    // Lightning lanes (the funding check binds to it). The Arkade
+    // destination's creation may omit it (the reference SDK's own
+    // funding terms tolerate exactly that) — when present it must
+    // be a real address; when absent, the funding-components
+    // check adopts the payload's lock token under its own pins
+    // (see checkSatoraFundingComponents).
+    if (s.destKey === "arkade") {
+      if (data.wbtc_address != null && !ethers.isAddress(data.wbtc_address || ""))
+        return refuse("the created swap carried a malformed contract address.");
+    } else if (!ethers.isAddress(data.wbtc_address || ""))
+      return refuse("the created swap carried a malformed contract address.");
+  }
   if (!(Number(data.evm_refund_locktime) > Math.floor(Date.now() / 1000)))
     return refuse("the created swap's refund timelock is not in the future.");
   if (s.destKey === "bitcoin") {
@@ -15629,13 +15736,13 @@ export async function createSatoraSwap(route, { phrase, index = 0, userAddress }
   } else {
     body = buildSatoraLnCreateRequest({ route, userAddress, userId: identity.userId });
   }
-  const data = await satoraFetchJson(s.destKey === "bitcoin" ? "/swap/evm/bitcoin" : s.destKey === "arkade" ? "/swap/evm/arkade" : "/swap/evm/lightning", { method: "POST", destKey: s.destKey, body });
+  const data = await satoraFetchJson(s.destKey === "bitcoin" ? "/swap/evm/bitcoin" : s.destKey === "arkade" ? "/swap/evm/arkade" : "/swap/evm/lightning", { method: "POST", destKey: s.destKey, body, nativeHtlc: s.htlcKind === "native" });
   const check = checkSatoraCreateResponse(route, data, { identity, claimPk: s.destKey === "arkade" ? identity.claimPk : claim?.claimPk });
   if (!check.ok) throw new Error(check.reason);
   return {
     id: data.id, provider: "satora", index: Math.max(0, Math.floor(Number(index) || 0)),
-    destKey: s.destKey, fromChainKey: Object.keys(SATORA_SOURCE_CHAINS).find(k => SATORA_SOURCE_CHAINS[k] === Number(route.fromChainId)) || null,
-    fromSymbol: route.fromToken.symbol, fromAmount: String(route.fromAmount),
+    destKey: s.destKey, fromChainKey: Object.keys(SATORA_CHAIN_ID_BY_KEY).find(k => SATORA_CHAIN_ID_BY_KEY[k] === Number(route.fromChainId)) || null,
+    fromSymbol: route.fromToken.symbol, fromDecimals: route.fromToken.decimals ?? 6, fromAmount: String(route.fromAmount),
     destInput: s.destInput,
     // The record's net is the CREATION's target — the payout
     // the server actually promised — not the quote's estimate
@@ -15762,7 +15869,7 @@ function satoraArkadeSourceVhtlcRefusal(route, data, { identity, vhtlcAddress })
   if (!delays.every(d => Number.isFinite(Number(d)) && Number(d) >= 0))
     return "the created swap carried unreadable Arkade exit delays.";
   const wantFee = Math.round(Number(s.protocolFeeSats || 0) + Number(s.networkFeeSats || 0) + Number(s.fluidFeeSats || 0));
-  if (!Number.isFinite(Number(data.fee_sats)) || Math.abs(Number(data.fee_sats) - wantFee) > 1)
+  if (!Number.isFinite(Number(data.fee_sats)) || Math.abs(Number(data.fee_sats) - wantFee) > (s.htlcKind === "native" ? satoraNativeFeeTol(wantFee) : 1))
     return "the created swap's fee differs from the final quote.";
   return null;
 }
@@ -15789,18 +15896,28 @@ export function checkSatoraArkadeToEvmCreateResponse(route, data, { identity = n
     return refuse("the created swap pays out a different token than the quote.");
   if (String(data.source_token?.token_id || "").toLowerCase() !== "btc")
     return refuse("the created swap does not sell Arkade BTC.");
-  const wantTarget = Math.round(s.grossTargetRaw);
+  // Native creations (§153) name the NET payout as their
+  // target — same bound as the other source checkers (the
+  // 0.1% drift plus the fee tolerance in raw units).
+  const wantTarget = Math.round(s.htlcKind === "native" ? s.netTargetRaw : s.grossTargetRaw);
   const gotTarget = Number(data.target_amount);
-  const targetTol = Math.max(2, Math.floor(wantTarget * 0.001));
+  const feeExpectA = Number(s.protocolFeeSats || 0) + Number(s.networkFeeSats || 0) + Number(s.fluidFeeSats || 0);
+  const targetTol = Math.max(2, Math.floor(wantTarget * 0.001))
+    + (s.htlcKind === "native" ? satoraNativeFeeTol(feeExpectA) * Math.pow(10, Math.max(0, (s.targetToken?.decimals ?? 18) - 8)) : 0);
   if (!Number.isFinite(gotTarget) || Math.abs(gotTarget - wantTarget) > targetTol)
     return refuse("the created swap's payout differs from the quote.");
   if (!claimingAddress || String(data.client_evm_address || "").toLowerCase() !== String(claimingAddress).toLowerCase())
     return refuse("the created swap's claim address is not the one derived from your Fluid swap key.");
-  if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
-    return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
-  if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
-    || !ethers.isAddress(data.server_evm_address || "") || !ethers.isAddress(data.wbtc_address || ""))
-    return refuse("the created swap carried a malformed contract address.");
+  if (s.htlcKind === "native") {
+    const nativeRefusal = satoraNativeCreationRefusal(data);
+    if (nativeRefusal) return refuse(nativeRefusal);
+  } else {
+    if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
+      return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
+    if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
+      || !ethers.isAddress(data.server_evm_address || "") || !ethers.isAddress(data.wbtc_address || ""))
+      return refuse("the created swap carried a malformed contract address.");
+  }
   if (!(Number(data.evm_refund_locktime) > Math.floor(Date.now() / 1000)))
     return refuse("the created swap's refund timelock is not in the future.");
   if (!(Number(data.evm_expected_sats) > 0)) return refuse("the created swap carried no expected payout amount.");
@@ -15866,9 +15983,12 @@ export async function createSatoraArkadeSourceSwap(route, { phrase, index = 0 } 
   const identity = satoraSwapClaimKey(phrase, index);
   let body, data, check, claimingAddress = null;
   if (s.destKey === "evm") {
-    claimingAddress = new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    // Chain 30 (§153): claiming address = the user's RIF smart
+    // wallet, as on the Bitcoin-source lane.
+    claimingAddress = s.htlcKind === "native" ? rifSmartWalletAddress(s.destInput) : new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    if (!claimingAddress) throw new Error("That route's destination could not be read.");
     body = buildSatoraArkadeToEvmCreateRequest({ route, identity, claimingAddress });
-    data = await satoraFetchJson("/swap/arkade/evm", { method: "POST", destKey: "arkade", body });
+    data = await satoraFetchJson("/swap/arkade/evm", { method: "POST", destKey: "arkade", body, nativeHtlc: s.htlcKind === "native" });
     check = checkSatoraArkadeToEvmCreateResponse(route, data, { identity, claimingAddress });
   } else {
     body = buildSatoraArkadeToLnCreateRequest({ route, identity });
@@ -15906,7 +16026,9 @@ export async function createSatoraArkadeSourceSwap(route, { phrase, index = 0 } 
     wbtcAddress: s.destKey === "evm" ? data.wbtc_address : null,
     refundLocktime: s.destKey === "evm" ? Number(data.evm_refund_locktime) : null,
     htlcVersion: s.destKey === "evm" ? Number(data.evm_htlc_version) : null,
+    htlcKind: s.destKey === "evm" ? (data.evm_htlc_kind || null) : null,
     expectedSats: s.destKey === "evm" ? Number(data.evm_expected_sats) : null,
+    expectedAmountRaw: s.destKey === "evm" && data.evm_expected_sats != null ? String(data.evm_expected_sats) : null,
     invoice: s.destKey === "lightning" ? String(data.client_lightning_invoice || "") : null,
     vhtlc: {
       address: vhtlcAddress, senderPk: data.sender_pk, receiverPk: data.receiver_pk,
@@ -16032,6 +16154,36 @@ export function buildSatoraBtcToLnCreateRequest({ route, identity } = {}) {
   if (fee.extraFeesBps > 0) body.extra_fees = fee.extraFeesBps;
   return body;
 }
+/** The native-HTLC creation pins shared by the three
+ *  BTC-family source checkers (§153): kind + version, the
+ *  pinned HTLCNative deployment, and the zero coordinator /
+ *  lock token a native lock carries by construction. Returns
+ *  a refusal string or null. */
+function satoraNativeCreationRefusal(data) {
+  if (String(data.evm_htlc_kind || "").toLowerCase() !== "native")
+    return "the created swap does not lock on a native HTLC.";
+  if (Number(data.evm_htlc_version) !== SATORA_NATIVE_HTLC_VERSION)
+    return `the created swap uses native HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_NATIVE_HTLC_VERSION} Fluid was built against.`;
+  if (String(data.evm_htlc_address || "").toLowerCase() !== SATORA_HTLC_NATIVE_ADDRESS.toLowerCase())
+    return "the created swap does not lock on the pinned Rootstock HTLC deployment.";
+  if (data.evm_coordinator_address != null && !/^0x0{40}$/.test(String(data.evm_coordinator_address)))
+    return "the created swap names a coordinator for a native lock — native locks have none.";
+  if (data.wbtc_address != null && !/^0x0{40}$/.test(String(data.wbtc_address)))
+    return "the created swap names a lock token for a native lock — the locked asset is RBTC itself.";
+  if (!ethers.isAddress(data.server_evm_address || ""))
+    return "the created swap carried a malformed contract address.";
+  return null;
+}
+/** The creation-fee tolerance for NATIVE creations (§153):
+ *  their fee stack contains the server's Rootstock funding
+ *  cost, converted at a moving gas price — the unfunded live
+ *  probes watched it drift 8–11 sats between a quote and a
+ *  creation minutes apart, while the ERC-20 lanes' stacks
+ *  reconcile to the sat. The pin therefore bounds the drift
+ *  at 2% of the stack (floored at 2 sats) on native creations
+ *  only: a differently-PRICED swap still refuses; the rail's
+ *  own gas conversion noise does not. */
+const satoraNativeFeeTol = (wantFee) => Math.max(2, Math.ceil(Math.abs(Number(wantFee) || 0) * 0.02));
 /** THE FUNDING INSPECTION (Part B's heart): bounds-check a
  *  Bitcoin-source creation BEFORE any funding send exists.
  *  Everything the user is about to lock Bitcoin against is
@@ -16088,15 +16240,33 @@ export function checkSatoraBtcSourceCreateResponse(route, data, { identity, clai
     if (String(data.client_evm_address || "").toLowerCase() !== String(claimingAddress || "").toLowerCase()) return fail("Satora's creation names a different claiming address than this swap's own.");
     if (String(data.target_evm_address || "").toLowerCase() !== String(s.destInput || "").toLowerCase()) return fail("Satora's creation pays a different address than the one you reviewed.");
     if (Number(data.evm_chain_id) !== Number(s.destChainId)) return fail("Satora's creation targets a different chain than the one you reviewed.");
-    if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION) return fail("Satora's creation used an unexpected EVM HTLC version.");
-    if (String(data.evm_htlc_kind || "") !== "erc20") return fail("Satora's creation used an unexpected EVM HTLC kind.");
-    if (!ethers.isAddress(String(data.evm_htlc_address || "")) || !ethers.isAddress(String(data.evm_coordinator_address || "")) || !ethers.isAddress(String(data.wbtc_address || "")) || !ethers.isAddress(String(data.evm_htlc_sender || ""))) return fail("Satora's creation carried an unusable EVM contract address.");
+    if (s.htlcKind === "native") {
+      const nativeRefusal = satoraNativeCreationRefusal(data);
+      if (nativeRefusal) return fail(nativeRefusal);
+    } else {
+      if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION) return fail("Satora's creation used an unexpected EVM HTLC version.");
+      if (String(data.evm_htlc_kind || "") !== "erc20") return fail("Satora's creation used an unexpected EVM HTLC kind.");
+      if (!ethers.isAddress(String(data.evm_htlc_address || "")) || !ethers.isAddress(String(data.evm_coordinator_address || "")) || !ethers.isAddress(String(data.wbtc_address || "")) || !ethers.isAddress(String(data.evm_htlc_sender || ""))) return fail("Satora's creation carried an unusable EVM contract address.");
+    }
     const evmRefundLocktime = Number(data.evm_refund_locktime);
     if (!Number.isInteger(evmRefundLocktime) || evmRefundLocktime <= Math.floor(Date.now() / 1000)) return fail("Satora's creation is already past its EVM refund time.");
     if (!(btcRefundLocktime > evmRefundLocktime)) return fail("Satora's Bitcoin refund time is not after its EVM refund time — your Bitcoin could stay locked past the point where the other side can be reclaimed. Refusing to fund.");
     if (!(Number(data.evm_expected_sats) > 0)) return fail("Satora's creation expects no Bitcoin value on the EVM side.");
-    if (!driftOk(Number(data.target_amount), Number(s.netTargetRaw))) return fail("Satora's creation pays out a different amount than the quote you reviewed.");
-    if (Math.abs(Number(data.fee_sats) - feeExpect) > 1) return fail("Satora's creation charges a different fee than the quote you reviewed.");
+    if (s.htlcKind === "native") {
+      // Native creations name the NET payout as their target
+      // (there is no DEX leg — the lock amount IS the payout),
+      // and the net moves with the creation's own fee
+      // re-pricing: the bound is the standing 0.1% rate drift
+      // PLUS the fee tolerance, denominated in the target's
+      // raw units (live-matched fixtures: an 11-sat fee
+      // re-price moved the net 0.22% seconds after the quote).
+      const rawPerSat = 10n ** BigInt(Math.max(0, (s.targetToken?.decimals ?? 18) - 8));
+      const tol = BigInt(Math.max(2, Math.floor(Number(s.netTargetRaw) * 0.001))) + BigInt(satoraNativeFeeTol(feeExpect)) * rawPerSat;
+      let diff = null;
+      try { diff = BigInt(data.target_amount) - BigInt(Math.round(Number(s.netTargetRaw))); } catch { diff = null; }
+      if (diff == null || diff > tol || diff < -tol) return fail("Satora's creation pays out a different amount than the quote you reviewed.");
+    } else if (!driftOk(Number(data.target_amount), Number(s.netTargetRaw))) return fail("Satora's creation pays out a different amount than the quote you reviewed.");
+    if (Math.abs(Number(data.fee_sats) - feeExpect) > (s.htlcKind === "native" ? satoraNativeFeeTol(feeExpect) : 1)) return fail("Satora's creation charges a different fee than the quote you reviewed.");
     return { ok: true, btcHtlcAddress: recomputed, btcHashLock: hashLock160, btcRefundLocktime, evmRefundLocktime };
   }
   if (s.destKey === "lightning") {
@@ -16129,9 +16299,14 @@ export async function createSatoraBtcSourceSwap(route, { phrase, index = 0 } = {
   const identity = satoraSwapClaimKey(phrase, index);
   let claimingAddress = null, data;
   if (s.destKey === "evm") {
-    claimingAddress = new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    // Chain 30 (§153): the claiming address is the user's RIF
+    // smart wallet, derived from their own Rootstock address —
+    // the payout lock claims through the relay under the owner
+    // key, not under the swap child's key.
+    claimingAddress = s.htlcKind === "native" ? rifSmartWalletAddress(s.destInput) : new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    if (!claimingAddress) throw new Error("That route's destination could not be read.");
     const body = buildSatoraBtcToEvmCreateRequest({ route, identity, claimingAddress });
-    data = await satoraFetchJson("/swap/bitcoin/evm", { method: "POST", destKey: "bitcoin", body });
+    data = await satoraFetchJson("/swap/bitcoin/evm", { method: "POST", destKey: "bitcoin", body, nativeHtlc: s.htlcKind === "native" });
   } else {
     const body = buildSatoraBtcToLnCreateRequest({ route, identity });
     data = await satoraFetchJson("/swap/bitcoin/lightning", { method: "POST", destKey: "lightning", body });
@@ -16153,10 +16328,15 @@ export async function createSatoraBtcSourceSwap(route, { phrase, index = 0 } = {
     feeSats: Math.round(Number(data.fee_sats) || 0) + Math.round(Number(data.network_fee_sats) || 0),
     btcUsd: s.btcUsd,
     claimingAddress, coordinatorAddress: data.evm_coordinator_address || null,
-    htlcAddress: data.evm_htlc_address || null, serverEvmAddress: data.evm_htlc_sender || null,
+    htlcAddress: data.evm_htlc_address || null,
+    // Native locks (§153) name no HTLC sender — the payout
+    // lock's depositor IS the server's EVM account.
+    serverEvmAddress: s.htlcKind === "native" ? (data.server_evm_address || null) : (data.evm_htlc_sender || null),
     wbtcAddress: data.wbtc_address || null, refundLocktime: check.evmRefundLocktime ?? null,
     htlcVersion: data.evm_htlc_version ?? null,
+    htlcKind: data.evm_htlc_kind || null,
     expectedSats: data.evm_expected_sats != null ? Math.round(Number(data.evm_expected_sats)) : null,
+    expectedAmountRaw: data.evm_expected_sats != null ? String(data.evm_expected_sats) : null,
     btcHtlcAddress: check.btcHtlcAddress, btcHashLock: check.btcHashLock,
     btcServerPk: String(data.btc_server_pk), btcRefundLocktime: check.btcRefundLocktime,
     invoice: !isEvm && classifySatoraLightningDestination(s.destInput)?.kind === "invoice" ? s.destInput : null,
@@ -16225,6 +16405,327 @@ export async function executeSatoraBtcSourceRoute({ phrase, route, storage, onPr
   }
   return [fundTxHash];
 }
+// ---------- HTLCNative v2 + the RIF Relay claim (§153) ----------
+// The Rootstock payout claim, ported from the reference
+// implementation (@lendasat/lendaswap-sdk-pure 2.8.1,
+// src/redeem/rif-relay.ts + src/evm/native.ts) and verified
+// against the live service at build time: Satora's
+// /chain-config publishes chain 30's RIF relay block (the
+// constants below pin it — a config that drifts from them is
+// refused, never followed), the relay's /chain-info answered
+// ready with CORS open, and the smart-wallet derivation
+// reproduces the exact address the live server demanded as
+// client_evm_address in unfunded creations.
+// The shape: the payout HTLC's claim address is the user's
+// RIF smart wallet — a counterfactual EIP-1167 clone of the
+// pinned template, owned by the user's own Rootstock address.
+// Claiming signs an RSK Enveloping (EIP-712) relay request
+// with the OWNER's key; the relay submits the smart wallet's
+// call to HTLCNative.redeem(preimage, amount, sender,
+// timelock), taking its fee OUT of the claimed RBTC
+// (tokenAmount) — the user needs no RBTC to claim, and a
+// first claim deploys the smart wallet inside the same
+// relayed transaction (the deploy request kind). The fee is
+// computed from the relay's own /estimate BEFORE anything is
+// signed, and a fee that would eat the whole payout refuses
+// the claim — the exact SDK discipline.
+export const SATORA_RIF_RELAY_URL = "https://mainnet.relay.rifcomputing.net";
+export const SATORA_RIF_RELAY_HUB = "0xb277ef52c98e72e1f9afd4b36201d0b56368fec8";
+export const SATORA_RIF_SMART_WALLET_FACTORY = "0x25c87343380eea565b6c664a8fd13b9b57c106cb";
+export const SATORA_RIF_SMART_WALLET_TEMPLATE = "0x58ef89fce26afda106a44220fb96e2b72941df4e";
+export const SATORA_RIF_DEPLOY_VERIFIER = "0x6f181c741a9869b42d58a7c7a7e4efd4cec57819";
+export const SATORA_RIF_RELAY_VERIFIER = "0x4b2b65677ca652c0badf00ffc52503c10e64411b";
+export const SATORA_RIF_CLAIM_CALL_GAS = 100000n;
+export const SATORA_RIF_FEE_TRANSFER_GAS = 10500n;
+const RIF_WALLET_NONCE_SELECTOR = "0xaffed0e0";
+const RIF_FACTORY_NONCE_SELECTOR = "0x70ae92d2";
+export const SATORA_HTLC_NATIVE_REDEEM_SELECTOR = "0xd592e483";
+export const SATORA_HTLC_NATIVE_CREATE_SELECTOR = ethers.id("create(bytes32,address,uint256)").slice(0, 10);
+export const SATORA_HTLC_NATIVE_REFUND_SELECTOR = ethers.id("refund(bytes32,uint256,address,uint256)").slice(0, 10);
+const rifWord = (v) => BigInt(v).toString(16).padStart(64, "0");
+const rifAddrWord = (a) => String(a).slice(2).toLowerCase().padStart(64, "0");
+/** The user's RIF Relay smart wallet address for a Rootstock
+ *  owner address (index 0, no recoverer) — the CREATE2 of the
+ *  pinned factory over the EIP-1167 clone of the pinned
+ *  template, salted by (owner, zero recoverer, index 0) in
+ *  the reference implementation's exact byte layout. Pure;
+ *  verified against the live server's demanded claim address
+ *  in the §153 pins. Null on a malformed owner. */
+export function rifSmartWalletAddress(ownerAddress) {
+  if (!ethers.isAddress(ownerAddress || "")) return null;
+  const ownerHex = String(ownerAddress).slice(2).toLowerCase();
+  const salt = ethers.keccak256("0x" + ownerHex + "0".repeat(40) + rifWord(0n));
+  const initCodeHash = ethers.keccak256("0x602d3d8160093d39f3363d3d373d3d3d3d363d73" + SATORA_RIF_SMART_WALLET_TEMPLATE.slice(2).toLowerCase() + "5af43d923d90803e602b57fd5bf3");
+  const hash = ethers.keccak256("0xff" + SATORA_RIF_SMART_WALLET_FACTORY.slice(2).toLowerCase() + salt.slice(2) + initCodeHash.slice(2));
+  return ethers.getAddress("0x" + hash.slice(-40));
+}
+/** HTLCNative.redeem calldata (the payout claim the smart
+ *  wallet executes): the pinned selector + (preimage, amount,
+ *  sender, timelock) words — the lock's own terms, read from
+ *  the bounds-checked creation record, never from a server
+ *  answer at claim time. Pure. */
+export function buildSatoraRifRedeemData({ preimageHex, amountRaw, sender, timelock } = {}) {
+  const pre = String(preimageHex || "").replace(/^0x/, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(pre)) throw new Error("The swap's secret was unreadable.");
+  if (!ethers.isAddress(sender || "")) throw new Error("The swap's payout sender was unreadable.");
+  const amount = BigInt(amountRaw);
+  if (amount <= 0n) throw new Error("The swap's expected payout was unreadable.");
+  return SATORA_HTLC_NATIVE_REDEEM_SELECTOR + pre + rifWord(amount) + rifAddrWord(sender) + rifWord(BigInt(timelock));
+}
+/** The relay fee for an /estimate answer: estimation x
+ *  gasPrice x 110% (the reference implementation's headroom),
+ *  with the gas price floored at the relay's published
+ *  minimum. Pure BigInt math. */
+export function satoraRifClaimFeeWei(estimation, gasPrice, minGasPrice) {
+  const est = BigInt(estimation), gp = BigInt(gasPrice), min = BigInt(minGasPrice);
+  return est * (gp > min ? gp : min) * 110n / 100n;
+}
+/** Pin Satora's /chain-config RIF block for chain 30 against
+ *  the constants this build was verified with. Returns the
+ *  block (with the pinned server URL) or null on any drift —
+ *  a drifted config is a refused claim, never a followed one. */
+export function checkSatoraRifRelayConfig(chainConfigData) {
+  const chains = Array.isArray(chainConfigData?.chains) ? chainConfigData.chains : (Array.isArray(chainConfigData) ? chainConfigData : []);
+  const entry = chains.find(c => Number(c?.chain) === SATORA_ROOTSTOCK_CHAIN_ID);
+  const rif = entry?.rif_relay;
+  if (!rif) return null;
+  const eq = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
+  if (String(rif.server_url || "") !== SATORA_RIF_RELAY_URL) return null;
+  if (!eq(rif.relay_hub, SATORA_RIF_RELAY_HUB) || !eq(rif.smart_wallet_factory, SATORA_RIF_SMART_WALLET_FACTORY)
+    || !eq(rif.smart_wallet_template, SATORA_RIF_SMART_WALLET_TEMPLATE) || !eq(rif.deploy_verifier, SATORA_RIF_DEPLOY_VERIFIER)
+    || !eq(rif.relay_verifier, SATORA_RIF_RELAY_VERIFIER)) return null;
+  return {
+    serverUrl: SATORA_RIF_RELAY_URL, relayHub: SATORA_RIF_RELAY_HUB,
+    smartWalletFactory: SATORA_RIF_SMART_WALLET_FACTORY, smartWalletTemplate: SATORA_RIF_SMART_WALLET_TEMPLATE,
+    deployVerifier: SATORA_RIF_DEPLOY_VERIFIER, relayVerifier: SATORA_RIF_RELAY_VERIFIER,
+  };
+}
+/** Pin the relay's /chain-info: it must be ready, serve chain
+ *  30, and name a usable fees receiver + minimum gas price. */
+export function checkSatoraRifChainInfo(data) {
+  if (!data || data.ready !== true) return null;
+  if (Number(data.chainId) !== SATORA_ROOTSTOCK_CHAIN_ID) return null;
+  if (!ethers.isAddress(data.feesReceiver || "")) return null;
+  let minGasPrice;
+  try { minGasPrice = BigInt(data.minGasPrice); } catch { return null; }
+  if (minGasPrice <= 0n) return null;
+  return { feesReceiver: ethers.getAddress(data.feesReceiver), minGasPrice };
+}
+const RIF_RELAY_DATA_TYPE = [
+  { name: "gasPrice", type: "uint256" }, { name: "feesReceiver", type: "address" },
+  { name: "callForwarder", type: "address" }, { name: "callVerifier", type: "address" },
+];
+const RIF_DEPLOY_REQUEST_TYPE = [
+  { name: "relayHub", type: "address" }, { name: "from", type: "address" }, { name: "to", type: "address" },
+  { name: "tokenContract", type: "address" }, { name: "recoverer", type: "address" }, { name: "value", type: "uint256" },
+  { name: "nonce", type: "uint256" }, { name: "tokenAmount", type: "uint256" }, { name: "tokenGas", type: "uint256" },
+  { name: "validUntilTime", type: "uint256" }, { name: "index", type: "uint256" }, { name: "data", type: "bytes" },
+  { name: "relayData", type: "RelayData" },
+];
+const RIF_RELAY_REQUEST_TYPE = [
+  { name: "relayHub", type: "address" }, { name: "from", type: "address" }, { name: "to", type: "address" },
+  { name: "tokenContract", type: "address" }, { name: "value", type: "uint256" }, { name: "gas", type: "uint256" },
+  { name: "nonce", type: "uint256" }, { name: "tokenAmount", type: "uint256" }, { name: "tokenGas", type: "uint256" },
+  { name: "validUntilTime", type: "uint256" }, { name: "data", type: "bytes" }, { name: "relayData", type: "RelayData" },
+];
+/** Build the RIF relay request (deploy kind for a first claim
+ *  — the smart wallet does not exist yet and is deployed
+ *  inside this same relayed transaction; relay kind once it
+ *  does). Pure: returns the JSON request/relayData for the
+ *  envelope plus the EIP-712 domain/types/message for the
+ *  owner's signature. tokenAmount is the relay fee in wei
+ *  (0 for the /estimate pass). */
+export function buildSatoraRifRelayRequest({ deployed, owner, smartWallet, htlcAddress, redeemData, nonce, tokenAmountWei, gasPriceWei, feesReceiver, validUntilTime } = {}) {
+  const fee = BigInt(tokenAmountWei || 0);
+  const request = {
+    relayHub: SATORA_RIF_RELAY_HUB, from: owner, to: htlcAddress, tokenContract: ethers.ZeroAddress,
+    value: "0", nonce: BigInt(nonce).toString(), tokenAmount: fee.toString(),
+    tokenGas: fee > 0n ? SATORA_RIF_FEE_TRANSFER_GAS.toString() : "0",
+    validUntilTime: Number(validUntilTime), data: redeemData,
+  };
+  let relayData, verifyingContract, types;
+  if (!deployed) {
+    request.recoverer = ethers.ZeroAddress;
+    request.index = 0;
+    relayData = { gasPrice: BigInt(gasPriceWei).toString(), feesReceiver, callForwarder: SATORA_RIF_SMART_WALLET_FACTORY, callVerifier: SATORA_RIF_DEPLOY_VERIFIER };
+    verifyingContract = SATORA_RIF_SMART_WALLET_FACTORY;
+    types = RIF_DEPLOY_REQUEST_TYPE;
+  } else {
+    request.gas = SATORA_RIF_CLAIM_CALL_GAS.toString();
+    relayData = { gasPrice: BigInt(gasPriceWei).toString(), feesReceiver, callForwarder: smartWallet, callVerifier: SATORA_RIF_RELAY_VERIFIER };
+    verifyingContract = smartWallet;
+    types = RIF_RELAY_REQUEST_TYPE;
+  }
+  const uintFields = new Set(["value", "gas", "nonce", "tokenAmount", "tokenGas", "validUntilTime", "index"]);
+  const message = {};
+  for (const [k, v] of Object.entries(request)) message[k] = uintFields.has(k) ? BigInt(v) : v;
+  message.relayData = { ...relayData, gasPrice: BigInt(relayData.gasPrice) };
+  return {
+    request, relayData, kind: deployed ? "relay" : "deploy",
+    domain: { name: "RSK Enveloping Transaction", version: "2", chainId: SATORA_ROOTSTOCK_CHAIN_ID, verifyingContract },
+    types: { RelayRequest: types, RelayData: RIF_RELAY_DATA_TYPE },
+    primaryType: "RelayRequest", message,
+  };
+}
+let satoraRifConfigPromise = null;
+export function resetSatoraRifCache() { satoraRifConfigPromise = null; }
+async function fetchSatoraRifRelayConfig() {
+  if (!satoraRifConfigPromise) {
+    satoraRifConfigPromise = (async () => {
+      const data = await satoraFetchJson("/chain-config");
+      const cfg = checkSatoraRifRelayConfig(data);
+      if (!cfg) throw new Error("Satora's published RIF Relay configuration for Rootstock does not match the deployment Fluid was built against — refusing the claim rather than following a drifted config.");
+      return cfg;
+    })();
+    satoraRifConfigPromise.catch(() => { satoraRifConfigPromise = null; });
+  }
+  return satoraRifConfigPromise;
+}
+async function rifRelayJson(url, { method = "GET", body = null } = {}) {
+  const res = await fetch(url, {
+    method, headers: { "Content-Type": "application/json" },
+    ...(body != null ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("The RIF Relay answered HTTP " + res.status + (data?.error ? ": " + String(data.error) : data?.message ? ": " + String(data.message) : "") + ".");
+  return data;
+}
+/** Claim a BTC-family -> Rootstock swap's payout through the
+ *  RIF Relay (see the section header): every term comes from
+ *  the bounds-checked creation record — the expected amount,
+ *  the payout lock's sender + refund timelock, the pinned
+ *  HTLC, and the smart wallet the creation pinned as the
+ *  claim address, re-derived here from the record's own
+ *  destination (the user's Rootstock address) and required to
+ *  match. The relay's fee is estimated and bounded before the
+ *  owner signs; the signed request is the only thing the
+ *  relay ever receives. Returns { status, txHash, feeWei } in
+ *  the shared claim shape. */
+export async function claimSatoraRifRelaySwap(record, { phrase } = {}) {
+  if (!record || record.destKey !== "evm" || Number(record.destChainId) !== SATORA_ROOTSTOCK_CHAIN_ID || String(record.htlcKind || "").toLowerCase() !== "native")
+    throw new Error("That record is not a Rootstock-bound Satora swap.");
+  if (!phrase) throw new Error("The unlocked wallet is not available for this claim.");
+  const identity = satoraSwapClaimKey(phrase, record.index);
+  // The preimage must be this swap's own: for Bitcoin-source
+  // records the stored lock is HASH160 of the hash lock; the
+  // Lightning/Arkade lanes store the hash lock itself.
+  if (record.hashLock) {
+    if (String(record.hashLock).toLowerCase() !== identity.hashLock.toLowerCase())
+      throw new Error("Fluid refused this Satora claim: the swap secret does not match the creation record.");
+  } else if (record.btcHashLock) {
+    const expect160 = hexOf(ripemd160(hex.decode(identity.hashLock.replace(/^0x/, ""))));
+    if (expect160 !== String(record.btcHashLock).toLowerCase())
+      throw new Error("Fluid refused this Satora claim: the swap secret does not match the creation record.");
+  }
+  const ownerWallet = ethers.Wallet.fromPhrase(String(phrase).trim().toLowerCase().replace(/\s+/g, " "));
+  const owner = ownerWallet.address;
+  if (String(record.destInput || "").toLowerCase() !== owner.toLowerCase())
+    throw new Error("Fluid refused this Satora claim: the swap pays a different Rootstock address than this wallet's.");
+  const smartWallet = rifSmartWalletAddress(owner);
+  if (record.claimingAddress && String(record.claimingAddress).toLowerCase() !== smartWallet.toLowerCase())
+    throw new Error("Fluid refused this Satora claim: the claim address is not this wallet's RIF smart wallet.");
+  if (String(record.htlcAddress || "").toLowerCase() !== SATORA_HTLC_NATIVE_ADDRESS.toLowerCase())
+    throw new Error("Fluid refused this Satora claim: the payout lock is not the pinned Rootstock HTLC.");
+  if (!ethers.isAddress(record.serverEvmAddress || ""))
+    throw new Error("Fluid refused this Satora claim: the payout lock's sender was unreadable.");
+  const amountRaw = record.expectedAmountRaw != null ? String(record.expectedAmountRaw) : String(Math.round(Number(record.expectedSats) || 0));
+  let amount;
+  try { amount = BigInt(amountRaw); } catch { throw new Error("Fluid refused this Satora claim: the expected payout was unreadable."); }
+  if (amount <= 0n) throw new Error("Fluid refused this Satora claim: the expected payout was unreadable.");
+  const timelock = Number(record.refundLocktime);
+  if (!Number.isInteger(timelock) || timelock <= Math.floor(Date.now() / 1000))
+    throw new Error("This swap's payout refund time has passed — the payout lock is no longer claimable.");
+  const fresh = await fetchSatoraSwapStatus(record.id);
+  const status = String(fresh?.status || record.status);
+  if (status === "clientredeemed" || status === "serverredeemed")
+    return { status, txHash: record.claimTxId || null, already: true };
+  if (status !== "serverfunded" && status !== "clientredeeming")
+    throw new Error(`This swap is not ready to claim (status: ${status}).`);
+  const cfg = await fetchSatoraRifRelayConfig();
+  const chainInfo = checkSatoraRifChainInfo(await rifRelayJson(cfg.serverUrl + "/chain-info"));
+  if (!chainInfo) throw new Error("The RIF Relay is not ready or does not serve Rootstock right now — try the claim again in a minute.");
+  // Smart-wallet state: the wallet's own nonce read answers
+  // when it is deployed; otherwise the factory's nonce for
+  // the owner prices the deploy kind.
+  const provider = providerFor("rootstock");
+  let deployed = false, nonce = 0n;
+  try {
+    const r = await provider.call({ to: smartWallet, data: RIF_WALLET_NONCE_SELECTOR });
+    if (r && r.length >= 66) { deployed = true; nonce = BigInt(r); }
+  } catch { /* an undeployed wallet answers with an error or empty data */ }
+  if (!deployed) {
+    const r = await provider.call({ to: cfg.smartWalletFactory, data: RIF_FACTORY_NONCE_SELECTOR + rifAddrWord(owner) });
+    nonce = BigInt(r);
+  }
+  const redeemData = buildSatoraRifRedeemData({ preimageHex: identity.secretHex, amountRaw: amount.toString(), sender: record.serverEvmAddress, timelock });
+  const validUntilTime = Math.floor(Date.now() / 1000) + 2 * 24 * 3600;
+  const buildReq = (tokenAmountWei, gasPriceWei) => buildSatoraRifRelayRequest({
+    deployed, owner, smartWallet, htlcAddress: record.htlcAddress, redeemData, nonce,
+    tokenAmountWei, gasPriceWei, feesReceiver: chainInfo.feesReceiver, validUntilTime,
+  });
+  const envelope = (req, signature) => ({
+    relayRequest: { request: req.request, relayData: req.relayData },
+    metadata: { relayHubAddress: cfg.relayHub, relayMaxNonce: Number.MAX_SAFE_INTEGER, signature },
+  });
+  const estimate = await rifRelayJson(cfg.serverUrl + "/estimate", { method: "POST", body: envelope(buildReq(0n, chainInfo.minGasPrice), "SERVER_SIGNATURE_REQUIRED") });
+  let estimation;
+  try { estimation = BigInt(estimate?.estimation); } catch { throw new Error("The RIF Relay returned no usable fee estimate — the claim was not submitted."); }
+  if (estimation <= 0n) throw new Error("The RIF Relay returned no usable fee estimate — the claim was not submitted.");
+  const estGasPrice = (() => { try { return BigInt(estimate?.gasPrice ?? 0); } catch { return 0n; } })();
+  const gasPrice = estGasPrice > chainInfo.minGasPrice ? estGasPrice : chainInfo.minGasPrice;
+  const fee = satoraRifClaimFeeWei(estimation, gasPrice, chainInfo.minGasPrice);
+  if (fee >= amount)
+    throw new Error(`The RIF Relay fee (${fee.toString()} wei) would eat the whole payout (${amount.toString()} wei) — refusing to claim. The payout stays locked for your smart wallet; try again when Rootstock gas is cheaper.`);
+  const req = buildReq(fee, gasPrice);
+  const signature = await ownerWallet.signTypedData(req.domain, req.types, req.message);
+  const relayed = await rifRelayJson(cfg.serverUrl + "/relay", { method: "POST", body: envelope(req, signature) });
+  const txHash = relayed?.txHash || (relayed?.signedTx ? ethers.keccak256(relayed.signedTx) : null);
+  if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash))
+    throw new Error("The RIF Relay accepted the claim but returned no transaction hash — check the swap again in a few minutes before retrying.");
+  // The relay's acceptance is not the claim landing: read the
+  // receipt when the chain answers in reasonable time. A
+  // reverted relay refuses (nothing is marked claimed); a
+  // slow chain returns the hash as an in-flight claim.
+  try {
+    const receipt = await provider.waitForTransaction(txHash, 1, 60000);
+    if (receipt && Number(receipt.status) === 0)
+      throw new Error(`The RIF Relay claim transaction ${txHash} reverted — the payout is still locked for your smart wallet and the claim can be retried.`);
+    if (receipt) return { status: "clientredeemed", txHash, feeWei: fee.toString(), already: false };
+  } catch (e) {
+    if (String(e?.message || "").includes("reverted")) throw e;
+    /* a slow read is not a failed claim — the hash stands */
+  }
+  return { status: "clientredeeming", txHash, feeWei: fee.toString(), already: false };
+}
+/** The funding call for an EVM-source NATIVE lock (chain 30):
+ *  HTLCNative.create(preimageHash, claimAddress, timelock)
+ *  payable — the amount is the call's value, the depositor is
+ *  the caller (the user's own Rootstock account), the claim
+ *  address is the server's EVM account from the bounds-checked
+ *  creation. Every term pins to the creation record; the
+ *  builder refuses a record that names anything else. Pure. */
+export function buildSatoraNativeLockCall(record) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this Satora funding: " + m });
+  if (!record || typeof record !== "object") return refuse("the swap record was unreadable.");
+  if (String(record.htlcKind || "").toLowerCase() !== "native") return refuse("the swap did not lock on a native HTLC.");
+  if (Number(record.htlcVersion) !== SATORA_NATIVE_HTLC_VERSION) return refuse("the swap did not lock on the pinned native HTLC v2.");
+  if (String(record.htlcAddress || "").toLowerCase() !== SATORA_HTLC_NATIVE_ADDRESS.toLowerCase())
+    return refuse("the swap's HTLC is not the pinned Rootstock deployment.");
+  const hashLock = String(record.hashLock || "");
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hashLock)) return refuse("the swap's hash lock was unreadable.");
+  if (!ethers.isAddress(record.serverEvmAddress || "")) return refuse("the swap's claim address was unreadable.");
+  const timelock = Number(record.refundLocktime);
+  if (!Number.isInteger(timelock) || timelock <= 0) return refuse("the swap's refund timelock was unreadable.");
+  let value;
+  try { value = BigInt(record.fromAmount); } catch { return refuse("the swap amount was unreadable."); }
+  if (value <= 0n) return refuse("the swap amount was unreadable.");
+  const data = new ethers.Interface(["function create(bytes32 preimageHash, address claimAddress, uint256 timelock) payable"])
+    .encodeFunctionData("create", [hashLock, record.serverEvmAddress, BigInt(timelock)]);
+  if (data.slice(0, 10).toLowerCase() !== SATORA_HTLC_NATIVE_CREATE_SELECTOR)
+    return refuse("the encoded lock call does not carry the pinned HTLC create selector.");
+  return { ok: true, to: record.htlcAddress, data, value: value.toString(), functionSignature: "create(bytes32,address,uint256)" };
+}
 /** Claim an Arkade -> EVM swap's payout through Satora's
  *  gasless claim: fetch the (bounds-checked) redeem calldata,
  *  build the redeem digest from the creation record, sign it
@@ -16237,6 +16738,11 @@ export async function executeSatoraBtcSourceRoute({ phrase, route, storage, onPr
 export async function claimSatoraArkadeEvmSwap(record, { phrase } = {}) {
   if (!record || (record.sourceKey !== "arkade" && record.sourceKey !== "lightning" && record.sourceKey !== "bitcoin") || record.destKey !== "evm")
     throw new Error("That record is not an Arkade/Lightning/Bitcoin -> EVM Satora swap.");
+  // Rootstock payouts (§153) do not claim through the
+  // coordinator at all — the lock is HTLCNative and the claim
+  // runs through the user's RIF Relay smart wallet.
+  if (String(record.htlcKind || "").toLowerCase() === "native")
+    return claimSatoraRifRelaySwap(record, { phrase });
   // The claim is the same gasless redeem on both source lanes
   // (the payout side is an identical HTLCErc20 lock); only the
   // version-header family differs with the swap's own family.
@@ -16418,7 +16924,7 @@ export function checkSatoraLnCreateResponse(route, data, { identity = null, clai
     return refuse("the created swap's amount differs from the amount you reviewed.");
   const feeTotal = Number(data.fee_sats) + (s.destKey === "bitcoin" ? Number(data.network_fee_sats || 0) : 0);
   const wantFee = Math.round(Number(s.protocolFeeSats || 0) + Number(s.networkFeeSats || 0) + Number(s.fluidFeeSats || 0));
-  if (!Number.isFinite(feeTotal) || Math.abs(feeTotal - wantFee) > 1)
+  if (!Number.isFinite(feeTotal) || Math.abs(feeTotal - wantFee) > (s.htlcKind === "native" ? satoraNativeFeeTol(wantFee) : 1))
     return refuse("the created swap's fee differs from the final quote.");
   const invoiceRefusal = satoraLnCreationInvoiceRefusal(data, { identity, sourceSats, nowSec });
   if (invoiceRefusal) return refuse(invoiceRefusal);
@@ -16428,21 +16934,33 @@ export function checkSatoraLnCreateResponse(route, data, { identity = null, clai
       return refuse("the created swap pays out a different token than the quote.");
     if (String(data.source_token?.token_id || "").toLowerCase() !== "btc")
       return refuse("the created swap does not sell Lightning BTC.");
-    const wantTarget = Math.round(s.grossTargetRaw);
+    // Native creations (§153) name the NET payout as their
+    // target (no DEX leg — the lock amount IS the payout) and
+    // it moves with the creation's fee re-pricing, so the
+    // bound is the 0.1% drift plus the fee tolerance in raw
+    // units — see checkSatoraBtcSourceCreateResponse.
+    const wantTarget = Math.round(s.htlcKind === "native" ? s.netTargetRaw : s.grossTargetRaw);
     const gotTarget = Number(data.target_amount);
-    if (!Number.isFinite(gotTarget) || Math.abs(gotTarget - wantTarget) > Math.max(2, Math.floor(wantTarget * 0.001)))
+    const targetTol = Math.max(2, Math.floor(wantTarget * 0.001))
+      + (s.htlcKind === "native" ? satoraNativeFeeTol(wantFee) * Math.pow(10, Math.max(0, (s.targetToken?.decimals ?? 18) - 8)) : 0);
+    if (!Number.isFinite(gotTarget) || Math.abs(gotTarget - wantTarget) > targetTol)
       return refuse("the created swap's payout differs from the quote.");
     if (!claimingAddress || String(data.client_evm_address || "").toLowerCase() !== String(claimingAddress).toLowerCase())
       return refuse("the created swap's claim address is not the one derived from your Fluid swap key.");
     if (String(data.target_evm_address || "").toLowerCase() !== String(s.destInput || "").toLowerCase())
       return refuse("the created swap would pay out to a different address than the one you reviewed.");
-    if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
-      return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
-    if (String(data.evm_htlc_kind || "").toLowerCase() !== "erc20")
-      return refuse("the created swap does not lock on an ERC-20 HTLC.");
-    if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
-      || !ethers.isAddress(data.server_evm_address || "") || !ethers.isAddress(data.wbtc_address || ""))
-      return refuse("the created swap carried a malformed contract address.");
+    if (s.htlcKind === "native") {
+      const nativeRefusal = satoraNativeCreationRefusal(data);
+      if (nativeRefusal) return refuse(nativeRefusal);
+    } else {
+      if (Number(data.evm_htlc_version) !== SATORA_ERC20_HTLC_VERSION)
+        return refuse(`the created swap uses HTLC version ${data.evm_htlc_version}, not the pinned version ${SATORA_ERC20_HTLC_VERSION} Fluid was built against.`);
+      if (String(data.evm_htlc_kind || "").toLowerCase() !== "erc20")
+        return refuse("the created swap does not lock on an ERC-20 HTLC.");
+      if (!ethers.isAddress(data.evm_htlc_address || "") || !ethers.isAddress(data.evm_coordinator_address || "")
+        || !ethers.isAddress(data.server_evm_address || "") || !ethers.isAddress(data.wbtc_address || ""))
+        return refuse("the created swap carried a malformed contract address.");
+    }
     if (!(Number(data.evm_refund_locktime) > nowSec))
       return refuse("the created swap's refund timelock is not in the future.");
     if (!(Number(data.evm_expected_sats) > 0)) return refuse("the created swap carried no expected payout amount.");
@@ -16485,9 +17003,12 @@ export async function createSatoraLnSourceSwap(route, { phrase, index = 0 } = {}
   const identity = satoraSwapClaimKey(phrase, index);
   let body, data, claimingAddress = null;
   if (s.destKey === "evm") {
-    claimingAddress = new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    // Chain 30 (§153): claiming address = the user's RIF smart
+    // wallet, as on the Bitcoin-source lane.
+    claimingAddress = s.htlcKind === "native" ? rifSmartWalletAddress(s.destInput) : new ethers.Wallet("0x" + identity.secretKeyHex).address;
+    if (!claimingAddress) throw new Error("That route's destination could not be read.");
     body = buildSatoraLnToEvmCreateRequest({ route, identity, claimingAddress });
-    data = await satoraFetchJson("/swap/lightning/evm", { method: "POST", destKey: "lightning", body });
+    data = await satoraFetchJson("/swap/lightning/evm", { method: "POST", destKey: "lightning", body, nativeHtlc: s.htlcKind === "native" });
   } else {
     body = buildSatoraLnToBtcCreateRequest({ route, identity });
     data = await satoraFetchJson("/swap/lightning/bitcoin", { method: "POST", destKey: "bitcoin", body });
@@ -16526,7 +17047,9 @@ export async function createSatoraLnSourceSwap(route, { phrase, index = 0 } = {}
     wbtcAddress: isEvm ? data.wbtc_address : null,
     refundLocktime: isEvm ? Number(data.evm_refund_locktime) : Number(data.btc_refund_locktime),
     htlcVersion: isEvm ? Number(data.evm_htlc_version) : null,
+    htlcKind: isEvm ? (data.evm_htlc_kind || null) : null,
     expectedSats: isEvm ? Number(data.evm_expected_sats) : null,
+    expectedAmountRaw: isEvm && data.evm_expected_sats != null ? String(data.evm_expected_sats) : null,
     btcHtlcAddress: isEvm ? null : String(data.btc_htlc_address || ""),
     btcHashLock: isEvm ? null : String(data.btc_hash_lock || "").toLowerCase().replace(/^0x/, ""),
     btcServerRefundPk: isEvm ? null : String(data.btc_server_refund_pk || ""),
@@ -17204,7 +17727,7 @@ export function satoraSwapPhase(status) {
 export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1000)) {
   const ph = satoraSwapPhase(record?.status);
   const fromHuman = record?.fromAmount != null && record?.fromSymbol
-    ? `${swapRawToAmount(record.fromAmount, 6)} ${record.fromSymbol}` : "your stablecoin";
+    ? `${swapRawToAmount(record.fromAmount, record?.fromDecimals ?? 6)} ${record.fromSymbol}` : "your stablecoin";
   const destName = record?.destKey === "lightning" ? "Lightning" : record?.destKey === "arkade" ? "Arkade" : "Bitcoin";
   // Lightning-source records likewise carry their own units
   // (sats paid over Lightning; the target's raw units in) and
@@ -17218,12 +17741,16 @@ export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1
       : `about ${swapRawToAmount(String(record.netTargetRaw || "0"), record.targetDecimals ?? 6)} ${record.targetSymbol || "tokens"} on ${destChainName(record.destChainKey) || "the destination chain"}`;
     let line = `Satora swap: ${fromSats} sats over Lightning → ${toHuman} — ${ph.label}.`;
     if (record.destKey === "evm" && record.status === "serverfunded" && !record.claimedAt)
-      line += " Claim it from the button below — the payout moves under your own claim signature.";
+      line += record.htlcKind === "native"
+        ? " Claim it from the button below — the payout is claimed through your RIF Relay smart wallet on Rootstock; the relayer's fee comes out of the payout itself, so you need no RBTC to claim."
+        : " Claim it from the button below — the payout moves under your own claim signature.";
     if (record.destKey === "bitcoin" && record.status === "serverfunded" && !record.claimedAt)
       line += " Claim it from the button below — the claim pays a Bitcoin transaction fee out of the locked sats.";
     line += record.destKey === "bitcoin"
       ? " If the swap is never claimed, Satora's side reclaims the lock after its refund time and the held Lightning payment returns to your Lightning wallet."
       : " If this swap fails, the held Lightning payment returns to your Lightning wallet when the hold expires.";
+    if (record.claimedAt && record.htlcKind === "native")
+      line += " The claimed RBTC sits in your RIF Relay smart wallet on Rootstock — the contract wallet your own Fluid key controls there.";
     return line;
   }
   // Bitcoin-source records (Part B) carry sats out of the
@@ -17237,13 +17764,17 @@ export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1
       : `about ${swapRawToAmount(String(record.netTargetRaw || "0"), record.targetDecimals ?? 6)} ${record.targetSymbol || "tokens"} on ${destChainName(record.destChainKey) || "the destination chain"}`;
     let line = `Satora swap: ${fromSats} sats on Bitcoin → ${toHuman} — ${ph.label}.`;
     if (record.destKey === "evm" && record.status === "serverfunded" && !record.claimedAt)
-      line += " Claim it from the button below — the payout moves under your own claim signature.";
+      line += record.htlcKind === "native"
+        ? " Claim it from the button below — the payout is claimed through your RIF Relay smart wallet on Rootstock; the relayer's fee comes out of the payout itself, so you need no RBTC to claim."
+        : " Claim it from the button below — the payout moves under your own claim signature.";
     if (!record.fundTxHash)
       line += " This swap was never funded — nothing is locked, nothing to refund.";
     else if (!record.claimedAt && !record.refundedAt) {
       const when = Number(record.btcRefundLocktime) > nowSec ? ` It unlocks at ${new Date(Number(record.btcRefundLocktime) * 1000).toLocaleString()}.` : " It is unlocked now — use the refund button below.";
       line += ` If this swap expires unclaimed, your Bitcoin is recoverable by the refund path after the lock's refund time, with your own key — no one's permission.${when}`;
     }
+    if (record.claimedAt && record.htlcKind === "native")
+      line += " The claimed RBTC sits in your RIF Relay smart wallet on Rootstock — the contract wallet your own Fluid key controls there.";
     return line;
   }
   // Arkade-source records carry different units (sats out of
@@ -17257,8 +17788,12 @@ export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1
       : `about ${swapRawToAmount(String(record.netTargetRaw || "0"), record.targetDecimals ?? 6)} ${record.targetSymbol || "tokens"} on ${destChainName(record.destChainKey) || "the destination chain"}`;
     let line = `Satora swap: ${fromSats} sats on Arkade → ${toHuman} — ${ph.label}.`;
     if (record.destKey === "evm" && record.status === "serverfunded" && !record.claimedAt)
-      line += " Claim it from the button below — the payout moves under your own claim signature.";
+      line += record.htlcKind === "native"
+        ? " Claim it from the button below — the payout is claimed through your RIF Relay smart wallet on Rootstock; the relayer's fee comes out of the payout itself, so you need no RBTC to claim."
+        : " Claim it from the button below — the payout moves under your own claim signature.";
     line += " If this swap fails, the locked sats refund to your own Arkade wallet after the lock's refund time.";
+    if (record.claimedAt && record.htlcKind === "native")
+      line += " The claimed RBTC sits in your RIF Relay smart wallet on Rootstock — the contract wallet your own Fluid key controls there.";
     return line;
   }
   // Bridged records still crossing: the honest state is where
@@ -17272,7 +17807,17 @@ export function satoraSwapHistoryLine(record, nowSec = Math.floor(Date.now() / 1
   let line = `Satora swap: ${fromHuman} → about ${Math.round(Number(record?.netSats || 0)).toLocaleString()} sats on ${destName} — ${ph.label}.`;
   if (!record?.sourceKey && record?.destKey === "bitcoin" && !record.claimedAt && (record.status === "serverfunded" || record.status === "clientredeeming"))
     line += " Satora has locked the Bitcoin in the swap's HTLC under your own claim key — claim it from the button below.";
-  if (ph.refundPath === "collaborative")
+  if (record?.htlcKind === "native") {
+    // Rootstock-source (§153): the refund is the locked RBTC
+    // itself, on the timelock path only — stated plainly,
+    // never in the WBTC/tBTC terms of the ERC-20 lanes.
+    if (!record.fundTxHash)
+      line += " This swap was never funded — nothing is locked, nothing to refund.";
+    else if (!record.claimedAt && !record.refundedAt) {
+      const when = Number(record.refundLocktime) > nowSec ? ` It unlocks at ${new Date(Number(record.refundLocktime) * 1000).toLocaleString()}.` : " It is unlocked now — refund it from the button below.";
+      line += ` If this swap fails, the refund is the RBTC you locked itself, refunded with your own key after the timelock — no one's permission.${when}`;
+    }
+  } else if (ph.refundPath === "collaborative")
     line += ` If this swap fails, the refund comes back as WBTC/tBTC, not ${record?.fromSymbol || "the stablecoin you sent"} — a collaborative refund (Satora co-signs, no gas for you) is available now, or you can refund on your own after the 24h timelock.`;
   else if (ph.refundPath === "unilateral") {
     const when = Number(record?.refundLocktime) > nowSec ? ` It unlocks at ${new Date(Number(record.refundLocktime) * 1000).toLocaleString()}.` : " It is unlocked now — refund it from the button below.";
@@ -17355,7 +17900,7 @@ const SATORA_ZERO_CALLS_HASH = "0x" + "0".repeat(64);
  *  rather than guess at a chain id to pin signatures against. */
 export function satoraEvmRefundChain(record) {
   const key = record?.bridge ? "arbitrum" : record?.fromChainKey;
-  const chainId = key ? SATORA_SOURCE_CHAINS[key] : undefined;
+  const chainId = key ? SATORA_CHAIN_ID_BY_KEY[key] : undefined;
   if (!key || chainId == null) return null;
   return { chainKey: key, chainId };
 }
@@ -17595,6 +18140,14 @@ export async function executeSatoraCollabRefundEvmSwap(wallet, record, storage, 
     throw new Error(`This swap's refund runs on the timelock path, which opens at ${new Date(Number(record.refundLocktime) * 1000).toLocaleString()} — the collaborative refund does not cover it; once that time has passed, the timelock refund action in this list executes it from your own wallet.`);
   if (phase.refundPath !== "collaborative")
     throw new Error(`This swap is not in a refundable state (status: ${status}).`);
+  // Native locks (§153) have no collaborative path in this
+  // build — the server-assisted refund terms describe the
+  // ERC-20 coordinator/direct shapes only. The honest answer
+  // is the timelock path, stated with its opening time (the
+  // "unavailable" outcome, reached without asking the server
+  // for terms it cannot give for this lock kind).
+  if (String(record.htlcKind || "").toLowerCase() === "native")
+    throw new Error(`Satora offers no collaborative refund for a native Rootstock lock — the locked RBTC stays refundable on the timelock path, which opens at ${new Date(Number(record.refundLocktime) * 1000).toLocaleString()}.`);
   // The swap object's own record of the lock double-sources the
   // two terms the refund endpoints could otherwise name freely:
   // the amount actually locked (read from the creation event)
@@ -17674,13 +18227,24 @@ const SATORA_HTLC_REFUND_INTERFACE = ["function refund(bytes32 preimageHash, uin
 export function buildSatoraUnilateralRefundCall(record, { lockedAmountRaw, nowSec = Math.floor(Date.now() / 1000) } = {}) {
   const refuse = (m) => ({ ok: false, reason: "Fluid refused this Satora refund: " + m });
   if (!record || typeof record !== "object") return refuse("the swap record was unreadable.");
-  if (record.htlcKind != null && String(record.htlcKind).toLowerCase() !== "erc20")
+  const nativeKind = String(record.htlcKind || "").toLowerCase() === "native";
+  if (record.htlcKind != null && !nativeKind && String(record.htlcKind).toLowerCase() !== "erc20")
     return refuse("the swap did not lock on an ERC-20 HTLC.");
-  if (record.htlcVersion != null && Number(record.htlcVersion) !== SATORA_ERC20_HTLC_VERSION)
+  if (nativeKind) {
+    // HTLCNative v2 (§153): refund(preimageHash, amount,
+    // claimAddress, timelock) — FOUR terms, no token word:
+    // the locked asset is the chain's native coin itself, and
+    // the depositor (the caller) is the lock's sender by
+    // construction. Same pin discipline as the ERC-20 shape.
+    if (Number(record.htlcVersion) !== SATORA_NATIVE_HTLC_VERSION)
+      return refuse("the swap did not lock on the pinned native HTLC v2.");
+    if (String(record.htlcAddress || "").toLowerCase() !== SATORA_HTLC_NATIVE_ADDRESS.toLowerCase())
+      return refuse("the swap's HTLC is not the pinned Rootstock deployment.");
+  } else if (record.htlcVersion != null && Number(record.htlcVersion) !== SATORA_ERC20_HTLC_VERSION)
     return refuse("the swap did not lock on the pinned ERC-20 HTLC v7.");
   if (!ethers.isAddress(record.htlcAddress || "")) return refuse("the swap's HTLC address was unreadable.");
   if (!/^0x[0-9a-fA-F]{64}$/.test(String(record.hashLock || ""))) return refuse("the swap's hash lock was unreadable.");
-  if (!ethers.isAddress(record.wbtcAddress || "")) return refuse("the swap's lock token was unreadable.");
+  if (!nativeKind && !ethers.isAddress(record.wbtcAddress || "")) return refuse("the swap's lock token was unreadable.");
   if (!ethers.isAddress(record.serverEvmAddress || "")) return refuse("the swap's claim address was unreadable.");
   const timelock = Number(record.refundLocktime);
   if (!Number.isInteger(timelock) || timelock <= 0) return refuse("the swap's refund timelock was unreadable.");
@@ -17689,6 +18253,13 @@ export function buildSatoraUnilateralRefundCall(record, { lockedAmountRaw, nowSe
   let amount;
   try { amount = BigInt(lockedAmountRaw); } catch { return refuse("the locked amount was unreadable."); }
   if (amount <= 0n) return refuse("the locked amount must be the chain-verified amount locked in the HTLC — it cannot be guessed.");
+  if (nativeKind) {
+    const data = new ethers.Interface(["function refund(bytes32 preimageHash, uint256 amount, address claimAddress, uint256 timelock)"])
+      .encodeFunctionData("refund", [record.hashLock, amount, record.serverEvmAddress, BigInt(timelock)]);
+    if (data.slice(0, 10).toLowerCase() !== SATORA_HTLC_NATIVE_REFUND_SELECTOR)
+      return refuse("the encoded refund call does not carry the pinned native HTLC refund selector.");
+    return { ok: true, to: record.htlcAddress, data, functionSignature: "refund(bytes32,uint256,address,uint256)" };
+  }
   const data = new ethers.Interface(SATORA_HTLC_REFUND_INTERFACE)
     .encodeFunctionData("refund", [record.hashLock, amount, record.wbtcAddress, record.serverEvmAddress, BigInt(timelock)]);
   if (data.slice(0, 10).toLowerCase() !== SATORA_HTLC_ERC20_REFUND_SELECTOR)
@@ -17780,8 +18351,18 @@ export async function executeSatoraUnilateralRefundEvmSwap(wallet, record, stora
   // once) is what makes a true double refund impossible.
   if (record.refundedAt && phase.phase !== "refund-available")
     throw new Error("This swap was already refunded.");
-  if (phase.phase !== "refund-available")
-    throw new Error(`This swap is not in a refundable state (status: ${status}).`);
+  if (phase.phase !== "refund-available") {
+    // Native locks (§153) have no collaborative path to wait
+    // for, so a funded native record may refund from any
+    // non-terminal, non-complete server state: the HTLC
+    // contract itself is the eligibility oracle — its own
+    // timelock (checked below on the chain's own clock) plus
+    // the pre-broadcast dry run decide, not the server's
+    // bookkeeping.
+    const nativeRecord = String(record.htlcKind || "").toLowerCase() === "native";
+    if (!nativeRecord || phase.phase === "complete" || phase.terminal)
+      throw new Error(`This swap is not in a refundable state (status: ${status}).`);
+  }
   // The swap object's own record of the lock double-sources the
   // refund's terms exactly as the collaborative executor does:
   // the address the lock is keyed under (the depositor — on v7
@@ -17812,13 +18393,19 @@ export async function executeSatoraUnilateralRefundEvmSwap(wallet, record, stora
   // refuses. Its silence refuses nothing: this path exists
   // precisely for when the server offers nothing, and the
   // on-chain dry run below remains the oracle.
-  try {
-    const rawParams = await fetchSatoraCollabRefundParams(record);
-    if (rawParams?.amount != null && String(rawParams.amount) !== lockedAmountRaw)
-      throw new Error("Satora's refund terms name a different locked amount than the swap's recorded lock — refusing to refund.");
-  } catch (e) {
-    const m = String(e?.message || "");
-    if (m.includes("different locked amount") || m.includes("sweep a different token")) throw e;
+  // Native locks have no collaborative params to second-source
+  // from (the endpoint describes the ERC-20 shapes) — the dry
+  // run below is their oracle, exactly as it is when the
+  // endpoint is silent on the ERC-20 lanes.
+  if (String(record.htlcKind || "").toLowerCase() !== "native") {
+    try {
+      const rawParams = await fetchSatoraCollabRefundParams(record);
+      if (rawParams?.amount != null && String(rawParams.amount) !== lockedAmountRaw)
+        throw new Error("Satora's refund terms name a different locked amount than the swap's recorded lock — refusing to refund.");
+    } catch (e) {
+      const m = String(e?.message || "");
+      if (m.includes("different locked amount") || m.includes("sweep a different token")) throw e;
+    }
   }
   const live = { ...record, status };
   const call = buildSatoraUnilateralRefundCall(live, { lockedAmountRaw, nowSec: chainNowSec });
@@ -18738,6 +19325,23 @@ async function suggestSatoraSolanaPriorityFee(owner) {
  *  the destination, and the refund truth — refunds come back as
  *  the BTC-pegged HTLC token (WBTC/tBTC), never the stablecoin
  *  that was sent. */
+/** The Rootstock claim disclosure (§153), shared by the
+ *  route card and the review sentences: a BTC-family ->
+ *  Rootstock payout claims through the user's RIF Relay
+ *  smart wallet, and the relayer's fee is a real cost of the
+ *  route — it is disclosed wherever the route's costs are
+ *  stated, never hidden inside the payout. The exact fee is
+ *  read from the relay's own estimate at claim time (it
+ *  floats with Rootstock gas) and the claim refuses if it
+ *  would eat the payout; what can be stated at quote time is
+ *  the mechanism, which is what these lines state. Empty for
+ *  every non-Rootstock route. */
+export function satoraRifDisclosureLines(route) {
+  const s = route?.satora;
+  if (!s || s.destKey !== "evm" || Number(s.destChainId) !== SATORA_ROOTSTOCK_CHAIN_ID) return [];
+  return ["The payout is claimed through your RIF Relay smart wallet on Rootstock: a relay submits the claim for you and its fee is taken out of the payout itself, so you need no RBTC to claim. Your first claim also sets up the smart wallet inside the same relayed transaction — no separate step, and the fee is confirmed before you claim; a claim whose fee would eat the payout is refused."];
+}
+const SATORA_RIF_INTENT_CLAUSE = "The payout is locked for your RIF Relay smart wallet on Rootstock — claim it from the swaps list; the relayer's fee is taken out of the payout itself, so you need no RBTC to claim, and your first claim also sets up the smart wallet inside the same relayed transaction.";
 export function formatSatoraSwapIntent({ route, destInput } = {}) {
   const s = route?.satora;
   if (!s) throw new Error("That route is not a Satora route.");
@@ -18768,10 +19372,15 @@ export function formatSatoraSwapIntent({ route, destInput } = {}) {
     else if (cls?.kind === "lnurl") destSentence = "It pays the LNURL you pasted.";
     else destSentence = "It pays the Lightning destination you gave.";
   }
-  const fromChainName = s.bridge ? s.bridge.name : (NETWORKS[Object.keys(SATORA_SOURCE_CHAINS).find(k => SATORA_SOURCE_CHAINS[k] === Number(route.fromChainId))]?.name || "your chain");
+  const fromChainName = s.bridge ? s.bridge.name : (NETWORKS[Object.keys(SATORA_CHAIN_ID_BY_KEY).find(k => SATORA_CHAIN_ID_BY_KEY[k] === Number(route.fromChainId))]?.name || "your chain");
   const crossingSentence = s.bridge
     ? ` Your USDC first crosses from ${s.bridge.name} to Arbitrum through Circle's transfer service — once it leaves ${s.bridge.name} that step can't be cancelled, and it can only land in your own wallet.${s.bridge.sourceChainKey === "base" ? " Two small transactions on Base pay their own network fees." : " Solana's network fee plus about 0.0012 SOL of account rent for the transfer's message account also apply."}`
     : "";
+  // Native plans (§153): funding is the user's own lock
+  // transaction on Rootstock (no gasless relay exists for
+  // native locks), and the refund is the locked RBTC itself.
+  if (s.htlcKind === "native")
+    return `Swap ${fromHuman} ${route.fromToken.symbol} on ${fromChainName} for about ${Math.round(s.netSats).toLocaleString()} sats on ${dest} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${destSentence} You fund this swap by locking the RBTC from your own Rootstock account in a transaction you sign yourself — you pay Rootstock's network fee for that lock, and there is no gasless funding on Rootstock. If this swap fails, the refund is the RBTC you locked itself, refundable with your own key after the timelock. Confirm?`;
   return `Swap ${fromHuman} ${route.fromToken.symbol} on ${fromChainName} for about ${Math.round(s.netSats).toLocaleString()} sats on ${dest} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${destSentence}${crossingSentence} If this swap fails, the refund comes back as WBTC/tBTC, not ${route.fromToken.symbol}. Confirm?`;
 }
 /** Execute a Satora route end to end (un-gated 2026-11-09, on
@@ -18823,7 +19432,7 @@ export function formatSatoraArkadeSourceIntent({ route } = {}) {
     return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Arkade wallet for about ${Math.round(s.netTargetRaw).toLocaleString()} sats on Lightning via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${destSentence} Your sats lock into a one-use Arkade VHTLC address that Fluid recomputes from the swap's own lock parameters and verifies before sending — on any mismatch nothing is sent. If Satora doesn't complete the swap, the lock refunds to your own Arkade wallet after its refund time. Arkade is a Bitcoin layer-2: exits back to Bitcoin mainnet are batched by the Arkade operator — operator-assisted, not a plain on-chain send. Confirm?`;
   }
   const toHuman = swapRawToAmount(String(s.netTargetRaw), s.targetToken?.decimals ?? 6);
-  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Arkade wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). The payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature. Your sats lock into a one-use Arkade VHTLC address that Fluid recomputes from the swap's own lock parameters and verifies before sending — on any mismatch nothing is sent. If Satora doesn't complete the swap, the lock refunds to your own Arkade wallet after its refund time. Arkade is a Bitcoin layer-2: exits back to Bitcoin mainnet are batched by the Arkade operator — operator-assisted, not a plain on-chain send. Confirm?`;
+  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Arkade wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. Fees: ${feeParts.join(", ")} — ${Math.round(totalSats).toLocaleString()} sats in total (about ${usd(totalSats)}). ${s.htlcKind === "native" ? SATORA_RIF_INTENT_CLAUSE : `The payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature.`} Your sats lock into a one-use Arkade VHTLC address that Fluid recomputes from the swap's own lock parameters and verifies before sending — on any mismatch nothing is sent. If Satora doesn't complete the swap, the lock refunds to your own Arkade wallet after its refund time. Arkade is a Bitcoin layer-2: exits back to Bitcoin mainnet are batched by the Arkade operator — operator-assisted, not a plain on-chain send. Confirm?`;
 }
 /** The review sentence for a Lightning-source Satora swap, in
  *  the Arkade-source sentence's shape: the full fee stack in
@@ -18855,7 +19464,7 @@ export function formatSatoraLnSourceIntent({ route } = {}) {
     return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Lightning wallet for about ${Math.round(s.netTargetRaw).toLocaleString()} sats on Bitcoin via Satora. ${feesSentence} Your Lightning wallet pays a hold invoice locked to this swap's own payment hash — Fluid checks the created swap field by field, and recomputes the Bitcoin lock address from the swap's own lock parameters, before anything is paid; on any mismatch nothing is paid. Satora then locks the Bitcoin in an on-chain HTLC under your own Fluid swap key: claim it from the swaps list below once it is funded (the claim pays a normal Bitcoin transaction fee out of the locked sats, so a little less than the locked amount lands). If you never claim, Satora's side reclaims the lock after its refund time and the held Lightning payment is returned to your Lightning wallet. Confirm?`;
   }
   const toHuman = swapRawToAmount(String(s.netTargetRaw), s.targetToken?.decimals ?? 6);
-  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Lightning wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. ${feesSentence} Your Lightning wallet pays a hold invoice locked to this swap's own payment hash — Fluid checks the created swap field by field before anything is paid; on any mismatch nothing is paid. The payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature. If Satora doesn't complete the swap, the held Lightning payment is returned to your Lightning wallet automatically when the hold expires — there is nothing to claim back and nothing locked on the other side. Confirm?`;
+  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Lightning wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. ${feesSentence} Your Lightning wallet pays a hold invoice locked to this swap's own payment hash — Fluid checks the created swap field by field before anything is paid; on any mismatch nothing is paid. ${s.htlcKind === "native" ? SATORA_RIF_INTENT_CLAUSE : `The payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature.`} If Satora doesn't complete the swap, the held Lightning payment is returned to your Lightning wallet automatically when the hold expires — there is nothing to claim back and nothing locked on the other side. Confirm?`;
 }
 /** The review sentence for a Bitcoin-source Satora swap, in
  *  the same register as the other source lanes: the full fee
@@ -18885,7 +19494,7 @@ export function formatSatoraBtcSourceIntent({ route } = {}) {
     return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Bitcoin wallet for about ${Math.round(s.netTargetRaw).toLocaleString()} sats on Lightning via Satora. ${feesSentence} ${floorSentence} Your Bitcoin is sent to an on-chain HTLC lock — Fluid recomputes the lock address from the swap's own parameters before anything is sent, and sends nothing on any mismatch. Satora claims the lock by revealing the swap secret once it has paid your Lightning destination. Bitcoin confirmations make this slow — tens of minutes, not seconds. ${refundSentence} Confirm?`;
   }
   const toHuman = swapRawToAmount(String(s.netTargetRaw), s.targetToken?.decimals ?? 6);
-  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Bitcoin wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. ${feesSentence} ${floorSentence} Your Bitcoin is sent to an on-chain HTLC lock — Fluid recomputes the lock address from the swap's own parameters before anything is sent, and sends nothing on any mismatch. Satora claims the lock by revealing the swap secret when it funds the payout; the payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature. Bitcoin confirmations make this slow — tens of minutes, not seconds. ${refundSentence} Confirm?`;
+  return `Swap ${Math.round(s.sourceSats).toLocaleString()} sats from your Bitcoin wallet for about ${toHuman} ${s.targetToken?.symbol || ""} on ${destChainName(s.destChainKey) || "the destination chain"} via Satora. ${feesSentence} ${floorSentence} Your Bitcoin is sent to an on-chain HTLC lock — Fluid recomputes the lock address from the swap's own parameters before anything is sent, and sends nothing on any mismatch. Satora claims the lock by revealing the swap secret when it funds the payout; ${s.htlcKind === "native" ? SATORA_RIF_INTENT_CLAUSE : `the payout lands at your own address on ${destChainName(s.destChainKey) || "the destination chain"} under your own claim signature.`} Bitcoin confirmations make this slow — tens of minutes, not seconds. ${refundSentence} Confirm?`;
 }
 /** Fund a persisted Satora record through the shipped gasless
  *  Permit2 path (components fetched + bounds-checked, witness
@@ -18895,7 +19504,54 @@ export function formatSatoraBtcSourceIntent({ route } = {}) {
  *  lanes; on bridged records the amount it moves is the netted
  *  one (satoraFundingAmount). Persists + returns the updated
  *  record. */
-async function fundSatoraSwapRecord(wallet, record, storage, onProgress = () => {}) {
+/** The default native-lock submission: dry-run the exact
+ *  create() call against the HTLC first (the contract is the
+ *  oracle for the lock's terms), then broadcast from the
+ *  user's own Rootstock account and require a confirmed
+ *  receipt — the record is marked funded only on a lock that
+ *  provably landed. Injectable via opts.submitNativeLock,
+ *  like the refund lanes' seam, so tests drive it with a fake. */
+function defaultSatoraNativeLockSubmit(wallet) {
+  return async ({ to, data, value, chainKey }) => {
+    const signer = wallet.connect(providerFor(chainKey));
+    try { await signer.call({ to, data, value: BigInt(value) }); }
+    catch (e) { throw new Error("The lock call does not verify against the HTLC on-chain (" + (e?.shortMessage || e?.message || "the dry run failed") + ") — nothing was broadcast."); }
+    const tx = await signer.sendTransaction({ to, data, value: BigInt(value) });
+    const receipt = await tx.wait().catch(() => null);
+    if (!receipt || Number(receipt.status) !== 1)
+      throw new Error("The lock transaction did not confirm — the swap stays unfunded in your list and nothing is marked locked.");
+    return tx.hash;
+  };
+}
+/** Fund a persisted NATIVE record (chain 30, §153): the user
+ *  locks their own RBTC into the swap's HTLCNative with a
+ *  direct create() call from their own Rootstock account —
+ *  no relayer, no Permit2, no custody, and the swap's RBTC
+ *  never touches any Fluid address. The call is built +
+ *  bounds-checked from the creation record alone
+ *  (buildSatoraNativeLockCall) before anything is signed. */
+async function fundSatoraNativeSwapRecord(wallet, record, storage, onProgress = () => {}, opts = {}) {
+  const built = buildSatoraNativeLockCall(record);
+  if (!built.ok) throw new Error(built.reason);
+  onProgress("Locking your RBTC into the swap's Rootstock HTLC from your own account…");
+  const submit = typeof opts?.submitNativeLock === "function" ? opts.submitNativeLock : defaultSatoraNativeLockSubmit(wallet);
+  const txHash = await submit({ to: built.to, data: built.data, value: built.value, chainKey: record.fromChainKey || "rootstock" });
+  if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash))
+    throw new Error("The lock broadcast returned no transaction hash — refusing to mark it funded.");
+  const updated = { ...record, fundTxHash: txHash, fundedAt: Date.now(), updatedAt: Date.now() };
+  try {
+    const fresh = await fetchSatoraSwapStatus(record.id);
+    if (fresh?.status) updated.status = fresh.status;
+  } catch { /* the record keeps its last known status; polling resumes it */ }
+  saveSatoraSwapRecord(storage, updated);
+  return updated;
+}
+async function fundSatoraSwapRecord(wallet, record, storage, onProgress = () => {}, opts = {}) {
+  // Native records (chain 30) fund by the user's own lock
+  // call — there is no funding payload to fetch (the server
+  // refuses gasless funding for native locks by design).
+  if (String(record.htlcKind || "").toLowerCase() === "native")
+    return fundSatoraNativeSwapRecord(wallet, record, storage, onProgress, opts);
   onProgress("Fetching the funding payload…");
   const comp = await fetchSatoraFundingComponents(record);
   // Arkade-destination records whose creation omitted the lock
@@ -19177,7 +19833,7 @@ export async function executeSatoraSwapRoute(wallet, route, onProgress = () => {
       if (record.bridgePhase !== "funding")
         return record.burnTx ? [record.burnTx] : [];
     }
-    const updated = await fundSatoraSwapRecord(wallet, record, storage, onProgress);
+    const updated = await fundSatoraSwapRecord(wallet, record, storage, onProgress, opts);
     return record.bridge && record.burnTx ? [record.burnTx, updated.fundTxHash] : [updated.fundTxHash];
   } finally { satoraBridgeInFlight.delete(record.id); }
 }

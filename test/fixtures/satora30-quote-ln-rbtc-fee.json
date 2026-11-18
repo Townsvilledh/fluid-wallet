@@ -1,0 +1,13 @@
+{
+  "exchange_rate": "1",
+  "network_fee": 300,
+  "gasless_network_fee": 0,
+  "protocol_fee": 500,
+  "protocol_fee_rate": 0.01,
+  "min_amount": 1000,
+  "max_amount": 1000000,
+  "source_amount": "50000",
+  "target_amount": "500000000000000",
+  "net_source_amount": "50000",
+  "net_target_amount": "492000000000000"
+}
