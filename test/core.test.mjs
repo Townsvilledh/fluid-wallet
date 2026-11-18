@@ -23893,6 +23893,16 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       && envD154.relayData.callForwarder.toLowerCase() === SATORA_RIF_SMART_WALLET_FACTORY.toLowerCase()
       && envD154.request.recoverer === ZERO154 && !("gas" in envD154.request));
   } finally { globalThis.fetch = realFetch154; FetchRequest.registerGetUrl(defaultGetUrl154); }
+
+  // --- (6) app wiring the live walk caught (§154 walk repairs) ---
+  const app154 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("§154: home row taps capture their row object at WIRE time (the §145 design) — the registry lookup no longer sits inside the click handler, where a later paint's re-registration could retarget a kept-DOM row to a different token (the walk's smart-wallet tap opened a NEAR page)",
+    app154.includes("const b = rowRefs.get(Number(r.dataset.evmrow));\n    if (!b) return;")
+    && app154.includes("const b = rowRefs.get(Number(r.dataset.tron));\n    if (b) r.onclick")
+    && app154.includes("const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));\n    if (b) r.onclick")
+    && !app154.includes("r.onclick = () => {\n    const b = rowRefs.get("));
+  ok("§154: the smart-wallet upsert never writes into a failed base read's empty balances (the plain send sheet would list the smart-wallet row as its only option) — the failure shape carries the row for paint instead",
+    app154.includes('if (networkKey !== "rootstock" || !rifSwLive || evmLoadFailed) return;'));
 }
 
 console.log(`\n${passed} checks passed`);

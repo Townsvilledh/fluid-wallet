@@ -3148,33 +3148,42 @@ function wireHomeRows(root) {
     copyText(el.dataset.copyaddr, el);
     toast("Address copied");
   });
-  root.querySelectorAll("[data-evmrow]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-evmrow]").forEach(r => {
+    // Capture the row object NOW, at wire time (the registry
+    // resets on the next paint; a click-time lookup could
+    // resolve this element's id against a LATER paint's rows
+    // when this element's section kept its DOM across that
+    // paint — the retarget the registry comment above rules
+    // out; §154 walk: a smart-wallet row tap opened a NEAR
+    // page after the late smart-wallet paint re-registered).
     const b = rowRefs.get(Number(r.dataset.evmrow));
     if (!b) return;
     const ck = r.dataset.evmchain;
-    if (ck && ck !== networkKey) openTokenPage(evmChainRowDesc(ck, b), "home");
-    else openTokenPage(evmDetailDesc(b), "home");
+    r.onclick = () => {
+      if (ck && ck !== networkKey) openTokenPage(evmChainRowDesc(ck, b), "home");
+      else openTokenPage(evmDetailDesc(b), "home");
+    };
   });
   root.querySelectorAll("#btcRow").forEach(el => el.onclick = () => openTokenPage(scalarTokenDesc("bitcoin"), "home"));
   const scalarWire = (attr, key) => { const el = root.querySelector(`[${attr}]`); if (el) el.onclick = () => openTokenPage(scalarTokenDesc(key), "home"); };
   scalarWire("data-ltc", "litecoin"); scalarWire("data-doge", "dogecoin"); scalarWire("data-bch", "bitcoincash");
   scalarWire("data-ada", "cardano"); scalarWire("data-zec", "zcash"); scalarWire("data-dash", "dash");
   const lnEl = root.querySelector("[data-ln]"); if (lnEl) lnEl.onclick = () => openLightningPanel();
-  root.querySelectorAll("[data-tron]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-tron]").forEach(r => {
     const b = rowRefs.get(Number(r.dataset.tron));
-    if (b) openTokenPage(tronDetailDesc(b), "home");
+    if (b) r.onclick = () => openTokenPage(tronDetailDesc(b), "home");
   });
-  root.querySelectorAll("[data-sol]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-sol]").forEach(r => {
     const b = rowRefs.get(Number(r.dataset.sol));
-    if (b) openTokenPage(solanaDetailDesc(b), "home");
+    if (b) r.onclick = () => openTokenPage(solanaDetailDesc(b), "home");
   });
-  root.querySelectorAll("[data-sui]").forEach(r => r.onclick = () => {
+  root.querySelectorAll("[data-sui]").forEach(r => {
     const b = rowRefs.get(Number(r.dataset.sui));
-    if (b) openTokenPage(suiDetailDesc(b), "home");
+    if (b) r.onclick = () => openTokenPage(suiDetailDesc(b), "home");
   });
-  const sheetWire = (attr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => r.onclick = () => {
+  const sheetWire = (attr, fn) => root.querySelectorAll(`[${attr}]`).forEach(r => {
     const b = rowRefs.get(Number(r.dataset[attr.slice(5)]));
-    if (b) fn(b);
+    if (b) r.onclick = () => fn(b);
   });
   sheetWire("data-stellar", (b) => openTokenPage(familyTokenDesc("stellar", b), "home"));
   sheetWire("data-ton", (b) => openTokenPage(familyTokenDesc("ton", b), "home"));
@@ -3941,9 +3950,16 @@ async function hydrateRifSmartWallet(w, myRenderSeq) {
 /** Settle the render's smart-wallet read into the active
  *  chain's rows: the flagged row replaces any earlier copy of
  *  itself; held-only discipline applies (a proven zero never
- *  renders; a failed read renders as couldn't-load). */
+ *  renders; a failed read renders as couldn't-load). While the
+ *  base read stands failed, `balances` keeps its failed-state
+ *  contract (empty — paint renders the failure shape, which
+ *  carries the smart-wallet row itself, with any live-proven
+ *  row substituted from rifSwLive): pushing the row here
+ *  would leak it into the plain send sheet's picker as that
+ *  sheet's only option. A late-adopted base read re-runs this
+ *  upsert with the flag cleared. */
 function upsertRifSwRow() {
-  if (networkKey !== "rootstock" || !rifSwLive) return;
+  if (networkKey !== "rootstock" || !rifSwLive || evmLoadFailed) return;
   balances = balances.filter(b => !b.rifSmartWallet);
   if (rifSwLive.status === "failed" || Number(rifSwLive.row.amount) > 0) balances.push(rifSwLive.row);
 }
