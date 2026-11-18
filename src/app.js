@@ -4783,22 +4783,36 @@ $("netBtn").onclick = () => {
   // while a query is typed: chains that have a pager page jump
   // the pager to it; other EVM networks switch through the normal
   // path; families open their page or their Explore chain view.
+  // §155 D6 (2026-11-18): ONE pinned entry sits above the search
+  // — "All networks", the combined view — rendered at all times
+  // (it is a selector option, not an enumerated chain list, so
+  // the no-partial-list rule stands). Ethuram asked for it by
+  // name: open the selector, tap All networks, see every held
+  // token on every chain with the grand total.
   openSheet(`<h3>Network</h3>
+    <div id="netAllSlot"></div>
     <input id="netSearch" placeholder="Search networks…" autocapitalize="none">
     <div id="netList"></div>
     <p class="msg err" id="netMsg"></p>`);
   const paint = () => {
     const q = $("netSearch").value.trim().toLowerCase();
     const host = $("netList");
-    if (!q) { host.innerHTML = ""; return; }
     const totals = familyUsdTotals();
     const total = (v) => v == null ? "—" : usd(v);
     const check = `<svg class="ic ic-sm ic-brand"><use href="#i-check"/></svg>`;
-    let html = "";
-    if (receiveNetworkMatches({ name: "All networks", aliases: ["all", "everything", "networks"] }, q)) {
-      const sel = viewKey === "all";
-      html += `<button class="netitem${sel ? " sel" : ""}" data-viewall="1"><span><svg class="ic ic-sm"><use href="#i-layers"/></svg> All networks</span><span class="vtotal">${total(heroTotal())}${sel ? " " + check : ""}</span></button>`;
+    // The pinned All-networks entry: always rendered (empty
+    // query included), outside the results list, wired to the
+    // same view-all action the search match used to carry.
+    const allSlot = $("netAllSlot");
+    if (allSlot) {
+      const selAll = viewKey === "all";
+      allSlot.innerHTML = `<button class="netitem${selAll ? " sel" : ""}" data-viewall="1"><span><svg class="ic ic-sm"><use href="#i-layers"/></svg> All networks</span><span class="vtotal">${total(heroTotal())}${selAll ? " " + check : ""}</span></button>`;
+      allSlot.querySelector("[data-viewall]").onclick = () => {
+        viewKey = "all"; saveViewKey(); closeSheet(); renderMain();
+      };
     }
+    if (!q) { host.innerHTML = ""; return; }
+    let html = "";
     // Chains with a pager page: jump the pager to the page.
     for (const s of homeScopes) {
       if (s.key === "all") continue;
@@ -4838,9 +4852,6 @@ $("netBtn").onclick = () => {
       const before = networkKey;
       await selectNetwork(b.dataset.net);
       if (networkKey === before) { closeSheet(); renderMain(); } // same network: selectNetwork only closed the sheet
-    });
-    host.querySelectorAll("[data-viewall]").forEach(b => b.onclick = () => {
-      viewKey = "all"; saveViewKey(); closeSheet(); renderMain();
     });
     host.querySelectorAll("[data-xplore]").forEach(b => b.onclick = () => {
       closeSheet(); goTab("wallet"); openExplore(); renderExploreChain(b.dataset.xplore);
@@ -11636,7 +11647,7 @@ $("actSwap").onclick = () => {
       document.querySelectorAll("[data-route]").forEach(b => b.onclick = async () => {
         if (b.disabled) return;
         const r = ranked[Number(b.dataset.route)];
-        pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount };
+        pendingSwap = { route: r, fromKey, toKey, fromTok, toTok, amount, offeredCount: ranked.length };
         // Token-trust re-check (§146, 2026-11-17): the search
         // gate ran at quote time; a token flagged SINCE the
         // quote is stopped here, before the review and before
@@ -11893,7 +11904,7 @@ $("actSwap").onclick = () => {
   $("wRoutes").onclick = searchRoutes;
   $("wDo").onclick = async () => {
     if (!pendingSwap) return;
-    const { route, fromKey, toKey, fromTok, toTok, amount } = pendingSwap;
+    const { route, fromKey, toKey, fromTok, toTok, amount, offeredCount } = pendingSwap;
     // Execution gate, re-run at the Confirm tap (2026-11-14 hard
     // stop): the review-step check is not trusted on its own — the
     // balance is re-read NOW, and a short or unreadable balance
@@ -12282,7 +12293,16 @@ $("actSwap").onclick = () => {
         try { console.warn("[fluid] swap outcome unconfirmed:", e); } catch { /* never break the sheet */ }
         msg("wMsg", "Your swap was sent — the network hasn't confirmed it yet, so it isn't marked failed. Your balances are refreshing now; the result will show in your activity. Please don't send it again yet.");
         rescanAfterActivity();
-      } else sendFailed(btn, "wMsg", e, "Swap failed: ");
+      } else {
+        // §155 D5: a rail's bounds refusal ends with "Pick
+        // another route." — claim that only when another route
+        // was actually on offer; when the refused route was the
+        // only one served for the pair, the copy says so.
+        let err = e;
+        if (err && typeof err.message === "string" && /Pick another route\./.test(err.message) && Number(offeredCount) <= 1)
+          err = new Error(err.message.replace(/Pick another route\./, "No other route serves this pair."));
+        sendFailed(btn, "wMsg", err, "Swap failed: ");
+      }
     } finally {
       releaseSwapRun(null);
     }

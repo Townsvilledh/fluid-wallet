@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync, statSync, readdirSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APPROVAL_PROXY, RELAY_ROUTER, relaySameChainTargetFor, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
 import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
@@ -5577,6 +5577,103 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     ok("relay: native step value must equal the exact swap amount",
       checkRelayStepBounds(native, native.relay.steps[0], native.relay.steps[0].items[0], RUSER).ok === true
       && checkRelayStepBounds(nativeShort, nativeShort.relay.steps[0], nativeShort.relay.steps[0].items[0], RUSER).ok === false);
+  }
+  // §155 D5 (2026-11-18): SAME-CHAIN Relay routes settle through
+  // RelayApprovalProxy (token input) / RelayRouter (native input)
+  // — never the depository. The fixtures below mirror the live
+  // responses probed on 2026-11-18 (LADYS→ETH and ETH→USDC on
+  // Arbitrum): the legitimate same-chain shapes pass; the
+  // depository spender on a same-chain route, rogue spenders,
+  // tampered amounts/tokens/recipients and value-smuggling inner
+  // calls are all refused.
+  {
+    const LADYS = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+    const AMT = 220000000n * 10n ** 18n;
+    const erc20 = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+    const proxyIface = new ethers.Interface(["function transferAndMulticall(address[] tokens, uint256[] amounts, tuple(address target, bool allowFailure, uint256 value, bytes data)[] calls, address refundTo, address recipient, bytes extraData)"]);
+    const routerIface = new ethers.Interface(["function multicall(tuple(address target, bool allowFailure, uint256 value, bytes data)[] calls, address refundTo, address recipient, bytes extraData)"]);
+    const extra = "0x" + "11".repeat(33);
+    const proxyCalldata = (over = {}) => proxyIface.encodeFunctionData("transferAndMulticall", [
+      over.tokens || [LADYS],
+      over.amounts || [AMT],
+      over.calls || [[LADYS, false, 0n, "0x095ea7b3"]],
+      over.refundTo || RUSER,
+      over.recipient || RUSER,
+      extra,
+    ]);
+    const mkStep = (id, data) => ({ id, items: [{ data: { from: RUSER, chainId: 42161, value: "0", ...data } }] });
+    const sameChainRoute = () => ({
+      fromAmount: AMT.toString(),
+      fromToken: { address: LADYS, symbol: "LADYS", decimals: 18, chainId: 42161 },
+      relay: { originChainId: 42161, destinationChainId: 42161, steps: [] },
+    });
+    const withSteps = (route, steps) => { route.relay.steps = steps; return route; };
+    const approveStep = (spender) => mkStep("approve", { to: LADYS, data: erc20.encodeFunctionData("approve", [spender, AMT]) });
+    const swapStep = (data) => mkStep("swap", { to: RELAY_APPROVAL_PROXY, data: proxyCalldata(), ...(data || {}) });
+
+    const good = withSteps(sameChainRoute(), [approveStep(RELAY_APPROVAL_PROXY), swapStep()]);
+    ok("§155 D5: same-chain token route (ApprovalProxy spender + swap step) passes the bounds check",
+      checkRelayStepBounds(good, good.relay.steps[0], good.relay.steps[0].items[0], RUSER).ok === true
+      && checkRelayStepBounds(good, good.relay.steps[1], good.relay.steps[1].items[0], RUSER).ok === true);
+    const depSpender = withSteps(sameChainRoute(), [approveStep("0x4cd00e387622c35bddb9b4c962c136462338bc31"), swapStep()]);
+    ok("§155 D5: a same-chain approval naming the depository is refused (wrong class)",
+      checkRelayStepBounds(depSpender, depSpender.relay.steps[0], depSpender.relay.steps[0].items[0], RUSER).ok === false);
+    const rogue = withSteps(sameChainRoute(), [approveStep("0x000000000000000000000000000000000000dEaD"), swapStep()]);
+    ok("§155 D5: a same-chain approval naming a rogue spender is refused",
+      checkRelayStepBounds(rogue, rogue.relay.steps[0], rogue.relay.steps[0].items[0], RUSER).ok === false
+      && /same-chain swap contract/.test(checkRelayStepBounds(rogue, rogue.relay.steps[0], rogue.relay.steps[0].items[0], RUSER).reason));
+    const badAmount = withSteps(sameChainRoute(), [approveStep(RELAY_APPROVAL_PROXY), swapStep({ data: proxyCalldata({ amounts: [AMT - 1n] }) })]);
+    ok("§155 D5: a proxy swap whose amount differs from the swap amount is refused",
+      checkRelayStepBounds(badAmount, badAmount.relay.steps[1], badAmount.relay.steps[1].items[0], RUSER).ok === false);
+    const badToken = withSteps(sameChainRoute(), [approveStep(RELAY_APPROVAL_PROXY), swapStep({ data: proxyCalldata({ tokens: ["0xaf88d065e77c8cC2239327C5EDb3A432268e5831"] }) })]);
+    ok("§155 D5: a proxy swap naming a different token is refused",
+      checkRelayStepBounds(badToken, badToken.relay.steps[1], badToken.relay.steps[1].items[0], RUSER).ok === false);
+    const badParty = withSteps(sameChainRoute(), [approveStep(RELAY_APPROVAL_PROXY), swapStep({ data: proxyCalldata({ recipient: "0x000000000000000000000000000000000000dEaD" }) })]);
+    ok("§155 D5: a proxy swap paying a third-party recipient is refused",
+      checkRelayStepBounds(badParty, badParty.relay.steps[1], badParty.relay.steps[1].items[0], RUSER).ok === false);
+    const badTarget = withSteps(sameChainRoute(), [approveStep(RELAY_APPROVAL_PROXY), swapStep({ to: "0x4cd00e387622c35bddb9b4c962c136462338bc31" })]);
+    ok("§155 D5: a same-chain swap step targeting the depository is refused",
+      checkRelayStepBounds(badTarget, badTarget.relay.steps[1], badTarget.relay.steps[1].items[0], RUSER).ok === false);
+
+    const ETH_AMT = 10n ** 16n;
+    const nativeRoute = () => ({
+      fromAmount: ETH_AMT.toString(),
+      fromToken: { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18, chainId: 42161 },
+      relay: { originChainId: 42161, destinationChainId: 42161, steps: [] },
+    });
+    const routerStep = (innerValue, over = {}) => mkStep("swap", {
+      to: RELAY_ROUTER, value: ETH_AMT.toString(),
+      data: routerIface.encodeFunctionData("multicall", [
+        over.calls || [[RELAY_ROUTER, false, innerValue, "0x9bb43718"]],
+        over.refundTo || "0x0000000000000000000000000000000000000000",
+        over.recipient || "0x0000000000000000000000000000000000000000",
+        extra,
+      ]),
+    });
+    const goodNative = withSteps(nativeRoute(), [routerStep(ETH_AMT - 6000000000000n)]);
+    ok("§155 D5: same-chain native route (RelayRouter multicall) passes the bounds check",
+      checkRelayStepBounds(goodNative, goodNative.relay.steps[0], goodNative.relay.steps[0].items[0], RUSER).ok === true);
+    const greedy = withSteps(nativeRoute(), [routerStep(ETH_AMT + 1n)]);
+    ok("§155 D5: a router swap whose inner calls exceed the swap's own value is refused",
+      checkRelayStepBounds(greedy, greedy.relay.steps[0], greedy.relay.steps[0].items[0], RUSER).ok === false);
+    const crossSwap = withSteps(nativeRoute(), [routerStep(ETH_AMT - 6000000000000n)]);
+    crossSwap.relay.destinationChainId = 8453;
+    ok("§155 D5: a swap step on a cross-chain route is refused",
+      checkRelayStepBounds(crossSwap, crossSwap.relay.steps[0], crossSwap.relay.steps[0].items[0], RUSER).ok === false);
+    ok("§155 D5: same-chain targets resolve per class; Metis (no deployment) fails closed",
+      relaySameChainTargetFor(42161, false) === RELAY_APPROVAL_PROXY
+      && relaySameChainTargetFor(42161, true) === RELAY_ROUTER
+      && relaySameChainTargetFor(1088, false) === null
+      && relaySameChainTargetFor(1088, true) === null);
+    const appSrcD5 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("§155 D5: the refusal copy only claims another route when one was offered",
+      appSrcD5.includes("No other route serves this pair.") && appSrcD5.includes("offeredCount: ranked.length"));
+    // §155 D6: the network selector's pinned All-networks entry.
+    ok("§155 D6: the network sheet pins an All networks entry above the search, outside the results list",
+      appSrcD5.includes('<div id="netAllSlot"></div>')
+      && appSrcD5.indexOf('<div id="netAllSlot"></div>') < appSrcD5.indexOf('<input id="netSearch"')
+      && appSrcD5.includes('allSlot.querySelector("[data-viewall]")')
+      && !appSrcD5.includes('receiveNetworkMatches({ name: "All networks"'));
   }
   // Source pin (house style): the bounds check runs before signing.
   const coreSrcRelay = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
@@ -18618,8 +18715,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("gap6: Relay intra HYPE -> USDC(999) collects at quote level (fees.app = the full dial)",
     rIntra6?.platformFeeCollecting === true && rIntra6.platformFeeRaw === "50000000000000000"
     && rIntra6.toAmount === "642328286");
-  ok("gap6: Relay intra's swap step is refused by the H-B depository pinning — the fleet-uniform same-chain behaviour (a Base -> Base quote refuses identically; Relay's same-chain router-step grammar is unpinned product-wide, so intra EXECUTION stays gated on every chain until that grammar is pinned)",
-    (() => { const s = relayExecutableSteps(rIntra6)[0]; return checkRelayStepBounds(rIntra6, s, s.items[0], ACCT6).ok === false; })());
+  ok("gap6: Relay intra's swap step passes the bounds check since §155 D5 pinned the same-chain grammar (RelayRouter multicall — the recorded step targets the pinned router; before D5 the unpinned grammar stayed gated and this refused)",
+    (() => { const s = relayExecutableSteps(rIntra6)[0]; return checkRelayStepBounds(rIntra6, s, s.items[0], ACCT6).ok === true; })());
   // Across: wired ONLY because the build-day in-page probe (from
   // the production origin, Fluid's own two-pass shape) echoed the
   // app fee in BOTH directions — 99,965 raw out, 99,979 raw in on
@@ -18954,8 +19051,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("gap7: Relay intra ETH -> USDG(4663) collects at quote level (fees.app = the full dial)",
     rIntra7?.platformFeeCollecting === true && rIntra7.platformFeeRaw === "50000000000000"
     && rIntra7.toAmount === "18160328" && rIntra7.toToken.symbol === "USDG");
-  ok("gap7: Relay intra's swap step is refused by the H-B depository pinning — the fleet-uniform same-chain behaviour (a Base -> Base quote refuses identically; Relay's same-chain router-step grammar is unpinned product-wide)",
-    (() => { const s = relayExecutableSteps(rIntra7)[0]; return checkRelayStepBounds(rIntra7, s, s.items[0], ACCT7).ok === false; })());
+  ok("gap7: Relay intra's swap step passes the bounds check since §155 D5 pinned the same-chain grammar (RelayRouter multicall — the recorded step targets the pinned router; before D5 the unpinned grammar stayed gated and this refused)",
+    (() => { const s = relayExecutableSteps(rIntra7)[0]; return checkRelayStepBounds(rIntra7, s, s.items[0], ACCT7).ok === true; })());
   // Across: wired ONLY because the build-day in-page probe (from
   // the production origin, Fluid's own two-pass shape) echoed the
   // app fee in BOTH directions on the WETH pair — 49,717,673,510,382

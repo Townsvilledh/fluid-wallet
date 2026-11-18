@@ -9312,6 +9312,37 @@ export function relayDepositoryFor(chainId) {
   if (!RELAY_EVM_CHAIN_IDS.has(id)) return null;
   return RELAY_DEPOSITORY_ALT_CHAINS.has(id) ? RELAY_DEPOSITORY_ALT : RELAY_DEPOSITORY;
 }
+/** Relay's SAME-CHAIN swap contracts (§155 D5, 2026-11-18):
+ *  same-chain Relay routes never touch the depository — a
+ *  token-input swap approves and calls RelayApprovalProxy
+ *  (transferAndMulticall), a native-input swap calls
+ *  RelayRouter (multicall). Both are Relay's own contracts
+ *  (Sourcify verified source: src/RelayApprovalProxy.sol,
+ *  src/RelayRouter.sol), deployed CREATE2-style at the same
+ *  address on every chain checked (bytecode size identical on
+ *  1, 8453, 42161, 56, 5000, 43114, 59144 — live-probed
+ *  2026-11-18 after a user's same-chain LADYS swap was refused
+ *  by the depository-only pin). Metis (1088) carries NEITHER
+ *  contract (eth_getCode 0 bytes via its canonical RPC), so it
+ *  resolves no same-chain target and fails closed, like any
+ *  chain outside RELAY_EVM_CHAIN_IDS. These are the ONLY
+ *  spenders/targets a same-chain Relay route may name — pinned
+ *  constants, never response values, same rule as the
+ *  depository. */
+export const RELAY_APPROVAL_PROXY = "0x5567954cd026cebfe486062cb75848e0f1c12e58";
+export const RELAY_ROUTER = "0x0729e2a4716d9f7dd17858d5d504426d228697f7";
+const RELAY_SAME_CHAIN_ABSENT_CHAINS = new Set([1088]);
+export function relaySameChainTargetFor(chainId, isNative) {
+  const id = Number(chainId);
+  if (!RELAY_EVM_CHAIN_IDS.has(id) || RELAY_SAME_CHAIN_ABSENT_CHAINS.has(id)) return null;
+  return isNative ? RELAY_ROUTER : RELAY_APPROVAL_PROXY;
+}
+const RELAY_APPROVAL_PROXY_ABI = [
+  "function transferAndMulticall(address[] tokens, uint256[] amounts, tuple(address target, bool allowFailure, uint256 value, bytes data)[] calls, address refundTo, address recipient, bytes extraData)",
+];
+const RELAY_ROUTER_ABI = [
+  "function multicall(tuple(address target, bool allowFailure, uint256 value, bytes data)[] calls, address refundTo, address recipient, bytes extraData)",
+];
 const RELAY_DEPOSITORY_ABI = [
   "function depositErc20(address depositor, address token, uint256 amount, bytes32 id)",
   "function depositNative(address depositor, bytes32 id)",
@@ -29461,17 +29492,32 @@ export function checkRelayStepBounds(route, step, item, owner) {
       .filter(s => s && s.id !== "approve")
       .flatMap(s => (s.items || []).map(it => it?.data?.to))
       .find(t => typeof t === "string" && t);
-    // H-B (2026-11-15): the spender is pinned to Relay's
-    // depository CONSTANT for the source chain — not merely to
+    // H-B (2026-11-15): the spender is pinned to a Relay
+    // contract CONSTANT for the source chain — not merely to
     // the deposit step's own `to` from the same response (the
     // old check, under which a response verified against
-    // itself). The deposit target must be that same constant.
-    const depository = relayDepositoryFor(route?.relay?.originChainId);
-    if (!depository) return refuse("Fluid has no pinned Relay depository for the swap's source chain.");
-    if (String(spender || "").toLowerCase() !== depository)
-      return refuse("a Relay approval was addressed to an unexpected spender, not Relay's pinned depository contract.");
-    if (!depositTo || String(depositTo).toLowerCase() !== depository)
-      return refuse("the Relay route's deposit step does not target Relay's pinned depository contract.");
+    // itself). The companion step's target must be that same
+    // constant. §155 D5 (2026-11-18): the constant depends on
+    // the route class — cross-chain routes settle through the
+    // depository; SAME-CHAIN routes settle through
+    // RelayApprovalProxy (see relaySameChainTargetFor). A
+    // same-chain approval naming the depository — or anything
+    // else — is refused, and vice versa.
+    const sameChain = Number(route?.relay?.originChainId) === Number(route?.relay?.destinationChainId);
+    const pinned = sameChain
+      ? relaySameChainTargetFor(route?.relay?.originChainId, false)
+      : relayDepositoryFor(route?.relay?.originChainId);
+    if (!pinned) return refuse(sameChain
+      ? "Fluid has no pinned Relay same-chain swap contract for the swap's source chain."
+      : "Fluid has no pinned Relay depository for the swap's source chain.");
+    if (String(spender || "").toLowerCase() !== pinned)
+      return refuse(sameChain
+        ? "a Relay approval was addressed to an unexpected spender, not Relay's pinned same-chain swap contract."
+        : "a Relay approval was addressed to an unexpected spender, not Relay's pinned depository contract.");
+    if (!depositTo || String(depositTo).toLowerCase() !== pinned)
+      return refuse(sameChain
+        ? "the Relay route's swap step does not target Relay's pinned same-chain swap contract."
+        : "the Relay route's deposit step does not target Relay's pinned depository contract.");
     let want = null;
     try { want = BigInt(route.fromAmount); } catch { want = null; }
     if (want == null || amount == null || BigInt(amount) !== want)
@@ -29489,6 +29535,60 @@ export function checkRelayStepBounds(route, step, item, owner) {
       return refuse("a Relay step's value did not match the exact amount being swapped.");
   } else if (value !== 0n) {
     return refuse("a Relay step carried native value on a token swap.");
+  }
+  if (step?.id === "swap") {
+    // §155 D5 (2026-11-18): a same-chain Relay swap step.
+    // Cross-chain routes never carry one (they deposit); a
+    // swap step on a cross-chain route is refused outright.
+    // The target is pinned per input class (RelayApprovalProxy
+    // for a token input, RelayRouter for the native coin) and
+    // the calldata is DECODED and checked field by field: the
+    // proxy may transfer only the sold token and only the
+    // exact amount, with refunds and proceeds addressed to the
+    // user (or left to the contract's sender semantics via the
+    // zero address — never a third party); the router's inner
+    // calls may carry no more native value in total than the
+    // transaction's own value, itself pinned above to the
+    // exact swap amount. The inner DEX calls' targets are the
+    // solver's plumbing and are not Fluid's to pin — the
+    // amounts, the parties and the outer contract are.
+    const sameChain = Number(route?.relay?.originChainId) === Number(route?.relay?.destinationChainId);
+    if (!sameChain) return refuse("a Relay swap step appeared on a route that is not same-chain.");
+    const target = relaySameChainTargetFor(route?.relay?.originChainId, isNative);
+    if (!target) return refuse("Fluid has no pinned Relay same-chain swap contract for the swap's source chain.");
+    if (String(data.to).toLowerCase() !== target)
+      return refuse("a Relay swap step did not target Relay's pinned same-chain swap contract.");
+    let wantSwap = null;
+    try { wantSwap = BigInt(route.fromAmount); } catch { wantSwap = null; }
+    if (wantSwap == null) return refuse("the swap amount was unreadable.");
+    const zeroAddr = "0x0000000000000000000000000000000000000000";
+    const partyOk = (a) => { const s = String(a || "").toLowerCase(); return s === String(owner).toLowerCase() || s === zeroAddr; };
+    if (!isNative) {
+      let p = null;
+      try { p = new ethers.Interface(RELAY_APPROVAL_PROXY_ABI).parseTransaction({ data: data.data }); } catch { p = null; }
+      if (!p || p.name !== "transferAndMulticall") return refuse("a Relay swap step's calldata did not decode as a RelayApprovalProxy call.");
+      const tokens = p.args[0], amounts = p.args[1], calls = p.args[2];
+      if (!tokens || tokens.length !== 1 || String(tokens[0]).toLowerCase() !== String(fromToken.address).toLowerCase())
+        return refuse("a Relay swap step named a different token than the one being swapped.");
+      if (!amounts || amounts.length !== 1 || BigInt(amounts[0]) !== wantSwap)
+        return refuse("a Relay swap step's amount did not match the exact amount being swapped.");
+      if (!calls || calls.length < 1) return refuse("a Relay swap step carried no calls to execute.");
+      for (const c of calls) { if (BigInt(c.value ?? 0) !== 0n) return refuse("a Relay swap step's inner call carried native value it should not have."); }
+      if (!partyOk(p.args[3]) || !partyOk(p.args[4]))
+        return refuse("a Relay swap step named a refund or recipient address that is not you.");
+      return { ok: true };
+    }
+    let p = null;
+    try { p = new ethers.Interface(RELAY_ROUTER_ABI).parseTransaction({ data: data.data }); } catch { p = null; }
+    if (!p || p.name !== "multicall") return refuse("a Relay swap step's calldata did not decode as a RelayRouter call.");
+    const calls = p.args[0];
+    if (!calls || calls.length < 1) return refuse("a Relay swap step carried no calls to execute.");
+    let innerTotal = 0n;
+    for (const c of calls) innerTotal += BigInt(c.value ?? 0);
+    if (innerTotal > value) return refuse("a Relay swap step's inner calls carried more native value than the swap itself.");
+    if (!partyOk(p.args[1]) || !partyOk(p.args[2]))
+      return refuse("a Relay swap step named a refund or recipient address that is not you.");
+    return { ok: true };
   }
   // H-B (2026-11-15): the deposit step itself — target pinned
   // to the depository constant, and the calldata DECODED and
