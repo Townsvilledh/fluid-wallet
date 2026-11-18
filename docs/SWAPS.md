@@ -42,7 +42,12 @@ The sources, per pair:
   Rootstock pairs are RBTC-only in both directions (RSK
   stables such as USDT0 are refused by Satora's quote API and
   stay on the OpenOcean intra lane; compositions reach them
-  through RBTC as the hub). Rootstock → Bitcoin family: the
+  through RBTC as the hub). The chain-30 pairs' counterparty
+  side is the Bitcoin family only (BTC / Lightning /
+  Arkade): there is no direct EVM-stable → chain-30 Satora
+  pair, so inbound to Rootstock from EVM stables composes
+  through the Bitcoin family (full pair scrutiny,
+  2026-11-18). Rootstock → Bitcoin family: the
   lock is an HTLCNative v2 lock the user funds from their own
   Rootstock account (the server refuses gasless funding for
   native locks; no Permit2, no custody), and a refund returns
@@ -346,6 +351,22 @@ gate lifted both families from coverage alone — as of
 > trap gate has lifted Polkadot — swaps in are offered
 > again, and swaps out execute with Fluid's commission
 > verified twice before your DOT moves.
+>
+> **Size caveat (measured 2026-11-18, full pair scrutiny +
+> live re-probe):** "two-way" holds only at small sizes.
+> Chainflip's DOT book depth is ~6 DOT (≈$4.40 at
+> $0.73/DOT): DOT-out quotes were served at 4, 5 and 6 DOT
+> on both the protocol API and Fluid's broker, and refused
+> ("insufficient liquidity") at 8 DOT and above — so at
+> the $10 pair standard DOT-out is NO-ROUTE, and the lane
+> is honestly a sub-~$4.50 exit today. DOT-in direct from
+> BSC quotes at exactly the 10 USDT hard minimum and
+> above, but a COMPOSED swap into DOT needs ~$11+ of
+> source value: leg 1 lands ~0.8% under the 10 USDT
+> minimum after its own costs, and the Chainflip leg then
+> refuses. The surface stays honest at every size — these
+> are live-quote refusals, never shown routes — but no
+> "two-way" claim for Polkadot stands without this caveat.
 
 DOT on Asset Hub joins the swap universe through Chainflip.
 Fluid already held, sent and received DOT; what was missing
@@ -426,7 +447,10 @@ refuses before funding.
   own (the DOT-source minimum measured 4 DOT on
   2026-11-17; DOT→BSC liquidity is thin — larger sizes can
   meet the protocol's insufficient-liquidity refusal,
-  which surfaces honestly as no route). Bitcoin and
+  which surfaces honestly as no route). The thin book's
+  ceiling was measured on 2026-11-18: quotes served at
+  6 DOT, refused at 8 DOT on both APIs (see the size
+  caveat at the head of this section). Bitcoin and
   Lightning origins likewise do not compose into DOT yet:
   no rail in the planner carries their value into a BSC
   anchor.
@@ -1743,12 +1767,16 @@ builder.
   user commits.** ZEC out: floor 0.00132 ZEC (~$1.22) at a
   ~457 s estimate — SLOW CLASS, disclosed as slow, never
   badged fast. ZEC in: floor ~$1.24 at ~150 s. DASH out:
-  floor 0.011 DASH (~$0.42) at ~129 s. **DASH in currently
-  has no liquidity above ~$1** (only a $1 quote cleared at
-  the probe; $5/$10/$20 all answered "No liquidity
-  available") — a solver-inventory state that may refill.
-  The pair is wired anyway and presents as an honest
-  no-route at larger sizes.
+  floor 0.011 DASH (~$0.42) at ~129 s. **DASH in is a
+  solver-inventory state, not a fixed fact:** at the
+  2026-11-15 probe it had no liquidity above ~$1 (only a
+  $1 quote cleared; $5/$10/$20 all answered "No liquidity
+  available"), but the full pair scrutiny of 2026-11-18
+  found 1Click quoting DASH in at $10 — both directions
+  live at the $10 standard. The pair is wired anyway and
+  presents as an honest no-route whenever the inventory
+  drains. A funded DASH-in settlement proof is still
+  owed; quote-live is not settlement-proven.
 - **Integration fix shipped with this gap:** 1Click's
   "No liquidity available" answer used to surface as a
   thrown route-search ERROR; it is now part of the no-route
