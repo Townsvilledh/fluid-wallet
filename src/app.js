@@ -60,6 +60,7 @@ import {
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
+  getCgContractPrices, routeCardReceiveLine, routeCardCostLine,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
@@ -208,7 +209,6 @@ let cosmosAddrs = {}, cosmosRows = [];
 // innerHTML goes through esc() first.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const UNVERIFIED_CAUTION = "This token isn't on a verified list — check the contract address carefully.";
-const expandedOther = new Set();  // family keys whose "Other tokens" group is expanded
 let familyScanFailed = {};        // tron/solana/sui -> true when the all-token read fell back to curated rows
 let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|failed, for the ACTIVE chain
 // Per-network EVM reads (§147, 2026-11-17): the All page promises
@@ -2245,11 +2245,13 @@ function paintHeader() {
 }
 
 // ---------- universal tokens: asset-list presentation ----------
-// Priced + verified tokens form the main list, sorted by USD value.
-// Everything else — unverified, or held but unpriced — stays visible
-// and fully usable under a collapsed "Other tokens (N)" group per
-// family. Token-derived strings are escaped (see esc): a token's
-// name is attacker-controlled data.
+// Every HELD token renders as a normal row in the main list,
+// sorted by USD value (§155, 2026-11-18): priced or not,
+// verified or not — the "Other tokens" bucket is abolished by
+// the owner's direct order. A held token no source can price
+// keeps its own named row with a blank fiat area. Token-derived
+// strings are escaped (see esc): a token's name is
+// attacker-controlled data.
 // ---------- token trust tags (§146, 2026-11-17) ----------
 // Verdicts live in wallet-core (proof-grade evidence standard,
 // per-chain+contract cache); this layer only renders them and
@@ -2375,9 +2377,9 @@ function skeletonRowsHtml(n = 3) {
  *  vanishing or posing as zero). Zero-balance rows are dropped
  *  here, at the single choke point every home list flows
  *  through — natives and curated stables included, no exceptions
- *  on this surface. Verified/priced rows form the main list;
- *  unverified or unpriced HELD rows keep the "Other tokens"
- *  group (held is held — the group hides nothing unheld). */
+ *  on this surface. Every held row is a main-list row (§155):
+ *  unverified or unpriced held tokens render exactly like the
+ *  rest, annotations riding the row itself. */
 function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
   return familyRowItems(famKey, rowsArr, priceOf, renderItem).html;
 }
@@ -2385,9 +2387,8 @@ function familyRowsHtml(famKey, rowsArr, priceOf, renderItem) {
  * §2): the All page's cross-chain list is built from these — one
  * item per held row across every family, each carrying its
  * pre-rendered row html plus the fields core's flattenHeldRows
- * orders by (amount, valueUsd, symbol). The chain page keeps the
- * grouped html (with its "Other tokens" group); the All page
- * flattens items and drops the grouping entirely. */
+ * orders by (amount, valueUsd, symbol). Chain page and All page
+ * render the same items — no grouping anywhere (§155). */
 function familyRowItems(famKey, rowsArr, priceOf, renderItem) {
   if (!famLoaded.has(famKey)) return { items: [], html: skeletonRowsHtml() };
   return familyRowItemsNow(famKey, rowsArr, priceOf, renderItem);
@@ -2403,9 +2404,9 @@ function familyRowItemsNow(famKey, rowsArr, priceOf, renderItem) {
   // badge belongs on All-page rows only, so each surface renders
   // its items under its own badge context (badgeAllCtx).
   const mk = ({ b, v }) => ({ b, famKey, amount: b.amount, valueUsd: v, symbol: b.symbol, render: () => renderItem({ b, v }) });
-  const main = sp.main.map(mk), other = sp.other.map(mk);
-  const html = main.map(x => x.render()).join("") + otherGroupHtml(famKey, sp.other, renderItem);
-  return { items: [...main, ...other], html };
+  const items = sp.main.map(mk);
+  const html = items.map(x => x.render()).join("");
+  return { items, html };
 }
 // Load/scan problems surface as a small alert in the group header
 // (§4.5) — the message + Retry live in a sheet, never as list prose.
@@ -2513,19 +2514,10 @@ async function retryFamily(key, title) {
   } catch { return fail(`${title} balances`); }
 }
 function splitRows(rows, symPriceOf, isNative = () => false) {
-  // The split itself lives in wallet-core (splitHomeRows) so the
-  // rule is unit-testable: the native row is tested FIRST and goes
-  // to main unconditionally — priced or not, flagged or not. A
-  // native asset is never an "other token".
+  // The ordering rule lives in wallet-core (splitHomeRows) so it
+  // is unit-testable: EVERY held row is a main row (§155 — the
+  // "Other tokens" bucket is abolished); the split only orders.
   return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);
-}
-function otherGroupHtml(famKey, items, renderItem) {
-  if (!items.length) return "";
-  const open = expandedOther.has(famKey);
-  return `<div class="row" data-other="${famKey}">
-      <span class="coin" style="background:#3b4a7a">…</span>
-      <span class="grow"><b>Other tokens (${items.length})</b><small>Unverified or unpriced — tap to ${open ? "hide" : "show"}. Fully usable; check contract addresses carefully.</small></span>
-      <span>${open ? "▾" : "▸"}</span></div>` + (open ? items.map(renderItem).join("") : "");
 }
 
 /** Amount cell for the scalar-balance families (LTC/DOGE/BCH):
@@ -3213,11 +3205,6 @@ function wireHomeRows(root) {
     const row = cosmosRows.find(x => x.key === r.dataset.cosmos);
     if (row) openTokenPage(familyTokenDesc(row.key, row), "home");
   });
-  root.querySelectorAll("[data-other]").forEach(r => r.onclick = () => {
-    const k = r.dataset.other;
-    if (expandedOther.has(k)) expandedOther.delete(k); else expandedOther.add(k);
-    paintAssets();
-  });
   const atb = root.querySelector("#addTokBtn");
   if (atb) atb.onclick = openAddTokenSheet;
 }
@@ -3872,6 +3859,40 @@ function evmChainEvidence(k) {
   try { return loadHeldTokens(NETWORKS[k].chainId).length > 0 || loadCustomTokens(NETWORKS[k].chainId).length > 0; }
   catch { return false; }
 }
+/** Price held EVM rows no list priced (§155, 2026-11-18):
+ *  CoinGecko by-contract first — the same source whose chain
+ *  list verifies these tokens, and the only source that prices
+ *  real held long-tail tokens at all (DexScreener returned
+ *  pairs:null for LADYS on Arbitrum while CG's by-contract
+ *  endpoint priced it) — then DexScreener for whatever CG does
+ *  not track. Mutates the rows' priceUsd in place; returns true
+ *  when any price landed. Never throws: a row no source prices
+ *  keeps priceUsd null and renders as a normal row with a blank
+ *  fiat area — held is held, priced or not. */
+async function priceHeldEvmRows(chainId, rows) {
+  const want = (rows || []).filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0);
+  if (!want.length) return false;
+  let changed = false;
+  try {
+    const m = await getCgContractPrices(chainId, want.map(r => r.address));
+    for (const r of want) {
+      const p = m.get(String(r.address).toLowerCase());
+      if (p != null) { r.priceUsd = p; changed = true; }
+    }
+  } catch { /* the DexScreener fallback below still runs */ }
+  const still = want.filter(r => r.priceUsd == null);
+  const dexId = dexChainIdForEvmChain(chainId);
+  if (still.length && dexId) {
+    try {
+      const info = await getDexScreenerTokenInfo(dexId, still.map(r => r.address));
+      for (const r of still) {
+        const d = info.get(r.address);
+        if (d && d.priceUsd != null) { r.priceUsd = d.priceUsd; changed = true; }
+      }
+    } catch { /* unpriced stays unpriced — an honest blank fiat area */ }
+  }
+  return changed;
+}
 /** One non-active chain's balance read. Throws when the base
  *  read (native + curated) fails — the caller shapes the
  *  failure. When the base lands but the known-token scan
@@ -3912,6 +3933,18 @@ async function readEvmChainRows(w, k) {
     knownRows = known.map(t => ({ symbol: t.symbol, name: t.name || t.symbol, amount: null,
       address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) }));
   }
+  // Held-row pricing + verification (§155): a known row's price
+  // resolves on THIS pass — by-contract, with the balance read —
+  // not from the symbol table (which cannot know long-tail
+  // tokens) and not from a later scan this chain never gets.
+  // Verification heals from the chain's CoinGecko list when it
+  // is already cached on-device (no extra fetch on this path).
+  const cgCached = cgCacheGet(chainId);
+  if (cgCached) {
+    const inList = new Set(cgCached.map(t => String(t.address || "").toLowerCase()));
+    for (const r of knownRows) if (r.address && inList.has(r.address.toLowerCase())) r.verified = true; // CG list membership IS the verification (chainTokenVerified's rule)
+  }
+  await priceHeldEvmRows(chainId, knownRows);
   return withRifSmartWalletRow(mergeEvmChainRows(base, knownRows), w, k);
 }
 /** Rootstock's per-network rows gain the RIF smart wallet's
@@ -4101,6 +4134,16 @@ async function hydrateEvmTokens() {
       }
     } catch { /* the full scan below remains the fallback */ }
   }
+  // Held-row pricing (§155): the visible list's prices resolve
+  // HERE — with the known-token reads, in one batched
+  // by-contract pass — not after the discovery tail below. A
+  // held token's value must land inside the balance window,
+  // not minutes later when the full scan happens to finish
+  // (the LADYS failure: its price waited behind the list fetch
+  // + full scan for a DexScreener step that had no pairs for
+  // it at all, so the row sat unpriced for the whole session).
+  if (await priceHeldEvmRows(chainId, [...customRows, ...quickRows]) && alive()) mergeEvmRows(customRows, quickRows);
+  if (!alive()) return;
   // Known-token phase settled: the visible list is now as
   // complete as this render's reads can make it, and the
   // header may stop holding the flag for it.
@@ -4227,17 +4270,12 @@ async function hydrateEvmTokens() {
   // amounts) so the next open quick-reads it before the list loads.
   saveHeldTokens(chainId, [...scan.balances.keys()].map(a => byAddr.get(a)).filter(Boolean)
     .concat(quickRows, customRows.filter(r => Number(r.amount) > 0)));
-  // 5) DexScreener prices for held rows no list could price.
-  const unpriced = [...customRows, ...allScannedRows].filter(r => r.priceUsd == null && Number(r.amount) > 0);
-  const dexId = dexChainIdForEvmChain(chainId);
-  if (unpriced.length && dexId) {
-    const info = await getDexScreenerTokenInfo(dexId, unpriced.map(r => r.address));
-    if (!alive()) return;
-    for (const r of unpriced) {
-      const d = info.get(r.address);
-      if (d && d.priceUsd != null) r.priceUsd = d.priceUsd;
-    }
-  }
+  // 5) Prices for held rows nothing above priced (§155):
+  // CoinGecko by-contract, then DexScreener — the same
+  // priceHeldEvmRows pass the known-token phase already ran;
+  // this one covers rows only the full scan could discover.
+  await priceHeldEvmRows(chainId, [...customRows, ...allScannedRows]);
+  if (!alive()) return;
   // A deadline-stopped scan is honest about its tail (§148):
   // its finds stand and are cached, but the chain reads
   // "limited" — discovery resumes on the next open — never
@@ -10459,13 +10497,55 @@ $("actSwap").onclick = () => {
     $(P[side].btn).textContent = t ? `${t.verified === false ? "⚠ " : ""}${t.symbol} ▾` : "Select token ▾";
   }
   function setPick(side, t) { pick[side] = t; updatePickBtn(side); show("wConfirm", false); $("wList").innerHTML = ""; pendingSwap = null; paintSwapAmtUsd(); }
-  // Live USD under the amount (2026-11-12): priced only from a
-  // price the app already holds (the getPrices-fed map, else the
-  // token's own list price); no price → the line stays empty.
+  // Live USD under the amount (2026-11-12; §155 repair,
+  // 2026-11-18): the price resolves from, in order — the
+  // symbol table, the pick's own list price, the held balance
+  // row's resolved price for this chain+contract, and finally
+  // a live by-contract fetch kicked from here (CoinGecko, then
+  // DexScreener) that repaints the line when it lands. The
+  // pre-§155 painter read only the first two, and both are
+  // structurally empty for long-tail tokens (the symbol table
+  // knows ~35 majors; every picker source hardcodes priceUSD
+  // null) — so the line silently never rendered for exactly
+  // the tokens the home screen was busy pricing (LADYS). No
+  // price anywhere → the line stays empty, never a placeholder.
+  const swapAmtPriceTried = new Set(); // `${netKey}:${addrLower}` — one fetch per pick per sheet
+  function heldRowPriceUsd(netKey, t) {
+    if (!t || !t.address || !NETWORKS[netKey]) return null;
+    const rows = netKey === networkKey ? balances : ((evmChainState.get(netKey) || {}).rows || []);
+    const b = rows.find(r => r.address && String(r.address).toLowerCase() === String(t.address).toLowerCase());
+    return b ? priceOfRow(b, prices[b.symbol]) : null;
+  }
+  function kickSwapAmtPrice(t) {
+    const net = NETWORKS[netSel.from];
+    if (!net || !t || !t.address || t.native) return;
+    const ck = netSel.from + ":" + String(t.address).toLowerCase();
+    if (swapAmtPriceTried.has(ck)) return;
+    swapAmtPriceTried.add(ck);
+    (async () => {
+      let p = null;
+      try {
+        const m = await getCgContractPrices(net.chainId, [t.address]);
+        p = m.get(String(t.address).toLowerCase()) ?? null;
+      } catch { /* the DexScreener fallback below still runs */ }
+      if (p == null) {
+        const dexId = dexChainIdForEvmChain(net.chainId);
+        if (dexId) {
+          try {
+            const info = await getDexScreenerTokenInfo(dexId, [t.address]);
+            const d = info.get(t.address);
+            if (d && d.priceUsd != null) p = d.priceUsd;
+          } catch { /* stays unpriced — the line stays empty */ }
+        }
+      }
+      if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); }
+    })();
+  }
   function paintSwapAmtUsd() {
     const el = $("wAmtUsd"); if (!el) return;
     const t = pick.from;
-    const px = t ? (Number(prices[t.symbol]) || t.priceUSD || null) : null;
+    const px = t ? (Number(prices[t.symbol]) || t.priceUSD || heldRowPriceUsd(netSel.from, t) || null) : null;
+    if (t && px == null) kickSwapAmtPrice(t);
     el.textContent = amountUsdLine($("wAmt").value.trim(), px) || "";
   }
   $("wAmt").addEventListener("input", paintSwapAmtUsd);
@@ -11548,8 +11628,8 @@ $("actSwap").onclick = () => {
           : `${r.cheapest ? '<span class="pill">CHEAPEST</span> ' : ""}${r.fastest ? '<span class="pill">FASTEST</span> ' : ""}`;
         const recv = fmt(swapRawToAmount(r.toAmount, toTok.decimals));
         return `<button class="${ex.ok ? "netitem routecard" : "netitem"}" data-route="${i}" ${ex.ok ? "" : "disabled style=\"opacity:.45\""}>
-            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${swapRouteCostLabel(r).text} ≈ ${usd(swapRouteCostLabel(r).usd)}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "satora" && satoraRifDisclosureLines(r).length ? `<br><small style="color:var(--warn)">${esc(satoraRifDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}${(r.provider === "tinyman" || r.provider === "pact") ? `<br><small style="color:var(--warn)">${esc(algoDisclosureLines(r).join(" "))}</small>` : ""}</span>
-            <span style="text-align:right">${usd(r.toAmountUSD)}${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
+            <span>${badges}${recv} ${esc(toTok.symbol)}<br><small style="color:var(--dim)">${esc(swapRouteName(r))} · ${swapDurationText(r.durationSec)} · ${esc(routeCardCostLine(r))}${r.usdMismatch ? " · ⚠ quoted value disagrees with the market price" : ""}</small>${r.entryCost ? `<br><small style="color:var(--warn)">Includes the one-time ${Number(r.entryCost.sats).toLocaleString()} sats Lightning channel opening — counted because your Lightning wallet has no channel yet; after it, receives cost no opening.</small>` : ""}${r.provider === "skip" && r.skip?.relayFee ? `<br><small style="color:var(--warn)">Includes the CCTP relay fee for this quote: ${fmt(swapRawToAmount(r.skip.relayFee.raw, 6))} USDC${r.skip.relayFee.usd ? ` (≈ ${usd(r.skip.relayFee.usd)})` : ""} — charged by the relay network, not by Fluid; it is already inside the amount you receive above.</small>` : ""}${(r.provider === "milestone" || r.provider === "oneclick") && (Number(r.durationSec) || 0) > 90 ? `<br><small style="color:var(--warn)">Slow route — about ${swapDurationText(r.durationSec)} in total${r.provider === "oneclick" ? " after your deposit confirms on its own network" : ""}, above the 1–1.5 minute staged-swap standard. No faster ${r.provider === "oneclick" ? "route" : "composition"} was found for this pair.</small>` : ""}${r.provider === "satora" && satoraRifDisclosureLines(r).length ? `<br><small style="color:var(--warn)">${esc(satoraRifDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "cctp-aptos" ? `<br><small style="color:var(--warn)">${esc(cctpAptosDisclosureLines(r).join(" "))}</small>` : ""}${r.provider === "bitflow" ? `<br><small style="color:var(--warn)">${esc(bitflowDisclosureLines(r).join(" "))}</small>` : ""}${(r.provider === "tinyman" || r.provider === "pact") ? `<br><small style="color:var(--warn)">${esc(algoDisclosureLines(r).join(" "))}</small>` : ""}</span>
+            <span style="text-align:right"><b>${esc(routeCardReceiveLine(r))}</b>${ex.ok ? '<br><span class="swapcta">Swap now ›</span>' : ""}</span></button>
           ${ex.ok ? "" : `<p class="tag" style="margin:2px 0 8px">${esc(ex.reason)}</p>`}`;
       }).join("");
       syncArkadeWarn(ranked);

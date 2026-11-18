@@ -5373,7 +5373,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcHome.includes("cosmos: famLoaded.has(\"cosmos\") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),"));
   const coreSrcHome = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("home order: splitRows main list runs through sortHomeRows, old value-only sort gone",
-    coreSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };")
+    coreSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other: [] };")
     && appSrcHome.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
     && !appSrcHome.includes("main.sort((x, y) => y.v - x.v);"));
   ok("home order: each Cosmos chain is its own pager scope (rev5 — no shared Cosmos card)",
@@ -8358,21 +8358,27 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const ALGO_ROW = { symbol: "ALGO", name: "Algorand", amount: "0.898", address: null, decimals: 6, verified: true };
   const ASA_ROW = { symbol: "ASA 123", name: "Algorand asset", amount: "50", address: "123", decimals: 0, verified: false, priceUsd: null };
   // (a) native held, price missing → main with its amount, v null.
+  // (§155, 2026-11-18: the unverified ASA row beside it is ALSO a
+  // main row now — the "Other tokens" bucket is abolished, so
+  // `other` is always empty and every held row renders normally.)
   {
     const sp = splitHomeRows([ALGO_ROW, ASA_ROW], () => null, (b) => !b.address);
-    ok("unpriced native: a held native row with no price renders in main, not the Other group",
-      sp.main.length === 1 && sp.main[0].b === ALGO_ROW && sp.main[0].v === null && sp.other.length === 1);
+    ok("unpriced native: a held native row with no price renders in main (§155: the unverified held token beside it is a main row too — no bucket)",
+      sp.main.length === 2 && sp.main[0].b === ALGO_ROW && sp.main[0].v === null && sp.other.length === 0);
     ok("unpriced native: the held native sorts as held in main (ahead of zeros)",
       splitHomeRows([{ ...ALGO_ROW, amount: "0" }, ALGO_ROW], () => null, (b) => !b.address).main[0].b.amount === "0.898");
   }
-  // (b) a genuine token, unpriced → still grouped; unverified stays
-  // grouped even when priced (the owner's quarantine, unchanged).
+  // (b) §155 contract: a genuine token renders in main priced or
+  // not, verified or not — held is held.
   {
     const tok = { symbol: "MEME", amount: "10", address: "0xabc", verified: true };
-    ok("unpriced native: an unpriced non-native token still lands in the Other group",
-      splitHomeRows([tok], () => null, () => false).other.length === 1);
-    ok("unpriced native: an unverified token stays grouped even with a price",
-      splitHomeRows([{ ...tok, verified: false }], () => 5, () => false).other.length === 1);
+    ok("§155: an unpriced non-native token renders as a normal main row with a null value (no bucket)",
+      splitHomeRows([tok], () => null, () => false).main.length === 1
+      && splitHomeRows([tok], () => null, () => false).main[0].v === null
+      && splitHomeRows([tok], () => null, () => false).other.length === 0);
+    ok("§155: an unverified token renders in main even with a price (the flag rides the row as a chip, never a bucket)",
+      splitHomeRows([{ ...tok, verified: false }], () => 5, () => false).main.length === 1
+      && splitHomeRows([{ ...tok, verified: false }], () => 5, () => false).other.length === 0);
     ok("unpriced native: a verified priced token renders in main",
       splitHomeRows([tok], () => 5, () => false).main.length === 1);
   }
@@ -9191,8 +9197,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       return l.text === "fees" && Math.abs(l.usd - 0.0033) < 1e-12; })());
   {
     const appSrc76 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-    ok("F5: the route row renders through swapRouteCostLabel, never gasCostUSD alone",
-      appSrc76.includes("swapRouteCostLabel(r).text") && appSrc76.includes("swapRouteCostLabel(r).usd")
+    ok("F5: the route row renders its cost through routeCardCostLine (swapRouteCostLabel's total, never gasCostUSD alone) and its receive value through routeCardReceiveLine",
+      appSrc76.includes("routeCardCostLine(r)") && appSrc76.includes("routeCardReceiveLine(r)")
       && !appSrc76.includes("fees ≈ ${usd(r.gasCostUSD)}"));
   }
 }
@@ -19309,8 +19315,10 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
         sp.main.length === 2 && sp.other.length === 0
         && sp.main.find(x => x.b === usdgRow).v === 25 && sp.main.find(x => x.b === wethRow).v === 1500);
       const memeRow = { symbol: "MEME", amount: "10", address: "0xabc", decimals: 18 };
-      ok("repair127: a genuinely unpriced token still groups as before — the fix prices the pins, it does not open the gates",
-        splitHomeRows([memeRow], valueOf(table), () => false).other.length === 1);
+      ok("repair127: an unpriced token is a main row carrying a null value (§155 — the bucket is abolished; held rows render as normal rows, priced or not)",
+        splitHomeRows([memeRow], valueOf(table), () => false).main.length === 1
+        && splitHomeRows([memeRow], valueOf(table), () => false).main[0].v === null
+        && splitHomeRows([memeRow], valueOf(table), () => false).other.length === 0);
     } finally { globalThis.fetch = realFetch127; }
     // The cache invariant the seeding must not break: a load
     // that priced NOTHING beyond the $1 constants (dead feeds)
@@ -23908,6 +23916,114 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && !app154.includes("r.onclick = () => {\n    const b = rowRefs.get("));
   ok("§154: the smart-wallet upsert never writes into a failed base read's empty balances (the plain send sheet would list the smart-wallet row as its only option) — the failure shape carries the row for paint instead",
     app154.includes('if (networkKey !== "rootstock" || !rifSwLive || evmLoadFailed) return;'));
+}
+
+// ================= §155: phone repair order (2026-11-18) =================
+// Ethuram's live phone, three defects + one confusion, one root
+// system: a held long-tail token (LADYS on Arbitrum) had NO
+// working price source — the symbol table knows ~35 majors, the
+// CoinGecko chain list carries priceUSD null by construction,
+// and the only long-tail step (DexScreener, active chain only,
+// after the list fetch + full scan) returned pairs:null for it
+// — so its value never existed: excluded from totals, dumped
+// in the "Other tokens" bucket by splitHomeRows' verified+priced
+// gate, and priceless in the swap sheet, whose USD line reads
+// only the symbol table + the pick's (always null) list price.
+// Plus D4: the route card printed the RECEIVE value as a large
+// unlabelled figure and the cost as small print, and the user
+// read the $0.15 receive as the swap's gas (measured all-in
+// quote cost for that exact trade, two-pass live probe:
+// $0.0032 — see the walk report).
+{
+  const { parseCgTokenPrices, getCgContractPrices, splitHomeRows: split155,
+          routeCardReceiveLine, routeCardCostLine, amountUsdLine: usdLine155 } = await import("../src/wallet-core.js");
+  const LADYS = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+  // --- by-contract price source (D1) ---
+  {
+    const m = parseCgTokenPrices({ [LADYS.toLowerCase()]: { usd: 4.519e-9 }, "0xdead": { usd: 0 }, "0xbeef": { usd: "x" } },
+      [LADYS, "0xdead", "0xbeef", "0xcafe"]);
+    ok("§155: the by-contract parser prices the token CoinGecko tracks (the live LADYS shape) and keys it lowercased",
+      m.get(LADYS.toLowerCase()) === 4.519e-9 && m.size === 1);
+    ok("§155: the by-contract parser drops zero, garbage and missing prices — unknown stays absent, never a fabricated figure",
+      !m.has("0xdead") && !m.has("0xbeef") && !m.has("0xcafe"));
+    ok("§155: the by-contract parser tolerates a null body", parseCgTokenPrices(null, [LADYS]).size === 0);
+  }
+  {
+    let calls = 0;
+    const stub = async (url) => {
+      calls++;
+      ok("§155: the by-contract fetch targets the chain's CG platform with the contract address",
+        url.includes("simple/token_price/arbitrum-one") && url.includes(LADYS.toLowerCase()));
+      return { ok: true, json: async () => ({ [LADYS.toLowerCase()]: { usd: 4.519e-9 } }) };
+    };
+    const m1 = await getCgContractPrices(42161, [LADYS], stub);
+    ok("§155: getCgContractPrices returns the by-contract price for a held long-tail token",
+      m1.get(LADYS.toLowerCase()) === 4.519e-9 && calls === 1);
+    const m2 = await getCgContractPrices(42161, [LADYS], async () => { throw new Error("must not be called — cache"); });
+    ok("§155: a repeat lookup inside the TTL is served from the session cache (a render loop cannot hammer the keyless API)",
+      m2.get(LADYS.toLowerCase()) === 4.519e-9);
+    const m3 = await getCgContractPrices(42161, ["0x0000000000000000000000000000000000001234"], async () => { throw new Error("down"); });
+    ok("§155: a failed by-contract fetch prices nothing and never throws (the row stays honestly unpriced)",
+      m3.size === 0);
+    const m4 = await getCgContractPrices(999999, [LADYS], stub);
+    ok("§155: a chain with no CoinGecko platform prices nothing", m4.size === 0);
+  }
+  // --- the bucket is abolished (D2) ---
+  {
+    const ladysRow = { symbol: "LADYS", name: "Milady Meme Coin", amount: "1041558458", address: LADYS, decimals: 18, verified: false, priceUsd: null };
+    const ethRow = { symbol: "ETH", name: "Ether", amount: "0.005", address: null, decimals: 18, verified: true };
+    const pricedRow = { symbol: "USDC", name: "USD Coin", amount: "20", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", decimals: 6, verified: true };
+    const failedRow = { symbol: "XYZ", name: "XYZ", amount: null, address: "0x999", decimals: 18, verified: false };
+    const valueOf = (b) => b === pricedRow ? 20 : b === ethRow ? 9 : null;
+    const sp = split155([ladysRow, ethRow, pricedRow, failedRow], valueOf, (b) => !b.address);
+    ok("§155: a held unverified unpriced token (the LADYS shape) renders as a main row — the bucket is gone",
+      sp.main.some(x => x.b === ladysRow) && sp.other.length === 0);
+    ok("§155: ordering holds — priced rows by value first, unpriced positives after, couldn't-load rows last among the visible",
+      sp.main[0].b === pricedRow && sp.main[1].b === ethRow && sp.main[2].b === ladysRow && sp.main[3].b === failedRow);
+    ok("§155: splitHomeRows NEVER returns an other row, whatever the flags",
+      [ladysRow, ethRow, pricedRow, failedRow].every(r => split155([r], () => null, () => false).other.length === 0));
+  }
+  // --- swap-sheet USD line arithmetic (D3) ---
+  ok("§155: the amount-USD line prices the phone case exactly (30,000,000 LADYS at the live by-contract price)",
+    usdLine155("30000000", 4.519e-9) === "≈ $0.14");
+  ok("§155: the amount-USD line stays empty without a price (no placeholder, no price-talk)",
+    usdLine155("30000000", null) === null && usdLine155("", 5) === null);
+  // --- route-card labels (D4b) ---
+  ok("§155: the route card's receive line names itself (the figure Ethuram read as gas)",
+    routeCardReceiveLine({ toAmountUSD: 0.147419 }) === "You receive ≈ $0.15");
+  ok("§155: the route card's cost line names itself and carries the TOTAL cost (route + Fluid fee, never gas alone)",
+    routeCardCostLine({ routeFeeUsd: 0.00244, platformFeeUsd: 0.00073, gasCostUSD: 0.0202 }) === "Cost ≈ <$0.01");
+  ok("§155: the cost line falls back to the gas figure only when the route carries no routeFeeUsd (swapRouteCostLabel's contract)",
+    routeCardCostLine({ gasCostUSD: 0.36 }) === "Cost ≈ $0.36");
+  // --- app wiring (source pins) ---
+  const app155 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const core155 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("§155: the bucket renders NOWHERE for held balances — no group function, no data-other wiring, no bucket markup in app.js",
+    !app155.includes("otherGroupHtml") && !app155.includes("data-other") && !app155.includes("Other tokens (")
+    && !app155.includes("expandedOther") && !app155.includes("Unverified or unpriced — tap to"));
+  ok("§155: the chain page renders the flat item list (familyRowItemsNow returns items only, no grouped bucket html)",
+    app155.includes("const html = items.map(x => x.render()).join(\"\");"));
+  ok("§155: held-row pricing runs on the ACTIVE chain with the known-token reads — before the discovery tail, not after the full scan",
+    app155.includes("if (await priceHeldEvmRows(chainId, [...customRows, ...quickRows]) && alive()) mergeEvmRows(customRows, quickRows);")
+    && app155.indexOf("priceHeldEvmRows(chainId, [...customRows, ...quickRows])") < app155.indexOf("const list = await cgTokensForChain(chainId);"));
+  ok("§155: held-row pricing also runs inside the per-network read (§147) — non-active chains price their held tokens on the same pass",
+    app155.includes("await priceHeldEvmRows(chainId, knownRows);"));
+  ok("§155: the scan-tail pricing pass covers scan-discovered held rows too (step 5 rides the same helper)",
+    app155.includes("await priceHeldEvmRows(chainId, [...customRows, ...allScannedRows]);"));
+  ok("§155: the pricing helper asks CoinGecko by-contract BEFORE DexScreener (the source that verifies the token first)",
+    app155.indexOf("const m = await getCgContractPrices(chainId, want.map(r => r.address));")
+      < app155.indexOf("const info = await getDexScreenerTokenInfo(dexId, still.map(r => r.address));"));
+  ok("§155: core's by-contract fetch is built on the platform map (one authority for list + price)",
+    core155.includes("simple/token_price/${platform}") && core155.includes("const platform = cgPlatformForChain(chainId);"));
+  ok("§155: the swap sheet's USD line resolves the held balance row's price and kicks a live by-contract fetch when nothing holds one",
+    app155.includes("|| heldRowPriceUsd(netSel.from, t) || null") && app155.includes("function kickSwapAmtPrice(t)")
+    && app155.includes("const m = await getCgContractPrices(net.chainId, [t.address]);")
+    && app155.includes("if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); }"));
+  ok("§155: the swap sheet still carries the USD line element under the amount input, repainted on every keystroke",
+    app155.includes('<p class="tag" id="wAmtUsd"') && app155.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd);'));
+  ok("§155: route cards render the labelled receive + cost lines (no unlabelled receive figure remains)",
+    app155.includes("<b>${esc(routeCardReceiveLine(r))}</b>") && app155.includes("${esc(routeCardCostLine(r))}")
+    && !app155.includes('<span style="text-align:right">${usd(r.toAmountUSD)}'));
 }
 
 console.log(`\n${passed} checks passed`);

@@ -29618,6 +29618,24 @@ export function swapRouteCostLabel(route) {
   return { text: "fees", usd: Number(route?.gasCostUSD) || 0 };
 }
 
+/** The route card's two money lines, labelled so they cannot
+ *  be confused (§155, 2026-11-18): the card used to print the
+ *  receive value as a large unlabelled figure at the right and
+ *  the cost as small print — Ethuram read the big $0.15 (what
+ *  he would RECEIVE for a $0.15 position) as the swap's gas,
+ *  when the measured all-in quote cost was $0.0032. The lines
+ *  now carry their words with them: "You receive ≈ $X" is the
+ *  card's prominent figure, "Cost ≈ $Y" the cost line, the
+ *  cost arithmetic still swapRouteCostLabel's (total cost,
+ *  never gas alone). Pure; the sheet renders exactly these
+ *  strings. */
+export function routeCardReceiveLine(route) {
+  return "You receive ≈ " + formatDisplayUsd(Number(route?.toAmountUSD) || 0);
+}
+export function routeCardCostLine(route) {
+  return "Cost ≈ " + formatDisplayUsd(swapRouteCostLabel(route).usd);
+}
+
 export function rankSwapRoutes(routes, toTokenPriceUsd = null, opts = {}) {
   // Merit ranking (2026-11-11, the owner's rule): when a
   // destination-gas plan is in force — passed explicitly, or
@@ -30841,8 +30859,10 @@ export function formatSwapIntent({ fromAmount, fromSymbol, fromNetKey, toAmount,
 // a token is "verified" only when it appears in the family's trusted
 // list (curated set, Jupiter strict, or the chain's CoinGecko list).
 // Everything else still shows and still works, but
-// carries verified:false — the app groups it under "Other tokens",
-// marks it ⚠, and adds a caution line to its send/swap reviews.
+// carries verified:false — the app renders it as a normal row
+// carrying the UNVERIFIED chip (§155: the "Other tokens" bucket
+// is abolished — held tokens are never grouped away), and adds
+// a caution line to its send/swap reviews.
 // Prices come from the wallet's price table, DexScreener, or
 // DexScreener — NEVER from a bare symbol lookup, because any scam
 // token can call itself "USDC".
@@ -30905,7 +30925,7 @@ export function parseDexScreenerPairs(data, dexChainId, addresses) {
     // token's display name/symbol here (a $120 pool "renamed" a token to
     // USDC at $400). Liquidity is the expensive thing to fake; volume is
     // not. Pairs under the floor contribute nothing — the token simply
-    // stays unpriced (Other tokens, still fully usable).
+    // stays unpriced (a normal row with a blank fiat area, §155).
     const liq = Number((p.liquidity && p.liquidity.usd) || 0);
     if (!(liq >= 1000)) continue;
     const cand = { price, vol: Number((p.volume && p.volume.h24) || 0),
@@ -30979,6 +30999,67 @@ export function cgPlatformForChain(chainId) {
  *  majors whose contract route doesn't apply. Null when unknown. */
 export function cgIdForSymbol(symbol) {
   return CG_IDS[symbol] || null;
+}
+/** Pure parser for a CoinGecko simple/token_price reply
+ *  ({ "<address>": { usd: n }, … }) → Map(lowercased address →
+ *  USD price). Only finite, positive prices land; an address the
+ *  reply omits or prices at zero/garbage stays absent — unknown
+ *  is null's job, never a fabricated figure. */
+export function parseCgTokenPrices(data, addresses) {
+  const out = new Map();
+  if (!data || typeof data !== "object") return out;
+  for (const a of addresses || []) {
+    const key = String(a || "").toLowerCase();
+    if (!key) continue;
+    const v = Number(data[key] && data[key].usd);
+    if (Number.isFinite(v) && v > 0) out.set(key, v);
+  }
+  return out;
+}
+/** By-contract CoinGecko prices for EVM tokens (§155,
+ *  2026-11-18): the price source for held tokens the symbol
+ *  table cannot know — the table covers ~35 majors by symbol,
+ *  the chain token lists carry priceUSD null BY CONSTRUCTION,
+ *  and DexScreener has no pairs at all for real held tokens
+ *  (live-probed: LADYS on Arbitrum, pairs: null, while this
+ *  endpoint prices it at $4.519e-09). CoinGecko is the same
+ *  source whose list verifies the token, so the price and the
+ *  verification share one authority. Batched (30 addresses per
+ *  call, the endpoint's comfortable batch), fault-tolerant per
+ *  batch (a failed batch prices nothing, never throws), and
+ *  cached in memory for CG_CONTRACT_PRICE_TTL_MS — hits AND
+ *  misses, so a render loop cannot hammer the keyless API for
+ *  a token it does not track. Returns a Map keyed by the
+ *  LOWERCASED address. `fetchImpl` is injectable for tests. */
+export const CG_CONTRACT_PRICE_TTL_MS = 30000;
+const cgContractPriceCache = new Map(); // `${chainId}:${addrLower}` -> { at, price|null }
+export async function getCgContractPrices(chainId, addresses, fetchImpl) {
+  const out = new Map();
+  const platform = cgPlatformForChain(chainId);
+  if (!platform) return out;
+  const F = fetchImpl || fetch;
+  const want = [...new Set((addresses || []).map(a => String(a || "").toLowerCase()).filter(Boolean))];
+  const now = Date.now();
+  const misses = [];
+  for (const a of want) {
+    const hit = cgContractPriceCache.get(`${chainId}:${a}`);
+    if (hit && now - hit.at < CG_CONTRACT_PRICE_TTL_MS) { if (hit.price != null) out.set(a, hit.price); }
+    else misses.push(a);
+  }
+  for (const batch of chunkArray(misses, 30)) {
+    let parsed = new Map();
+    try {
+      const url = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${batch.join(",")}&vs_currencies=usd`;
+      const res = await F(url, { signal: AbortSignal.timeout(8000) });
+      if (res && res.ok) parsed = parseCgTokenPrices(await res.json().catch(() => null), batch);
+    } catch { /* this batch prices nothing — the rows stay honestly unpriced */ }
+    for (const a of batch) {
+      const p = parsed.get(a) ?? null;
+      cgContractPriceCache.set(`${chainId}:${a}`, { at: Date.now(), price: p });
+      if (p != null) out.set(a, p);
+    }
+  }
+  return out;
 }
 /** Pure parser for a CoinGecko market_chart reply: [[ms, price], …]
  *  → at most maxPoints { t, p } samples, evenly thinned, garbage
@@ -35232,28 +35313,32 @@ export function unpackBalanceCache(json, address) {
  *  rows in their given order. amountOf/valueOf read the caller's
  *  row shape; an unpriced positive counts as value 0 among the
  *  positives. */
-/** Split one family's home rows into the visible main list and the
- *  collapsed "Other tokens" group (2026-11-09 unpriced-native fix).
- *  THE NATIVE ROW IS TESTED FIRST AND UNCONDITIONALLY: a family's
- *  native asset is a main row even when its price is missing (v null)
- *  and even if a data source left verified === false on it — natives
- *  are never "other tokens". A NON-native row joins main only when it
- *  is not flagged unverified AND carries a USD value; an explicit
- *  unverified flag or a missing price keeps a token in the group
- *  (the owner's quarantine for unverified/unpriced tokens). Main is
- *  ordered with sortHomeRows (held, then couldn't-load, then zeros);
- *  the Other group keeps its given order.
+/** Split one family's home rows for rendering (§155,
+ *  2026-11-18 — the "Other tokens" bucket is ABOLISHED by the
+ *  owner's direct order). Until today a non-native row joined
+ *  the main list only when it was not flagged unverified AND
+ *  carried a USD value; everything else — in practice every
+ *  held non-curated token, since held rows are stamped
+ *  verified:false at read time — collapsed into an "Other
+ *  tokens" group on every chain, its value excluded from view
+ *  (the LADYS complaint: a >$5 position sat in the bucket
+ *  while the chain total showed $0.01 of ETH dust). Held is
+ *  held: EVERY row is a main row now, priced or not, flagged
+ *  or not — an unpriceable token keeps its own named row with
+ *  a blank fiat area, and verification/trust annotations ride
+ *  the row itself (the UNVERIFIED chip, the §146 trust badge),
+ *  never a bucket. Ordering is sortHomeRows unchanged (held
+ *  by value, then couldn't-load, then zeros). `other` is
+ *  always empty — the field survives so consumers keep their
+ *  shape; nothing renders from it.
  *  rows: balance-row objects; valueOf(b) → USD value or null;
- *  isNative(b) → boolean. Returns { main: [{b, v}], other: [{b, v}] }. */
+ *  isNative(b) → boolean (kept for signature stability; the
+ *  native row needs no special case when nothing is bucketed).
+ *  Returns { main: [{b, v}], other: [] }. */
 export function splitHomeRows(rows, valueOf, isNative) {
-  const main = [], other = [];
-  for (const b of rows) {
-    const v = valueOf(b);
-    if (isNative(b)) main.push({ b, v });
-    else if (b.verified !== false && v != null) main.push({ b, v });
-    else other.push({ b, v });
-  }
-  return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other };
+  const main = [];
+  for (const b of rows) main.push({ b, v: valueOf(b) });
+  return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other: [] };
 }
 
 /** Count holdings with no live price (2026-11-09 unpriced-native
