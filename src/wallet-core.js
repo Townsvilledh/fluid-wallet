@@ -493,13 +493,14 @@ export const NETWORKS = {
   // RSK (OpenOcean's live list + builds); its contract symbol
   // is "USD₮0", pinned here as the chain's USDT with the
   // provenance named (rUSDT, the token-bridge form, is NOT
-  // pinned). Satora quotes RBTC ↔ BTC/Lightning/Arkade with
-  // the keyed capture echo PROVEN live at build time — but
-  // its execution is NOT wired: chain-30 swaps lock in an
-  // HTLCNative v2 (no gasless funding) and pay out through
-  // RIF Relay smart wallets, two mechanisms Fluid does not
-  // implement; the full evidence is the research addendum.
-  // A route that would refuse at creation is not offered.
+  // pinned). Satora chain-30 execution IS wired (§153):
+  // RBTC ↔ BTC/Lightning/Arkade locks in an HTLCNative v2
+  // funded by the user's own account (no gasless funding),
+  // and BTC-family payouts claim through the user's RIF Relay
+  // smart wallet. Since §154 the smart wallet's RBTC is a
+  // first-class balance with its own relayed send; swaps OUT
+  // of the smart wallet are not offered (the lock's depositor
+  // is the plain account by construction — see SWAPS.md).
   rootstock: {
     name: "Rootstock", chainId: 30, symbol: "RBTC", priceSym: "BTC",
     rpc: "https://public-node.rsk.co", explorer: "https://explorer.rootstock.io",
@@ -16697,6 +16698,230 @@ export async function claimSatoraRifRelaySwap(record, { phrase } = {}) {
     /* a slow read is not a failed claim — the hash stands */
   }
   return { status: "clientredeeming", txHash, feeWei: fee.toString(), already: false };
+}
+// ---------- Spending FROM the RIF smart wallet (§154) ----------
+// §153 landed claimed RBTC IN the user's RIF Relay smart
+// wallet, but nothing could spend it back out: the balance
+// views never read the smart wallet, and no send path could
+// sign for it. This section closes that gap with the same
+// grammar and discipline as the claim. The smart wallet's
+// balance is read live like any other balance (a failed read
+// throws — the surfaces show "couldn't load", never a zero).
+// A spend signs an RSK Enveloping request whose inner call is
+// an arbitrary (to, value, data) executed BY the smart wallet;
+// the relay submits it and takes its fee out of the smart
+// wallet's own RBTC (tokenAmount), so the plain Rootstock
+// account needs no RBTC either. The fee is computed from the
+// relay's /estimate BEFORE the owner signs, and the spend
+// refuses — before any signature — when the fee would eat the
+// amount, when it passes the reviewed bound the caller hands
+// in, or when the smart wallet's balance cannot cover amount
+// + fee. Only the owner's key ever signs; the relay receives
+// the signed request and nothing else.
+export const SATORA_RIF_SPEND_CALL_GAS = 100000n;
+/** Build an RIF relay request for an arbitrary smart-wallet
+ *  call (the claim builder above is the HTLC special case of
+ *  this shape). Deploy kind when the wallet does not exist yet
+ *  (it is deployed inside this same relayed transaction, then
+ *  executes the call); relay kind once it does. Pure: returns
+ *  the JSON request/relayData for the envelope plus the
+ *  EIP-712 domain/types/message for the owner's signature.
+ *  tokenAmount is the relay fee in wei (0 for the /estimate
+ *  pass). */
+export function buildRifRelayCallRequest({ deployed, owner, smartWallet, to, valueWei = 0n, data = "0x", callGas, nonce, tokenAmountWei, gasPriceWei, feesReceiver, validUntilTime } = {}) {
+  if (!ethers.isAddress(owner || "") || !ethers.isAddress(smartWallet || "") || !ethers.isAddress(to || ""))
+    throw new Error("The relayed call's addresses were unreadable.");
+  const value = BigInt(valueWei || 0);
+  if (value < 0n) throw new Error("The relayed call's value was unreadable.");
+  const callData = typeof data === "string" && /^0x(?:[0-9a-fA-F]{2})*$/.test(data) ? data : null;
+  if (callData == null) throw new Error("The relayed call's data was unreadable.");
+  const fee = BigInt(tokenAmountWei || 0);
+  const request = {
+    relayHub: SATORA_RIF_RELAY_HUB, from: owner, to, tokenContract: ethers.ZeroAddress,
+    value: value.toString(), nonce: BigInt(nonce).toString(), tokenAmount: fee.toString(),
+    tokenGas: fee > 0n ? SATORA_RIF_FEE_TRANSFER_GAS.toString() : "0",
+    validUntilTime: Number(validUntilTime), data: callData,
+  };
+  let relayData, verifyingContract, types;
+  if (!deployed) {
+    request.recoverer = ethers.ZeroAddress;
+    request.index = 0;
+    relayData = { gasPrice: BigInt(gasPriceWei).toString(), feesReceiver, callForwarder: SATORA_RIF_SMART_WALLET_FACTORY, callVerifier: SATORA_RIF_DEPLOY_VERIFIER };
+    verifyingContract = SATORA_RIF_SMART_WALLET_FACTORY;
+    types = RIF_DEPLOY_REQUEST_TYPE;
+  } else {
+    request.gas = BigInt(callGas ?? SATORA_RIF_SPEND_CALL_GAS).toString();
+    relayData = { gasPrice: BigInt(gasPriceWei).toString(), feesReceiver, callForwarder: smartWallet, callVerifier: SATORA_RIF_RELAY_VERIFIER };
+    verifyingContract = smartWallet;
+    types = RIF_RELAY_REQUEST_TYPE;
+  }
+  const uintFields = new Set(["value", "gas", "nonce", "tokenAmount", "tokenGas", "validUntilTime", "index"]);
+  const message = {};
+  for (const [k, v] of Object.entries(request)) message[k] = uintFields.has(k) ? BigInt(v) : v;
+  message.relayData = { ...relayData, gasPrice: BigInt(relayData.gasPrice) };
+  return {
+    request, relayData, kind: deployed ? "relay" : "deploy",
+    domain: { name: "RSK Enveloping Transaction", version: "2", chainId: SATORA_ROOTSTOCK_CHAIN_ID, verifyingContract },
+    types: { RelayRequest: types, RelayData: RIF_RELAY_DATA_TYPE },
+    primaryType: "RelayRequest", message,
+  };
+}
+/** The balance row the surfaces render for the smart wallet's
+ *  RBTC: its own row, flagged, never merged into the plain
+ *  account's RBTC row — the two balances sit in different
+ *  places and spend through different paths, and the user must
+ *  be able to tell them apart. balanceWei null is the
+ *  couldn't-load row. Pure. */
+export function rifSmartWalletBalanceRow({ smartWallet = null, balanceWei = null } = {}) {
+  return {
+    symbol: "RBTC", name: "Rootstock BTC",
+    amount: balanceWei == null ? null : swapRawToAmount(String(balanceWei), 18),
+    address: null, decimals: 18, verified: true,
+    rifSmartWallet: true, smartWalletAddress: smartWallet,
+  };
+}
+/** Read the smart wallet's live state: its RBTC balance and
+ *  whether it is deployed yet. Throws when every Rootstock
+ *  endpoint fails — a failed read is a failed read, never a
+ *  zero. `provider` is injectable for tests; production reads
+ *  rotate across the network's endpoints like every other
+ *  balance read. */
+export async function readRifSmartWalletState(ownerAddress, { provider } = {}) {
+  const smartWallet = rifSmartWalletAddress(ownerAddress);
+  if (!smartWallet) throw new Error("That Rootstock account was unreadable.");
+  const read = async (p) => {
+    const [balance, code] = await Promise.all([p.getBalance(smartWallet), p.getCode(smartWallet)]);
+    return {
+      smartWallet, owner: ethers.getAddress(ownerAddress),
+      balanceWei: balance.toString(),
+      deployed: typeof code === "string" && code !== "0x" && code.length > 2,
+    };
+  };
+  if (provider) return read(provider);
+  return withEvmProvider("rootstock", read);
+}
+async function rifRelayChainInfo(cfg) {
+  const chainInfo = checkSatoraRifChainInfo(await rifRelayJson(cfg.serverUrl + "/chain-info"));
+  if (!chainInfo) throw new Error("The RIF Relay is not ready or does not serve Rootstock right now — try again in a minute.");
+  return chainInfo;
+}
+/** The smart wallet's deployment state + nonce, read exactly
+ *  as the claim reads them: the wallet's own nonce answers
+ *  when it is deployed; otherwise the factory's nonce for the
+ *  owner prices the deploy kind. */
+async function rifWalletNonceState(provider, cfg, owner, smartWallet) {
+  let deployed = false, nonce = 0n;
+  try {
+    const r = await provider.call({ to: smartWallet, data: RIF_WALLET_NONCE_SELECTOR });
+    if (r && r.length >= 66) { deployed = true; nonce = BigInt(r); }
+  } catch { /* an undeployed wallet answers with an error or empty data */ }
+  if (!deployed) {
+    const r = await provider.call({ to: cfg.smartWalletFactory, data: RIF_FACTORY_NONCE_SELECTOR + rifAddrWord(owner) });
+    nonce = BigInt(r);
+  }
+  return { deployed, nonce };
+}
+function rifRelayEnvelope(cfg, req, signature) {
+  return {
+    relayRequest: { request: req.request, relayData: req.relayData },
+    metadata: { relayHubAddress: cfg.relayHub, relayMaxNonce: Number.MAX_SAFE_INTEGER, signature },
+  };
+}
+/** Everything a relayed call needs before a signature: the
+ *  pinned config verified, the relay ready, the wallet's
+ *  nonce state + balance read, and the fee computed from the
+ *  relay's own /estimate — with the refusals applied HERE so
+ *  no caller can sign past them: a fee that would eat the
+ *  amount refuses, and a balance that cannot cover amount +
+ *  fee refuses. Returns the prepared context the send signs
+ *  from (the estimate is re-run inside the send itself, so a
+ *  reviewed fee is always re-proven at signing time). */
+async function prepareRifRelayCall({ phrase, to, valueWei = 0n, data = "0x", callGas } = {}) {
+  if (!phrase) throw new Error("The unlocked wallet is not available for this send.");
+  if (!ethers.isAddress(to || "")) throw new Error("That is not a valid Rootstock address.");
+  const value = BigInt(valueWei || 0);
+  if (value < 0n) throw new Error("The amount was unreadable.");
+  const ownerWallet = ethers.Wallet.fromPhrase(String(phrase).trim().toLowerCase().replace(/\s+/g, " "));
+  const owner = ownerWallet.address;
+  const smartWallet = rifSmartWalletAddress(owner);
+  const cfg = await fetchSatoraRifRelayConfig();
+  const chainInfo = await rifRelayChainInfo(cfg);
+  const provider = providerFor("rootstock");
+  const { deployed, nonce } = await rifWalletNonceState(provider, cfg, owner, smartWallet);
+  const balance = await provider.getBalance(smartWallet);
+  const validUntilTime = Math.floor(Date.now() / 1000) + 2 * 24 * 3600;
+  const buildReq = (tokenAmountWei, gasPriceWei) => buildRifRelayCallRequest({
+    deployed, owner, smartWallet, to: ethers.getAddress(to), valueWei: value, data, callGas, nonce,
+    tokenAmountWei, gasPriceWei, feesReceiver: chainInfo.feesReceiver, validUntilTime,
+  });
+  const estimate = await rifRelayJson(cfg.serverUrl + "/estimate", { method: "POST", body: rifRelayEnvelope(cfg, buildReq(0n, chainInfo.minGasPrice), "SERVER_SIGNATURE_REQUIRED") });
+  let estimation;
+  try { estimation = BigInt(estimate?.estimation); } catch { throw new Error("The RIF Relay returned no usable fee estimate — nothing was signed."); }
+  if (estimation <= 0n) throw new Error("The RIF Relay returned no usable fee estimate — nothing was signed.");
+  const estGasPrice = (() => { try { return BigInt(estimate?.gasPrice ?? 0); } catch { return 0n; } })();
+  const gasPrice = estGasPrice > chainInfo.minGasPrice ? estGasPrice : chainInfo.minGasPrice;
+  const fee = satoraRifClaimFeeWei(estimation, gasPrice, chainInfo.minGasPrice);
+  if (value > 0n && fee >= value)
+    throw new Error(`The RIF Relay fee (${fee.toString()} wei) would eat the whole amount (${value.toString()} wei) — refusing to send. The RBTC stays in your smart wallet; try again when Rootstock gas is cheaper.`);
+  if (balance < value + fee)
+    throw new Error(`Your smart wallet holds ${swapRawToAmount(balance.toString(), 18)} RBTC — this send needs the amount plus the relay fee (${swapRawToAmount((value + fee).toString(), 18)} RBTC together). Lower the amount and review again.`);
+  return { ownerWallet, owner, smartWallet, cfg, chainInfo, provider, deployed, nonce, balanceWei: balance.toString(), fee, gasPrice, estimation, buildReq, kind: deployed ? "relay" : "deploy" };
+}
+/** Price a relayed smart-wallet call without signing anything:
+ *  the live fee estimate, the wallet's balance and deployment
+ *  state, under every refusal prepareRifRelayCall applies.
+ *  The send sheet's review step shows this fee; the confirm
+ *  step re-proves it inside sendRifRelayCall. */
+export async function estimateRifRelayCall({ phrase, to, valueWei = 0n, data = "0x", callGas } = {}) {
+  const prep = await prepareRifRelayCall({ phrase, to, valueWei, data, callGas });
+  return {
+    smartWallet: prep.smartWallet, owner: prep.owner, deployed: prep.deployed, kind: prep.kind,
+    balanceWei: prep.balanceWei, feeWei: prep.fee.toString(),
+    estimation: prep.estimation.toString(), gasPriceWei: prep.gasPrice.toString(),
+    to: ethers.getAddress(to), valueWei: BigInt(valueWei || 0).toString(),
+  };
+}
+/** Send a call out of the user's RIF smart wallet through the
+ *  RIF Relay: the fee is estimated fresh inside this call and
+ *  bounded before the owner signs (maxFeeWei is the reviewed
+ *  bound the caller hands in — a fee that has moved past it
+ *  refuses and nothing is signed), then the signed request is
+ *  the only thing the relay receives. The relay's acceptance
+ *  is not the send landing: the receipt is read when the chain
+ *  answers in reasonable time — a reverted relay throws, a
+ *  slow chain returns the hash as in-flight. Returns
+ *  { status, txHash, feeWei, confirmed }. */
+export async function sendRifRelayCall({ phrase, to, valueWei = 0n, data = "0x", callGas, maxFeeWei } = {}) {
+  const prep = await prepareRifRelayCall({ phrase, to, valueWei, data, callGas });
+  if (maxFeeWei != null && prep.fee > BigInt(maxFeeWei))
+    throw new Error(`The RIF Relay fee moved to ${swapRawToAmount(prep.fee.toString(), 18)} RBTC since the review — past the bound you approved. Nothing was signed; review the send again.`);
+  const req = prep.buildReq(prep.fee, prep.gasPrice);
+  const signature = await prep.ownerWallet.signTypedData(req.domain, req.types, req.message);
+  const relayed = await rifRelayJson(prep.cfg.serverUrl + "/relay", { method: "POST", body: rifRelayEnvelope(prep.cfg, req, signature) });
+  const txHash = relayed?.txHash || (relayed?.signedTx ? ethers.keccak256(relayed.signedTx) : null);
+  if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash))
+    throw new Error("The RIF Relay accepted the send but returned no transaction hash — check the smart wallet's balance in a few minutes before retrying.");
+  try {
+    const receipt = await prep.provider.waitForTransaction(txHash, 1, 60000);
+    if (receipt && Number(receipt.status) === 0)
+      throw new Error(`The RIF Relay send transaction ${txHash} reverted — the RBTC is still in your smart wallet and the send can be retried.`);
+    if (receipt) return { status: "relayed", txHash, feeWei: prep.fee.toString(), confirmed: true };
+  } catch (e) {
+    if (String(e?.message || "").includes("reverted")) throw e;
+    /* a slow read is not a failed send — the hash stands */
+  }
+  return { status: "relaying", txHash, feeWei: prep.fee.toString(), confirmed: false };
+}
+/** A plain RBTC send out of the smart wallet to an external
+ *  Rootstock address — the §154 spend. The recipient gets
+ *  exactly amountWei; the relay fee comes out of the smart
+ *  wallet's balance on top of it. */
+export async function sendRifSmartWalletRbtc({ phrase, to, amountWei, maxFeeWei } = {}) {
+  if (!ethers.isAddress(to || "")) throw new Error("That is not a valid Rootstock address.");
+  let amount;
+  try { amount = BigInt(amountWei); } catch { throw new Error("The amount was unreadable."); }
+  if (amount <= 0n) throw new Error("Enter an amount above zero.");
+  return sendRifRelayCall({ phrase, to: ethers.getAddress(to), valueWei: amount, data: "0x", maxFeeWei });
 }
 /** The funding call for an EVM-source NATIVE lock (chain 30):
  *  HTLCNative.create(preimageHash, claimAddress, timelock)
@@ -35175,6 +35400,12 @@ export function evmChainFailureRows(netKey, heldTokens, customTokens) {
   if (!net) return [];
   const rows = [{ symbol: net.symbol, amount: null, address: null, verified: true },
     ...(net.tokens || []).map(t => ({ ...t, amount: null }))];
+  // Rootstock's failure shape carries the RIF smart wallet's
+  // row too (§154): a failed read leaves its balance unknown,
+  // and unknown renders as couldn't-load on its own labelled
+  // row — never as a zero folded into the plain account's row
+  // and never as absence.
+  if (netKey === "rootstock") rows.push(rifSmartWalletBalanceRow({}));
   const seen = new Set(rows.map(r => String(r.address || "").toLowerCase()).filter(Boolean));
   const add = (t, custom) => {
     if (!t || !t.address) return;

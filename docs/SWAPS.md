@@ -61,6 +61,48 @@ The sources, per pair:
   header on EVM-target creations; Fluid now sends
   `fluid/1.0.0` on every Satora call (without it, creations
   on the previously shipped chains fail server-side today).
+  **Spending FROM the smart wallet joined on 2026-11-18
+  (§154).** The Rootstock holdings view reads the smart
+  wallet's RBTC live and shows it as its own row — labelled
+  "Rootstock · Smart wallet", never merged into the plain
+  account's RBTC row; a failed smart-wallet read renders as
+  couldn't-load on that row, never as zero or absence. Its
+  token page carries the smart wallet's own address, and its
+  Send is a relayed send through the same RIF Relay grammar
+  as the claim (deploy kind on first use, relay kind after):
+  the owner signs, the relay submits, and the fee comes out
+  of the smart wallet on top of the amount — estimated live
+  from the relay's `/estimate` before signing and refused if
+  it would eat the amount, outrun the balance, or move past
+  the reviewed bound. Measured fee magnitude (live probes,
+  2026-11-18, at the relay's quoted gas price of 26065600
+  wei): a plain send estimated 131070 gas once the wallet is
+  deployed — the relay's required fee 3416418192000 wei
+  (≈342 sats), Fluid's charged figure 3758060011200 wei
+  (≈376 sats, ≈$0.24 at the probe's BTC price) with the
+  reference client's +10% headroom — and 213027 gas on first
+  use (deploy kind; ≈611 sats charged, ≈$0.39). The fee is a
+  flat gas figure, not a percentage: about 0.75% of a 0.0005
+  RBTC send, shrinking as amounts grow. The relay's
+  `/estimate` stalls in bursts (a ~9-minute window of 45 s
+  timeouts at probe time, then 0.2–3 s answers; §153 saw the
+  same) — a stalled estimate fails the review honestly and
+  nothing is signed unestimated. **Swaps OUT of the smart
+  wallet are NOT offered, deliberately.** A chain-30 swap's
+  lock is keyed to its depositor: the shipped executor funds
+  locks from the plain account, its creation names the plain
+  account as `user_address`, and its unilateral refund
+  executor pins the depositor to that account. Satora's
+  server does accept a creation naming the smart wallet as
+  `user_address` (live probe, 2026-11-18, creation
+  11e7dc66-c926-46ef-9ca8-3d8e3ea85899), but whether the
+  server credits a lock whose depositor is the smart wallet
+  — and how such a lock refunds if the swap stalls — cannot
+  be proven without funding a real lock, so the composition
+  stays unbuilt rather than risk a user's RBTC in an
+  unproven lock. The smart wallet's own page says so and
+  offers the working path: one relayed send to the user's
+  own Rootstock account, then swap from there as normal.
 - **Jupiter** — Solana same-chain swaps (direct, ~10× cheaper than
   routing Solana through a general aggregator).
 - **Across** — same-asset moves between EVM majors. (No gas drop:
@@ -2257,26 +2299,19 @@ machine.
   pinned stable is USD₮0 (Tether's LayerZero form, the traded
   dollar on RSK), pinned as the chain's USDT with provenance
   named; rUSDT (the bridge form) is not pinned.
-- **Rootstock's Satora lane — capture PROVEN, execution NOT
-  wired, deliberately.** Satora quotes RBTC ↔ BTC /
-  Lightning / Arkade 1:1 both ways, and the keyed
-  `extra_fees` echo was proven live at build time (protocol
-  fee 250 → 500 under the developer key, net down exactly
-  250 sats, both directions — the shipped differential
-  identity holds to the sat). But chain-30 execution is a
-  different grammar from every shipped lane: creations lock
-  in an **HTLCNative v2** (the server refuses gasless funding
-  for native locks outright, and Fluid's executor funds only
-  Permit2 ERC-20 locks), and payouts claim through the
-  user's **RIF Relay smart wallet** (relayed
-  meta-transactions; `/chain-config` publishes the relay
-  block). Neither grammar is implemented, and the lock-call
-  ABI appears in no payload — so no Satora route is offered
-  for Rootstock. A route that would refuse at creation is
-  not a route. **Re-probe / build trigger:** a separate
-  slice that pins the HTLCNative v2 ABI (lock + refund) and
-  the RIF Relay claim flow from the reference SDK against
-  the addendum's payloads, then re-runs the keyed echo.
+- **Rootstock's Satora lane — WIRED (§153, 2026-11-18;
+  smart-wallet spend §154).** The separate slice this entry
+  used to call for has landed: the HTLCNative v2 ABI (lock +
+  refund) and the RIF Relay claim flow are pinned from the
+  reference SDK and live-verified, RBTC ↔ BTC / Lightning /
+  Arkade runs in both directions with the keyed capture
+  echo proven, and §154 added the smart wallet's live
+  balance row plus its relayed send (fee magnitudes
+  measured — see the Satora section above). The one piece
+  still deliberately unbuilt is swapping OUT of the smart
+  wallet: the lock's depositor is the plain account by
+  construction, and the smart-wallet-funded composition is
+  unprovable without funding a real lock (evidence above).
 - **Flare (14) — FULL: presence + OpenOcean intra.** Relay
   refuses the chain explicitly; OpenOcean builds live (echo
   0.6199% at sane size at admission; the shipped rail

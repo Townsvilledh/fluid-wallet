@@ -11103,8 +11103,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       return sites.length === 2
         && sites.some(i => i > core.indexOf("export async function executeRelaySwapRoute"))
         && sites.some(i => i > core.indexOf("export async function executeOpenOceanSwapRoute")); })());
-  ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist)",
-    app.includes("rows: balances.filter(b => !b.scanned && !b.custom)"));
+  ok("repair: the balance cache persists CURATED rows only (scanned/custom never persist; §154: the RIF smart-wallet row is a live-only read and never persists either)",
+    app.includes("rows: balances.filter(b => !b.scanned && !b.custom && !b.rifSmartWallet)"));
   ok("repair: a failed scan or missing token list reconciles scanned rows DOWN",
     app.includes('evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: quickRows })')
     && app.includes('status: quickRows.length ? "limited" : "failed"')
@@ -22657,9 +22657,9 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§147: an evm:<key> pager page renders its read rows — the commit-only skeleton is gone",
     sl147("const renderChainPage = ").includes("const g = groups.find(x => x.key === scope.key);")
     && !app147.includes("its rows load when the page commits"));
-  ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read",
+  ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read (§154: the live-only RIF smart-wallet row is filtered out of the persisted rows)",
     app147.includes('evmChainState.set(k, { status: "cached", rows });')
-    && app147.includes('if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows;'));
+    && app147.includes('if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows.filter(b => !b.rifSmartWallet);'));
 }
 
 // §148 — BALANCE SPEED: bounded scan, evidence-gated header,
@@ -23740,6 +23740,159 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   // --- (9) the §149 gate lifts Rootstock by coverage alone ---
   ok("§153: Rootstock has an executable exit and leaves the inbound-closed set — the gate needed no edit, it reads the same predicates this build wired",
     swapFamilyHasExecutableExit("rootstock") === true && !swapInboundClosedFamilies().includes("rootstock"));
+}
+
+// §154 (2026-11-18): spending FROM the RIF Relay smart wallet.
+// §153 landed claimed RBTC in the smart wallet; this section
+// reads its balance as its own row and sends it back out
+// through the same relay grammar, with the claim's fee
+// discipline extended to spends: the fee is computed from the
+// relay's /estimate BEFORE signing and bounded by the reviewed
+// maxFeeWei. The /estimate figures stubbed below are the LIVE
+// measurements taken at build time (2026-11-18, relay answering
+// in 0.2–3 s between stall windows): a relay-kind plain
+// transfer estimated 131070 gas at gasPrice 26065600 — the
+// relay's own required fee 3416418192000 wei, Fluid's charged
+// figure carrying the reference client's +10% headroom.
+{
+  const {
+    buildRifRelayCallRequest, rifSmartWalletBalanceRow, readRifSmartWalletState,
+    estimateRifRelayCall, sendRifRelayCall, sendRifSmartWalletRbtc,
+    buildSatoraRifRelayRequest, buildSatoraRifRedeemData, checkSatoraRifChainInfo,
+    satoraRifClaimFeeWei, evmChainFailureRows, resetSatoraRifCache,
+    SATORA_RIF_SPEND_CALL_GAS, SATORA_RIF_CLAIM_CALL_GAS, SATORA_RIF_SMART_WALLET_FACTORY,
+    SATORA_HTLC_NATIVE_ADDRESS,
+  } = await import("../src/wallet-core.js");
+  const fx154 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const PHRASE154 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+  const OWNER154 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+  const SMART154 = "0x6619aB7f4Ab8C9396a6Bf8819075Be3a45f3eF4f";
+  const RCPT154 = "0x7Fe638235FaD0fdfbBcC759640d881e0fa62135B";
+  const ZERO154 = "0x0000000000000000000000000000000000000000";
+  const jsonRes154 = (body, okRes = true, status = 200) => ({ ok: okRes, status, json: async () => body });
+  const info154 = checkSatoraRifChainInfo(fx154("satora30-rif-chain-info.json"));
+  const VU154 = 1794970000 + 172800;
+  const baseSpend154 = { owner: OWNER154, smartWallet: SMART154, to: RCPT154, valueWei: 500000000000000n, data: "0x", nonce: 2n, tokenAmountWei: 0n, gasPriceWei: 26065600n, feesReceiver: info154.feesReceiver, validUntilTime: VU154 };
+
+  // --- (1) the general call builder: spend shapes ---
+  const spendRelay154 = buildRifRelayCallRequest({ ...baseSpend154, deployed: true });
+  ok("§154: a deployed wallet's spend request is the RELAY kind — the call's own target, value and data ride in the request, the wallet is forwarder + verifying contract, the spend call gas is stated, and a zero fee carries no fee-transfer gas",
+    spendRelay154.kind === "relay" && spendRelay154.request.to === RCPT154 && spendRelay154.request.value === "500000000000000" && spendRelay154.request.data === "0x"
+    && spendRelay154.request.gas === SATORA_RIF_SPEND_CALL_GAS.toString() && spendRelay154.request.tokenGas === "0"
+    && spendRelay154.relayData.callForwarder === SMART154 && spendRelay154.domain.verifyingContract === SMART154);
+  const spendFee154 = buildRifRelayCallRequest({ ...baseSpend154, deployed: true, tokenAmountWei: 3786245461284n });
+  ok("§154: a priced spend carries its fee as tokenAmount with the fee-transfer gas — the exact shape the claim prices with",
+    spendFee154.request.tokenAmount === "3786245461284" && spendFee154.request.tokenGas === "10500");
+  const spendDeploy154 = buildRifRelayCallRequest({ ...baseSpend154, deployed: false });
+  ok("§154: a first spend is the DEPLOY kind — factory as forwarder + verifying contract, recoverer + index present, no gas field (the wallet deploys inside the same relayed transaction, then executes the call)",
+    spendDeploy154.kind === "deploy" && spendDeploy154.relayData.callForwarder === SATORA_RIF_SMART_WALLET_FACTORY
+    && spendDeploy154.domain.verifyingContract === SATORA_RIF_SMART_WALLET_FACTORY
+    && spendDeploy154.request.recoverer === ZERO154 && spendDeploy154.request.index === 0 && !("gas" in spendDeploy154.request));
+  let badTo154 = false, badData154 = false;
+  try { buildRifRelayCallRequest({ ...baseSpend154, deployed: true, to: "0x123" }); } catch { badTo154 = true; }
+  try { buildRifRelayCallRequest({ ...baseSpend154, deployed: true, data: "0xzz" }); } catch { badData154 = true; }
+  ok("§154: the call builder refuses a malformed target or calldata before anything is built", badTo154 && badData154);
+
+  // --- (2) grammar parity: the claim is the general shape ---
+  const redeem154 = buildSatoraRifRedeemData({ preimageHex: "ab".repeat(32), amountRaw: "491400000000000", sender: "0x1111111111111111111111111111111111111111", timelock: 1794970000 });
+  const parity154 = [false, true].every((deployed) => {
+    const viaClaim = buildSatoraRifRelayRequest({ deployed, owner: OWNER154, smartWallet: SMART154, htlcAddress: SATORA_HTLC_NATIVE_ADDRESS, redeemData: redeem154, nonce: 1n, tokenAmountWei: 5n, gasPriceWei: 26065600n, feesReceiver: info154.feesReceiver, validUntilTime: VU154 });
+    const viaGeneral = buildRifRelayCallRequest({ deployed, owner: OWNER154, smartWallet: SMART154, to: SATORA_HTLC_NATIVE_ADDRESS, valueWei: 0n, data: redeem154, callGas: SATORA_RIF_CLAIM_CALL_GAS, nonce: 1n, tokenAmountWei: 5n, gasPriceWei: 26065600n, feesReceiver: info154.feesReceiver, validUntilTime: VU154 });
+    return JSON.stringify(viaClaim.request) === JSON.stringify(viaGeneral.request)
+      && JSON.stringify(viaClaim.relayData) === JSON.stringify(viaGeneral.relayData)
+      && JSON.stringify(viaClaim.domain) === JSON.stringify(viaGeneral.domain) && viaClaim.kind === viaGeneral.kind;
+  });
+  ok("§154: the general call builder reproduces the claim builder's envelopes exactly for a claim-shaped call, both kinds — one grammar, two call sites", parity154);
+
+  // --- (3) the balance row + the failure shape ---
+  const row154 = rifSmartWalletBalanceRow({ smartWallet: SMART154, balanceWei: "500000000000000" });
+  ok("§154: the smart-wallet balance row is its own flagged row — RBTC, exact decimal amount, no contract address, the smart wallet's address carried for its page",
+    row154.symbol === "RBTC" && row154.amount === "0.0005" && row154.address === null && row154.rifSmartWallet === true && row154.smartWalletAddress === SMART154);
+  ok("§154: a null balanceWei is the couldn't-load row, and Rootstock's failure shape carries exactly one smart-wallet row while other chains carry none",
+    rifSmartWalletBalanceRow({}).amount === null
+    && evmChainFailureRows("rootstock", [], []).filter(r => r.rifSmartWallet).length === 1
+    && evmChainFailureRows("rootstock", [], []).find(r => r.rifSmartWallet).amount === null
+    && evmChainFailureRows("ethereum", [], []).every(r => !r.rifSmartWallet));
+
+  // --- (4) the state read, injected provider ---
+  const st154 = await readRifSmartWalletState(OWNER154, { provider: { getBalance: async () => 500000000000000n, getCode: async () => "0x600d600d" } });
+  const st154u = await readRifSmartWalletState(OWNER154, { provider: { getBalance: async () => 0n, getCode: async () => "0x" } });
+  let stFail154 = false;
+  try { await readRifSmartWalletState(OWNER154, { provider: { getBalance: async () => { throw new Error("rpc down"); }, getCode: async () => "0x" } }); } catch { stFail154 = true; }
+  ok("§154: the state read returns the derived wallet, the exact wei balance and the deployment flag — and a failed read throws (unknown, never a fabricated zero)",
+    st154.smartWallet === SMART154 && st154.balanceWei === "500000000000000" && st154.deployed === true
+    && st154u.deployed === false && st154u.balanceWei === "0" && stFail154);
+
+  // --- (5) estimate + send end to end against stubs ---
+  const realFetch154 = globalThis.fetch;
+  const relayBodies154 = [];
+  let rpcDeployed154 = true;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes("api.satora.io")) {
+      if (u.includes("/chain-config")) return jsonRes154(fx154("satora30-chain-config.json"));
+      throw new Error("unexpected satora url in §154 stub: " + u);
+    }
+    if (u.includes("rifcomputing.net")) {
+      if (u.endsWith("/chain-info")) return jsonRes154(fx154("satora30-rif-chain-info.json"));
+      if (u.endsWith("/estimate")) return jsonRes154({ gasPrice: "26065600", estimation: "131070" });
+      if (u.endsWith("/relay")) { relayBodies154.push(JSON.parse(init.body)); return jsonRes154({ txHash: "0x" + "ef".repeat(32) }); }
+      throw new Error("unexpected relay url in §154 stub: " + u);
+    }
+    throw new Error("unexpected fetch in §154 stub: " + u);
+  };
+  const defaultGetUrl154 = FetchRequest.createGetUrlFunc();
+  FetchRequest.registerGetUrl(async (req) => {
+    if (!String(req.url).includes("rsk.co")) return defaultGetUrl154(req);
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const answer = (q) => {
+      let result;
+      if (q.method === "eth_chainId") result = "0x1e";
+      else if (q.method === "net_version") result = "30";
+      else if (q.method === "eth_blockNumber") result = "0x101";
+      else if (q.method === "eth_getBalance") result = "0x6F05B59D3B20000"; // 0.5 RBTC in the smart wallet
+      else if (q.method === "eth_call") {
+        const to = String(q.params?.[0]?.to || "").toLowerCase();
+        if (to === SMART154.toLowerCase()) result = rpcDeployed154 ? "0x" + "0".repeat(63) + "3" : "0x";
+        else result = "0x" + "0".repeat(64); // the factory's nonce for the owner: 0
+      }
+      else if (q.method === "eth_getTransactionReceipt") result = { transactionHash: "0x" + "ef".repeat(32), transactionIndex: "0x0", blockHash: "0x" + "11".repeat(32), blockNumber: "0x100", from: SMART154, to: RCPT154, cumulativeGasUsed: "0x5208", gasUsed: "0x5208", logs: [], logsBloom: "0x" + "00".repeat(256), status: "0x1", effectiveGasPrice: "0x1", type: "0x0", contractAddress: null };
+      else if (q.method === "eth_getTransactionByHash") result = { hash: "0x" + "ef".repeat(32), blockNumber: "0x100", blockHash: "0x" + "11".repeat(32), transactionIndex: "0x0", from: SMART154, to: RCPT154, value: "0x1c6bf52634000", gasPrice: "0x1", gas: "0x5208", input: "0x", nonce: "0x0", type: "0x0", chainId: "0x1e" };
+      else throw new Error("unexpected rpc method in §154 stub: " + q.method);
+      return { jsonrpc: "2.0", id: q.id ?? 1, result };
+    };
+    const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+  });
+  try {
+    resetSatoraCaches(); resetSatoraRifCache();
+    const expectedFee154 = satoraRifClaimFeeWei(131070n, info154.minGasPrice, info154.minGasPrice).toString();
+    const est154 = await estimateRifRelayCall({ phrase: PHRASE154, to: RCPT154, valueWei: 500000000000000n });
+    ok("§154: the estimate prices a spend from the relay's own answer — the live-measured estimation at the dearer of the quoted and minimum gas prices, +10%, against the wallet's live balance and deployment state",
+      est154.feeWei === expectedFee154 && est154.balanceWei === "500000000000000000" && est154.deployed === true && est154.kind === "relay" && est154.smartWallet === SMART154);
+    const sent154 = await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: RCPT154, amountWei: "500000000000000", maxFeeWei: expectedFee154 });
+    const env154 = relayBodies154[0]?.relayRequest;
+    ok("§154: the send runs end to end — the signed relay-kind envelope pays the recipient exactly the amount, the fee rides as tokenAmount at the estimated figure, and the relay's hash + confirmed receipt are the result",
+      sent154.txHash === "0x" + "ef".repeat(32) && sent154.feeWei === expectedFee154 && sent154.confirmed === true
+      && !!env154 && env154.request.to === RCPT154 && env154.request.value === "500000000000000"
+      && env154.request.tokenAmount === expectedFee154 && env154.request.tokenGas === "10500"
+      && /^0x[0-9a-f]{130}$/i.test(relayBodies154[0].metadata.signature));
+    let boundErr154 = null, balErr154 = null, eatErr154 = null, addrErr154 = null;
+    try { await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: RCPT154, amountWei: "500000000000000", maxFeeWei: "1" }); } catch (e) { boundErr154 = e; }
+    try { await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: RCPT154, amountWei: "600000000000000000" }); } catch (e) { balErr154 = e; }
+    try { await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: RCPT154, amountWei: "1000000000000" }); } catch (e) { eatErr154 = e; }
+    try { await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: "0x123", amountWei: "500000000000000" }); } catch (e) { addrErr154 = e; }
+    ok("§154: the refusals fire BEFORE any relay call — a fee past the reviewed bound, an amount the balance cannot cover with its fee, a fee that would eat the whole amount, and a malformed recipient all refuse with nothing signed",
+      !!boundErr154 && /moved/.test(boundErr154.message) && !!balErr154 && !!eatErr154 && /eat the whole amount/.test(eatErr154.message) && !!addrErr154
+      && relayBodies154.length === 1);
+    rpcDeployed154 = false;
+    const sentDeploy154 = await sendRifSmartWalletRbtc({ phrase: PHRASE154, to: RCPT154, amountWei: "500000000000000", maxFeeWei: expectedFee154 });
+    const envD154 = relayBodies154[1]?.relayRequest;
+    ok("§154: an undeployed wallet's first spend is the DEPLOY kind — factory forwarder, recoverer + index in the request, no gas field — funded by the balance the counterfactual address already holds",
+      sentDeploy154.txHash === "0x" + "ef".repeat(32) && !!envD154
+      && envD154.relayData.callForwarder.toLowerCase() === SATORA_RIF_SMART_WALLET_FACTORY.toLowerCase()
+      && envD154.request.recoverer === ZERO154 && !("gas" in envD154.request));
+  } finally { globalThis.fetch = realFetch154; FetchRequest.registerGetUrl(defaultGetUrl154); }
 }
 
 console.log(`\n${passed} checks passed`);

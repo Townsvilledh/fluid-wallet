@@ -44,6 +44,7 @@ import {
   NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapInboundPaused,
   fetchTokenTrust, fetchTokenTrustBatch, resolveTokenTrustSync, tokenTrustSwapCheck, assertSwapTokensNotScam, tokenTrustReasonLine, tokenTrustSourceLabel,
   formatSatoraSwapIntent, satoraRifDisclosureLines, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
+  rifSmartWalletAddress, rifSmartWalletBalanceRow, readRifSmartWalletState, estimateRifRelayCall, sendRifSmartWalletRbtc,
   formatSatoraLnSourceIntent, executeSatoraLnSourceRoute, claimSatoraLnEvmSwap, buildSatoraBtcHtlcClaimTx, satoraBtcHtlcAddress, fetchBtcUtxos, getBtcFeeRateInfo,
   formatSatoraBtcSourceIntent, executeSatoraBtcSourceRoute, claimSatoraBtcEvmSwap, satoraTaprootClaimKey, checkSatoraEvmBtcClaim, buildSatoraEvmBtcClaim, satoraBtcSourceHtlcAddress, buildSatoraBtcHtlcRefundTx, fetchSatoraSwapStatus, executeSatoraCollabRefundEvmSwap, executeSatoraUnilateralRefundEvmSwap, satoraSwapPhase,
   satoraSwapClaimKey, fetchLnArkadePair, estimateLnArkadeFeeSats, createLnArkadeSwap, fetchLnArkadeSwapStatus, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS, isValidBitcoinAddress,
@@ -225,6 +226,14 @@ let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|
 let evmChainState = new Map();
 let evmChainOk = new Set();
 const evmChainsPending = new Set();
+// The ACTIVE chain's RIF smart-wallet read (§154, Rootstock
+// only): { status: "ok"|"failed", row } once the live read
+// settles this render — the row the Rootstock view adds beside
+// the plain account's RBTC, labelled as smart-wallet held and
+// never merged into it. Reset with every render; the read is
+// live-only (the balance cache never carries this row — it
+// re-enters only from a fresh read, like a scanned row).
+let rifSwLive = null;
 // The current render's per-network pass (§147), kept as a
 // promise so the active chain's DEEP scan can defer its start
 // until those known-token reads settle (balance-speed round,
@@ -1323,7 +1332,7 @@ function persistBalanceCache() {
     // next session as spendable truth in the Send/Swap sheets.
     // They now re-enter only from a fresh scan/read this session.
     const evm = liveOkFams.has("evm")
-      ? { network: networkKey, rows: balances.filter(b => !b.scanned && !b.custom) }
+      ? { network: networkKey, rows: balances.filter(b => !b.scanned && !b.custom && !b.rifSmartWallet) }
       : (prev && prev.evm ? prev.evm : null);
     // Per-network EVM rows (§147), same provenance gate: a
     // chain's entry is written only when ITS live read succeeded
@@ -1333,7 +1342,7 @@ function persistBalanceCache() {
     const evmChainsSnap = { ...(prev && prev.evmChains ? prev.evmChains : {}) };
     for (const [k, st] of evmChainState) {
       if (k === networkKey) { delete evmChainsSnap[k]; continue; }
-      if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows;
+      if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows.filter(b => !b.rifSmartWallet);
     }
     for (const k of Object.keys(evmChainsSnap)) if (!NETWORKS[k]) delete evmChainsSnap[k];
     const cosmosRowsSnap = liveOkFams.has("cosmos") ? cosmosRows
@@ -1397,6 +1406,7 @@ async function renderMain() {
   evmChainState = new Map();
   evmChainOk = new Set();
   evmChainsPending.clear();
+  rifSwLive = null;
   evmChainsPassPromise = null;
   evmKnownPending = false;
   paintHeader();
@@ -1427,6 +1437,12 @@ async function renderMain() {
     if (k === networkKey) continue;
     if (evmChainEvidence(k) || evmChainState.has(k)) evmChainsPending.add(k);
   }
+  // Rootstock evidence (§154): a Satora swap record paying out
+  // to this wallet's RIF smart wallet (a native chain-30
+  // destination) means the smart wallet may hold RBTC — the
+  // chain joins the pending set so its page reads the smart
+  // wallet live even when nothing else marks the chain held.
+  if (networkKey !== "rootstock" && hasRifClaimEvidence()) evmChainsPending.add("rootstock");
   // The ACTIVE chain's held/custom records are holding evidence
   // too (balance-speed round): its known-token reads gate the
   // header through evmKnownPending while they run.
@@ -1848,6 +1864,7 @@ async function renderMain() {
       evmLoadFailed = false;
       markLiveOk("evm");
       markLoaded("evm");
+      upsertRifSwRow();
       paintAssets();
       hydrateEvmTokens();
     }).catch(() => {});
@@ -1856,6 +1873,7 @@ async function renderMain() {
   markLoaded("evm");
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
+  hydrateRifSmartWallet(w, myRenderSeq); // background: the RIF smart wallet's own read (§154; Rootstock only, no-ops elsewhere)
   evmChainsPassPromise = hydrateEvmChains(w, myRenderSeq); // background: per-network reads for the All page (§147)
   renderHistory();
   discoverChains(); // background, non-blocking; no-ops while the cache is fresh
@@ -2578,14 +2596,20 @@ function paintAssets() {
   // null) — never an empty list under a $0.00 header.
   {
     const rows = [];
-    const render = ({ b, v }) => tokenRowHtml(b, v, net.name, `data-evmrow="${rowRefFor(b)}"`, "evm");
+    const render = ({ b, v }) => tokenRowHtml(b, v, b.rifSmartWallet ? net.name + " · Smart wallet" : net.name, `data-evmrow="${rowRefFor(b)}"`, "evm");
     // The failure shape (§147): native + curated + the chain's
     // held/custom token RECORDS — a non-curated held token whose
     // read failed pins as "couldn't load" on its own chain too,
     // never silently absent (core's evmChainFailureRows).
-    const evmRows = evmLoadFailed
+    let evmRows = evmLoadFailed
       ? evmChainFailureRows(networkKey, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))
       : balances;
+    // §154: the base read failed but the smart wallet's own
+    // read landed live — its proven row replaces the failure
+    // shape's placeholder, so a true balance is never hidden
+    // behind the other read's failure.
+    if (evmLoadFailed && networkKey === "rootstock" && rifSwLive && rifSwLive.status === "ok" && Number(rifSwLive.row.amount) > 0)
+      evmRows = evmRows.map(r => r.rifSmartWallet ? rifSwLive.row : r);
     const fi = familyRowItems("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render);
     rows.push(fi.html);
     if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
@@ -2605,7 +2629,7 @@ function paintAssets() {
     const cnet = NETWORKS[k]; if (!cnet) continue;
     const render = ({ b, v }) => {
       evmRowCtxKey = k;
-      try { return tokenRowHtml(b, v, cnet.name, `data-evmrow="${rowRefFor(b)}" data-evmchain="${k}"`, "evm"); }
+      try { return tokenRowHtml(b, v, b.rifSmartWallet ? cnet.name + " · Smart wallet" : cnet.name, `data-evmrow="${rowRefFor(b)}" data-evmchain="${k}"`, "evm"); }
       finally { evmRowCtxKey = null; }
     };
     const fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], render);
@@ -3243,6 +3267,37 @@ function evmCatalogDesc(netKey, t) {
   };
 }
 
+/** A token-page descriptor for the RIF smart wallet's RBTC
+ *  row (§154): its own page, its own identity (the smart wallet
+ *  address, tap-to-copy), and its own actions — Send opens the
+ *  relayed smart-wallet send sheet, Swap opens the honest
+ *  not-available sheet (Rootstock's swap routes fund their
+ *  locks from the plain account; the working path is one
+ *  relayed send first), Receive shows the smart wallet's own
+ *  address. The note states plainly where this RBTC sits and
+ *  that a relay fee applies to sends. `scoped` marks the
+ *  non-active-chain variant (its descriptor is kept, not
+ *  rebuilt, while the page is open — the evmChainRowDesc
+ *  discipline); the active-chain variant carries no scopeKey
+ *  so refreshTokenPageDesc rebuilds it from live rows. */
+function rifSmartWalletDesc(b, netKey, scoped) {
+  const net = NETWORKS[netKey];
+  const sw = b.smartWalletAddress || (wallet ? rifSmartWalletAddress(wallet.address) : null);
+  const row = { ...b, smartWalletAddress: sw };
+  const price = priceOfRow(row, prices[net.priceSym]);
+  return {
+    family: "evm", row, chainLabel: net.name + " · Smart wallet",
+    ...(scoped ? { scopeKey: "evm:" + netKey } : {}),
+    identLabel: "Smart wallet address", ident: sw,
+    price: price != null ? price : null,
+    extras: { cgId: cgIdForSymbol(net.priceSym || b.symbol) },
+    note: "This RBTC sits in your RIF Relay smart wallet on Rootstock — the contract wallet your own Fluid key controls, where payouts from Bitcoin-family swaps land. It is separate from your plain Rootstock account's RBTC. Sending it runs through the RIF Relay: a relay submits the send for you and takes a small fee out of the smart wallet, estimated live and shown before you confirm.",
+    send: () => openRifSendSheet(row),
+    swap: () => openRifSwapInfoSheet(row),
+    receive: () => openRifReceiveSheet(row),
+  };
+}
+
 /** A token-page descriptor for a HELD row on a NON-active EVM
  *  chain (§147 — the All page's per-network rows): the page shows
  *  the balance the per-network read proved; Send/Swap switch the
@@ -3250,6 +3305,7 @@ function evmCatalogDesc(netKey, t) {
  *  pre-scoped flow — the same discipline as the catalogue
  *  descriptor, carrying the real held row instead of a zero. */
 function evmChainRowDesc(netKey, b) {
+  if (b.rifSmartWallet) return rifSmartWalletDesc(b, netKey, true);
   const net = NETWORKS[netKey];
   const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
   return {
@@ -3272,7 +3328,7 @@ function evmChainRowDesc(netKey, b) {
 function refreshTokenPageDesc() {
   const st = tokenPageState; if (!st || !st.desc || !st.desc.row) return;
   const d = st.desc;
-  const same = (b) => b && (b.address || null) === (d.row.address || null) && b.symbol === d.row.symbol;
+  const same = (b) => b && (b.address || null) === (d.row.address || null) && b.symbol === d.row.symbol && !!b.rifSmartWallet === !!d.row.rifSmartWallet;
   try {
     if (d.family === "evm" && !String(d.scopeKey || "").startsWith("evm:")) { const b = balances.find(same); if (b) st.desc = evmDetailDesc(b); }
     else if (d.family === "tron") { const b = tronBalances.find(same); if (b) st.desc = tronDetailDesc(b); }
@@ -3305,7 +3361,7 @@ function closeTokenPage() {
  *  the family + the on-chain id the verdict cache keys on. */
 function tokenPageTrustId(d) {
   if (!d) return null;
-  if (d.family === "evm") return d.ident ? { chainKey: networkKey, tokenId: d.ident } : null;
+  if (d.family === "evm") return d.ident && !(d.row && d.row.rifSmartWallet) ? { chainKey: networkKey, tokenId: d.ident } : null;
   if (d.family === "stellar") { const iss = (d.row && d.row.issuer) || null; return iss ? { chainKey: "stellar", tokenId: iss } : null; }
   if (["solana", "sui", "ton", "tron", "aptos", "near", "polkadot"].includes(d.family)) return d.ident ? { chainKey: d.family, tokenId: d.ident } : null;
   return null;
@@ -3373,6 +3429,7 @@ function renderTokenPage() {
     <div id="tdTrust"></div>
     <div id="tdMoves"></div>
     ${(() => { const pk = d.family === "evm" ? String(d.scopeKey || "").replace(/^evm:/, "") : d.family; return swapInboundPaused(pk) ? `<p class="tag" style="color:var(--warn);margin-top:12px">Swaps into ${esc(d.chainLabel)} are paused in Fluid: Fluid can't swap back out of ${esc(d.chainLabel)} yet, so value swapped in could only leave again by a plain send. Holding, sending and receiving work as normal.</p>` : ""; })()}
+    ${d.note ? `<p class="tag" style="margin-top:12px">${esc(d.note)}</p>` : ""}
     <div style="margin-top:16px">
       ${d.swap ? `<button class="btn" id="tdSwap" style="width:100%">Swap</button>` : ""}
       <div style="display:flex;gap:8px;margin-top:8px">
@@ -3390,6 +3447,7 @@ function renderTokenPage() {
   const moveBtn = $("tdMove");
   if (moveBtn && d.move) moveBtn.onclick = () => d.move();
   $("tdReceive").onclick = () => {
+    if (d.receive) { d.receive(); return; }
     if (d.scopeKey && d.scopeKey !== viewKey && !String(d.scopeKey).startsWith("evm:")) { viewKey = d.scopeKey; saveViewKey(); renderMain(); }
     $("actReceive").click();
   };
@@ -3814,7 +3872,7 @@ async function readEvmChainRows(w, k) {
   for (const t of custom) addKnown(t, true);
   for (const t of held) addKnown(t, false);
   const known = [...knownByAddr.values()];
-  if (!known.length) return base;
+  if (!known.length) return withRifSmartWalletRow(base, w, k);
   let knownRows;
   try {
     // A known-token read is a paint-path read (§148): it rides
@@ -3831,7 +3889,63 @@ async function readEvmChainRows(w, k) {
     knownRows = known.map(t => ({ symbol: t.symbol, name: t.name || t.symbol, amount: null,
       address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) }));
   }
-  return mergeEvmChainRows(base, knownRows);
+  return withRifSmartWalletRow(mergeEvmChainRows(base, knownRows), w, k);
+}
+/** Rootstock's per-network rows gain the RIF smart wallet's
+ *  RBTC row (§154), read live on the same pass: a proven
+ *  balance above zero joins the chain's rows as its own
+ *  labelled row; a failed smart-wallet read joins as a
+ *  couldn't-load row (the chain was evidence-bearing by
+ *  construction, so the balance's existence is a live question
+ *  the surface must answer honestly — never a silent absence);
+ *  a proven zero adds nothing (held-only rendering). Other
+ *  chains pass through untouched. */
+async function withRifSmartWalletRow(rows, w, k) {
+  if (k !== "rootstock") return rows;
+  try {
+    const st = await readRifSmartWalletState(w.address);
+    const row = rifSmartWalletBalanceRow(st);
+    if (Number(row.amount) > 0) rows.push(row);
+  } catch {
+    rows.push(rifSmartWalletBalanceRow({ smartWallet: rifSmartWalletAddress(w.address) }));
+  }
+  return rows;
+}
+/** Does this wallet hold on-device evidence of a Rootstock
+ *  smart-wallet payout — a Satora swap record whose payout
+ *  claimed (or will claim) into the RIF smart wallet? */
+function hasRifClaimEvidence() {
+  try {
+    return loadSatoraSwapRecords(localStorage).some(r => r && Number(r.destChainId) === 30 && String(r.htlcKind || "").toLowerCase() === "native");
+  } catch { return false; }
+}
+/** The ACTIVE chain's smart-wallet read (§154): fires beside
+ *  the base read when Rootstock is active and settles the row
+ *  into `balances` — success above zero, or the couldn't-load
+ *  row on failure (a failed read is unknown, never zero and
+ *  never absence). A proven zero settles to no row. */
+async function hydrateRifSmartWallet(w, myRenderSeq) {
+  if (networkKey !== "rootstock" || !w) return;
+  const stale = () => wallet !== w || renderSeq !== myRenderSeq || networkKey !== "rootstock";
+  try {
+    const st = await readRifSmartWalletState(w.address);
+    if (stale()) return;
+    rifSwLive = { status: "ok", row: rifSmartWalletBalanceRow(st) };
+  } catch {
+    if (stale()) return;
+    rifSwLive = { status: "failed", row: rifSmartWalletBalanceRow({ smartWallet: rifSmartWalletAddress(w.address) }) };
+  }
+  upsertRifSwRow();
+  paintAssets();
+}
+/** Settle the render's smart-wallet read into the active
+ *  chain's rows: the flagged row replaces any earlier copy of
+ *  itself; held-only discipline applies (a proven zero never
+ *  renders; a failed read renders as couldn't-load). */
+function upsertRifSwRow() {
+  if (networkKey !== "rootstock" || !rifSwLive) return;
+  balances = balances.filter(b => !b.rifSmartWallet);
+  if (rifSwLive.status === "failed" || Number(rifSwLive.row.amount) > 0) balances.push(rifSwLive.row);
 }
 /** Work the pending set with bounded concurrency (2): the
  *  active network and the families keep priority for the 1–2 s
@@ -4119,6 +4233,7 @@ let pendingSwapFrom = null; // { netKey, address|null } — set by a detail Swap
 let tokenDetailSeq = 0;
 const tdPriceText = (p) => p == null ? null : (p >= 0.01 ? usd(p) : "$" + Number(p.toPrecision(3)).toString());
 function evmDetailDesc(b) {
+  if (b.rifSmartWallet) return rifSmartWalletDesc(b, networkKey, false);
   const net = NETWORKS[networkKey];
   const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
   // Canonical-bridge Move (2026-11-15): a held token that is
@@ -5068,11 +5183,130 @@ function tronRampSendFee() {
   };
 }
 
+// ---------- RIF smart wallet sheets (§154) ----------
+// The smart wallet's RBTC gets its own surfaces, never the
+// plain account's: its send runs through the RIF Relay (the
+// owner signs, a relay submits, the fee comes out of the smart
+// wallet and is shown from the relay's live estimate before
+// confirming), its receive address is the smart wallet's own,
+// and its swap surface states honestly that swaps out of the
+// smart wallet are not available yet — Rootstock's swap routes
+// fund their locks from the plain account, so the working path
+// is one relayed send to the user's own account first.
+function openRifSendSheet(row, opts = {}) {
+  if (balanceUnknownGate(row, "Rootstock")) return;
+  const sw = row.smartWalletAddress || rifSmartWalletAddress(wallet.address);
+  if (row.amount != null && Number(row.amount) <= 0) {
+    openSheet(`<h3>Smart wallet RBTC</h3>
+      <p><b>0 RBTC</b> · in your RIF Relay smart wallet on Rootstock<br><span class="mono">${esc(sw || "")}</span></p>
+      <p class="tag">Your smart wallet holds no RBTC right now, so there is nothing to send. Payouts from Bitcoin-family swaps to Rootstock land here when you claim them.</p>`);
+    return;
+  }
+  let pendingRif = null;
+  openSheet(`<h3>Send RBTC — smart wallet</h3>
+    <p><b>${fmt(row.amount)} RBTC</b> · in your RIF Relay smart wallet on Rootstock<br><span class="mono">${esc(sw || "")}</span></p>
+    <p class="tag">This RBTC sits in your smart wallet, not your plain Rootstock account. A relay submits the send for you and takes its fee out of the smart wallet — the fee is estimated live and shown before you confirm, and the send refuses if the fee moves past the bound you reviewed.</p>
+    <input id="rifTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name" value="${opts.prefillTo ? esc(opts.prefillTo) : ""}">
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
+      <input id="rifAmt" inputmode="decimal" placeholder="Amount" style="flex:1">
+      <button class="btn ghost" id="rifMax" style="margin:0;padding:4px 12px">MAX</button>
+    </div>
+    <button class="btn" id="rifReview">Review send</button>
+    <div id="rifIntent" class="hidden">
+      <p class="seed" id="rifIntentText"></p>
+      <button class="btn" id="rifConfirm">Confirm &amp; send</button>
+    </div>
+    <p class="msg err" id="rifMsg"></p>
+    <p class="tag">The recipient receives exactly the amount you enter; the relay fee comes out of the smart wallet on top of it. Sends are final.</p>`);
+  $("rifMax").onclick = async () => {
+    try {
+      msg("rifMsg", "Asking the relay for its fee…", true);
+      // The fee is gas-priced, not amount-priced: a nominal
+      // amount prices it, then MAX is the balance minus it.
+      const est = await estimateRifRelayCall({ phrase: wallet.mnemonic.phrase, to: wallet.address, valueWei: "100000000000000" });
+      const maxWei = BigInt(est.balanceWei) - BigInt(est.feeWei);
+      if (maxWei <= 0n) return msg("rifMsg", "The relay fee would take the whole smart wallet balance — there is nothing left to send.");
+      $("rifAmt").value = swapRawToAmount(maxWei.toString(), 18);
+      msg("rifMsg", "");
+    } catch (e) { msg("rifMsg", e.message); }
+  };
+  $("rifReview").onclick = async () => {
+    const toRaw = $("rifTo").value.trim(), amount = $("rifAmt").value.trim();
+    if (!toRaw) return msg("rifMsg", "Enter a recipient.");
+    if (!amount || Number(amount) <= 0) return msg("rifMsg", "Enter an amount.");
+    if (Number(amount) > Number(row.amount)) return msg("rifMsg", "Amount is more than your smart wallet balance.");
+    let to;
+    try {
+      const r = await resolveChainRecipient(toRaw, { isValidAddress: (a) => /^0x[0-9a-fA-F]{40}$/.test(a), field: "evm", chainLabel: "Rootstock" });
+      to = r.to;
+      if (r.name) toast("Name resolved");
+    } catch (e) { return msg("rifMsg", e.message); }
+    let amountWei;
+    try { amountWei = ethers.parseUnits(amount, 18); } catch { return msg("rifMsg", "That amount was unreadable."); }
+    try {
+      msg("rifMsg", "Asking the relay for its fee…", true);
+      const est = await estimateRifRelayCall({ phrase: wallet.mnemonic.phrase, to, valueWei: amountWei.toString() });
+      const feeWei = BigInt(est.feeWei);
+      const boundWei = (feeWei * 11n + 9n) / 10n; // the reviewed fee + 10% drift headroom
+      pendingRif = { to, amount, amountWei: amountWei.toString(), maxFeeWei: boundWei.toString() };
+      const feeTxt = swapRawToAmount(feeWei.toString(), 18);
+      $("rifIntentText").textContent = `Send ${amount} RBTC from your RIF Relay smart wallet on Rootstock to ${to}. A relay submits the send and takes its fee of about ${feeTxt} RBTC out of the smart wallet, on top of the amount — ${swapRawToAmount((amountWei + feeWei).toString(), 18)} RBTC leaves the smart wallet in total. If the relay's fee jumps past ${swapRawToAmount(boundWei.toString(), 18)} RBTC before you confirm, the send stops and asks you to review again. Sends are final.`;
+      setBalanceAfter($("rifIntentText"), { balance: row.amount, amount, fee: feeTxt, symbol: "RBTC", decimals: 8 });
+      show("rifIntent"); msg("rifMsg", "");
+    } catch (e) { msg("rifMsg", e.message); }
+  };
+  $("rifConfirm").onclick = async () => {
+    if (!pendingRif) return;
+    const btn = $("rifConfirm");
+    try {
+      setSendBusy(btn, true);
+      msg("rifMsg", "Signing locally and asking the relay to submit…", true);
+      const { txHash, feeWei, confirmed } = await sendRifSmartWalletRbtc({ phrase: wallet.mnemonic.phrase, to: pendingRif.to, amountWei: pendingRif.amountWei, maxFeeWei: pendingRif.maxFeeWei });
+      const h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      h.unshift({ hash: txHash, amount: pendingRif.amount, symbol: "RBTC", to: pendingRif.to, explorer: NETWORKS.rootstock.explorer, at: Date.now() });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, HISTORY_MAX)));
+      const done = pendingRif; pendingRif = null;
+      showTxSuccess({ verb: "Sent", amount: done.amount, symbol: "RBTC",
+        logoHtml: tokenLogoHtml(row, "evm"), to: done.to, familyName: "Rootstock · Smart wallet",
+        feeText: `Relay fee ${swapRawToAmount(feeWei, 18)} RBTC`,
+        explorerUrl: historyTxUrl({ hash: txHash, explorer: NETWORKS.rootstock.explorer }), txid: txHash, pending: !confirmed });
+      rescanAfterActivity();
+    } catch (e) { sendFailed(btn, "rifMsg", e); }
+  };
+}
+
+function openRifSwapInfoSheet(row) {
+  openSheet(`<h3>Swap RBTC — smart wallet</h3>
+    <p><b>${row.amount == null ? "—" : fmt(row.amount)} RBTC</b> · in your RIF Relay smart wallet on Rootstock</p>
+    <p class="tag">Swaps out of the smart wallet aren't available yet. A Rootstock swap locks its RBTC from the account that creates it, and Fluid's swap routes are built on your plain Rootstock account — the smart wallet's RBTC can't fund those locks directly today, and Fluid won't offer a swap it can't prove end to end.</p>
+    <p class="tag">The working path takes one extra step: send the RBTC to your own Rootstock account (one relayed send, fee shown before you confirm), then swap from there as normal.</p>
+    <button class="btn" id="rifSwapSendFirst">Send to my Rootstock account</button>
+    <button class="btn ghost" id="rifSwapOpen" style="margin-top:8px">Open the swap sheet</button>`);
+  $("rifSwapSendFirst").onclick = () => openRifSendSheet(row, { prefillTo: wallet.address });
+  $("rifSwapOpen").onclick = async () => {
+    closeSheet();
+    await selectNetwork("rootstock");
+    pendingSwapFrom = { netKey: "rootstock", address: null };
+    $("actSwap").click();
+  };
+}
+
+function openRifReceiveSheet(row) {
+  const sw = row.smartWalletAddress || rifSmartWalletAddress(wallet.address);
+  openSheet(`<h3>Receive RBTC — smart wallet</h3>
+    <p class="tag">This is your RIF Relay smart wallet's own address on Rootstock. RBTC sent here lands in the smart wallet — separate from your plain Rootstock account's address.</p>
+    <p class="seed" id="rifRecvAddr" style="word-break:break-all;cursor:pointer" title="Tap to copy">${esc(sw || "")}</p>
+    <button class="btn" id="rifRecvCopy">Copy address</button>`);
+  const copy = () => { copyText(sw, $("rifRecvAddr")); toast("Address copied"); };
+  $("rifRecvCopy").onclick = copy;
+  $("rifRecvAddr").onclick = copy;
+}
+
 function openEvmSendSheet(prefer = null) {
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag" id="sLoadNote">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
-    <select id="sToken">${balances.map((b, i) => `<option value="${i}">${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}</option>`).join("")}</select>
+    <select id="sToken">${balances.map((b, i) => `<option value="${i}"${b.rifSmartWallet ? " disabled" : ""}>${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}${b.rifSmartWallet ? " (in your smart wallet — send it from its own page)" : ""}</option>`).join("")}</select>
     <input id="sTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
     <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
@@ -5104,7 +5338,7 @@ function openEvmSendSheet(prefer = null) {
   // selected — the picker holds balances indices; a null address is
   // the native row. An unmatched preference leaves the default.
   if (prefer) {
-    const idx = balances.findIndex(x => (x.address || null) === (prefer.address || null));
+    const idx = balances.findIndex(x => !x.rifSmartWallet && (x.address || null) === (prefer.address || null));
     if (idx >= 0) { $("sToken").value = String(idx); paintSendAmtUsd(); }
   }
   // MAX fills the EXACT on-chain balance (a fresh read; the row's
@@ -5167,6 +5401,7 @@ function openEvmSendSheet(prefer = null) {
     // because the user forgot the amount).
     if (evmLoadFailed) return msg("sMsg", warnPrefix + resolvedNote + "Balances couldn't load right now — tap More → Refresh and try again.");
     if (!b) return msg("sMsg", warnPrefix + resolvedNote + "Balances are still loading — wait a moment and try again.");
+    if (b.rifSmartWallet) return msg("sMsg", warnPrefix + resolvedNote + "That RBTC sits in your RIF Relay smart wallet, not this account — open its row on the Rootstock page and use its own Send, which runs through the relay.");
     if (!amount || Number(amount) <= 0) return msg("sMsg", warnPrefix + resolvedNote + "Enter an amount.");
     // Cash-out deposits take their own review path: the composition
     // is priced and the design's sentence painted BEFORE the balance
