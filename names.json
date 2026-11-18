@@ -822,5 +822,13 @@
     "sol": "3JjB6xjgaCbUpS8n6mTuMEagMXdCSDjnCziJJzd93r1E",
     "tron": "TYWUaSz1ZDoLMz25gb9paG7tPEwUpiPQRt",
     "sui": "0x2dffee02fd6d1ddd7b0d2d660f361e17ef264a8d53f725af985a52d9f3293c8a"
+  },
+  "verify155438276": {
+    "evm": "0xA94919C4910F7618D844Fc2746960F5338BB0a1e",
+    "btc": "bc1qhzlexa48a5z4q22n8njadkswqhyjfm723g2533",
+    "algo": "G23BHTMKJJWXKLCPIJT7FP3BRYN6U5UDN47DVYIG4346LUTYU7G7F56YNQ",
+    "sol": "47xTC94jUXdYKvvwHTDZeA24pHyzSEt2NeRXN9WCQbuS",
+    "tron": "TRQJmbooRwyKuUTjDV3VJSegWQDYeG6ChJ",
+    "sui": "0xe856a0cb402ec9b76f3fac71f75ae4bb3ef8fdab39e6950ecd2790a58e1064ce"
   }
 }
