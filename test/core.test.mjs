@@ -5374,7 +5374,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   const coreSrcHome = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("home order: splitRows main list runs through sortHomeRows, old value-only sort gone",
     coreSrcHome.includes("return { main: sortHomeRows(main, (x) => x.b.amount, (x) => x.v), other: [] };")
-    && appSrcHome.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
+    && appSrcHome.includes("return splitHomeRows(rows, (b) => (valueNullOf && valueNullOf(b)) ? null : rowUsdValue(b, symPriceOf(b)), isNative);")
     && !appSrcHome.includes("main.sort((x, y) => y.v - x.v);"));
   ok("home order: each Cosmos chain is its own pager scope (rev5 — no shared Cosmos card)",
     appSrcHome.includes("if (isCosmosKey(g.key)) { const r = cosmosRows.find(x => x.key === g.key); censusPush(g.key, g.key, r ? r.name : g.key); continue; }"));
@@ -8460,8 +8460,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // `other` is always empty and every held row renders normally.)
   {
     const sp = splitHomeRows([ALGO_ROW, ASA_ROW], () => null, (b) => !b.address);
-    ok("unpriced native: a held native row with no price renders in main (§155: the unverified held token beside it is a main row too — no bucket)",
-      sp.main.length === 2 && sp.main[0].b === ALGO_ROW && sp.main[0].v === null && sp.other.length === 0);
+    ok("unpriced native: a held native row with no price renders in main (§155: the unverified held token beside it is a main row too — no bucket; §156: the unpriced pair orders by amount desc, ASA 50 ahead of ALGO 0.898)",
+      sp.main.length === 2 && sp.main[0].b === ASA_ROW && sp.main[1].b === ALGO_ROW && sp.main[1].v === null && sp.other.length === 0);
     ok("unpriced native: the held native sorts as held in main (ahead of zeros)",
       splitHomeRows([{ ...ALGO_ROW, amount: "0" }, ALGO_ROW], () => null, (b) => !b.address).main[0].b.amount === "0.898");
   }
@@ -8529,9 +8529,10 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   {
     const appSrc72 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
     const coreSrc72 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
-    ok("unpriced native: splitRows delegates to splitHomeRows with the family native test",
-      appSrc72.includes("return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);")
-      && appSrc72.includes("splitRows(visible, priceOf, (b) => isNativeRow(famKey, b))"));
+    ok("unpriced native: splitRows delegates to splitHomeRows with the family native test (§156: plus the scam value-nullifier)",
+      appSrc72.includes("return splitHomeRows(rows, (b) => (valueNullOf && valueNullOf(b)) ? null : rowUsdValue(b, symPriceOf(b)), isNative);")
+      && appSrc72.includes("const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b),")
+      && appSrc72.includes("return tid ? trustScamActive(tid.chainKey, tid.tokenId) : false; });"));
     ok("unpriced native: prices live SILENTLY (rev5 §7) — token rows and scalar rows show the amount alone, no marker text anywhere",
       !appSrc72.includes(`<small>price unavailable</small>`) && !appSrc72.includes("No live price available")
       && appSrc72.includes("if (price == null && Number(bal) > 0)"));
@@ -24162,6 +24163,99 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§155: route cards render the labelled receive + cost lines (no unlabelled receive figure remains)",
     app155.includes("<b>${esc(routeCardReceiveLine(r))}</b>") && app155.includes("${esc(routeCardCostLine(r))}")
     && !app155.includes('<span style="text-align:right">${usd(r.toAmountUSD)}'));
+}
+
+// §156 — ASSETS SORTED BY VALUE, HIGHEST FIRST (D7, 2026-11-18).
+// The owner's order, verbatim in substance: "when I open my
+// wallet, the asset I'm holding should fall in accordance to
+// their value worth — the highest one at the top, the one next
+// to it right under it." §155 made every held token a normal
+// row, but sortHomeRows still counted an unpriced positive as
+// value 0 AMONG the positives: a huge unpriced holding could
+// sit above a small priced one on a tie, and unpriced rows kept
+// read order. Now the tiers are: priced positives by USD
+// descending; unpriced positives below ALL priced rows, by
+// amount descending then symbol A–Z (deterministic, never
+// read-order luck); couldn't-load rows keep their pinned place
+// below the positives (§147/§148 treatment untouched); true
+// zeros last. The sort is recomputed from live state at every
+// paint, and paints fire at settle events only — so a price
+// landing late (§155 re-price) moves the row to its earned
+// place at that settle, and a settled list never re-sorts on a
+// timer. The All view's flattenHeldRows already carried this
+// shape (§145); pinned here across chains. A §146 scam row —
+// no displayed fiat, excluded from totals — sorts with the
+// unpriced group via the app's value-nullifier in splitRows.
+{
+  const { splitHomeRows: split156, flattenHeldRows: flat156 } = await import("../src/wallet-core.js");
+  const vals = new Map();
+  const valueOf156 = (b) => vals.has(b.symbol) ? vals.get(b.symbol) : null;
+  const mk = (symbol, amount) => ({ symbol, name: symbol, amount, address: "0x" + symbol, decimals: 18, verified: false });
+  const order = (sp) => sp.main.map(x => x.b.symbol).join(",");
+  // (a) chain page: strict USD descent; the unpriced whale sits
+  // below even a cent of priced value; failed and zero keep
+  // their places at the tail.
+  {
+    vals.clear();
+    vals.set("BIG", 50); vals.set("MID", 5); vals.set("DUST", 0.01);
+    const rows = [mk("DUST", "3"), mk("WHALE", "9000000"), mk("BIG", "2"), mk("FAILED", null), mk("MID", "4"), mk("ZERO", "0")];
+    ok("§156 (a): a chain page renders priced rows in descending USD order, unpriced below ALL priced, then couldn't-load, then zeros",
+      order(split156(rows, valueOf156, () => false)) === "BIG,MID,DUST,WHALE,FAILED,ZERO");
+  }
+  // (b) late price: the same rows re-split after the whale's
+  // price lands — the row moves to its earned place at the
+  // settle re-sort, not stuck at the bottom.
+  {
+    vals.clear();
+    vals.set("BIG", 50); vals.set("MID", 5); vals.set("DUST", 0.01);
+    const rows = [mk("DUST", "3"), mk("WHALE", "9000000"), mk("BIG", "2"), mk("MID", "4")];
+    const before = order(split156(rows, valueOf156, () => false));
+    vals.set("WHALE", 4000);
+    const after = order(split156(rows, valueOf156, () => false));
+    ok("§156 (b): a row priced late re-sorts into its correct position at the settle re-sort",
+      before === "BIG,MID,DUST,WHALE" && after === "WHALE,BIG,MID,DUST");
+  }
+  // (c) the unpriced group is deterministic: amount desc, then
+  // symbol A–Z — the same output whatever the read order was.
+  {
+    vals.clear(); vals.set("P", 1);
+    const a = [mk("ZZZ", "5"), mk("P", "1"), mk("AAA", "5"), mk("MMM", "9")];
+    const b = [mk("MMM", "9"), mk("AAA", "5"), mk("P", "1"), mk("ZZZ", "5")];
+    const oa = order(split156(a, valueOf156, () => false));
+    const ob = order(split156(b, valueOf156, () => false));
+    ok("§156 (c): unpriced rows sit below priced rows in deterministic order (amount desc, symbol A–Z), independent of read order",
+      oa === "P,MMM,AAA,ZZZ" && ob === oa);
+  }
+  // (d) the All view's flat list descends by value ACROSS
+  // chains (failed reads keep their §145 pinned first place).
+  {
+    const items = [
+      { symbol: "LADYS", amount: "1041558458", valueUsd: 4.69 },
+      { symbol: "SOL", amount: null, valueUsd: null },
+      { symbol: "BNB", amount: "0.5", valueUsd: 300 },
+      { symbol: "XYZ", amount: "77", valueUsd: null },
+      { symbol: "ETH", amount: "0.004", valueUsd: 0.01 },
+    ];
+    const flat = flat156(items).map(x => x.symbol).join(",");
+    ok("§156 (d): the All view descends by USD value across chains, unpriced last by amount, failed reads first (pinned treatment)",
+      flat === "SOL,BNB,LADYS,ETH,XYZ");
+  }
+  // (e) scam wiring + stability shape (app source pins): the
+  // split nullifies an active scam verdict's value (the row
+  // sorts as unpriced, matching its no-fiat display), the
+  // per-network split runs under that chain's trust context,
+  // and no timer repaints Assets (re-sorts happen at paints,
+  // which are settle events).
+  {
+    const app156 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("§156 (e): an active §146 scam verdict nullifies the row's sort value in splitRows (sorts with the unpriced group, never by its fantasy price)",
+      app156.includes("(valueNullOf && valueNullOf(b)) ? null : rowUsdValue(b, symPriceOf(b))")
+      && app156.includes("return tid ? trustScamActive(tid.chainKey, tid.tokenId) : false; });"));
+    ok("§156 (e): the per-network EVM split runs under that chain's trust context (same ctx discipline as its render closure)",
+      app156.includes("try { fi = familyRowItemsNow(\"evm\", st.rows,") && app156.includes("finally { evmRowCtxKey = null; }"));
+    ok("§156 (e): no interval repaints the Assets list — re-sorts ride settle-event paints only, never a timer tick",
+      !/setInterval\([^)]*paintAssets/.test(app156) && !/setInterval\([^)]*renderMain/.test(app156));
+  }
 }
 
 console.log(`\n${passed} checks passed`);

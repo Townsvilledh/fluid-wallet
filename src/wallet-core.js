@@ -35421,12 +35421,22 @@ export function unpackBalanceCache(json, address) {
   return o;
 }
 
-/** Order rows within one family: positive balances first (USD
- *  value descending), then couldn't-load rows (amount null — the
- *  balance is unknown, never a dressed-up zero), then true-zero
- *  rows in their given order. amountOf/valueOf read the caller's
- *  row shape; an unpriced positive counts as value 0 among the
- *  positives. */
+/** Order rows within one family (§156, 2026-11-18 — the owner's
+ *  D7 order: assets fall by worth, highest first). Priced
+ *  positives first, USD value descending (ties keep the given
+ *  order); then UNPRICED positives — a held token no source can
+ *  price has no value to rank by, so it sits below every priced
+ *  row, ordered among its own kind by amount descending, then
+ *  symbol/name A–Z, then given order (deterministic, never
+ *  random); then couldn't-load rows (amount null — the balance
+ *  is unknown, never a dressed-up zero) in their given order;
+ *  then true-zero rows in their given order. amountOf/valueOf
+ *  read the caller's row shape. The sort is a pure function of
+ *  the CURRENT values: every paint recomputes it, and paints
+ *  happen at settle events (a read landing, a §155 re-price
+ *  landing, a trust verdict landing, a manual refresh) — so a
+ *  row priced late moves to its earned place at that settle,
+ *  and the settled list never re-sorts on a timer tick. */
 /** Split one family's home rows for rendering (§155,
  *  2026-11-18 — the "Other tokens" bucket is ABOLISHED by the
  *  owner's direct order). Until today a non-native row joined
@@ -35441,8 +35451,9 @@ export function unpackBalanceCache(json, address) {
  *  or not — an unpriceable token keeps its own named row with
  *  a blank fiat area, and verification/trust annotations ride
  *  the row itself (the UNVERIFIED chip, the §146 trust badge),
- *  never a bucket. Ordering is sortHomeRows unchanged (held
- *  by value, then couldn't-load, then zeros). `other` is
+ *  never a bucket. Ordering is sortHomeRows (§156: priced by
+ *  value descending, then unpriced positives by amount/name,
+ *  then couldn't-load, then zeros). `other` is
  *  always empty — the field survives so consumers keep their
  *  shape; nothing renders from it.
  *  rows: balance-row objects; valueOf(b) → USD value or null;
@@ -35477,15 +35488,26 @@ export function countUnpricedHoldings(groups) {
   return n;
 }
 export function sortHomeRows(items, amountOf, valueOf) {
+  const nameOf = (x) => {
+    const b = x && x.b ? x.b : x;
+    return String((b && (b.symbol || b.name)) || "");
+  };
   const tier = (x) => {
     const a = amountOf(x);
-    if (a == null) return 1;
-    return Number(a) > 0 ? 0 : 2;
+    if (a == null) return 2;
+    if (!(Number(a) > 0)) return 3;
+    return valueOf(x) != null ? 0 : 1;
   };
   return items.map((x, i) => [x, i]).sort((p, q) => {
     const tp = tier(p[0]), tq = tier(q[0]);
     if (tp !== tq) return tp - tq;
-    if (tp === 0) { const d = (valueOf(q[0]) || 0) - (valueOf(p[0]) || 0); if (d !== 0) return d; }
+    if (tp === 0) { const d = valueOf(q[0]) - valueOf(p[0]); if (d !== 0) return d; }
+    if (tp === 1) {
+      const d = Number(amountOf(q[0])) - Number(amountOf(p[0]));
+      if (d !== 0) return d;
+      const dn = nameOf(p[0]).localeCompare(nameOf(q[0]));
+      if (dn !== 0) return dn;
+    }
     return p[1] - q[1];
   }).map(([x]) => x);
 }

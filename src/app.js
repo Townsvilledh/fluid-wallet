@@ -2399,7 +2399,8 @@ function familyRowItems(famKey, rowsArr, priceOf, renderItem) {
  *  settle record. */
 function familyRowItemsNow(famKey, rowsArr, priceOf, renderItem) {
   const visible = rowsArr.filter(b => b && (b.amount == null || Number(b.amount) > 0));
-  const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b));
+  const sp = splitRows(visible, priceOf, (b) => isNativeRow(famKey, b),
+    (b) => { const tid = rowTrustId(famKey, b); return tid ? trustScamActive(tid.chainKey, tid.tokenId) : false; });
   // Items carry a RENDER closure, not finished html: the chain
   // badge belongs on All-page rows only, so each surface renders
   // its items under its own badge context (badgeAllCtx).
@@ -2513,11 +2514,16 @@ async function retryFamily(key, title) {
     return fail(`${title} balances`);
   } catch { return fail(`${title} balances`); }
 }
-function splitRows(rows, symPriceOf, isNative = () => false) {
+function splitRows(rows, symPriceOf, isNative = () => false, valueNullOf = null) {
   // The ordering rule lives in wallet-core (splitHomeRows) so it
   // is unit-testable: EVERY held row is a main row (§155 — the
   // "Other tokens" bucket is abolished); the split only orders.
-  return splitHomeRows(rows, (b) => rowUsdValue(b, symPriceOf(b)), isNative);
+  // valueNullOf (§156): a row whose USD value must not rank it —
+  // an active §146 scam verdict displays no fiat figure and is
+  // excluded from every total, so it sorts with the unpriced
+  // group (§156 tier 1) instead of by its fantasy price. The
+  // totals' own scam exclusion is separate and unchanged.
+  return splitHomeRows(rows, (b) => (valueNullOf && valueNullOf(b)) ? null : rowUsdValue(b, symPriceOf(b)), isNative);
 }
 
 /** Amount cell for the scalar-balance families (LTC/DOGE/BCH):
@@ -2624,7 +2630,13 @@ function paintAssets() {
       try { return tokenRowHtml(b, v, b.rifSmartWallet ? cnet.name + " · Smart wallet" : cnet.name, `data-evmrow="${rowRefFor(b)}" data-evmchain="${k}"`, "evm"); }
       finally { evmRowCtxKey = null; }
     };
-    const fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], render);
+    // The split resolves trust verdicts under the same chain
+    // context the render closure sets (§156: the scam sort
+    // predicate reads rowTrustId, which is ctx-keyed for EVM).
+    evmRowCtxKey = k;
+    let fi;
+    try { fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], render); }
+    finally { evmRowCtxKey = null; }
     grp("evm:" + k, "", [fi.html], fi.items);
   }
   // Tron family rows (tap a row to send on Tron)
