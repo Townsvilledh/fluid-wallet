@@ -1245,6 +1245,12 @@ function hydrateBalanceCache(w) {
   put("aptos", (rows) => { aptosBalances = rows; });
   put("stacks", (rows) => { stacksBalances = rows; });
   put("cosmos", (rows) => { cosmosRows = rows; });
+  // Per-chain Cosmos evidence (§157/D8): the family-level put
+  // records "cosmos" when ANY chain held; the All view's
+  // couldn't-load rule and the page census judge each chain on
+  // its own evidence, so a cached positive on one chain also
+  // records that chain's key.
+  for (const r of cosmosRows) if (r && r.key && Number(r.amount) > 0) evidenceFams.add(r.key);
   if (cached.evm && cached.evm.network === networkKey && Array.isArray(cached.evm.rows)) {
     balances = cached.evm.rows;
     famLoaded.add("evm"); hydratedFams.add("evm");
@@ -2113,7 +2119,9 @@ function viewAddress() {
   return a ? { text: short(a), copy: a } : { text: "", copy: null };
 }
 /** Couldn't-load signal for the hero (2026-11-14 header-honesty
- *  fix): true when any family IN THE CURRENT VIEW sits in its
+ *  fix; the All-view branch is evidence-scoped since §157/D8 —
+ *  see allViewUnloaded below): true when any family IN THE
+ *  CURRENT VIEW sits in its
  *  couldn't-load state, so the header total — which can only sum
  *  the rows that loaded — is annotated instead of posing as the
  *  whole story (the sweep caught a bare "$0.00 · Across all
@@ -2128,31 +2136,72 @@ function viewAddress() {
  *  every row family's flag, its row array, and TON's scan flag:
  *  the total silently excludes that row's unknown balance, so
  *  the footnote owes the user the same warning. */
+/** The All view's couldn't-load signal (§157/D8): the hero line
+ *  annotates the total only for failures where holdings are at
+ *  stake — the same evidence rule the All list itself applies
+ *  (familyHeldEvidence and its scalar/cosmos equivalents). A
+ *  bare failed read on a chain with no held evidence no longer
+ *  raises the line: against a settled picture it is empty-chain
+ *  noise, and the line must not claim it (the owner's total sat
+ *  annotated over Algorand/Aptos/Zcash failures on chains he
+ *  holds nothing on). One exception keeps the 2026-11-14
+ *  header-honesty fix intact: a cold start where no live read
+ *  anywhere has succeeded and no evidence exists — nothing is
+ *  known at all, so any failure keeps the annotation (a bare
+ *  $0.00 must never pose as the whole story over a wholly
+ *  unread wallet). Scoped (per-chain) views keep their own
+ *  per-family signal in balancesUnloadedInView, unchanged. */
+function allViewUnloaded() {
+  const pos = (rows) => Array.isArray(rows) && rows.some(b => b && Number(b.amount) > 0);
+  const nul = (rows) => Array.isArray(rows) && rows.some(b => b && b.amount == null);
+  let evid = false, raw = false;
+  const fam = (flag, rows, key) => {
+    if (!(flag || nul(rows))) return;
+    raw = true;
+    if (evidenceFams.has(key) || pos(rows)) evid = true;
+  };
+  // Active EVM chain: its failure shape is all-null rows, so the
+  // record/cache evidence decides, exactly as for its list rows.
+  if (evmLoadFailed || nul(balances)) {
+    raw = true;
+    if (evidenceFams.has("evm") || evmChainEvidence(networkKey) || pos(balances)) evid = true;
+  }
+  // Per-network EVM reads (§147).
+  for (const [k, st] of evmChainState) {
+    if (!st) continue;
+    const ev = evmChainEvidence(k) || (k === "rootstock" && hasRifClaimEvidence());
+    if (st.status === "failed") { raw = true; if (ev) evid = true; }
+    else if (nul(st.rows)) { raw = true; if (ev || pos(st.rows)) evid = true; }
+  }
+  if (btcLoadFailed) { raw = true; if (evidenceFams.has("bitcoin") || (Number(btcBal) + Number(btcTrBal)) > 0) evid = true; }
+  const scalar = (flag, bal, key) => { if (flag) { raw = true; if (evidenceFams.has(key) || Number(bal) > 0) evid = true; } };
+  scalar(ltcLoadFailed, ltcBal, "litecoin"); scalar(dogeLoadFailed, dogeBal, "dogecoin");
+  scalar(bchLoadFailed, bchBal, "bitcoincash"); scalar(adaLoadFailed, adaBal, "cardano");
+  scalar(zecLoadFailed, zecBal, "zcash"); scalar(dashLoadFailed, dashBal, "dash");
+  fam(tronLoadFailed, tronBalances, "tron");
+  fam(stellarLoadFailed, stellarBalances, "stellar");
+  fam(tonLoadFailed || tonScanFailed, tonBalances, "ton");
+  fam(nearLoadFailed, nearBalances, "near");
+  fam(algoLoadFailed, algoBalances, "algorand");
+  fam(tezLoadFailed, tezBalances, "tezos");
+  fam(hbaLoadFailed, hbaBalances, "hedera");
+  fam(xrpLoadFailed, xrpBalances, "xrpl");
+  fam(dotLoadFailed, dotBalances, "polkadot");
+  fam(aptosLoadFailed, aptosBalances, "aptos");
+  fam(stacksLoadFailed || stacksScanFailed, stacksBalances, "stacks");
+  fam(false, solBalances, "solana");
+  fam(false, suiBalances, "sui");
+  if (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null)) {
+    raw = true;
+    if (cosmosRows.some(r => r.amount == null && evidenceFams.has(r.key))) evid = true;
+  }
+  if (evid) return true;
+  return raw && evidenceFams.size === 0 && liveOkFams.size === 0 && evmChainOk.size === 0;
+}
 function balancesUnloadedInView() {
   const rowNull = (rows) => Array.isArray(rows) && rows.some(b => b && b.amount == null);
   const cosmosChainFailed = (key) => famLoaded.has("cosmos") && cosmosRows.some(r => r.key === key && r.amount == null);
-  if (viewKey === "all") {
-    return evmLoadFailed || rowNull(balances)
-      // Per-network EVM reads (§147): a failed non-active chain —
-      // or a null row inside one — is part of this view's truth
-      // too; the header note must not clear while an entire held
-      // chain stands unread behind it.
-      || [...evmChainState.values()].some(st => st && (st.status === "failed" || (st.rows || []).some(b => b && b.amount == null)))
-      || btcLoadFailed || ltcLoadFailed || dogeLoadFailed || bchLoadFailed || adaLoadFailed || zecLoadFailed || dashLoadFailed
-      || tronLoadFailed || rowNull(tronBalances)
-      || stellarLoadFailed || rowNull(stellarBalances)
-      || tonLoadFailed || tonScanFailed || rowNull(tonBalances)
-      || nearLoadFailed || rowNull(nearBalances)
-      || algoLoadFailed || rowNull(algoBalances)
-      || tezLoadFailed || rowNull(tezBalances)
-      || hbaLoadFailed || rowNull(hbaBalances)
-      || xrpLoadFailed || rowNull(xrpBalances)
-      || dotLoadFailed || rowNull(dotBalances)
-      || aptosLoadFailed || rowNull(aptosBalances)
-      || stacksLoadFailed || stacksScanFailed || rowNull(stacksBalances)
-      || rowNull(solBalances) || rowNull(suiBalances)
-      || (famLoaded.has("cosmos") && cosmosRows.some(r => r.amount == null));
-  }
+  if (viewKey === "all") return allViewUnloaded();
   switch (viewKey) {
     case "evm": return evmLoadFailed || rowNull(balances);
     case "bitcoin": return btcLoadFailed;
@@ -2393,6 +2442,27 @@ function familyRowItems(famKey, rowsArr, priceOf, renderItem) {
   if (!famLoaded.has(famKey)) return { items: [], html: skeletonRowsHtml() };
   return familyRowItemsNow(famKey, rowsArr, priceOf, renderItem);
 }
+/** Held evidence for a family's couldn't-load rows in the All
+ *  view (§157/D8): true when this device has reason to believe
+ *  the family/chain holds something — a positive row in this
+ *  very read (a null sibling is then a discovered holding whose
+ *  own read failed), a previously known balance in the cache
+ *  (evidenceFams), an ever-held/custom token record on the
+ *  chain, or Rootstock's Satora claim record (§154). The All
+ *  view shows a couldn't-load row ONLY under evidence; the
+ *  chain pages render their rows regardless (their §147/§148
+ *  treatment is untouched — this flag feeds core's
+ *  flattenHeldRows filter, nothing else). */
+function familyHeldEvidence(famKey, rowsArr) {
+  if (Array.isArray(rowsArr) && rowsArr.some(b => b && Number(b.amount) > 0)) return true;
+  if (famKey === "evm") {
+    const k = evmRowCtxKey || networkKey;
+    return evmChainEvidence(k)
+      || (k === networkKey && evidenceFams.has("evm"))
+      || (k === "rootstock" && hasRifClaimEvidence());
+  }
+  return evidenceFams.has(famKey);
+}
 /** familyRowItems without the family-loaded gate: for row sets
  *  whose loaded state is their own fact, not the family's — the
  *  per-network EVM reads (§147), whose per-chain state IS the
@@ -2404,7 +2474,8 @@ function familyRowItemsNow(famKey, rowsArr, priceOf, renderItem) {
   // Items carry a RENDER closure, not finished html: the chain
   // badge belongs on All-page rows only, so each surface renders
   // its items under its own badge context (badgeAllCtx).
-  const mk = ({ b, v }) => ({ b, famKey, amount: b.amount, valueUsd: v, symbol: b.symbol, render: () => renderItem({ b, v }) });
+  const famEvidence = familyHeldEvidence(famKey, rowsArr);
+  const mk = ({ b, v }) => ({ b, famKey, amount: b.amount, valueUsd: v, symbol: b.symbol, evidence: famEvidence || Number(b.amount) > 0, render: () => renderItem({ b, v }) });
   const items = sp.main.map(mk);
   const html = items.map(x => x.render()).join("");
   return { items, html };
@@ -2586,7 +2657,7 @@ function paintAssets() {
       <span class="grow"><b class="rname">Bitcoin</b><small>BTC · SegWit + Taproot</small></span>
       <span class="amt">${scalarAmtHtml(btcLoadFailed, btcBal + btcTrBal, prices.BTC)}</span></div>`;
   grp("bitcoin", "", [famLoaded.has("bitcoin") ? btcRowHtml() : skeletonRowsHtml(1)],
-    [{ famKey: "bitcoin", amount: btcLoadFailed ? null : btcBal + btcTrBal, valueUsd: prices.BTC != null ? (btcBal + btcTrBal) * prices.BTC : null, symbol: "BTC", render: btcRowHtml }]);
+    [{ famKey: "bitcoin", amount: btcLoadFailed ? null : btcBal + btcTrBal, valueUsd: prices.BTC != null ? (btcBal + btcTrBal) * prices.BTC : null, symbol: "BTC", evidence: evidenceFams.has("bitcoin") || (Number(btcBal) + Number(btcTrBal)) > 0, render: btcRowHtml }]);
   // EVM rows for the active network: native + curated + custom +
   // scanned (hydrateEvmTokens merges the discovered ones into
   // `balances`), presented priced-and-verified first. A failed load
@@ -2758,7 +2829,7 @@ function paintAssets() {
           ? `<b>—</b><small>couldn't load</small>`
           : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "" : usd(0))}</small>`}</span></div>`;
     grp(r.key, i === 0 ? `<p class="tag" style="margin:12px 0 2px">Cosmos — one phrase, seven chains</p>` : "", [cosmosRowHtml()],
-      [{ famKey: r.key, amount: r.amount, valueUsd: p != null && r.amount != null ? Number(r.amount) * p : null, symbol: r.symbol, render: cosmosRowHtml }]);
+      [{ famKey: r.key, amount: r.amount, valueUsd: p != null && r.amount != null ? Number(r.amount) * p : null, symbol: r.symbol, evidence: evidenceFams.has(r.key) || Number(r.amount) > 0, render: cosmosRowHtml }]);
   });
   // Lightning scoped view (§4.2): no token rows — one row into the
   // Lightning panel (the Wallet tab's Lightning button covers All).
@@ -2770,7 +2841,7 @@ function paintAssets() {
   const scalarGrp = (key, header, cfg) => {
     const render = () => scalarRowHtml(cfg);
     grp(key, header, [famLoaded.has(key) ? render() : skeletonRowsHtml(1)],
-      [{ famKey: key, amount: cfg.failed ? null : cfg.bal, valueUsd: cfg.price != null ? cfg.bal * cfg.price : null, symbol: cfg.sym, render }]);
+      [{ famKey: key, amount: cfg.failed ? null : cfg.bal, valueUsd: cfg.price != null ? cfg.bal * cfg.price : null, symbol: cfg.sym, evidence: evidenceFams.has(key) || Number(cfg.bal) > 0, render }]);
   };
   scalarGrp("litecoin", `<p class="tag" style="margin:12px 0 2px">Bitcoin family</p>`,
     { attr: `data-ltc="1"`, sym: "LTC", name: "Litecoin", sub: "Native SegWit", failed: ltcLoadFailed, bal: ltcBal, price: prices.LTC, famKey: "litecoin" });
@@ -2882,9 +2953,11 @@ function paintAssets() {
     return `<div class="card groupcard">${head}${innerHtml}</div>`;
   };
   // ---- home restructure (spec rev5): census -> pager -> pages ----
-  // A scope earns a page iff it holds something, its read failed,
-  // or a send/swap touching it is in flight (core's heldScopes
-  // owns the rule and the order). The ACTIVE EVM network is the
+  // A scope earns a page iff it holds something, its read failed
+  // WITH held evidence (§157/D8 — a bare failed read on an
+  // evidence-free chain earns no page), or a send/swap touching
+  // it is in flight (core's heldScopes owns the rule and the
+  // order). The ACTIVE EVM network is the
   // "evm" scope; any OTHER EVM chain earns a page only on
   // on-device evidence (an ever-held or custom token record) --
   // its scope key is "evm:<netKey>" and committing the page
@@ -2911,6 +2984,10 @@ function paintAssets() {
       failed: groupKey === "evm" ? evmLoadFailed
         : isCosmosKey(groupKey) ? (famLoaded.has("cosmos") && (cosmosRows.find(r => r.key === groupKey) || {}).amount == null)
         : !!famFailed[groupKey],
+      // §157/D8: held evidence — a failed scope earns its page
+      // only with it (core's heldScopes applies the rule).
+      evidence: groupKey === "evm" ? (evidenceFams.has("evm") || evmChainEvidence(networkKey))
+        : evidenceFams.has(groupKey),
       inFlight: inFlight.has(scopeKey),
       totalUsd: scopeKey === "evm" ? totals.evm : (groupKey ? totals[groupKey] : null) });
   };
@@ -2935,17 +3012,19 @@ function paintAssets() {
       census.push({ key: "evm:" + k, name: NETWORKS[k].name,
         held: (st.rows || []).some(b => Number(b && b.amount) > 0),
         failed: st.status === "failed",
+        evidence: evmChainEvidence(k) || (k === "rootstock" && hasRifClaimEvidence()),
         inFlight: inFlight.has("evm:" + k),
         totalUsd: evmTotals[k] != null ? evmTotals[k] : null });
-    } else if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, inFlight: inFlight.has("evm:" + k), totalUsd: null });
+    } else if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, evidence: true, inFlight: inFlight.has("evm:" + k), totalUsd: null });
   }
   if (lnSession || inFlight.has("lightning")) census.push({ key: "lightning", name: "Lightning", held: !!lnSession, failed: false, inFlight: inFlight.has("lightning"), totalUsd: totals.lightning });
   const scopes = heldScopes(census);
   homeScopes = scopes;
   homeGroups = groups;
-  // Page 0: the flat held-only list across every chain (failed
-  // reads first, then value, then amount -- core's order), each
-  // row badged with its chain. No family cards, no group headers.
+  // Page 0: the flat held-only list across every chain (value
+  // descending, then amount, then evidence-bearing couldn't-load
+  // rows -- core's §157 order), each row badged with its chain.
+  // No family cards, no group headers.
   const renderAllPage = () => {
     const listEl = $("assetList"); if (!listEl) return;
     const items = [];

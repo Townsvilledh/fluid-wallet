@@ -35516,14 +35516,22 @@ export function sortHomeRows(items, amountOf, valueOf) {
  * The Assets tab's pager (home restructure, spec §1/§2): page 0 is
  * always All; a chain earns a page only when the user has a reason
  * to look at it — it holds something (a balance > 0), its read
- * failed (unknown is not zero, and the page is its Retry card), or
+ * failed WITH held evidence (unknown is not zero, and the page is
+ * its Retry card — §157/D8: evidence required, a bare failure on
+ * an evidence-free chain earns nothing), or
  * a send / milestone swap on it is still in flight (the user must
  * be able to watch it finish). The census is a pure function of
  * the caller's per-scope facts so the rule is unit-testable; the
  * app assembles the facts from its live family state.
  * entries: [{ key, name, totalUsd (number|null — the scope's USD
  * total when a current figure exists, else null), held, failed,
- * inFlight }]. Returns the page list with the All scope first:
+ * evidence (§157/D8: on-device evidence the scope may hold
+ * something — held/custom records, a previously known balance),
+ * inFlight }]. A failed scope earns its page ONLY with held
+ * evidence (§157/D8, superseding the §145/§147 bare-failure
+ * rule): a bare failed read on a chain with no evidence is the
+ * same noise D8 removed from the All view — it must not mint a
+ * page either. Returns the page list with the All scope first:
  * [{ key: "all" }, ...chain entries in pager order]. Order:
  * valued holdings by USD total descending (a failed scope whose
  * last known total is a number keeps the place that total earns —
@@ -35561,7 +35569,7 @@ export function pendingGateScopes(evidenceKeys, allKeys, anyChainPending) {
 }
 
 export function heldScopes(entries) {
-  const keep = (Array.isArray(entries) ? entries : []).filter(e => e && e.key && (e.held || e.failed || e.inFlight));
+  const keep = (Array.isArray(entries) ? entries : []).filter(e => e && e.key && (e.held || e.inFlight || (e.failed && e.evidence)));
   const valued = (e) => typeof e.totalUsd === "number" && Number.isFinite(e.totalUsd) && e.totalUsd > 0;
   const tier = (e) => valued(e) ? 0 : (e.failed ? 1 : 2);
   const byName = (a, b) => String(a.name || a.key).localeCompare(String(b.name || b.key));
@@ -35576,24 +35584,34 @@ export function heldScopes(entries) {
 }
 
 /** The All page's flat held-only row list (home restructure, spec
- * §2): a row appears iff its amount is a real number > 0, or its
- * amount is null (a failed read — the balance is unknown, and the
- * row must say so rather than vanish or pose as zero). Zero-balance
+ * §2; §157/D8 ordering + evidence rule, 2026-11-18): a row appears
+ * iff its amount is a real number > 0, or its amount is null (a
+ * failed read — the balance is unknown, and the row must say so
+ * rather than vanish or pose as zero) AND the item carries held
+ * evidence (x.evidence === true: a held/custom token record, a
+ * previously known balance, or a positive row in the same family
+ * read — the app stamps it). A failed read on a chain with NO
+ * held evidence is not a row at all (§157/D8: the owner's phone
+ * showed Algorand/Aptor/Zcash "couldn't load" rows — chains he
+ * holds nothing on — ranked above his one real holding; the
+ * §145 failed-FIRST pin is superseded). Zero-balance
  * rows NEVER appear — not held is not listed, here or anywhere on
- * Home/Assets. Order is the honesty order: failed reads first,
- * then priced holdings by USD value descending, then holdings
- * with no current figure by amount descending; symbol A–Z breaks
- * ties inside a tier, then the given order. Items are the
- * caller's row descriptors ({ amount, valueUsd, symbol, ... });
- * they are returned unmodified, filtered and sorted. */
+ * Home/Assets. Order is the value order (§156/D7 applied to the
+ * combined list itself): priced holdings by USD value
+ * descending, then holdings with no current figure by amount
+ * descending, then evidence-bearing couldn't-load rows; symbol
+ * A–Z breaks ties inside a tier, then the given order. Items are
+ * the caller's row descriptors ({ amount, valueUsd, symbol,
+ * evidence, ... }); they are returned unmodified, filtered and
+ * sorted. */
 export function flattenHeldRows(items) {
-  const keep = (Array.isArray(items) ? items : []).filter(x => x && (x.amount == null || Number(x.amount) > 0));
-  const tier = (x) => x.amount == null ? 0 : (x.valueUsd != null ? 1 : 2);
+  const keep = (Array.isArray(items) ? items : []).filter(x => x && (Number(x.amount) > 0 || (x.amount == null && x.evidence === true)));
+  const tier = (x) => x.amount == null ? 2 : (x.valueUsd != null ? 0 : 1);
   return keep.map((x, i) => [x, i]).sort((p, q) => {
     const ta = tier(p[0]), tb = tier(q[0]);
     if (ta !== tb) return ta - tb;
-    if (ta === 1) { const d = Number(q[0].valueUsd) - Number(p[0].valueUsd); if (d !== 0) return d; }
-    if (ta === 2) { const d = Number(q[0].amount) - Number(p[0].amount); if (d !== 0) return d; }
+    if (ta === 0) { const d = Number(q[0].valueUsd) - Number(p[0].valueUsd); if (d !== 0) return d; }
+    if (ta === 1) { const d = Number(q[0].amount) - Number(p[0].amount); if (d !== 0) return d; }
     const ds = String(p[0].symbol || "").localeCompare(String(q[0].symbol || ""));
     if (ds !== 0) return ds;
     return p[1] - q[1];

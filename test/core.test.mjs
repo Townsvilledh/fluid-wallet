@@ -22305,7 +22305,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     { key: "solana", name: "Solana", held: true, failed: false, inFlight: false, totalUsd: 50 },
     { key: "bsc", name: "BNB Chain", held: true, failed: false, inFlight: false, totalUsd: 120 },
     { key: "tron", name: "Tron", held: false, failed: false, inFlight: false, totalUsd: 0 },
-    { key: "sui", name: "Sui", held: false, failed: true, inFlight: false, totalUsd: null },
+    { key: "sui", name: "Sui", held: false, failed: true, evidence: true, inFlight: false, totalUsd: null },
     { key: "ton", name: "TON", held: false, failed: false, inFlight: true, totalUsd: null },
     { key: "near", name: "NEAR", held: true, failed: false, inFlight: false, totalUsd: null },
     { key: "aptos", name: "Aptos", held: true, failed: false, inFlight: false, totalUsd: null },
@@ -22315,9 +22315,12 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     scopeKeys[0] === "all" && scopeKeys[1] === "bsc" && scopeKeys[2] === "solana");
   ok("§145: heldScopes drops the unheld/quiet scope entirely (no page for a chain that holds nothing)",
     !scopeKeys.includes("tron"));
-  ok("§145: heldScopes keeps failed and in-flight scopes, failed pinned ahead of unpriced, unpriced A–Z",
+  ok("§145: heldScopes keeps failed (with evidence, §157) and in-flight scopes, failed pinned ahead of unpriced, unpriced A–Z",
     scopeKeys.indexOf("sui") > 2 && scopeKeys.indexOf("sui") < scopeKeys.indexOf("aptos")
     && scopeKeys.indexOf("ton") > 2 && scopeKeys.indexOf("aptos") < scopeKeys.indexOf("near"));
+  ok("§157: heldScopes drops a failed scope with NO held evidence (a bare failed read earns no page)",
+    !heldScopes([{ key: "zcash", name: "Zcash", held: false, failed: true, evidence: false, inFlight: false, totalUsd: null }]).some(s => s.key === "zcash")
+    && !heldScopes([{ key: "zcash", name: "Zcash", held: false, failed: true, inFlight: false, totalUsd: null }]).some(s => s.key === "zcash"));
   ok("§145: a failed scope WITH a numeric total keeps its valued place (partial read with real rows)",
     heldScopes([{ key: "evm", name: "EVM", held: true, failed: true, totalUsd: 500 }, { key: "solana", name: "Solana", held: true, totalUsd: 50 }])[1].key === "evm");
 
@@ -22325,16 +22328,19 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   const flatFixture = [
     { symbol: "AAA", amount: "5", valueUsd: 10 },
     { symbol: "ZZZ", amount: "0", valueUsd: 0 },
-    { symbol: "BBB", amount: null, valueUsd: null },
+    { symbol: "BBB", amount: null, valueUsd: null, evidence: true },
     { symbol: "CCC", amount: "2", valueUsd: 40 },
     { symbol: "DDD", amount: "9", valueUsd: null },
     { symbol: "EEE", amount: "1", valueUsd: null },
   ];
   const flatKeys = flattenHeldRows(flatFixture).map(x => x.symbol);
-  ok("§145: flattenHeldRows drops zero rows entirely and pins failed reads first",
-    !flatKeys.includes("ZZZ") && flatKeys[0] === "BBB");
-  ok("§145: flattenHeldRows orders priced by USD desc, then unpriced by amount desc",
-    flatKeys.join() === "BBB,CCC,AAA,DDD,EEE");
+  ok("§145+§157: flattenHeldRows drops zero rows entirely; an evidence-bearing failed read sorts BELOW every priced holding (the §145 failed-first pin is superseded by D8)",
+    !flatKeys.includes("ZZZ") && flatKeys[flatKeys.length - 1] === "BBB");
+  ok("§145+§157: flattenHeldRows orders priced by USD desc, then unpriced by amount desc, then evidence-bearing couldn't-load",
+    flatKeys.join() === "CCC,AAA,DDD,EEE,BBB");
+  ok("§157: flattenHeldRows drops a failed read with NO held evidence entirely (no row for a chain he holds nothing on)",
+    flattenHeldRows([{ symbol: "NOEV", amount: null, valueUsd: null }]).length === 0
+    && flattenHeldRows([{ symbol: "NOEV", amount: null, valueUsd: null, evidence: false }]).length === 0);
 
   // --- perf: budgets + endpoint depth ---
   ok("§145: balance-read budgets sit at the 1–2 s paint standard (EVM + families + BTC + UTXO)",
@@ -22715,19 +22721,19 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   const flat147 = flattenHeldRows([
     { chain: "bsc", symbol: "BNB", amount: "0.002", valueUsd: 1.2 },
     { chain: "arbitrum", symbol: "LADYS", amount: "1041558458", valueUsd: 5.4 },
-    { chain: "arbitrum", symbol: "USDC", amount: null, valueUsd: null },
+    { chain: "arbitrum", symbol: "USDC", amount: null, valueUsd: null, evidence: true },
     { chain: "bsc", symbol: "DUST", amount: "0", valueUsd: 0 },
   ]).map(x => x.symbol);
-  ok("§147: the All flatten keeps held rows from two EVM networks at once, failed reads first, zeros dropped",
-    flat147.join() === "USDC,LADYS,BNB");
+  ok("§147+§157: the All flatten keeps held rows from two EVM networks at once, zeros dropped, the evidence-bearing failed row below the priced rows (D8 order)",
+    flat147.join() === "LADYS,BNB,USDC");
 
-  // --- a failed non-active chain earns a failed census entry ---
+  // --- a failed non-active chain WITH held evidence earns a failed census entry ---
   const scopes147 = heldScopes([
     { key: "bsc", name: "BNB Chain", held: true, failed: false, inFlight: false, totalUsd: 3 },
-    { key: "evm:arbitrum", name: "Arbitrum", held: false, failed: true, inFlight: false, totalUsd: null },
+    { key: "evm:arbitrum", name: "Arbitrum", held: false, failed: true, evidence: true, inFlight: false, totalUsd: null },
     { key: "evm:polygon", name: "Polygon", held: true, failed: false, inFlight: false, totalUsd: null },
   ]).map(s => s.key);
-  ok("§147: heldScopes keeps a failed non-active EVM chain's page, pinned in the failed tier ahead of unpriced holdings",
+  ok("§147+§157: heldScopes keeps a failed non-active EVM chain's page when it carries held evidence, pinned in the failed tier ahead of unpriced holdings",
     scopes147.includes("evm:arbitrum")
     && scopes147.indexOf("evm:arbitrum") > scopes147.indexOf("bsc")
     && scopes147.indexOf("evm:arbitrum") < scopes147.indexOf("evm:polygon"));
@@ -22758,9 +22764,10 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && app147.includes("totalUsd: evmTotals[k] != null ? evmTotals[k] : null"));
   ok("§147: heroTotal sums the per-network chains through core's rule",
     sl147("function heroTotal(").includes("sumEvmChainsUsd(evmChainsForTotal,"));
-  ok("§147: the header stays Updating… while any evidence-bearing EVM chain is unread, and the couldn't-load note sees per-chain failures",
+  ok("§147+§157: the header stays Updating… while any evidence-bearing EVM chain is unread, and the couldn't-load note sees per-chain failures (via allViewUnloaded since §157)",
     sl147("function paintHeader(").includes("|| evmChainsPending.size > 0;")
-    && sl147("function balancesUnloadedInView(").includes("[...evmChainState.values()].some("));
+    && sl147("function balancesUnloadedInView(").includes("return allViewUnloaded();")
+    && sl147("function allViewUnloaded(").includes("for (const [k, st] of evmChainState)"));
   ok("§147: an evm:<key> pager page renders its read rows — the commit-only skeleton is gone",
     sl147("const renderChainPage = ").includes("const g = groups.find(x => x.key === scope.key);")
     && !app147.includes("its rows load when the page commits"));
@@ -24227,18 +24234,21 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       oa === "P,MMM,AAA,ZZZ" && ob === oa);
   }
   // (d) the All view's flat list descends by value ACROSS
-  // chains (failed reads keep their §145 pinned first place).
+  // chains (§157/D8: an evidence-bearing failed read now sorts
+  // BELOW every priced holding — the §145 failed-first pin this
+  // block originally asserted was superseded by the owner's
+  // phone defect of 2026-11-18).
   {
     const items = [
       { symbol: "LADYS", amount: "1041558458", valueUsd: 4.69 },
-      { symbol: "SOL", amount: null, valueUsd: null },
+      { symbol: "SOL", amount: null, valueUsd: null, evidence: true },
       { symbol: "BNB", amount: "0.5", valueUsd: 300 },
       { symbol: "XYZ", amount: "77", valueUsd: null },
       { symbol: "ETH", amount: "0.004", valueUsd: 0.01 },
     ];
     const flat = flat156(items).map(x => x.symbol).join(",");
-    ok("§156 (d): the All view descends by USD value across chains, unpriced last by amount, failed reads first (pinned treatment)",
-      flat === "SOL,BNB,LADYS,ETH,XYZ");
+    ok("§156 (d)+§157: the All view descends by USD value across chains, unpriced last by amount, evidence-bearing failed reads below every priced holding",
+      flat === "BNB,LADYS,ETH,XYZ,SOL");
   }
   // (e) scam wiring + stability shape (app source pins): the
   // split nullifies an active scam verdict's value (the row
@@ -24255,6 +24265,106 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       app156.includes("try { fi = familyRowItemsNow(\"evm\", st.rows,") && app156.includes("finally { evmRowCtxKey = null; }"));
     ok("§156 (e): no interval repaints the Assets list — re-sorts ride settle-event paints only, never a timer tick",
       !/setInterval\([^)]*paintAssets/.test(app156) && !/setInterval\([^)]*renderMain/.test(app156));
+  }
+}
+
+// §157 (2026-11-18, D8 — the owner's phone defect): the All view
+// listed Algorand / Aptos / Zcash "couldn't load" rows — chains
+// he holds NOTHING on — ABOVE his one real holding (LADYS ·
+// Arbitrum, $4.68), under the §145 failed-first pin. D8's model,
+// exactly as the owner stated it: the All view lists HELD ASSETS
+// ONLY, sorted by live USD value descending; a chain with no
+// held evidence emits NO row when its read fails; a
+// couldn't-load row is honest only for a chain with held
+// evidence, and sorts below every priced held asset. The page
+// census applies the same evidence rule to failed scopes. The
+// per-chain pages keep their §147/§148 couldn't-load treatment
+// (the change is scoped to the All view's assembly — core's
+// flattenHeldRows/heldScopes — plus the evidence the app stamps
+// onto items and census entries).
+{
+  const { flattenHeldRows: flat157, heldScopes: scopes157 } = await import("../src/wallet-core.js");
+  // (d) the sparse shape — his exact phone picture: ONE priced
+  // holding plus several failed EMPTY chains.
+  {
+    const items = [
+      { famKey: "algorand", symbol: "ALGO", amount: null, valueUsd: null },
+      { famKey: "aptos", symbol: "APT", amount: null, valueUsd: null },
+      { famKey: "zcash", symbol: "ZEC", amount: null, valueUsd: null, evidence: false },
+      { famKey: "evm", symbol: "LADYS", amount: "1041558458", valueUsd: 4.68 },
+      { famKey: "evm", symbol: "ETH", amount: "0.00005", valueUsd: 0.16 },
+    ];
+    const flat = flat157(items);
+    ok("§157 (d): sparse shape — one priced holding plus failed empty chains → the holding is the FIRST row and the empty chains emit no rows at all",
+      flat.length === 2 && flat[0].symbol === "LADYS" && flat[1].symbol === "ETH");
+  }
+  // (a) no row for a no-evidence failed chain, whatever its family.
+  {
+    const flat = flat157([
+      { famKey: "algorand", symbol: "ALGO", amount: null, valueUsd: null },
+      { famKey: "aptos", symbol: "APT", amount: null, valueUsd: null },
+      { famKey: "zcash", symbol: "ZEC", amount: null, valueUsd: null },
+      { famKey: "bitcoin", symbol: "BTC", amount: "0.001", valueUsd: 90 },
+    ]);
+    ok("§157 (a): the All view contains no row for any chain with no held evidence whose read failed",
+      flat.length === 1 && flat[0].symbol === "BTC");
+  }
+  // (b) a held-evidence chain whose read failed renders its
+  // couldn't-load row BELOW every priced held asset.
+  {
+    const flat = flat157([
+      { famKey: "algorand", symbol: "ALGO", amount: null, valueUsd: null, evidence: true },
+      { famKey: "evm", symbol: "LADYS", amount: "1041558458", valueUsd: 4.68 },
+      { famKey: "evm", symbol: "ETH", amount: "0.25", valueUsd: 750 },
+      { famKey: "sui", symbol: "SUI", amount: "10", valueUsd: null },
+    ]);
+    ok("§157 (b): a held-evidence failed chain's couldn't-load row sits below every priced held asset (and below unpriced positives)",
+      flat.map(x => x.symbol).join(",") === "ETH,LADYS,SUI,ALGO");
+  }
+  // (c) priced rows strictly descending by value across chains.
+  {
+    const flat = flat157([
+      { famKey: "a", symbol: "T1", amount: "1", valueUsd: 0.5 },
+      { famKey: "b", symbol: "T2", amount: "1", valueUsd: 900 },
+      { famKey: "c", symbol: "T3", amount: "1", valueUsd: 42 },
+      { famKey: "d", symbol: "T4", amount: "1", valueUsd: 3.25 },
+    ]);
+    const vals = flat.map(x => x.valueUsd);
+    ok("§157 (c): the All view's priced rows are strictly descending by USD value across chains",
+      vals.every((v, i) => i === 0 || vals[i - 1] > v) && flat.map(x => x.symbol).join(",") === "T2,T3,T4,T1");
+  }
+  // (a-companion) the page census: a bare failed read with zero
+  // held evidence earns NO page; failed WITH evidence keeps it.
+  {
+    const keys = scopes157([
+      { key: "zcash", name: "Zcash", held: false, failed: true, evidence: false, inFlight: false, totalUsd: null },
+      { key: "algorand", name: "Algorand", held: false, failed: true, evidence: true, inFlight: false, totalUsd: null },
+      { key: "evm:arbitrum", name: "Arbitrum", held: true, failed: false, inFlight: false, totalUsd: 4.68 },
+    ]).map(s => s.key);
+    ok("§157: the pager holds no page for a failed chain with zero held evidence, and keeps the page for a failed chain WITH held evidence",
+      !keys.includes("zcash") && keys.includes("algorand") && keys.includes("evm:arbitrum"));
+  }
+  // App wiring (source pins): items and census entries carry
+  // the evidence stamp; the header qualifier is evidence-scoped
+  // for the All view; Cosmos hydration records per-chain keys.
+  {
+    const app157 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const core157 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    ok("§157: core gates the All flatten and the page census on held evidence",
+      core157.includes("(x.amount == null && x.evidence === true)") && core157.includes("(e.failed && e.evidence)"));
+    ok("§157: the app stamps held evidence onto family items (records, cache, or a positive sibling row)",
+      app157.includes("function familyHeldEvidence(") && app157.includes("evidence: famEvidence || Number(b.amount) > 0"));
+    ok("§157: scalar, Bitcoin and Cosmos items carry their own evidence stamps",
+      app157.includes("evidence: evidenceFams.has(key) || Number(cfg.bal) > 0")
+      && app157.includes("evidence: evidenceFams.has(\"bitcoin\") || (Number(btcBal) + Number(btcTrBal)) > 0")
+      && app157.includes("evidence: evidenceFams.has(r.key) || Number(r.amount) > 0"));
+    ok("§157: the census stamps evidence per scope (family scopes from the cache set, per-network EVM from its token records)",
+      app157.includes("evidence: groupKey === \"evm\" ? (evidenceFams.has(\"evm\") || evmChainEvidence(networkKey))")
+      && app157.includes("evidence: evmChainEvidence(k) || (k === \"rootstock\" && hasRifClaimEvidence())"));
+    ok("§157: Cosmos cache hydration records per-chain evidence keys, not only the family key",
+      app157.includes("if (r && r.key && Number(r.amount) > 0) evidenceFams.add(r.key);"));
+    ok("§157: the hero couldn't-load line is evidence-scoped in the All view (allViewUnloaded), scoped views untouched",
+      app157.includes("function allViewUnloaded()") && app157.includes("if (viewKey === \"all\") return allViewUnloaded();"));
   }
 }
 
