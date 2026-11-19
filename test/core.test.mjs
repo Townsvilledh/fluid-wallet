@@ -5352,8 +5352,8 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
 
   // app.js wiring (source pins, as in sections 61/62).
   const appSrcHome = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("home order: paintAssets passes the raw-balance held map into the page census (rev5)",
-    appSrcHome.includes(": !!heldMap[groupKey]") && appSrcHome.includes("const scopes = heldScopes(census);")
+  ok("home order: paintAssets passes the raw-balance held map into the page census (rev5; §158: the earned list is then assembled with user-jumped scopes)",
+    appSrcHome.includes(": !!heldMap[groupKey]") && appSrcHome.includes("const scopes = withJumpedScopes(heldScopes(census), census, jumpedKeys);")
     && appSrcHome.includes("bitcoin: (Number(btcBal) + Number(btcTrBal)) > 0,"));
   ok("load speed: renderMain no longer awaits prices before balance loads",
     !appSrcHome.includes("prices = await Promise.race(")
@@ -5365,9 +5365,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     appSrcHome.includes("pendingGateScopes(evidenceFams, HOME_FAMILIES, evmChainsPending.size > 0)")
     && appSrcHome.includes("gateScopes.some((k) => !liveFams.has(k))")
     && !appSrcHome.includes("cachePaint && !HOME_FAMILIES.every((k) => liveFams.has(k))"));
-  ok("home order: paintAssets renders the pager through heldScopes + flattenHeldRows (rev5)",
+  ok("home order: paintAssets renders the pager through heldScopes + flattenHeldRows (rev5; §158: withJumpedScopes joins the import for the jumped-page assembly)",
     appSrcHome.includes("const flat = flattenHeldRows(items);")
-    && appSrcHome.includes("heldScopes, flattenHeldRows,"));
+    && appSrcHome.includes("heldScopes, withJumpedScopes, flattenHeldRows,"));
   ok("home order: family failure is read from the load-failed flags",
     appSrcHome.includes("bitcoin: btcLoadFailed, evm: evmLoadFailed, litecoin: ltcLoadFailed,")
     && appSrcHome.includes("cosmos: famLoaded.has(\"cosmos\") && cosmosRows.some(r => r.amount == null) && !cosmosRows.some(r => Number(r.amount) > 0),"));
@@ -24365,6 +24365,364 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       app157.includes("if (r && r.key && Number(r.amount) > 0) evidenceFams.add(r.key);"));
     ok("§157: the hero couldn't-load line is evidence-scoped in the All view (allViewUnloaded), scoped views untouched",
       app157.includes("function allViewUnloaded()") && app157.includes("if (viewKey === \"all\") return allViewUnloaded();"));
+  }
+}
+
+
+// §158 (2026-11-19, the owner's phone defect): in Assets he
+// searched "sui" and tapped through to the Sui chain view — but
+// the hero stayed exactly as All (pill "All networks", the
+// grand total, "Across all networks"). Root cause: the hero is
+// driven only by viewKey; a pageless family's search hit was
+// keyed "xplore:<id>" and routed into Explore's chain view,
+// which never commits a view; and the §157 census earns Sui no
+// page (he holds 0 SUI), so pagerCommit had nowhere to land
+// even if the handler had tried. Explore's not-held branch
+// compounded it: no "Open the page" jump at all. The fix: ONE
+// commit — jumpToChainPage — for every chain-name surface
+// (Assets search, Explore jumps, the Network sheet): a paged
+// chain commits through pagerCommit as a swipe does; a
+// pageless chain earns a SESSION page from the user's own tap
+// (core's withJumpedScopes assembles it into the pager list),
+// so hero, pill, swipe bar, page and the Send/Receive/Swap
+// actions all scope to the chain. A committed viewKey restored
+// on reload earns its page the same way. §157 stands: failure
+// still mints NO pages and NO All-view rows — a jumped page is
+// user intent, never a failure artefact, and the All list
+// never reads the scope list.
+{
+  const { withJumpedScopes: wjs158, heldScopes: hs158 } = await import("../src/wallet-core.js");
+  // The assembly rule, on the owner's shape: LADYS-earning
+  // Arbitrum + the active EVM page earned; Sui quiet (nothing
+  // held, read landed, no evidence) earns nothing.
+  const census158 = [
+    { key: "evm:arbitrum", name: "Arbitrum", held: true, failed: false, evidence: true, inFlight: false, totalUsd: 4.68 },
+    { key: "evm", name: "BNB Chain", held: true, failed: false, evidence: true, inFlight: false, totalUsd: 0.16 },
+    { key: "sui", name: "Sui", held: false, failed: false, evidence: false, inFlight: false, totalUsd: 0 },
+    { key: "zcash", name: "Zcash", held: false, failed: true, evidence: false, inFlight: false, totalUsd: null },
+    { key: "tezos", name: "Tezos", held: false, failed: false, evidence: false, inFlight: false, totalUsd: 0 },
+  ];
+  const earned158 = hs158(census158);
+  ok("§158: without a jump, the pageless Sui earns no page (the defect's precondition)",
+    !earned158.some(s => s.key === "sui") && earned158.some(s => s.key === "evm:arbitrum"));
+  {
+    const out = wjs158(earned158, census158, ["sui"]);
+    ok("§158: a user jump mints the Sui page for the session, flagged as jumped, after the earned pages",
+      out.some(s => s.key === "sui" && s.jumped === true)
+      && out[out.length - 1].key === "sui"
+      && out.filter(s => s.key === "evm:arbitrum").length === 1);
+  }
+  ok("§158: a jump never resurrects a failed evidence-free chain that was NOT tapped (failure still mints nothing)",
+    !wjs158(earned158, census158, ["sui"]).some(s => s.key === "zcash")
+    && !wjs158(earned158, census158, []).some(s => s.key === "sui")
+    && !wjs158(earned158, census158, ["all", "nosuchchain"]).some(s => s.jumped));
+  ok("§158: the committed view earns its page the same way (the reload-agreement rule rides the same assembly)",
+    wjs158(earned158, census158, ["tezos"]).some(s => s.key === "tezos" && s.jumped === true));
+  // App wiring (source pins): one commit for every surface.
+  {
+    const app158 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    ok("§158: paintAssets assembles the pager from earned + jumped scopes (session jumps + the committed view)",
+      app158.includes("const scopes = withJumpedScopes(heldScopes(census), census, jumpedKeys);")
+      && app158.includes("if (viewKey !== \"all\" && viewKey !== \"evm\") jumpedKeys.add(viewKey);"));
+    ok("§158: Assets search keys family hits by their scope id and its tap handler routes through the one jump commit (no Explore routing left)",
+      app158.includes("chainHits.push({ key: m.id, name: m.name })")
+      && !app158.includes("xplore:")
+      && app158.includes("jumpToChainPage(key);"));
+    const xSeg = app158.slice(app158.indexOf("function renderExploreChain(key)"), app158.indexOf("// ---------- chain discovery"));
+    const notHeldSeg = xSeg.slice(xSeg.indexOf("if (!rowsHtml || !c.held)"), xSeg.indexOf("wireHomeRows(host);\n      return;"));
+    ok("§158: Explore's not-held branch carries the same 'Open the page' jump, wired to the same commit",
+      notHeldSeg.includes('id="xJump"') && notHeldSeg.includes("jumpToChainPage(c.scopeKey)"));
+    ok("§158: the Network sheet's pageless-family rows land on the chain page via the same commit",
+      app158.includes('closeSheet(); goTab("wallet"); jumpToChainPage(b.dataset.xplore);'));
+  }
+  // The production path, driven end to end in jsdom: the REAL
+  // bundle (built from current src with the production esbuild
+  // config), a wallet created through the real DOM flow, the
+  // owner's fixture (LADYS held record on Arbitrum stubbed at
+  // 1,041,558,458 / $4.4933e-9 ≈ $4.68, BNB dust ≈ $0.16 —
+  // the D8 walk's stub recipe), then the real search input,
+  // the real chain-row tap, and the hero DOM read back. On the
+  // unfixed code this drive leaves the hero on All (verified
+  // 2026-11-19); these pins are its regression fence.
+  {
+    const { JSDOM } = await import("jsdom");
+    const { build: esbuild158 } = await import("esbuild");
+    const PW158 = "WalkPass158!";
+    const NAME158 = "verify158" + Math.floor(100000 + Math.random() * 899999);
+    const LADYS158 = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+    const bundleRes158 = await esbuild158({
+      entryPoints: [new URL("../src/app.js", import.meta.url).pathname], bundle: true, minify: true, write: false,
+      format: "iife", external: ["./lightning.chunk.js", "./walletconnect.chunk.js", "./arkade.chunk.js", "./cosmos.chunk.js", "./polkadot.chunk.js", "./peer.chunk.js"],
+      alias: { zod: new URL("../node_modules/zod/index.js", import.meta.url).pathname },
+    });
+    const bundle158 = bundleRes158.outputFiles[0].text;
+    const html158 = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+    let reqCount158 = 0;
+    const fixtureFetch158 = (input, init) => {
+      reqCount158++;
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      let u = null; try { u = new URL(url); } catch {}
+      const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
+      const fail = () => Promise.resolve(new Response("fixture 503", { status: 503 }));
+      if (!u) return fail();
+      if (u.hostname === "graphql.mainnet.sui.io") {
+        return Promise.resolve(json({ data: { address: { balances: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } }));
+      }
+      if (u.hostname === "api.coingecko.com" && u.pathname.includes("/simple/token_price/")) {
+        const addrs = (u.searchParams.get("contract_addresses") || "").toLowerCase();
+        const out = {};
+        if (addrs.includes(LADYS158.toLowerCase())) out[LADYS158.toLowerCase()] = { usd: 4.4933e-9 };
+        return Promise.resolve(json(out));
+      }
+      const IDPX = { ethereum: 3000, "usd-coin": 1, tether: 1, bitcoin: 90000, binancecoin: 600, solana: 200, ripple: 0.6, cardano: 0.6, dogecoin: 0.16, polkadot: 4.2, "the-open-network": 5.5, stellar: 0.12, near: 4.8, aptos: 8, sui: 1.1, tron: 0.27, litecoin: 105, "bitcoin-cash": 490, zcash: 55, dash: 32, "hedera-hashgraph": 0.3, tezos: 0.9, algorand: 0.4, cosmos: 9, stacks: 1.8, "avalanche-2": 40, "matic-network": 0.9, chainlink: 22 };
+      if (u.hostname === "api.coingecko.com" && u.pathname.includes("/simple/price")) {
+        const ids = (u.searchParams.get("ids") || "").split(",").filter(Boolean);
+        const out = {}; for (const id of ids) out[id] = { usd: IDPX[id] != null ? IDPX[id] : 1 };
+        return Promise.resolve(json(out));
+      }
+      const SYMPX = { ETHUSDT: "3000", BNBUSDT: "600", BTCUSDT: "90000", SOLUSDT: "200", USDCUSDT: "1", XRPUSDT: "0.6", ADAUSDT: "0.6", DOGEUSDT: "0.16", DOTUSDT: "4.2", TONUSDT: "5.5", XLMUSDT: "0.12", NEARUSDT: "4.8", APTUSDT: "8", SUIUSDT: "1.1", TRXUSDT: "0.27", LTCUSDT: "105", BCHUSDT: "490", ZECUSDT: "55", DASHUSDT: "32", HBARUSDT: "0.3", XTZUSDT: "0.9", ALGOUSDT: "0.4", ATOMUSDT: "9", STXUSDT: "1.8", AVAXUSDT: "40", MATICUSDT: "0.9", LINKUSDT: "22", POLUSDT: "0.9" };
+      if (u.hostname === "api.binance.com" && u.pathname.includes("/ticker/price")) {
+        let syms = [];
+        try { syms = JSON.parse(u.searchParams.get("symbols") || "[]"); } catch {}
+        return Promise.resolve(json(syms.map(s => ({ symbol: s, price: SYMPX[s] || "1" }))));
+      }
+      const ARB_HOSTS = ["arbitrum-one-rpc.publicnode.com", "arb1.arbitrum.io", "arbitrum.drpc.org", "arb-mainnet.public.blastapi.io"];
+      const BSC_HOSTS = ["bsc-rpc.publicnode.com", "bsc-dataseed.binance.org", "bsc-dataseed1.binance.org", "bsc-dataseed2.binance.org", "bsc-dataseed3.binance.org", "bsc-dataseed4.binance.org", "bsc-mainnet.public.blastapi.io", "bsc-dataseed1.defibit.io", "bsc-dataseed1.ninicoin.io"];
+      const isArb = ARB_HOSTS.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("arb"));
+      const isBsc = BSC_HOSTS.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("bsc"));
+      if (isArb || isBsc) {
+        const u256 = (h) => "0x" + String(h).padStart(64, "0");
+        const LADYS_RAW = (1041558458n * (10n ** 18n)).toString(16);
+        const BSC_DUST_WEI = (2667n * (10n ** 11n)).toString(16);
+        const arbAnswer = (req) => {
+          const p = req.params || [];
+          switch (req.method) {
+            case "eth_chainId": return "0xa4b1";
+            case "net_version": return "42161";
+            case "eth_blockNumber": return "0x1000000";
+            case "eth_getBalance": return "0x0";
+            case "eth_getCode": return "0x";
+            case "eth_getTransactionCount": return "0x1";
+            case "eth_gasPrice": return "0x3b9aca00";
+            case "eth_maxPriorityFeePerGas": return "0x3b9aca00";
+            case "eth_feeHistory": return { oldestBlock: "0x1000000", baseFeePerGas: ["0x3b9aca00"], gasUsedRatio: [0.5] };
+            case "eth_call": { const to = ((p[0] && p[0].to) || "").toLowerCase(); if (to === LADYS158.toLowerCase()) return u256(LADYS_RAW); return u256("0"); }
+            default: return "0x0";
+          }
+        };
+        const bscAnswer = (req) => {
+          switch (req.method) {
+            case "eth_chainId": return "0x38";
+            case "net_version": return "56";
+            case "eth_blockNumber": return "0x1000000";
+            case "eth_getBalance": return "0x" + BSC_DUST_WEI;
+            case "eth_getCode": return "0x";
+            case "eth_getTransactionCount": return "0x1";
+            case "eth_gasPrice": return "0x3b9aca00";
+            case "eth_maxPriorityFeePerGas": return "0x3b9aca00";
+            case "eth_feeHistory": return { oldestBlock: "0x1000000", baseFeePerGas: ["0x3b9aca00"], gasUsedRatio: [0.5] };
+            case "eth_call": return u256("0");
+            default: return "0x0";
+          }
+        };
+        const answer = isArb ? arbAnswer : bscAnswer;
+        let bodyText = "";
+        if (init && init.body != null) {
+          const b = init.body;
+          if (typeof b === "string") bodyText = b;
+          else if (ArrayBuffer.isView(b) || b instanceof ArrayBuffer) bodyText = new TextDecoder().decode(b);
+        }
+        let parsed = null; try { parsed = JSON.parse(bodyText); } catch {}
+        if (Array.isArray(parsed)) return Promise.resolve(json(parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: answer(r) }))));
+        if (parsed && parsed.method) return Promise.resolve(json({ jsonrpc: "2.0", id: parsed.id, result: answer(parsed) }));
+        return Promise.resolve(json({ jsonrpc: "2.0", id: 1, result: "0x0" }));
+      }
+      return fail();
+    };
+    const makeWindow158 = (seedEntries) => {
+      const dom = new JSDOM(html158, { url: "https://fluidwallet.dpdns.org/", runScripts: "outside-only", pretendToBeVisual: true });
+      const { window } = dom;
+      window.CSS = window.CSS || {};
+      if (!window.CSS.escape) window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
+      if (!window.matchMedia) window.matchMedia = (q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+      if (!window.IntersectionObserver) window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+      if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+      window.WebSocket = class { constructor() {} close() {} send() {} addEventListener() {} removeEventListener() {} };
+      window.fetch = (input, init) => fixtureFetch158(input, init);
+      if (seedEntries) for (const [k, v] of Object.entries(seedEntries)) window.localStorage.setItem(k, v);
+      return window;
+    };
+    const sleep158 = (ms) => new Promise((r) => setTimeout(r, ms));
+    const waitFor158 = async (window, fn, label, timeoutMs = 90000) => {
+      const t0 = Date.now();
+      for (;;) {
+        let v = null;
+        try { v = fn(window.document); } catch {}
+        if (v) return v;
+        if (Date.now() - t0 > timeoutMs) throw new Error("§158 drive timeout: " + label);
+        await sleep158(400);
+      }
+    };
+    const btnByText158 = (doc, text, last = false) => {
+      const all = [...doc.querySelectorAll("button")].filter(b => (b.textContent || "").trim() === text);
+      return last ? all[all.length - 1] : all[0];
+    };
+    const btnStarts158 = (doc, text) => [...doc.querySelectorAll("button")].find(b => (b.textContent || "").trim().startsWith(text));
+    const hero158 = (w) => ({
+      pill: ((w.document.querySelector("#netBtn") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      total: ((w.document.querySelector("#totalUsd") || {}).textContent || "").trim(),
+      sub: ((w.document.querySelector("#totalSub") || {}).textContent || "").replace(/\s+/g, " ").trim(),
+      swipe: ((w.document.querySelector("#swName") || {}).textContent || "").trim(),
+      pages: [...w.document.querySelectorAll(".hpage")].map(s => s.dataset.page),
+    });
+    const settle158 = async (w) => {
+      let last = -1, stable = 0;
+      const t0 = Date.now();
+      while (stable < 3 && Date.now() - t0 < 120000) {
+        await sleep158(1200);
+        const sub = (w.document.querySelector("#totalSub") || {}).textContent || "";
+        if (reqCount158 === last && !sub.includes("Updating")) stable++; else { stable = 0; last = reqCount158; }
+      }
+    };
+    const unlockIfAsked158 = async (w) => {
+      await waitFor158(w, (d) => (d.body.textContent || "").includes("Across all networks") || (d.body.textContent || "").includes(" only") || d.querySelector("#unlockPw") ? true : null, "home or unlock");
+      if (w.document.querySelector("#unlockPw")) {
+        w.document.querySelector("#unlockPw").value = PW158;
+        const ub = btnByText158(w.document, "Unlock Fluid"); if (ub) ub.click();
+        await sleep158(2500);
+      }
+    };
+    // Lazy chunks cannot load inside jsdom; their rejections are
+    // the app's honest couldn't-load path, not pin failures.
+    let strayRejections158 = 0;
+    const swallow158 = () => { strayRejections158++; };
+    process.on("unhandledRejection", swallow158);
+    const windows158 = [];
+    try {
+      // Phase A: create the wallet through the real DOM flow.
+      const wA = makeWindow158(null); windows158.push(wA);
+      wA.eval(bundle158);
+      await waitFor158(wA, (d) => btnByText158(d, "Create new wallet"), "welcome create button");
+      btnByText158(wA.document, "Create new wallet").click();
+      await sleep158(600);
+      wA.document.querySelector("#createName").value = NAME158;
+      wA.document.querySelector("#createPw").value = PW158;
+      wA.document.querySelector("#createPw2").value = PW158;
+      const seedCheck158 = wA.document.querySelector("#seedCheck"); if (seedCheck158) seedCheck158.click();
+      await sleep158(300);
+      btnByText158(wA.document, "Create new wallet", true).click();
+      await waitFor158(wA, (d) => (d.body.textContent || "").includes("I wrote my seed phrase down") ? true : null, "seed screen", 60000);
+      [...wA.document.querySelectorAll("input[type=checkbox]")].forEach(c => { if (!c.checked) c.click(); });
+      await sleep158(300);
+      const cont158 = btnStarts158(wA.document, "Continue"); if (cont158) cont158.click();
+      await waitFor158(wA, (d) => btnByText158(d, "I'll confirm later"), "confirm later", 60000);
+      btnByText158(wA.document, "I'll confirm later").click();
+      await waitFor158(wA, (d) => btnStarts158(d, "Continue without a username"), "no-username", 60000);
+      btnStarts158(wA.document, "Continue without a username").click();
+      await waitFor158(wA, (d) => (d.body.textContent || "").includes("Across all networks") || d.querySelector("#unlockPw") ? true : null, "phase A home", 90000);
+      const dump158 = {};
+      for (let i = 0; i < wA.localStorage.length; i++) { const k = wA.localStorage.key(i); dump158[k] = wA.localStorage.getItem(k); }
+      wA.close();
+      dump158["fluid_held_tokens_v1"] = JSON.stringify({ "42161": [{ address: LADYS158, symbol: "LADYS", name: "Milady Meme Coin", decimals: 18 }] });
+      // Phase B: reboot on the fixture and drive the search.
+      const wB = makeWindow158(dump158); windows158.push(wB);
+      wB.eval(bundle158);
+      await unlockIfAsked158(wB);
+      await settle158(wB);
+      {
+        const h = hero158(wB);
+        ok("§158 drive: the fixture lands as the owner's shape — All hero, grand total $4.84, and NO Sui page before the tap",
+          h.pill === "All networks" && h.total === "$4.84" && h.sub.startsWith("Across all networks") && h.swipe === "ALL" && !h.pages.includes("sui"));
+      }
+      {
+        const inp = wB.document.querySelector("#homeSearch");
+        inp.value = "sui";
+        inp.dispatchEvent(new wB.Event("input", { bubbles: true }));
+        await sleep158(800);
+        const row = [...wB.document.querySelectorAll("[data-chainjump]")].find(r => (r.textContent || "").includes("Sui"));
+        ok("§158 drive: search offers the Sui chain row", !!row);
+        row.click();
+        await sleep158(1500);
+        const h = hero158(wB);
+        ok("§158 drive: tapping the Sui chain row lands ON Sui — pill, its own $0.00 total, 'Sui only', swipe SUI, and a Sui pager page (the owner's defect, fenced)",
+          h.pill === "Sui" && h.total === "$0.00" && h.sub.startsWith("Sui only") && h.swipe === "SUI" && h.pages.includes("sui"));
+        const sec = wB.document.querySelector('.hpage[data-page="sui"]');
+        ok("§158 drive: the minted Sui page shows the family's honest scoped treatment (its $0.00 total line)",
+          !!sec && (sec.textContent || "").includes("$0.00"));
+      }
+      {
+        wB.document.querySelector("#actSend").click();
+        await sleep158(1200);
+        const sheet = (wB.document.querySelector("#sheetBody") || {}).textContent || "";
+        ok("§158 drive: Send from the Sui view opens the Sui send sheet (actions scope with the view)",
+          sheet.includes("on Sui"));
+        const x = wB.document.querySelector("#sheetX"); if (x) x.click();
+        await sleep158(600);
+      }
+      {
+        wB.document.querySelector("#netBtn").click();
+        await sleep158(1000);
+        const all = wB.document.querySelector("[data-viewall]");
+        ok("§158 drive: the selector's pinned All networks entry is present", !!all);
+        all.click();
+        await sleep158(1200);
+        const h = hero158(wB);
+        ok("§158 drive: the All networks entry restores the All hero with the grand total",
+          h.pill === "All networks" && h.total === "$4.84" && h.sub.startsWith("Across all networks") && h.swipe === "ALL");
+      }
+      {
+        const inp = wB.document.querySelector("#homeSearch");
+        inp.value = "arbitrum";
+        inp.dispatchEvent(new wB.Event("input", { bubbles: true }));
+        await sleep158(800);
+        const row = [...wB.document.querySelectorAll("[data-chainjump]")].find(r => (r.textContent || "").includes("Arbitrum"));
+        ok("§158 drive: search offers the held Arbitrum chain row", !!row);
+        row.click();
+        await sleep158(1500);
+        const h = hero158(wB);
+        ok("§158 drive: the held-chain jump is unchanged — pill Arbitrum, its $4.68 total, 'Arbitrum only', swipe ARBITRUM",
+          h.pill === "Arbitrum" && h.total === "$4.68" && h.sub.startsWith("Arbitrum only") && h.swipe === "ARBITRUM");
+      }
+      {
+        wB.document.querySelector("#netBtn").click();
+        await sleep158(1000);
+        wB.document.querySelector("[data-viewall]").click();
+        await sleep158(1000);
+        wB.document.querySelector("#exploreLine").click();
+        await sleep158(1000);
+        const xr = wB.document.querySelector('[data-xchain="tezos"]');
+        ok("§158 drive: Explore lists Tezos", !!xr);
+        xr.click();
+        await sleep158(1000);
+        const jump = wB.document.querySelector("#xJump");
+        ok("§158 drive: the not-held Explore chain view carries an 'Open the Tezos page' jump (no dead end)",
+          !!jump && (jump.textContent || "").includes("Open the Tezos page"));
+        jump.click();
+        await sleep158(1500);
+        const h = hero158(wB);
+        ok("§158 drive: the Explore jump lands on Tezos — pill, 'Tezos only', swipe TEZOS, page exists",
+          h.pill === "Tezos" && h.sub.startsWith("Tezos only") && h.swipe === "TEZOS" && h.pages.includes("tezos"));
+      }
+      wB.close();
+      // Phase C: a committed Sui view restored on reload earns
+      // its page with no search involved (the agreement rule).
+      {
+        const wC = makeWindow158({ ...dump158, fluid_view_v1: "sui" }); windows158.push(wC);
+        wC.eval(bundle158);
+        await unlockIfAsked158(wC);
+        await settle158(wC);
+        const h = hero158(wC);
+        ok("§158 drive: a persisted Sui view restores WITH its page — pill Sui, 'Sui only', swipe SUI, page present (hero and page cannot disagree)",
+          h.pill === "Sui" && h.sub.startsWith("Sui only") && h.swipe === "SUI" && h.pages.includes("sui"));
+        wC.close();
+      }
+    } catch (e158) {
+      ok("§158 drive: the production-path drive completed (" + (e158 && e158.message) + ")", false);
+    } finally {
+      for (const w of windows158) { try { w.close(); } catch { /* already closed */ } }
+      process.removeListener("unhandledRejection", swallow158);
+      if (strayRejections158) console.log("§158 drive: " + strayRejections158 + " stray rejection(s) swallowed (lazy-chunk loads inside jsdom)");
+    }
   }
 }
 

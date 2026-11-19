@@ -35568,6 +35568,41 @@ export function pendingGateScopes(evidenceKeys, allKeys, anyChainPending) {
   return [...all];
 }
 
+/** The pager page list (§158, 2026-11-19): heldScopes' earned
+ *  pages PLUS the pages the USER jumped to themselves. A chain
+ *  earns a census page by holding something (or failing with
+ *  held evidence, or an in-flight send/swap — heldScopes' rule,
+ *  §157/D8); a page can ALSO be minted by the user's own tap —
+ *  a chain-name search hit, an Explore "Open the page" jump, a
+ *  network-sheet pick, or the committed view restored on reload
+ *  — because the hero and the page must never disagree: the
+ *  owner's phone showed the Sui view under an "All networks"
+ *  hero because search routed him into Explore (no page, no
+ *  view commit) instead of onto the chain. A jumped page is
+ *  USER INTENT, not a failure artefact: the §157 evidence rule
+ *  is untouched (a bare failed read still earns nothing — the
+ *  jumped keys are only ever the ones the user tapped or the
+ *  view they committed), and the All page's row list never
+ *  reads this list at all (flattenHeldRows owns it). Jumped
+ *  entries ride AFTER the earned pages, in census order,
+ *  flagged jumped: true; a key with no census entry, "all",
+ *  or an already-earned key adds nothing. Pure: entries are
+ *  the caller's census ({ key, name, held, failed, evidence,
+ *  inFlight, totalUsd }); the returned jumped entries are
+ *  shallow copies, the earned ones pass through unmodified. */
+export function withJumpedScopes(earned, censusEntries, jumpedKeys) {
+  const out = [...(Array.isArray(earned) ? earned : [])];
+  const have = new Set(out.map(s => s && s.key));
+  const want = new Set([...(jumpedKeys || [])].filter(k => k && k !== "all"));
+  if (!want.size) return out;
+  for (const e of Array.isArray(censusEntries) ? censusEntries : []) {
+    if (!e || !e.key || !want.has(e.key) || have.has(e.key)) continue;
+    out.push({ ...e, jumped: true });
+    have.add(e.key);
+  }
+  return out;
+}
+
 export function heldScopes(entries) {
   const keep = (Array.isArray(entries) ? entries : []).filter(e => e && e.key && (e.held || e.inFlight || (e.failed && e.evidence)));
   const valued = (e) => typeof e.totalUsd === "number" && Number.isFinite(e.totalUsd) && e.totalUsd > 0;

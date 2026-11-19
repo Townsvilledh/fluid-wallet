@@ -69,7 +69,7 @@ import {
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
   decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
-  heldScopes, flattenHeldRows, pendingGateScopes,
+  heldScopes, withJumpedScopes, flattenHeldRows, pendingGateScopes,
   evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd,
   BALANCE_READ_ATTEMPT_MS, SCAN_ATTEMPT_TIMEOUT_MS, SCAN_DEADLINE_MS,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
@@ -3018,7 +3018,16 @@ function paintAssets() {
     } else if (evidence || inFlight.has("evm:" + k)) census.push({ key: "evm:" + k, name: NETWORKS[k].name, held: evidence, failed: false, evidence: true, inFlight: inFlight.has("evm:" + k), totalUsd: null });
   }
   if (lnSession || inFlight.has("lightning")) census.push({ key: "lightning", name: "Lightning", held: !!lnSession, failed: false, inFlight: inFlight.has("lightning"), totalUsd: totals.lightning });
-  const scopes = heldScopes(census);
+  // §158: the earned pages PLUS the pages the user jumped to
+  // themselves (their own chain tap, or the committed view
+  // restored on reload) — the hero follows viewKey, so a
+  // committed view must always find its page here, or the two
+  // disagree (the Sui search defect). Failure still mints
+  // nothing: jumped keys are user intent only (core's
+  // withJumpedScopes owns the assembly).
+  const jumpedKeys = new Set(sessionJumpedScopes);
+  if (viewKey !== "all" && viewKey !== "evm") jumpedKeys.add(viewKey);
+  const scopes = withJumpedScopes(heldScopes(census), census, jumpedKeys);
   homeScopes = scopes;
   homeGroups = groups;
   // Page 0: the flat held-only list across every chain (value
@@ -3119,6 +3128,12 @@ function paintAssets() {
 // between pages, the pinned search, the Explore view and the
 // token page that replaced the old detail sheet.
 let homeScopes = [{ key: "all" }];
+/** Session pages minted by the user's own chain jumps (§158):
+ *  scope keys (family / Cosmos chain keys) the census did not
+ *  earn but the user explicitly navigated to. A tap is intent,
+ *  not evidence — the set is session-only and never feeds the
+ *  All view's rows or the §157 failure rule. */
+let sessionJumpedScopes = new Set();
 let homeGroups = [];
 let pagerSig = "";
 let pagerScrollRestore = null;
@@ -3181,6 +3196,46 @@ function pagerCommit(idx) {
   if (s.key === "evm") { if (viewKey !== "evm") { viewKey = "evm"; saveViewKey(); renderMain(); } return; }
   if (s.key.startsWith("evm:")) { viewKey = "evm"; saveViewKey(); selectNetwork(s.key.slice(4)); return; }
   if (viewKey !== s.key) { viewKey = s.key; saveViewKey(); renderMain(); }
+}
+/** Land the user ON a chain (§158): the one commit every
+ *  chain-name surface uses — Assets search, Explore's "Open the
+ *  page" jumps, the Network sheet. A chain with a pager page
+ *  commits through pagerCommit exactly as a swipe does. A chain
+ *  with NO page (zero balance, no held evidence — the Sui case)
+ *  still lands: the user's own tap mints the page for the
+ *  session (sessionJumpedScopes; paintAssets' census assembly
+ *  adds it via withJumpedScopes), the repaint puts the pager on
+ *  it, and the commit scopes the hero, the pill and the
+ *  Send/Receive/Swap actions to the chain — hero and page can
+ *  never disagree. An EVM network key (or "evm:<key>") rides
+ *  the normal network switch, whose census page is the active
+ *  network's own. Returns true when the jump landed. */
+function jumpToChainPage(key) {
+  if (!key) return false;
+  if (NETWORKS[key] || key.startsWith("evm:")) {
+    const netKey = key.startsWith("evm:") ? key.slice(4) : key;
+    if (!NETWORKS[netKey]) return false;
+    if (netKey === networkKey) {
+      const idx = homeScopes.findIndex(s => s.key === "evm");
+      if (idx >= 0) { pagerGoTo(idx); pagerCommit(idx); }
+      else if (viewKey !== "evm") { viewKey = "evm"; saveViewKey(); renderMain(); }
+    } else {
+      viewKey = "evm"; saveViewKey();
+      selectNetwork(netKey);
+    }
+    return true;
+  }
+  let idx = homeScopes.findIndex(s => s.key === key);
+  if (idx < 0) {
+    // No census page: the tap itself earns one for the session.
+    sessionJumpedScopes.add(key);
+    renderMain();
+    idx = homeScopes.findIndex(s => s.key === key);
+    if (idx < 0) { sessionJumpedScopes.delete(key); return false; }
+  }
+  pagerGoTo(idx);
+  pagerCommit(idx);
+  return true;
 }
 {
   const pagerEl = $("homePager");
@@ -3616,9 +3671,12 @@ function paintHomeSearch() {
   if (tab) tab.classList.add("searching");
   const matches = (sym, name) => String(sym || "").toLowerCase().includes(q) || String(name || "").toLowerCase().includes(q);
   let html = "";
-  // Chain-name matches first: tapping jumps the pager (a chain
-  // with no page yet gets its context created — an EVM chain
-  // switches the network, a family opens its Explore chain view).
+  // Chain-name matches first: tapping lands the user ON the
+  // chain (§158) — a chain with a page commits the pager to it,
+  // an EVM chain switches the network, and a family with no
+  // page yet earns one from the tap itself (jumpToChainPage).
+  // Before §158 a pageless family routed into Explore instead,
+  // so the chain view opened under an "All networks" hero.
   const chainHits = homeScopes.filter(s => s.key !== "all" && String(s.name || "").toLowerCase().includes(q))
     .map(s => ({ key: s.key, name: s.name || s.key }));
   for (const k of Object.keys(NETWORKS)) {
@@ -3627,7 +3685,7 @@ function paintHomeSearch() {
   }
   for (const m of RECEIVE_NETWORKS) {
     if (m.id === "evm" || m.id === "lightning" || chainHits.some(h => h.key === m.id)) continue;
-    if (String(m.name || "").toLowerCase().includes(q)) chainHits.push({ key: "xplore:" + m.id, name: m.name });
+    if (String(m.name || "").toLowerCase().includes(q)) chainHits.push({ key: m.id, name: m.name });
   }
   for (const s of chainHits) {
     html += `<div class="row" data-chainjump="${esc(s.key)}">
@@ -3692,11 +3750,8 @@ function paintHomeSearch() {
   wireHomeRows(host);
   host.querySelectorAll("[data-chainjump]").forEach(r => r.onclick = () => {
     const key = r.dataset.chainjump;
-    const idx = homeScopes.findIndex(s => s.key === key);
     clearHomeSearch();
-    if (idx >= 0) { pagerGoTo(idx); pagerCommit(idx); }
-    else if (key.startsWith("evm:")) selectNetwork(key.slice(4));
-    else if (key.startsWith("xplore:")) { openExplore(); renderExploreChain(key.slice(7)); }
+    jumpToChainPage(key);
   });
   host.querySelectorAll("[data-unheld]").forEach(r => r.onclick = () => {
     const u = unheld[Number(r.dataset.unheld)];
@@ -3796,7 +3851,7 @@ function renderExploreChain(key) {
     host.innerHTML = `
       <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(net.name)}</b></div>
       ${rowsHtml}
-      ${jumpKey && homeScopes.some(s => s.key === jumpKey) ? `<button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(net.name)} page</button>` : ""}`;
+      ${jumpKey ? `<button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(net.name)} page</button>` : ""}`;
     $("xBack2").onclick = () => renderExplore();
     host.querySelectorAll("[data-xevm]").forEach(r => r.onclick = () => {
       const b = balances[Number(r.dataset.xevm)];
@@ -3817,27 +3872,33 @@ function renderExploreChain(key) {
         <span class="logowrap">${tokenLogoHtml({ symbol: nat }, c.familyId)}</span>
         <span class="grow"><b class="rname">${esc(nat)}</b><small>${esc(nat)} · ${esc(c.name)}</small></span>
         <span class="amt"><b>0</b><small></small></span></div>` : `<p class="tag" style="padding:10px 0">Nothing listed here yet.</p>`;
+      // §158: the not-held branch carries the same "Open the
+      // page" jump as the held branch — before, it returned
+      // here with no path that scopes the wallet to the chain
+      // at all (the search dead-end Ethuram hit on Sui).
       host.innerHTML = `
         <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(c.name)}</b></div>
-        ${rowsHtml}`;
+        ${rowsHtml}
+        <button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(c.name)} page</button>`;
       $("xBack2").onclick = () => renderExplore();
       const natEl = host.querySelector("[data-xnat]");
       if (natEl && nat) natEl.onclick = () => openTokenPage(familyTokenDesc(c.familyId, { symbol: nat, name: c.name, amount: "0", verified: true }), "explore");
+      const jump0 = host.querySelector("#xJump");
+      if (jump0) jump0.onclick = () => { closeExplore(); jumpToChainPage(c.scopeKey); };
       wireHomeRows(host);
       return;
     }
     host.innerHTML = `
       <div class="xhead"><button class="xback" id="xBack2" aria-label="Back">‹</button><b class="t-title">${esc(c.name)}</b></div>
       ${rowsHtml}
-      ${homeScopes.some(s => s.key === c.scopeKey) ? `<button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(c.name)} page</button>` : ""}`;
+      <button class="btn ghost" id="xJump" style="width:100%;margin-top:10px">Open the ${esc(c.name)} page</button>`;
     $("xBack2").onclick = () => renderExplore();
     wireHomeRows(host);
   }
   const jump = $("xJump");
   if (jump) jump.onclick = () => {
-    const idx = homeScopes.findIndex(s => s.key === jumpKey || s.key === c.scopeKey);
     closeExplore();
-    if (idx >= 0) { pagerGoTo(idx); pagerCommit(idx); }
+    jumpToChainPage(jumpKey || c.scopeKey);
   };
 }
 
@@ -4942,7 +5003,8 @@ $("netBtn").onclick = () => {
   // pre-rendered chain list on any surface. Results appear only
   // while a query is typed: chains that have a pager page jump
   // the pager to it; other EVM networks switch through the normal
-  // path; families open their page or their Explore chain view.
+  // path; families land on their chain page (§158: a pageless
+  // family earns a session page from the tap).
   // §155 D6 (2026-11-18): ONE pinned entry sits above the search
   // — "All networks", the combined view — rendered at all times
   // (it is a selector option, not an enumerated chain list, so
@@ -4990,7 +5052,8 @@ $("netBtn").onclick = () => {
       if (!n.name.toLowerCase().includes(q) && String(n.symbol || "").toLowerCase() !== q) continue;
       html += `<button class="netitem" data-net="${k}"><span>${esc(n.name)}${n.symbol ? ` <small style="color:var(--dim)">${esc(n.symbol)}</small>` : ""}</span><span class="vtotal">—</span></button>`;
     }
-    // Families: jump when paged, else their Explore chain view.
+    // Families: jump when paged, else land on the chain page
+    // via the §158 jump (data-xplore carries the family id).
     for (const m of RECEIVE_NETWORKS) {
       if (m.id === "evm" || m.id === "lightning") continue;
       if (!receiveNetworkMatches(m, q)) continue;
@@ -5014,7 +5077,10 @@ $("netBtn").onclick = () => {
       if (networkKey === before) { closeSheet(); renderMain(); } // same network: selectNetwork only closed the sheet
     });
     host.querySelectorAll("[data-xplore]").forEach(b => b.onclick = () => {
-      closeSheet(); goTab("wallet"); openExplore(); renderExploreChain(b.dataset.xplore);
+      // §158: a pageless family lands ON its chain page (the
+      // tap mints the session page) — no longer routed into
+      // Explore, where the hero stayed on the old view.
+      closeSheet(); goTab("wallet"); jumpToChainPage(b.dataset.xplore);
     });
   };
   $("netSearch").addEventListener("input", paint);
