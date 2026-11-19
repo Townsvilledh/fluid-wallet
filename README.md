@@ -89,6 +89,10 @@ docs/                documentation — start at docs/README.md
 
 A non-custodial wallet you can't inspect is just a promise. Fluid is MIT-licensed: fork it, audit it, ship your own. No forms.
 
+## Support Fluid
+
+Fluid is a free, open-source public-goods wallet — no company accounts, no token sale. It is built and maintained on donations. Donations via [Giveth](https://giveth.io/project/fluid-free-open-source-crypto-wallet) fund route testing, infrastructure and security review.
+
 ## License
 
 MIT — see `LICENSE`.
