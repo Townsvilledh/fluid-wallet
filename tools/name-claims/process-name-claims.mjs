@@ -495,13 +495,20 @@ async function main() {
     state.processed[d.eventId] = { decision: d.decision, name: d.name, reason: d.reason, at: now };
     if (d.ours) appendFileSync(LOG_PATH, JSON.stringify({ at: new Date(now * 1000).toISOString(), ...d }) + "\n");
   }
-  // Prune processed records older than the query window — they can
-  // never be fetched again, and the map must not grow without bound
-  // on other apps' kind-30078 traffic.
-  const cutoff = now - 14 * 24 * 3600;
+  // Prune processed records older than 24h — they can never be
+  // fetched again in normal operation (the query window is
+  // lastQuerySince, i.e. ~1h back), and the map must not grow
+  // without bound on other apps' kind-30078 traffic. The 14-day
+  // window previously used here let the state grow to ~410 MB /
+  // 2.4M records and OOM the default Node heap (2026-11-20).
+  // A re-fetch after a state loss re-decides old events safely:
+  // winners are in state.winners (never pruned), the registry
+  // refuses duplicates, and retired names refuse outright.
+  const cutoff = now - 24 * 3600;
   for (const [id, rec] of Object.entries(state.processed)) if (!rec.at || rec.at < cutoff) delete state.processed[id];
   // Arrival stamps prune on the same horizon: an event older
-  // than the query window can never be fetched again.
+  // than the query window can never be fetched again. (Deferred
+  // claims retry every 5 min, so none stays undecided for 24h.)
   if (state.seen) for (const [id, rec] of Object.entries(state.seen)) if (!rec.at || rec.at < cutoff) delete state.seen[id];
   for (const w of winners) state.winners[w.name] = w.eventId;
   state.lastQuerySince = now - 3600; // 1h overlap; the processed set dedupes
