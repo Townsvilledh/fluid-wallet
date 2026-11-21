@@ -226,7 +226,13 @@ export const NETWORKS = {
       "https://arb1.arbitrum.io/rpc",
       "https://arbitrum.drpc.org",
       "https://1rpc.io/arb",
-      "https://arb-mainnet.public.blastapi.io",
+      // arb-mainnet.public.blastapi.io replaced 2026-11-21: the
+      // host refused every connection from the build VM (curl
+      // error 52, empty reply) while the other four answered —
+      // a dead list entry costs every read a rotation slot.
+      // OnFinality's public endpoint is live-verified the same
+      // day (eth_getBalance 200, correct value, ~1.4 s).
+      "https://arbitrum.api.onfinality.io/public",
     ],
     rpcFallback: "https://arb1.arbitrum.io/rpc",
     tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")],
@@ -280,7 +286,7 @@ export const NETWORKS = {
       "https://zksync-mainnet.public.blastapi.io",
     ],
     rpcFallback: "https://zksync.drpc.org",
-    tokens: [USDC("0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"), USDT("0x493257fD37EDB34451f62EDf8D2a0C418852bA4c")],
+    tokens: [USDC("0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4"), USDT("0x493257fD37EDB34451f62EDf8D2a0C418852bA4C")],
   },
   linea: {
     name: "Linea", chainId: 59144, symbol: "ETH", priceSym: "ETH",
@@ -511,7 +517,7 @@ export const NETWORKS = {
       "https://rootstock-mainnet.public.blastapi.io",
     ],
     rpcFallback: "https://mycrypto.rsk.co",
-    tokens: [USDT("0x779dED0C9e1022225F8e0630b35A9B54Be713736")],
+    tokens: [USDT("0x779Ded0c9e1022225f8E0630b35a9b54bE713736")],
   },
   // Flare (14): OpenOcean intra only (Relay refuses the chain
   // explicitly). The pinned stable is USD₮0 (LayerZero) at
@@ -861,16 +867,25 @@ export async function evmRpcFetchJson(networkKey, body, { timeoutMs = 20000 } = 
  *  just another rotation trigger. 30 s leaves room for the slow
  *  but real ~25 s Multicall-class calls the sweep captured. */
 export const EVM_PROVIDER_ATTEMPT_TIMEOUT_MS = 30000;
-/** Per-attempt budget for the BALANCE read (loading-speed round
- *  2, 2026-11-17): the owner's standard is every held balance
- *  painted live within 1–2 s of open. A balance attempt is a
- *  handful of parallel calls (readBalances fans its token reads
- *  out), so a healthy endpoint answers it in well under this
- *  budget; an endpoint that cannot is raced past, not waited
- *  out. Token scans pass their own bounded budgets (below) —
- *  they are not held to the paint standard, but they are no
- *  longer unbounded either. */
-export const BALANCE_READ_ATTEMPT_MS = 2500;
+/** Per-attempt budget for the BALANCE read. History: 2500 ms
+ *  (loading-speed round 2, 2026-11-17) was calibrated on the
+ *  build machine, where a single RPC call measures 1.1–1.7 s —
+ *  leaving under a second of headroom for DNS + TLS + the
+ *  batched POST on a COLD connection. On the owner's phone
+ *  (Samsung A12, Nigerian 4G, 2026-11-21) every Arbitrum
+ *  attempt outlived 2.5 s while three of its five endpoints
+ *  were verifiably healthy, so the read threw and the first
+ *  screen settled "couldn't load" — the D1 recurrence. The
+ *  budget is NOT the paint latency: attempts race with a
+ *  300 ms stagger, so a fast endpoint still wins in its own
+ *  latency; the budget only decides when a slow-but-alive
+ *  endpoint's answer is DISCARDED. 10 s keeps slow real
+ *  answers (cold TLS + 4G round trips + a busy radio shared
+ *  with every other family's open-time reads) and still
+ *  bounds a genuinely hung endpoint well inside the app's
+ *  20 s settle race. Token scans pass their own bounded
+ *  budgets (below). */
+export const BALANCE_READ_ATTEMPT_MS = 10000;
 /** Budgets for the DEEP token scan (balance-speed round,
  *  2026-11-17): the scan is a discovery tail behind the known-
  *  token reads, not a paint-path read — but the unbounded 30 s
@@ -960,15 +975,18 @@ export function familyRpcOrder(key, urls, now = Date.now()) {
   const tail = list.filter(u => !head.includes(u) && cooling(u));
   return [...head, ...mid, ...tail];
 }
-/** Per-attempt budget for family BALANCE reads (loading-speed
- *  round 2, 2026-11-17): the same 1–2 s paint standard as the
- *  EVM read. Read wrappers pass it to withFamilyEndpoints, which
- *  then RACES the family's endpoints (first good answer wins)
+/** Per-attempt budget for family BALANCE reads: the same
+ *  correction as BALANCE_READ_ATTEMPT_MS (2026-11-21) — the
+ *  2500 ms build-machine calibration discarded slow-but-alive
+ *  answers on phone-class connections; the race stagger, not
+ *  the budget, is what makes a healthy endpoint answer fast.
+ *  Read wrappers pass it to withFamilyEndpoints, which then
+ *  RACES the family's endpoints (first good answer wins)
  *  instead of walking them one timeout at a time. Callers that
  *  pass no budget (sends, broadcasts, claims — anything whose
  *  attempt must run to its own conclusion exactly once) keep
  *  the sequential rotation below, byte for byte. */
-export const FAMILY_READ_ATTEMPT_MS = 2500;
+export const FAMILY_READ_ATTEMPT_MS = 8000;
 /** Run `attempt(url)` against a family's endpoints in rotation
  *  order until one returns; rethrows the last error when every
  *  endpoint throws. An attempt error carrying `noRotate` is a
@@ -1119,43 +1137,52 @@ export function validatePassword(pw) {
   return typeof pw === "string" && pw.length >= MIN_PASSWORD_LENGTH;
 }
 
-async function readBalances(wallet, networkKey, provider) {
-  const net = NETWORKS[networkKey];
-  // The native read and every curated-token read are independent
-  // calls: they fly together (loading-speed round 2, 2026-11-17).
-  // Sequentially awaited, one slow token's round trip stacked on
-  // the native's and the whole attempt outlived the balance
-  // budget on endpoints that were merely ordinary, not dead.
-  const tokens = net.tokens.filter(t => !isNativePredeploy(net.chainId, t.address));
-  const [native, tokenBals] = await Promise.all([
-    provider.getBalance(wallet.address),
-    Promise.all(tokens.map(async (t) => {
-      const c = new ethers.Contract(t.address, ERC20, provider);
-      const bal = await c.balanceOf(wallet.address);
-      return { symbol: t.symbol, amount: ethers.formatUnits(bal, t.decimals), address: t.address, decimals: t.decimals };
-    })),
-  ]);
-  // GAP-1: a listed token that IS the chain's native-asset
-  // predeploy (Arc's USDC) is the same funds as the native row —
-  // never emit it as a second row, or totals double (the filter
-  // above drops it before any call is made for it).
-  return [{ symbol: net.symbol, amount: ethers.formatEther(native), address: null }, ...tokenBals];
-}
-
 export async function getBalances(wallet, networkKey) {
   // Endpoint rotation (2026-11-14, replacing the single retry
   // against one fallback): free public endpoints refuse in
   // bursts — the primary 429s under shared-IP load (live:
   // bsc-rpc.publicnode.com, 2026-11-08) and the dataseed 403s
-  // on roughly half of calls (2026-11-14) — so the read runs
-  // through withEvmProvider and rotates across the network's
-  // whole endpoint list before failing. When every endpoint
-  // fails the read throws: a failed read must surface as
-  // "couldn't load", never as a zero. The balance read carries
-  // the tight per-attempt budget (BALANCE_READ_ATTEMPT_MS): it
-  // is the read the 1–2 s paint standard is measured on.
-  return withEvmProvider(networkKey, (provider) => readBalances(wallet, networkKey, provider),
-    { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS });
+  // on roughly half of calls (2026-11-14) — so every part of
+  // the read runs through withEvmProvider and rotates across
+  // the network's whole endpoint list before failing.
+  //
+  // Per-part independence (2026-11-21, the D1 recurrence): the
+  // native read and each curated-token read are SEPARATE
+  // rotated reads, settled independently. The previous shape
+  // fanned them into one Promise.all inside a single provider
+  // attempt, so ANY part failing — one token's balanceOf
+  // reverting, one endpoint refusing one call — failed the
+  // whole chain, and a token whose registry address was itself
+  // malformed (the zkSync / Rootstock checksum corruptions
+  // fixed the same day: ethers throws locally on Contract
+  // construction, before any network call) made its chain
+  // unloadable on every endpoint, forever. Now: the NATIVE
+  // read failing on every endpoint still throws (the chain is
+  // unknown — "couldn't load", never a zero), but a token that
+  // fails everywhere comes back as an amount-null row, which
+  // the app already renders as that row's own "couldn't load"
+  // beside the chain's real native and token values.
+  const net = NETWORKS[networkKey];
+  if (!net) throw new Error("Unknown network: " + networkKey);
+  // GAP-1: a listed token that IS the chain's native-asset
+  // predeploy (Arc's USDC) is the same funds as the native row —
+  // never emit it as a second row, or totals double (the filter
+  // here drops it before any call is made for it).
+  const tokens = net.tokens.filter(t => !isNativePredeploy(net.chainId, t.address));
+  const opts = { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS };
+  const [nativeRes, ...tokenRes] = await Promise.allSettled([
+    withEvmProvider(networkKey, (provider) => provider.getBalance(wallet.address), opts),
+    ...tokens.map((t) => getEvmTokenBalance(wallet, networkKey, t, opts)),
+  ]);
+  if (nativeRes.status === "rejected") throw nativeRes.reason;
+  const rows = [{ symbol: net.symbol, amount: ethers.formatEther(nativeRes.value), address: null }];
+  tokens.forEach((t, i) => {
+    const r = tokenRes[i];
+    rows.push(r.status === "fulfilled"
+      ? { symbol: t.symbol, amount: r.value, address: t.address, decimals: t.decimals }
+      : { symbol: t.symbol, amount: null, address: t.address, decimals: t.decimals });
+  });
+  return rows;
 }
 
 /** The home-screen greeting (Ethuram's requirement, 2026-11-06): the

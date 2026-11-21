@@ -5039,6 +5039,81 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && appSrcEvm.includes('setTimeout(() => reject(new Error("prices timed out")), 20000)'));
 }
 
+// 61a. Balance-load recurrence fix (2026-11-21): the owner's
+// Arbitrum first screen settled "couldn't load" on his phone
+// for the second time (first: D1, 2026-11-18) while three of
+// Arbitrum's five endpoints were verifiably healthy. Three
+// defects combined: (1) the 2500 ms per-attempt budget was
+// calibrated on the build machine (single call 1.1–1.7 s) and
+// discarded slow-but-alive answers on a phone-class connection;
+// (2) readBalances fanned native + tokens into one Promise.all
+// per provider attempt, so ANY part failing failed the chain;
+// (3) two curated token addresses carried corrupted EIP-55
+// checksums (zkSync USDT …bA4c for …bA4C, Rootstock USDT), so
+// ethers threw locally on Contract construction and those two
+// chains could NEVER load, on any endpoint, ever. getBalances
+// now settles each part independently: native failure throws,
+// a failed token returns an amount-null row.
+{
+  const { ethers: ethers61a } = await import("ethers");
+  ok("61a: every curated token address in NETWORKS passes ethers address validation (a mixed-case address with a corrupted EIP-55 checksum throws — the zkSync/Rootstock failure class; all-lowercase entries are valid and pass)",
+    Object.values(NETWORKS).every(net => (net.tokens || []).every(t => {
+      try { ethers61a.getAddress(t.address); return true; } catch { return false; }
+    })));
+  ok("61a: the two corrupted addresses are fixed at the source",
+    NETWORKS.zksync.tokens.some(t => t.symbol === "USDT" && t.address === "0x493257fD37EDB34451f62EDf8D2a0C418852bA4C")
+    && NETWORKS.rootstock.tokens.some(t => t.symbol === "USDT" && t.address === "0x779Ded0c9e1022225f8E0630b35a9b54bE713736"));
+  ok("61a: Arbitrum's dead blastapi host is replaced by the live-verified OnFinality endpoint",
+    evmRpcUrls("arbitrum").includes("https://arbitrum.api.onfinality.io/public")
+    && !evmRpcUrls("arbitrum").includes("https://arb-mainnet.public.blastapi.io"));
+
+  const wallet61a = { address: "0x0000000000000000000000000000000000000001" };
+  const defaultGetUrl61a = FetchRequest.createGetUrlFunc();
+  const USDC_BSC = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d";
+  const stub61a = (usdcFails, delayMs) => async (req) => {
+    if (delayMs) await new Promise(r => setTimeout(r, delayMs));
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const answer = (reqObj) => {
+      let result;
+      if (reqObj.method === "eth_chainId") result = "0x38";
+      else if (reqObj.method === "net_version") result = "56";
+      else if (reqObj.method === "eth_getBalance") result = "0xde0b6b3a7640000";
+      else if (reqObj.method === "eth_call") {
+        const to = (reqObj.params?.[0]?.to || "").toLowerCase();
+        if (usdcFails && to === USDC_BSC) return { jsonrpc: "2.0", id: reqObj.id, error: { code: -32000, message: "execution reverted" } };
+        result = to === USDC_BSC ? "0x0000000000000000000000000000000000000000000000001bc16d674ec80000"
+          : "0x00000000000000000000000000000000000000000000000029a2241af62c0000";
+      } else throw new Error("unexpected rpc method " + reqObj.method);
+      return { jsonrpc: "2.0", id: reqObj.id, result };
+    };
+    const payload = Array.isArray(parsed) ? parsed.map(answer) : answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" },
+      new TextEncoder().encode(JSON.stringify(payload)));
+  };
+  try {
+    // One token failing on EVERY endpoint: the chain still loads —
+    // native and the other tokens are real, the failed token is an
+    // amount-null row (the app's per-row "couldn't load").
+    resetEvmRpcHealth();
+    FetchRequest.registerGetUrl(stub61a(true, 0));
+    const rows = await getBalances(wallet61a, "bsc");
+    ok("61a: a token failing everywhere degrades to a null row; native + siblings still load",
+      rows.length === 4 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
+      && rows[1].symbol === "USDC" && rows[1].amount === null
+      && rows[2].symbol === "USDT" && rows[2].amount === "3.0");
+    // Slow-but-alive endpoints (3 s — dead under the old 2500 ms
+    // budget, alive under the phone-realistic one): the read lands.
+    resetEvmRpcHealth();
+    FetchRequest.registerGetUrl(stub61a(false, 3000));
+    const slowRows = await getBalances(wallet61a, "bsc");
+    ok("61a: endpoints answering at 3 s (past the old budget) still land the balance read",
+      slowRows.length === 4 && slowRows[0].amount === "1.0" && slowRows[1].amount === "2.0");
+  } finally {
+    FetchRequest.registerGetUrl(defaultGetUrl61a);
+    resetEvmRpcHealth();
+  }
+}
+
 // 61b. EVM RPC endpoint resilience (2026-11-14): BSC's shipped
 // pair was not enough — bsc-rpc.publicnode.com 429s under load
 // and bsc-dataseed.binance.org 403s on roughly half of calls, and
@@ -21293,7 +21368,7 @@ import { getAlgoSwapRoutes } from "../src/wallet-core.js";
   const fx136 = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
   const ACCT136 = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
   const OO_EXCHANGE136 = "0x6352a56caadC4F1E25CD6c75970Fa768A3304e64";
-  const RSK_USDT0 = "0x779dED0C9e1022225F8e0630b35A9B54Be713736";
+  const RSK_USDT0 = "0x779Ded0c9e1022225f8E0630b35a9b54bE713736"; // corrected 2026-11-21: the previous pin preserved a corrupted EIP-55 checksum byte-exact (…ED0C… for …ed0c…) — the pin tested the string, not its validity, which is how the corruption survived; see section 61a
   const FLR_USDT0 = "0xe7cd86e13ac4309349f30b3435a9d337750fc82d";
   const FLR_IMPOSTOR = "0x0b38e83b86d491735feaa0a791f65c2b99535396";
   const entry136 = (key, chainId, symbol, priceSym, rpc, explorer) => {
@@ -22428,8 +22503,8 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     && flattenHeldRows([{ symbol: "NOEV", amount: null, valueUsd: null, evidence: false }]).length === 0);
 
   // --- perf: budgets + endpoint depth ---
-  ok("§145: balance-read budgets sit at the 1–2 s paint standard (EVM + families + BTC + UTXO)",
-    BALANCE_READ_ATTEMPT_MS === 2500 && FAMILY_READ_ATTEMPT_MS === 2500
+  ok("§145: balance-read budgets — EVM/family attempt budgets widened to phone-realistic values 2026-11-21 (the 2500 ms build-machine calibration discarded slow-but-alive answers on the owner's 4G phone: the D1 recurrence); BTC + UTXO fetch budgets unchanged",
+    BALANCE_READ_ATTEMPT_MS === 10000 && FAMILY_READ_ATTEMPT_MS === 8000
     && BTC_BALANCE_FETCH_MS === 2500 && UTXO_READ_FETCH_MS === 2500);
   ok("§145: the major EVM chains carry deepened keyless endpoint lists (≥4)",
     ["ethereum", "base", "arbitrum", "optimism", "polygon", "avalanche"].every(k => evmRpcUrls(k).length >= 4));
@@ -22899,7 +22974,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
 
   // --- the scan budgets are the shipped constants ---
   ok("§148: scan budgets — attempts bounded in the balance spirit, the whole scan wall-clock capped",
-    SCAN_ATTEMPT_TIMEOUT_MS === 10000 && SCAN_DEADLINE_MS === 60000 && BALANCE_READ_ATTEMPT_MS === 2500);
+    SCAN_ATTEMPT_TIMEOUT_MS === 10000 && SCAN_DEADLINE_MS === 60000 && BALANCE_READ_ATTEMPT_MS === 10000);
 
   // --- the deadline stops the scan and reports partial, honestly ---
   registerNetworks({ c777001: { name: "Stub148", chainId: 777001, symbol: "S48", priceSym: null,
@@ -24571,7 +24646,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
         try { syms = JSON.parse(u.searchParams.get("symbols") || "[]"); } catch {}
         return Promise.resolve(json(syms.map(s => ({ symbol: s, price: SYMPX[s] || "1" }))));
       }
-      const ARB_HOSTS = ["arbitrum-one-rpc.publicnode.com", "arb1.arbitrum.io", "arbitrum.drpc.org", "arb-mainnet.public.blastapi.io"];
+      const ARB_HOSTS = ["arbitrum-one-rpc.publicnode.com", "arb1.arbitrum.io", "arbitrum.drpc.org", "arb-mainnet.public.blastapi.io", "arbitrum.api.onfinality.io"];
       const BSC_HOSTS = ["bsc-rpc.publicnode.com", "bsc-dataseed.binance.org", "bsc-dataseed1.binance.org", "bsc-dataseed2.binance.org", "bsc-dataseed3.binance.org", "bsc-dataseed4.binance.org", "bsc-mainnet.public.blastapi.io", "bsc-dataseed1.defibit.io", "bsc-dataseed1.ninicoin.io"];
       const isArb = ARB_HOSTS.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("arb"));
       const isBsc = BSC_HOSTS.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("bsc"));
