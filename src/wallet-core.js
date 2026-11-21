@@ -9345,7 +9345,23 @@ const RELAY_ROUTER_ABI = [
 ];
 const RELAY_DEPOSITORY_ABI = [
   "function depositErc20(address depositor, address token, uint256 amount, bytes32 id)",
+  // The sweep form (no amount: the deposit is whatever balance
+  // the caller just swept in) — the depository's second
+  // depositErc20 overload, present in its Sourcify-verified ABI
+  // and the form a composed route's terminal handoff embeds
+  // (§155 D5 follow-up, 2026-11-21).
+  "function depositErc20(address depositor, address token, bytes32 id)",
   "function depositNative(address depositor, bytes32 id)",
+];
+/** RelayRouter's cleanup functions: how a composed cross-chain
+ *  route lands its swapped proceeds — the router sweeps its
+ *  balance into a target contract by calling it (the ViaCall
+ *  forms Relay was measured serving live, 2026-11-21; the plain
+ *  cleanup forms are deliberately NOT recognised here, so a
+ *  route using one fails closed until it is measured too). */
+const RELAY_ROUTER_CLEANUP_ABI = [
+  "function cleanupNativeViaCall(uint256 amount, address to, bytes data)",
+  "function cleanupErc20sViaCall(address[] tokens, address[] tos, bytes[] datas, uint256[] amounts)",
 ];
 /** The one Relay App Fees claim address: the DripBot collection
  *  wallet's EVM address. Relay requires an EVM recipient even for
@@ -29450,6 +29466,42 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
   }
   return destNote ? `${s} ${destNote}` : s;
 }
+/** The terminal handoff of a composed cross-chain Relay route
+ *  (§155 D5 follow-up, 2026-11-21): the multicall's LAST inner
+ *  call must run through Relay's pinned Router as one of its
+ *  cleanup functions, and the call the cleanup makes must land
+ *  on the pinned depository as a deposit naming the USER as
+ *  depositor — the point where a composed route rejoins the
+ *  direct deposit shape, with the proceeds bound to the user's
+ *  own deposit id. Only the ViaCall cleanup forms Relay was
+ *  measured serving live (Arbitrum LADYS routes, 2026-11-21)
+ *  are recognised; any other shape fails closed. */
+export function relayComposedHandoffOk(call, owner, depository) {
+  if (!call || !owner || !depository) return false;
+  if (String(call.target || "").toLowerCase() !== RELAY_ROUTER) return false;
+  let p = null;
+  try { p = new ethers.Interface(RELAY_ROUTER_CLEANUP_ABI).parseTransaction({ data: call.data }); } catch { p = null; }
+  if (!p) return false;
+  const depIface = new ethers.Interface(RELAY_DEPOSITORY_ABI);
+  const depositNamesUser = (data) => {
+    let d = null;
+    try { d = depIface.parseTransaction({ data }); } catch { d = null; }
+    if (!d || (d.name !== "depositErc20" && d.name !== "depositNative")) return false;
+    return String(d.args[0] || "").toLowerCase() === String(owner).toLowerCase();
+  };
+  if (p.name === "cleanupNativeViaCall") {
+    return String(p.args[1] || "").toLowerCase() === String(depository).toLowerCase()
+      && depositNamesUser(p.args[2]);
+  }
+  if (p.name === "cleanupErc20sViaCall") {
+    const tos = p.args[1], datas = p.args[2];
+    if (!tos || !datas || tos.length !== datas.length) return false;
+    for (let i = 0; i < tos.length; i++) {
+      if (String(tos[i]).toLowerCase() === String(depository).toLowerCase() && depositNamesUser(datas[i])) return true;
+    }
+  }
+  return false;
+}
 /** Bounds-check one Relay step item BEFORE anything is signed (the
  *  Relay twin of checkSwapStepBounds). Relay builds complete
  *  transactions; Fluid signs only a transaction that is exactly the
@@ -29465,7 +29517,13 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
  *     naming the user as depositor (and, for a token swap, the
  *     sold token and the exact amount), it must never target the
  *     token being sold, and it must carry value only when the sold
- *     asset is the chain's native coin — and then exactly fromAmount. */
+ *     asset is the chain's native coin — and then exactly fromAmount.
+ *     One measured exception (§155 D5 follow-up, 2026-11-21): a
+ *     cross-chain route Relay COMPOSES through its ApprovalProxy
+ *     (the sold token has no direct bridge path) — its approval
+ *     names the pinned proxy, and its deposit step is a proxy
+ *     multicall held to the composed branch's own pins, ending
+ *     in a depository deposit naming the user. */
 export function checkRelayStepBounds(route, step, item, owner) {
   const refuse = (m) => ({ ok: false, reason: "Fluid refused this route: " + m + " Pick another route." });
   const data = item?.data;
@@ -29502,7 +29560,17 @@ export function checkRelayStepBounds(route, step, item, owner) {
     // depository; SAME-CHAIN routes settle through
     // RelayApprovalProxy (see relaySameChainTargetFor). A
     // same-chain approval naming the depository — or anything
-    // else — is refused, and vice versa.
+    // else — is refused, and vice versa. §155 D5 follow-up
+    // (2026-11-21): a cross-chain route whose input token has
+    // no direct bridge path is COMPOSED by Relay — the approval
+    // names the pinned ApprovalProxy and the deposit step calls
+    // it (an origin-chain swap whose proceeds are swept into
+    // the same pinned depository; see the composed branch of
+    // the deposit check below). So a cross-chain approval is
+    // accepted only as one of two exact pairings: spender AND
+    // deposit target both the depository (direct), or both the
+    // pinned ApprovalProxy (composed). A mixed pairing, or any
+    // other spender, is refused.
     const sameChain = Number(route?.relay?.originChainId) === Number(route?.relay?.destinationChainId);
     const pinned = sameChain
       ? relaySameChainTargetFor(route?.relay?.originChainId, false)
@@ -29510,14 +29578,23 @@ export function checkRelayStepBounds(route, step, item, owner) {
     if (!pinned) return refuse(sameChain
       ? "Fluid has no pinned Relay same-chain swap contract for the swap's source chain."
       : "Fluid has no pinned Relay depository for the swap's source chain.");
-    if (String(spender || "").toLowerCase() !== pinned)
-      return refuse(sameChain
-        ? "a Relay approval was addressed to an unexpected spender, not Relay's pinned same-chain swap contract."
-        : "a Relay approval was addressed to an unexpected spender, not Relay's pinned depository contract.");
-    if (!depositTo || String(depositTo).toLowerCase() !== pinned)
-      return refuse(sameChain
-        ? "the Relay route's swap step does not target Relay's pinned same-chain swap contract."
-        : "the Relay route's deposit step does not target Relay's pinned depository contract.");
+    if (!sameChain && String(spender || "").toLowerCase() === RELAY_APPROVAL_PROXY
+      && relaySameChainTargetFor(route?.relay?.originChainId, false) === RELAY_APPROVAL_PROXY) {
+      // Composed pairing: the deposit step must target the same
+      // pinned proxy the approval names — its own deep check
+      // (below) pins what the proxy may do with the approval.
+      if (!depositTo || String(depositTo).toLowerCase() !== RELAY_APPROVAL_PROXY)
+        return refuse("the Relay route's deposit step does not target Relay's pinned approval proxy contract.");
+    } else {
+      if (String(spender || "").toLowerCase() !== pinned)
+        return refuse(sameChain
+          ? "a Relay approval was addressed to an unexpected spender, not Relay's pinned same-chain swap contract."
+          : "a Relay approval was addressed to an unexpected spender, not Relay's pinned depository contract.");
+      if (!depositTo || String(depositTo).toLowerCase() !== pinned)
+        return refuse(sameChain
+          ? "the Relay route's swap step does not target Relay's pinned same-chain swap contract."
+          : "the Relay route's deposit step does not target Relay's pinned depository contract.");
+    }
     let want = null;
     try { want = BigInt(route.fromAmount); } catch { want = null; }
     if (want == null || amount == null || BigInt(amount) !== want)
@@ -29588,6 +29665,57 @@ export function checkRelayStepBounds(route, step, item, owner) {
     if (innerTotal > value) return refuse("a Relay swap step's inner calls carried more native value than the swap itself.");
     if (!partyOk(p.args[1]) || !partyOk(p.args[2]))
       return refuse("a Relay swap step named a refund or recipient address that is not you.");
+    return { ok: true };
+  }
+  if (step?.id === "deposit" && !isNative
+    && Number(route?.relay?.originChainId) !== Number(route?.relay?.destinationChainId)
+    && String(data.to).toLowerCase() === RELAY_APPROVAL_PROXY) {
+    // §155 D5 follow-up (2026-11-21): a COMPOSED cross-chain
+    // route. When the sold token has no direct bridge path,
+    // Relay serves the deposit step as a RelayApprovalProxy
+    // transferAndMulticall: the proxy pulls exactly the sold
+    // amount, swaps it on the origin chain through the solver's
+    // plumbing, and the proceeds are swept into the pinned
+    // depository as a deposit in the user's name (measured live
+    // on Arbitrum LADYS → ETH and LADYS → USDC-Base, 2026-11-21;
+    // a user's live swap was refused until this shape was
+    // recognised). The checks mirror the same-chain discipline
+    // with the differences the shape forces: the multicall's
+    // refundTo/recipient are the SOLVER's (they receive only
+    // what the calls leave unswept — the value path itself is
+    // pinned by the exact pull and the mandatory terminal
+    // handoff below, the same solver trust the direct deposit
+    // shape already carries), and the inner swap call's target
+    // is the solver's plumbing, not Fluid's to pin. What IS
+    // pinned: the outer contract, the token and amount pulled,
+    // zero native value in every inner call, the sold token
+    // touchable only by an approval no larger than the pull,
+    // and a LAST inner call that deposits the proceeds into
+    // the pinned depository naming the user as depositor.
+    if (!relaySameChainTargetFor(route?.relay?.originChainId, false))
+      return refuse("Fluid has no pinned Relay approval proxy for the swap's source chain.");
+    let want = null;
+    try { want = BigInt(route.fromAmount); } catch { want = null; }
+    if (want == null) return refuse("the swap amount was unreadable.");
+    let p = null;
+    try { p = new ethers.Interface(RELAY_APPROVAL_PROXY_ABI).parseTransaction({ data: data.data }); } catch { p = null; }
+    if (!p || p.name !== "transferAndMulticall") return refuse("a Relay composed step's calldata did not decode as a RelayApprovalProxy call.");
+    const tokens = p.args[0], amounts = p.args[1], calls = p.args[2];
+    if (!tokens || tokens.length !== 1 || String(tokens[0]).toLowerCase() !== String(fromToken.address).toLowerCase())
+      return refuse("a Relay composed step named a different token than the one being swapped.");
+    if (!amounts || amounts.length !== 1 || BigInt(amounts[0]) !== want)
+      return refuse("a Relay composed step's amount did not match the exact amount being swapped.");
+    if (!calls || calls.length < 1) return refuse("a Relay composed step carried no calls to execute.");
+    for (const c of calls) { if (BigInt(c.value ?? 0) !== 0n) return refuse("a Relay composed step's inner call carried native value it should not have."); }
+    for (const c of calls) {
+      if (String(c.target || "").toLowerCase() !== String(fromToken.address).toLowerCase()) continue;
+      let dec = null;
+      try { dec = new ethers.Interface(SWAP_ERC20).decodeFunctionData("approve", c.data); } catch { dec = null; }
+      if (!dec) return refuse("a Relay composed step called the token being sold in a way that is not an approval.");
+      if (BigInt(dec[1]) > want) return refuse("a Relay composed step approved more of the token than the amount being swapped.");
+    }
+    if (!relayComposedHandoffOk(calls[calls.length - 1], owner, relayDepositoryFor(route?.relay?.originChainId)))
+      return refuse("a Relay composed step did not end by depositing into Relay's pinned depository in your name.");
     return { ok: true };
   }
   // H-B (2026-11-15): the deposit step itself — target pinned

@@ -5675,6 +5675,91 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       && appSrcD5.includes('allSlot.querySelector("[data-viewall]")')
       && !appSrcD5.includes('receiveNetworkMatches({ name: "All networks"'));
   }
+  // §155 D5 follow-up (2026-11-21): COMPOSED cross-chain Relay
+  // routes. When the sold token has no direct bridge path, Relay
+  // serves approve → RelayApprovalProxy (spender) and a deposit
+  // step that is a proxy transferAndMulticall: pull the exact
+  // amount, swap on the origin chain, and sweep the proceeds
+  // into the pinned depository via a RelayRouter cleanup call
+  // embedding a deposit that names the user. The fixtures mirror
+  // the live responses measured 2026-11-21 (Arbitrum LADYS →
+  // ETH, native sweep; LADYS → USDC on Base, ERC20 sweep) after
+  // a user's live swap was refused by the depository-only pin.
+  {
+    const LADYS = "0x3b60FF35D3f7F62d636b067dD0dC0dFdAd670E4E";
+    const DEP = "0x4cd00e387622c35bddb9b4c962c136462338bc31";
+    const USDC_ARB = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+    const VENUE = "0x0000000000001fF3684f28c67538d4D072C22734";
+    const SOLVER = "0xf70da97812CB96acDF810712Aa562db8dfA3dbEF";
+    const AMT = 350000000n * 10n ** 18n;
+    const OID = "0x9d8854ed98d497d018c8b5006a80c0002cef9f2185450fd8a8a3e44aa4be48c1";
+    const erc20 = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+    const proxyIface = new ethers.Interface(["function transferAndMulticall(address[] tokens, uint256[] amounts, tuple(address target, bool allowFailure, uint256 value, bytes data)[] calls, address refundTo, address recipient, bytes extraData)"]);
+    const cleanupNativeIface = new ethers.Interface(["function cleanupNativeViaCall(uint256 amount, address to, bytes data)"]);
+    const cleanupErc20Iface = new ethers.Interface(["function cleanupErc20sViaCall(address[] tokens, address[] tos, bytes[] datas, uint256[] amounts)"]);
+    const depNativeIface = new ethers.Interface(["function depositNative(address depositor, bytes32 id)"]);
+    const depErc20SweepIface = new ethers.Interface(["function depositErc20(address depositor, address token, bytes32 id)"]);
+    const extra = "0x" + "22".repeat(33);
+    const nativeHandoff = (depositor = RUSER) => [RELAY_ROUTER, false, 0n,
+      cleanupNativeIface.encodeFunctionData("cleanupNativeViaCall", [0n, DEP, depNativeIface.encodeFunctionData("depositNative", [depositor, OID])])];
+    const erc20Handoff = (depositor = RUSER) => [RELAY_ROUTER, false, 0n,
+      cleanupErc20Iface.encodeFunctionData("cleanupErc20sViaCall", [[USDC_ARB], [DEP], [depErc20SweepIface.encodeFunctionData("depositErc20", [depositor, USDC_ARB, OID])], [0n]])];
+    const composedData = (handoff, over = {}) => proxyIface.encodeFunctionData("transferAndMulticall", [
+      over.tokens || [LADYS],
+      over.amounts || [AMT],
+      over.calls || [
+        [LADYS, false, 0n, erc20.encodeFunctionData("approve", [VENUE, over.innerApproveAmount || AMT])],
+        [VENUE, false, 0n, "0x2213bc0b" + "00".repeat(32)],
+        handoff,
+      ],
+      SOLVER, SOLVER, extra,
+    ]);
+    const mkStep = (id, data) => ({ id, items: [{ data: { from: RUSER, chainId: 42161, value: "0", ...data } }] });
+    const composedRoute = (steps, dest = 1) => ({
+      fromAmount: AMT.toString(),
+      fromToken: { address: LADYS, symbol: "LADYS", decimals: 18, chainId: 42161 },
+      relay: { originChainId: 42161, destinationChainId: dest, steps },
+    });
+    const approveStep = (spender) => mkStep("approve", { to: LADYS, data: erc20.encodeFunctionData("approve", [spender, AMT]) });
+    const depositStep = (handoff, over) => mkStep("deposit", { to: RELAY_APPROVAL_PROXY, data: composedData(handoff, over) });
+
+    const goodNative = composedRoute([approveStep(RELAY_APPROVAL_PROXY), depositStep(nativeHandoff())]);
+    ok("§155 D5 follow-up: composed cross-chain route (native sweep handoff) passes the bounds check",
+      checkRelayStepBounds(goodNative, goodNative.relay.steps[0], goodNative.relay.steps[0].items[0], RUSER).ok === true
+      && checkRelayStepBounds(goodNative, goodNative.relay.steps[1], goodNative.relay.steps[1].items[0], RUSER).ok === true);
+    const goodErc20 = composedRoute([approveStep(RELAY_APPROVAL_PROXY), depositStep(erc20Handoff())], 8453);
+    ok("§155 D5 follow-up: composed cross-chain route (ERC20 sweep handoff) passes the bounds check",
+      checkRelayStepBounds(goodErc20, goodErc20.relay.steps[0], goodErc20.relay.steps[0].items[0], RUSER).ok === true
+      && checkRelayStepBounds(goodErc20, goodErc20.relay.steps[1], goodErc20.relay.steps[1].items[0], RUSER).ok === true);
+    const mixed = composedRoute([approveStep(RELAY_APPROVAL_PROXY), mkStep("deposit", { to: DEP, data: "0xe8017952" + "00".repeat(96) })]);
+    ok("§155 D5 follow-up: a proxy approval paired with a depository step is refused (mixed pairing)",
+      checkRelayStepBounds(mixed, mixed.relay.steps[0], mixed.relay.steps[0].items[0], RUSER).ok === false);
+    const noHandoff = composedRoute([approveStep(RELAY_APPROVAL_PROXY),
+      depositStep(nativeHandoff(), { calls: [
+        [LADYS, false, 0n, erc20.encodeFunctionData("approve", [VENUE, AMT])],
+        [VENUE, false, 0n, "0x2213bc0b" + "00".repeat(32)],
+      ] })]);
+    ok("§155 D5 follow-up: a composed step with no depository handoff is refused",
+      checkRelayStepBounds(noHandoff, noHandoff.relay.steps[1], noHandoff.relay.steps[1].items[0], RUSER).ok === false
+      && /did not end by depositing/.test(checkRelayStepBounds(noHandoff, noHandoff.relay.steps[1], noHandoff.relay.steps[1].items[0], RUSER).reason));
+    const stranger = composedRoute([approveStep(RELAY_APPROVAL_PROXY), depositStep(nativeHandoff("0x000000000000000000000000000000000000dEaD"))]);
+    ok("§155 D5 follow-up: a handoff deposit naming a stranger is refused",
+      checkRelayStepBounds(stranger, stranger.relay.steps[1], stranger.relay.steps[1].items[0], RUSER).ok === false);
+    const fatApprove = composedRoute([approveStep(RELAY_APPROVAL_PROXY), depositStep(nativeHandoff(), { innerApproveAmount: AMT + 1n })]);
+    ok("§155 D5 follow-up: an inner approval above the pulled amount is refused",
+      checkRelayStepBounds(fatApprove, fatApprove.relay.steps[1], fatApprove.relay.steps[1].items[0], RUSER).ok === false);
+    const valueCall = composedRoute([approveStep(RELAY_APPROVAL_PROXY),
+      depositStep(nativeHandoff(), { calls: [
+        [LADYS, false, 0n, erc20.encodeFunctionData("approve", [VENUE, AMT])],
+        [VENUE, false, 1n, "0x2213bc0b" + "00".repeat(32)],
+        nativeHandoff(),
+      ] })]);
+    ok("§155 D5 follow-up: an inner call carrying native value is refused",
+      checkRelayStepBounds(valueCall, valueCall.relay.steps[1], valueCall.relay.steps[1].items[0], RUSER).ok === false);
+    const sameChainDeposit = composedRoute([approveStep(RELAY_APPROVAL_PROXY), depositStep(nativeHandoff())], 42161);
+    ok("§155 D5 follow-up: the composed deposit shape on a same-chain route is refused",
+      checkRelayStepBounds(sameChainDeposit, sameChainDeposit.relay.steps[1], sameChainDeposit.relay.steps[1].items[0], RUSER).ok === false);
+  }
   // Source pin (house style): the bounds check runs before signing.
   const coreSrcRelay = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
   ok("relay: bounds check precedes signing in the executor",
