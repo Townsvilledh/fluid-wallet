@@ -150,5 +150,13 @@
     "sol": "2XvjKBQJZDArLWvsyjXie4e87X57BNKHyvQoyfpjqbYx",
     "tron": "TMhLQ55bQiR5JDFR4GC6vbhCpqj6uP3KL8",
     "sui": "0xba9ae586c23f1e7b69081d0e2f936a885f93ee01535084780806dd0e4d248499"
+  },
+  "balwalk1122": {
+    "evm": "0x80FD5927de457d1659f94611689Fa0865DB0c7ac",
+    "btc": "bc1qc7nqy7geecrk3ku2cx52d0fc5smtpv42yrxn6w",
+    "algo": "DXEJRI2LM4A5XUG7SRGR5D2357WPOV4MEXJKBO37MXYGVZHKDKBD7QULTU",
+    "sol": "8tmrSaMqidRNPCoGaomzVZ5CM6cvzMMS6chqWc6V81Cu",
+    "tron": "TMjEzZPoB3Sjuh3UEfKsXHENPZmG2ETXSv",
+    "sui": "0xc4204240b4c5b3047ec470a5f216c109e88f600ff68a25c925fe74caa9f7c8d2"
   }
 }
