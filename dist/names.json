@@ -142,5 +142,29 @@
     "sol": "EBs6YDi4Ai5N6VqKLfNj2VJQYkoGPP5KyL1wL7Fv7ckN",
     "tron": "TK2amAx6v4F6MXy3XNdS6FeU7EF2girjFG",
     "sui": "0x2ff4d14c4b906b2f6e5e10940705f3686197ae1a28103aaddf6477d089ef3b48"
+  },
+  "balwalk1121": {
+    "evm": "0x80a1074d37883f7d3584E99436f1F369b0775bbA",
+    "btc": "bc1qu4308xeu9te8mqha7n6ujq0hmyuanym0gu4l3z",
+    "algo": "EJRGGWL5JFQUYKXU3ZZBK7KB2F24P4OGEXTBX4Q5P36ANIYEI33QEZNBSM",
+    "sol": "2XvjKBQJZDArLWvsyjXie4e87X57BNKHyvQoyfpjqbYx",
+    "tron": "TMhLQ55bQiR5JDFR4GC6vbhCpqj6uP3KL8",
+    "sui": "0xba9ae586c23f1e7b69081d0e2f936a885f93ee01535084780806dd0e4d248499"
+  },
+  "balwalk1122": {
+    "evm": "0x80FD5927de457d1659f94611689Fa0865DB0c7ac",
+    "btc": "bc1qc7nqy7geecrk3ku2cx52d0fc5smtpv42yrxn6w",
+    "algo": "DXEJRI2LM4A5XUG7SRGR5D2357WPOV4MEXJKBO37MXYGVZHKDKBD7QULTU",
+    "sol": "8tmrSaMqidRNPCoGaomzVZ5CM6cvzMMS6chqWc6V81Cu",
+    "tron": "TMjEzZPoB3Sjuh3UEfKsXHENPZmG2ETXSv",
+    "sui": "0xc4204240b4c5b3047ec470a5f216c109e88f600ff68a25c925fe74caa9f7c8d2"
+  },
+  "judeee": {
+    "evm": "0x9E67a017f32888BE4BBf4c602A4489ded1113acF",
+    "btc": "bc1qvcptns7u27uvagh6qqfeckrhvecw67s8s8wtg7",
+    "algo": "EB3O7WQKDJDZ6AMPZVRPIVB4XG46XTPYWRCVWWDKZZS5CETPUWTSBJCBKY",
+    "sol": "E1RMxWYWhMmFAa8VzmEJkkbBbwvCeaLLEfUbjSjEfZQD",
+    "tron": "TQQmuPGnyf2uGUBDUkcyjNqjdZXdoF6GyK",
+    "sui": "0x878083fd3675d48bc2ea70ac8f98f70de11b5e758baade076116a1da9beae4e5"
   }
 }

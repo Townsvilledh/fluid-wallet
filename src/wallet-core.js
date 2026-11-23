@@ -1702,6 +1702,19 @@ async function fetchPricesFresh() {
   // price; if ETH itself never priced, WETH stays unpriced
   // too (honest, never invented).
   if (out.ETH != null) out.WETH = out.ETH;
+  // cbBTC alias (2026-11-23 stale-price defect): Coinbase
+  // Wrapped BTC is BTC 1:1 by contract (backed by BTC held
+  // by Coinbase, redeemable 1:1), so it prices at exactly
+  // the BTC price — the same shape as WETH above. This alias
+  // is load-bearing, not cosmetic: neither CoinGecko's
+  // by-contract endpoint (token_price/base answers {} and
+  // coins/base/contract answers "coin not found") nor
+  // DexScreener (pairs:null for cbBTC) prices cbBTC at all,
+  // so without it a cbBTC row could only ever show a
+  // PERSISTED price — which is how Ethuram's phone showed
+  // $61,429 while BTC traded at $63,016. If BTC itself never
+  // priced, cbBTC stays unpriced too (honest, never invented).
+  if (out.BTC != null) out.cbBTC = out.BTC;
   return out;
 }
 
@@ -31246,6 +31259,32 @@ const CG_PLATFORM_IDS = { 1: "ethereum", 56: "binance-smart-chain", 8453: "base"
   // verified live (their token lists answer under the same
   // slugs — see COINGECKO_TOKEN_LIST_SLUGS).
   30: "rootstock", 14: "flare-network" };
+/** Canonical 1:1 wrapped assets, keyed `chainId:address`
+ *  (address lowercased) -> peg symbol. A listed asset is
+ *  backed 1:1 by its peg and redeemable 1:1, so its live
+ *  price IS the peg's live price — the same shape as the
+ *  WETH/cbBTC symbol aliases in fetchPricesFresh, but keyed
+ *  by CONTRACT so a scam token borrowing the symbol cannot
+ *  borrow the peg (the symbol table is keyed by symbol alone
+ *  and a row's own priceUsd wins over it — the peg must be
+ *  resolved per row, per contract, at re-price time).
+ *  Today exactly one entry: cbBTC on Base (Coinbase Wrapped
+ *  BTC, 0xcbB7C0000aB88B473b1f5aFd9ef808440E773), backed 1:1
+ *  by BTC held by Coinbase. It is listed because NO price
+ *  feed tracks it — CoinGecko's by-contract endpoint answers
+ *  {} and its contract page "coin not found", DexScreener has
+ *  no pairs — so without the peg a cbBTC row's price could
+ *  only ever come from a persisted value (2026-11-23
+ *  stale-price defect: $61,429 shown while BTC was $63,016).
+ *  Add entries only for assets whose 1:1 backing is proven
+ *  from the issuer's own documentation, never by symbol. */
+export const WRAPPED_PEG_BY_CONTRACT = {
+  "8453:0xcbb7c0000ab88b473b1f5afd9ef808440e773": "BTC",
+};
+export function pegSymbolForToken(chainId, address) {
+  if (chainId == null || !address) return null;
+  return WRAPPED_PEG_BY_CONTRACT[`${Number(chainId)}:${String(address).toLowerCase()}`] || null;
+}
 export function cgPlatformForChain(chainId) {
   return CG_PLATFORM_IDS[Number(chainId)] || null;
 }
@@ -35513,6 +35552,42 @@ export function dropLegacyBalanceCache(storage) {
 }
 const BALANCE_CACHE_ROW_KEYS = ["bitcoin", "tron", "solana", "sui", "stellar", "ton", "near", "algorand", "xrpl", "polkadot", "aptos", "stacks", "tezos", "hedera"];
 const BALANCE_CACHE_SCALAR_KEYS = ["btcBal", "btcTrBal", "ltcBal", "dogeBal", "bchBal", "zecBal", "dashBal"];
+
+/** Max age of a cached price (2026-11-23 stale-price
+ *  defect): the balance cache is a PAINT-EARLY layer for
+ *  amounts, but the prices riding in it are market data —
+ *  a price older than this is not "live" and must never
+ *  paint as current. Five minutes matches the in-session
+ *  scan-cache reuse (evmScanCache) and is far inside any
+ *  real market move Ethuram would notice; a price from
+ *  hours ago (his cbBTC showed $61,429 while BTC traded
+ *  at $63,016 — the cached value was ~2–4 h old) is
+ *  dropped outright and the row re-prices live or renders
+ *  honestly unpriced. The envelope's `t` is the clock:
+ *  a cache with no usable timestamp is stale by default. */
+export const BALANCE_CACHE_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
+export function balanceCachePricesFresh(cache, now = Date.now()) {
+  const t = cache && Number(cache.t);
+  return Number.isFinite(t) && t > 0 && Number(now) - t < BALANCE_CACHE_PRICE_MAX_AGE_MS;
+}
+/** Drop per-row prices from hydrated cache rows (the stale
+ *  half of the 2026-11-23 fix): a row's priceUsd, once
+ *  present, WINS over the symbol table (priceOfRow) and
+ *  blocks the live re-price (priceHeldEvmRows only prices
+ *  rows with priceUsd == null) — so a stale cached price
+ *  is self-perpetuating unless removed. Deleting the field
+ *  (not nulling it — null means "no source prices this"
+ *  and would still block the symbol-table fallback) hands
+ *  the row back to live pricing: the symbol table while the
+ *  read is in flight, the re-price pass when it lands.
+ *  Mutates and returns `rows` (the caller's fresh JSON.parse
+ *  objects, never shared state). Amounts are untouched —
+ *  only prices age out. */
+export function stripCachedRowPrices(rows) {
+  if (!Array.isArray(rows)) return rows;
+  for (const r of rows) if (r && typeof r === "object") delete r.priceUsd;
+  return rows;
+}
 
 /** Serialise a balance snapshot for the cache. `snap` is the app's
  *  plain-data balance state: { evmNetwork, evmRows, evmChains:

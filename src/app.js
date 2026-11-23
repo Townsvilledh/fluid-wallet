@@ -60,7 +60,7 @@ import {
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
-  getCgContractPrices, routeCardReceiveLine, routeCardCostLine,
+  getCgContractPrices, pegSymbolForToken, routeCardReceiveLine, routeCardCostLine,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
@@ -73,6 +73,7 @@ import {
   evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd,
   BALANCE_READ_ATTEMPT_MS, SCAN_ATTEMPT_TIMEOUT_MS, SCAN_DEADLINE_MS,
   BALANCE_CACHE_KEY, packBalanceCache, unpackBalanceCache, dropLegacyBalanceCache,
+  balanceCachePricesFresh, stripCachedRowPrices,
   FEE_SPLIT, rampFeeQuote, rampTier1Eligible, formatRampSellIntent,
   newRampFeeOrder, rampFeeOrderTransition, rampFeeOrderSummary,
   loadRampFeeOrders, saveRampFeeOrder,
@@ -1221,16 +1222,25 @@ function hydrateBalanceCache(w) {
   let cached = null;
   try { cached = unpackBalanceCache(localStorage.getItem(BALANCE_CACHE_KEY), w.address); } catch { /* storage unavailable */ }
   if (!cached) return;
-  if (cached.prices && typeof cached.prices === "object" && Object.keys(cached.prices).length) {
+  // Prices age out (2026-11-23 stale-price defect): the
+  // cache envelope carries `t`, and anything older than the
+  // max age is NOT live — its prices never paint, and its
+  // rows lose their priceUsd so the live re-price (or the
+  // symbol table) supplies a current value instead of the
+  // hours-old one standing as fact. Amounts still paint
+  // instantly either way; only prices are age-gated.
+  const pricesFresh = balanceCachePricesFresh(cached);
+  if (pricesFresh && cached.prices && typeof cached.prices === "object" && Object.keys(cached.prices).length) {
     prices = { ...prices, ...cached.prices };
   }
+  const stripIfStale = (rows) => { if (!pricesFresh) stripCachedRowPrices(rows); return rows; };
   const f = cached.fams || {};
   // A cached family whose rows carry a positive balance is
   // holding EVIDENCE (balance-speed round): it gates the
   // header's done state until its live read settles. A cached
   // all-zero family is proven-quiet, not evidence — it settles
   // in the background like any zero-evidence scope.
-  const put = (key, apply) => { if (Array.isArray(f[key])) { apply(f[key]); famLoaded.add(key); hydratedFams.add(key); if (f[key].some(r => r && Number(r.amount) > 0)) evidenceFams.add(key); } };
+  const put = (key, apply) => { if (Array.isArray(f[key])) { stripIfStale(f[key]); apply(f[key]); famLoaded.add(key); hydratedFams.add(key); if (f[key].some(r => r && Number(r.amount) > 0)) evidenceFams.add(key); } };
   put("tron", (rows) => { tronBalances = rows; });
   put("solana", (rows) => { solBalances = rows; });
   put("sui", (rows) => { suiBalances = rows; });
@@ -1252,7 +1262,7 @@ function hydrateBalanceCache(w) {
   // records that chain's key.
   for (const r of cosmosRows) if (r && r.key && Number(r.amount) > 0) evidenceFams.add(r.key);
   if (cached.evm && cached.evm.network === networkKey && Array.isArray(cached.evm.rows)) {
-    balances = cached.evm.rows;
+    balances = stripIfStale(cached.evm.rows);
     famLoaded.add("evm"); hydratedFams.add("evm");
     if (cached.evm.rows.some(r => r && Number(r.amount) > 0)) evidenceFams.add("evm");
   }
@@ -1263,7 +1273,7 @@ function hydrateBalanceCache(w) {
   if (cached.evmChains && typeof cached.evmChains === "object") {
     for (const [k, rows] of Object.entries(cached.evmChains)) {
       if (k === networkKey || !NETWORKS[k] || !Array.isArray(rows)) continue;
-      evmChainState.set(k, { status: "cached", rows });
+      evmChainState.set(k, { status: "cached", rows: stripIfStale(rows) });
     }
   }
   const sc = cached.scalars || {};
@@ -4042,6 +4052,19 @@ async function priceHeldEvmRows(chainId, rows) {
         if (d && d.priceUsd != null) { r.priceUsd = d.priceUsd; changed = true; }
       }
     } catch { /* unpriced stays unpriced — an honest blank fiat area */ }
+  }
+  // Canonical 1:1 wrapped assets (2026-11-23 stale-price
+  // defect): a pegged token no feed tracks — cbBTC is the
+  // proof, CoinGecko answers {} and DexScreener has no
+  // pairs for it — prices at its peg's LIVE price from this
+  // render's table, never from a persisted value. The peg
+  // resolves per contract (pegSymbolForToken), so a
+  // same-symbol impostor cannot borrow it; if the peg
+  // itself never priced, the row stays honestly unpriced.
+  for (const r of still) {
+    if (r.priceUsd != null) continue;
+    const peg = pegSymbolForToken(chainId, r.address);
+    if (peg && prices[peg] != null) { r.priceUsd = prices[peg]; changed = true; }
   }
   return changed;
 }

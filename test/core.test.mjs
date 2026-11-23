@@ -22931,8 +22931,8 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§147: an evm:<key> pager page renders its read rows — the commit-only skeleton is gone",
     sl147("const renderChainPage = ").includes("const g = groups.find(x => x.key === scope.key);")
     && !app147.includes("its rows load when the page commits"));
-  ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read (§154: the live-only RIF smart-wallet row is filtered out of the persisted rows)",
-    app147.includes('evmChainState.set(k, { status: "cached", rows });')
+  ok("§147: cache discipline — per-network rows hydrate as cached state and persist only from that chain's proven live read (§154: the live-only RIF smart-wallet row is filtered out of the persisted rows; 2026-11-23 stale-price: a stale cache's rows lose their priceUsd at hydrate)",
+    app147.includes('evmChainState.set(k, { status: "cached", rows: stripIfStale(rows) });')
     && app147.includes('if (evmChainOk.has(k) && st && st.status === "ok") evmChainsSnap[k] = st.rows.filter(b => !b.rifSmartWallet);'));
 }
 
@@ -24884,6 +24884,87 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       if (strayRejections158) console.log("§158 drive: " + strayRejections158 + " stray rejection(s) swallowed (lazy-chunk loads inside jsdom)");
     }
   }
+}
+
+// 2026-11-23 stale-price defect: Ethuram's phone showed
+// cbBTC at $61,429 while BTC traded at $63,016 — the price
+// was a hours-old persisted value, and no live feed prices
+// cbBTC at all (CoinGecko token_price/base answers {},
+// coins/base/contract "coin not found", DexScreener pairs:null).
+{
+  const {
+    pegSymbolForToken, WRAPPED_PEG_BY_CONTRACT,
+    BALANCE_CACHE_PRICE_MAX_AGE_MS, balanceCachePricesFresh, stripCachedRowPrices,
+    packBalanceCache, unpackBalanceCache, getPrices, resetPricesCache,
+  } = await import("../src/wallet-core.js");
+  const CBBTC = "0xcbB7C0000aB88B473b1f5aFd9ef808440E773";
+  // --- the peg resolves by contract, never by symbol ---
+  ok("stale-price: pegSymbolForToken resolves cbBTC-on-Base to BTC",
+    pegSymbolForToken(8453, CBBTC) === "BTC"
+    && pegSymbolForToken(8453, CBBTC.toLowerCase()) === "BTC"
+    && pegSymbolForToken("8453", CBBTC) === "BTC");
+  ok("stale-price: the peg does NOT resolve for the wrong chain, a lookalike address, or a bare symbol",
+    pegSymbolForToken(1, CBBTC) === null
+    && pegSymbolForToken(8453, "0xcbB7C0000aB88B473b1f5aFd9ef808440E774") === null
+    && pegSymbolForToken(8453, null) === null
+    && pegSymbolForToken(8453, "cbBTC") === null);
+  ok("stale-price: exactly one pegged contract is registered today (cbBTC on Base)",
+    Object.keys(WRAPPED_PEG_BY_CONTRACT).length === 1
+    && WRAPPED_PEG_BY_CONTRACT["8453:0xcbb7c0000ab88b473b1f5afd9ef808440e773"] === "BTC");
+  // --- the display table prices cbBTC at live BTC ---
+  {
+    const realFetchSP = globalThis.fetch;
+    resetPricesCache();
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("api.binance.com")) return { ok: true, json: async () => [{ symbol: "BTCUSDT", price: "63016" }, { symbol: "ETHUSDT", price: "1800" }] };
+      if (u.includes("api.coingecko.com")) return { ok: true, json: async () => ({}) };
+      throw new Error("unexpected fetch " + u);
+    };
+    try {
+      const table = await getPrices();
+      ok("stale-price: the display table prices cbBTC at exactly the live BTC price (1:1 by contract, like WETH/ETH)",
+        table.BTC === 63016 && table.cbBTC === 63016 && table.WETH === 1800);
+    } finally { globalThis.fetch = realFetchSP; resetPricesCache(); }
+  }
+  // --- a dead BTC feed leaves cbBTC honestly unpriced ---
+  {
+    const realFetchSP2 = globalThis.fetch;
+    resetPricesCache();
+    globalThis.fetch = async () => { throw new Error("feeds down"); };
+    try {
+      const table = await getPrices();
+      ok("stale-price: when BTC itself never prices, cbBTC stays unpriced (never invented)",
+        table.BTC == null && table.cbBTC == null);
+    } finally { globalThis.fetch = realFetchSP2; resetPricesCache(); }
+  }
+  // --- the cache age gate ---
+  ok("stale-price: the price max age is five minutes",
+    BALANCE_CACHE_PRICE_MAX_AGE_MS === 5 * 60 * 1000);
+  const nowSP = Date.now();
+  ok("stale-price: a cache packed minutes ago is fresh; one packed hours ago is stale; one with no timestamp is stale",
+    balanceCachePricesFresh({ t: nowSP - 60 * 1000 }, nowSP) === true
+    && balanceCachePricesFresh({ t: nowSP - 4 * 60 * 1000 }, nowSP) === true
+    && balanceCachePricesFresh({ t: nowSP - 5 * 60 * 1000 }, nowSP) === false
+    && balanceCachePricesFresh({ t: nowSP - 4 * 60 * 60 * 1000 }, nowSP) === false
+    && balanceCachePricesFresh({}, nowSP) === false
+    && balanceCachePricesFresh(null, nowSP) === false);
+  // --- pack/unpack round-trip keeps the envelope clock, and stripping hands rows back to live pricing ---
+  const packedSP = packBalanceCache("0x0EBf5563F905E3B9D58718E28E08143511DC763b", {
+    evmNetwork: "base",
+    evmRows: [{ symbol: "cbBTC", name: "Coinbase Wrapped BTC", amount: "0.00004", address: CBBTC, decimals: 8, verified: true, priceUsd: 61429 }],
+    prices: { BTC: 61429, cbBTC: 61429 },
+  }, nowSP - 4 * 60 * 60 * 1000);
+  const unpackedSP = unpackBalanceCache(packedSP, "0x0EBf5563F905E3B9D58718E28E08143511DC763b");
+  ok("stale-price: the packed cache carries its write time, and a 4-hour-old pack fails the freshness gate",
+    unpackedSP && Number(unpackedSP.t) === nowSP - 4 * 60 * 60 * 1000
+    && balanceCachePricesFresh(unpackedSP, nowSP) === false);
+  const strippedSP = stripCachedRowPrices(JSON.parse(JSON.stringify(unpackedSP.evm.rows)));
+  ok("stale-price: stripping removes the row price (deleted, not nulled) so the row falls back to live pricing instead of blocking it",
+    strippedSP.length === 1 && !("priceUsd" in strippedSP[0]) && strippedSP[0].amount === "0.00004");
+  const keptSP = stripCachedRowPrices([{ symbol: "USDC", amount: "5", priceUsd: 1 }]);
+  ok("stale-price: stripping deletes only the price field and leaves the rest of the row intact",
+    keptSP.length === 1 && keptSP[0].amount === "5" && !("priceUsd" in keptSP[0]));
 }
 
 console.log(`\n${passed} checks passed`);
