@@ -182,5 +182,13 @@
     "sol": "8bEsmQfz4qAC69hUXQTSuVx65TfkyTRGS46kGmyDoxpv",
     "tron": "TKDHQWSfVaUdyhA4PVNiEHob3CH1VhVyZH",
     "sui": "0xe1c43c5203a90bcc8bf9e1db2cd6af6f477b751db3176a9ba7c49935e0fd9ff2"
+  },
+  "princedede": {
+    "evm": "0x75d5a04fBfa534366656Df1d5F87a103558e8c43",
+    "btc": "bc1qnwmydkc0j3khdpz5rhyfe8wmzvuyrlfhcyzvgj",
+    "algo": "X7X35LP2BI5T4VY53Q5HHSP43AYN4D2K4W3DAZSDY4AJY6NSLERAMH477M",
+    "sol": "DgaXpqR9JWvBP5GwXqDBe9qpHsennbGnWdRhz9drjCfT",
+    "tron": "TLiFyWhisdGvHoHus3Uag9c8Lf7FjH8CUj",
+    "sui": "0xcfc1e1eb6cf5ad94070052f1a6337c3e1438e08c5c06d884b0a4cba376a670e4"
   }
 }
