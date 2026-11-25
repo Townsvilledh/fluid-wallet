@@ -190,5 +190,21 @@
     "sol": "DgaXpqR9JWvBP5GwXqDBe9qpHsennbGnWdRhz9drjCfT",
     "tron": "TLiFyWhisdGvHoHus3Uag9c8Lf7FjH8CUj",
     "sui": "0xcfc1e1eb6cf5ad94070052f1a6337c3e1438e08c5c06d884b0a4cba376a670e4"
+  },
+  "lille_v06_probe": {
+    "evm": "0x5D8BA113Db3301744ea9BA1813c7c8cC721aFfb9",
+    "btc": "bc1qv2mx0qklledrnfz6px4tpvnlpulvpdela6hr0c",
+    "algo": "OFNRJ3IVGT3WPFCG3XRFGYKXZQO4XVPAHEE5ZSN23CQI475LWSLE62V5ZI",
+    "sol": "5t7TiWRB8Ftbh8GDD3mcjq5wubLffSSNk4P4pXDG2WT5",
+    "tron": "TJVq7WM1tDPhpkaQGx4NpzVP5RpdvH5CSb",
+    "sui": "0xf655e9f8cfa88477da4f9bfd2ea6b0d292e053bd8a1d51239b047c11d1f8c956"
+  },
+  "lille_v06_cam": {
+    "evm": "0xa0f7239e183282a135DC21bf98A4DEfFCbA2c613",
+    "btc": "bc1qmcrrsx36c2y4q3kfadf4g08pmhwq7dhn7sgkn4",
+    "algo": "BAGXPNSKERTZ74XB347OGIVZEJSQMZRQNMJT3RFCBVIQ37WG7PUE4YU4AE",
+    "sol": "ESeG6gEquACsXQib5rYHUQL6BmVGbjkJ1YyqYyeQaQ1U",
+    "tron": "TQeKBHBGZhnJZwkYU4UyXttCWymJnrUgFi",
+    "sui": "0x92acec5f87096bafcfdb6514582c0396a1738434f6d701c1cd9ce858973f5522"
   }
 }
