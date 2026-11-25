@@ -254,5 +254,13 @@
     "sol": "HBP4gfP4xzCXocbsr6gygB9wYyjBa8ifQdb12ENKcDSh",
     "tron": "TPL3WFVprgpRpkzsJBGdHyFDyGxotxe7jT",
     "sui": "0x8772f0f58495071a730072a6ae2610f34711bcefc6a9591c64d7886fe37564ed"
+  },
+  "lille_v06_take5": {
+    "evm": "0x75ef164dB13C22746b32c9Ef139E5CbC9d6b7b67",
+    "btc": "bc1q4tvn7j4emjhqetz5242f8kyt87tuksux9fthgz",
+    "algo": "UYEIEIDC4IJWVHWQRMAPIHIROWJ3KID7O7D2RE5VKDYPZ5CTAI6GC3JRNY",
+    "sol": "Ft2GucR6DC7hqL3sf2He6wxHaXfDUU94bEoM1Cs5j2Ze",
+    "tron": "TLinUZsyNGEUxfX8xUg6u6TMqYDSWR38Up",
+    "sui": "0x08b7b91f2eec1bf91f45aab563cbf9c75ec05f87b03ace6aaaaaed4a9fa3bf2e"
   }
 }
