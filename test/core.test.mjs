@@ -11401,11 +11401,27 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       (await resolveBroadcastOutcome([coalesceThrower, reverted], "0xabc", { attempts: 2, delayMs: 0 })).state === "reverted");
     ok("repair A: when no node can produce a receipt, the outcome is 'unknown' — not failed, not success",
       (await resolveBroadcastOutcome([coalesceThrower, notYet], "0xabc", { attempts: 2, delayMs: 0 })).state === "unknown");
+    const beats = [];
+    const beatState = (await resolveBroadcastOutcome([notYet], "0xabc", { attempts: 3, delayMs: 5, onProgress: (w) => beats.push(w) })).state;
+    ok("black-screen fix: the settle wait reports a heartbeat before each retry sleep, so the in-flight screen can stay alive",
+      beatState === "unknown" && beats.length === 2 && beats[0] === 5 && beats[1] === 10);
+    ok("black-screen fix: a throwing progress sink cannot break the settle",
+      (await resolveBroadcastOutcome([notYet], "0xabc", { attempts: 2, delayMs: 0, onProgress: () => { throw new Error("sink broke"); } })).state === "unknown");
   })();
   ok("repair A: the LI.FI executor settles broadcasts via the chain, not tx.wait()",
     !core.slice(core.indexOf("export async function executeSwapRoute"), core.indexOf("export async function revokeApproval")).includes("await tx.wait()")
-    && core.includes("await settleBroadcastOrThrow(fromKey, tx.hash);")
-    && core.includes("await settleBroadcastOrThrow(fromKey, depTx.hash);"));
+    && core.includes("await settleBroadcastOrThrow(fromKey, tx.hash, (w) => onProgress(")
+    && core.includes("await settleBroadcastOrThrow(fromKey, depTx.hash, (w) => onProgress("));
+  const idxBs = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("black-screen fix: the sheet carries a dedicated in-flight progress block (spinner, step line, elapsed line)",
+    idxBs.includes('id="txProgress"') && idxBs.includes('id="txProgressText"') && idxBs.includes('id="txProgressElapsed"')
+    && idxBs.includes("#txProgress{"));
+  ok("black-screen fix: the busy state shows/hides the progress block, ticks every second, and progress messages mirror into it",
+    app.includes("if (on) txProgressShow(); else txProgressHide();")
+    && app.includes("if (ok && text && sheetBusy) txProgressSay(text);")
+    && app.includes("txProgressTimer = setInterval(tick, 1000)"));
+  ok("black-screen fix: the busy confirm button is not dimmed into the sheet background",
+    idxBs.includes('#sheetRoot[data-busy="1"] .btn:disabled'));
   ok("repair A: the swap sheet renders an unconfirmed broadcast as sent-pending, disarmed — never 'Swap failed'",
     app.includes("e.outcomeUnknown") && app.includes("isn't marked failed") && app.includes("Please don't send it again yet."));
 

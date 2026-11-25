@@ -383,7 +383,7 @@ function cgCacheSet(chainId, tokens) {
 }
 
 function show(id, on = true) { $(id).classList.toggle("hidden", !on); }
-function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } }
+function msg(id, text, ok = false) { const e = $(id); if (e) { e.textContent = text; e.className = "msg " + (ok ? "ok" : "err"); } if (ok && text && sheetBusy) txProgressSay(text); }
 // ---------- build freshness (audit P1-9) ----------
 // The build this tab booted with, recorded once at startup from
 // the stamped page. A sheet whose data load fails or hangs checks
@@ -439,7 +439,7 @@ addEventListener("popstate", () => {
   if (sheetHistSwallow) { sheetHistSwallow = false; return; }
   if (sheetHistArmed) { sheetHistArmed = false; closeSheet(); }
 });
-function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; sheetGen++; const r = $("sheetRoot"); const wasOpen = !!(r && !r.classList.contains("hidden")); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); armSheetHistory(); if (!wasOpen) focusSheetPrimary(); }
+function openSheet(html) { fireSheetCloseHook(); sheetBusy = false; txProgressHide(); sheetGen++; const r = $("sheetRoot"); const wasOpen = !!(r && !r.classList.contains("hidden")); if (r) { r.removeAttribute("data-busy"); r.classList.remove("closing"); } $("sheetBody").innerHTML = html; show("sheetRoot"); armSheetHistory(); if (!wasOpen) focusSheetPrimary(); }
 /** P2-4: when a sheet opens, the cursor lands in its primary field —
  *  the field the sheet's markup marks data-autofocus (the recipient
  *  field on sends, the amount on Swap, the paste field on Lightning /
@@ -454,6 +454,7 @@ function focusSheetPrimary() {
 }
 function closeSheet(force = false) {
   if (sheetBusy && !force) return;
+  txProgressHide();
   fireSheetCloseHook();
   disarmSheetHistory();
   const r = $("sheetRoot");
@@ -466,9 +467,44 @@ function closeSheet(force = false) {
   setTimeout(() => { if (sheetGen === gen) { show("sheetRoot", false); r.classList.remove("closing"); } }, 190);
 }
 $("sheetX").onclick = () => closeSheet(); $("scrim").onclick = () => closeSheet();
+/** In-flight processing block (2026-11-25 black-screen defect):
+ *  while any send/swap is busy, a block pinned to the top of the
+ *  sheet shows a large brand spinner, the current step (mirrored
+ *  from the flow's own progress messages by msg()) and an elapsed
+ *  counter ticking every second. The settle waits behind a
+ *  broadcast can run ~30–60 s; before this block the only visible
+ *  signal was a 16px spinner inside a dimmed disabled button and
+ *  the progress line sat scrolled out of view at the sheet's
+ *  bottom, so on the user's phone the whole window read as a
+ *  dead black page. The per-second tick also guarantees the
+ *  screen keeps repainting for the entire window. */
+let txProgressTimer = null, txProgressStartedAt = 0;
+function txProgressShow() {
+  const box = $("txProgress"); if (!box) return;
+  box.classList.remove("hidden");
+  if (!txProgressTimer) {
+    txProgressStartedAt = Date.now();
+    const tick = () => {
+      const el = $("txProgressElapsed"); if (!el) return;
+      const s = Math.max(0, Math.round((Date.now() - txProgressStartedAt) / 1000));
+      el.textContent = `${s}s — keep this screen open`;
+    };
+    tick();
+    txProgressTimer = setInterval(tick, 1000);
+  }
+}
+function txProgressHide() {
+  if (txProgressTimer) { clearInterval(txProgressTimer); txProgressTimer = null; }
+  const box = $("txProgress"); if (box) box.classList.add("hidden");
+  const t = $("txProgressText"); if (t) t.textContent = "Working…";
+}
+function txProgressSay(text) {
+  const t = $("txProgressText"); if (t && text) t.textContent = text;
+}
 /** Put a confirm button into / out of its broadcasting state:
  *  spinner + "Sending…", disabled, sheet locked (§4.8). */
 function setSendBusy(btn, on) {
+  if (on) txProgressShow(); else txProgressHide();
   if (!btn) return;
   sheetBusy = !!on;
   const root = $("sheetRoot"); if (root) { if (on) root.setAttribute("data-busy", "1"); else root.removeAttribute("data-busy"); }

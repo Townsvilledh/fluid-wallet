@@ -103,6 +103,26 @@
   .spinner{ display:inline-block; width:16px; height:16px; margin-right:8px; vertical-align:-3px; border-radius:50%;
     border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .8s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
+  /* In-flight processing block (2026-11-25 black-screen defect):
+     while a send/swap is busy, this block pins to the top of the
+     sheet with a large brand spinner, the current step and an
+     elapsed counter — the processing state must stay visibly
+     alive for the whole broadcast/settle window, which can run
+     ~30–60 s; before this, the only signal was a 16px spinner in
+     a dimmed disabled button and the screen read as dead black. */
+  #txProgress{ position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:12px;
+    background:var(--surface-2); border:1px solid rgba(247,147,26,.45); border-radius:14px;
+    padding:12px 14px; margin:0 0 10px; }
+  .txp-spin{ flex:0 0 auto; width:34px; height:34px; border-radius:50%;
+    border:3px solid rgba(247,147,26,.25); border-top-color:var(--brand-1); animation:spin .8s linear infinite; }
+  .txp-text{ min-width:0; }
+  #txProgressText{ font-weight:600; font-size:15px; }
+  .txp-elapsed{ color:var(--dim); font-size:12.5px; margin-top:2px; }
+  /* The busy confirm button keeps legible colours — the generic
+     :disabled faint treatment dimmed the one control the user is
+     watching into the near-black sheet for the whole window. */
+  #sheetRoot[data-busy="1"] .btn:disabled{ color:var(--txt); }
+  #sheetRoot[data-busy="1"] .spinner{ border-color:rgba(247,147,26,.35); border-top-color:var(--brand-1); }
   /* header (§4.1) */
   .apphead{ display:flex; align-items:center; gap:10px; min-height:44px; }
   .avatar{ width:36px; height:36px; border-radius:50%; background:var(--grad-drop); display:grid; place-items:center; flex:0 0 auto; }
@@ -360,7 +380,7 @@
     #sheetRoot.closing .sheet, #sheetRoot.closing .scrim{ animation:none; }
   }
 </style>
-<meta name="fluid-build" content="dc53894c2f"></head>
+<meta name="fluid-build" content="8fcb58598f"></head>
 <body>
 <svg width="0" height="0" style="display:none" aria-hidden="true">
   <defs>
@@ -735,6 +755,7 @@
     <div class="scrim" id="scrim"></div>
     <div class="sheet">
       <div class="grab"></div>
+      <div id="txProgress" class="hidden" role="status"><span class="txp-spin" aria-hidden="true"></span><div class="txp-text"><div id="txProgressText">Working…</div><div class="txp-elapsed" id="txProgressElapsed">Keep this screen open</div></div></div>
       <button class="x" id="sheetX"><svg class="ic ic-sm"><use href="#i-x"/></svg></button>
       <div id="sheetBody"></div>
     </div>
@@ -752,6 +773,6 @@
   </section>
   </noscript>
 </div>
-<script src="app.bundle.js?v=dc53894c2f"></script>
+<script src="app.bundle.js?v=8fcb58598f"></script>
 </body>
 </html>

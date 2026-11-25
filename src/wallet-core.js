@@ -1417,7 +1417,7 @@ async function simulateEvmStepOrThrow(networkKey, provider, txReq, from) {
  * This polls the receipt on each given provider in turn; a node's
  * unreadable answer is one failed ATTEMPT, never a verdict. Never
  * throws for RPC weirdness. Providers are injectable for tests. */
-export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10, delayMs = 3000, sleepFn } = {}) {
+export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10, delayMs = 3000, sleepFn, onProgress } = {}) {
   const sleep = sleepFn || ((ms) => new Promise(r => setTimeout(r, ms)));
   const list = (providers || []).filter(Boolean);
   for (let i = 0; i < attempts; i++) {
@@ -1427,7 +1427,16 @@ export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10
         if (rc) return { state: Number(rc.status) === 1 ? "mined" : "reverted", receipt: rc };
       } catch { /* unreadable answer: try the next node, then wait and retry */ }
     }
-    if (i < attempts - 1) await sleep(delayMs);
+    if (i < attempts - 1) {
+      // Heartbeat (2026-11-25 black-screen defect): this wait can
+      // run ~30 s per step with the sheet otherwise unchanged —
+      // on the user's phone the in-flight screen read as a dead
+      // black page. Report the wait BEFORE each sleep so the UI
+      // can keep the processing state visibly alive; a throwing
+      // progress sink must never break the settle itself.
+      if (typeof onProgress === "function") { try { onProgress((i + 1) * delayMs); } catch { /* progress is cosmetic; the settle is not */ } }
+      await sleep(delayMs);
+    }
   }
   return { state: "unknown" };
 }
@@ -1437,8 +1446,8 @@ export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10
  * still unknown after the polling budget → a FLAGGED error
  * (e.outcomeUnknown) the UI renders as "sent, unconfirmed" —
  * never as "failed". */
-async function settleBroadcastOrThrow(networkKey, txHash) {
-  const outcome = await resolveBroadcastOutcome([providerFor(networkKey), providerForFallback(networkKey)], txHash);
+async function settleBroadcastOrThrow(networkKey, txHash, onProgress) {
+  const outcome = await resolveBroadcastOutcome([providerFor(networkKey), providerForFallback(networkKey)], txHash, { onProgress });
   if (outcome.state === "mined") return outcome.receipt;
   if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — the tokens it was moving are back in your wallet; only the network fee was spent.");
   const err = new Error("Sent, but the network hasn't confirmed it yet.");
@@ -1450,8 +1459,8 @@ async function settleBroadcastOrThrow(networkKey, txHash) {
  * be read, the ALLOWANCE is the ground truth — proceed when the
  * chain shows the approval landed, refuse only when it truly
  * isn't there. */
-async function settleApprovalOrThrow(networkKey, txHash, recheckAllowance) {
-  try { await settleBroadcastOrThrow(networkKey, txHash); }
+async function settleApprovalOrThrow(networkKey, txHash, recheckAllowance, onProgress) {
+  try { await settleBroadcastOrThrow(networkKey, txHash, onProgress); }
   catch (e) {
     if (e && e.outcomeUnknown && typeof recheckAllowance === "function") {
       let okNow = false;
@@ -12295,7 +12304,7 @@ export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () =
       onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
       const atx = await c.approve(oo.tx.to, need);
       approvalHashes.push(atx.hash);
-      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, oo.tx.to)) >= need);
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, oo.tx.to)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
         onApprove({ chainKey: fromKey, token: route.fromToken.address, tokenSymbol: route.fromToken?.symbol || null, spender: oo.tx.to, amount: need.toString(), decimals: route.fromToken?.decimals ?? null, at: Date.now() });
       } catch { /* recording an approval must never break a swap */ }
@@ -12307,7 +12316,7 @@ export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () =
   await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
   const swapTx = await signer.sendTransaction(txReq);
   onProgress("Swap sent — waiting for it to mine…");
-  await settleBroadcastOrThrow(fromKey, swapTx.hash);
+  await settleBroadcastOrThrow(fromKey, swapTx.hash, (w) => onProgress(`Swap sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
   return [swapTx.hash, ...approvalHashes];
 }
 
@@ -14167,7 +14176,7 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
       onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
       const atx = await c.approve(ac.swapTx.to, need);
       approvalHashes.push(atx.hash);
-      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, ac.swapTx.to)) >= need);
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, ac.swapTx.to)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
         onApprove({ chainKey: fromKey, token: ac.inputToken, tokenSymbol: route.fromToken?.symbol || null, spender: ac.swapTx.to, amount: need.toString(), decimals: route.fromToken?.decimals ?? null, at: Date.now() });
       } catch { /* recording an approval must never break a swap */ }
@@ -14182,7 +14191,7 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
   // Chain-decided outcome (defect A): the deposit is the
   // value-moving transaction — a receipt-read glitch after
   // broadcast must never label it "failed".
-  await settleBroadcastOrThrow(fromKey, depTx.hash);
+  await settleBroadcastOrThrow(fromKey, depTx.hash, (w) => onProgress(`Deposit sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
   return [depTx.hash, ...approvalHashes];
 }
 // ---------- Satora: EVM stablecoins -> Bitcoin mainnet / Lightning ----------
@@ -24134,7 +24143,7 @@ export async function executeMayanSwapRoute(wallet, route, onProgress = () => {}
     if (current < need) {
       const atx = await token.approve(MAYAN_FORWARDER, need);
       onApprove?.({ hash: atx.hash, spender: MAYAN_FORWARDER, amount: need.toString() });
-      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await token.allowance(wallet.address, MAYAN_FORWARDER)) >= need);
+      await settleApprovalOrThrow(fromKey, atx.hash, async () => (await token.allowance(wallet.address, MAYAN_FORWARDER)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
     }
   }
   const txr = await signer.sendTransaction({ to: route.mayan.tx.to, data: route.mayan.tx.data, value: BigInt(route.mayan.tx.value || "0") });
@@ -28087,7 +28096,7 @@ export async function executeChainflipSwapRoute(wallet, route, onProgress = () =
       onProgress("Approving USDT for the Chainflip vault (exact amount only)…");
       const atx = await token.approve(CHAINFLIP_BSC_VAULT, need);
       approvalHashes.push(atx.hash);
-      await settleApprovalOrThrow("bsc", atx.hash, async () => (await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) >= need);
+      await settleApprovalOrThrow("bsc", atx.hash, async () => (await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
         onApprove({ chainKey: "bsc", token: CHAINFLIP_BSC_USDT.address, tokenSymbol: "USDT", spender: CHAINFLIP_BSC_VAULT, amount: need.toString(), decimals: 18, at: Date.now() });
       } catch { /* recording an approval must never break a swap */ }
@@ -28096,7 +28105,7 @@ export async function executeChainflipSwapRoute(wallet, route, onProgress = () =
   onProgress("Signing the Chainflip deposit…");
   const tx = await signer.sendTransaction({ to: encoded.to, data: encoded.calldata, value: BigInt(encoded.value ?? "0") });
   onProgress("Deposit sent — Chainflip delivers DOT to your Polkadot address (about 2 minutes; if the price floor is missed inside the retry window, the deposit refunds to your BSC address automatically)…");
-  await settleBroadcastOrThrow("bsc", tx.hash);
+  await settleBroadcastOrThrow("bsc", tx.hash, (w) => onProgress(`Deposit sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
   return [tx.hash, ...approvalHashes];
 }
 
@@ -29838,7 +29847,7 @@ export async function executeRelaySwapRoute(wallet, route, onProgress = () => {}
       }
       onProgress(`Step ${n} sent — waiting for it to mine…`);
       // Chain-decided outcome, same as every EVM executor (defect A).
-      await settleBroadcastOrThrow(fromKey, tx.hash);
+      await settleBroadcastOrThrow(fromKey, tx.hash, (w) => onProgress(`Step ${n} sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
     }
   }
   return hashes;
