@@ -106,6 +106,15 @@ copyFileSync("public/og-image.png", "dist/og-image.png");
 // fresh fetch everywhere. og-image.png stays for the WalletConnect icon.
 copyFileSync("public/og-card.png", "dist/og-card.png");
 copyFileSync("public/favicon.png", "dist/favicon.png");
+// Web app manifest + PWA icons (2026-11-25): without these the site had
+// no install information at all — PWA directory checks failed and phones
+// never offered "install Fluid". One source set in public/, copied as-is.
+copyFileSync("public/manifest.webmanifest", "dist/manifest.webmanifest");
+mkdirSync("dist/icons", { recursive: true });
+copyFileSync("public/icons/icon-192.png", "dist/icons/icon-192.png");
+copyFileSync("public/icons/icon-512.png", "dist/icons/icon-512.png");
+copyFileSync("public/icons/maskable-512.png", "dist/icons/maskable-512.png");
+copyFileSync("public/icons/apple-touch-icon.png", "dist/icons/apple-touch-icon.png");
 copyFileSync("public/CNAME", "dist/CNAME");
 mkdirSync("dist/fonts", { recursive: true });
 copyFileSync("public/fonts/inter-var.woff2", "dist/fonts/inter-var.woff2");

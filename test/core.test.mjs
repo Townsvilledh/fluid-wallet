@@ -2566,6 +2566,28 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     idxSrc.includes('http-equiv="Content-Security-Policy"')
     && idxSrc.includes("script-src 'self'")
     && idxSrc.includes("object-src 'none'"));
+  // Web app manifest (2026-11-25): the live site shipped with NO manifest
+  // at all — PWA directory checks failed ("no install information") and
+  // phones never offered install. Pin the link, the manifest's install
+  // fields and the build copies so it cannot silently vanish again.
+  const manifestSrc = readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8");
+  const buildSrc = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+  ok("pwa-manifest: index.html links the manifest and the apple touch icon",
+    idxSrc.includes('<link rel="manifest" href="/manifest.webmanifest">')
+    && idxSrc.includes('<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">'));
+  ok("pwa-manifest: manifest carries name, standalone display, start_url and the icon set",
+    manifestSrc.includes('"short_name":"Fluid"')
+    && manifestSrc.includes('"display":"standalone"')
+    && manifestSrc.includes('"start_url":"/"')
+    && manifestSrc.includes('/icons/icon-192.png')
+    && manifestSrc.includes('/icons/icon-512.png')
+    && manifestSrc.includes('/icons/maskable-512.png'));
+  ok("pwa-manifest: build copies the manifest and all four icons into dist",
+    buildSrc.includes('copyFileSync("public/manifest.webmanifest", "dist/manifest.webmanifest")')
+    && buildSrc.includes('copyFileSync("public/icons/icon-192.png", "dist/icons/icon-192.png")')
+    && buildSrc.includes('copyFileSync("public/icons/icon-512.png", "dist/icons/icon-512.png")')
+    && buildSrc.includes('copyFileSync("public/icons/maskable-512.png", "dist/icons/maskable-512.png")')
+    && buildSrc.includes('copyFileSync("public/icons/apple-touch-icon.png", "dist/icons/apple-touch-icon.png")'));
 }
 
 // ---------- vault KDF hardening (security audit H2) ----------
