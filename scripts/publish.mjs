@@ -50,6 +50,8 @@ const ARTIFACTS = ["index.html", "app.bundle.js", "recovery.html", "donate.html"
   "lightning.chunk.js", "fluid_lightning_bg.wasm", "sw.js", "walletconnect.chunk.js", "arkade.chunk.js",
   "cosmos.chunk.js", "polkadot.chunk.js", "peer.chunk.js",
   "fonts/inter-var.woff2", "fonts/space-grotesk-var.woff2", "favicon.png",
+  "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
+  "icons/maskable-512.png", "icons/apple-touch-icon.png",
   "fluid-agent.json", ".well-known/fluid-agent.json", ".nojekyll",
   "funding.json", ".well-known/funding-manifest-urls",
   "checksums.txt", "release-pubkey.pem"];

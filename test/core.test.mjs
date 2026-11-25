@@ -2582,12 +2582,19 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     && manifestSrc.includes('/icons/icon-192.png')
     && manifestSrc.includes('/icons/icon-512.png')
     && manifestSrc.includes('/icons/maskable-512.png'));
+  const publishSrc = readFileSync(new URL("../scripts/publish.mjs", import.meta.url), "utf8");
   ok("pwa-manifest: build copies the manifest and all four icons into dist",
     buildSrc.includes('copyFileSync("public/manifest.webmanifest", "dist/manifest.webmanifest")')
     && buildSrc.includes('copyFileSync("public/icons/icon-192.png", "dist/icons/icon-192.png")')
     && buildSrc.includes('copyFileSync("public/icons/icon-512.png", "dist/icons/icon-512.png")')
     && buildSrc.includes('copyFileSync("public/icons/maskable-512.png", "dist/icons/maskable-512.png")')
     && buildSrc.includes('copyFileSync("public/icons/apple-touch-icon.png", "dist/icons/apple-touch-icon.png")'));
+  ok("pwa-manifest: publish ARTIFACTS carry the manifest and icons to gh-pages (the live site)",
+    publishSrc.includes('"manifest.webmanifest"')
+    && publishSrc.includes('"icons/icon-192.png"')
+    && publishSrc.includes('"icons/icon-512.png"')
+    && publishSrc.includes('"icons/maskable-512.png"')
+    && publishSrc.includes('"icons/apple-touch-icon.png"'));
 }
 
 // ---------- vault KDF hardening (security audit H2) ----------
