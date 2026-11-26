@@ -17854,8 +17854,15 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("skip fee: the inverse transform nets the law's target exactly (50 -> request 66)",
     skipFeeRequest(50) === 66 && skipFeeRequest(38) === 50 && skipFeeRequest(0) === 0
     && Array.from({ length: 100 }, (_, i) => i + 1).every(t => skipSplitFor(skipFeeRequest(t)).fluid === t));
-  ok("skip config: the affiliate table ships empty — quotes run fee-free until the operator sets an address (the 1Click recipient precedent)",
-    Object.keys(SKIP_AFFILIATE_ADDRESSES).length === 0 && skipAffiliateAddress("osmosis-1") === null
+  ok("skip config: the affiliate table carries the DripBot wallet's six Cosmos addresses (configured 2026-11-26) — each slice chain resolves, unknown chains return null",
+    Object.keys(SKIP_AFFILIATE_ADDRESSES).length === 6
+    && skipAffiliateAddress("cosmoshub-4") === "cosmos1yqyj9h8dt4duxtsap5gn34fxla92f9numrpqzg"
+    && skipAffiliateAddress("osmosis-1") === "osmo1yqyj9h8dt4duxtsap5gn34fxla92f9nuncjs56"
+    && skipAffiliateAddress("noble-1") === "noble1yqyj9h8dt4duxtsap5gn34fxla92f9nunq5g6x"
+    && skipAffiliateAddress("celestia") === "celestia1yqyj9h8dt4duxtsap5gn34fxla92f9nu2fssc9"
+    && skipAffiliateAddress("injective-1") === "inj10lnrsg6l458alw7vwktypkypuraxyy6m2u4cee"
+    && skipAffiliateAddress("dydx-mainnet-1") === "dydx1yqyj9h8dt4duxtsap5gn34fxla92f9nuj60yzl"
+    && skipAffiliateAddress("pacific-1") === null && skipAffiliateAddress("unknown-1") === null
     && skipAffiliateAddress("osmosis-1", { "osmosis-1": addrs119.osmosis }) === addrs119.osmosis);
 
   // --- echo verification against the live captures ---
@@ -18015,8 +18022,8 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
       swapRouteExecutable(charged).ok === true
       && swapRouteExecutable({ ...charged, skip: { ...charged.skip, feeEcho: null } }).ok === false);
     msgsCalls = 0;
-    const free = await getSkipSwapRoute(args119, { fetchImpl: stub });
-    ok("skip route: with no affiliate configured the route ships fee-free in ONE msgs pass (the shipped config state)",
+    const free = await getSkipSwapRoute(args119, { fetchImpl: stub, affiliateAddresses: {} });
+    ok("skip route: with no affiliate configured the route ships fee-free in ONE msgs pass",
       free.platformFeeCollecting === false && free.platformFeeBps === 0 && msgsCalls === 1);
     const badStub = async (url, opts) => {
       const u = String(url);

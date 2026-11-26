@@ -10780,13 +10780,24 @@ export const SKIP_API = "https://api.skip.build/v2";
  *  (Skip places the affiliate on the route's SETTLEMENT
  *  chain, so one address per chain is needed — the research
  *  fixtures pin the shape with the test wallet's addresses).
- *  Empty today — an operator item, exactly the
- *  ONECLICK_FEE_RECIPIENT / CHAINFLIP_BROKER_ACCOUNT
- *  precedent: while no address is configured, Skip quotes
- *  run fee-free with collecting=false and the whole capture
- *  mechanism (transform + echo-verify) stands implemented
- *  and test-pinned behind the config. */
-export const SKIP_AFFILIATE_ADDRESSES = {};
+ *  Configured 2026-11-26 at the owner's direction: the six
+ *  addresses are the DripBot fee-collection wallet's own
+ *  Cosmos addresses, derived with this file's cosmosAddress
+ *  derivation (the shared 118 account for Hub/Osmosis/Noble/
+ *  Celestia/dYdX, Injective's own coin-type-60 account).
+ *  A configured address alone never claims capture:
+ *  collecting still turns true per-route ONLY when the
+ *  affiliate echo verifies against the quote (verifySkipFeeEcho);
+ *  a route whose echo does not verify runs fee-free with
+ *  collecting=false, honestly. */
+export const SKIP_AFFILIATE_ADDRESSES = {
+  "cosmoshub-4": "cosmos1yqyj9h8dt4duxtsap5gn34fxla92f9numrpqzg",
+  "osmosis-1": "osmo1yqyj9h8dt4duxtsap5gn34fxla92f9nuncjs56",
+  "noble-1": "noble1yqyj9h8dt4duxtsap5gn34fxla92f9nunq5g6x",
+  "celestia": "celestia1yqyj9h8dt4duxtsap5gn34fxla92f9nu2fssc9",
+  "injective-1": "inj10lnrsg6l458alw7vwktypkypuraxyy6m2u4cee",
+  "dydx-mainnet-1": "dydx1yqyj9h8dt4duxtsap5gn34fxla92f9nuj60yzl",
+};
 export function skipAffiliateAddress(chainId, table = SKIP_AFFILIATE_ADDRESSES) {
   const a = table ? table[String(chainId)] : null;
   return typeof a === "string" && a ? a : null;
