@@ -302,5 +302,13 @@
     "sol": "5NkQBHKkKvVqVPvrJiVW4sFVGY28oKc1UKVm4NVJVtyC",
     "tron": "TPiSwcTaRTWMyBYyKYNQYaZgq3GJgHaTR8",
     "sui": "0x06c9ef55e80e8e8594a233c2faf7c530f98849074c0c6adba761fe6f208af14e"
+  },
+  "chiboy": {
+    "evm": "0x81E18D5C5fb06871A0f2c8aE2aAEe2D8cec1e9E6",
+    "btc": "bc1qzvcgdk90wwkxesrqdp57wzrsdx8eg6xjm98u9k",
+    "algo": "25ZFGIWHIPULV43XOU2MENXDGHOKEPE2PRUO2U2UHC6YCVXDX2PWTH675U",
+    "sol": "cAcJekQtzCxVXuee4icPox1CynyR1kVn8BnZgcyoo4R",
+    "tron": "TMoxNSpsDrTzkqR395h7cRrjFB5GXx2Qaa",
+    "sui": "0x6db27a94e6743358978c31842c1902f41744544e5d2804263ff6aefa6708b8e7"
   }
 }
