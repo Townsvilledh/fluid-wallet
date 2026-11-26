@@ -67,7 +67,7 @@ import { detectScanFamily, detectScanTxid, isValidBitcoinAddress, scanTargetsFor
   SCAN_EVM_NETWORKS, SCAN_BLOCKSCOUT_APIS, SCAN_TX_LIMIT } from "../src/wallet-core.js";
 import { withDeadline, dotApi, installCosmosSdk, installPolkadotSdk, loadCosmosSdk, loadPolkadotSdk } from "../src/wallet-core.js";
 import { installPeerSdk, loadPeerSdk, PEER_REFERRAL_CODE, PEER_BASE_USDC, PEER_MIN_SELL_USDC, PEER_BUY_NOTE, peerReferralConfigured, peerSellCorridor, peerPlatformName, peerPlatformsForCurrency, peerPairFillStats, peerFillSecondsLabel, peerFillTimeLine, peerUsdcToRaw, peerRawToUsdc, peerAttributionCheck, peerErrorCopy, peerCashClient, peerCapabilities, peerPrepareSell, peerExecuteSell, peerExecuteWithdraw, peerExecuteTopUp, peerViemReceipt, peerCurrencyHash, parsePeerBook, peerBookFloorLine } from "../src/wallet-core.js";
-import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
+import { WALLETCONNECT_PROJECT_ID, walletConnectConfigured, WALLETCONNECT_RELAY_URL, WC_EIP155_METHODS, parseWcUri, planWcNamespaces, describeWcProposal, buildWcNamespaces, wcSessionSummary, decodeWcRequest, signWcMessage, signWcTypedData, wcTxFeeQuote, evmNetworkKeyForChainId, wcSupportedChainIds } from "../src/wallet-core.js";
 import { sortHomeFamilies, sortHomeRows, rankPickerTokens, pickerListState } from "../src/wallet-core.js";
 import { ONECLICK_API, ONECLICK_FEE_RECIPIENT, ONECLICK_SWAPS_STORAGE_KEY, NEAR_SWAP_CHAIN_ID, XRPL_SWAP_CHAIN_ID, LITECOIN_SWAP_CHAIN_ID, DOGECOIN_SWAP_CHAIN_ID, BITCOINCASH_SWAP_CHAIN_ID, APTOS_SWAP_CHAIN_ID, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, oneClickConfig, oneClickAssetFor, oneClickSupportsPair, oneClickFeeRequest, verifyOneClickFeeEcho, buildOneClickQuoteBody, parseOneClickQuote, getOneClickSwapRoute, loadOneClickSwapRecords, saveOneClickSwapRecord, oneClickSwapPhase, oneClickSwapHistoryLine, fetchOneClickStatus, pollOneClickSwapStatuses, submitOneClickDeposit, executeOneClickSwapRoute, tokenSymbolOn, readDestNativeRaw } from "../src/wallet-core.js";
 import { CARDANO_SWAP_CHAIN_ID, CARDANO_SWAP_NATIVE_TOKEN, CARDANO_EXPLORER, CARDANO_BLOCKFROST_PROJECT_ID, CARDANO_ONECLICK_MIN_DURATION_SEC, CARDANO_KOIOS_READ_BASES, cardanoAddress, cardanoStakeAddress, cardanoPaymentNode, cardanoMasterKeyFromEntropy, cardanoSignExtended, cardanoAddressToBytes, isValidCardanoAddress, cborEncode, parseKoiosTip, parseKoiosEpochParams, parseKoiosUtxos, getCardanoTip, getCardanoAccount, getCardanoBalance, getCardanoBalanceLovelace, cardanoFeeForTxSize, cardanoMinUtxoLovelace, buildCardanoPaymentTx, planCardanoSend, submitCardanoTx, cardanoSubmitConfig, formatCardanoSendIntent } from "../src/wallet-core.js";
@@ -4952,6 +4952,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("WC: eth_accounts is a read-only auto answer", acc.ok && acc.auto === true && acc.sign === null);
   const cid = decodeWcRequest({ method: "eth_chainId", params: [], chainId: "eip155:137", ownAddress: ME });
   ok("WC: eth_chainId is a read-only auto answer", cid.ok && cid.auto === true && cid.chainId === 137);
+
+  // -- fee quote math for the transaction review sheet --
+  ok("WC: fee quote multiplies gas × price", wcTxFeeQuote(21000n, 1000000000n) === 21000000000000n);
+  ok("WC: fee quote accepts hex-string inputs", wcTxFeeQuote("0x5208", "0x3b9aca00") === 21000000000000n);
+  ok("WC: fee quote refuses zero gas / junk instead of guessing", wcTxFeeQuote(0n, 1000000000n) === null && wcTxFeeQuote("nope", 1n) === null && wcTxFeeQuote(21000n, null) === null);
 
   // -- sessions list summary --
   const sum = wcSessionSummary({ topic: "topic123", expiry: 1899999999, peer: { metadata: { name: "D", url: "https://d.example", icons: [] } }, namespaces: { eip155: { accounts: [`eip155:1:${ME}`, `eip155:8453:${ME}`], chains: ["eip155:1"], methods: [], events: [] } } });
@@ -11444,6 +11449,15 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("defect D: the switch wait is visible — a switching sheet with the progress block, abandoned if the user closes it",
     app.includes("Switching networks — loading this chain's balances first") && app.includes("txProgressSay(`Switching to ${NETWORKS[key].name}…`)")
     && app.includes("if (!ok || sheetGen !== gen) return;"));
+  ok("WC tx sheet: a transaction request shows a live estimated-fee row filled from Fluid's own RPC estimate",
+    app.includes('id="wcFeeVal"') && app.includes("estimateWcTxFee(decoded.networkKey, decoded.sign.tx, wallet.address)")
+    && app.includes("couldn't estimate — the network sets the final fee when it sends")
+    && core.includes("export async function estimateWcTxFee(networkKey, tx, from)") && core.includes("export function wcTxFeeQuote(gasLimit, feePerUnit)"));
+  ok("WC deep link: #wc=<uri> is validated by parseWcUri, the fragment is cleared, and pairing auto-starts in the panel",
+    app.includes("async function consumeWcDeepLink()") && app.includes("/^#wc=(.+)$/.exec(location.hash || \"\")")
+    && app.includes("if (!parseWcUri(uri)) return;") && app.includes("paintWcPanel(uri);") && app.includes("wcConnect();")
+    && app.includes('window.addEventListener("hashchange", () => { consumeWcDeepLink(); })')
+    && app.includes("if (wallet) consumeWcDeepLink();") && app.includes("function paintWcPanel(prefillUri)"));
   ok("repair: the swap balance check is wei-exact (moved to the execution gate — route-preview decision, §99)",
     app.includes("swapBalanceGate(amount, have, fromTok.decimals)")
     && core.includes("export function swapBalanceGate"));

@@ -40560,3 +40560,41 @@ export async function executeWcTransaction(wallet, sign) {
   const signer = wallet.connect(providerFor(sign.networkKey));
   return signer.sendTransaction({ ...sign.tx });
 }
+
+/** Pure fee math for a reviewed WC transaction: the fee the user
+ *  would pay at `gasLimit` units × `feePerUnit` wei. Null when
+ *  either input is unusable — the sheet then says the fee couldn't
+ *  be estimated instead of showing a wrong number. */
+export function wcTxFeeQuote(gasLimit, feePerUnit) {
+  try {
+    const g = BigInt(gasLimit), p = BigInt(feePerUnit);
+    if (g <= 0n || p < 0n) return null;
+    return g * p;
+  } catch { return null; }
+}
+
+/** Estimate the network fee for a decoded WC transaction (the
+ *  sign.tx from decodeWcRequest) over Fluid's own provider for the
+ *  chain — the same RPC the send itself will use. Prefers the gas
+ *  fields the requesting app set; otherwise asks the network.
+ *  Returns { feeWei, gasLimit, symbol } or null when the network
+ *  can't be reached or won't quote — never a guessed figure. */
+export async function estimateWcTxFee(networkKey, tx, from) {
+  try {
+    const net = NETWORKS[networkKey];
+    if (!net || !tx) return null;
+    const provider = providerFor(networkKey);
+    let gasLimit = tx.gasLimit != null ? BigInt(tx.gasLimit) : null;
+    if (gasLimit == null) gasLimit = await provider.estimateGas({ ...tx, from });
+    let feePerUnit = null;
+    if (tx.maxFeePerGas != null) feePerUnit = BigInt(tx.maxFeePerGas);
+    else if (tx.gasPrice != null) feePerUnit = BigInt(tx.gasPrice);
+    else {
+      const fd = await provider.getFeeData();
+      feePerUnit = fd.maxFeePerGas != null ? fd.maxFeePerGas : fd.gasPrice;
+    }
+    const feeWei = wcTxFeeQuote(gasLimit, feePerUnit);
+    if (feeWei == null) return null;
+    return { feeWei, gasLimit, symbol: net.symbol };
+  } catch { return null; }
+}

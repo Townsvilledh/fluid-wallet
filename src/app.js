@@ -67,7 +67,7 @@ import {
   detectScanFamily, detectScanTxid, fetchScanTxid, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
   formatScanFeedEntry, scanChainStatusText, scanChainBadge, scanTxUrl, scanAddressUrl,
   WALLETCONNECT_PROJECT_ID, walletConnectConfigured, parseWcUri, describeWcProposal, buildWcNamespaces,
-  decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, evmNetworkKeyForChainId,
+  decodeWcRequest, wcSessionSummary, signWcMessage, signWcTypedData, executeWcTransaction, estimateWcTxFee, evmNetworkKeyForChainId,
   sortHomeFamilies, sortHomeRows, splitHomeRows, countUnpricedHoldings, mergeCgFallbackPrices,
   heldScopes, withJumpedScopes, flattenHeldRows, pendingGateScopes,
   evmChainFailureRows, mergeEvmChainRows, sumEvmChainsUsd,
@@ -1253,6 +1253,10 @@ function refreshGate() {
     history.replaceState(null, "", location.pathname + location.search);
     setTimeout(() => openLightningPanel(), 350);
   }
+  // WalletConnect pairing deep link (#wc=<uri>): consumed here so
+  // a link that arrived while the wallet was locked fires the
+  // moment the app unlocks. See consumeWcDeepLink in the WC section.
+  if (wallet) consumeWcDeepLink();
 }
 
 /** Load a family's ALL-token rows; if the discovery read itself is
@@ -9856,7 +9860,7 @@ async function openWcPanel() {
   }
 }
 
-function paintWcPanel() {
+function paintWcPanel(prefillUri) {
   openSheet(`<div id="wcPanel"><h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
     <p class="tag">Connect Fluid to an app: open the app, choose WalletConnect, copy its pairing code (it starts with <span class="mono">wc:</span>) and paste it here. You'll review the connection before anything is shared. (Pairing codes are copied text for now — Fluid has no camera scanner yet.)</p>
     <textarea id="wcUri" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus rows="3" placeholder="wc:… pairing code from the app" autocapitalize="none"></textarea>
@@ -9865,9 +9869,42 @@ function paintWcPanel() {
     <h4>Connected apps</h4>
     <div id="wcSessions"></div>
     </div>`);
+  if (prefillUri) $("wcUri").value = prefillUri;
   $("wcConnectBtn").onclick = wcConnect;
   paintWcSessions();
 }
+
+/** Deep-link pairing: fluidwallet.dpdns.org/#wc=<url-encoded wc: URI>
+ *  opens Fluid straight at the WalletConnect panel with the pairing
+ *  already started — an agent holding the user's session (Lille
+ *  first, Sign Where You Stand) hands over the link instead of
+ *  making the user copy a code by hand. The fragment is consumed
+ *  once per arrival and only while the wallet is unlocked: a locked
+ *  wallet keeps the fragment untouched until the unlock paints the
+ *  app, and an invalid fragment is ignored in place. */
+let wcDeepLinkBusy = false;
+async function consumeWcDeepLink() {
+  if (!wallet || wcDeepLinkBusy) return;
+  const m = /^#wc=(.+)$/.exec(location.hash || "");
+  if (!m) return;
+  let uri = "";
+  try { uri = decodeURIComponent(m[1]); } catch { return; }
+  if (!parseWcUri(uri)) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  wcDeepLinkBusy = true;
+  try {
+    if (!walletConnectConfigured()) return;
+    openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+      <p class="tag">Starting WalletConnect… the first open downloads its code (once); after that it loads from your device.</p>`);
+    await wcBoot();
+    paintWcPanel(uri);
+    wcConnect();
+  } catch (e) {
+    openSheet(`<h3>${icon("layers", "ic ic-brand")} WalletConnect</h3>
+      <p class="tag">WalletConnect isn't available in this build (${esc((e && e.message) || e)}). The single-file build can't load it — open Fluid at <b>fluidwallet.dpdns.org</b> to connect to dApps.</p>`);
+  } finally { wcDeepLinkBusy = false; }
+}
+window.addEventListener("hashchange", () => { consumeWcDeepLink(); });
 
 async function wcConnect() {
   const uri = $("wcUri").value.trim();
@@ -9983,10 +10020,30 @@ async function wcOnRequest(event) {
     <p class="tag">From <b>${esc(dappName)}</b>${sum && sum.url ? ` · <span class="mono">${esc(sum.url)}</span>` : ""}${netName ? ` · on ${esc(netName)}` : ""}</p>
     <p class="seed" style="white-space:pre-wrap">${esc(decoded.intent)}</p>
     ${rowsHtml}
+    ${decoded.kind === "transaction" ? `<div class="txrow"><span>Estimated network fee</span><b id="wcFeeVal">estimating…</b></div>` : ""}
     ${decoded.warning ? `<p class="banner err">${icon("alert", "ic ic-sm")}<span>${esc(decoded.warning)}</span></p>` : ""}
     <div class="stickyfoot"><button class="btn" id="wcReqApprove">${decoded.kind === "transaction" ? "Send transaction" : "Sign"}</button>
     <button class="btn danger" id="wcReqReject">Reject</button></div>
     <p class="msg err" id="wcReqMsg"></p></div>`);
+  if (decoded.kind === "transaction") {
+    // Live fee estimate over Fluid's own RPC for the chain — the
+    // same provider the send will use. The row is already on the
+    // sheet saying "estimating…"; if the sheet has moved on, the
+    // element is gone and the estimate dies with it. A failed
+    // estimate says so honestly rather than showing a guess.
+    estimateWcTxFee(decoded.networkKey, decoded.sign.tx, wallet.address).then(est => {
+      const el = $("wcFeeVal");
+      if (!el) return;
+      if (!est) { el.textContent = "couldn't estimate — the network sets the final fee when it sends"; return; }
+      const feeNative = ethers.formatEther(est.feeWei);
+      const px = prices[est.symbol];
+      const usd = px != null && Number.isFinite(Number(px)) ? Number(feeNative) * Number(px) : null;
+      el.textContent = `≈ ${feeNative} ${est.symbol}` + (usd != null && usd >= 0.005 ? ` (≈ $${usd.toFixed(2)})` : "");
+    }).catch(() => {
+      const el = $("wcFeeVal");
+      if (el) el.textContent = "couldn't estimate — the network sets the final fee when it sends";
+    });
+  }
   $("wcReqReject").onclick = async () => {
     try { await wcClient.respondError(topic, id, 4001, "User rejected the request."); } catch { /* relay gone */ }
     toast("Request rejected");
