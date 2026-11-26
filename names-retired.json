@@ -579,6 +579,102 @@
     "walkprobe3": {
       "at": "2026-11-20",
       "reason": "QA/walk test wallet created by an automated audit/walk run; its keys existed only in a disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-20) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_cam": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_demo": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_diag2": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_diag3": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_diag5": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_final": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_movie2": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_probe": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_take5": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_take6": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_v06_take7": {
+      "at": "2026-11-26",
+      "reason": "Lille v0.6 test wallet from her video-rung proof runs; its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_f2": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_f3": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_f4": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_r3": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_r4": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_r5": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "lille_login_r6": {
+      "at": "2026-11-26",
+      "reason": "Lille WalletConnect login test wallet (v0.10 login proofs); its keys existed only in disposable test profiles and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "balwalk1121": {
+      "at": "2026-11-26",
+      "reason": "QA walk probe wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "balwalk1122": {
+      "at": "2026-11-26",
+      "reason": "QA walk probe wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "balwalk1123": {
+      "at": "2026-11-26",
+      "reason": "QA walk probe wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "walkprobe1121": {
+      "at": "2026-11-26",
+      "reason": "QA walk probe wallet created by an automated audit run; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "wcwalk266231": {
+      "at": "2026-11-26",
+      "reason": "WalletConnect walk test wallet created by an automated audit run on 2026-11-26; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
+    },
+    "wcwalk525698": {
+      "at": "2026-11-26",
+      "reason": "WalletConnect walk test wallet created by an automated audit run on 2026-11-26; its keys existed only in the disposable test browser profile and no longer exist. Retired by the registry operator at the owner's order (2026-11-26) so the name can never resolve to a wallet nobody controls."
     }
   }
 }
