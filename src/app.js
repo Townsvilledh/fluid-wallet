@@ -183,6 +183,15 @@ const fmt = (n, d = 6) => formatDisplayAmount(n, d);
 const fmtFixed = (n, d = 6) => formatDisplayFixed(n, d);
 
 let wallet = null, networkKey = "bsc", balances = [], prices = {}, btcAddr = null, btcBal = 0, btcTrAddr = null, btcTrBal = 0, pendingSend = null;
+// Cross-chain sheet guard (2026-11-26 defect D): the settle
+// record of the CURRENT render's EVM read — which chain it is
+// reading for, and a promise that resolves the moment that
+// read has settled (balances assigned, or the failure state
+// flagged). renderMain registers it before its first await;
+// openAfterNetworkSwitch waits on it so a sheet opened after a
+// network switch is built from the NEW chain's balances, never
+// the previous chain's rows.
+let evmSettleKey = null, evmSettlePromise = Promise.resolve();
 let tronAddr = null, tronBalances = [], tronLoadFailed = false;
 let solAddr = null, solBalances = [];
 let suiAddr = null, suiBalances = [];
@@ -1465,6 +1474,15 @@ async function renderMain() {
   // render's own reads repaint every family for real.
   const myRenderSeq = ++renderSeq;
   const staleRender = () => wallet !== w || renderSeq !== myRenderSeq;
+  // Defect D settle record (see the declaration up top):
+  // registered NOW, in this render's synchronous prefix before
+  // its first await, so a waiter starting the moment a network
+  // switch returns always finds the record for the chain that
+  // was switched to. Resolved at the end of the EVM section
+  // below, once this render's read has settled.
+  let resolveMyEvmSettle;
+  const myEvmSettled = new Promise(res => { resolveMyEvmSettle = res; });
+  evmSettleKey = networkKey; evmSettlePromise = myEvmSettled;
   // The name-section description (#namePreview) is painted by
   // renderNameSection() below — its only writer (QA round 3). A
   // set-only write here used to leave the previous wallet's name
@@ -1951,6 +1969,10 @@ async function renderMain() {
   }
   if (!evmLoadFailed) markLiveOk("evm");
   markLoaded("evm");
+  // Defect D: this render's EVM read has settled — balances
+  // (or the honest failure state) now belong to evmKey, and a
+  // sheet waiting on the switch may open against them.
+  resolveMyEvmSettle();
   paintAssets();
   hydrateEvmTokens(); // background: custom tokens + full scan of the active chain
   hydrateRifSmartWallet(w, myRenderSeq); // background: the RIF smart wallet's own read (§154; Rootstock only, no-ops elsewhere)
@@ -3480,6 +3502,50 @@ function familyTokenDesc(key, b) {
     swap: () => { pendingSwapFrom = { netKey: key, address: b.address || null }; $("actSwap").click(); },
   };
 }
+/** Wait until the EVM balances on screen belong to `key` —
+ *  the render a network switch started has finished its EVM
+ *  read (success, or the honest failure state). False when the
+ *  wallet locked or the user switched away again meanwhile.
+ *  Bounded: the read itself races a 20 s timeout, so the
+ *  settle record always resolves; the loop cap is a backstop. */
+async function awaitEvmSettled(key) {
+  for (let i = 0; i < 300; i++) {
+    if (!wallet || networkKey !== key) return false;
+    if (evmSettleKey === key) { await evmSettlePromise; return !!wallet && networkKey === key; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/** Switch-then-open for the cross-chain descriptors
+ *  (2026-11-26 defect D): selectNetwork swaps networkKey at
+ *  once, but the new chain's balances land seconds later — a
+ *  send/swap sheet opened immediately rendered the PREVIOUS
+ *  chain's rows under the new chain's name. The user tapped
+ *  ETH on Base and got a "Send on Base" sheet holding his BNB
+ *  Chain rows with BNB pre-selected — and because the switch
+ *  had closed the picker sheet, the wait happened behind a
+ *  black screen. Now the switch shows a live switching sheet
+ *  with the progress block, the open waits for the new chain's
+ *  own read to settle, and only then does the real sheet open,
+ *  against the right chain's balances. If the user closes the
+ *  switching sheet (or anything else replaces it) the open is
+ *  abandoned — their close wins. */
+async function openAfterNetworkSwitch(key, open) {
+  if (key === networkKey) { open(); return; }
+  await selectNetwork(key);
+  if (!wallet || networkKey !== key) return;
+  openSheet(`<h3>${esc(NETWORKS[key].name)}</h3>
+    <p class="tag">Switching networks — loading this chain's balances first, so the sheet opens on the right assets.</p>`);
+  txProgressShow();
+  txProgressSay(`Switching to ${NETWORKS[key].name}…`);
+  const gen = sheetGen;
+  const ok = await awaitEvmSettled(key);
+  txProgressHide();
+  if (!ok || sheetGen !== gen) return;
+  open();
+}
+
 /** A descriptor for an EVM token on a NON-active chain (Explore /
  * search catalogue entries): the token page shows it not-held;
  * Send/Swap switch the network first, then open the pre-scoped
@@ -3492,8 +3558,8 @@ function evmCatalogDesc(netKey, t) {
     identLabel: t.address ? "Contract address" : null, ident: t.address || null,
     price: null,
     extras: t.address ? { cgPlatform: cgPlatformForChain(net.chainId), address: t.address, cgId: null } : { cgId: cgIdForSymbol(net.priceSym || t.symbol) },
-    send: async () => { await selectNetwork(netKey); openEvmSendSheet({ address: t.address || null }); },
-    swap: async () => { await selectNetwork(netKey); pendingSwapFrom = { netKey, address: t.address || null }; $("actSwap").click(); },
+    send: async () => { await openAfterNetworkSwitch(netKey, () => openEvmSendSheet({ address: t.address || null })); },
+    swap: async () => { await openAfterNetworkSwitch(netKey, () => { pendingSwapFrom = { netKey, address: t.address || null }; $("actSwap").click(); }); },
   };
 }
 
@@ -3545,8 +3611,8 @@ function evmChainRowDesc(netKey, b) {
     extras: b.address
       ? { cgPlatform: cgPlatformForChain(net.chainId), address: b.address, cgId: b.verified === false ? null : cgIdForSymbol(b.symbol) }
       : { cgId: cgIdForSymbol(net.priceSym || b.symbol) },
-    send: async () => { await selectNetwork(netKey); openEvmSendSheet({ address: b.address || null }); },
-    swap: async () => { await selectNetwork(netKey); pendingSwapFrom = { netKey, address: b.address || null }; $("actSwap").click(); },
+    send: async () => { await openAfterNetworkSwitch(netKey, () => openEvmSendSheet({ address: b.address || null })); },
+    swap: async () => { await openAfterNetworkSwitch(netKey, () => { pendingSwapFrom = { netKey, address: b.address || null }; $("actSwap").click(); }); },
   };
 }
 
@@ -5785,10 +5851,7 @@ function openRifSwapInfoSheet(row) {
     <button class="btn ghost" id="rifSwapOpen" style="margin-top:8px">Open the swap sheet</button>`);
   $("rifSwapSendFirst").onclick = () => openRifSendSheet(row, { prefillTo: wallet.address });
   $("rifSwapOpen").onclick = async () => {
-    closeSheet();
-    await selectNetwork("rootstock");
-    pendingSwapFrom = { netKey: "rootstock", address: null };
-    $("actSwap").click();
+    await openAfterNetworkSwitch("rootstock", () => { pendingSwapFrom = { netKey: "rootstock", address: null }; $("actSwap").click(); });
   };
 }
 

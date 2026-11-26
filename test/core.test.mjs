@@ -11433,6 +11433,17 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
     (() => { const s = app.indexOf("function showTxSuccess("); const openIdx = app.indexOf('openSheet(`<div class="txsuccess">', s);
       const busyIdx = app.indexOf("setSendBusy(null, false)", s);
       return s > -1 && openIdx > s && busyIdx > openIdx; })());
+  ok("defect D: renderMain registers the EVM settle record before its first await and resolves it when the read settles",
+    app.includes("evmSettleKey = networkKey; evmSettlePromise = myEvmSettled;") && app.includes("resolveMyEvmSettle();")
+    && app.indexOf("evmSettleKey = networkKey; evmSettlePromise = myEvmSettled;") < app.indexOf("balances = await Promise.race("));
+  ok("defect D: cross-chain Send/Swap opens wait for the switched chain's settle — the old open-immediately-after-switch pattern is gone",
+    app.includes("async function openAfterNetworkSwitch(key, open)") && app.includes("async function awaitEvmSettled(key)")
+    && (app.match(/openAfterNetworkSwitch\(netKey,/g) || []).length === 4 && app.includes('openAfterNetworkSwitch("rootstock",')
+    && !app.includes("await selectNetwork(netKey); openEvmSendSheet") && !app.includes("await selectNetwork(netKey); pendingSwapFrom")
+    && !app.includes('await selectNetwork("rootstock");'));
+  ok("defect D: the switch wait is visible — a switching sheet with the progress block, abandoned if the user closes it",
+    app.includes("Switching networks — loading this chain's balances first") && app.includes("txProgressSay(`Switching to ${NETWORKS[key].name}…`)")
+    && app.includes("if (!ok || sheetGen !== gen) return;"));
   ok("repair: the swap balance check is wei-exact (moved to the execution gate — route-preview decision, §99)",
     app.includes("swapBalanceGate(amount, have, fromTok.decimals)")
     && core.includes("export function swapBalanceGate"));
@@ -24953,6 +24964,225 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
       process.removeListener("unhandledRejection", swallow158);
       if (strayRejections158) console.log("§158 drive: " + strayRejections158 + " stray rejection(s) swallowed (lazy-chunk loads inside jsdom)");
     }
+  }
+}
+
+// 2026-11-26 defect D drive: the owner's phone defect — on All
+// networks (his active chain is BNB Chain) he tapped ETH on
+// Base in the Send picker and got a "Send on Base" sheet
+// holding his BNB Chain rows with BNB pre-selected, after a
+// black-screen pause. Root cause: the cross-chain descriptors
+// opened the sheet the moment selectNetwork flipped
+// networkKey, seconds before the new chain's balances landed,
+// so the sheet rendered the PREVIOUS chain's global balances.
+// This drive runs the production bundle in jsdom with BNB dust
+// on the active chain and 0.5 ETH on Base (Base RPC answers
+// delayed, so the switch wait is observable), then drives the
+// real picker tap. On the unfixed code the sheet selects BNB;
+// fixed, it must select the Base ETH the user tapped, and the
+// switching sheet must be seen during the wait.
+{
+  const { JSDOM } = await import("jsdom");
+  const { build: esbuildD } = await import("esbuild");
+  const PWD = "WalkPassD!26";
+  const NAMED = "verifyd" + Math.floor(100000 + Math.random() * 899999);
+  const bundleResD = await esbuildD({
+    entryPoints: [new URL("../src/app.js", import.meta.url).pathname], bundle: true, minify: true, write: false,
+    format: "iife", external: ["./lightning.chunk.js", "./walletconnect.chunk.js", "./arkade.chunk.js", "./cosmos.chunk.js", "./polkadot.chunk.js", "./peer.chunk.js"],
+    alias: { zod: new URL("../node_modules/zod/index.js", import.meta.url).pathname },
+  });
+  const bundleD = bundleResD.outputFiles[0].text;
+  const htmlD = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  const fixtureFetchD = (input, init) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    let u = null; try { u = new URL(url); } catch {}
+    const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
+    const fail = () => Promise.resolve(new Response("fixture 503", { status: 503 }));
+    if (!u) return fail();
+    if (u.hostname === "graphql.mainnet.sui.io") {
+      return Promise.resolve(json({ data: { address: { balances: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } }));
+    }
+    const IDPXD = { ethereum: 3000, binancecoin: 600, bitcoin: 90000, "usd-coin": 1, tether: 1 };
+    if (u.hostname === "api.coingecko.com" && u.pathname.includes("/simple/token_price/")) return Promise.resolve(json({}));
+    if (u.hostname === "api.coingecko.com" && u.pathname.includes("/simple/price")) {
+      const ids = (u.searchParams.get("ids") || "").split(",").filter(Boolean);
+      const out = {}; for (const id of ids) out[id] = { usd: IDPXD[id] != null ? IDPXD[id] : 1 };
+      return Promise.resolve(json(out));
+    }
+    if (u.hostname === "api.binance.com" && u.pathname.includes("/ticker/price")) {
+      let syms = [];
+      try { syms = JSON.parse(u.searchParams.get("symbols") || "[]"); } catch {}
+      const PXD = { ETHUSDT: "3000", BNBUSDT: "600", BTCUSDT: "90000" };
+      return Promise.resolve(json(syms.map(s => ({ symbol: s, price: PXD[s] || "1" }))));
+    }
+    const BSC_HOSTS_D = ["bsc-rpc.publicnode.com", "bsc-dataseed.binance.org", "bsc-dataseed1.binance.org", "bsc-dataseed2.binance.org", "bsc-dataseed3.binance.org", "bsc-dataseed4.binance.org", "bsc-mainnet.public.blastapi.io", "bsc-dataseed1.defibit.io", "bsc-dataseed1.ninicoin.io"];
+    const BASE_HOSTS_D = ["base-rpc.publicnode.com", "mainnet.base.org", "base.drpc.org", "base-mainnet.public.blastapi.io", "base.api.onfinality.io"];
+    const isBscD = BSC_HOSTS_D.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("bsc"));
+    const isBaseD = BASE_HOSTS_D.includes(u.hostname) || (u.hostname === "1rpc.io" && u.pathname.includes("base"));
+    if (isBscD || isBaseD) {
+      const u256 = (h) => "0x" + String(h).padStart(64, "0");
+      const BSC_DUST_WEI = (2667n * (10n ** 11n)).toString(16);
+      const BASE_ETH_WEI = (500000000000000000n).toString(16);
+      const answerD = (req) => {
+        const p = req.params || [];
+        switch (req.method) {
+          case "eth_chainId": return isBaseD ? "0x2105" : "0x38";
+          case "net_version": return isBaseD ? "8453" : "56";
+          case "eth_blockNumber": return "0x1000000";
+          case "eth_getBalance": return "0x" + (isBaseD ? BASE_ETH_WEI : BSC_DUST_WEI);
+          case "eth_getCode": return "0x";
+          case "eth_getTransactionCount": return "0x1";
+          case "eth_gasPrice": return "0x3b9aca00";
+          case "eth_maxPriorityFeePerGas": return "0x3b9aca00";
+          case "eth_feeHistory": return { oldestBlock: "0x1000000", baseFeePerGas: ["0x3b9aca00"], gasUsedRatio: [0.5] };
+          case "eth_call": return u256("0");
+          default: return "0x0";
+        }
+      };
+      let bodyText = "";
+      if (init && init.body != null) {
+        const b = init.body;
+        if (typeof b === "string") bodyText = b;
+        else if (ArrayBuffer.isView(b) || b instanceof ArrayBuffer) bodyText = new TextDecoder().decode(b);
+      }
+      let parsed = null; try { parsed = JSON.parse(bodyText); } catch {}
+      const respondD = () => {
+        if (Array.isArray(parsed)) return json(parsed.map(r => ({ jsonrpc: "2.0", id: r.id, result: answerD(r) })));
+        if (parsed && parsed.method) return json({ jsonrpc: "2.0", id: parsed.id, result: answerD(parsed) });
+        return json({ jsonrpc: "2.0", id: 1, result: "0x0" });
+      };
+      // Base answers are delayed so the network-switch wait —
+      // and the switching sheet shown during it — is observable.
+      if (isBaseD) return new Promise((res) => setTimeout(() => res(respondD()), 300));
+      return Promise.resolve(respondD());
+    }
+    return fail();
+  };
+  const makeWindowD = (seedEntries) => {
+    const dom = new JSDOM(htmlD, { url: "https://fluidwallet.dpdns.org/", runScripts: "outside-only", pretendToBeVisual: true });
+    const { window } = dom;
+    window.CSS = window.CSS || {};
+    if (!window.CSS.escape) window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
+    if (!window.matchMedia) window.matchMedia = (q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+    if (!window.IntersectionObserver) window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+    if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+    window.WebSocket = class { constructor() {} close() {} send() {} addEventListener() {} removeEventListener() {} };
+    window.fetch = (input, init) => fixtureFetchD(input, init);
+    if (seedEntries) for (const [k, v] of Object.entries(seedEntries)) window.localStorage.setItem(k, v);
+    return window;
+  };
+  const sleepD = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitForD = async (window, fn, label, timeoutMs = 90000) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(window.document); } catch {}
+      if (v) return v;
+      if (Date.now() - t0 > timeoutMs) throw new Error("defect D drive timeout: " + label);
+      await sleepD(300);
+    }
+  };
+  const btnByTextD = (doc, text, last = false) => {
+    const all = [...doc.querySelectorAll("button")].filter(b => (b.textContent || "").trim() === text);
+    return last ? all[all.length - 1] : all[0];
+  };
+  const btnStartsD = (doc, text) => [...doc.querySelectorAll("button")].find(b => (b.textContent || "").trim().startsWith(text));
+  let strayRejectionsD = 0;
+  const swallowD = () => { strayRejectionsD++; };
+  process.on("unhandledRejection", swallowD);
+  const windowsD = [];
+  try {
+    // Phase A: create the wallet through the real DOM flow.
+    const wA = makeWindowD(null); windowsD.push(wA);
+    wA.eval(bundleD);
+    await waitForD(wA, (d) => btnByTextD(d, "Create new wallet"), "welcome create button");
+    btnByTextD(wA.document, "Create new wallet").click();
+    await sleepD(600);
+    wA.document.querySelector("#createName").value = NAMED;
+    wA.document.querySelector("#createPw").value = PWD;
+    wA.document.querySelector("#createPw2").value = PWD;
+    const seedCheckD = wA.document.querySelector("#seedCheck"); if (seedCheckD) seedCheckD.click();
+    await sleepD(300);
+    btnByTextD(wA.document, "Create new wallet", true).click();
+    // The seed words render only once vault creation has
+    // actually finished — the seed box's static label text is
+    // in the DOM from page load, so it cannot gate this wait.
+    await waitForD(wA, (d) => { const out = d.querySelector("#seedOut"); return out && out.children.length > 0 ? true : null; }, "seed words rendered", 120000);
+    [...wA.document.querySelectorAll("input[type=checkbox]")].forEach(c => { if (!c.checked) c.click(); });
+    await sleepD(300);
+    // The seed-done handler is assigned at the end of the
+    // create ceremony; click until the backup quiz mounts.
+    await waitForD(wA, (d) => {
+      const later = btnByTextD(d, "I'll confirm later");
+      if (later) return later;
+      [...d.querySelectorAll("input[type=checkbox]")].forEach(c => { if (!c.checked) c.click(); });
+      const done = d.querySelector("#seedDoneBtn"); if (done) done.click();
+      return null;
+    }, "seed quiz", 120000);
+    btnByTextD(wA.document, "I'll confirm later").click();
+    await waitForD(wA, (d) => btnStartsD(d, "Continue without a username"), "no-username", 120000);
+    btnStartsD(wA.document, "Continue without a username").click();
+    await waitForD(wA, (d) => (d.body.textContent || "").includes("Across all networks") || d.querySelector("#unlockPw") ? true : null, "phase A home", 90000);
+    const dumpD = {};
+    for (let i = 0; i < wA.localStorage.length; i++) { const k = wA.localStorage.key(i); dumpD[k] = wA.localStorage.getItem(k); }
+    wA.close();
+    // The per-network pass reads a non-active chain only with
+    // on-device evidence (an ever-held or custom token record)
+    // — the owner's wallet carries Base evidence from real use,
+    // so the fixture seeds a Base held-token record the same
+    // way the §158 drive seeds Arbitrum. The record's own
+    // balance reads zero here; the held asset under test is
+    // the chain's native ETH, read by the pass it triggers.
+    dumpD["fluid_held_tokens_v1"] = JSON.stringify({ "8453": [{ address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", name: "USD Coin", decimals: 6 }] });
+    // Phase B: reboot and drive the defect — All view, active
+    // chain BNB Chain with dust, 0.5 ETH held on Base.
+    const wB = makeWindowD(dumpD); windowsD.push(wB);
+    wB.eval(bundleD);
+    await waitForD(wB, (d) => (d.body.textContent || "").includes("Across all networks") || d.querySelector("#unlockPw") ? true : null, "home or unlock");
+    if (wB.document.querySelector("#unlockPw")) {
+      wB.document.querySelector("#unlockPw").value = PWD;
+      const ub = btnByTextD(wB.document, "Unlock Fluid"); if (ub) ub.click();
+      await sleepD(2500);
+    }
+    // Wait until the per-network Base read has landed on the
+    // All page (a row naming ETH and Base).
+    await waitForD(wB, (d) => [...d.querySelectorAll("#assetList .row")].some(r => (r.textContent || "").includes("ETH") && (r.textContent || "").includes("Base")) ? true : null, "Base ETH row on the All page", 120000);
+    // Open the Send picker from the All view.
+    wB.document.querySelector("#actSend").click();
+    const pickRows = await waitForD(wB, (d) => { const rows = [...d.querySelectorAll("[data-sendpick]")]; return rows.length >= 2 ? rows : null; }, "send picker rows", 60000);
+    const ethBaseRow = pickRows.find(r => (r.textContent || "").includes("ETH") && (r.textContent || "").includes("Base"));
+    const bnbRow = pickRows.find(r => (r.textContent || "").includes("BNB"));
+    ok("defect D drive: the picker offers both the active chain's BNB and the Base ETH row (the stale-array candidate was in play)",
+      !!ethBaseRow && !!bnbRow);
+    ethBaseRow.click();
+    // Poll the transition: the switching sheet must be seen,
+    // then the send sheet must land.
+    let sawSwitchingD = false;
+    const selD = await (async () => {
+      const t0 = Date.now();
+      for (;;) {
+        const body = wB.document.querySelector("#sheetBody");
+        if (body && (body.textContent || "").includes("Switching networks")) sawSwitchingD = true;
+        const sel = wB.document.querySelector("#sToken");
+        if (sel) return sel;
+        if (Date.now() - t0 > 60000) throw new Error("defect D drive timeout: send sheet after the switch");
+        await sleepD(25);
+      }
+    })();
+    const h3D = (wB.document.querySelector("#sheetBody h3") || {}).textContent || "";
+    const selTextD = (selD.options[selD.selectedIndex] || {}).textContent || "";
+    const balLineD = (wB.document.querySelector("#sBalLine") || {}).textContent || "";
+    ok("defect D drive: the switch wait is visible — a 'Switching networks' sheet stands in for the old black screen", sawSwitchingD);
+    ok("defect D drive: tapping ETH on Base opens 'Send on Base' with ETH selected — not the previous chain's BNB",
+      h3D === "Send on Base" && selTextD.startsWith("ETH") && !selTextD.startsWith("BNB"));
+    ok("defect D drive: the send sheet's balance line is the tapped asset's (0.5 ETH on Base)",
+      balLineD.includes("ETH") && balLineD.includes("0.5"));
+  } catch (eD) {
+    ok("defect D drive: the production-path drive completed (" + (eD && eD.message) + ")", false);
+  } finally {
+    for (const w of windowsD) { try { w.close(); } catch { /* already closed */ } }
+    process.removeListener("unhandledRejection", swallowD);
+    if (strayRejectionsD) console.log("defect D drive: " + strayRejectionsD + " stray rejection(s) swallowed (lazy-chunk loads inside jsdom)");
   }
 }
 
