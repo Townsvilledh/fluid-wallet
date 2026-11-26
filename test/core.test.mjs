@@ -20,7 +20,7 @@ import { SATORA_BRIDGE_SOURCES, SATORA_CCTP_TOKEN_MESSENGER_V2, SATORA_CCTP_MESS
 import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MINT, jupiterMintOf, jupiterSupportsPair, buildJupiterBuildParams, parseJupiterBuild, checkJupiterSwapBounds, jupiterFeeAccountFor, resetJupiterCaches, getJupiterSwapRoute, executeJupiterSwapRoute } from "../src/wallet-core.js";
 import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC, TON_SWAP_CHAIN_ID, TON_SWAP_NATIVE_TOKEN, RELAY_TON_CHAIN_ID, RELAY_TON_DEPOSITORY, relayTonExecutableSteps, buildRelayTonDepositBody, parseRelayTonDepositBody, checkRelayTonStepBounds, tonAddressEquals, executeRelayTonSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
-import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
+import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, heldBalanceText, sheetBalanceLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
 import { GAME_HONOUR_LADDER, gameHonoursForCounts, gameTitleForCounts, fluidStorageKeysToWipe } from "../src/wallet-core.js";
 import { TOKEN_TRUST_SCAM_LIST, TOKEN_TRUST_ALLOW_LIST, tokenTrustTtlMs, tokenTrustFresh, tokenTrustKey, tokenTrustIsNative, tokenTrustPinned, tokenTrustOverrideVerdict, goplusMaliciousFlagPresent, parseGoPlusEvmTokenSecurity, parseHoneypotIsResult, parseGoPlusSolanaTokenSecurity, parseGoPlusSuiTokenSecurity, parseJupiterTokenVerdict, parseRugCheckRisks, parseTonApiJetton, parseStellarExpertDirectory, tokenTrustRefusalMessage, resolveTokenTrustSync, fetchTokenTrust, fetchTokenTrustBatch, tokenTrustSwapCheck, assertSwapTokensNotScam, resetTokenTrustCache, getSwapRoutesDirect } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
@@ -11386,6 +11386,18 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("repair: amountUsdLine omits cleanly with no price / no amount / zero",
     amountUsdLine("0.00001", null) === null && amountUsdLine("", 73000) === null && amountUsdLine("0", 73000) === null && amountUsdLine("0.5", 0) === null);
 
+  // Held-balance text (2026-11-26 defects A/B): the sheets render
+  // balance + USD from the Assets state; an unloaded balance is
+  // an honest "couldn't load" — never blank, never a fake zero.
+  ok("defect A: heldBalanceText renders amount + symbol + USD value when priced",
+    heldBalanceText("2.5", "ETH", 0.4) === "2.5 ETH · ≈ $1.00");
+  ok("defect A: heldBalanceText shows the amount alone when unpriced, and $0.00 for a priced true zero",
+    heldBalanceText("2.5", "ETH", null) === "2.5 ETH" && heldBalanceText("0", "ETH", 0.5) === "0 ETH · $0.00");
+  ok("defect A: heldBalanceText reads an unloaded balance as couldn't load — null and NaN alike",
+    heldBalanceText(null, "ETH", 0.5) === "couldn't load" && heldBalanceText("abc", "ETH", 0.5) === "couldn't load" && heldBalanceText(undefined, "ETH", null) === "couldn't load");
+  ok("defect A: sheetBalanceLine prefixes the balance and keeps the couldn't-load state explicit",
+    sheetBalanceLine("2.5", "ETH", 0.4) === "Balance: 2.5 ETH · ≈ $1.00" && sheetBalanceLine(null, "ETH", 1) === "Balance couldn't load");
+
   // App/core wiring pins.
   const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const core = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
@@ -11407,7 +11419,20 @@ const { parseBolt12Offer, parseNameLnOffer, lightningTargetForNameEntry } = awai
   ok("repair: the EVM send review gates on a fresh exact balance with the plain sentence",
     app.includes("amountVsBalance(amount, balStr, b.address ? b.decimals : 18)") && app.includes("your exact balance is ${balStr} ${b.symbol}"));
   ok("repair: the swap sheet has the USD line under the amount, repainted on input and pick",
-    app.includes('id="wAmtUsd"') && app.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd)') && app.includes("pendingSwap = null; paintSwapAmtUsd(); }"));
+    app.includes('id="wAmtUsd"') && app.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd)') && app.includes("pendingSwap = null; paintSwapAmtUsd(); paintSwapFromBal(); }"));
+  ok("defect A: the EVM send selector and balance line show balance + USD from the Assets state (heldBalanceText / sheetBalanceLine)",
+    app.includes('id="sBalLine"') && app.includes("heldBalanceText(b.amount, b.symbol, pxOf(b))") && app.includes("sheetBalanceLine(b.amount, b.symbol, pxOf(b))"));
+  ok("defect A: the swap sheet shows the From asset's balance + USD by the amount field, resolved from Assets state (swapHeldState), repainted on every pick",
+    app.includes('id="wFromBal"') && app.includes("function swapHeldState(netKey, tok)") && app.includes("sheetBalanceLine(st.amount, t.symbol, st.priceUsd, st.dp || 6)"));
+  ok("defect B: All-networks Send opens the cross-network asset picker; a single EVM network keeps its scoped sheet",
+    app.includes('if (viewKey === "all") return openSendPicker();') && app.includes('if (viewKey === "evm") return openEvmSendSheet();')
+    && app.includes("const entries = flattenHeldRows(items);") && app.includes('data-sendpick="${i}"') && app.includes("evmChainRowDesc(k, it.b)"));
+  ok("defect C: the post-activity rescan queues behind the next paint — it can never fuse with the terminal sheet swap into one unpainted task (the send blackout gap)",
+    app.includes("requestAnimationFrame(() => setTimeout(run, 0))") && app.includes("postActivityRescanQueued"));
+  ok("defect C: showTxSuccess swaps the terminal content in BEFORE the busy teardown — the processing state is replaced, never followed by a blank",
+    (() => { const s = app.indexOf("function showTxSuccess("); const openIdx = app.indexOf('openSheet(`<div class="txsuccess">', s);
+      const busyIdx = app.indexOf("setSendBusy(null, false)", s);
+      return s > -1 && openIdx > s && busyIdx > openIdx; })());
   ok("repair: the swap balance check is wei-exact (moved to the execution gate — route-preview decision, §99)",
     app.includes("swapBalanceGate(amount, have, fromTok.decimals)")
     && core.includes("export function swapBalanceGate"));
@@ -24369,7 +24394,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§155: the swap sheet's USD line resolves the held balance row's price and kicks a live by-contract fetch when nothing holds one",
     app155.includes("|| heldRowPriceUsd(netSel.from, t) || null") && app155.includes("function kickSwapAmtPrice(t)")
     && app155.includes("const m = await getCgContractPrices(net.chainId, [t.address]);")
-    && app155.includes("if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); }"));
+    && app155.includes("if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); paintSwapFromBal(); }"));
   ok("§155: the swap sheet still carries the USD line element under the amount input, repainted on every keystroke",
     app155.includes('<p class="tag" id="wAmtUsd"') && app155.includes('$("wAmt").addEventListener("input", paintSwapAmtUsd);'));
   ok("§155: route cards render the labelled receive + cost lines (no unlabelled receive figure remains)",

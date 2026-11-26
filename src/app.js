@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import {
   NETWORKS, createVault, importVault, unlockVault, validatePassword, needsKdfUpgrade, reencryptVault,
   getBalances, estimateSend, executeSend, formatSendIntent,
-  humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine,
+  humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, heldBalanceText, sheetBalanceLine,
   dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
   mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
@@ -535,10 +535,29 @@ function showSheetError(text) {
  *  broadcasts and a string of failed sends. The token scan's
  *  5-minute cache is busted for the active chain so token rows
  *  re-read for real, not from the in-session cache. */
+let postActivityRescanQueued = false;
 function rescanAfterActivity() {
   if (!wallet) return;
-  try { evmScanCache.delete(NETWORKS[networkKey].chainId); } catch { /* the rescan must never break the flow */ }
-  try { const p = renderMain(); if (p && p.catch) p.catch(() => {}); } catch { /* a failed rescan keeps the honest load-failure paint */ }
+  /* 2026-11-26 blackout-gap repair (defect C): the rescan is a
+   * FULL home re-render. Running it synchronously in the same
+   * task as the terminal sheet swap meant the browser could not
+   * paint the Sent/failed state until the re-render had blocked
+   * the main thread — on the user's phone the invalidated sheet
+   * layer presented black for seconds between the processing
+   * block and the terminal sheet. The rescan now queues behind
+   * the next paint (rAF + a macrotask), coalesced, so the
+   * terminal sheet always paints first. The scan-cache bust and
+   * the re-read itself are unchanged — only their timing moved. */
+  if (postActivityRescanQueued) return;
+  postActivityRescanQueued = true;
+  const run = () => {
+    postActivityRescanQueued = false;
+    if (!wallet) return;
+    try { evmScanCache.delete(NETWORKS[networkKey].chainId); } catch { /* the rescan must never break the flow */ }
+    try { const p = renderMain(); if (p && p.catch) p.catch(() => {}); } catch { /* a failed rescan keeps the honest load-failure paint */ }
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => setTimeout(run, 0));
+  else setTimeout(run, 0);
 }
 
 /** Send-confirm failure path shared by every family sheet. The
@@ -1122,8 +1141,13 @@ function badgeHtml(b, famKey) {
 // animated check + recap, and Done returns to a refreshed wallet.
 function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName, feeText, explorerUrl, txid, pending }) {
   gameOnTxSuccess(verb, txid);
-  setSendBusy(null, false); sheetBusy = false;
-  const root = $("sheetRoot"); if (root) root.removeAttribute("data-busy");
+  /* 2026-11-26 blackout-gap repair (defect C): the busy /
+   * processing teardown must NEVER precede the terminal content
+   * swap. The processing block stays mounted until the success
+   * markup replaces the sheet body (openSheet performs the swap
+   * and its own progress hide in one task), and the busy flags
+   * are cleared only afterwards — the terminal state REPLACES
+   * the processing state; it never follows a blank. */
   try { navigator.vibrate && navigator.vibrate(15); } catch { /* unsupported — fine */ }
   const usdPart = (() => {
     const p = prices[String(symbol || "").split("→")[0]];
@@ -1151,6 +1175,10 @@ function showTxSuccess({ verb, amount, symbol, logoHtml, to, toName, familyName,
   const ex = $("txExplorer");
   if (ex && explorerUrl) ex.onclick = () => window.open(explorerUrl, "_blank", "noopener");
   $("txDone").onclick = () => { closeSheet(true); markActivityDot(); renderMain(); };
+  // Terminal state is in the DOM — only NOW may the busy /
+  // processing state come down (defect C, see above).
+  setSendBusy(null, false); sheetBusy = false;
+  const root = $("sheetRoot"); if (root) root.removeAttribute("data-busy");
 }
 
 // ---------- tabs ----------
@@ -5387,8 +5415,117 @@ $("actReceive").onclick = () => {
 // ---------- send (EVM) ----------
 // §4.2: the Send button dispatches on the current view — a family
 // view opens that family's own send sheet; All/EVM open the EVM sheet.
+/** All-networks send picker (2026-11-26 defect B): Send tapped
+ * from the All view offers EVERY held asset across networks —
+ * asset, network, balance and USD value per entry — instead of
+ * dropping into the ACTIVE network's sheet, which stranded every
+ * other chain's assets behind a manual network switch (the user
+ * on All networks got "Send on BNB Chain" with BNB only).
+ * Entries are gathered from the SAME balance state and with the
+ * SAME price rules as the Assets rows (familyRowItems /
+ * flattenHeldRows — the All page's own pipeline, held-only with
+ * couldn't-load rows kept under evidence), and each entry routes
+ * through the very descriptor Send the token pages use, so the
+ * per-network sheets, the cash-out checkbox flow and
+ * name/address resolution are all reached exactly as before.
+ * A single-network view never comes here — it keeps its scoped
+ * sheet (the actSend dispatch below). */
+function openSendPicker() {
+  const items = [];
+  const dummyRender = () => "";
+  const pushFam = (famKey, rowsArr, priceOf, descOf, labelOf) => {
+    const fi = familyRowItems(famKey, rowsArr, priceOf, dummyRender);
+    for (const it of fi.items) items.push({ ...it, desc: descOf(it.b), label: labelOf(it.b) });
+  };
+  // Bitcoin (a scalar family with its own row shape).
+  items.push({ famKey: "bitcoin", amount: btcLoadFailed ? null : btcBal + btcTrBal,
+    valueUsd: prices.BTC != null ? (btcBal + btcTrBal) * prices.BTC : null, symbol: "BTC",
+    evidence: evidenceFams.has("bitcoin") || (Number(btcBal) + Number(btcTrBal)) > 0,
+    desc: scalarTokenDesc("bitcoin"),
+    scalar: { sym: "BTC", name: "Bitcoin", sub: "SegWit + Taproot", failed: btcLoadFailed, bal: btcBal + btcTrBal, price: prices.BTC, famKey: "bitcoin" } });
+  // EVM, active chain — the failure shape when the load failed,
+  // exactly as paintAssets renders it (§147/§154 included).
+  {
+    const net = NETWORKS[networkKey];
+    let evmRows = evmLoadFailed
+      ? evmChainFailureRows(networkKey, loadHeldTokens(net.chainId), loadCustomTokens(net.chainId))
+      : balances;
+    if (evmLoadFailed && networkKey === "rootstock" && rifSwLive && rifSwLive.status === "ok" && Number(rifSwLive.row.amount) > 0)
+      evmRows = evmRows.map(r => r.rifSmartWallet ? rifSwLive.row : r);
+    pushFam("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym],
+      (b) => evmDetailDesc(b), (b) => b.rifSmartWallet ? net.name + " · Smart wallet" : net.name);
+  }
+  // EVM, per-network reads (§147): selecting one switches the
+  // network first, then opens that chain's send sheet pre-scoped
+  // to the asset (evmChainRowDesc's send — the shipped pattern).
+  for (const [k, st] of evmChainState) {
+    if (k === networkKey || !st || !Array.isArray(st.rows)) continue;
+    const cnet = NETWORKS[k]; if (!cnet) continue;
+    evmRowCtxKey = k;
+    let fi;
+    try { fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], dummyRender); }
+    finally { evmRowCtxKey = null; }
+    for (const it of fi.items) items.push({ ...it, netKey: k, desc: evmChainRowDesc(k, it.b), label: it.b.rifSmartWallet ? cnet.name + " · Smart wallet" : cnet.name });
+  }
+  // Token families with their own detail descriptors.
+  pushFam("tron", tronBalances, (b) => prices[b.symbol], (b) => tronDetailDesc(b), () => "Tron");
+  pushFam("solana", solBalances, (b) => prices[b.symbol], (b) => solanaDetailDesc(b), () => "Solana");
+  pushFam("sui", suiBalances, (b) => prices[b.symbol], (b) => suiDetailDesc(b), () => "Sui");
+  // Sheet families routed by familyTokenDesc.
+  const sheetFams = [["stellar", stellarBalances, "Stellar"], ["ton", tonBalances, "TON"], ["near", nearBalances, "NEAR"],
+    ["algorand", algoBalances, "Algorand"], ["tezos", tezBalances, "Tezos"], ["hedera", hbaBalances, "Hedera"],
+    ["xrpl", xrpBalances, "XRP Ledger"], ["polkadot", dotBalances, "Polkadot Asset Hub"], ["aptos", aptosBalances, "Aptos"], ["stacks", stacksBalances, "Stacks"]];
+  for (const [key, rows, label] of sheetFams) {
+    if (!rows.length) continue;
+    pushFam(key, rows, (b) => key === "near" && b.symbol === "wNEAR" ? prices.NEAR : prices[b.symbol], (b) => familyTokenDesc(key, b), () => label);
+  }
+  // Cosmos chains: one native row per chain, as on the All page.
+  for (const r of cosmosRows) {
+    const p = prices[r.symbol];
+    items.push({ famKey: r.key, amount: r.amount, valueUsd: p != null && r.amount != null ? Number(r.amount) * p : null,
+      symbol: r.symbol, evidence: evidenceFams.has(r.key) || Number(r.amount) > 0, desc: familyTokenDesc(r.key, r), cosmosRow: r });
+  }
+  // Scalar families (LTC/DOGE/BCH/ADA/ZEC/DASH).
+  const scalarCfgs = [
+    ["litecoin", "LTC", "Litecoin", "Native SegWit", ltcLoadFailed, ltcBal, prices.LTC],
+    ["dogecoin", "DOGE", "Dogecoin", "Legacy", dogeLoadFailed, dogeBal, prices.DOGE],
+    ["bitcoincash", "BCH", "Bitcoin Cash", "CashAddr", bchLoadFailed, bchBal, prices.BCH],
+    ["cardano", "ADA", "Cardano", "Shelley", adaLoadFailed, adaBal, prices.ADA],
+    ["zcash", "ZEC", "Zcash", "Transparent", zecLoadFailed, zecBal, prices.ZEC],
+    ["dash", "DASH", "Dash", "Legacy", dashLoadFailed, dashBal, prices.DASH],
+  ];
+  for (const [key, sym, name, sub, failed, bal, price] of scalarCfgs)
+    items.push({ famKey: key, amount: failed ? null : bal, valueUsd: price != null ? bal * price : null, symbol: sym,
+      evidence: evidenceFams.has(key) || Number(bal) > 0, desc: scalarTokenDesc(key),
+      scalar: { sym, name, sub, failed, bal, price, famKey: key } });
+  const entries = flattenHeldRows(items);
+  // Nothing held anywhere (or nothing settled yet): fall back to
+  // the active network's sheet, whose own loading/failure notes
+  // say exactly where things stand — never an empty picker.
+  if (!entries.length) return openEvmSendSheet();
+  const rowHtml = (e, i) => {
+    if (e.scalar) return scalarRowHtml({ attr: `data-sendpick="${i}"`, ...e.scalar });
+    if (e.cosmosRow) {
+      const r = e.cosmosRow, p = prices[r.symbol];
+      return `<div class="row" data-sendpick="${i}">
+        <span class="logowrap">${tokenLogoHtml({ symbol: r.symbol }, r.key)}</span>
+        <span class="grow"><b class="rname">${esc(r.name)}${r.legacy ? " (legacy)" : ""}</b><small>${esc(r.symbol)} · Cosmos</small></span>
+        <span class="amt">${r.amount == null
+          ? `<b>—</b><small>couldn't load</small>`
+          : `<b>${fmt(r.amount)}</b><small>${p != null ? usd(Number(r.amount) * p) : (Number(r.amount) > 0 ? "" : usd(0))}</small>`}</span></div>`;
+    }
+    if (e.netKey) { evmRowCtxKey = e.netKey; try { return tokenRowHtml(e.b, e.valueUsd, e.label, `data-sendpick="${i}"`, "evm"); } finally { evmRowCtxKey = null; } }
+    return tokenRowHtml(e.b, e.valueUsd, e.label, `data-sendpick="${i}"`, e.famKey);
+  };
+  openSheet(`<h3>Send — choose an asset</h3>
+    <p class="tag">Every asset you hold, across all networks. Tap one to send it.</p>
+    ${entries.map(rowHtml).join("")}`);
+  document.querySelectorAll("[data-sendpick]").forEach(el =>
+    el.addEventListener("click", () => { const e = entries[Number(el.getAttribute("data-sendpick"))]; if (e && e.desc && e.desc.send) e.desc.send(); }));
+}
 $("actSend").onclick = () => {
-  if (viewKey === "all" || viewKey === "evm") return openEvmSendSheet();
+  if (viewKey === "all") return openSendPicker();
+  if (viewKey === "evm") return openEvmSendSheet();
   if (viewKey === "bitcoin") return openBtcSheet();
   if (viewKey === "lightning") return openLightningPanel();
   if (viewKey === "litecoin") return openLtcSheet();
@@ -5667,10 +5804,17 @@ function openRifReceiveSheet(row) {
 }
 
 function openEvmSendSheet(prefer = null) {
+  // The price rule is the Assets rows' own (priceOfRow: the row's
+  // list price wins, else the symbol price) — the selector and
+  // the balance line below render the SAME balance state the
+  // home rows show, never a fresh unaccounted read (2026-11-26
+  // defect A).
+  const pxOf = (b) => priceOfRow(b, b.address ? prices[b.symbol] : prices[NETWORKS[networkKey].priceSym]);
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag" id="sLoadNote">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
-    <select id="sToken">${balances.map((b, i) => `<option value="${i}"${b.rifSmartWallet ? " disabled" : ""}>${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${fmt(b.amount)}${b.rifSmartWallet ? " (in your smart wallet — send it from its own page)" : ""}</option>`).join("")}</select>
+    <select id="sToken">${balances.map((b, i) => `<option value="${i}"${b.rifSmartWallet ? " disabled" : ""}>${b.verified === false ? "⚠ " : ""}${esc(b.symbol)} — ${esc(heldBalanceText(b.amount, b.symbol, pxOf(b)))}${b.rifSmartWallet ? " (in your smart wallet — send it from its own page)" : ""}</option>`).join("")}</select>
+    <p class="tag" id="sBalLine" style="margin:2px 0 0"></p>
     <input id="sTo" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="none" data-autofocus placeholder="Recipient 0x… address or Fluid name (e.g. kemi)">
     <input id="sAmt" inputmode="decimal" placeholder="Amount">
     <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px">
@@ -5692,18 +5836,26 @@ function openEvmSendSheet(prefer = null) {
   const paintSendAmtUsd = () => {
     const el = $("sAmtUsd"); if (!el) return;
     const b = balances[Number($("sToken").value)];
-    const px = !b ? null : (b.address ? (Number(prices[b.symbol]) || b.priceUsd || null)
-                                     : (Number(prices[NETWORKS[networkKey].priceSym]) || null));
-    el.textContent = amountUsdLine($("sAmt").value.trim(), px) || "";
+    el.textContent = amountUsdLine($("sAmt").value.trim(), b ? pxOf(b) : null) || "";
   };
+  // The selected asset's balance + USD value, kept beside the
+  // amount field and repainted whenever the selection changes
+  // (2026-11-26 defect A). An unloaded balance says so — never a
+  // blank, never a fake zero.
+  const paintSendBal = () => {
+    const el = $("sBalLine"); if (!el) return;
+    const b = balances[Number($("sToken").value)];
+    el.textContent = !b ? (evmLoadFailed ? "Balance couldn't load" : "") : sheetBalanceLine(b.amount, b.symbol, pxOf(b));
+  };
+  paintSendBal();
   $("sAmt").addEventListener("input", paintSendAmtUsd);
-  $("sToken").addEventListener("change", paintSendAmtUsd);
+  $("sToken").addEventListener("change", () => { paintSendAmtUsd(); paintSendBal(); });
   // Token-detail entry (item F): open with the tapped token already
   // selected — the picker holds balances indices; a null address is
   // the native row. An unmatched preference leaves the default.
   if (prefer) {
     const idx = balances.findIndex(x => !x.rifSmartWallet && (x.address || null) === (prefer.address || null));
-    if (idx >= 0) { $("sToken").value = String(idx); paintSendAmtUsd(); }
+    if (idx >= 0) { $("sToken").value = String(idx); paintSendAmtUsd(); paintSendBal(); }
   }
   // MAX fills the EXACT on-chain balance (a fresh read; the row's
   // exact string as fallback) — never the rounded display value,
@@ -10701,6 +10853,7 @@ $("actSwap").onclick = () => {
       <div id="wFromList" style="max-height:240px;overflow:auto"></div>
     </div>
     <input id="wAmt" data-autofocus inputmode="decimal" placeholder="Amount">
+    <p class="tag" id="wFromBal" style="margin:2px 0 0"></p>
     <p class="tag" id="wAmtUsd" style="margin:2px 0 0"></p>
     <button class="btn ghost" id="wFlip">${icon("swap", "ic ic-sm")} Flip</button>
     <label class="tag">To</label>
@@ -10792,7 +10945,7 @@ $("actSwap").onclick = () => {
     const t = pick[side];
     $(P[side].btn).textContent = t ? `${t.verified === false ? "⚠ " : ""}${t.symbol} ▾` : "Select token ▾";
   }
-  function setPick(side, t) { pick[side] = t; updatePickBtn(side); show("wConfirm", false); $("wList").innerHTML = ""; pendingSwap = null; paintSwapAmtUsd(); }
+  function setPick(side, t) { pick[side] = t; updatePickBtn(side); show("wConfirm", false); $("wList").innerHTML = ""; pendingSwap = null; paintSwapAmtUsd(); paintSwapFromBal(); }
   // Live USD under the amount (2026-11-12; §155 repair,
   // 2026-11-18): the price resolves from, in order — the
   // symbol table, the pick's own list price, the held balance
@@ -10811,6 +10964,76 @@ $("actSwap").onclick = () => {
     const rows = netKey === networkKey ? balances : ((evmChainState.get(netKey) || {}).rows || []);
     const b = rows.find(r => r.address && String(r.address).toLowerCase() === String(t.address).toLowerCase());
     return b ? priceOfRow(b, prices[b.symbol]) : null;
+  }
+  /* The From pick's held state, resolved from the SAME balance
+   * state the Assets rows render (2026-11-26 defect A) — never
+   * the execution gate's fresh read (swapBalanceOf stays
+   * execution-only). Returns { amount, priceUsd, dp } or null
+   * when that state is unsettled or failed: the line then reads
+   * "Balance couldn't load" — never a blank, never a fake zero.
+   * A settled read with no matching row is a true zero. */
+  function swapHeldState(netKey, tok) {
+    if (!tok) return null;
+    const symPrice = () => Number(prices[tok.symbol]) || tok.priceUSD || null;
+    if (NETWORKS[netKey]) {
+      let rows;
+      if (netKey === networkKey) {
+        if (evmLoadFailed) return null;
+        rows = balances;
+      } else {
+        const st = evmChainState.get(netKey);
+        if (!st || st.status === "failed") return null;
+        rows = st.rows || [];
+      }
+      const b = tok.native ? rows.find(r => !r.address)
+        : rows.find(r => r.address && String(r.address).toLowerCase() === String(tok.address || "").toLowerCase());
+      if (!b) return { amount: 0, priceUsd: tok.native ? (Number(prices[NETWORKS[netKey].priceSym]) || null) : symPrice() };
+      if (b.amount == null) return null;
+      return { amount: b.amount, priceUsd: priceOfRow(b, tok.native ? prices[NETWORKS[netKey].priceSym] : prices[b.symbol]) || symPrice() };
+    }
+    if (skipChainOf(netKey)) {
+      if (!famLoaded.has("cosmos")) return null;
+      const row = cosmosRows.find(r => r && r.key === netKey);
+      if (!row || row.amount == null) return null;
+      if (tok.native) return { amount: row.amount, priceUsd: symPrice() };
+      const t = (row.tokens || []).find(x => x && x.denom === tok.address);
+      if (!t) return { amount: 0, priceUsd: symPrice() };
+      if (t.amount == null) return null;
+      return { amount: t.amount, priceUsd: symPrice() };
+    }
+    const SCALARS = { bitcoin: [() => btcBal + btcTrBal, () => btcLoadFailed], litecoin: [() => ltcBal, () => ltcLoadFailed], dogecoin: [() => dogeBal, () => dogeLoadFailed], bitcoincash: [() => bchBal, () => bchLoadFailed], cardano: [() => adaBal, () => adaLoadFailed], zcash: [() => zecBal, () => zecLoadFailed], dash: [() => dashBal, () => dashLoadFailed] };
+    if (SCALARS[netKey]) {
+      const sc = SCALARS[netKey];
+      if (!famLoaded.has(netKey) || sc[1]()) return null;
+      return { amount: sc[0](), priceUsd: Number(prices[tok.symbol]) || null, dp: 8 };
+    }
+    if (netKey === "lightning") {
+      // Only an already-booted session has Assets state; the
+      // paint never boots one (booting stays an execution step).
+      if (!lnSession) return null;
+      try { return { amount: Number(lnSession.balance().spendableMsat || 0) / 1e11, priceUsd: Number(prices.BTC) || null, dp: 8 }; }
+      catch { return null; }
+    }
+    const FAMROWS = { tron: tronBalances, solana: solBalances, sui: suiBalances, stellar: stellarBalances, ton: tonBalances, near: nearBalances, algorand: algoBalances, tezos: tezBalances, hedera: hbaBalances, xrpl: xrpBalances, polkadot: dotBalances, aptos: aptosBalances, stacks: stacksBalances };
+    if (Object.prototype.hasOwnProperty.call(FAMROWS, netKey)) {
+      if (!famLoaded.has(netKey)) return null;
+      const rows = FAMROWS[netKey] || [];
+      const idOf = (r) => netKey === "stacks" ? r.contract : r.address;
+      const b = tok.native ? rows.find(r => !idOf(r))
+        : rows.find(r => idOf(r) && String(idOf(r)) === String(tok.address || ""));
+      if (!b) return { amount: 0, priceUsd: symPrice() };
+      if (b.amount == null) return null;
+      const px = netKey === "near" && b.symbol === "wNEAR" ? priceOfRow(b, prices.NEAR) : priceOfRow(b, prices[b.symbol]);
+      return { amount: b.amount, priceUsd: px || symPrice() };
+    }
+    return null; // arkade (session-lazy by design) and anything unmapped
+  }
+  function paintSwapFromBal() {
+    const el = $("wFromBal"); if (!el) return;
+    const t = pick.from;
+    if (!t) { el.textContent = ""; return; }
+    const st = swapHeldState(netSel.from, t);
+    el.textContent = st ? sheetBalanceLine(st.amount, t.symbol, st.priceUsd, st.dp || 6) : "Balance couldn't load";
   }
   function kickSwapAmtPrice(t) {
     const net = NETWORKS[netSel.from];
@@ -10834,7 +11057,7 @@ $("actSwap").onclick = () => {
           } catch { /* stays unpriced — the line stays empty */ }
         }
       }
-      if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); }
+      if (p != null && pick.from === t) { t.priceUSD = p; paintSwapAmtUsd(); paintSwapFromBal(); }
       if (p == null) {
         // One delayed retry (§155 D1 follow-through): the first
         // attempt can die in the open-time request storm; if the
@@ -10842,7 +11065,7 @@ $("actSwap").onclick = () => {
         // re-kicks the fetch.
         setTimeout(() => {
           swapAmtPriceTried.delete(ck);
-          if (pick.from === t) paintSwapAmtUsd();
+          if (pick.from === t) { paintSwapAmtUsd(); paintSwapFromBal(); }
         }, 20000);
       }
     })();

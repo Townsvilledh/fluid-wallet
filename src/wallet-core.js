@@ -1385,6 +1385,37 @@ export function amountUsdLine(amount, priceUsd) {
   return "≈ " + formatDisplayUsd(a * p);
 }
 
+/** Held-balance text for amount-deciding surfaces (2026-11-26
+ *  defects A/B): the Swap sheet's From line, the Send sheet's
+ *  token selector and balance line, and the All-networks send
+ *  picker. ALWAYS rendered from the SAME balance state the
+ *  Assets rows show — never a fresh unaccounted read. A null /
+ *  non-finite amount is an UNLOADED balance and renders the
+ *  honest "couldn't load" — never a silent blank and never a
+ *  fake zero (the balances law). A priced holding appends its
+ *  USD value; a true zero with a known price shows $0.00; an
+ *  unpriced holding shows the amount alone. */
+export function heldBalanceText(amount, symbol, priceUsd, dp = 6) {
+  if (amount == null) return "couldn't load";
+  const a = Number(amount);
+  if (!Number.isFinite(a)) return "couldn't load";
+  const sym = String(symbol || "");
+  const base = `${formatDisplayAmount(a, dp)} ${sym}`.trim();
+  const p = Number(priceUsd);
+  if (!Number.isFinite(p) || !(p > 0)) return base;
+  if (a > 0) return `${base} · ≈ ${formatDisplayUsd(a * p)}`;
+  if (a === 0) return `${base} · $0.00`;
+  return base;
+}
+
+/** The "Balance: …" line shown beside an amount field for the
+ *  currently selected asset; an unloaded balance reads
+ *  "Balance couldn't load" (see heldBalanceText). */
+export function sheetBalanceLine(amount, symbol, priceUsd, dp = 6) {
+  const t = heldBalanceText(amount, symbol, priceUsd, dp);
+  return t === "couldn't load" ? "Balance couldn't load" : "Balance: " + t;
+}
+
 /** Simulate one EVM step exactly as it would be broadcast and
  * refuse BEFORE signing when the chain already refuses it
  * (2026-11-12 repair): a quote can be generated for a token the
