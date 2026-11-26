@@ -326,5 +326,21 @@
     "sol": "8hUZ9zZNhGm8C4jRpDGNfipntLeEtVA8ug3iQSZaq2DE",
     "tron": "TTNrGf24dbmajpjcLJ468joMUweAAnLHXU",
     "sui": "0x3884b4f47ebd47ee78dd02f0b0ee53b2cbb822f5e57056e54e99af15f964aee4"
+  },
+  "lille_login_r5": {
+    "evm": "0x76DffEDfCed73D887D5ca378864418Cb8299bD90",
+    "btc": "bc1qxkpwdd5sd4hxrlayqq6eyu97ssscj8y3mnu6ve",
+    "algo": "JSWC45Q5ODT2Z7UOUON6OAOPZYP3HE67DMI6ALQUAYUZ2CESYHAGDY7NRI",
+    "sol": "2mp4Xsvajri2mb2SHz9sKPBCz62SSLxYYaprxThBSo93",
+    "tron": "TLom5BXWVWs3icMsRfijbwpRqBR1yitXRr",
+    "sui": "0xe802ba0b0b4a9f362613835932e58779628e0ff6dc0792390069fc35f223c827"
+  },
+  "lille_login_r4": {
+    "evm": "0xcdCf2272dB58C8A3aFaBcFe7B4C04A1E8cE708E8",
+    "btc": "bc1qgsnkfgkan7pfad7zsscsl3qjvnk3xlg8a6kqqk",
+    "algo": "AAOPY7PY76AJ7LH53YBFRLVKWYUD4FKKRF2XFJYRVAUN2YGPCY5YMYXAVE",
+    "sol": "AJEYsACR2HasSkbNH3GwjUJxYof7atbsYYpXwjbGJu2n",
+    "tron": "TUjRfM2cnrZf1dyA4aUruoHf9TzUjRWzfL",
+    "sui": "0x82a2759cdd5d4c6338f615899ca8bf1f71082b1788e6db82513bc07c23d0598d"
   }
 }
