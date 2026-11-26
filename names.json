@@ -294,5 +294,13 @@
     "sol": "78TQBVTqTBErGfD7DXu49Vs59DtBQhb1L2ub2r4NZQeW",
     "tron": "TWPkfQ4NKVG8JyLXDb1MgkgBxDFNggLYCY",
     "sui": "0x00ef0753d25a0f2819484a99408cd41bac3e7c706338a551711f4d61be7e6f03"
+  },
+  "tebioba1": {
+    "evm": "0x96c72896B106dF476d72525dB31AD6e598f13a95",
+    "btc": "bc1qq69hpr7um632tnf0gnclac6alskrhy0nqrrks6",
+    "algo": "BREP2B22FENS6DMX7O4NLBHWRY2STRA2TU7LEK3IWPRDHAMAXLCGHM5KF4",
+    "sol": "5NkQBHKkKvVqVPvrJiVW4sFVGY28oKc1UKVm4NVJVtyC",
+    "tron": "TPiSwcTaRTWMyBYyKYNQYaZgq3GJgHaTR8",
+    "sui": "0x06c9ef55e80e8e8594a233c2faf7c530f98849074c0c6adba761fe6f208af14e"
   }
 }
