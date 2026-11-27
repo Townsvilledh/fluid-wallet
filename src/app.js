@@ -7,7 +7,7 @@ import {
   getBalances, estimateSend, executeSend, formatSendIntent,
   humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, heldBalanceText, sheetBalanceLine,
   dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd,
-  mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, JUMPER_URL, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
+  mtpelerinBuyUrl, mtpelerinSellUrl, rampRoutesFor, RAMP_COUNTRIES, fetchPaycrestNgnBuyRate, fetchPaycrestRate, getPrices,
   bitcoinAddress, bitcoinTaprootAddress, getBitcoinBalance, planBitcoinSend, broadcastBitcoinTx, feeRateNote, payLightningInvoice,
   getInscriptions, getRuneBalances, planRuneTransfer, formatInscriptionRow, formatRuneRow,
   litecoinAddress, getLitecoinBalance, planLitecoinSend, broadcastLitecoinTx, isValidLitecoinAddress, formatLitecoinSendIntent,
@@ -10141,7 +10141,7 @@ function rampSheet(mode) {
         // No inline onclick (the CSP forbids inline handlers): the URL
         // rides in a data attribute and is opened by the bound listener.
         // Name + badge on their own line, note beneath (stacked layout).
-        : `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}${r.external ? ' <span class="pill soon">EXTERNAL APP</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
+        : `<button class="netitem rampitem" data-ramp-url="${esc(r.url)}"><span class="rampname">${esc(r.name)}${r.badge ? ' <span class="pill">CHEAPEST</span>' : ""}</span><small class="rampnote">${esc(r.note)}</small></button>`).join("") +
       (routes.length === 0 ? `<p class="tag">No ${mode === "buy" ? "buy" : "cash-out"} route for ${esc(c.name)} passes Fluid's bar right now — a direct page that lets you paste your Fluid address, with no WalletConnect step. We're working on it.</p>` : "") +
       // Nigeria sell (form-route full removal, 2026-11-16):
       // with that route gone, NG sell is empty at EVERY size — the gap
@@ -11002,7 +11002,6 @@ $("actSwap").onclick = () => {
       <p class="tag">One search across every Fluid chain (routes by Relay, Across, Mayan and Jupiter; Satora covers Bitcoin, Lightning and Arkade from EVM stablecoins, spends out of Arkade to Lightning and EVM stablecoins, spends out of Lightning to EVM stablecoins and Bitcoin — paid from your own Lightning wallet — and spends out of Bitcoin to EVM stablecoins and Lightning (Satora's minimums apply there: 20,000 sats, 10,000 to Polygon)). Cheapest = most received after fees; Fluid's fee is a small multiple of the route's cost, never more than 0.5% — and you approve the exact sentence before anything is signed.</p>
       <p class="tag">Total cost caps: $0.20 EVM · $1.50 Bitcoin · $0.30 Lightning · $0.30 Solana. Arkade routes cap at $0.20 total cost the same way.</p>
     </details>
-    <button class="netitem rampitem" id="wJumper"><span class="rampname">Jumper <span class="pill soon">EXTERNAL APP</span></span><small class="rampnote">Swap on Jumper (LI.FI's aggregator) instead — the trade happens on Jumper, not inside Fluid, and Fluid earns nothing from it.</small></button>
     <div id="wConfirm" class="hidden">
       <p class="seed" id="wIntentText"></p>
       <button class="btn" id="wDo">Confirm &amp; swap</button>
@@ -11016,11 +11015,8 @@ $("actSwap").onclick = () => {
     <div id="wGasFallback"></div>
     <div id="wMilestone"></div>
     <p class="msg err" id="wMsg"></p>`);
-  // Jumper (2026-11-27, owner's order): the labelled external
-  // swap row above — a plain link-out in the ramp rows' shape,
-  // opened with the same https-guarded window.open they use.
-  // Not country-gated: Jumper is crypto-to-crypto, no fiat.
-  $("wJumper").onclick = () => { if (/^https:\/\//.test(JUMPER_URL)) window.open(JUMPER_URL, "_blank", "noopener"); };
+  // Jumper link-out REMOVED 2026-11-27 (owner's order —
+  // discard all external link-outs; embedded only).
   const P = {
     from: { btn: "wFromTokBtn", panel: "wFromPick", search: "wFromSearch", list: "wFromList", netBtn: "wFromNetBtn", netPanel: "wFromNetPick", netSearch: "wFromNetSearch", netList: "wFromNetList" },
     to: { btn: "wToTokBtn", panel: "wToPick", search: "wToSearch", list: "wToList", netBtn: "wToNetBtn", netPanel: "wToNetPick", netSearch: "wToNetSearch", netList: "wToNetList" },

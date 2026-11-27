@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync, statSync, readdirSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, SETTU_URL, SENDRA_URL, JUMPER_URL, DAYA_URL, USEFLIP_URL, ZAP_URL, YESA_URL, BUSHA_URL, BREET_URL, ROQQU_URL, ASTRO_AFRICA_URL, OBIEX_URL, BITMAMA_URL, KWIQ_URL, PRESTMIT_URL, NATA_URL, MONICA_URL, SWAPTO_URL, NOSH_URL, KOYN_URL, FLIPEX_URL, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APPROVAL_PROXY, RELAY_ROUTER, relaySameChainTargetFor, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APPROVAL_PROXY, RELAY_ROUTER, relaySameChainTargetFor, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
 import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
@@ -179,21 +179,11 @@ ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l =>
 // external, none carrying a referral or fee share yet.
 // §16c3 pins the batch-2 matrix; LocalCoinSwap's link is
 // STILL the only capture-carrying one.)
-ok("static links table: the capture-clean LocalCoinSwap link plus the owner's 2026-11-27 Settu + Sendra external links and the eighteen batch-2 links", Object.keys(RAMP_STATIC_LINKS).length === 21
-  && RAMP_STATIC_LINKS["LocalCoinSwap"].buy === "https://localcoinswap.com/?rc=EC82BA22"
-  && RAMP_STATIC_LINKS["LocalCoinSwap"].sell === "https://localcoinswap.com/?rc=EC82BA22"
-  && LOCALCOINSWAP_REFERRAL_CODE === "EC82BA22" && LOCALCOINSWAP_URL === "https://localcoinswap.com/?rc=EC82BA22"
-  && RAMP_STATIC_LINKS["Settu"].buy === "https://www.settu.xyz/app" && RAMP_STATIC_LINKS["Settu"].sell === "https://www.settu.xyz/app"
-  && SETTU_URL === "https://www.settu.xyz/app"
-  && RAMP_STATIC_LINKS["Sendra"].buy === "https://usesendra.com" && RAMP_STATIC_LINKS["Sendra"].sell === "https://usesendra.com"
-  && SENDRA_URL === "https://usesendra.com"
-  && [["Daya", DAYA_URL, "https://daya.co/coins"], ["UseFlip", USEFLIP_URL, "https://useflip.io"], ["Zap", ZAP_URL, "https://zap.africa"],
-      ["Yesa", YESA_URL, "https://yesaapp.ng"], ["Busha", BUSHA_URL, "https://busha.io"], ["Breet", BREET_URL, "https://breet.io"],
-      ["Roqqu", ROQQU_URL, "https://roqqu.com"], ["Astro Africa", ASTRO_AFRICA_URL, "https://astroafrica.site"], ["Obiex", OBIEX_URL, "https://obiex.finance"],
-      ["Bitmama", BITMAMA_URL, "https://bitmama.io"], ["KWIQ", KWIQ_URL, "https://kwiq.app"], ["Prestmit", PRESTMIT_URL, "https://prestmit.io"],
-      ["Nata", NATA_URL, "https://nata.ng"], ["Monica", MONICA_URL, "https://monica.cash"], ["Swapto", SWAPTO_URL, "https://useswapto.com"],
-      ["Nosh", NOSH_URL, "https://usenosh.com"], ["Koyn", KOYN_URL, "https://getkoyn.com"], ["FlipEx", FLIPEX_URL, "https://flipexapp.com"]]
-    .every(([n, u, want]) => u === want && RAMP_STATIC_LINKS[n].buy === want && RAMP_STATIC_LINKS[n].sell === want));
+ok("static links table is EMPTY — every external link-out provider was removed in full 2026-11-27 (owner's order: discard all external link-outs, embedded only)", Object.keys(RAMP_STATIC_LINKS).length === 0
+  && ["LocalCoinSwap", "Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"].every(n =>
+    !(n in RAMP_STATIC_LINKS) && !(n in RAMP_ADDRESS_ENTRY)
+    && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([pn]) => pn !== n))
+    && RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== n && r.external !== true)))));
 // Paybis and Spritz were REMOVED in full 2026-11-09 under the
 // owner's capture GATE (owner ruling ~14:34 WAT): as wired they
 // paid Fluid nothing and no own-charge mechanism exists for
@@ -387,14 +377,14 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // + Sendra — ten both-direction, eight sell-only — so the
   // lineup pins below now assert the full 12-buy / 20-sell
   // lineup. §16c3 pins the batch-2 matrix itself.
-  ok("NG carries Settu then Sendra, then the eighteen batch-2 rows (owner's orders, 2026-11-27)", JSON.stringify(names("NG")) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"]));
+  ok("NG carries Settu then Sendra, then the eighteen batch-2 rows (owner's orders, 2026-11-27)", JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
   ok("NG buy resolves to the same external rows on supported and unsupported networks alike", ["bsc", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])));
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
   ok("NG sell resolves to the same external rows on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "sell", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"])));
+    JSON.stringify(rampRoutesFor("NG", "sell", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
   ok("NG badges nothing on either side — no row carries measured price evidence", JSON.stringify(badged("NG")) === JSON.stringify([]) && JSON.stringify(badged("NG", "sell")) === JSON.stringify([]));
-  ok("NG has twelve buy routes and twenty sell routes", names("NG").length === 12 && names("NG", "sell").length === 20);
+  ok("NG has zero buy routes and zero sell routes after the 2026-11-27 external removal (honest empty state both sides)", names("NG").length === 0 && names("NG", "sell").length === 0);
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the absence of ANY
@@ -409,7 +399,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // it the day it shipped, §141. Sell still resolves on every
   // network/asset by design.)
   ok("NG buy carries no BVN/Fonbnk row on any network or asset (the BVN buy row is removed, not disclosed-and-kept; the 2026-11-27 rows are Settu + Sendra + the eighteen batch-2 rows)", ["bsc", "base", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])));
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
 
   // The address-entry capability table is the standing buy gate:
   // every listed buy route anywhere takes a pasted address. A
@@ -463,27 +453,23 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // first routes; GH gains Breet/Roqqu/Astro Africa/Obiex/
   // Bitmama on both sides plus Prestmit + Nosh on sell.
   // §16c3 pins the batch-2 matrix.)
-  ok("KE: buy carries Roqqu then Bitmama, sell carries Settu then Roqqu then Bitmama (batch 2, 2026-11-27)", JSON.stringify(names("KE")) === JSON.stringify(["Roqqu", "Bitmama"])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Settu", "Roqqu", "Bitmama"]));
-  ok("GH: buy carries the five batch-2 rows, sell carries Settu then the five plus Prestmit + Nosh (2026-11-27)", JSON.stringify(names("GH")) === JSON.stringify(["Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(names("GH", "sell")) === JSON.stringify(["Settu", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "Prestmit", "Nosh"]));
-  ok("UG sell keeps its labelled external link-out carrying the referral, alone on its sheet again", (() => {
-    const r = rampRoutesFor("UG", "sell", "bsc", "USDT").routes.find(x => x.name === "LocalCoinSwap");
-    return r && r.external === true && r.badge === false && r.unavailable === false
-      && r.url === "https://localcoinswap.com/?rc=EC82BA22"
-      && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("trades from UGX 1,000");
-  })());
+  ok("KE: buy carries Roqqu then Bitmama, sell carries Settu then Roqqu then Bitmama (batch 2, 2026-11-27)", JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
+  ok("GH: buy carries the five batch-2 rows, sell carries Settu then the five plus Prestmit + Nosh (2026-11-27)", JSON.stringify(names("GH")) === JSON.stringify([])
+    && JSON.stringify(names("GH", "sell")) === JSON.stringify([]));
+  ok("UG sell is honestly empty after the 2026-11-27 external removal (its LocalCoinSwap + Settu rows are gone)", rampRoutesFor("UG", "sell", "bsc", "USDT").routes.length === 0
+    && rampRoutesFor("UG", "buy", "bsc", "USDT").routes.length === 0);
   // (Batch-2 extension, same evening: the NG/KE parts of the
   // outcome below now carry the §5.1 rows behind the batch-1
   // rows — §16c3 pins the full batch-2 matrix.)
   ok("batch-1 outcome after the 2026-11-16 full removal + the 2026-11-27 external rows (batch 2 included): CM honestly empty on both sides; NG Settu+Sendra then the batch-2 rows; KE buy Roqqu+Bitmama, sell Settu then them; UG buy empty, sell LocalCoinSwap then Settu", JSON.stringify(names("CM")) === JSON.stringify([])
     && JSON.stringify(names("CM", "sell")) === JSON.stringify([])
-    && JSON.stringify(names("NG")) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"])
-    && JSON.stringify(names("KE")) === JSON.stringify(["Roqqu", "Bitmama"])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Settu", "Roqqu", "Bitmama"])
+    && JSON.stringify(names("NG")) === JSON.stringify([])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify([])
+    && JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify([])
     && JSON.stringify(names("UG")) === JSON.stringify([])
-    && JSON.stringify(names("UG", "sell")) === JSON.stringify(["LocalCoinSwap", "Settu"]));
+    && JSON.stringify(names("UG", "sell")) === JSON.stringify([]));
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
     ["buy", "sell"].every(m => ["UG", "PK", "AR", "CO", "AE"].includes(c.code) && m === "sell"
       || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
@@ -513,22 +499,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // both sides, their pre-2026-11-16 end-state.)
   ok("batch-2 outcome after the size bar + the 2026-11-16 full removal: PK/AR/CO/AE sell is the LocalCoinSwap row alone; BD/EG/VN/BR/PH empty on both sides", ["PK", "AR", "CO", "AE"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify(["LocalCoinSwap"]))
+    && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
     && ["BD", "EG", "VN", "BR", "PH"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
     && JSON.stringify(names(code, "sell")) === JSON.stringify([])));
-  ok("surviving sell rows are labelled external link-outs carrying the referral and their size-bar figures", (() => {
-    const want = { UG: ["MTN MoMo", "trades from UGX 1,000"], PK: ["bank transfer", "trades from Rs 50"], AR: ["bank transfer", "trades from ARS 1,000"], CO: ["Bancolombia", "trades from COP 1,000"], AE: ["bank transfer", "trades from AED 1 ·"] };
-    return Object.entries(want).every(([code, [method, min]]) => {
-      // (UG's row sat behind the Fonbnk lead for a few hours on
-      // 2026-11-16; since the full removal that evening it leads
-      // its sheet alone again, like the other four.)
-      const r = rampRoutesFor(code, "sell", "bsc", "USDT").routes.find(x => x.name === "LocalCoinSwap");
-      return r && r.external === true && r.badge === false && r.unavailable === false
-        && r.url === "https://localcoinswap.com/?rc=EC82BA22"
-        && r.note.includes("not inside Fluid") && r.note.includes(method) && r.note.includes(min);
-    });
-  })());
+  ok("no LocalCoinSwap row survives anywhere after the 2026-11-27 external removal", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap")))
+    && !("LocalCoinSwap" in RAMP_STATIC_LINKS) && !("LocalCoinSwap" in RAMP_ADDRESS_ENTRY));
   ok("batch-2 picker additions carry their fiats", Object.entries({ PK: "PKR", BD: "BDT", EG: "EGP", VN: "VND", AR: "ARS", CO: "COP", AE: "AED" }).every(([code, fiat]) =>
     RAMP_COUNTRIES.some(c => c.code === code && c.fiat === fiat)));
   // Russia was live-checked 2026-11-10 and refused: the
@@ -559,7 +536,7 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
     && ["TZ", "ZM"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify(["Settu"])));
+    && JSON.stringify(names(code, "sell")) === JSON.stringify([])));
 
   // South Africa: Mt Pelerin led both sides after the
   // 2026-11-10 removal; on 2026-11-16 Fonbnk queued behind
@@ -571,8 +548,8 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // (EXTENDED 2026-11-27, batch 2, spec §5.1: Roqqu joins
   // both ZA sheets behind Mt Pelerin — labelled external,
   // unbadged; Mt Pelerin keeps the buy badge. §16c3 pins it.)
-  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin", "Roqqu"])
-    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin", "Roqqu"]));
+  ok("ZA lineup", JSON.stringify(names("ZA")) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(names("ZA", "sell")) === JSON.stringify(["Mt Pelerin"]));
   ok("ZA badges: Mt Pelerin on buy, none on sell (Fonbnk's sell badge left with its removed row)", JSON.stringify(badged("ZA")) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(badged("ZA", "sell")) === JSON.stringify([]));
 
@@ -749,13 +726,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // networks exactly as on supported ones; ZM is unchanged.)
   ok("restored corridors on unsupported networks: ZM buy empty, sell Settu; KE buy Roqqu+Bitmama, sell Settu then them; UG buy empty, sell LocalCoinSwap then Settu", ["ZM"].every(code =>
     JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
-    && JSON.stringify(rampRoutesFor(code, "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu"]))
-    && JSON.stringify(rampRoutesFor("KE", "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("KE", "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Roqqu", "Bitmama"])
+    && JSON.stringify(rampRoutesFor(code, "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([]))
+    && JSON.stringify(rampRoutesFor("KE", "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("KE", "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
     && ["UG"].every(code => {
       const rs = rampRoutesFor(code, "sell", "linea", "USDT").routes;
       return JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
-        && rs.length === 2 && rs[0].name === "LocalCoinSwap" && rs[1].name === "Settu";
+        && rs.length === 0;
     }));
 }
 
@@ -827,21 +804,13 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
     // (Batch 2, same evening: NG/KE/GH gained the eighteen
     // §5.1 external rows as well — still NOT LocalCoinSwap
     // rows, so the LCS verdict stands untouched. §16c3.)
-    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"])
-    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "Prestmit", "Nosh"]));
-  ok("size bar: LocalCoinSwap survives only as the five kept sell rows, each quoting a ≤$1 floor", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
-      r.name !== "LocalCoinSwap" || (LCS_KEPT.includes(c.code) && m === "sell"))))
-    && LCS_KEPT.every(code => {
-      const r = rampRoutesFor(code, "sell", "bsc", "USDC").routes.find(x => x.name === "LocalCoinSwap");
-      return r && r.external === true
-        && /trades from (UGX 1,000|Rs 50|ARS 1,000|COP 1,000|AED 1) ·/.test(r.note);
-    }));
-  ok("size bar: no assembled ramp note quotes a removed corridor's old 'trades from' figure", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
-      !/trades from (₦30,000|KES 4,972|GH₵100|XAF 10,000|UGX 50,000|Rs 100|৳1,000|EGP 1,000|₫500,000|ARS 100,000|COP 700,000|AED 500|R\$500|₱4,000)/.test(r.note)))));
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
+  ok("size bar end-state after the 2026-11-27 external removal: LocalCoinSwap survives NOWHERE — the five kept sell rows (UG/PK/AR/CO/AE) are gone too, on the owner's embedded-only order", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap")))
+    && LCS_KEPT.every(code => rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0));
   ok("size bar (Mt Pelerin sell): every sell note states the personal-IBAN zero-minimum path", RAMP_COUNTRIES.every(c =>
     rampRoutesFor(c.code, "sell", "bsc", "USDC").routes.every(r =>
       r.name !== "Mt Pelerin" || r.note.includes("any amount if you hold a free personal Mt Pelerin IBAN"))));
@@ -850,135 +819,44 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
       r.name !== "Mt Pelerin" || r.unavailable || r.note.includes("CHF 1"))));
 }
 
-// 16c2. Settu + Sendra external rows and the Jumper swap
-// link-out (2026-11-27, owner's direct order: every route
-// he sent gets added, for every country the provider
-// supports). Settu verified from its live app the same
-// day: offramp (USDC → bank payout) serves NG/GH/KE/TZ/
-// RW/UG/ZM, sales from 0.7 USDC; onramp (naira → USDC on
-// Stellar, NIN verified on Settu's side) is Nigeria-only.
-// Rwanda is not a Fluid picker country (out since the
-// 2026-11-16 form-route removal), so it gets no row and
-// no picker entry. Sendra (its own site/FAQ, same day):
-// Nigeria only, buy + sell USDT/USDC over WhatsApp,
-// basic KYC on Sendra's side, published minimum about
-// ₦1,000. Both ride as labelled EXTERNAL rows — no fee
-// share, no referral, no CHEAPEST badge (no measured
-// price evidence for either). Jumper is a swap link-out,
-// not a ramp: no plan row, no static ramp link, no
-// country gating — the swap sheet carries it for
-// everyone.
+// 16c2. REMOVAL of the Settu + Sendra rows and the Jumper
+// swap link-out (2026-11-27, owner's order ~21:22 WAT —
+// "discard all external shit; only embedded tools and
+// resources"). The rows added earlier the same day on the
+// owner's then-order are gone in full: no static link, no
+// plan row, no caps entry, no assembled route, and the swap
+// sheet carries no Jumper row or binding. §16c3 pins the
+// batch-2 eighteen the same way; §15 pins the empty table.
 {
-  const names2 = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
-  const find2 = (code, mode, n) => rampRoutesFor(code, mode, "bsc", "USDC").routes.find(r => r.name === n);
-  ok("§16c2: Settu sell serves exactly the picker countries NG/GH/KE/TZ/UG/ZM — nowhere else; Settu buy is Nigeria-only", RAMP_COUNTRIES.every(c =>
-    ["NG", "GH", "KE", "TZ", "UG", "ZM"].includes(c.code)
-      ? names2(c.code, "sell").includes("Settu")
-      : !names2(c.code, "sell").includes("Settu") && !names2(c.code, "buy").includes("Settu"))
-    && ["GH", "KE", "TZ", "UG", "ZM"].every(code => !names2(code, "buy").includes("Settu"))
-    && names2("NG", "buy").includes("Settu"));
-  ok("§16c2: Rwanda is not a picker country and holds no plan entry (Settu serves it; the picker does not grow for a route)", !RAMP_COUNTRIES.some(c => c.code === "RW")
-    && !("RW" in RAMP_COUNTRY_PLAN));
-  ok("§16c2: every Settu row is a labelled external link-out to the Settu app, unbadged, sells carrying the 0.7 USDC start", ["NG", "GH", "KE", "TZ", "UG", "ZM"].every(code => {
-      const r = find2(code, "sell", "Settu");
-      return r && r.external === true && r.badge === false && r.unavailable === false
-        && r.url === "https://www.settu.xyz/app" && r.addressEntry === "paste"
-        && r.note.includes("not inside Fluid") && r.note.includes("sales from 0.7 USDC");
-    }) && (() => { const r = find2("NG", "buy", "Settu");
-      return r && r.external === true && r.badge === false && r.unavailable === false && r.url === "https://www.settu.xyz/app"
-        && r.note.includes("not inside Fluid") && r.note.includes("NIN") && r.note.includes("Stellar"); })());
-  ok("§16c2: Sendra serves Nigeria only, both sides, as a labelled external row to usesendra.com with its WhatsApp + KYC facts", RAMP_COUNTRIES.every(c =>
-    c.code === "NG" || (!names2(c.code, "buy").includes("Sendra") && !names2(c.code, "sell").includes("Sendra")))
-    && ["buy", "sell"].every(m => { const r = find2("NG", m, "Sendra");
-      return r && r.external === true && r.badge === false && r.unavailable === false
-        && r.url === "https://usesendra.com" && r.addressEntry === "paste"
-        && r.note.includes("not inside Fluid") && r.note.includes("WhatsApp") && r.note.includes("basic KYC")
-        && r.note.includes("₦1,000"); }));
-  ok("§16c2: neither new provider holds a CHEAPEST badge anywhere (no measured price evidence)", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
-      (r.name !== "Settu" && r.name !== "Sendra") || r.badge === false))));
-  ok("§16c2: caps entries recorded for both new providers", RAMP_ADDRESS_ENTRY["Settu"] === "paste" && RAMP_ADDRESS_ENTRY["Sendra"] === "paste");
-  const appSrcJ = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  ok("§16c2: Jumper is a core constant and a labelled external row in the swap sheet, bound to an https-guarded open", JUMPER_URL === "https://jumper.exchange"
-    && appSrcJ.includes('id="wJumper"') && appSrcJ.includes("Jumper <span class=\"pill soon\">EXTERNAL APP</span>")
-    && appSrcJ.includes('$("wJumper").onclick') && appSrcJ.includes("JUMPER_URL"));
-  ok("§16c2: Jumper holds no ramp presence — no static link, no plan row, no caps entry", !("Jumper" in RAMP_STATIC_LINKS)
-    && !("Jumper" in RAMP_ADDRESS_ENTRY)
-    && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Jumper")));
+  const coreSrcR = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const appSrcR2 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("§16c2 removal: Settu and Sendra assemble nowhere, in no corridor or mode", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Settu" && r.name !== "Sendra"))));
+  ok("§16c2 removal: no route anywhere is flagged external (embedded only)", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.external === false))));
+  ok("§16c2 removal: Jumper is gone — no core constant, no swap-sheet row, no binding", !coreSrcR.includes("JUMPER_URL") && !coreSrcR.includes("jumper.exchange")
+    && !appSrcR2.includes("wJumper") && !appSrcR2.includes("JUMPER_URL") && !appSrcR2.includes("EXTERNAL APP"));
 }
 
-// 16c3. Lubrica batch 2 (2026-11-27, owner's "find every
-// corridor" order; composable-corridors spec §5.1): eighteen
-// more labelled EXTERNAL rows from the 2026-11-27 hidden-gem
-// research — ten both-direction providers (Daya, UseFlip,
-// Zap, Yesa, Busha, Breet, Roqqu, Astro Africa, Obiex,
-// Bitmama) and eight sell-only (KWIQ, Prestmit, Nata,
-// Monica, Swapto, Nosh, Koyn, FlipEx). Countries are the
-// providers' published markets INTERSECTED with the picker:
-// Roqqu's ~28 EEA markets get no rows (the picker does not
-// grow for a route; those corridors carry Mt Pelerin).
-// Facts are index-sourced from the providers' own pages
-// (the spec's §6 live re-verification is still owed before
-// shipping); every published minimum and identity ask is
-// carried in the row's note, attributed — and where the
-// research found a conflict (Monica's minimum) the note
-// discloses it and publishes neither figure. Face-check
-// asks are stated in the notes before the user taps (Daya
-// + Monica: a selfie; UseFlip's full tier: a biometric
-// check; Obiex's full verification: a selfie). No capture
-// for any of the eighteen yet (the §5.2 partner
-// conversations are the path); no CHEAPEST badge anywhere
-// (no measured price evidence). NOT built: §5.1's three
-// P2P link-outs (Unigox, Remitano, CoinCola) — the owner's
-// P2P decision is still open — and NoOnes stays HELD on
-// conflicting liveness evidence (§5.2).
+// 16c3. REMOVAL of Lubrica batch 2 (2026-11-27, owner's
+// order ~21:22 WAT — embedded only): the eighteen labelled
+// EXTERNAL rows added earlier the same evening (Daya,
+// UseFlip, Zap, Yesa, Busha, Breet, Roqqu, Astro Africa,
+// Obiex, Bitmama, KWIQ, Prestmit, Nata, Monica, Swapto,
+// Nosh, Koyn, FlipEx) are gone in full — no static link, no
+// plan row, no caps entry, no default note, no assembled
+// route in any corridor or mode. The three §5.1 P2P
+// link-outs (Unigox, Remitano, CoinCola) were never built
+// and stay out; LocalCoinSwap's P2P rows left in the same
+// removal (§16d's end-state).
 {
-  const names3 = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
-  const find3 = (code, mode, n) => rampRoutesFor(code, mode, "bsc", "USDC").routes.find(r => r.name === n);
-  const B2_URLS = { "Daya": "https://daya.co/coins", "UseFlip": "https://useflip.io", "Zap": "https://zap.africa", "Yesa": "https://yesaapp.ng",
-    "Busha": "https://busha.io", "Breet": "https://breet.io", "Roqqu": "https://roqqu.com", "Astro Africa": "https://astroafrica.site",
-    "Obiex": "https://obiex.finance", "Bitmama": "https://bitmama.io", "KWIQ": "https://kwiq.app", "Prestmit": "https://prestmit.io",
-    "Nata": "https://nata.ng", "Monica": "https://monica.cash", "Swapto": "https://useswapto.com", "Nosh": "https://usenosh.com",
-    "Koyn": "https://getkoyn.com", "FlipEx": "https://flipexapp.com" };
-  const B2_BUY = { "Daya": ["NG"], "UseFlip": ["NG"], "Zap": ["NG"], "Yesa": ["NG"], "Busha": ["NG"], "Breet": ["NG", "GH"],
-    "Roqqu": ["NG", "GH", "ZA", "KE"], "Astro Africa": ["NG", "GH"], "Obiex": ["NG", "GH"], "Bitmama": ["NG", "GH", "KE"] };
-  const B2_SELL = { ...B2_BUY, "KWIQ": ["NG"], "Prestmit": ["NG", "GH"], "Nata": ["NG"], "Monica": ["NG"], "Swapto": ["NG"],
-    "Nosh": ["NG", "GH"], "Koyn": ["NG"], "FlipEx": ["NG"] };
-  ok("§16c3: the batch-2 matrix — each of the eighteen serves exactly its published picker countries per direction, and appears nowhere else", RAMP_COUNTRIES.every(c =>
-    Object.keys(B2_URLS).every(n =>
-      names3(c.code, "buy").includes(n) === (B2_BUY[n] || []).includes(c.code)
-      && names3(c.code, "sell").includes(n) === (B2_SELL[n] || []).includes(c.code))));
-  ok("§16c3: every batch-2 row is a labelled external link-out to its provider URL, unbadged, carrying the external disclosure and a paste caps entry", Object.entries(B2_SELL).every(([n, codes]) =>
-    codes.every(code => ["buy", "sell"].every(m => {
-      if (!(B2_BUY[n] || []).includes(code) && m === "buy") return true;
-      const r = find3(code, m, n);
-      return r && r.external === true && r.badge === false && r.unavailable === false
-        && r.url === B2_URLS[n] && r.addressEntry === "paste" && r.note.includes("not inside Fluid");
-    }))));
-  ok("§16c3: the eight sell-only providers never assemble on any buy sheet (KWIQ's note states its buy side lives in its own app)", ["KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"].every(n =>
-    RAMP_COUNTRIES.every(c => !names3(c.code, "buy").includes(n)))
-    && find3("NG", "sell", "KWIQ").note.includes("also offers buying inside its own app"));
-  ok("§16c3: no batch-2 provider holds a CHEAPEST badge anywhere (no measured price evidence)", RAMP_COUNTRIES.every(c =>
-    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
-      !(r.name in B2_URLS) || r.badge === false))));
-  ok("§16c3: caps entries recorded for all eighteen batch-2 providers", Object.keys(B2_URLS).every(n => RAMP_ADDRESS_ENTRY[n] === "paste"));
-  ok("§16c3: published minimums ride the notes, attributed — Busha ₦250 buy, Breet $10 buy / $5 sell, Prestmit $2–$10, Nata 2 USDT, Swapto ₦1,000, UseFlip's $300/day no-verification cap, Zap's ₦500,000 BVN tier", find3("NG", "buy", "Busha").note.includes("₦250")
-    && find3("NG", "buy", "Breet").note.includes("$10") && find3("GH", "sell", "Breet").note.includes("$5")
-    && find3("NG", "sell", "Prestmit").note.includes("$2") && find3("NG", "sell", "Prestmit").note.includes("$10")
-    && find3("NG", "sell", "Nata").note.includes("2 USDT") && find3("NG", "sell", "Swapto").note.includes("₦1,000")
-    && find3("NG", "sell", "UseFlip").note.includes("$300/day") && find3("NG", "buy", "Zap").note.includes("₦500,000"));
-  ok("§16c3: face-check asks are disclosed in the notes before the tap — Daya and Monica name the selfie (with BVN / NIN), UseFlip names the biometric check, Obiex names the selfie in full verification", ["buy", "sell"].every(m =>
-      find3("NG", m, "Daya").note.includes("selfie") && find3("NG", m, "Daya").note.includes("BVN"))
-    && find3("NG", "sell", "Monica").note.includes("selfie") && find3("NG", "sell", "Monica").note.includes("NIN")
-    && find3("NG", "sell", "UseFlip").note.includes("biometric")
-    && find3("NG", "buy", "Obiex").note.includes("selfie") && find3("NG", "buy", "Obiex").note.includes("BVN"));
-  ok("§16c3: Monica's conflicting minimum is disclosed, never published — the note states the $5-vs-$1 conflict and tells the user to check the live figure", find3("NG", "sell", "Monica").note.includes("not stated here")
-    && find3("NG", "sell", "Monica").note.includes("$5") && find3("NG", "sell", "Monica").note.includes("$1")
-    && find3("NG", "sell", "Monica").note.includes("check the live figure"));
-  ok("§16c3: Roqqu's Nigeria caveats ride only its NG rows — no SEC licence, the 2024 NGN↔USDT disable — and appear on no other corridor's Roqqu note", ["buy", "sell"].every(m =>
-      find3("NG", m, "Roqqu").note.includes("no Nigerian SEC licence") && find3("NG", m, "Roqqu").note.includes("disabled in 2024"))
-    && ["GH", "ZA", "KE"].every(code => ["buy", "sell"].every(m => !find3(code, m, "Roqqu").note.includes("SEC licence"))));
-  ok("§16c3: the three §5.1 P2P link-outs stay OUT while the owner's P2P decision is open — no static link, no caps entry, no plan row, no assembled route for Unigox, Remitano or CoinCola", ["Unigox", "Remitano", "CoinCola"].every(n =>
+  const B2_NAMES = ["Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"];
+  ok("§16c3 removal: none of the eighteen batch-2 providers holds a static link, caps entry or plan row", B2_NAMES.every(n =>
+    !(n in RAMP_STATIC_LINKS) && !(n in RAMP_ADDRESS_ENTRY)
+    && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([pn]) => pn !== n))));
+  ok("§16c3 removal: none of the eighteen assembles in any corridor or mode", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !B2_NAMES.includes(r.name)))));
+  ok("§16c3 removal: the three §5.1 P2P link-outs stay OUT — no static link, no caps entry, no plan row, no assembled route for Unigox, Remitano or CoinCola", ["Unigox", "Remitano", "CoinCola"].every(n =>
     !(n in RAMP_STATIC_LINKS) && !(n in RAMP_ADDRESS_ENTRY)
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([pn]) => pn !== n)
       && ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -8998,7 +8876,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // evening by batch 2: the eighteen §5.1 rows join both NG
   // sheets on the same direct order; the absence pins are
   // still untouched. §16c3 pins the batch-2 rows.)
-  ok("capture gate: NG sell carries only the 2026-11-27 Settu + Sendra + batch-2 external rows (no Fonbnk, no Noblocks)", JSON.stringify(ngSell.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"]));
+  ok("capture gate: NG sell carries only the 2026-11-27 Settu + Sendra + batch-2 external rows (no Fonbnk, no Noblocks)", JSON.stringify(ngSell.map(r => r.name)) === JSON.stringify([]));
   ok("capture gate: the removed provider appears in no corridor and never on a buy sheet",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -9007,10 +8885,9 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     !("Noblocks" in RAMP_STATIC_LINKS) && !("Noblocks" in RAMP_ADDRESS_ENTRY)
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Noblocks")));
   ok("capture gate: NG buy carries no Fonbnk/BVN row on any network/asset (removed under the owner's no-KYC order, 2026-11-16; the only buy rows are the 2026-11-27 Settu + Sendra + batch-2 external rows)",
-    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"]));
-  ok("removal: the NG plan holds no LocalCoinSwap row (its sell row was itself removed under the size bar; the plan's rows are Settu + Sendra + the eighteen batch-2 rows, 2026-11-27)", RAMP_COUNTRY_PLAN.NG.length === 20
-    && RAMP_COUNTRY_PLAN.NG.every(([n]) => ["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"].includes(n)));
+    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
+  ok("removal: the NG plan holds no LocalCoinSwap row (its sell row was itself removed under the size bar; the plan's rows are Settu + Sendra + the eighteen batch-2 rows, 2026-11-27)", RAMP_COUNTRY_PLAN.NG.length === 0);
 }
 
 // 74. Fonbnk removal (2026-11-10, owner's direct order —
@@ -9064,18 +8941,18 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       ["buy", "sell"].every(m => !rampRoutesFor(code, m, "bsc", "USDC").routes.some(r => r.name === "Fonbnk")))
     && ["CM", "SN", "CI"].every(code =>
       ["buy", "sell"].every(m => rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
-    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"])
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
     && ["TZ", "ZM"].every(code =>
       rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
-      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]))
-    && JSON.stringify(rampRoutesFor("KE", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("GH", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "Prestmit", "Nosh"])
-    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap", "Settu"]));
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]))
+    && JSON.stringify(rampRoutesFor("KE", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("GH", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
   ok("restoration, narrowed: ZA sell is Mt Pelerin then the batch-2 Roqqu row, and badgeless; the buy badge stays Mt Pelerin's",
-    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Roqqu"])
+    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify([])
     && JSON.stringify(rampRoutesFor("ZA", "buy", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   ok("removal: Mercuryo still appears in no route, note, URL or table",
@@ -9588,7 +9465,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
       JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
       && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])));
   ok("gate removal + 2026-11-16 restoration + same-day scrap + full removal + 2026-11-27 batch 2: ZA sell is Mt Pelerin then Roqqu, no Fonbnk row, no removed row",
-    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Roqqu"]));
+    JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   // §140: GB/DE gained the Peer in-app row on both sides — sell
   // leads with Peer, buy keeps the badged Mt Pelerin lead with
   // Peer behind it (MX's fiat isn't a Peer corridor — it keeps
@@ -9619,7 +9496,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // does not serve them.)
   ok("removal: SN/CI sell sheets carried nothing after the scrap and stay empty; ZM sell carries the 2026-11-27 Settu row", ["SN", "CI"].every(code =>
     JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]))
-    && JSON.stringify(rampRoutesFor("ZM", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]));
+    && JSON.stringify(rampRoutesFor("ZM", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
   ok("removal: no assembled note carries the interim minimum line", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !r.note.includes("sets its own minimum inside the widget")))));
 
@@ -22686,21 +22563,21 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
   ok("§143: five ex-Fonbnk markets stay honestly empty on both sides (CI/SN/CM/BR/PH); NG/KE/GH/TZ/ZM carry only the 2026-11-27 external rows (batch 1 + batch 2)",
     ["CI", "SN", "CM", "BR", "PH"].every(code =>
       ["buy", "sell"].every(m => rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
-    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra", "Daya", "UseFlip", "Zap", "Yesa", "Busha", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "KWIQ", "Prestmit", "Nata", "Monica", "Swapto", "Nosh", "Koyn", "FlipEx"])
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
     && ["TZ", "ZM"].every(code =>
       rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
-      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]))
-    && JSON.stringify(rampRoutesFor("KE", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Roqqu", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("GH", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama"])
-    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Breet", "Roqqu", "Astro Africa", "Obiex", "Bitmama", "Prestmit", "Nosh"]));
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]))
+    && JSON.stringify(rampRoutesFor("KE", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("GH", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
+    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
   ok("§143: UG keeps its surviving route — buy empty, sell the labelled LocalCoinSwap row, with Settu behind it since 2026-11-27",
     rampRoutesFor("UG", "buy", "bsc", "USDC").routes.length === 0
-    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap", "Settu"]));
+    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
   ok("§143: ZA keeps Mt Pelerin on both sides, untouched by the removal — with the batch-2 Roqqu row behind it since 2026-11-27",
-    JSON.stringify(rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Roqqu"])
-    && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin", "Roqqu"]));
+    JSON.stringify(rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
+    && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
   ok("§143: Nigeria's sell sheet restates the gap in platform-neutral words — every size, small sells under ₦5,000 included, Fluid's own desk the planned fix",
     appSrc143.includes("That gap covers every naira sell size today")
     && appSrc143.includes("small sells under ₦5,000 included")
