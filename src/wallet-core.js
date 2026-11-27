@@ -7896,8 +7896,41 @@ export function mtpelerinSellUrl(asset = "USDT", fiat = "EUR") {
 // supplied 2026-11-10). Keyless: just the rc param on the link.
 export const LOCALCOINSWAP_REFERRAL_CODE = "EC82BA22";
 export const LOCALCOINSWAP_URL = `https://localcoinswap.com/?rc=${LOCALCOINSWAP_REFERRAL_CODE}`;
+// Settu + Sendra (ADDED 2026-11-27 on the owner's direct
+// order — every route he sent gets added, for every country
+// the provider supports): both ride in the same sanctioned
+// labelled-external shape as LocalCoinSwap (external: true,
+// the trade happens on the provider, never inside Fluid),
+// but WITHOUT LocalCoinSwap's capture: neither pays Fluid a
+// fee share yet, so no referral rides either link and the
+// rows stand on the owner's order alone, plainly labelled.
+// Settu facts verified from its live app the same day: the
+// offramp converts USDC to bank payout in Nigeria, Ghana,
+// Kenya, Tanzania, Rwanda, Uganda and Zambia (sales from
+// 0.7 USDC — inside the $1 size bar); the onramp buys USDC
+// with naira, delivered on Stellar, and asks for NIN
+// verification on Settu's side (Nigeria is its only verified
+// buy market). Rwanda is NOT a Fluid picker country (it left
+// with the 2026-11-16 form-route removal), so no Rwanda row
+// exists — the picker does not grow for a route. Sendra
+// facts from its own site/FAQ the same day: Nigeria only
+// (NGN), buy AND sell USDT/USDC, run as a WhatsApp chat,
+// basic KYC asked on Sendra's side; its published minimum
+// is about ₦1,000 (≈ $0.75, its community figure) — also
+// inside the size bar. Its link is the site, which routes
+// the user to its WhatsApp from there.
+export const SETTU_URL = "https://www.settu.xyz/app";
+export const SENDRA_URL = "https://usesendra.com";
+// Jumper (LI.FI's aggregator, jumper.exchange): a crypto-
+// to-crypto SWAP link-out, not a fiat ramp — no country
+// restriction, so it carries no plan row and no picker
+// gating; the swap sheet surfaces it as a labelled external
+// row for every user (see app.js). No fee share for Fluid.
+export const JUMPER_URL = "https://jumper.exchange";
 export const RAMP_STATIC_LINKS = {
   "LocalCoinSwap": { buy: LOCALCOINSWAP_URL, sell: LOCALCOINSWAP_URL },
+  "Settu": { buy: SETTU_URL, sell: SETTU_URL },
+  "Sendra": { buy: SENDRA_URL, sell: SENDRA_URL },
 };
 // A default note is either one string (used on both sheets) or a
 // per-mode { buy, sell } object — rampRoutesFor selects by mode so
@@ -7911,6 +7944,14 @@ const RAMP_DEFAULT_NOTES = {
   "Mt Pelerin": {
     buy: "No ID needed for bank transfers up to ~CHF 999/month · 0% fee on your first CHF 500/year · then 0–1.3% by bank · buys start at CHF 1 · unverified purchases are held 7 days before delivery",
     sell: "Sells start at CHF 50 (about $61) — or any amount if you hold a free personal Mt Pelerin IBAN · sell fee 0–1.3% by bank · no ID needed for bank transfers up to ~CHF 999/month",
+  },
+  // Sendra (2026-11-27, owner's order): Nigeria-only, so the
+  // provider default carries both modes and the NG row needs
+  // no override. The ₦1,000 start is Sendra's published
+  // figure (community post, 2026-11-25), stated as theirs.
+  "Sendra": {
+    buy: "External app — the purchase happens with Sendra on WhatsApp, not inside Fluid · buy USDC or USDT with naira in a chat and pay by bank transfer · starts from about ₦1,000 (Sendra's published figure) · Sendra asks for basic KYC on their side",
+    sell: "External app — the sale happens with Sendra on WhatsApp, not inside Fluid · sell USDC or USDT in a chat and get paid naira to your bank account · starts from about ₦1,000 (Sendra's published figure) · Sendra asks for basic KYC on their side",
   },
 };
 // The SWIFT addendum (audit P1-12): on the 12 own-fiat Mt Pelerin
@@ -7949,6 +7990,18 @@ export const RAMP_ADDRESS_ENTRY = {
   // sheet; the caps entry exists because every planned
   // provider carries one.
   "LocalCoinSwap": "paste",
+  // Settu (2026-11-27): its onramp delivers the bought USDC
+  // on Stellar — to the connected wallet by default, or to
+  // a different Stellar address the user pastes (the option
+  // is in its live app, verified 2026-11-27). A paste path
+  // exists, so it is not a WalletConnect-only buy.
+  "Settu": "paste",
+  // Sendra (2026-11-27): the whole flow is a WhatsApp chat
+  // with Sendra's own keyless account — no WalletConnect
+  // step exists in it at all, and bought dollars can be
+  // sent on to an address the user gives. Not a
+  // WalletConnect-only route.
+  "Sendra": "paste",
   // The removed form-route provider held a "paste" entry here
   // during its one-day life (2026-11-16) — removed with the
   // whole integration the same day (owner's order, 21:04 WAT;
@@ -7967,7 +8020,12 @@ export const RAMP_ADDRESS_ENTRY = {
 // sell rows also qualify via (a) — its ambassador referral pays
 // 10% of platform fees in BTC — and only in the sanctioned
 // labelled-external-marketplace shape (external:true, plainly
-// labelled, per-corridor live book check before surfacing). The African off-ramp
+// labelled, per-corridor live book check before surfacing).
+// Settu and Sendra (2026-11-27) are the standing exception by
+// the owner's DIRECT ORDER: they carry no capture yet and sit
+// in the plan as labelled external rows on his instruction
+// alone — the gate's history is not rewritten by them, and
+// any FUTURE provider still needs (a) or (b). The African off-ramp
 // provider briefly kept under clause (b) was REMOVED IN FULL
 // 2026-11-10 on the owner's direct order (see the plan history
 // above). The Paycrest Gateway sell is the gate's model citizen
@@ -8011,7 +8069,27 @@ export const RAMP_COUNTRY_PLAN = {
   // behind its standing gates — see
   // research_notes/fluid-ng-repair-20261109/report.md.
   // Evidence: research_notes/fluid-lcs-size-correction-20261110/.
-  NG: [],
+  // NG GAINS ROUTES 2026-11-27 (owner's direct order — every
+  // route he sent gets added): Settu (buy AND sell — its
+  // onramp is Nigeria-only, its offramp pays Nigerian banks)
+  // and Sendra (buy AND sell, Nigeria-only by its own FAQ),
+  // both as labelled EXTERNAL rows in the LocalCoinSwap
+  // shape. Neither pays Fluid a fee share yet; both pass
+  // the size bar on their own published starts (Settu sells
+  // from 0.7 USDC; Sendra from about ₦1,000). No CHEAPEST
+  // badge: no measured price evidence exists for either, and
+  // the badge is judged on measured price only. The honest-
+  // empty history above stands as history — this is a new
+  // end-state, ordered, not a quiet reversal of the bars:
+  // the bars judged IN-Fluid and marketplace rows; these are
+  // labelled link-outs the owner named himself.
+  NG: [
+    ["Settu", { external: true, note: {
+      buy: "External app — the purchase happens on Settu, not inside Fluid · buy USDC with naira by bank transfer; the USDC arrives on Stellar, to your connected wallet or a Stellar address you paste · Settu verifies your NIN on their side",
+      sell: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid naira to your Nigerian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there",
+    } }],
+    ["Sendra", { external: true }],
+  ],
   // KE: BUY resolves empty (the LocalCoinSwap buy book sat
   // +4.5% to +7.6% over market on the 2026-11-10 live check).
   // SELL's labelled LocalCoinSwap row (batch 1, 2026-11-10) was
@@ -8028,7 +8106,14 @@ export const RAMP_COUNTRY_PLAN = {
   // Gateway sell (Class 1) remains KE sell's end-state behind
   // its standing gates. Evidence:
   // research_notes/fluid-lcs-size-correction-20261110/.
-  KE: [],
+  // KE SELL GAINS A ROUTE 2026-11-27 (owner's direct order):
+  // Settu's offramp pays Kenyan banks — a labelled EXTERNAL
+  // row in the LocalCoinSwap shape, no fee share yet, no
+  // badge (no measured price evidence). BUY stays honestly
+  // empty: Settu's only verified buy market is Nigeria.
+  KE: [
+    ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid shillings to your Kenyan bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+  ],
   // GH: BUY stays honestly empty (the LocalCoinSwap buy book
   // sat +1% to +54% over market on the 2026-11-10 live check —
   // the cheap rows are bank-transfer-only outliers and the
@@ -8051,7 +8136,15 @@ export const RAMP_COUNTRY_PLAN = {
   // book is two offers from one vendor at +56%/+63% over
   // market. No RU country or row is added — a corridor is
   // never surfaced without a passing live check.
-  GH: [],
+  // GH SELL GAINS A ROUTE 2026-11-27 (owner's direct order):
+  // Settu's offramp pays Ghanaian banks — a labelled
+  // EXTERNAL row in the LocalCoinSwap shape, no fee share
+  // yet, no badge (no measured price evidence). BUY stays
+  // honestly empty: Settu's only verified buy market is
+  // Nigeria.
+  GH: [
+    ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid cedis to your Ghanaian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+  ],
   // BJ/BF/GA/CG/CD/GM held empty plans here during the form-
   // route batch's one-day life (2026-11-16) — the route was appended
   // programmatically and their plans never carried a row. The
@@ -8082,13 +8175,28 @@ export const RAMP_COUNTRY_PLAN = {
   // research_notes/fluid-lcs-size-correction-20261110/.
   UG: [
     ["LocalCoinSwap", { modes: ["sell"], external: true, note: "External P2P marketplace — the trade happens on LocalCoinSwap, not inside Fluid · live Uganda offers (checked 10 Nov 2026): buyers pay by bank transfer or MTN MoMo at about 3–9% below the market rate, trades from UGX 1,000 · free LocalCoinSwap account; their escrow holds the crypto until you confirm payment" }],
+    // Settu sell row ADDED 2026-11-27 (owner's direct
+    // order): its offramp pays Ugandan banks. It queues
+    // BEHIND LocalCoinSwap — that row carries measured
+    // price evidence and the referral; Settu carries
+    // neither yet, so it takes the second rank honestly.
+    ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid shillings to your Ugandan bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
   ],
   // TZ, SN, CI, ZM: BUY resolves empty. SELL's only row —
   // the African off-ramp provider restored 2026-11-09 — was
   // REMOVED IN FULL 2026-11-10 on the owner's direct order,
   // so both sides resolve to the honest empty state until a
   // qualifying route exists.
-  TZ: [],
+  // TZ SELL GAINS A ROUTE 2026-11-27 (owner's direct order):
+  // Settu's offramp pays Tanzanian banks — a labelled
+  // EXTERNAL row in the LocalCoinSwap shape, no fee share
+  // yet, no badge (no measured price evidence). BUY stays
+  // honestly empty (Settu's only verified buy market is
+  // Nigeria); SN and CI stay empty on both sides — Settu
+  // does not serve them.
+  TZ: [
+    ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid shillings to your Tanzanian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+  ],
   // CM: BUY resolves empty (the LocalCoinSwap buy book's real
   // rows sat +2.9%/+8.9% over market on the 2026-11-10 live
   // check). SELL's labelled external-marketplace row (batch
@@ -8106,7 +8214,15 @@ export const RAMP_COUNTRY_PLAN = {
   CM: [],
   SN: [],
   CI: [],
-  ZM: [],
+  // ZM SELL GAINS A ROUTE 2026-11-27 (owner's direct order):
+  // Settu's offramp pays Zambian banks — a labelled
+  // EXTERNAL row in the LocalCoinSwap shape, no fee share
+  // yet, no badge (no measured price evidence). BUY stays
+  // honestly empty (Settu's only verified buy market is
+  // Nigeria).
+  ZM: [
+    ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid kwacha to your Zambian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+  ],
   US: [
     // Mt Pelerin EXCLUDES US persons, so it stays listed, flagged,
     // for non-US users paying in USD — it can never lead or badge

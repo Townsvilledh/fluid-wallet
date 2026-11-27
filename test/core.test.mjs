@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import { readFileSync, statSync, readdirSync } from "node:fs";
 import { FetchRequest, FetchResponse } from "ethers";
-import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APPROVAL_PROXY, RELAY_ROUTER, relaySameChainTargetFor, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
+import { createVault, importVault, unlockVault, mtpelerinBuyUrl, mtpelerinSellUrl, MTPELERIN_FIATS, MTPELERIN_REFERRAL_CODE, formatSendIntent, dustDisplayFloor, formatDisplayAmount, formatDisplayFixed, formatDisplayUsd, NETWORKS, bitcoinAddress, rampRoutesFor, RAMP_COUNTRY_PLAN, RAMP_STATIC_LINKS, RAMP_COUNTRIES, RAMP_ADDRESS_ENTRY, LOCALCOINSWAP_URL, LOCALCOINSWAP_REFERRAL_CODE, SETTU_URL, SENDRA_URL, JUMPER_URL, PAYCREST_NGN_USDT_RATE_URL, parsePaycrestNgnBuyRate, fetchPaycrestNgnBuyRate, validateFluidName, normalizeFluidName, buildNameEntry, findNameForAddresses, buildNameClaimMessage, verifyNameClaim, buildSignedNameClaim, verifyNostrEventSignature, nameClaimNostrKeys, nameClaimState, NAME_STATE_COPY, NAME_CLAIM_RELAYS, splitFee, FEE_SPLIT, PLATFORM_FEE_BPS, PLATFORM_FEE_FRACTION, PLATFORM_FEE_COLLECTION_ENABLED, platformFeeOn, platformFeeApplies, platformFeePercentText, feeLegTargets, feePotReport, BITCOIN_SWAP_CHAIN_ID, rankRoutes, GAME_FEE_SPLIT, splitGameFee, AGENT_POLICY_DEFAULTS, agentAddresses, buildAgentDescriptor, checkAgentPolicy, FEE_SETTLEMENT, feeSettlementDue, rankSwapRoutes, formatSwapIntent, swapRouteExecutable, swapAmountToRaw, swapRawToAmount, NATIVE_TOKEN_ADDRESS, looksLikePoison, gateChains, registerNetworks, providerFor, providerForFallback, getBalances, evmRpcUrls, evmRpcOrder, evmRpcFetchJson, withEvmProvider, resetEvmRpcHealth, EVM_RPC_COOLDOWN_MS, tronAddressFromKey, tronAddressFromPhrase, tronAddressToHex, tronAddressFromHex, isValidTronAddress, tronSunToTrx, tronTrxToSun, formatTronSendIntent, TRON_TOKENS, TRON_SWAP_CHAIN_ID, TRON_SWAP_NATIVE_TOKEN, swapChainOf, deriveSlip10Ed25519, solanaSeedFromSeed, solanaAddressFromSeed, solanaAddressFromPhrase, isValidSolanaAddress, solLamportsToSol, solSolToLamports, solanaAtaAddress, formatSolanaSendIntent, SOLANA_TOKENS, SOLANA_SWAP_CHAIN_ID, SOLANA_SWAP_NATIVE_TOKEN, SOLANA_RENT_EXEMPT_LAMPORTS, SOLANA_ATA_RENT_LAMPORTS, litecoinAddress, isValidLitecoinAddress, formatLitecoinSendIntent, dogecoinAddress, isValidDogeAddress, DOGE_MIN_OUTPUT, buildSignedDogeTx, formatDogeSendIntent, DOGE_DUST_KOINU, dogeTxSize, bitcoinCashAddress, bitcoinCashLegacyAddress, bchAddressToScript, bchSighashDigest, buildSignedBchTx, isValidBchAddress, RECEIVE_NETWORKS, receiveNetworkMatches, filterReceiveNetworks, escapeHtml, sanitizePersistedSymbol, historyTxUrl, formatHistoryEntry, formatApprovalRow, formatRevokePrompt, stacksAddressFromPhrase, stacksAddressDecode, stacksAddressEncode, isValidStacksAddress, isValidStacksContractAddress, stxMicroToStx, stxToMicro, stacksAmountToRaw, stacksRawToAmount, buildSignedStacksTx, formatStacksSendIntent, parseStacksCallReadValue, stacksExplorerTxUrl, STACKS_TOKENS, STACKS_MAX_FEE_USTX, STACKS_MAX_FEE_RATE_USTX_PER_BYTE, getSwapRoutes, buildRelayQuoteRequest, relayChainOf, relaySupportsPair, parseRelayQuote, relayExecutableSteps, checkRelayStepBounds, RELAY_APPROVAL_PROXY, RELAY_ROUTER, relaySameChainTargetFor, RELAY_APP_FEE_RECIPIENT, RELAY_SOLANA_CHAIN_ID, RELAY_TRON_CHAIN_ID, PLATFORM_FEE_ROUTE_MULTIPLIER, PLATFORM_FEE_ROUTE_MULTIPLIER_EVM, PLATFORM_FEE_TOTAL_CEILINGS_USD, platformFeeEcosystemOf, platformFeeMultiplierFor, platformFeeCeilingFor, platformFeeUsdForRoute, platformFeeBpsForRoute, swapRouteCostLabel, fetchStableTokens, scanEvmTokenBalances, relayCurrencyFor, NATIVE_ASSET_PREDEPLOY, NATIVE_ASSET_PREDEPLOY_DECIMALS, scaleRawAmount, NATIVE_TOKEN_SENTINEL, isNativePredeploy, sanitizeNameEntry, lnurlPayRequestJson, lnurlPayMetadata, isLnurlName, LNURL_BRIDGE_BASE } from "../src/wallet-core.js";
 import { parseAcrossQuote, acrossSupportsPair, buildAcrossQuoteParams, checkAcrossDepositBounds, acrossExecutableSteps, acrossQuoteArgs, ACROSS_HANDLERS, ACROSS_MESSAGE_ADAPTERS, ACROSS_APP_FEE_RECIPIENT, ACROSS_CHAIN_IDS, ACROSS_SPOKE_POOLS } from "../src/wallet-core.js";
 import { checkCetusPtbSafety, composeCetusSwapTx, getCetusSwapRoute, parseCetusRoute, cetusCoinTypeOf, cetusSupportsPair, CETUS_AGGREGATOR_PACKAGE, CETUS_FEE_RECEIVER } from "../src/wallet-core.js";
 import { AGGREGATOR_V3_CONFIG as CETUS_SDK_CONFIG } from "@cetusprotocol/aggregator-sdk";
@@ -168,10 +168,19 @@ ok("bitcoin address vector", bitcoinAddress("abandon abandon abandon abandon aba
 // 15. Global ramps + onramp links (per-country, price-ranked model)
 ok("static ramp links are https", Object.values(RAMP_STATIC_LINKS).every(l =>
   (l.buy === undefined || l.buy.startsWith("https://")) && (l.sell === undefined || l.sell.startsWith("https://"))));
-ok("static links table holds only the capture-clean LocalCoinSwap link after the capture-gate pulls", Object.keys(RAMP_STATIC_LINKS).length === 1
+// (2026-11-27: the table grows to three on the owner's
+// direct order — Settu and Sendra join as labelled external
+// rows with NO referral and no fee share; LocalCoinSwap's
+// link stays the only capture-carrying one. §16c2 pins the
+// new rows' full matrix.)
+ok("static links table: the capture-clean LocalCoinSwap link plus the owner's 2026-11-27 Settu + Sendra external links", Object.keys(RAMP_STATIC_LINKS).length === 3
   && RAMP_STATIC_LINKS["LocalCoinSwap"].buy === "https://localcoinswap.com/?rc=EC82BA22"
   && RAMP_STATIC_LINKS["LocalCoinSwap"].sell === "https://localcoinswap.com/?rc=EC82BA22"
-  && LOCALCOINSWAP_REFERRAL_CODE === "EC82BA22" && LOCALCOINSWAP_URL === "https://localcoinswap.com/?rc=EC82BA22");
+  && LOCALCOINSWAP_REFERRAL_CODE === "EC82BA22" && LOCALCOINSWAP_URL === "https://localcoinswap.com/?rc=EC82BA22"
+  && RAMP_STATIC_LINKS["Settu"].buy === "https://www.settu.xyz/app" && RAMP_STATIC_LINKS["Settu"].sell === "https://www.settu.xyz/app"
+  && SETTU_URL === "https://www.settu.xyz/app"
+  && RAMP_STATIC_LINKS["Sendra"].buy === "https://usesendra.com" && RAMP_STATIC_LINKS["Sendra"].sell === "https://usesendra.com"
+  && SENDRA_URL === "https://usesendra.com");
 // Paybis and Spritz were REMOVED in full 2026-11-09 under the
 // owner's capture GATE (owner ruling ~14:34 WAT): as wired they
 // paid Fluid nothing and no own-charge mechanism exists for
@@ -353,14 +362,20 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // 2026-11-10 end-state, now with the sell gap restated in the
   // sheet as the general Nigeria fiat-sell gap (Fluid's own
   // desk the planned fix). §143 pins the absence everywhere.
-  ok("NG is honestly empty on both sides (Fonbnk removed in full, owner's order 2026-11-16 21:04 WAT)", JSON.stringify(names("NG")) === JSON.stringify([])
-    && JSON.stringify(names("NG", "sell")) === JSON.stringify([]));
-  ok("NG buy resolves honestly empty on supported and unsupported networks alike", ["bsc", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
-  ok("NG sell resolves honestly empty on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "sell", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
-  ok("NG badges nothing on either side — no route exists to badge", JSON.stringify(badged("NG")) === JSON.stringify([]) && JSON.stringify(badged("NG", "sell")) === JSON.stringify([]));
-  ok("NG has no route on either side", names("NG").length === 0 && names("NG", "sell").length === 0);
+  // END-STATE SUPERSEDED 2026-11-27 (owner's direct order —
+  // every route he sent gets added): NG gains Settu (buy +
+  // sell) and Sendra (buy + sell) as labelled EXTERNAL rows;
+  // the Fonbnk absence the pins above narrated still stands
+  // (§143 keeps pinning it) — what changed is only that the
+  // sheets are no longer empty. §16c2 pins the new matrix.
+  ok("NG carries Settu then Sendra on both sides (owner's order, 2026-11-27)", JSON.stringify(names("NG")) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Settu", "Sendra"]));
+  ok("NG buy resolves to the same two external rows on supported and unsupported networks alike", ["bsc", "linea"].every(k =>
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])));
+  ok("NG sell resolves to the same two external rows on supported and unsupported networks alike", ["bsc", "base", "ethereum", "arbitrum", "polygon", "linea"].every(k =>
+    JSON.stringify(rampRoutesFor("NG", "sell", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])));
+  ok("NG badges nothing on either side — neither new row carries measured price evidence", JSON.stringify(badged("NG")) === JSON.stringify([]) && JSON.stringify(badged("NG", "sell")) === JSON.stringify([]));
+  ok("NG has two routes on either side", names("NG").length === 2 && names("NG", "sell").length === 2);
   // The empty state is an app-side render of routes.length === 0
   // (the pattern built 2026-11-07 for zero-route combos): pin both
   // the explainer's presence in the sheet and the absence of ANY
@@ -374,8 +389,8 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // form route's buy side was BVN-gated and the owner removed
   // it the day it shipped, §141. Sell still resolves on every
   // network/asset by design.)
-  ok("NG buy carries no route on any network or asset (the BVN buy row is removed, not disclosed-and-kept)", ["bsc", "base", "linea"].every(k =>
-    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify([])));
+  ok("NG buy carries no BVN/Fonbnk row on any network or asset (the BVN buy row is removed, not disclosed-and-kept; the 2026-11-27 rows are Settu + Sendra only)", ["bsc", "base", "linea"].every(k =>
+    JSON.stringify(rampRoutesFor("NG", "buy", k, "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])));
 
   // The address-entry capability table is the standing buy gate:
   // every listed buy route anywhere takes a pasted address. A
@@ -420,21 +435,28 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // Fonbnk REMOVED IN FULL on the owner's escalated order.
   // KE/GH are honestly empty on both sides again; UG's
   // LocalCoinSwap row leads its sell sheet alone again.)
-  ok("KE is honestly empty on both sides (Fonbnk removed in full, owner's order 2026-11-16 21:04 WAT)", JSON.stringify(names("KE")) === JSON.stringify([])
-    && JSON.stringify(names("KE", "sell")) === JSON.stringify([]));
-  ok("GH is honestly empty on both sides (Fonbnk removed in full, owner's order 2026-11-16 21:04 WAT)", JSON.stringify(names("GH")) === JSON.stringify([])
-    && JSON.stringify(names("GH", "sell")) === JSON.stringify([]));
+  // (KE/GH sell end-state SUPERSEDED 2026-11-27, owner's
+  // order: Settu's offramp serves both — labelled external
+  // sell rows; their buy sides stay honestly empty, and the
+  // Fonbnk absence above still stands. §16c2 pins it.)
+  ok("KE: buy honestly empty, sell carries the Settu external row (2026-11-27)", JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Settu"]));
+  ok("GH: buy honestly empty, sell carries the Settu external row (2026-11-27)", JSON.stringify(names("GH")) === JSON.stringify([])
+    && JSON.stringify(names("GH", "sell")) === JSON.stringify(["Settu"]));
   ok("UG sell keeps its labelled external link-out carrying the referral, alone on its sheet again", (() => {
     const r = rampRoutesFor("UG", "sell", "bsc", "USDT").routes.find(x => x.name === "LocalCoinSwap");
     return r && r.external === true && r.badge === false && r.unavailable === false
       && r.url === "https://localcoinswap.com/?rc=EC82BA22"
       && r.note.includes("not inside Fluid") && r.note.includes("MTN MoMo") && r.note.includes("trades from UGX 1,000");
   })());
-  ok("batch-1 outcome after the 2026-11-16 full removal: NG/KE/CM honestly empty on both sides; UG buy empty, sell LocalCoinSwap alone", ["NG", "KE", "CM"].every(code =>
-    JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
+  ok("batch-1 outcome after the 2026-11-16 full removal + the 2026-11-27 external rows: CM honestly empty on both sides; NG Settu+Sendra both sides; KE sell Settu; UG buy empty, sell LocalCoinSwap then Settu", JSON.stringify(names("CM")) === JSON.stringify([])
+    && JSON.stringify(names("CM", "sell")) === JSON.stringify([])
+    && JSON.stringify(names("NG")) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(names("NG", "sell")) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(names("KE")) === JSON.stringify([])
+    && JSON.stringify(names("KE", "sell")) === JSON.stringify(["Settu"])
     && JSON.stringify(names("UG")) === JSON.stringify([])
-    && JSON.stringify(names("UG", "sell")) === JSON.stringify(["LocalCoinSwap"]));
+    && JSON.stringify(names("UG", "sell")) === JSON.stringify(["LocalCoinSwap", "Settu"]));
   ok("LocalCoinSwap surfaces nowhere else: no other corridor, no buy sheet", RAMP_COUNTRIES.every(c =>
     ["buy", "sell"].every(m => ["UG", "PK", "AR", "CO", "AE"].includes(c.code) && m === "sell"
       || rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))));
@@ -502,9 +524,15 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // are Fonbnk sell-only now. REVERSED AGAIN the same evening
   // (21:04 WAT): Fonbnk removed in full — all four are back
   // to the honest empty state on both sides.)
-  ok("scrapped corridors: honestly empty on both sides after the 2026-11-16 full removal", ["TZ", "SN", "CI", "ZM"].every(code =>
+  // (TZ/ZM sell SUPERSEDED 2026-11-27, owner's order:
+  // Settu's offramp serves both — SN/CI stay empty, Settu
+  // does not serve them.)
+  ok("scrapped corridors after the 2026-11-16 full removal + 2026-11-27: SN/CI honestly empty on both sides; TZ/ZM buy empty, sell Settu", ["SN", "CI"].every(code =>
     JSON.stringify(names(code)) === JSON.stringify([])
-    && JSON.stringify(names(code, "sell")) === JSON.stringify([])));
+    && JSON.stringify(names(code, "sell")) === JSON.stringify([]))
+    && ["TZ", "ZM"].every(code =>
+    JSON.stringify(names(code)) === JSON.stringify([])
+    && JSON.stringify(names(code, "sell")) === JSON.stringify(["Settu"])));
 
   // South Africa: Mt Pelerin led both sides after the
   // 2026-11-10 removal; on 2026-11-16 Fonbnk queued behind
@@ -682,13 +710,17 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // removed in full — ZM/KE are empty on unsupported networks
   // exactly as on supported ones, and UG's sell is the
   // LocalCoinSwap row alone again.)
-  ok("restored corridors on unsupported networks: ZM/KE honestly empty; UG buy empty, sell LocalCoinSwap alone", ["ZM", "KE"].every(code =>
+  // (2026-11-27: the static external rows are network-
+  // agnostic like LocalCoinSwap's — ZM/KE sell carry Settu
+  // on unsupported networks too, and UG's sell carries both
+  // external rows.)
+  ok("restored corridors on unsupported networks: ZM/KE buy empty, sell Settu; UG buy empty, sell LocalCoinSwap then Settu", ["ZM", "KE"].every(code =>
     JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
-    && JSON.stringify(rampRoutesFor(code, "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([]))
+    && JSON.stringify(rampRoutesFor(code, "sell", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify(["Settu"]))
     && ["UG"].every(code => {
       const rs = rampRoutesFor(code, "sell", "linea", "USDT").routes;
       return JSON.stringify(rampRoutesFor(code, "buy", "linea", "USDT").routes.map(r => r.name)) === JSON.stringify([])
-        && rs.length === 1 && rs[0].name === "LocalCoinSwap";
+        && rs.length === 2 && rs[0].name === "LocalCoinSwap" && rs[1].name === "Settu";
     }));
 }
 
@@ -743,16 +775,24 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   // end-state. BD/EG/VN were never Fonbnk markets and stay
   // honestly empty. The size bar's LCS verdict is unchanged:
   // no LCS row or plan entry anywhere in the set.)
-  ok("size bar: removed LocalCoinSwap corridors hold no LCS row or plan row and stay honestly empty on both sides", LCS_REMOVED.every(code =>
+  ok("size bar: removed LocalCoinSwap corridors hold no LCS row or plan row (CM/BR/PH stay honestly empty; NG/KE/GH carry only the 2026-11-27 Settu/Sendra rows)", LCS_REMOVED.every(code =>
     RAMP_COUNTRY_PLAN[code].every(([n]) => n !== "LocalCoinSwap")
     && rampRoutesFor(code, "buy", "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap")
     && rampRoutesFor(code, "sell", "bsc", "USDC").routes.every(r => r.name !== "LocalCoinSwap"))
     && ["BD", "EG", "VN"].every(code =>
       rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
       && rampRoutesFor(code, "sell", "bsc", "USDC").routes.length === 0)
-    && ["NG", "KE", "GH", "CM", "BR", "PH"].every(code =>
+    && ["CM", "BR", "PH"].every(code =>
       JSON.stringify(rampRoutesFor(code, "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])
-      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])));
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]))
+    // (2026-11-27: NG/KE/GH left the empty end-state on the
+    // owner's direct order — the rows they gained are Settu/
+    // Sendra external rows, NOT LocalCoinSwap rows, so the
+    // size bar's LCS verdict above is untouched. §16c2.)
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(rampRoutesFor("KE", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"])
+    && JSON.stringify(rampRoutesFor("GH", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]));
   ok("size bar: LocalCoinSwap survives only as the five kept sell rows, each quoting a ≤$1 floor", RAMP_COUNTRIES.every(c =>
     ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
       r.name !== "LocalCoinSwap" || (LCS_KEPT.includes(c.code) && m === "sell"))))
@@ -770,6 +810,63 @@ ok("mtpelerin null for unknown asset", mtpelerinBuyUrl("BTC", "EUR") === null);
   ok("size bar (Mt Pelerin buy): every navigating buy note states the CHF 1 smallest start (owner-accepted 2026-11-11)", RAMP_COUNTRIES.every(c =>
     rampRoutesFor(c.code, "buy", "bsc", "USDC").routes.every(r =>
       r.name !== "Mt Pelerin" || r.unavailable || r.note.includes("CHF 1"))));
+}
+
+// 16c2. Settu + Sendra external rows and the Jumper swap
+// link-out (2026-11-27, owner's direct order: every route
+// he sent gets added, for every country the provider
+// supports). Settu verified from its live app the same
+// day: offramp (USDC → bank payout) serves NG/GH/KE/TZ/
+// RW/UG/ZM, sales from 0.7 USDC; onramp (naira → USDC on
+// Stellar, NIN verified on Settu's side) is Nigeria-only.
+// Rwanda is not a Fluid picker country (out since the
+// 2026-11-16 form-route removal), so it gets no row and
+// no picker entry. Sendra (its own site/FAQ, same day):
+// Nigeria only, buy + sell USDT/USDC over WhatsApp,
+// basic KYC on Sendra's side, published minimum about
+// ₦1,000. Both ride as labelled EXTERNAL rows — no fee
+// share, no referral, no CHEAPEST badge (no measured
+// price evidence for either). Jumper is a swap link-out,
+// not a ramp: no plan row, no static ramp link, no
+// country gating — the swap sheet carries it for
+// everyone.
+{
+  const names2 = (code, mode = "buy") => rampRoutesFor(code, mode, "bsc", "USDC").routes.map(r => r.name);
+  const find2 = (code, mode, n) => rampRoutesFor(code, mode, "bsc", "USDC").routes.find(r => r.name === n);
+  ok("§16c2: Settu sell serves exactly the picker countries NG/GH/KE/TZ/UG/ZM — nowhere else; Settu buy is Nigeria-only", RAMP_COUNTRIES.every(c =>
+    ["NG", "GH", "KE", "TZ", "UG", "ZM"].includes(c.code)
+      ? names2(c.code, "sell").includes("Settu")
+      : !names2(c.code, "sell").includes("Settu") && !names2(c.code, "buy").includes("Settu"))
+    && ["GH", "KE", "TZ", "UG", "ZM"].every(code => !names2(code, "buy").includes("Settu"))
+    && names2("NG", "buy").includes("Settu"));
+  ok("§16c2: Rwanda is not a picker country and holds no plan entry (Settu serves it; the picker does not grow for a route)", !RAMP_COUNTRIES.some(c => c.code === "RW")
+    && !("RW" in RAMP_COUNTRY_PLAN));
+  ok("§16c2: every Settu row is a labelled external link-out to the Settu app, unbadged, sells carrying the 0.7 USDC start", ["NG", "GH", "KE", "TZ", "UG", "ZM"].every(code => {
+      const r = find2(code, "sell", "Settu");
+      return r && r.external === true && r.badge === false && r.unavailable === false
+        && r.url === "https://www.settu.xyz/app" && r.addressEntry === "paste"
+        && r.note.includes("not inside Fluid") && r.note.includes("sales from 0.7 USDC");
+    }) && (() => { const r = find2("NG", "buy", "Settu");
+      return r && r.external === true && r.badge === false && r.unavailable === false && r.url === "https://www.settu.xyz/app"
+        && r.note.includes("not inside Fluid") && r.note.includes("NIN") && r.note.includes("Stellar"); })());
+  ok("§16c2: Sendra serves Nigeria only, both sides, as a labelled external row to usesendra.com with its WhatsApp + KYC facts", RAMP_COUNTRIES.every(c =>
+    c.code === "NG" || (!names2(c.code, "buy").includes("Sendra") && !names2(c.code, "sell").includes("Sendra")))
+    && ["buy", "sell"].every(m => { const r = find2("NG", m, "Sendra");
+      return r && r.external === true && r.badge === false && r.unavailable === false
+        && r.url === "https://usesendra.com" && r.addressEntry === "paste"
+        && r.note.includes("not inside Fluid") && r.note.includes("WhatsApp") && r.note.includes("basic KYC")
+        && r.note.includes("₦1,000"); }));
+  ok("§16c2: neither new provider holds a CHEAPEST badge anywhere (no measured price evidence)", RAMP_COUNTRIES.every(c =>
+    ["buy", "sell"].every(m => rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
+      (r.name !== "Settu" && r.name !== "Sendra") || r.badge === false))));
+  ok("§16c2: caps entries recorded for both new providers", RAMP_ADDRESS_ENTRY["Settu"] === "paste" && RAMP_ADDRESS_ENTRY["Sendra"] === "paste");
+  const appSrcJ = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("§16c2: Jumper is a core constant and a labelled external row in the swap sheet, bound to an https-guarded open", JUMPER_URL === "https://jumper.exchange"
+    && appSrcJ.includes('id="wJumper"') && appSrcJ.includes("Jumper <span class=\"pill soon\">EXTERNAL APP</span>")
+    && appSrcJ.includes('$("wJumper").onclick') && appSrcJ.includes("JUMPER_URL"));
+  ok("§16c2: Jumper holds no ramp presence — no static link, no plan row, no caps entry", !("Jumper" in RAMP_STATIC_LINKS)
+    && !("Jumper" in RAMP_ADDRESS_ENTRY)
+    && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Jumper")));
 }
 
 // 17. Fluid Names
@@ -8777,8 +8874,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // native to its quotes and echo-verified, which is exactly
   // what the capture gate always demanded. REVERSED AGAIN
   // the same evening (21:04 WAT): Fonbnk removed in full on
-  // the owner's escalated order — NG sell is honestly empty.)
-  ok("capture gate: NG sell is honestly empty (Fonbnk removed in full, owner's order 2026-11-16 21:04 WAT)", ngSell.length === 0);
+  // the owner's escalated order — NG sell is honestly empty.
+  // SUPERSEDED 2026-11-27, owner's direct order: NG sell
+  // gains the Settu + Sendra labelled external rows — the
+  // gate's Fonbnk/Noblocks absence pins below are untouched
+  // by them; §16c2 pins the new rows.)
+  ok("capture gate: NG sell carries only the 2026-11-27 Settu + Sendra external rows (no Fonbnk, no Noblocks)", JSON.stringify(ngSell.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"]));
   ok("capture gate: the removed provider appears in no corridor and never on a buy sheet",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r =>
@@ -8786,10 +8887,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("capture gate: the removed provider holds no static link, caps entry or plan row",
     !("Noblocks" in RAMP_STATIC_LINKS) && !("Noblocks" in RAMP_ADDRESS_ENTRY)
     && RAMP_COUNTRIES.every(c => RAMP_COUNTRY_PLAN[c.code].every(([n]) => n !== "Noblocks")));
-  ok("capture gate: NG buy carries NO route on any network/asset (the restored Fonbnk buy row was BVN-gated; removed under the owner's no-KYC order, 2026-11-16)",
-    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify([])
-    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify([]));
-  ok("removal: the NG plan holds no row at all (the LocalCoinSwap sell row was itself removed under the size bar)", RAMP_COUNTRY_PLAN.NG.length === 0);
+  ok("capture gate: NG buy carries no Fonbnk/BVN row on any network/asset (removed under the owner's no-KYC order, 2026-11-16; the only buy rows are the 2026-11-27 Settu + Sendra external rows)",
+    JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "BNB").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(rampRoutesFor("NG", "buy", "base", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"]));
+  ok("removal: the NG plan holds no LocalCoinSwap row (its sell row was itself removed under the size bar; the plan's only rows are Settu + Sendra, 2026-11-27)", RAMP_COUNTRY_PLAN.NG.length === 2
+    && RAMP_COUNTRY_PLAN.NG.every(([n]) => n === "Settu" || n === "Sendra"));
 }
 
 // 74. Fonbnk removal (2026-11-10, owner's direct order —
@@ -8829,12 +8931,22 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   ok("full removal: no Fonbnk route or marker exists in any corridor or mode",
     RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
       rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => r.name !== "Fonbnk" && !("fonbnk" in r)))));
+  // (2026-11-27: CM/SN/CI are still empty on both sides;
+  // NG/KE/GH/TZ/ZM now fall back to the owner's Settu/
+  // Sendra external rows — still no Fonbnk anywhere, which
+  // is what this section pins. UG's sell gained Settu
+  // behind LocalCoinSwap.)
   ok("full removal: none of the ten former corridors carries a Fonbnk route on either side; their fallbacks are the plan routes or the honest empty state",
     CORRIDORS.every(code =>
       ["buy", "sell"].every(m => !rampRoutesFor(code, m, "bsc", "USDC").routes.some(r => r.name === "Fonbnk")))
-    && ["NG", "KE", "GH", "TZ", "CM", "SN", "CI", "ZM"].every(code =>
+    && ["CM", "SN", "CI"].every(code =>
       ["buy", "sell"].every(m => rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
-    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap"]));
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && ["KE", "GH", "TZ", "ZM"].every(code =>
+      rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]))
+    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap", "Settu"]));
   ok("restoration, narrowed: ZA sell is Mt Pelerin alone and badgeless; the buy badge stays Mt Pelerin's",
     JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDT").routes.filter(r => r.badge).map(r => r.name)) === JSON.stringify([])
@@ -9375,8 +9487,12 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
   // sell side gained the labelled LocalCoinSwap row, and
   // returned under the size bar the same night, §16d), and
   // no assembled note anywhere carries the line.
-  ok("removal: SN/CI/ZM sell sheets carried nothing after the scrap; the Fonbnk form route they gained on 2026-11-16 was removed in full the same evening — honestly empty again", ["SN", "CI", "ZM"].every(code =>
-    JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([])));
+  // (2026-11-27: ZM's sell sheet gained the Settu external
+  // row on the owner's order; SN/CI remain empty — Settu
+  // does not serve them.)
+  ok("removal: SN/CI sell sheets carried nothing after the scrap and stay empty; ZM sell carries the 2026-11-27 Settu row", ["SN", "CI"].every(code =>
+    JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify([]))
+    && JSON.stringify(rampRoutesFor("ZM", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"]));
   ok("removal: no assembled note carries the interim minimum line", RAMP_COUNTRIES.every(c => ["buy", "sell"].every(m =>
     rampRoutesFor(c.code, m, "bsc", "USDC").routes.every(r => !r.note.includes("sets its own minimum inside the widget")))));
 
@@ -22431,12 +22547,23 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     RAMP_COUNTRIES.length === 61
     && ["BJ", "BF", "GA", "CG", "CD", "GM"].every(code =>
       !RAMP_COUNTRIES.some(c => c.code === code) && !(code in RAMP_COUNTRY_PLAN)));
-  ok("§143: ten ex-Fonbnk markets fall back to the honest empty state on both sides (NG/KE/GH/TZ/ZM/CI/SN/CM/BR/PH)",
-    ["NG", "KE", "GH", "TZ", "ZM", "CI", "SN", "CM", "BR", "PH"].every(code =>
-      ["buy", "sell"].every(m => rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0)));
-  ok("§143: UG keeps its surviving route — buy empty, sell the labelled LocalCoinSwap row alone",
+  // (2026-11-27 supersession, owner's direct order: NG/
+  // KE/GH/TZ/ZM gained Settu/Sendra labelled external rows
+  // — §16c2 pins their matrix. The Fonbnk ABSENCE this
+  // section exists to pin is untouched: no ex-Fonbnk market
+  // carries any Fonbnk shape; five markets remain honestly
+  // empty on both sides.)
+  ok("§143: five ex-Fonbnk markets stay honestly empty on both sides (CI/SN/CM/BR/PH); NG/KE/GH/TZ/ZM carry only the 2026-11-27 external rows",
+    ["CI", "SN", "CM", "BR", "PH"].every(code =>
+      ["buy", "sell"].every(m => rampRoutesFor(code, m, "bsc", "USDC").routes.length === 0))
+    && JSON.stringify(rampRoutesFor("NG", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && JSON.stringify(rampRoutesFor("NG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu", "Sendra"])
+    && ["KE", "GH", "TZ", "ZM"].every(code =>
+      rampRoutesFor(code, "buy", "bsc", "USDC").routes.length === 0
+      && JSON.stringify(rampRoutesFor(code, "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Settu"])));
+  ok("§143: UG keeps its surviving route — buy empty, sell the labelled LocalCoinSwap row, with Settu behind it since 2026-11-27",
     rampRoutesFor("UG", "buy", "bsc", "USDC").routes.length === 0
-    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap"]));
+    && JSON.stringify(rampRoutesFor("UG", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["LocalCoinSwap", "Settu"]));
   ok("§143: ZA keeps Mt Pelerin on both sides, untouched by the removal",
     JSON.stringify(rampRoutesFor("ZA", "buy", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"])
     && JSON.stringify(rampRoutesFor("ZA", "sell", "bsc", "USDC").routes.map(r => r.name)) === JSON.stringify(["Mt Pelerin"]));
