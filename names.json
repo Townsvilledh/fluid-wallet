@@ -198,5 +198,13 @@
     "sol": "7DqtC725Yo5362oTSCK654K1tzARu5v1DwH42rrDGLK4",
     "tron": "TDFPwiYbzSFozHdmBHqsrnS5swNYLC5A7b",
     "sui": "0x596eff0ffb4c807ab5f3ccecf40f075fca181a4f98a0857f79c9c141552c562a"
+  },
+  "dioxidane": {
+    "evm": "0x84dAAC795db1484B182Ae9D18E86465362053d6C",
+    "btc": "bc1q4weydfr6syalxjrhd7fkg37jvg3wftceyk30z7",
+    "algo": "ER6GNOJLTV67Z4VMPDJM6FZV2HO4JPAISJWOCC2TEHFG36FA2NNDKK5QNE",
+    "sol": "FFpAijeCWRaDpxthdP7isUR4cmxPETypunERZv3ngeQn",
+    "tron": "TN5gA6cKeaTDSZ6iuwcmxwC5x9n76GTVTW",
+    "sui": "0x473494964d83c719d6dcd4d82451ee6a9f670969c6f571164023de5b688e46c1"
   }
 }
