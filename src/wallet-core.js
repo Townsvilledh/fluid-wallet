@@ -7927,10 +7927,82 @@ export const SENDRA_URL = "https://usesendra.com";
 // gating; the swap sheet surfaces it as a labelled external
 // row for every user (see app.js). No fee share for Fluid.
 export const JUMPER_URL = "https://jumper.exchange";
+// Lubrica BATCH 2 (ADDED 2026-11-27, owner's order the same
+// evening — find every corridor; spec:
+// goals/lubrica-fluid-s-routing-plug/files/
+// composable-corridors-spec.md §5.1): eighteen more labelled
+// EXTERNAL rows in the batch-1 shape (external: true, the
+// trade happens on the provider, never inside Fluid). All
+// eighteen are Nigerian/African retail ramps from the
+// 2026-11-27 hidden-gem research (index-sourced from the
+// providers' own pages — the notes below carry their
+// PUBLISHED minimums and identity asks, attributed as
+// theirs; the spec's §6 live re-verification is still owed
+// before these rows ship, and no row here claims a measured
+// figure). Capture: NONE of the eighteen pays Fluid a fee
+// share yet (research: capture "none found" for every one)
+// — they stand on the owner's direct order as batch 1 did,
+// and the spec's §5.2 partner conversations are their
+// capture path. No CHEAPEST badge anywhere: no measured
+// price evidence exists for any of them. Direction is
+// per-provider as published: ten sell BOTH ways; eight are
+// SELL-only rows (KWIQ also sells buying inside its own app
+// — its row here is the sell side, and its note says so).
+// Countries: only picker countries get rows — Roqqu's ~28
+// EEA markets get none (the picker does not grow for a
+// route, and those corridors already carry Mt Pelerin).
+// Face-check rows say so in their notes BEFORE the user
+// taps: Daya and Monica ask for a selfie on their side
+// (with BVN / NIN), UseFlip's full tier adds a biometric
+// check, and Obiex's full verification adds a selfie —
+// the identity ask is never a surprise inside the provider.
+// Monica's minimum is NOT stated in its note: its own
+// pages say $5 while a competitor's comparison says $1 —
+// the conflict is disclosed, neither figure published.
+// NOT in this batch: §5.1's three P2P link-outs (Unigox,
+// Remitano, CoinCola) — the owner's P2P decision is still
+// open, so they stay out until he rules; and NoOnes stays
+// HELD (§5.2) on conflicting liveness evidence.
+export const DAYA_URL = "https://daya.co/coins";
+export const USEFLIP_URL = "https://useflip.io";
+export const ZAP_URL = "https://zap.africa";
+export const YESA_URL = "https://yesaapp.ng";
+export const BUSHA_URL = "https://busha.io";
+export const BREET_URL = "https://breet.io";
+export const ROQQU_URL = "https://roqqu.com";
+export const ASTRO_AFRICA_URL = "https://astroafrica.site";
+export const OBIEX_URL = "https://obiex.finance";
+export const BITMAMA_URL = "https://bitmama.io";
+export const KWIQ_URL = "https://kwiq.app";
+export const PRESTMIT_URL = "https://prestmit.io";
+export const NATA_URL = "https://nata.ng";
+export const MONICA_URL = "https://monica.cash";
+export const SWAPTO_URL = "https://useswapto.com";
+export const NOSH_URL = "https://usenosh.com";
+export const KOYN_URL = "https://getkoyn.com";
+export const FLIPEX_URL = "https://flipexapp.com";
 export const RAMP_STATIC_LINKS = {
   "LocalCoinSwap": { buy: LOCALCOINSWAP_URL, sell: LOCALCOINSWAP_URL },
   "Settu": { buy: SETTU_URL, sell: SETTU_URL },
   "Sendra": { buy: SENDRA_URL, sell: SENDRA_URL },
+  "Daya": { buy: DAYA_URL, sell: DAYA_URL },
+  "UseFlip": { buy: USEFLIP_URL, sell: USEFLIP_URL },
+  "Zap": { buy: ZAP_URL, sell: ZAP_URL },
+  "Yesa": { buy: YESA_URL, sell: YESA_URL },
+  "Busha": { buy: BUSHA_URL, sell: BUSHA_URL },
+  "Breet": { buy: BREET_URL, sell: BREET_URL },
+  "Roqqu": { buy: ROQQU_URL, sell: ROQQU_URL },
+  "Astro Africa": { buy: ASTRO_AFRICA_URL, sell: ASTRO_AFRICA_URL },
+  "Obiex": { buy: OBIEX_URL, sell: OBIEX_URL },
+  "Bitmama": { buy: BITMAMA_URL, sell: BITMAMA_URL },
+  "KWIQ": { buy: KWIQ_URL, sell: KWIQ_URL },
+  "Prestmit": { buy: PRESTMIT_URL, sell: PRESTMIT_URL },
+  "Nata": { buy: NATA_URL, sell: NATA_URL },
+  "Monica": { buy: MONICA_URL, sell: MONICA_URL },
+  "Swapto": { buy: SWAPTO_URL, sell: SWAPTO_URL },
+  "Nosh": { buy: NOSH_URL, sell: NOSH_URL },
+  "Koyn": { buy: KOYN_URL, sell: KOYN_URL },
+  "FlipEx": { buy: FLIPEX_URL, sell: FLIPEX_URL },
 };
 // A default note is either one string (used on both sheets) or a
 // per-mode { buy, sell } object — rampRoutesFor selects by mode so
@@ -7953,6 +8025,72 @@ const RAMP_DEFAULT_NOTES = {
     buy: "External app — the purchase happens with Sendra on WhatsApp, not inside Fluid · buy USDC or USDT with naira in a chat and pay by bank transfer · starts from about ₦1,000 (Sendra's published figure) · Sendra asks for basic KYC on their side",
     sell: "External app — the sale happens with Sendra on WhatsApp, not inside Fluid · sell USDC or USDT in a chat and get paid naira to your bank account · starts from about ₦1,000 (Sendra's published figure) · Sendra asks for basic KYC on their side",
   },
+  // Lubrica batch 2 (2026-11-27, owner's order; spec §5.1):
+  // the ten both-direction providers carry per-mode defaults
+  // here; the eight sell-only providers carry a single string
+  // (their only sheet — they hold no buy row anywhere, and
+  // §16c3 pins that). Every figure is the provider's own
+  // published one, attributed in the note; where a provider
+  // publishes no minimum or no identity ask, the note says
+  // exactly that instead of guessing. Face-check asks
+  // (Daya, Monica: a selfie; UseFlip's full tier: a
+  // biometric check; Obiex's full verification: a selfie)
+  // are stated plainly — the user reads the identity ask
+  // before they tap.
+  "Daya": {
+    buy: "External app — the purchase happens on Daya, not inside Fluid · buy crypto with naira from a Daya naira account in your own name · Daya publishes no minimum for retail buys (its Pro order book starts at $1) · Daya verifies your BVN and asks for a selfie on their side",
+    sell: "External app — the sale happens on Daya, not inside Fluid · sell crypto and get paid naira to your bank account · Daya publishes no minimum for retail sales (its Pro order book starts at $1) · Daya verifies your BVN and asks for a selfie on their side",
+  },
+  "UseFlip": {
+    buy: "External app — the purchase happens on UseFlip, not inside Fluid · buy USDT or USDC with naira by bank transfer to a single-use virtual account · UseFlip publishes no minimum · its starter tier asks for no verification; higher limits ask for NIN, BVN, a government ID and a biometric check on their side",
+    sell: "External app — the sale happens on UseFlip, not inside Fluid · sell USDT or USDC and get paid naira to your bank account · UseFlip publishes no minimum · with no verification at all, sales are capped at $300/day on UseFlip's side; higher limits ask for NIN, BVN, a government ID and a biometric check",
+  },
+  "Zap": {
+    buy: "External app — the purchase happens on Zap, not inside Fluid · buy crypto with naira by bank transfer · Zap publishes no minimum · Zap verifies in tiers on their side: BVN alone allows up to ₦500,000 per transaction, adding a government ID raises it to ₦3M, and proof of address to ₦15M",
+    sell: "External app — the sale happens on Zap, not inside Fluid · sell crypto and get paid naira to your bank account · Zap publishes no minimum · Zap verifies in tiers on their side: BVN alone allows up to ₦500,000 per transaction, adding a government ID raises it to ₦3M, and proof of address to ₦15M",
+  },
+  "Yesa": {
+    buy: "External app — the purchase happens on Yesa, not inside Fluid · buy USDT or USDC with naira by bank transfer · Yesa publishes no minimum · Yesa asks for verification on their side (the detail is shown in their app)",
+    sell: "External app — the sale happens on Yesa, not inside Fluid · sell USDT or USDC and get paid naira to your bank account · Yesa publishes no minimum and charges no sell fee · Yesa asks for verification on their side (the detail is shown in their app)",
+  },
+  "Busha": {
+    buy: "External app — the purchase happens on Busha, not inside Fluid · buy USDC or USDT with naira by bank transfer · buys start at ₦250 (Busha's published figure) · Busha verifies in tiers on their side — its first tier can deposit but not withdraw",
+    sell: "External app — the sale happens on Busha, not inside Fluid · sell USDC or USDT and get paid naira to your bank account · Busha publishes no sell minimum · Busha verifies in tiers on their side — its first tier can deposit but not withdraw",
+  },
+  "Breet": {
+    buy: "External app — the purchase happens on Breet, not inside Fluid · buy USDT or USDC with local currency and have it sent to your own wallet address · buys start at $10 (Breet's published figure) · Breet runs identity checks on their side and can hold deposits for review",
+    sell: "External app — the sale happens on Breet, not inside Fluid · sell crypto and get paid to your bank account · sells start at $5, with per-coin floors of $2–$10 (USDT on TRC20 starts at $10) — Breet's published figures · Breet runs identity checks on their side",
+  },
+  // Roqqu's default serves GH/ZA/KE; its NG row overrides
+  // with the Nigeria-specific caveats (no NG SEC licence;
+  // the NGN↔USDT pair's live status unverified since its
+  // 2024 disable) — see the NG plan entry.
+  "Roqqu": {
+    buy: "External app — the purchase happens on Roqqu, not inside Fluid · buy USDC or USDT with local currency by bank transfer · Roqqu publishes no minimum · Roqqu's verification ask is not published — expect an identity check in their app",
+    sell: "External app — the sale happens on Roqqu, not inside Fluid · sell USDC or USDT and get paid to your bank account · Roqqu publishes no minimum · Roqqu's verification ask is not published — expect an identity check in their app",
+  },
+  "Astro Africa": {
+    buy: "External app — the purchase happens on Astro Africa, not inside Fluid · buy crypto with local currency by bank transfer · Astro Africa publishes no minimum · Astro Africa says no ID is needed to sign up or start trading (its own claim; later tiers are not described)",
+    sell: "External app — the sale happens on Astro Africa, not inside Fluid · sell crypto and get paid to your bank account or mobile money · Astro Africa publishes no minimum · Astro Africa says no ID is needed to sign up or start trading (its own claim; later tiers are not described)",
+  },
+  "Obiex": {
+    buy: "External app — the purchase happens on Obiex, not inside Fluid · fund Obiex's naira balance (NGNX) and swap into crypto at no swap fee · Obiex publishes no retail minimum (its OTC desk starts at $50,000 — that is not this route) · Obiex asks for your BVN to activate the naira balance, and full verification adds a government ID and a selfie on their side",
+    sell: "External app — the sale happens on Obiex, not inside Fluid · swap crypto into Obiex's naira balance (NGNX) at no swap fee and withdraw to your bank free · Obiex publishes no retail minimum (its OTC desk starts at $50,000 — that is not this route) · Obiex asks for your BVN to activate the naira balance, and full verification adds a government ID and a selfie on their side",
+  },
+  "Bitmama": {
+    buy: "External app — the purchase happens on Bitmama, not inside Fluid · buy USDT, USDC or XLM with local currency by bank transfer · Bitmama publishes no minimum · Bitmama's verification ask is not published — expect an identity check in their app",
+    sell: "External app — the sale happens on Bitmama, not inside Fluid · sell USDT, USDC or XLM and get paid to your bank account · Bitmama publishes no minimum · Bitmama's verification ask is not published — expect an identity check in their app",
+  },
+  // Sell-only providers (single string = their sell sheet's
+  // copy; none of them holds a buy row in any corridor).
+  "KWIQ": "External app — the sale happens on KWIQ, not inside Fluid · sell crypto and get paid naira to your bank account at zero fee (KWIQ's published figure) · KWIQ publishes no minimum · KWIQ's verification ask is not published — expect an identity check in their app · KWIQ also offers buying inside its own app; this row is its sell side",
+  "Prestmit": "External app — the sale happens on Prestmit, not inside Fluid · sell crypto and get paid to your bank account · Prestmit's published route minimums: $2 for BTC, LTC and DOGE, $5 for most other coins, $10 for USDT on TRC20 · Prestmit's verification ask is not published — expect an identity check in their app",
+  "Nata": "External app — the sale happens on Nata, not inside Fluid · sell crypto and get paid naira to your bank account at ₦0 selling fee (Nata's published figure) · Nata's published route minimums: 2 USDT or 2 USDC, 0.0001 BTC, 0.001 ETH · Nata's verification ask is not published — expect an identity check in their app",
+  "Monica": "External app — the sale happens on Monica, not inside Fluid · sell crypto and get paid naira to your bank account · Monica's minimum is not stated here: its own pages say $5 while a competitor's comparison says $1 — check the live figure in Monica before you send · Monica verifies your NIN and asks for a selfie on their side, once, before your first sale",
+  "Swapto": "External app — the sale happens on Swapto, not inside Fluid · sell crypto and get paid naira to your bank account · sales start at about ₦1,000 equivalent (Swapto's published figure) · Swapto verifies your BVN on their side",
+  "Nosh": "External app — the sale happens on Nosh, not inside Fluid · sell crypto and get paid to your bank account · Nosh publishes no minimum · Nosh verifies your identity during sign-up on their side",
+  "Koyn": "External app — the sale happens on Koyn, not inside Fluid · sell crypto and get paid naira to your bank account · Koyn publishes no minimum · Koyn asks for basic verification on their side",
+  "FlipEx": "External app — the sale happens on FlipEx, not inside Fluid · sell crypto and get paid naira to your bank account · FlipEx publishes no minimum · receiving needs only email and phone on FlipEx's side; selling asks for your BVN (its Tier 2)",
 };
 // The SWIFT addendum (audit P1-12): on the 12 own-fiat Mt Pelerin
 // corridors flagged `swift: true` in the plan, a bank-transfer buy
@@ -8002,6 +8140,35 @@ export const RAMP_ADDRESS_ENTRY = {
   // sent on to an address the user gives. Not a
   // WalletConnect-only route.
   "Sendra": "paste",
+  // Lubrica batch 2 (2026-11-27): all eighteen are
+  // account-based apps/exchanges of the LocalCoinSwap
+  // reading — none publishes a WalletConnect-only buy flow,
+  // and bought crypto withdraws to an address the user
+  // pastes (Breet's own pages state buys are sent to an
+  // external wallet; Zap is non-custodial by design; the
+  // rest are custodial-balance apps with address
+  // withdrawals). So none is a WalletConnect-only route.
+  // The live paste-path re-verification the spec's §6 rule
+  // demands is still owed for each and is recorded as such
+  // in the batch-2 narration above.
+  "Daya": "paste",
+  "UseFlip": "paste",
+  "Zap": "paste",
+  "Yesa": "paste",
+  "Busha": "paste",
+  "Breet": "paste",
+  "Roqqu": "paste",
+  "Astro Africa": "paste",
+  "Obiex": "paste",
+  "Bitmama": "paste",
+  "KWIQ": "paste",
+  "Prestmit": "paste",
+  "Nata": "paste",
+  "Monica": "paste",
+  "Swapto": "paste",
+  "Nosh": "paste",
+  "Koyn": "paste",
+  "FlipEx": "paste",
   // The removed form-route provider held a "paste" entry here
   // during its one-day life (2026-11-16) — removed with the
   // whole integration the same day (owner's order, 21:04 WAT;
@@ -8025,7 +8192,14 @@ export const RAMP_ADDRESS_ENTRY = {
 // the owner's DIRECT ORDER: they carry no capture yet and sit
 // in the plan as labelled external rows on his instruction
 // alone — the gate's history is not rewritten by them, and
-// any FUTURE provider still needs (a) or (b). The African off-ramp
+// any FUTURE provider still needs (a) or (b). Lubrica batch 2
+// (the eighteen §5.1 rows added later the same day) stands on
+// the same direct order — the owner's "find every corridor"
+// instruction named the spec's build-ready list itself; the
+// research found no capture for any of the eighteen, and the
+// spec's §5.2 partner conversations are their capture path.
+// The gate is not rewritten by them either: a provider the
+// owner has not named still needs (a) or (b). The African off-ramp
 // provider briefly kept under clause (b) was REMOVED IN FULL
 // 2026-11-10 on the owner's direct order (see the plan history
 // above). The Paycrest Gateway sell is the gate's model citizen
@@ -8083,12 +8257,47 @@ export const RAMP_COUNTRY_PLAN = {
   // end-state, ordered, not a quiet reversal of the bars:
   // the bars judged IN-Fluid and marketplace rows; these are
   // labelled link-outs the owner named himself.
+  // NG GAINS BATCH 2 the same evening (2026-11-27, owner's
+  // "find every corridor" order; composable-corridors spec
+  // §5.1): eighteen more labelled EXTERNAL rows queue behind
+  // Settu and Sendra — ten both-direction (Daya, UseFlip,
+  // Zap, Yesa, Busha, Breet, Roqqu, Astro Africa, Obiex,
+  // Bitmama) and eight sell-only (KWIQ, Prestmit, Nata,
+  // Monica, Swapto, Nosh, Koyn, FlipEx). Facts are the
+  // providers' own published figures from the 2026-11-27
+  // research, carried in the provider default notes; Roqqu's
+  // row overrides its note with the Nigeria caveats (no NG
+  // SEC licence; its NGN↔USDT pair was disabled in 2024 and
+  // its live status is unverified). No capture for any of
+  // the eighteen yet; no badges (no measured price
+  // evidence). §16c3 pins the batch-2 matrix.
   NG: [
     ["Settu", { external: true, note: {
       buy: "External app — the purchase happens on Settu, not inside Fluid · buy USDC with naira by bank transfer; the USDC arrives on Stellar, to your connected wallet or a Stellar address you paste · Settu verifies your NIN on their side",
       sell: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid naira to your Nigerian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there",
     } }],
     ["Sendra", { external: true }],
+    ["Daya", { external: true }],
+    ["UseFlip", { external: true }],
+    ["Zap", { external: true }],
+    ["Yesa", { external: true }],
+    ["Busha", { external: true }],
+    ["Breet", { external: true }],
+    ["Roqqu", { external: true, note: {
+      buy: "External app — the purchase happens on Roqqu, not inside Fluid · buy USDC or USDT with naira by bank transfer · Roqqu publishes no minimum · Roqqu's verification ask is not published — expect an identity check in their app · two cautions: Roqqu holds no Nigerian SEC licence, and its naira↔USDT pair was disabled in 2024 — check the pair is live in Roqqu before you rely on it",
+      sell: "External app — the sale happens on Roqqu, not inside Fluid · sell USDC or USDT and get paid naira to your bank account · Roqqu publishes no minimum · Roqqu's verification ask is not published — expect an identity check in their app · two cautions: Roqqu holds no Nigerian SEC licence, and its naira↔USDT pair was disabled in 2024 — check the pair is live in Roqqu before you rely on it",
+    } }],
+    ["Astro Africa", { external: true }],
+    ["Obiex", { external: true }],
+    ["Bitmama", { external: true }],
+    ["KWIQ", { modes: ["sell"], external: true }],
+    ["Prestmit", { modes: ["sell"], external: true }],
+    ["Nata", { modes: ["sell"], external: true }],
+    ["Monica", { modes: ["sell"], external: true }],
+    ["Swapto", { modes: ["sell"], external: true }],
+    ["Nosh", { modes: ["sell"], external: true }],
+    ["Koyn", { modes: ["sell"], external: true }],
+    ["FlipEx", { modes: ["sell"], external: true }],
   ],
   // KE: BUY resolves empty (the LocalCoinSwap buy book sat
   // +4.5% to +7.6% over market on the 2026-11-10 live check).
@@ -8111,8 +8320,14 @@ export const RAMP_COUNTRY_PLAN = {
   // row in the LocalCoinSwap shape, no fee share yet, no
   // badge (no measured price evidence). BUY stays honestly
   // empty: Settu's only verified buy market is Nigeria.
+  // KE GAINS BATCH 2 the same evening (spec §5.1): Roqqu and
+  // Bitmama, both directions, labelled EXTERNAL — BUY gains
+  // its first routes, and both queue behind Settu on the
+  // sell sheet. No capture yet, no badges. §16c3 pins it.
   KE: [
     ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid shillings to your Kenyan bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+    ["Roqqu", { external: true }],
+    ["Bitmama", { external: true }],
   ],
   // GH: BUY stays honestly empty (the LocalCoinSwap buy book
   // sat +1% to +54% over market on the 2026-11-10 live check —
@@ -8142,8 +8357,21 @@ export const RAMP_COUNTRY_PLAN = {
   // yet, no badge (no measured price evidence). BUY stays
   // honestly empty: Settu's only verified buy market is
   // Nigeria.
+  // GH GAINS BATCH 2 the same evening (spec §5.1): five
+  // both-direction rows (Breet, Roqqu, Astro Africa, Obiex,
+  // Bitmama) — BUY gains its first routes — plus two
+  // sell-only rows (Prestmit, Nosh) behind Settu on the sell
+  // sheet. All labelled EXTERNAL, no capture yet, no badges.
+  // §16c3 pins it.
   GH: [
     ["Settu", { modes: ["sell"], external: true, note: "External app — the sale happens on Settu, not inside Fluid · sell USDC and get paid cedis to your Ghanaian bank account — Settu says payouts typically land in about 3 minutes · sales from 0.7 USDC · you connect your own wallet on Settu and sign there" }],
+    ["Breet", { external: true }],
+    ["Roqqu", { external: true }],
+    ["Astro Africa", { external: true }],
+    ["Obiex", { external: true }],
+    ["Bitmama", { external: true }],
+    ["Prestmit", { modes: ["sell"], external: true }],
+    ["Nosh", { modes: ["sell"], external: true }],
   ],
   // BJ/BF/GA/CG/CD/GM held empty plans here during the form-
   // route batch's one-day life (2026-11-16) — the route was appended
@@ -8152,8 +8380,13 @@ export const RAMP_COUNTRY_PLAN = {
   // (owner's order, 21:04 WAT) and the six countries left the
   // picker with it (see RAMP_COUNTRIES above), so their plan
   // entries come out too.
+  // ZA GAINS BATCH 2 2026-11-27 (spec §5.1): Roqqu, both
+  // directions, labelled EXTERNAL, queues behind Mt
+  // Pelerin's badged lead on both sheets — no capture yet,
+  // no badge (no measured price evidence). §16c3 pins it.
   ZA: [
     ["Mt Pelerin", { badge: true, badgeModes: ["buy"], swift: true }],
+    ["Roqqu", { external: true }],
   ],
   // UG: BUY resolves empty (the LocalCoinSwap buy book was
   // junk / +19% to +29% over market on the 2026-11-10 live
