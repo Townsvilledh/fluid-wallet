@@ -5112,10 +5112,11 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     FetchRequest.registerGetUrl(rpcGetUrl(false));
     let rows = await getBalances(wallet, "bsc");
     ok("evm balances: healthy primary reads native + tokens",
-      rows.length === 4 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
+      rows.length === 5 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
       && rows[1].symbol === "USDC" && rows[1].amount === "2.0"
       && rows[2].symbol === "USDT" && rows[2].amount === "3.0"
-      && rows[3].symbol === "BTCB" && rows[3].amount === "3.0");
+      && rows[3].symbol === "BTCB" && rows[3].amount === "3.0"
+      && rows[4].symbol === "NODE" && rows[4].amount === "3.0");
     ok("evm balances: healthy primary never calls the fallback",
       calls.every(u => u.includes("bsc-rpc.publicnode.com")));
     // Primary 429s (transport rejects, the way a rate limit surfaces):
@@ -5124,7 +5125,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     FetchRequest.registerGetUrl(rpcGetUrl(true));
     rows = await getBalances(wallet, "bsc");
     ok("evm balances: dead primary falls back to the dataseed",
-      rows.length === 4 && rows[0].amount === "1.0" && rows[1].amount === "2.0");
+      rows.length === 5 && rows[0].amount === "1.0" && rows[1].amount === "2.0");
     ok("evm balances: fallback was attempted after the primary failed",
       calls.some(u => u.includes("bsc-rpc.publicnode.com")) && calls.some(u => u.includes("bsc-dataseed.binance.org")));
     // Both dead: the read rejects — the app shows "couldn't load".
@@ -5224,16 +5225,17 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     FetchRequest.registerGetUrl(stub61a(true, 0));
     const rows = await getBalances(wallet61a, "bsc");
     ok("61a: a token failing everywhere degrades to a null row; native + siblings still load",
-      rows.length === 4 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
+      rows.length === 5 && rows[0].symbol === "BNB" && rows[0].amount === "1.0"
       && rows[1].symbol === "USDC" && rows[1].amount === null
-      && rows[2].symbol === "USDT" && rows[2].amount === "3.0");
+      && rows[2].symbol === "USDT" && rows[2].amount === "3.0"
+      && rows[4].symbol === "NODE" && rows[4].amount === "3.0");
     // Slow-but-alive endpoints (3 s — dead under the old 2500 ms
     // budget, alive under the phone-realistic one): the read lands.
     resetEvmRpcHealth();
     FetchRequest.registerGetUrl(stub61a(false, 3000));
     const slowRows = await getBalances(wallet61a, "bsc");
     ok("61a: endpoints answering at 3 s (past the old budget) still land the balance read",
-      slowRows.length === 4 && slowRows[0].amount === "1.0" && slowRows[1].amount === "2.0");
+      slowRows.length === 5 && slowRows[0].amount === "1.0" && slowRows[1].amount === "2.0");
   } finally {
     FetchRequest.registerGetUrl(defaultGetUrl61a);
     resetEvmRpcHealth();
@@ -5333,7 +5335,7 @@ ok("fee pot due exactly at $2", feePotReport([{ amount: 2, priceUsd: 1 }]).due =
     resetEvmRpcHealth();
     const rowsRpc = await getBalances({ address: "0x0000000000000000000000000000000000000001" }, "bsc");
     ok("evm balances: an HTTP-403 primary rotates and the load succeeds",
-      rowsRpc.length === 4 && rowsRpc[0].amount === "1.0"
+      rowsRpc.length === 5 && rowsRpc[0].amount === "1.0"
       && seenRpc[0] === BSC_URLS[0] && seenRpc.some(u => u === BSC_URLS[1]));
   } finally { FetchRequest.registerGetUrl(prevGetUrlRpc); resetEvmRpcHealth(); }
 
@@ -23093,7 +23095,7 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
      { address: USDC_ARB, symbol: "USDC", decimals: 6 }],
     [{ address: "0x1111111111111111111111111111111111111111", symbol: "CSTM", name: "Custom Token", decimals: 18 }]);
   ok("§147: a chain's failure shape is native + curated + held/custom records, every row unknown (amount null)",
-    failRows.length === 5 && failRows.every(r => r.amount === null)
+    failRows.length === 6 && failRows.every(r => r.amount === null)
     && failRows[0].symbol === "ETH" && failRows[0].address === null
     && failRows.some(r => r.symbol === "USDT"));
   ok("§147: the failure shape carries the non-curated HELD token (the LADYS hole) and the custom record, curated duplicates collapsed",
@@ -26132,6 +26134,290 @@ import { DISCOVERY_BLOCKSCOUT_APIS, parseBlockscoutTokenBalances, fetchBlockscou
       FetchRequest.registerGetUrl(defaultGetUrl29);
     }
   } finally { clearInterval(keepAlive29); }
+}
+
+// ---------- 2026-11-28 NodeOps NODE bridge (LayerZero OFT, Arbitrum <-> BSC) ----------
+// The Portal's call, captured from its own bundles and verified
+// on chain before implementation (see the wallet-core section):
+// send() on the token itself, quoteSend for the fee, no
+// approval. These pins hold the construction to the captured
+// shape — with the one deliberate tightening: minAmountLD is
+// the exact dust-floored delivery, not the Portal's looser
+// amount - 5 NODE, and the Portal's minimum is refused below.
+{
+  const {
+    NODE_TOKEN_ADDRESS: NODE_ADDR_NB, NODE_OFT_EXTRA_OPTIONS: NODE_OPTS_NB, NETWORKS: NETWORKS_NB,
+    nodeBridgePair: pairNB, nodeBridgeReceivedAmountLD: recvNB, buildNodeBridgeSendParam: buildParamNB,
+    encodeNodeBridgeSendTx: encodeTxNB, checkNodeBridgeTx: checkTxNB, nodeBridgeFeeBandOk: bandNB,
+    verifyNodeOftEntry: verifyNB, resetNodeBridgeVerifyCache: resetVerifyNB,
+    getNodeBridgeSwapRoute: getRouteNB, executeNodeBridgeSwapRoute: execRouteNB, swapRouteExecutable,
+  } = await import("../src/wallet-core.js");
+  const { ethers: ethersNB } = await import("ethers");
+  const USER_NB = "0x1111111111111111111111111111111111111111";
+  const FULL_NB = "1348019189852397434509"; // the owner's real Arbitrum balance at capture
+  const FEE_ARB_NB = 742162481973798n;      // the real quoteSend answer, Arbitrum -> BSC, 2026-11-28
+  const FEE_BSC_NB = 2371445758639065n;     // the real quoteSend answer, BSC -> Arbitrum, 2026-11-28
+  const ADAPTER_NB = "0xA516F018D5ac6d086a04bBB1A8ECb00eB61a970a"; // Ethereum's OFT adapter — never the Arb/BSC target
+  // The Portal's own ABI, verbatim from its page chunk — the
+  // INDEPENDENT decoder every built transaction is judged with.
+  const PORTAL_ABI_NB = [
+    { name: "send", type: "function", stateMutability: "payable",
+      inputs: [
+        { name: "_sendParam", type: "tuple", components: [
+          { name: "dstEid", type: "uint32" }, { name: "to", type: "bytes32" },
+          { name: "amountLD", type: "uint256" }, { name: "minAmountLD", type: "uint256" },
+          { name: "extraOptions", type: "bytes" }, { name: "composeMsg", type: "bytes" }, { name: "oftCmd", type: "bytes" } ] },
+        { name: "_fee", type: "tuple", components: [
+          { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] },
+        { name: "_refundAddress", type: "address" } ],
+      outputs: [
+        { name: "msgReceipt", type: "tuple", components: [
+          { name: "guid", type: "bytes32" }, { name: "nonce", type: "uint64" },
+          { name: "fee", type: "tuple", components: [
+            { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] } ] },
+        { name: "oftReceipt", type: "tuple", components: [
+          { name: "amountSentLD", type: "uint256" }, { name: "amountReceivedLD", type: "uint256" } ] } ] },
+    { name: "quoteSend", type: "function", stateMutability: "view",
+      inputs: [
+        { name: "_sendParam", type: "tuple", components: [
+          { name: "dstEid", type: "uint32" }, { name: "to", type: "bytes32" },
+          { name: "amountLD", type: "uint256" }, { name: "minAmountLD", type: "uint256" },
+          { name: "extraOptions", type: "bytes" }, { name: "composeMsg", type: "bytes" }, { name: "oftCmd", type: "bytes" } ] },
+        { name: "_payInLzToken", type: "bool" } ],
+      outputs: [ { name: "msgFee", type: "tuple", components: [
+        { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] } ] },
+  ];
+  const portalIfaceNB = new ethersNB.Interface(PORTAL_ABI_NB);
+
+  // --- the pair gate ---
+  const argsNB = (over = {}) => ({ fromChainKey: "arbitrum", toChainKey: "bsc", fromTokenAddress: NODE_ADDR_NB, toTokenAddress: NODE_ADDR_NB, fromAmount: "1000000000000000000", fromAddress: USER_NB, toAddress: USER_NB, ...over });
+  ok("nodebridge: the pair resolves both directions with the destination's endpoint id",
+    pairNB(argsNB())?.dstEid === 30102 && pairNB(argsNB({ fromChainKey: "bsc", toChainKey: "arbitrum" }))?.dstEid === 30110);
+  ok("nodebridge: non-pairs refuse — same chain, an unbridged chain, a different token, a dead amount",
+    pairNB(argsNB({ toChainKey: "arbitrum" })) === null
+    && pairNB(argsNB({ toChainKey: "ethereum" })) === null
+    && pairNB(argsNB({ fromTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" })) === null
+    && pairNB(argsNB({ toTokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" })) === null
+    && pairNB(argsNB({ fromAmount: "0" })) === null && pairNB(argsNB({ fromAmount: "1.5" })) === null);
+
+  // --- delivered-amount (dust) math ---
+  ok("nodebridge: the delivered amount is the sent amount floored to the shared-decimal dust unit (quoteOFT's own arithmetic)",
+    recvNB(FULL_NB) === "1348019189000000000000" && recvNB("1500000000000000000") === "1500000000000000000"
+    && recvNB("100000000000000000000") === "100000000000000000000" && recvNB("999999999999") === "0");
+
+  // --- the SendParam: the Portal's shape ---
+  const paramNB = buildParamNB({ dstEid: 30102, toAddress: USER_NB, amountRaw: FULL_NB });
+  // The Portal's options, rebuilt from their decoded parts
+  // (type 3 | executor worker 1 | option size 17 | lzReceive
+  // type 1 | uint128 gas 200000) — an independent construction
+  // of the same bytes the Portal's options builder emits.
+  const portalOptionsNB = ethersNB.concat(["0x0003", "0x01", "0x0011", "0x01", ethersNB.zeroPadValue(ethersNB.toBeHex(200000), 16)]);
+  ok("nodebridge: the SendParam is the Portal's — destination eid, bytes32 recipient, exact amount, the Portal's own options bytes",
+    paramNB.dstEid === 30102 && paramNB.to === ethersNB.zeroPadValue(USER_NB, 32)
+    && paramNB.amountLD === BigInt(FULL_NB) && paramNB.extraOptions === portalOptionsNB && paramNB.extraOptions === NODE_OPTS_NB
+    && paramNB.composeMsg === "0x" && paramNB.oftCmd === "0x");
+  ok("nodebridge: the minimum is the EXACT delivery — the Portal's looser amount-minus-5-NODE is not what Fluid signs",
+    paramNB.minAmountLD === BigInt(recvNB(FULL_NB)) && paramNB.minAmountLD !== BigInt(FULL_NB) - 5000000000000000000n);
+
+  // --- the built transaction, judged by the Portal's own ABI ---
+  const txNB = encodeTxNB({ param: paramNB, nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB });
+  const decNB = portalIfaceNB.decodeFunctionData("send", txNB.data);
+  ok("nodebridge: the built transaction is send() on the token itself, value = the quoted fee, refund to the sender",
+    txNB.to === NODE_ADDR_NB && txNB.value === FEE_ARB_NB
+    && Number(decNB[0].dstEid) === 30102 && decNB[0].to === ethersNB.zeroPadValue(USER_NB, 32)
+    && decNB[0].amountLD === BigInt(FULL_NB) && decNB[0].minAmountLD === BigInt(recvNB(FULL_NB))
+    && decNB[0].extraOptions === NODE_OPTS_NB && decNB[1].nativeFee === FEE_ARB_NB && decNB[1].lzTokenFee === 0n
+    && decNB[2].toLowerCase() === USER_NB.toLowerCase());
+
+  // --- the route fixture + bounds check + gate ---
+  const routeNB = {
+    provider: "nodebridge", id: "nodebridge:arbitrum:bsc", type: "bridge",
+    fromChainId: 42161, toChainId: 56, fromChainKey: "arbitrum", toChainKey: "bsc",
+    fromAmount: FULL_NB, fromToken: { address: NODE_ADDR_NB, symbol: "NODE", name: "NodeOps", decimals: 18, chainId: 42161 },
+    toToken: { address: NODE_ADDR_NB, symbol: "NODE", name: "NodeOps", decimals: 18, chainId: 56 },
+    toAmount: recvNB(FULL_NB), toAmountMin: recvNB(FULL_NB), toAmountUSD: null, fromAmountUSD: null,
+    gasCostUSD: null, routeFeeUsd: null, executionDuration: 900,
+    platformFeeRaw: "0", platformFeeUsd: 0, platformFeeBps: 0, platformFeeCollecting: false, steps: [],
+    nodeBridge: { token: NODE_ADDR_NB, dstEid: 30102, recipient: USER_NB, nativeFeeRaw: FEE_ARB_NB.toString(), lzReceiveGas: 200000 },
+  };
+  ok("nodebridge: the bounds check accepts the exact built transaction",
+    checkTxNB(routeNB, txNB, USER_NB).ok === true);
+  const tamperNB = (fn) => { const p = buildParamNB({ dstEid: 30102, toAddress: USER_NB, amountRaw: FULL_NB }); fn(p); return p; };
+  ok("nodebridge: the bounds check refuses every drift — recipient, endpoint, amount, the Portal's loose minimum, options, value, refund, target, a non-send call",
+    checkTxNB(routeNB, encodeTxNB({ param: tamperNB(p => { p.to = ethersNB.zeroPadValue("0x2222222222222222222222222222222222222222", 32); }), nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB }), USER_NB).ok === false
+    && checkTxNB(routeNB, encodeTxNB({ param: tamperNB(p => { p.dstEid = 30110; }), nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB }), USER_NB).ok === false
+    && checkTxNB(routeNB, encodeTxNB({ param: tamperNB(p => { p.amountLD = BigInt(FULL_NB) - 1n; }), nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB }), USER_NB).ok === false
+    && checkTxNB(routeNB, encodeTxNB({ param: tamperNB(p => { p.minAmountLD = BigInt(FULL_NB) - 5000000000000000000n; }), nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB }), USER_NB).ok === false
+    && checkTxNB(routeNB, encodeTxNB({ param: tamperNB(p => { p.extraOptions = "0x000301001101000000000000000000000000000186a0"; }), nativeFeeRaw: FEE_ARB_NB, refundAddress: USER_NB }), USER_NB).ok === false
+    && checkTxNB(routeNB, { ...txNB, value: FEE_ARB_NB - 1n }, USER_NB).ok === false
+    && checkTxNB(routeNB, encodeTxNB({ param: paramNB, nativeFeeRaw: FEE_ARB_NB, refundAddress: "0x2222222222222222222222222222222222222222" }), USER_NB).ok === false
+    && checkTxNB(routeNB, { ...txNB, to: ADAPTER_NB }, USER_NB).ok === false
+    && checkTxNB(routeNB, { ...txNB, data: "0x095ea7b3" + "0".repeat(128) }, USER_NB).ok === false);
+  ok("nodebridge: the fee band holds the reviewed quote — half again (or 0.0001 native for dust fees) of slack, never more, never a dead fee",
+    bandNB(FEE_ARB_NB, FEE_ARB_NB) === true && bandNB(FEE_ARB_NB, FEE_ARB_NB * 3n / 2n) === true
+    && bandNB(FEE_ARB_NB, FEE_ARB_NB * 3n / 2n + 1n) === false
+    && bandNB(1000n, 100000000001000n) === true && bandNB(1000n, 100000000001001n) === false
+    && bandNB(0n, 5n) === false && bandNB(5n, 0n) === false && bandNB("junk", 5n) === false);
+  ok("nodebridge: the quoter's shape passes the executability gate",
+    swapRouteExecutable(routeNB).ok === true);
+  ok("nodebridge: the gate refuses drift — a claimed fee, an unfloored delivery, the wrong endpoint, a missing recipient, a same-chain pair",
+    swapRouteExecutable({ ...routeNB, platformFeeCollecting: true }).ok === false
+    && swapRouteExecutable({ ...routeNB, platformFeeRaw: "5" }).ok === false
+    && swapRouteExecutable({ ...routeNB, toAmount: FULL_NB, toAmountMin: FULL_NB }).ok === false
+    && swapRouteExecutable({ ...routeNB, nodeBridge: { ...routeNB.nodeBridge, dstEid: 30110 } }).ok === false
+    && swapRouteExecutable({ ...routeNB, nodeBridge: { ...routeNB.nodeBridge, recipient: "" } }).ok === false
+    && swapRouteExecutable({ ...routeNB, toChainKey: "arbitrum", toChainId: 42161 }).ok === false);
+}
+
+// ---------- NodeOps NODE bridge: quote + execute on stubbed chains ----------
+// The stub answers the token's own calls with the facts measured
+// live on chain (the real quoteSend fees among them), so the
+// production quoter and executor run end to end and the signed
+// broadcast is decoded with the Portal's own ABI — the
+// construction proof, in the suite's established stub pattern.
+{
+  const {
+    NODE_TOKEN_ADDRESS: NODE_ADDR_NB2, nodeBridgeReceivedAmountLD: recvNB2,
+    verifyNodeOftEntry: verifyNB2, resetNodeBridgeVerifyCache: resetVerifyNB2,
+    getNodeBridgeSwapRoute: getRouteNB2, executeNodeBridgeSwapRoute: execRouteNB2, swapRouteExecutable: gateNB2,
+  } = await import("../src/wallet-core.js");
+  const { ethers: ethersNB2 } = await import("ethers");
+  const FULL_NB2 = "1348019189852397434509";
+  const FEE_ARB_NB2 = 742162481973798n;
+  const FEE_BSC_NB2 = 2371445758639065n;
+  const portalIfaceNB2 = new ethersNB2.Interface([
+    { name: "send", type: "function", stateMutability: "payable",
+      inputs: [
+        { name: "_sendParam", type: "tuple", components: [
+          { name: "dstEid", type: "uint32" }, { name: "to", type: "bytes32" },
+          { name: "amountLD", type: "uint256" }, { name: "minAmountLD", type: "uint256" },
+          { name: "extraOptions", type: "bytes" }, { name: "composeMsg", type: "bytes" }, { name: "oftCmd", type: "bytes" } ] },
+        { name: "_fee", type: "tuple", components: [
+          { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] },
+        { name: "_refundAddress", type: "address" } ],
+      outputs: [] },
+    { name: "quoteSend", type: "function", stateMutability: "view",
+      inputs: [
+        { name: "_sendParam", type: "tuple", components: [
+          { name: "dstEid", type: "uint32" }, { name: "to", type: "bytes32" },
+          { name: "amountLD", type: "uint256" }, { name: "minAmountLD", type: "uint256" },
+          { name: "extraOptions", type: "bytes" }, { name: "composeMsg", type: "bytes" }, { name: "oftCmd", type: "bytes" } ] },
+        { name: "_payInLzToken", type: "bool" } ],
+      outputs: [ { name: "msgFee", type: "tuple", components: [
+        { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] } ] },
+  ]);
+  const probeIfaceNB2 = new ethersNB2.Interface([
+    "function token() view returns (address)", "function decimals() view returns (uint8)",
+    "function sharedDecimals() view returns (uint8)", "function approvalRequired() view returns (bool)",
+    "function peers(uint32) view returns (bytes32)",
+  ]);
+  const selNB2 = (name) => probeIfaceNB2.getFunction(name).selector;
+  const wordNB2 = (v) => "0x" + BigInt(v).toString(16).padStart(64, "0");
+  const blockNB2 = { number: "0x64", hash: "0x" + "22".repeat(32), parentHash: "0x" + "11".repeat(32), timestamp: "0x67300000", transactions: [], gasLimit: "0x1c9c380", gasUsed: "0x0", miner: "0x0000000000000000000000000000000000000000", difficulty: "0x0", baseFeePerGas: "0x5f5e100", extraData: "0x", nonce: "0x0000000000000000", mixHash: "0x" + "00".repeat(32), sha3Uncles: "0x" + "00".repeat(32), logsBloom: "0x" + "00".repeat(256), stateRoot: "0x" + "00".repeat(32), transactionsRoot: "0x" + "00".repeat(32), receiptsRoot: "0x" + "00".repeat(32), uncles: [] };
+  const makeRpcNB2 = ({ chainIdHex, netVersion, feeRaw, wrongPeer = false }) => {
+    const sent = [];
+    const answer = (r) => {
+      let result;
+      switch (r.method) {
+        case "eth_chainId": result = chainIdHex; break;
+        case "net_version": result = netVersion; break;
+        case "eth_blockNumber": result = "0x64"; break;
+        case "eth_getBlockByNumber": result = blockNB2; break;
+        case "eth_getBalance": result = "0x38d7ea4c68000"; break;
+        case "eth_getTransactionCount": result = "0x0"; break;
+        case "eth_gasPrice": result = "0x5f5e100"; break;
+        case "eth_maxPriorityFeePerGas": result = "0x0"; break;
+        case "eth_feeHistory": result = { baseFeePerGas: ["0x5f5e100", "0x5f5e100"], gasUsedRatio: [0.5], reward: [["0x0"]], oldestBlock: "0x1" }; break;
+        case "eth_estimateGas": result = "0x61a80"; break;
+        case "eth_call": {
+          const data = String(r.params?.[0]?.data || "");
+          if (data.startsWith(selNB2("token"))) result = wordNB2(BigInt(NODE_ADDR_NB2));
+          else if (data.startsWith(selNB2("decimals"))) result = wordNB2(18n);
+          else if (data.startsWith(selNB2("sharedDecimals"))) result = wordNB2(6n);
+          else if (data.startsWith(selNB2("approvalRequired"))) result = wordNB2(0n);
+          else if (data.startsWith(selNB2("peers"))) result = wrongPeer ? wordNB2(0n) : ethersNB2.zeroPadValue(NODE_ADDR_NB2, 32);
+          else if (data.startsWith(portalIfaceNB2.getFunction("quoteSend").selector))
+            result = ethersNB2.AbiCoder.defaultAbiCoder().encode(["tuple(uint256 nativeFee, uint256 lzTokenFee)"], [[feeRaw, 0n]]);
+          else result = "0x"; // the send() simulation: success, no return value read
+          break;
+        }
+        case "eth_sendRawTransaction": { const raw = r.params[0]; sent.push(raw); result = ethersNB2.keccak256(raw); break; }
+        case "eth_getTransactionReceipt": result = { transactionHash: r.params[0], transactionIndex: "0x0", blockHash: "0x" + "22".repeat(32), blockNumber: "0x64", from: "0x0000000000000000000000000000000000000000", to: NODE_ADDR_NB2, cumulativeGasUsed: "0x61a80", gasUsed: "0x61a80", contractAddress: null, logs: [], logsBloom: "0x" + "00".repeat(256), status: "0x1", effectiveGasPrice: "0x5f5e100", type: "0x2" }; break;
+        default: result = null;
+      }
+      return { jsonrpc: "2.0", id: r.id, result };
+    };
+    return { answer, sent };
+  };
+  const serveNB2 = (stub) => async (req) => {
+    const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+    const payload = Array.isArray(parsed) ? parsed.map(stub.answer) : stub.answer(parsed);
+    return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+  };
+
+  const realFetchNB2 = globalThis.fetch;
+  const defaultGetUrlNB2 = FetchRequest.createGetUrlFunc();
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+  try {
+    const arbNB2 = makeRpcNB2({ chainIdHex: "0xa4b1", netVersion: "42161", feeRaw: FEE_ARB_NB2 });
+    FetchRequest.registerGetUrl(serveNB2(arbNB2));
+    resetVerifyNB2();
+    const walletNB2 = new ethersNB2.Wallet("0x" + "55".repeat(32));
+    const qArgsNB2 = { fromChainKey: "arbitrum", toChainKey: "bsc", fromTokenAddress: NODE_ADDR_NB2, toTokenAddress: NODE_ADDR_NB2, fromAmount: FULL_NB2, fromAddress: walletNB2.address, toAddress: walletNB2.address };
+    const quotedNB2 = await getRouteNB2(qArgsNB2);
+    ok("nodebridge: the quoter builds the route from the contract's own quoteSend — the real captured fee, the exact floored delivery, ~15 minutes, honestly non-collecting",
+      !!quotedNB2 && quotedNB2.provider === "nodebridge" && quotedNB2.nodeBridge.nativeFeeRaw === FEE_ARB_NB2.toString()
+      && quotedNB2.toAmount === recvNB2(FULL_NB2) && quotedNB2.executionDuration === 900
+      && quotedNB2.platformFeeCollecting === false && gateNB2(quotedNB2).ok === true);
+    const hashesNB2 = await execRouteNB2(walletNB2, quotedNB2);
+    const sentTxNB2 = ethersNB2.Transaction.from(arbNB2.sent[arbNB2.sent.length - 1]);
+    const sentDecNB2 = portalIfaceNB2.decodeFunctionData("send", sentTxNB2.data);
+    ok("nodebridge: the executor broadcasts ONE send() to the token — the Portal's exact call, signed by the wallet, decoded with the Portal's own ABI",
+      hashesNB2.length === 1 && arbNB2.sent.length === 1
+      && sentTxNB2.to.toLowerCase() === NODE_ADDR_NB2.toLowerCase() && sentTxNB2.value === FEE_ARB_NB2
+      && Number(sentDecNB2[0].dstEid) === 30102 && sentDecNB2[0].to === ethersNB2.zeroPadValue(walletNB2.address, 32)
+      && sentDecNB2[0].amountLD === BigInt(FULL_NB2) && sentDecNB2[0].minAmountLD === BigInt(recvNB2(FULL_NB2))
+      && sentDecNB2[0].extraOptions === "0x00030100110100000000000000000000000000030d40"
+      && sentDecNB2[1].nativeFee === FEE_ARB_NB2 && sentDecNB2[1].lzTokenFee === 0n
+      && sentDecNB2[2].toLowerCase() === walletNB2.address.toLowerCase()
+      && hashesNB2[0] === ethersNB2.keccak256(arbNB2.sent[0]));
+    let bandRefusedNB2 = false;
+    try { await execRouteNB2(walletNB2, { ...quotedNB2, nodeBridge: { ...quotedNB2.nodeBridge, nativeFeeRaw: "1000" } }); }
+    catch (e) { bandRefusedNB2 = /moved too much/.test(e.message); }
+    ok("nodebridge: when the fresh fee breaks the reviewed band, the executor refuses and sends nothing",
+      bandRefusedNB2 && arbNB2.sent.length === 1);
+    const badNB2 = makeRpcNB2({ chainIdHex: "0xa4b1", netVersion: "42161", feeRaw: FEE_ARB_NB2, wrongPeer: true });
+    FetchRequest.registerGetUrl(serveNB2(badNB2));
+    resetVerifyNB2();
+    ok("nodebridge: a token whose destination peer does not answer with the twin contract is not verified as the bridge — no route",
+      (await verifyNB2("arbitrum", 30102)) === false && (await getRouteNB2(qArgsNB2)) === null);
+    const bscNB2 = makeRpcNB2({ chainIdHex: "0x38", netVersion: "56", feeRaw: FEE_BSC_NB2 });
+    FetchRequest.registerGetUrl(serveNB2(bscNB2));
+    resetVerifyNB2();
+    const quotedBackNB2 = await getRouteNB2({ ...qArgsNB2, fromChainKey: "bsc", toChainKey: "arbitrum" });
+    ok("nodebridge: the mirror direction quotes from BSC's own contract — its own real captured fee, endpoint 30110",
+      !!quotedBackNB2 && quotedBackNB2.nodeBridge.dstEid === 30110 && quotedBackNB2.nodeBridge.nativeFeeRaw === FEE_BSC_NB2.toString()
+      && gateNB2(quotedBackNB2).ok === true);
+  } finally {
+    globalThis.fetch = realFetchNB2;
+    FetchRequest.registerGetUrl(defaultGetUrlNB2);
+  }
+
+  // --- wiring pins (house style) ---
+  {
+    const coreNB2 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+    const appNB2 = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+    const { NETWORKS: NETWORKS_NB2 } = await import("../src/wallet-core.js");
+    ok("nodebridge: the bridge is wired into the direct search, core's dispatch, and the sheet's execution chain",
+      coreNB2.includes("const nb = await getNodeBridgeSwapRoute(planArgs); if (nb) routes.push(nb);")
+      && coreNB2.includes('if (route.provider === "nodebridge") return executeNodeBridgeSwapRoute(wallet, route, progress);')
+      && appNB2.includes("hashes = await executeNodeBridgeSwapRoute(wallet, route, (t) => msg(\"wMsg\", t, true));"));
+    ok("nodebridge: the sheet names the route and states its fee and timing before signing; NODE is curated on both chains",
+      appNB2.includes('route.provider === "nodebridge") return "LayerZero bridge";')
+      && appNB2.includes("nodeBridgeDisclosureLine(r)")
+      && NETWORKS_NB2.arbitrum.tokens.some(t => t.address === NODE_ADDR_NB2)
+      && NETWORKS_NB2.bsc.tokens.some(t => t.address === NODE_ADDR_NB2));
+  }
 }
 
 console.log(`\n${passed} checks passed`);

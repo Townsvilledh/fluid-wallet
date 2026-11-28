@@ -191,7 +191,12 @@ export const NETWORKS = {
     // USDC/USDT. The contract is the swap-picker ranking pin
     // (0x7130d2A1…, see the picker section).
     tokens: [USDC("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", 18), USDT("0x55d398326f99059fF775485246999027B3197955", 18),
-      { symbol: "BTCB", address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", decimals: 18 }],
+      { symbol: "BTCB", address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", decimals: 18 },
+      // NODE (NodeOps): curated 2026-11-28 with the LayerZero
+      // bridge below — its market lives on this chain, and the
+      // swap picker must be able to name it as a destination
+      // even before the wallet holds any here.
+      { symbol: "NODE", address: "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb", decimals: 18 }],
   },
   // Endpoint deepening (2026-11-17, loading-speed round 2): the
   // chains below carried ONE read endpoint each (Base two), so a
@@ -235,7 +240,12 @@ export const NETWORKS = {
       "https://arbitrum.api.onfinality.io/public",
     ],
     rpcFallback: "https://arb1.arbitrum.io/rpc",
-    tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")],
+    tokens: [USDC("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"), USDT("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"),
+      // NODE (NodeOps): curated 2026-11-28 with the LayerZero
+      // bridge below — the token is held here (account-driven
+      // discovery already surfaces it) and the bridge's source
+      // side must name it in the picker without a list fetch.
+      { symbol: "NODE", address: "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb", decimals: 18 }],
   },
   optimism: {
     name: "OP Mainnet", chainId: 10, symbol: "ETH", priceSym: "ETH",
@@ -25130,6 +25140,7 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
   }
   if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
   if (route.provider === "wrap") return executeWrapSwapRoute(wallet, route, progress);
+  if (route.provider === "nodebridge") return executeNodeBridgeSwapRoute(wallet, route, progress);
   if (route.provider === "soroswap") return executeSoroswapSwapRoute(wallet, route, progress);
   if (route.provider === "cctp-aptos") {
     const out = await executeCctpAptosSwapRoute(wallet, route, progress, { storage, onApprove });
@@ -29623,6 +29634,364 @@ export async function executeWrapSwapRoute(wallet, route, onProgress = () => {})
   return [tx.hash];
 }
 
+/* ---------- NodeOps NODE bridge (LayerZero OFT, Arbitrum <-> BSC) ---------- */
+// Ethuram's order (2026-11-28): NODE sits on Arbitrum with no
+// market; its market is on BSC (PancakeSwap). NodeOps' own
+// bridge — the Portal at portal.nodeops.network — moves NODE
+// between the chains through LayerZero, and the order was for
+// that bridge INSIDE Fluid, signed in-wallet, never a trip to
+// the Portal (the embed law).
+//
+// The call shape was CAPTURED from the Portal's own bundles
+// (its bridge chunk + page chunk) and then VERIFIED ON CHAIN
+// before a line of this was written:
+//   - The Portal's config pins the SAME token address on all
+//     three chains; on Ethereum it calls a separate OFT adapter
+//     (0xA516F018D5ac6d086a04bBB1A8ECb00eB61a970a), but on
+//     Arbitrum and BSC the token ITSELF is the LayerZero V2
+//     OFT — the Portal calls quoteSend/send on the token.
+//   - On chain (2026-11-28): token() returns itself, decimals
+//     18, sharedDecimals 6, approvalRequired() FALSE (no
+//     approval — the OFT debits the sender directly),
+//     endpoint() is the LayerZero V2 endpoint, and
+//     peers(30102) on Arbitrum names the same token address on
+//     BSC; BSC answers the mirror image (peers(30110) back,
+//     quoteSend live in both directions).
+//   - quoteSend quotes a FLAT native messaging fee (measured
+//     0.000742 ETH Arbitrum->BSC and 0.002371 BNB BSC->
+//     Arbitrum at capture time; it moves with destination gas,
+//     so execution re-quotes it under a band), lzTokenFee 0.
+//   - quoteOFT: no OFT fee, no min/max limit; the delivered
+//     amount is the sent amount floored to the shared-decimal
+//     dust unit (10^(18-6) = 10^12 — under a millionth of a
+//     NODE of dust stays behind at any size).
+// The Portal's own SendParam uses minAmountLD = amount - 5
+// NODE (a flat slippage allowance) and runs an approval the
+// contract does not require; Fluid builds the same call with
+// the exact dust-floored minimum instead — the delivery is
+// deterministic, so anything looser would permit a shortfall
+// the user never agreed to.
+// Capture: nothing rides this call — the OFT send has no
+// affiliate/referrer surface — so the route is honestly
+// non-collecting, declared on the route like the direct wrap.
+export const NODE_TOKEN_ADDRESS = "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb";
+export const NODE_OFT_BRIDGE_CHAINS = {
+  arbitrum: { eid: 30110 },
+  bsc: { eid: 30102 },
+};
+export const NODE_OFT_DECIMALS = 18;
+export const NODE_OFT_SHARED_DECIMALS = 6;
+const NODE_OFT_DUST_UNIT = 10n ** BigInt(NODE_OFT_DECIMALS - NODE_OFT_SHARED_DECIMALS);
+/** The LayerZero messaging options the Portal builds for this
+ *  bridge, byte for byte: options type 3, the executor worker,
+ *  lzReceive with 200,000 destination gas and no native drop.
+ *  (Decoded from the Portal's own options builder and proven
+ *  live — quoteSend answers with exactly these bytes.) */
+export const NODE_OFT_EXTRA_OPTIONS = "0x00030100110100000000000000000000000000030d40";
+export const NODE_OFT_LZ_RECEIVE_GAS = 200000;
+/** The delivery the docs and the Portal state for Arbitrum
+ *  <-> BSC: up to 15 minutes. The route quotes it honestly. */
+export const NODE_BRIDGE_DURATION_SEC = 900;
+const NODE_OFT_SEND_PARAM_COMPONENTS = [
+  { name: "dstEid", type: "uint32" }, { name: "to", type: "bytes32" },
+  { name: "amountLD", type: "uint256" }, { name: "minAmountLD", type: "uint256" },
+  { name: "extraOptions", type: "bytes" }, { name: "composeMsg", type: "bytes" }, { name: "oftCmd", type: "bytes" },
+];
+const NODE_OFT_IFACE = new ethers.Interface([
+  // The Portal's own bridge ABI, verbatim — its page chunk
+  // carries exactly these two functions.
+  { name: "send", type: "function", stateMutability: "payable",
+    inputs: [
+      { name: "_sendParam", type: "tuple", components: NODE_OFT_SEND_PARAM_COMPONENTS },
+      { name: "_fee", type: "tuple", components: [
+        { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] },
+      { name: "_refundAddress", type: "address" } ],
+    outputs: [
+      { name: "msgReceipt", type: "tuple", components: [
+        { name: "guid", type: "bytes32" }, { name: "nonce", type: "uint64" },
+        { name: "fee", type: "tuple", components: [
+          { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] } ] },
+      { name: "oftReceipt", type: "tuple", components: [
+        { name: "amountSentLD", type: "uint256" }, { name: "amountReceivedLD", type: "uint256" } ] } ] },
+  { name: "quoteSend", type: "function", stateMutability: "view",
+    inputs: [
+      { name: "_sendParam", type: "tuple", components: NODE_OFT_SEND_PARAM_COMPONENTS },
+      { name: "_payInLzToken", type: "bool" } ],
+    outputs: [ { name: "msgFee", type: "tuple", components: [
+      { name: "nativeFee", type: "uint256" }, { name: "lzTokenFee", type: "uint256" } ] } ] },
+  "function token() view returns (address)",
+  "function approvalRequired() view returns (bool)",
+  "function sharedDecimals() view returns (uint8)",
+  "function peers(uint32 eid) view returns (bytes32)",
+  "function decimals() view returns (uint8)",
+]);
+
+/** The amount a NODE bridge delivers for a sent amount: the
+ *  OFT removes shared-decimal dust, deterministically
+ *  (quoteOFT-verified on chain in both directions). Pure. */
+export function nodeBridgeReceivedAmountLD(amountRaw) {
+  const a = BigInt(amountRaw);
+  return (a / NODE_OFT_DUST_UNIT * NODE_OFT_DUST_UNIT).toString();
+}
+
+/** The bridge pair a search asks for, if any: NODE on one of
+ *  the two OFT chains, NODE on the other, an integer raw
+ *  amount above zero. Pure. */
+export function nodeBridgePair(args) {
+  if (!args) return null;
+  const from = NODE_OFT_BRIDGE_CHAINS[args.fromChainKey];
+  const to = NODE_OFT_BRIDGE_CHAINS[args.toChainKey];
+  if (!from || !to || args.fromChainKey === args.toChainKey) return null;
+  if (!NETWORKS[args.fromChainKey] || !NETWORKS[args.toChainKey]) return null;
+  const want = NODE_TOKEN_ADDRESS.toLowerCase();
+  if (String(args.fromTokenAddress || "").toLowerCase() !== want) return null;
+  if (String(args.toTokenAddress || "").toLowerCase() !== want) return null;
+  const amt = String(args.fromAmount || "");
+  if (!/^\d+$/.test(amt) || BigInt(amt) <= 0n) return null;
+  return { fromChainKey: args.fromChainKey, toChainKey: args.toChainKey, dstEid: to.eid };
+}
+
+/** The exact SendParam the Portal builds for this bridge —
+ *  same destination endpoint id, same bytes32 recipient, same
+ *  messaging options — with ONE deliberate tightening:
+ *  minAmountLD is the exact dust-floored delivery (the Portal
+ *  allows amount - 5 NODE; the delivery is deterministic, so
+ *  the exact figure is the honest minimum). Pure. */
+export function buildNodeBridgeSendParam({ dstEid, toAddress, amountRaw }) {
+  const amount = BigInt(amountRaw);
+  return {
+    dstEid: Number(dstEid),
+    to: ethers.zeroPadValue(ethers.getAddress(toAddress), 32),
+    amountLD: amount,
+    minAmountLD: BigInt(nodeBridgeReceivedAmountLD(amountRaw)),
+    extraOptions: NODE_OFT_EXTRA_OPTIONS,
+    composeMsg: "0x",
+    oftCmd: "0x",
+  };
+}
+
+/** The exact bridge transaction: send() on the token itself,
+ *  the quoted native messaging fee as the value, refunds to
+ *  the sender. Pure. */
+export function encodeNodeBridgeSendTx({ param, nativeFeeRaw, refundAddress }) {
+  const fee = { nativeFee: BigInt(nativeFeeRaw), lzTokenFee: 0n };
+  const data = NODE_OFT_IFACE.encodeFunctionData("send", [param, fee, ethers.getAddress(refundAddress)]);
+  return { to: NODE_TOKEN_ADDRESS, data, value: BigInt(nativeFeeRaw) };
+}
+
+/** Bounds-check a built NODE bridge transaction against the
+ *  route the user approved (the Relay bounds-check pattern):
+ *  the call must be send() on the NODE token itself, naming
+ *  the route's destination endpoint, the route's recipient,
+ *  the exact amount and its exact dust-floored minimum, the
+ *  pinned messaging options, no compose/command payloads, a
+ *  native-only fee equal to the transaction's value, and the
+ *  sender as the refund address. Pure. */
+export function checkNodeBridgeTx(route, txReq, owner) {
+  const refuse = (m) => ({ ok: false, reason: "Fluid refused this route: " + m + " Pick another route." });
+  const b = route?.nodeBridge;
+  if (!b) return refuse("the route carries no bridge plan to check the transaction against.");
+  if (String(txReq?.to || "").toLowerCase() !== NODE_TOKEN_ADDRESS.toLowerCase())
+    return refuse("the bridge transaction does not target the NODE token contract.");
+  let decoded = null;
+  try { decoded = NODE_OFT_IFACE.decodeFunctionData("send", txReq?.data || "0x"); } catch { decoded = null; }
+  if (!decoded) return refuse("the bridge transaction is not the token's send call.");
+  const [param, fee, refund] = decoded;
+  if (Number(param.dstEid) !== Number(b.dstEid)) return refuse("the bridge transaction names a different destination chain than the route.");
+  let wantTo = null;
+  try { wantTo = ethers.zeroPadValue(ethers.getAddress(b.recipient), 32).toLowerCase(); } catch { wantTo = null; }
+  if (!wantTo || String(param.to).toLowerCase() !== wantTo) return refuse("the bridge transaction names a different recipient than the route.");
+  let amountOk = false, minOk = false;
+  try {
+    amountOk = param.amountLD === BigInt(route.fromAmount);
+    minOk = param.minAmountLD === BigInt(nodeBridgeReceivedAmountLD(route.fromAmount));
+  } catch { amountOk = false; minOk = false; }
+  if (!amountOk) return refuse("the bridge transaction moves a different amount than the route.");
+  if (!minOk) return refuse("the bridge transaction's minimum delivery is not the exact quoted delivery.");
+  if (String(param.extraOptions).toLowerCase() !== NODE_OFT_EXTRA_OPTIONS) return refuse("the bridge transaction carries different LayerZero options than the verified bridge.");
+  if (param.composeMsg !== "0x" || param.oftCmd !== "0x") return refuse("the bridge transaction carries an unexpected payload.");
+  if (fee.lzTokenFee !== 0n) return refuse("the bridge transaction charges a LayerZero-token fee the quote never stated.");
+  let valueOk = false;
+  try { valueOk = fee.nativeFee === BigInt(txReq?.value); } catch { valueOk = false; }
+  if (!valueOk) return refuse("the bridge transaction's value is not its stated fee.");
+  if (fee.nativeFee <= 0n) return refuse("the bridge transaction carries no messaging fee.");
+  if (String(refund).toLowerCase() !== String(owner || "").toLowerCase()) return refuse("the bridge transaction names a refund address that is not your wallet.");
+  return { ok: true };
+}
+
+/** The execution-time fee band: quoteSend is re-run before
+ *  signing (the fee moves with destination gas), and the fresh
+ *  fee may exceed the reviewed quote by at most half again —
+ *  or 0.0001 native, whichever is larger — before the bridge
+ *  refuses and asks for a fresh search instead of silently
+ *  paying more than the user reviewed. Pure. */
+export function nodeBridgeFeeBandOk(quotedRaw, freshRaw) {
+  let q, f;
+  try { q = BigInt(quotedRaw); f = BigInt(freshRaw); } catch { return false; }
+  if (q <= 0n || f <= 0n) return false;
+  const slack = q / 2n > 100000000000000n ? q / 2n : 100000000000000n;
+  return f <= q + slack;
+}
+
+const NODE_OFT_VERIFY_CACHE = new Map(); // "chainKey:dstEid" -> true (successes only; failures re-probe)
+export function resetNodeBridgeVerifyCache() { NODE_OFT_VERIFY_CACHE.clear(); }
+/** On-chain proof that a chain's NODE token IS the LayerZero
+ *  bridge the Portal uses, wired to the destination: the token
+ *  names itself as its own OFT token, 18 decimals, 6 shared
+ *  decimals, NO approval required (the sender is debited
+ *  directly), and its peer for the destination endpoint is the
+ *  same token address on the other chain. Every fact was
+ *  measured live before this was written; the executor
+ *  re-runs the proof (cache cleared) before signing. */
+export async function verifyNodeOftEntry(chainKey, dstEid) {
+  const entry = NODE_OFT_BRIDGE_CHAINS[chainKey];
+  if (!entry || !NETWORKS[chainKey]) return false;
+  const cacheKey = chainKey + ":" + Number(dstEid);
+  if (NODE_OFT_VERIFY_CACHE.get(cacheKey)) return true;
+  try {
+    const ok = await withEvmProvider(chainKey, async (provider) => {
+      const c = new ethers.Contract(NODE_TOKEN_ADDRESS, NODE_OFT_IFACE, provider);
+      // Sequential, never a Promise.all batch: ethers batches
+      // concurrent calls into one JSON-RPC batch request, and
+      // endpoints in the standing rotation (drpc) reject batches
+      // with HTTP 400 even though the same calls answer singly —
+      // a batched proof failed closed on healthy chains
+      // (measured live 2026-11-28).
+      const tok = await c.token();
+      const dec = await c.decimals();
+      const shared = await c.sharedDecimals();
+      const needsApproval = await c.approvalRequired();
+      const peer = await c.peers(Number(dstEid));
+      if (String(tok).toLowerCase() !== NODE_TOKEN_ADDRESS.toLowerCase()) return false;
+      if (Number(dec) !== NODE_OFT_DECIMALS || Number(shared) !== NODE_OFT_SHARED_DECIMALS) return false;
+      if (needsApproval !== false) return false;
+      if (String(peer).toLowerCase() !== ethers.zeroPadValue(NODE_TOKEN_ADDRESS, 32).toLowerCase()) return false;
+      return true;
+    });
+    if (ok) { NODE_OFT_VERIFY_CACHE.set(cacheKey, true); return true; }
+  } catch { /* a failed read is not a verified bridge — no route */ }
+  return false;
+}
+
+/** The token's own quoteSend, live: the LayerZero messaging
+ *  fee for this exact SendParam, native + LZ-token parts. */
+async function quoteNodeBridgeFee(chainKey, param) {
+  return withEvmProvider(chainKey, async (provider) => {
+    const c = new ethers.Contract(NODE_TOKEN_ADDRESS, NODE_OFT_IFACE, provider);
+    const fee = await c.quoteSend(param, false);
+    return { nativeFee: BigInt(fee.nativeFee), lzTokenFee: BigInt(fee.lzTokenFee) };
+  });
+}
+
+/** Quote the NODE bridge for a search: the token's own
+ *  quoteSend, live. The delivered amount is the sent amount
+ *  minus shared-decimal dust (deterministic — quoteOFT); the
+ *  cost is the LayerZero messaging fee in the source chain's
+ *  native coin plus this transaction's gas, stated on the
+ *  route and in the review sheet before signing. No approval
+ *  is ever taken: approvalRequired() is false (verified in
+ *  the proof above) — the OFT debits the sender directly. */
+export async function getNodeBridgeSwapRoute(args) {
+  const pair = nodeBridgePair(args);
+  if (!pair) return null;
+  const recipient = args.toAddress || args.fromAddress;
+  if (!recipient || !ethers.isAddress(recipient)) return null;
+  if (!(await verifyNodeOftEntry(pair.fromChainKey, pair.dstEid))) return null;
+  const fromNet = NETWORKS[pair.fromChainKey], toNet = NETWORKS[pair.toChainKey];
+  const param = buildNodeBridgeSendParam({ dstEid: pair.dstEid, toAddress: recipient, amountRaw: args.fromAmount });
+  const fee = await quoteNodeBridgeFee(pair.fromChainKey, param);
+  if (fee.lzTokenFee !== 0n || fee.nativeFee <= 0n) return null;
+  const received = nodeBridgeReceivedAmountLD(args.fromAmount);
+  if (BigInt(received) <= 0n) return null; // a sub-dust amount delivers nothing — no route
+  const tok = (net) => ({ address: NODE_TOKEN_ADDRESS, symbol: "NODE", name: "NodeOps", decimals: NODE_OFT_DECIMALS, chainId: net.chainId });
+  let nodeUsd = null, nativeUsd = null;
+  try {
+    const prices = await getPrices();
+    const p = prices[fromNet.priceSym]?.usd;
+    if (Number.isFinite(Number(p))) nativeUsd = Number(p);
+  } catch { /* USD is display-only here */ }
+  try {
+    const byContract = await getCgContractPrices(fromNet.chainId, [NODE_TOKEN_ADDRESS]);
+    const p = byContract.get(NODE_TOKEN_ADDRESS.toLowerCase());
+    if (Number.isFinite(Number(p))) nodeUsd = Number(p);
+  } catch { /* USD is display-only here */ }
+  const fromAmountUSD = nodeUsd != null ? Number(ethers.formatUnits(BigInt(args.fromAmount), NODE_OFT_DECIMALS)) * nodeUsd : null;
+  const toAmountUSD = nodeUsd != null ? Number(ethers.formatUnits(BigInt(received), NODE_OFT_DECIMALS)) * nodeUsd : null;
+  const feeUsd = nativeUsd != null ? Number(ethers.formatEther(fee.nativeFee)) * nativeUsd : null;
+  // Total native cost (messaging fee + this transaction's
+  // gas) in USD — the figure the review sentence renders as
+  // "Route + network fees". The gas half is estimated against
+  // the exact transaction; when the estimate cannot run (a
+  // zero-balance preview, say) the messaging fee alone stands
+  // as the cost floor and the sentence still says "about".
+  let gasCostUSD = feeUsd;
+  try {
+    const txReq = encodeNodeBridgeSendTx({ param, nativeFeeRaw: fee.nativeFee, refundAddress: args.fromAddress || recipient });
+    const gasWei = await withEvmProvider(pair.fromChainKey, async (provider) => {
+      const [gas, feeData] = await Promise.all([
+        provider.estimateGas({ from: args.fromAddress, ...txReq }),
+        provider.getFeeData(),
+      ]);
+      const gp = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+      return gas * gp;
+    });
+    if (nativeUsd != null) gasCostUSD = (feeUsd || 0) + Number(ethers.formatEther(gasWei)) * nativeUsd;
+  } catch { /* the messaging fee alone stands as the cost floor */ }
+  return {
+    provider: "nodebridge",
+    id: `nodebridge:${pair.fromChainKey}:${pair.toChainKey}`,
+    type: "bridge",
+    fromChainId: fromNet.chainId, toChainId: toNet.chainId,
+    fromChainKey: pair.fromChainKey, toChainKey: pair.toChainKey,
+    fromAmount: String(args.fromAmount), fromToken: tok(fromNet), toToken: tok(toNet),
+    toAmount: received, toAmountMin: received,
+    toAmountUSD, fromAmountUSD,
+    gasCostUSD, routeFeeUsd: gasCostUSD, executionDuration: NODE_BRIDGE_DURATION_SEC,
+    platformFeeRaw: "0", platformFeeUsd: 0, platformFeeBps: 0, platformFeeCollecting: false,
+    steps: [],
+    nodeBridge: {
+      token: NODE_TOKEN_ADDRESS, dstEid: pair.dstEid, recipient,
+      nativeFeeRaw: fee.nativeFee.toString(), lzReceiveGas: NODE_OFT_LZ_RECEIVE_GAS,
+    },
+  };
+}
+
+/** Execute a NODE bridge route: re-verify the bridge on chain
+ *  (cache cleared — the quote-time proof is not trusted at
+ *  sign time), re-quote the messaging fee under the band,
+ *  rebuild the exact send() and bounds-check it against the
+ *  route, simulate, broadcast through the rotated fleet,
+ *  settle chain-decided. One transaction, no approval.
+ *  Delivery on the destination chain is LayerZero's (~15
+ *  minutes) and is never waited on here. */
+export async function executeNodeBridgeSwapRoute(wallet, route, onProgress = () => {}) {
+  const { ok, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const chainKey = route.fromChainKey;
+  const b = route.nodeBridge;
+  NODE_OFT_VERIFY_CACHE.delete(chainKey + ":" + Number(b.dstEid));
+  if (!(await verifyNodeOftEntry(chainKey, b.dstEid))) {
+    throw new Error("The NODE bridge could not be verified on chain — nothing was sent.");
+  }
+  const param = buildNodeBridgeSendParam({ dstEid: b.dstEid, toAddress: b.recipient, amountRaw: route.fromAmount });
+  const fee = await quoteNodeBridgeFee(chainKey, param);
+  if (fee.lzTokenFee !== 0n) throw new Error("The bridge now quotes a LayerZero-token fee the route never stated — nothing was sent. Search again.");
+  if (!nodeBridgeFeeBandOk(b.nativeFeeRaw, fee.nativeFee)) {
+    throw new Error("The bridge fee moved too much since this route was quoted — nothing was sent. Search again for a fresh quote.");
+  }
+  const txReq = encodeNodeBridgeSendTx({ param, nativeFeeRaw: fee.nativeFee, refundAddress: wallet.address });
+  const check = checkNodeBridgeTx(route, txReq, wallet.address);
+  if (!check.ok) throw new Error(check.reason);
+  onProgress("Bridging NODE via LayerZero…");
+  const provider = providerFor(chainKey);
+  await simulateEvmStepOrThrow(chainKey, provider, txReq, wallet.address);
+  const tx = await broadcastEvmTxRotated(wallet, chainKey, txReq);
+  onProgress("Sent — waiting for it to mine…");
+  await settleBroadcastOrThrow(chainKey, tx.hash, (w) => onProgress(`Sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
+  onProgress(`Sent — your NODE arrives on ${NETWORKS[route.toChainKey]?.name || route.toChainKey} in about 15 minutes.`);
+  return [tx.hash];
+}
+
 /** The delivery FORM of an EVM token address on a chain:
  * "native" (the zero address, the sentinel, or a native
  * predeploy), "wrapped" (the chain's wrapped-native
@@ -29755,6 +30124,16 @@ export async function getSwapRoutesDirect(args) {
   // and merit ranking puts its zero-fee 1:1 first.
   if (wrapPairDirection(planArgs)) {
     try { const w = await getWrapSwapRoute(planArgs); if (w) routes.push(w); } catch { /* the direct wrap is a candidate, never a single point of failure */ }
+  }
+  // NodeOps NODE bridge (LayerZero OFT, 2026-11-28): for
+  // NODE <-> NODE between Arbitrum and BSC, the token's own
+  // bridge — the same send() the NodeOps Portal makes, quoted
+  // from the contract itself — is a candidate beside the
+  // venues. It is the only door for the pair (NODE has no
+  // Arbitrum market), and a candidate like the others: its
+  // failure simply leaves the pair to its other routes.
+  if (nodeBridgePair(planArgs)) {
+    try { const nb = await getNodeBridgeSwapRoute(planArgs); if (nb) routes.push(nb); } catch { /* the NODE bridge is a candidate, never a single point of failure */ }
   }
   // 1Click (NEAR Intents, 2026-11-14): a candidate beside
   // Mayan, never a single point of failure — except its
@@ -31025,6 +31404,45 @@ export function swapRouteExecutable(route) {
     if (route.platformFeeCollecting) return { ok: false, reason: "This wrap route claims a fee a 1:1 wrap cannot carry — pick another route." };
     if (route.platformFeeRaw != null && String(route.platformFeeRaw) !== "0") return { ok: false, reason: "This wrap route claims a fee a 1:1 wrap cannot carry — pick another route." };
     return { ok: true, wrap: true };
+  }
+  // NodeOps NODE bridge routes (LayerZero OFT, 2026-11-28):
+  // executable when the route is exactly the structural shape
+  // the quoter builds — NODE on both sides between the two
+  // OFT chains, the destination endpoint of the pinned table,
+  // the delivered amount exactly the dust-floored sent amount,
+  // a stated recipient and a stated messaging fee, and an
+  // honestly non-collecting fee state (the OFT send has no
+  // surface a Fluid fee could ride). The executor re-verifies
+  // the bridge on chain and bounds-checks the built send()
+  // before signing, so this gate is shape-only by design.
+  if (route?.provider === "nodebridge") {
+    const incomplete = "This bridge route is incomplete — search again.";
+    const b = route.nodeBridge;
+    if (!b || typeof b !== "object") return { ok: false, reason: incomplete };
+    const fromEntry = NODE_OFT_BRIDGE_CHAINS[route.fromChainKey];
+    const toEntry = NODE_OFT_BRIDGE_CHAINS[route.toChainKey];
+    if (!fromEntry || !toEntry || route.fromChainKey === route.toChainKey) return { ok: false, reason: incomplete };
+    if (!NETWORKS[route.fromChainKey] || !NETWORKS[route.toChainKey]) return { ok: false, reason: incomplete };
+    if (Number(b.dstEid) !== toEntry.eid) return { ok: false, reason: incomplete };
+    if (String(b.token || "").toLowerCase() !== NODE_TOKEN_ADDRESS.toLowerCase()) return { ok: false, reason: incomplete };
+    if (String(route.fromToken?.address || "").toLowerCase() !== NODE_TOKEN_ADDRESS.toLowerCase()) return { ok: false, reason: incomplete };
+    if (String(route.toToken?.address || "").toLowerCase() !== NODE_TOKEN_ADDRESS.toLowerCase()) return { ok: false, reason: incomplete };
+    if (Number(route.fromChainId) !== NETWORKS[route.fromChainKey].chainId || Number(route.toChainId) !== NETWORKS[route.toChainKey].chainId) return { ok: false, reason: incomplete };
+    let amtOk = false;
+    try {
+      amtOk = /^\d+$/.test(String(route.fromAmount)) && BigInt(route.fromAmount) > 0n
+        && String(route.toAmount) === nodeBridgeReceivedAmountLD(route.fromAmount)
+        && BigInt(route.toAmount) > 0n
+        && String(route.toAmountMin) === String(route.toAmount);
+    } catch { /* not an integer amount */ }
+    if (!amtOk) return { ok: false, reason: incomplete };
+    if (!ethers.isAddress(b.recipient || "")) return { ok: false, reason: incomplete };
+    let feeOk = false;
+    try { feeOk = /^\d+$/.test(String(b.nativeFeeRaw)) && BigInt(b.nativeFeeRaw) > 0n; } catch { /* not an integer fee */ }
+    if (!feeOk) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting) return { ok: false, reason: "This bridge route claims a fee the token's own bridge cannot carry — pick another route." };
+    if (route.platformFeeRaw != null && String(route.platformFeeRaw) !== "0") return { ok: false, reason: "This bridge route claims a fee the token's own bridge cannot carry — pick another route." };
+    return { ok: true, nodeBridge: true };
   }
   // Gas-fallback composed routes (destination-gas mechanism 2,
   // 2026-11-11): executable when the composite is complete AND

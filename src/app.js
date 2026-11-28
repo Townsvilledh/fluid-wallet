@@ -41,7 +41,7 @@ import {
   lnErrorText, parseSisPathsInput, lnReceiveTransition, lnReceiveView, lnReceivePlan, lnLsps2OpeningFeeMsat, waitForLnPeerConnected,
   lnNodeStatus, lnLightningAddressState,
   AGENT_POLICY_DEFAULTS, agentAddresses, agentEvmWallet, buildAgentDescriptor, checkAgentPolicy, sendFromAgent,
-  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapInboundPaused,
+  NATIVE_TOKEN_ADDRESS, getSwapRoutes, rankSwapRoutes, swapRouteExecutable, swapRouteCostLabel, swapOwnAddressFor, familyRowsTotalUsd, familyRollupTotalUsd, injectiveCountedOnEvmSide, executeRelaySwapRoute, executeRelayTronSwapRoute, executeRelayTonSwapRoute, TON_SWAP_NATIVE_TOKEN, executeAcrossSwapRoute, executeJupiterSwapRoute, executeCetusSwapRoute, executeSunswapSwapRoute, executeChainflipSwapRoute, executeOneClickSwapRoute, executeWrapSwapRoute, executeNodeBridgeSwapRoute, loadOneClickSwapRecords, pollOneClickSwapStatuses, oneClickSwapHistoryLine, oneClickSwapPhase, NEAR_SWAP_NATIVE_TOKEN, XRPL_SWAP_NATIVE_TOKEN, LITECOIN_SWAP_NATIVE_TOKEN, DOGECOIN_SWAP_NATIVE_TOKEN, BITCOINCASH_SWAP_NATIVE_TOKEN, APTOS_SWAP_NATIVE_TOKEN, TRON_EXPLORER, formatSwapIntent, swapAmountToRaw, swapRawToAmount, isNoQuoteSwapError, diagnoseNoRouteSwap, formatSwapNoRouteMessage, swapInboundPaused,
   fetchTokenTrust, fetchTokenTrustBatch, resolveTokenTrustSync, tokenTrustSwapCheck, assertSwapTokensNotScam, tokenTrustReasonLine, tokenTrustSourceLabel,
   formatSatoraSwapIntent, satoraRifDisclosureLines, formatSatoraArkadeSourceIntent, executeSatoraArkadeSourceRoute, claimSatoraArkadeEvmSwap, saveSatoraSwapRecord, checkSatoraLightningReceivability, classifySatoraLightningDestination, loadSatoraSwapRecords, pollSatoraSwapStatuses, satoraSwapHistoryLine, executeSatoraSwapRoute, resumeSatoraBridgedSwaps,
   rifSmartWalletAddress, rifSmartWalletBalanceRow, readRifSmartWalletState, estimateRifRelayCall, sendRifSmartWalletRbtc,
@@ -10756,6 +10756,7 @@ function swapRouteName(route) {
   if (route && route.provider === "skip") return "Skip";
   if (route && route.provider === "openocean") return "OpenOcean";
   if (route && route.provider === "wrap") return route.wrap?.direction === "unwrap" ? "Direct unwrap" : "Direct wrap";
+  if (route && route.provider === "nodebridge") return "LayerZero bridge";
   if (route && route.provider === "soroswap") return "Soroswap";
   if (route && route.provider === "cctp-aptos") return "Circle CCTP";
   if (route && route.provider === "bitflow") return "Bitflow";
@@ -10765,6 +10766,18 @@ function swapRouteName(route) {
   if (route && route.provider === "milestone") return "Milestone route: " + (route.milestone?.label || "composed route");
   const names = [...new Set((route.steps || []).map(s => s.toolDetails?.name || s.tool).filter(Boolean))];
   return names.join(" → ") || "Swap route";
+}
+/** The NODE bridge's review-sheet sentence: what carries the
+ *  tokens, the exact bridge fee in the source chain's own coin
+ *  (also inside the "route + network fees" figure above), and
+ *  the honest ~15-minute delivery as NODE on the other chain. */
+function nodeBridgeDisclosureLine(r) {
+  const b = r.nodeBridge || {};
+  const sym = (NETWORKS[r.fromChainKey] || {}).symbol || "";
+  const fee = b.nativeFeeRaw != null && /^\d+$/.test(String(b.nativeFeeRaw))
+    ? ` The bridge fee is ${fmt(swapRawToAmount(b.nativeFeeRaw, 18))} ${sym}, paid with the transaction.`
+    : "";
+  return `This bridges your NODE through the token's own LayerZero bridge — the same bridge the NodeOps Portal uses, run here inside Fluid.${fee} Your NODE arrives as NODE on ${swapChainName(r.toChainKey)} in about 15 minutes.`;
 }
 function swapDurationText(sec) {
   if (!Number.isFinite(sec)) return "time varies";
@@ -12683,6 +12696,7 @@ $("actSwap").onclick = () => {
         if (r.provider === "soroswap") $("wIntentText").textContent += " One signature runs the swap inside your own Stellar account. If your account first needs a trustline to hold an asset on the route, you'll sign that as its own separate step before the swap — each trustline locks 0.5 XLM as reserve, and it is never bundled into the swap itself.";
         if (r.provider === "cctp-aptos") $("wIntentText").textContent += " " + cctpAptosDisclosureLines(r).join(" ");
         if (r.provider === "bitflow") $("wIntentText").textContent += " " + bitflowDisclosureLines(r).join(" ");
+        if (r.provider === "nodebridge") $("wIntentText").textContent += " " + nodeBridgeDisclosureLine(r);
         if (r.provider === "tinyman" || r.provider === "pact") $("wIntentText").textContent += " " + algoDisclosureLines(r).join(" ");
         // Destination gas (2026-11-11): the plan's one plain line —
         // the drop alongside, the two-step fallback, or the honest
@@ -12996,6 +13010,27 @@ $("actSwap").onclick = () => {
         // approval when a token goes in, simulates, then signs
         // with the wallet's EVM key.
         hashes = await executeOpenOceanSwapRoute(wallet, route, (t) => msg("wMsg", t, true), recordEvmApproval);
+        srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "nodebridge") {
+        // NodeOps NODE bridge (LayerZero OFT, 2026-11-28): core
+        // re-verifies the token's bridge on chain, re-quotes the
+        // LayerZero messaging fee under its band, bounds-checks
+        // the exact send() it builds (contract, recipient,
+        // amount, minimum, fee, refund), simulates, then signs
+        // with the wallet's EVM key. One transaction, no
+        // approval; delivery on the destination chain follows
+        // in about 15 minutes and the success screen says so.
+        hashes = await executeNodeBridgeSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
+        srcExplorer = NETWORKS[fromKey].explorer;
+      } else if (route.provider === "wrap") {
+        // Direct wrap/unwrap (2026-11-28): core re-verifies the
+        // wrapped-native contract on chain, simulates, and
+        // broadcasts through the rotated fleet. This branch was
+        // missing when the route shipped — a standalone wrap
+        // route picked in the sheet fell through to the refusal
+        // below; milestone legs already executed it through
+        // core's dispatch. One transaction, one hash.
+        hashes = await executeWrapSwapRoute(wallet, route, (t) => msg("wMsg", t, true));
         srcExplorer = NETWORKS[fromKey].explorer;
       } else if (route.provider === "soroswap") {
         // Soroswap route (Stellar same-chain, gap #9): core
