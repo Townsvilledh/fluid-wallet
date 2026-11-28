@@ -25988,4 +25988,150 @@ import { DISCOVERY_BLOCKSCOUT_APIS, parseBlockscoutTokenBalances, fetchBlockscou
     && appDb.includes('"buildStamp", "buildStampTop"'));
 }
 
+// ============ 2026-11-28 repair: Relay step-2 hang budgets + wrap-unverified honesty ============
+// The owner's phone sat on "Signing step 2 of 2…" for 115+ s
+// with the deposit never broadcast: step 2's awaits inherited
+// ethers' 300 s FetchRequest default on endpoints that accept
+// the connection and never answer. These pins hold the budgets:
+// every wait in the step path is raced, the broadcast is
+// hedged, a timeout says plainly that nothing was sent (when
+// the chain could be checked), and an uncheckable broadcast is
+// the honest outcome-unknown — never an infinite signing
+// screen. Plus the build-3 walk wobble: a wrap/unwrap pair
+// whose verification reads fail must say "couldn't be checked",
+// never quote an aggregator's minimum as the pair's minimum.
+{
+  const {
+    broadcastSignedTxRotated: bcast29, resolveBroadcastOutcome: resolve29,
+    stepTimeoutError: stepTimeout29, verifyWrappedNativeEntry: verifyWrap29,
+    wrapRouteBlind: wrapBlind29, resetWrappedNativeProbeState: resetWrap29,
+    getWrapSwapRoute: getWrap29,
+  } = await import("../src/wallet-core.js");
+  const { ethers: ethers29 } = await import("ethers");
+  const core29 = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const keepAlive29 = setInterval(() => {}, 40); // the raced timers are unref'd; hold the loop open
+  try {
+    const w29 = new ethers29.Wallet("0x" + "22".repeat(32));
+    const signed29 = await w29.signTransaction({ to: "0x3333333333333333333333333333333333333333", value: 1n, gasLimit: 21000n, gasPrice: 1000000000n, nonce: 0, chainId: 42161 });
+    const hash29 = ethers29.Transaction.from(signed29).hash;
+    const hang29 = () => new Promise(() => {});
+    const hangProv29 = () => ({ broadcastTransaction: hang29, getTransactionReceipt: hang29 });
+
+    // (a) The reproduced hang shape: every endpoint accepts and
+    // never answers, and no node can even be read afterwards.
+    // Pre-fix this waited out ethers' 300 s default per offer,
+    // sequentially. Now: bounded, and honestly UNKNOWN (the
+    // bytes may have reached a mempool — never "nothing sent").
+    let errA29 = null; const tA29 = Date.now();
+    try {
+      await bcast29([hangProv29(), hangProv29()], signed29, { attemptTimeoutMs: 250, staggerMs: 40, verifyAttempts: 1, verifyDelayMs: 1, sleepFn: async () => {}, verifyAttemptTimeoutMs: 250, verifyDeadlineMs: 2000 });
+    } catch (e) { errA29 = e; }
+    ok("hangfix: a fleet that never answers fails the broadcast fast, not in 300s-per-endpoint",
+      !!errA29 && (Date.now() - tA29) < 6000);
+    ok("hangfix: an uncheckable broadcast is outcome-unknown with its hash — never a clean failure",
+      !!errA29 && errA29.outcomeUnknown === true && errA29.txHash === hash29);
+
+    // (b) Same dead offers, but the chain CAN be read and the
+    // tx is not there: the verdict is the plain timeout, and it
+    // says nothing was sent.
+    let errB29 = null; const tB29 = Date.now();
+    const nullReceipt29 = () => ({ broadcastTransaction: hang29, getTransactionReceipt: async () => null });
+    try {
+      await bcast29([nullReceipt29(), nullReceipt29()], signed29, { attemptTimeoutMs: 250, staggerMs: 40, verifyAttempts: 1, verifyDelayMs: 1, sleepFn: async () => {}, verifyAttemptTimeoutMs: 250, verifyDeadlineMs: 2000 });
+    } catch (e) { errB29 = e; }
+    ok("hangfix: a checked-and-absent timed-out broadcast reads as the plain nothing-was-sent timeout",
+      !!errB29 && errB29.stepTimeout === true && errB29.message.includes("nothing was sent") && (Date.now() - tB29) < 6000);
+
+    // (c) Receipt polls are raced too, and "answered" separates
+    // a node that replied null from a node that never replied.
+    const tC29 = Date.now();
+    const outHang29 = await resolve29([hangProv29()], hash29, { attempts: 2, delayMs: 1, sleepFn: async () => {}, attemptTimeoutMs: 200 });
+    const outNull29 = await resolve29([{ getTransactionReceipt: async () => null }], hash29, { attempts: 1, delayMs: 1, sleepFn: async () => {}, attemptTimeoutMs: 200 });
+    ok("hangfix: receipt polls are timeout-raced and report whether any node answered",
+      outHang29.state === "unknown" && outHang29.answered === false && outNull29.state === "unknown" && outNull29.answered === true && (Date.now() - tC29) < 3000);
+
+    // (d) The timeout copy passes humanizeTxError verbatim —
+    // the nothing-was-sent fact is never re-worded away.
+    ok("hangfix: the step-timeout sentence survives humanizeTxError word for word",
+      humanizeTxError(stepTimeout29()) === stepTimeout29().message && stepTimeout29().message.includes("nothing was sent"));
+
+    // (e) Source pins: the step path's waits are the raced ones.
+    ok("hangfix: simulation and the broadcast offers run through the budget races",
+      core29.includes("raceAttemptTimeout(provider.call(call), EVM_STEP_CALL_TIMEOUT_MS)")
+      && core29.includes("raceEndpointAttempts(offers, staggerMs)")
+      && core29.includes("deadlineMs: EVM_SETTLE_BUDGET_MS"));
+
+    // (f) Wrap-unverified: degraded reads on the owner's own
+    // pair (WETH → ETH, Arbitrum, the walked 0.00061 amount).
+    const WETH_ARB29 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1";
+    const USER29 = "0x1111111111111111111111111111111111111111";
+    const wrapArgs29 = { fromChainKey: "arbitrum", toChainKey: "arbitrum", fromTokenAddress: WETH_ARB29, toTokenAddress: NATIVE_TOKEN_ADDRESS, fromAmount: "610000000000000", fromAddress: USER29, toAddress: USER29 };
+    const defaultGetUrl29 = FetchRequest.createGetUrlFunc();
+    const realFetch29 = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+    try {
+      resetWrap29();
+      FetchRequest.registerGetUrl(async () => { throw new Error("Failed to fetch"); });
+      const verifiedDead29 = await verifyWrap29("arbitrum");
+      ok("wrapblind: with every read dead the entry does not verify — and the pair records blindness, not absence",
+        verifiedDead29 === false && wrapBlind29(wrapArgs29) === true);
+      const verdictBlind29 = await diagnoseNoRouteSwap(wrapArgs29, { fromDecimals: 18, fromPriceUsd: 3000, search: async () => [] });
+      const msgBlind29 = formatSwapNoRouteMessage({ fromSymbol: "WETH", toSymbol: "ETH", amountText: "0.00061 WETH", verdict: verdictBlind29 });
+      ok("wrapblind: the diagnosis is wrap-unverified and the sheet says the route couldn't be checked — no fabricated minimum",
+        verdictBlind29.kind === "wrap-unverified" && msgBlind29.includes("direct unwrap") && msgBlind29.includes("works at any size")
+        && msgBlind29.includes("didn't answer just now") && !msgBlind29.includes("smallest swap") && !msgBlind29.includes("below the minimum"));
+
+      // Negative control: no blindness on record → the
+      // wrap-unverified verdict never fires.
+      resetWrap29();
+      ok("wrapblind: with no blindness recorded the pair is not wrap-blind",
+        wrapBlind29(wrapArgs29) === false);
+      const verdictCalm29 = await diagnoseNoRouteSwap(wrapArgs29, { fromDecimals: 18, fromPriceUsd: 3000, search: async () => [] });
+      ok("wrapblind: a calm pair never earns the wrap-unverified verdict",
+        verdictCalm29.kind !== "wrap-unverified");
+
+      // Positive control: reads answer → the entry verifies,
+      // blindness clears, and the direct route is offered at
+      // the walked dust amount.
+      const word29 = (v) => "0x" + BigInt(v).toString(16).padStart(64, "0");
+      const encStr29 = (s) => {
+        const b = new TextEncoder().encode(s);
+        const pad = (32 - (b.length % 32)) % 32;
+        return "0x" + (32).toString(16).padStart(64, "0") + b.length.toString(16).padStart(64, "0")
+          + [...b].map(x => x.toString(16).padStart(2, "0")).join("") + "00".repeat(pad);
+      };
+      const rpcAnswer29 = (r) => {
+        let result;
+        switch (r.method) {
+          case "eth_chainId": result = "0xa4b1"; break;
+          case "net_version": result = "42161"; break;
+          case "eth_blockNumber": result = "0x64"; break;
+          case "eth_call": {
+            const data = String(r.params?.[0]?.data || "");
+            if (data.startsWith("0x95d89b41")) result = encStr29("WETH");
+            else if (data.startsWith("0x313ce567")) result = word29(18n);
+            else result = "0x";
+            break;
+          }
+          default: result = null;
+        }
+        return { jsonrpc: "2.0", id: r.id, result };
+      };
+      FetchRequest.registerGetUrl(async (req) => {
+        const parsed = JSON.parse(new TextDecoder().decode(req.body || new Uint8Array()));
+        const payload = Array.isArray(parsed) ? parsed.map(rpcAnswer29) : rpcAnswer29(parsed);
+        return new FetchResponse(200, "OK", { "content-type": "application/json" }, new TextEncoder().encode(JSON.stringify(payload)));
+      });
+      const verifiedOk29 = await verifyWrap29("arbitrum");
+      const routeOk29 = await getWrap29(wrapArgs29);
+      ok("wrapblind: when the reads answer, the entry verifies and the direct unwrap is offered at any size",
+        verifiedOk29 === true && wrapBlind29(wrapArgs29) === false
+        && !!routeOk29 && routeOk29.provider === "wrap" && routeOk29.toAmount === "610000000000000");
+    } finally {
+      globalThis.fetch = realFetch29;
+      FetchRequest.registerGetUrl(defaultGetUrl29);
+    }
+  } finally { clearInterval(keepAlive29); }
+}
+
 console.log(`\n${passed} checks passed`);

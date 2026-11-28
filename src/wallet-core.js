@@ -1293,6 +1293,10 @@ export function gameTitleForCounts(counts) {
 const TX_ERROR_SELECTOR_TRANSFER_FROM_FAILED = "0x7939f424"; // the legacy router diamond's TransferFromFailed()
 export function humanizeTxError(e) {
   const msg = String((e && (e.shortMessage || e.message)) || e || "");
+  // Step-timeout errors (2026-11-28 repair) carry their own plain,
+  // already-user-facing wording — including the load-bearing fact
+  // that nothing was sent — and pass through verbatim.
+  if (e && e.stepTimeout) return msg;
   const code = String((e && e.code) || "");
   let data = "";
   try { data = String((e && (e.data || (e.error && e.error.data) || (e.info && e.info.error && e.info.error.data))) || ""); } catch { /* shape varies */ }
@@ -1432,6 +1436,61 @@ export function sheetBalanceLine(amount, symbol, priceUsd, dp = 6) {
   return t === "couldn't load" ? "Balance couldn't load" : "Balance: " + t;
 }
 
+/* ---- Swap-step time budgets (2026-11-28 repair: the Relay
+ * step-2 hang). The owner's phone sat on "Signing step 2 of 2…"
+ * for 115+ seconds with the deposit NEVER broadcast: step 1 (the
+ * approval, which skips simulation) landed, then step 2 entered
+ * simulateEvmStepOrThrow / the broadcast rotation, whose awaits
+ * inherited ethers' FetchRequest default timeout of 300 SECONDS
+ * per call — on a phone network whose endpoints accept the
+ * connection and never answer, a single call stalls five
+ * minutes and a sequential five-endpoint rotation stalls
+ * twenty-five. NOTHING in the step path may wait unboundedly
+ * again: every network wait below is raced against a per-call
+ * budget, and the loops carry elapsed-time budgets of their own,
+ * so one signing step resolves — sent, refused, or stopped with
+ * a plain "nothing was sent" timeout — in about two minutes
+ * worst case on a fully dead fleet, and in seconds when even one
+ * endpoint answers. */
+export const EVM_STEP_CALL_TIMEOUT_MS = 12000;        // one simulate / broadcast offer
+export const EVM_RECEIPT_POLL_TIMEOUT_MS = 5000;      // one receipt poll
+export const EVM_FEE_PIN_BUDGET_MS = 12000;           // fee-pin loop total (an improvement, never a gate)
+export const EVM_POPULATE_BUDGET_MS = 30000;          // populate loop total
+export const EVM_BROADCAST_VERIFY_BUDGET_MS = 12000;  // post-offer on-chain verify total
+export const EVM_SETTLE_BUDGET_MS = 60000;            // post-broadcast settle total
+
+/** The plain timeout verdict for a step that never reached
+ * broadcast: the wait was stopped, and NOTHING WAS SENT — the
+ * sentence the owner needs before deciding whether to retry.
+ * humanizeTxError passes it through verbatim (e.stepTimeout). */
+export function stepTimeoutError() {
+  const e = new Error("This step took too long on a slow connection and was stopped — nothing was sent. Your tokens are still in your wallet. Check your connection and try again.");
+  e.stepTimeout = true;
+  return e;
+}
+function attemptTimeoutError() {
+  const e = new Error("RPC attempt timed out");
+  e.attemptTimeout = true;
+  return e;
+}
+export function isAttemptTimeout(e) { return !!(e && e.attemptTimeout); }
+
+/** Race one provider call against its budget. The losing call is
+ * left to settle on its own (its rejection is swallowed here so
+ * it can never surface as an unhandled rejection later); the
+ * race itself always resolves within ~ms. */
+async function raceAttemptTimeout(promise, ms) {
+  const p = Promise.resolve(promise);
+  p.catch(() => { /* a late answer to a lost race is nobody's error */ });
+  let timer = null;
+  try {
+    return await Promise.race([p, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(attemptTimeoutError()), ms);
+      if (timer && typeof timer.unref === "function") timer.unref();
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 /** Simulate one EVM step exactly as it would be broadcast and
  * refuse BEFORE signing when the chain already refuses it
  * (2026-11-12 repair): a quote can be generated for a token the
@@ -1439,17 +1498,26 @@ export function sheetBalanceLine(amount, symbol, priceUsd, dp = 6) {
  * pre-humanized (humanizeTxError is idempotent over its own
  * sentences). An UNREADABLE answer from the primary node (the
  * coalesce class) is not a verdict — the fallback node is asked
- * before refusing. */
+ * before refusing. Every call is raced against
+ * EVM_STEP_CALL_TIMEOUT_MS (2026-11-28 repair): a node that
+ * accepts the connection and never answers reads as UNREADABLE —
+ * the fallback is asked — and a timeout on the last available
+ * node stops the step with the plain nothing-was-sent verdict
+ * instead of hanging the signing sheet. */
 async function simulateEvmStepOrThrow(networkKey, provider, txReq, from) {
   const call = { from, to: txReq.to, data: txReq.data, value: txReq.value };
-  try { await provider.call(call); return; }
+  try { await raceAttemptTimeout(provider.call(call), EVM_STEP_CALL_TIMEOUT_MS); return; }
   catch (e) {
-    const unreadable = /could not coalesce/i.test(String((e && e.message) || "")) || (e && e.code === "UNKNOWN_ERROR");
+    const unreadable = isAttemptTimeout(e) || /could not coalesce/i.test(String((e && e.message) || "")) || (e && e.code === "UNKNOWN_ERROR");
     const fallback = unreadable ? providerForFallback(networkKey) : null;
     if (fallback) {
-      try { await fallback.call(call); return; }
-      catch (e2) { throw new Error(humanizeTxError(e2)); }
+      try { await raceAttemptTimeout(fallback.call(call), EVM_STEP_CALL_TIMEOUT_MS); return; }
+      catch (e2) {
+        if (isAttemptTimeout(e2)) throw stepTimeoutError();
+        throw new Error(humanizeTxError(e2));
+      }
     }
+    if (isAttemptTimeout(e)) throw stepTimeoutError();
     throw new Error(humanizeTxError(e));
   }
 }
@@ -1464,17 +1532,28 @@ async function simulateEvmStepOrThrow(networkKey, provider, txReq, from) {
  * This polls the receipt on each given provider in turn; a node's
  * unreadable answer is one failed ATTEMPT, never a verdict. Never
  * throws for RPC weirdness. Providers are injectable for tests. */
-export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10, delayMs = 3000, sleepFn, onProgress } = {}) {
+export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10, delayMs = 3000, sleepFn, onProgress, attemptTimeoutMs = EVM_RECEIPT_POLL_TIMEOUT_MS, deadlineMs = null } = {}) {
   const sleep = sleepFn || ((ms) => new Promise(r => setTimeout(r, ms)));
   const list = (providers || []).filter(Boolean);
+  // 2026-11-28 repair: every poll is raced (a node that never
+  // answers costs attemptTimeoutMs, not ethers' 300 s default),
+  // an optional total deadline stops new rounds from starting,
+  // and the result reports whether ANY node actually ANSWERED
+  // (a receipt or an honest null) — callers distinguishing
+  // "checked, not there" from "couldn't check at all" need it.
+  const deadlineAt = deadlineMs != null ? Date.now() + deadlineMs : null;
+  let answered = false;
   for (let i = 0; i < attempts; i++) {
+    if (deadlineAt != null && Date.now() >= deadlineAt) break;
     for (const p of list) {
+      if (deadlineAt != null && Date.now() >= deadlineAt) break;
       try {
-        const rc = await p.getTransactionReceipt(txHash);
-        if (rc) return { state: Number(rc.status) === 1 ? "mined" : "reverted", receipt: rc };
-      } catch { /* unreadable answer: try the next node, then wait and retry */ }
+        const rc = await raceAttemptTimeout(p.getTransactionReceipt(txHash), attemptTimeoutMs);
+        answered = true;
+        if (rc) return { state: Number(rc.status) === 1 ? "mined" : "reverted", receipt: rc, answered };
+      } catch { /* unreadable or timed-out answer: try the next node, then wait and retry */ }
     }
-    if (i < attempts - 1) {
+    if (i < attempts - 1 && (deadlineAt == null || Date.now() < deadlineAt)) {
       // Heartbeat (2026-11-25 black-screen defect): this wait can
       // run ~30 s per step with the sheet otherwise unchanged —
       // on the user's phone the in-flight screen read as a dead
@@ -1485,7 +1564,7 @@ export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10
       await sleep(delayMs);
     }
   }
-  return { state: "unknown" };
+  return { state: "unknown", answered };
 }
 
 /** Settle one broadcast step against the chain (defect A):
@@ -1494,7 +1573,7 @@ export async function resolveBroadcastOutcome(providers, txHash, { attempts = 10
  * (e.outcomeUnknown) the UI renders as "sent, unconfirmed" —
  * never as "failed". */
 async function settleBroadcastOrThrow(networkKey, txHash, onProgress) {
-  const outcome = await resolveBroadcastOutcome([providerFor(networkKey), providerForFallback(networkKey)], txHash, { onProgress });
+  const outcome = await resolveBroadcastOutcome([providerFor(networkKey), providerForFallback(networkKey)], txHash, { onProgress, deadlineMs: EVM_SETTLE_BUDGET_MS });
   if (outcome.state === "mined") return outcome.receipt;
   if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — the tokens it was moving are back in your wallet; only the network fee was spent.");
   const err = new Error("Sent, but the network hasn't confirmed it yet.");
@@ -1530,18 +1609,28 @@ async function settleApprovalOrThrow(networkKey, txHash, recheckAllowance, onPro
  * lost may still have landed. Fail-closed stays: if nothing took
  * it and nothing mined, the plain error surfaces and nothing is
  * retried blind. */
-export async function broadcastSignedTxRotated(providers, signedTx, { verifyAttempts = 3, verifyDelayMs = 2000, sleepFn = null } = {}) {
+export async function broadcastSignedTxRotated(providers, signedTx, { verifyAttempts = 3, verifyDelayMs = 1500, sleepFn = null, attemptTimeoutMs = EVM_STEP_CALL_TIMEOUT_MS, staggerMs = 1000, verifyAttemptTimeoutMs = EVM_RECEIPT_POLL_TIMEOUT_MS, verifyDeadlineMs = EVM_BROADCAST_VERIFY_BUDGET_MS } = {}) {
   const list = (Array.isArray(providers) ? providers : []).filter(p => p && typeof p.broadcastTransaction === "function");
   if (!list.length) throw new Error("No RPC endpoint is available to send through.");
   let hash = null;
   try { hash = ethers.Transaction.from(String(signedTx)).hash; } catch { /* an unparseable payload lets the endpoints judge */ }
-  let lastErr = null;
-  for (const p of list) {
+  // 2026-11-28 step-2 hang repair: the offers are HEDGED, not
+  // sequential. The signed bytes are idempotent (same nonce, same
+  // hash — a second node accepting them changes nothing), so the
+  // endpoints race: the first node to accept ends the wait, and a
+  // node that accepts the connection and never answers costs one
+  // stagger plus its attempt timeout instead of stalling the
+  // whole rotation (sequentially, five dead endpoints × ethers'
+  // 300 s default was a 25-minute hang — the owner's step 2).
+  // "Already known" is still success, now INSIDE the attempt, so
+  // a hedge that hears it resolves instead of starting more
+  // offers. A late answer from a losing offer is swallowed by
+  // raceEndpointAttempts.
+  const offers = list.map((p) => async () => {
     try {
-      const res = await p.broadcastTransaction(signedTx);
+      const res = await raceAttemptTimeout(p.broadcastTransaction(signedTx), attemptTimeoutMs);
       return { hash: (res && res.hash) || hash, response: res || null, alreadyKnown: false, verified: false };
     } catch (e) {
-      lastErr = e;
       const m = String((e && (e.shortMessage || e.message)) || e || "");
       // The node already holds THIS transaction (hash-addressed) —
       // an earlier attempt reached its mempool before the reply
@@ -1549,13 +1638,34 @@ export async function broadcastSignedTxRotated(providers, signedTx, { verifyAtte
       if (hash && /already known|already exists|known transaction/i.test(m)) {
         return { hash, response: null, alreadyKnown: true, verified: false };
       }
+      throw e;
     }
-  }
+  });
+  let lastErr = null;
+  try { return await raceEndpointAttempts(offers, staggerMs); }
+  catch (e) { lastErr = e; }
   if (hash) {
-    const outcome = await resolveBroadcastOutcome(list, hash, { attempts: verifyAttempts, delayMs: verifyDelayMs, sleepFn });
+    const outcome = await resolveBroadcastOutcome(list, hash, { attempts: verifyAttempts, delayMs: verifyDelayMs, sleepFn, attemptTimeoutMs: verifyAttemptTimeoutMs, deadlineMs: verifyDeadlineMs });
     if (outcome.state === "mined") return { hash, response: null, alreadyKnown: true, verified: true };
     if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — the tokens it was moving are back in your wallet; only the network fee was spent.");
+    if (!outcome.answered) {
+      // No offer was answered AND no node could even be READ to
+      // check: the bytes may or may not have reached a mempool
+      // before the connection died. Fail closed with the honest
+      // unknown-outcome verdict (the UI renders it "sent,
+      // unconfirmed — don't send again yet"), never a clean
+      // "nothing was sent" the chain might contradict.
+      const err = new Error("The connection failed while that was being sent, so the wallet can't tell whether it landed. Check your balances and activity before trying again — please don't send it again yet.");
+      err.outcomeUnknown = true;
+      err.txHash = hash;
+      throw err;
+    }
   }
+  // At least one node answered the verify polls and the tx is
+  // not there: the offers' own failure is the verdict — a
+  // timeout reads as the plain nothing-was-sent sentence (the
+  // chain was checked), anything else keeps its humanized form.
+  if (lastErr && isAttemptTimeout(lastErr)) throw stepTimeoutError();
   throw new Error(humanizeTxError(lastErr));
 }
 
@@ -1609,12 +1719,16 @@ export async function broadcastEvmTxRotated(wallet, networkKey, txReq, { provide
   // before — the pin is an improvement, never a new gate.
   let popReq = txReq;
   if (txReq && txReq.maxFeePerGas == null && txReq.maxPriorityFeePerGas == null && txReq.gasPrice == null) {
+    // Elapsed budget (2026-11-28 step-2 repair): the pin loop
+    // stops starting reads once EVM_FEE_PIN_BUDGET_MS is spent —
+    // the pin is an improvement, never a reason to keep a
+    // signing step waiting on a dead fleet.
+    const feeT0 = Date.now();
     for (const p of list) {
+      const remaining = EVM_FEE_PIN_BUDGET_MS - (Date.now() - feeT0);
+      if (remaining <= 0) break;
       try {
-        const fd = await Promise.race([
-          p.getFeeData(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("RPC attempt timed out")), EVM_PROVIDER_ATTEMPT_TIMEOUT_MS)),
-        ]);
+        const fd = await raceAttemptTimeout(p.getFeeData(), Math.min(EVM_STEP_CALL_TIMEOUT_MS, remaining));
         const pin = pinnedEvmFeeFields(fd);
         if (pin) { popReq = { ...txReq, ...pin }; break; }
         if (fd) break; // a tip market (or unreadable fees): ethers' defaults stand
@@ -1622,18 +1736,23 @@ export async function broadcastEvmTxRotated(wallet, networkKey, txReq, { provide
     }
   }
   let populated = null, popErr = null;
+  const popT0 = Date.now();
   for (const p of list) {
+    // Same repair: population as a whole gets
+    // EVM_POPULATE_BUDGET_MS across the fleet — one hung
+    // endpoint can no longer consume a full per-attempt race
+    // and then hand the step to the next hung endpoint.
+    const remaining = EVM_POPULATE_BUDGET_MS - (Date.now() - popT0);
+    if (remaining <= 0) { if (!popErr) popErr = attemptTimeoutError(); break; }
     try {
-      const attempt = (async () => wallet.connect(p).populateTransaction({ ...popReq }))();
-      attempt.catch(() => { /* a late rejection after the race is moot */ });
-      populated = await Promise.race([
-        attempt,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("RPC attempt timed out")), EVM_PROVIDER_ATTEMPT_TIMEOUT_MS)),
-      ]);
+      populated = await raceAttemptTimeout(wallet.connect(p).populateTransaction({ ...popReq }), Math.min(EVM_PROVIDER_ATTEMPT_TIMEOUT_MS, remaining));
       if (populated) break;
     } catch (e) { popErr = e; }
   }
-  if (!populated) throw new Error(humanizeTxError(popErr));
+  if (!populated) {
+    if (popErr && isAttemptTimeout(popErr)) throw stepTimeoutError();
+    throw new Error(humanizeTxError(popErr));
+  }
   const signed = await wallet.signTransaction(populated);
   const sent = await broadcastSignedTxRotated(list, signed);
   return { hash: sent.hash, response: sent.response, alreadyKnown: sent.alreadyKnown, verified: sent.verified };
@@ -29348,6 +29467,33 @@ export const WRAPPED_NATIVE_BY_CHAIN = {
   seievm: { address: "0xe30feDd158A2e3b13e9badaeABaFc5516e95e8C7", symbol: "WSEI" },
 };
 const WRAPPED_NATIVE_VERIFY_CACHE = new Map(); // chainKey -> true (successes only; failures re-probe next quote)
+/* Probe ledger for the wrapped-native verification (2026-11-28,
+ * build-3 walk wobble): verifyWrappedNativeEntry returns false
+ * for TWO very different reasons — the chain ANSWERED and the
+ * entry is not the canonical contract (definitive: no route), or
+ * the reads never landed at all (transport failure: the route
+ * exists but could not be CHECKED). Collapsing both into "no
+ * route" let the no-route diagnosis present an aggregator's
+ * minimum as the pair's minimum for a wrap/unwrap that works at
+ * ANY size. The ledger remembers which failure the latest probe
+ * was, briefly, so the diagnosis can say "couldn't be checked"
+ * instead of inventing a floor. Same shape as the OpenOcean
+ * probe ledger above. */
+export const WRAPPED_NATIVE_PROBE_FRESH_MS = 120000;
+const WRAPPED_NATIVE_PROBE_LEDGER = new Map(); // chainKey -> { outcome: "answered" | "blind", at }
+export function resetWrappedNativeProbeState() {
+  WRAPPED_NATIVE_PROBE_LEDGER.clear();
+  WRAPPED_NATIVE_VERIFY_CACHE.clear();
+}
+/** True when args name a native↔wrapped pair whose direct route
+ * could not be verified because the chain reads did not answer
+ * (a fresh blindness entry) — the diagnosis must then say the
+ * route couldn't be checked, never quote another rail's floor. */
+export function wrapRouteBlind(args, now = Date.now()) {
+  if (!wrapPairDirection(args)) return false;
+  const rec = WRAPPED_NATIVE_PROBE_LEDGER.get(args.fromChainKey);
+  return !!rec && rec.outcome === "blind" && (now - rec.at) <= WRAPPED_NATIVE_PROBE_FRESH_MS;
+}
 /** On-chain proof that a chain's table entry IS the canonical
  * wrapped-native contract: the pinned symbol, 18 decimals, and
  * deposit()/withdraw(0) behaviour probes (eth_call, value 0 —
@@ -29367,8 +29513,21 @@ export async function verifyWrappedNativeEntry(chainKey) {
       await provider.call({ from: probeFrom, to: entry.address, data: "0x2e1a7d4d" + "0".repeat(64) });
       return true;
     });
+    // The reads landed (pass or definitive mismatch): the chain
+    // was checked — record "answered" so no stale blindness can
+    // outlive a working probe.
+    WRAPPED_NATIVE_PROBE_LEDGER.set(chainKey, { outcome: "answered", at: Date.now() });
     if (ok) { WRAPPED_NATIVE_VERIFY_CACHE.set(chainKey, true); return true; }
-  } catch { /* an unverifiable entry offers no route — honest absence */ }
+  } catch (e) {
+    // A revert-shaped refusal means the CHAIN answered (the
+    // entry definitively is not the canonical contract) — that
+    // is an answer, not blindness. Anything else (transport,
+    // timeout, unreadable) means the route could not be
+    // checked at all: record blindness so the no-route
+    // diagnosis stays honest about it.
+    const chainAnswered = !!e && (e.code === "CALL_EXCEPTION" || e.code === "BAD_DATA" || /execution reverted/i.test(String(e.message || "")));
+    WRAPPED_NATIVE_PROBE_LEDGER.set(chainKey, { outcome: chainAnswered ? "answered" : "blind", at: Date.now() });
+  }
   return false;
 }
 /** The wrap pair a search asks for, if any: same EVM chain,
@@ -30045,6 +30204,18 @@ export async function diagnoseNoRouteSwap(args, { fromDecimals = null, fromPrice
       if (human > 0) return { kind: "below-minimum", floor: { found: true, usd: Number(fromPriceUsd) > 0 ? Math.round(human * Number(fromPriceUsd) * 100) / 100 : null, amountRaw: String(cfFloor.minRaw), amountHuman: human }, market: null };
     } catch { /* fall through to the ladder */ }
   }
+  // Wrap-blindness (2026-11-28, build-3 walk wobble): this
+  // pair's DIRECT wrap/unwrap route — which works at ANY size —
+  // was dropped from the search because its verification reads
+  // never landed (wrapRouteBlind). The floor ladder below would
+  // find some AGGREGATOR's minimum for the pair and present it
+  // as the pair's own minimum — a fabricated floor for a route
+  // with none. The verdict is "couldn't be checked": honest,
+  // retryable, and it quotes no other rail's figure.
+  if (wrapRouteBlind(args)) {
+    const dir = wrapPairDirection(args);
+    return { kind: "wrap-unverified", floor: null, market: null, wrapDirection: dir ? dir.direction : null };
+  }
   // One-way trap gate (§149, 2026-11-17): when the
   // destination family has no executable outbound swap
   // route AND a rail would otherwise serve this pair into
@@ -30149,6 +30320,11 @@ export function formatSwapNoRouteMessage({ fromSymbol = "this token", toSymbol =
     } else {
       s = `No route for ${fromSymbol} → ${toSymbol}${amt} — that amount is below the minimum for this pair. The smallest swap that works right now is about ${floorText || verdict.floor.amountHuman}. Raise the amount and search again.`;
     }
+  } else if (verdict?.kind === "wrap-unverified") {
+    // The pair's own direct route couldn't be checked — never
+    // another rail's minimum in its place (2026-11-28).
+    const what = verdict.wrapDirection === "wrap" ? "direct wrap" : verdict.wrapDirection === "unwrap" ? "direct unwrap" : "direct wrap/unwrap";
+    s = `No route could be checked for ${fromSymbol} → ${toSymbol}${amt} — this pair's ${what} route works at any size, but the chain reads needed to check it didn't answer just now, so it can't be offered safely yet. Give it a moment and search again.`;
   } else if (verdict?.kind === "no-market") {
     s = `No market found for ${fromSymbol}: it can't be swapped into anything right now — not even ${nativeSymbol || "its own chain's coin"} on its own chain. A token with no market can't be swapped at any size.`;
   } else if (verdict?.kind === "unreachable") {
