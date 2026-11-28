@@ -246,5 +246,13 @@
     "sol": "777ocnZG7ePkqRoWZtEheypbGjdsc5DwcagaUr2xHUte",
     "tron": "TNPrPFgbTzkvSd32fZ35UJwUDQExQx164Z",
     "sui": "0x8c3a48aaee187a0584fb569f9961272db990d780f413210b0139904689ad1655"
+  },
+  "testnetstriker": {
+    "evm": "0xDC5756d86ce66450780d760228dB74d8AdaD8F74",
+    "btc": "bc1qk3lp2qtkjdd5v2alytqp33turhjlahmhz8m4wq",
+    "algo": "4RAZWBJ4VJBY4RB73D7HDZ7SVRUQ2G2IROCO2QV6XWTMOH24434EB5EIWA",
+    "sol": "49y5EtKE7aojVjraf6QCLJxNmG1bqXhJ2zoWETvfo82k",
+    "tron": "TW4GHhTtmpaQWdy1MSMzQeYF4hWxcLXoq1",
+    "sui": "0x11a613f376c89457794d3961e4caefed90ca31be9e0873b1a479c1639392a5cc"
   }
 }
