@@ -1502,6 +1502,79 @@ async function settleApprovalOrThrow(networkKey, txHash, recheckAllowance, onPro
   }
 }
 
+/** Broadcast resilience (2026-11-28 repair, defect: the owner's
+ * WETH→ETH swap died on ONE node's unreadable reply — "The network
+ * node sent back an answer the wallet couldn't read, so nothing
+ * was sent" — even though other endpoints would have taken the
+ * same bytes). The rule: sign ONCE, then offer the SAME signed
+ * bytes to each RPC endpoint in the chain's rotated read order.
+ * An "already known" answer is success (an earlier endpoint took
+ * it). If every endpoint refuses the broadcast itself, the tx is
+ * verified on chain before failing — an attempt whose reply was
+ * lost may still have landed. Fail-closed stays: if nothing took
+ * it and nothing mined, the plain error surfaces and nothing is
+ * retried blind. */
+export async function broadcastSignedTxRotated(providers, signedTx, { verifyAttempts = 3, verifyDelayMs = 2000, sleepFn = null } = {}) {
+  const list = (Array.isArray(providers) ? providers : []).filter(p => p && typeof p.broadcastTransaction === "function");
+  if (!list.length) throw new Error("No RPC endpoint is available to send through.");
+  let hash = null;
+  try { hash = ethers.Transaction.from(String(signedTx)).hash; } catch { /* an unparseable payload lets the endpoints judge */ }
+  let lastErr = null;
+  for (const p of list) {
+    try {
+      const res = await p.broadcastTransaction(signedTx);
+      return { hash: (res && res.hash) || hash, response: res || null, alreadyKnown: false, verified: false };
+    } catch (e) {
+      lastErr = e;
+      const m = String((e && (e.shortMessage || e.message)) || e || "");
+      // The node already holds THIS transaction (hash-addressed) —
+      // an earlier attempt reached its mempool before the reply
+      // was lost. That is a successful send.
+      if (hash && /already known|already exists|known transaction/i.test(m)) {
+        return { hash, response: null, alreadyKnown: true, verified: false };
+      }
+    }
+  }
+  if (hash) {
+    const outcome = await resolveBroadcastOutcome(list, hash, { attempts: verifyAttempts, delayMs: verifyDelayMs, sleepFn });
+    if (outcome.state === "mined") return { hash, response: null, alreadyKnown: true, verified: true };
+    if (outcome.state === "reverted") throw new Error("That was sent, but the network rejected it — the tokens it was moving are back in your wallet; only the network fee was spent.");
+  }
+  throw new Error(humanizeTxError(lastErr));
+}
+
+/** Populate → sign once → rotated broadcast, for any EVM step.
+ * Population walks the rotated read order too: the first endpoint
+ * that can nonce + price the transaction wins, each attempt raced
+ * against the fleet attempt budget so a hung node cannot hold the
+ * send. Returns { hash } (the shape every caller already uses). */
+export async function broadcastEvmTxRotated(wallet, networkKey, txReq, { providers = null } = {}) {
+  const net = NETWORKS[networkKey];
+  if (!net) throw new Error("Unknown network: " + networkKey);
+  if (!wallet || typeof wallet.signTransaction !== "function" || typeof wallet.connect !== "function") {
+    throw new Error("The wallet isn't unlocked — nothing was sent.");
+  }
+  const list = (providers && providers.length) ? providers
+    : evmRpcOrder(networkKey).map(url => new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true }));
+  if (!list.length) throw new Error("No RPC endpoint is configured for " + networkKey + ".");
+  let populated = null, popErr = null;
+  for (const p of list) {
+    try {
+      const attempt = (async () => wallet.connect(p).populateTransaction({ ...txReq }))();
+      attempt.catch(() => { /* a late rejection after the race is moot */ });
+      populated = await Promise.race([
+        attempt,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("RPC attempt timed out")), EVM_PROVIDER_ATTEMPT_TIMEOUT_MS)),
+      ]);
+      if (populated) break;
+    } catch (e) { popErr = e; }
+  }
+  if (!populated) throw new Error(humanizeTxError(popErr));
+  const signed = await wallet.signTransaction(populated);
+  const sent = await broadcastSignedTxRotated(list, signed);
+  return { hash: sent.hash, response: sent.response, alreadyKnown: sent.alreadyKnown, verified: sent.verified };
+}
+
 export async function estimateSend(wallet, networkKey, { to, amount, token }) {
   const net = NETWORKS[networkKey];
   const provider = providerFor(networkKey);
@@ -1520,16 +1593,18 @@ export async function estimateSend(wallet, networkKey, { to, amount, token }) {
 
 export async function executeSend(wallet, networkKey, { to, amount, token }) {
   if (!ethers.isAddress(to)) throw new Error("That is not a valid wallet address.");
-  const provider = providerFor(networkKey);
-  const signer = wallet.connect(provider);
-  let tx;
+  // Broadcast through the rotated endpoint fleet (2026-11-28): a
+  // plain send used to ride the one primary node, so one node's
+  // unreadable reply dead-ended sends exactly like swaps.
+  let txReq;
   if (!token) {
-    tx = await signer.sendTransaction({ to, value: ethers.parseEther(String(amount)) });
+    txReq = { to, value: ethers.parseEther(String(amount)) };
   } else {
-    const c = new ethers.Contract(token.address, ERC20, signer);
-    tx = await c.transfer(to, ethers.parseUnits(String(amount), token.decimals));
+    const data = new ethers.Interface(ERC20).encodeFunctionData("transfer", [to, ethers.parseUnits(String(amount), token.decimals)]);
+    txReq = { to: token.address, data, value: 0n };
   }
-  return tx; // caller awaits tx.wait() and records the hash
+  const sent = await broadcastEvmTxRotated(wallet, networkKey, txReq);
+  return { hash: sent.hash }; // callers use tx.hash only
 }
 
 // ---------- USD prices (Binance public ticker, no key; graceful fallback) ----------
@@ -10677,14 +10752,17 @@ async function oneClickDepositSend(wallet, { entry, to, amountRaw, destinationTa
       const provider = providerFor(entry.chainKey);
       const signer = wallet.connect(provider);
       if (entry.native) {
-        const tx = await signer.sendTransaction({ to, value: BigInt(amountRaw) });
+        // Rotated broadcast (2026-11-28): the deposit rides the
+        // endpoint fleet, not the one primary node.
+        const tx = await broadcastEvmTxRotated(wallet, entry.chainKey, { to, value: BigInt(amountRaw) });
         await settleBroadcastOrThrow(entry.chainKey, tx.hash);
         return tx.hash;
       }
       const c = new ethers.Contract(entry.address, ["function transfer(address to, uint256 amount) returns (bool)"], signer);
       try { await c.transfer.staticCall(to, BigInt(amountRaw)); }
       catch (e) { throw new Error("The network says this deposit would fail: " + (e.shortMessage || e.message || "simulation failed")); }
-      const tx = await c.transfer(to, BigInt(amountRaw));
+      const data = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]).encodeFunctionData("transfer", [to, BigInt(amountRaw)]);
+      const tx = await broadcastEvmTxRotated(wallet, entry.chainKey, { to: entry.address, data, value: 0n });
       await settleBroadcastOrThrow(entry.chainKey, tx.hash);
       return tx.hash;
     }
@@ -12419,7 +12497,10 @@ export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () =
     const c = new ethers.Contract(route.fromToken.address, SWAP_ERC20, signer);
     if ((await c.allowance(wallet.address, oo.tx.to)) < need) {
       onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
-      const atx = await c.approve(oo.tx.to, need);
+      // Rotated broadcast (2026-11-28): approvals and the swap
+      // ride the endpoint fleet, not the one primary node.
+      const approveData = new ethers.Interface(SWAP_ERC20).encodeFunctionData("approve", [oo.tx.to, need]);
+      const atx = await broadcastEvmTxRotated(wallet, fromKey, { to: route.fromToken.address, data: approveData, value: 0n });
       approvalHashes.push(atx.hash);
       await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, oo.tx.to)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
@@ -12431,7 +12512,7 @@ export async function executeOpenOceanSwapRoute(wallet, route, onProgress = () =
   const txReq = { to: oo.tx.to, data: oo.tx.data, value: BigInt(oo.tx.value || "0") };
   if (oo.estimatedGas) { try { txReq.gasLimit = (BigInt(oo.estimatedGas) * 13n) / 10n; } catch { /* let the node estimate */ } }
   await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
-  const swapTx = await signer.sendTransaction(txReq);
+  const swapTx = await broadcastEvmTxRotated(wallet, fromKey, txReq);
   onProgress("Swap sent — waiting for it to mine…");
   await settleBroadcastOrThrow(fromKey, swapTx.hash, (w) => onProgress(`Swap sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
   return [swapTx.hash, ...approvalHashes];
@@ -14291,7 +14372,10 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
     const c = new ethers.Contract(ac.inputToken, SWAP_ERC20, signer);
     if ((await c.allowance(wallet.address, ac.swapTx.to)) < need) {
       onProgress(`Approving ${route.fromToken?.symbol || "token"} for the route (exact amount only)…`);
-      const atx = await c.approve(ac.swapTx.to, need);
+      // Rotated broadcast (2026-11-28): approvals and the deposit
+      // ride the endpoint fleet, not the one primary node.
+      const approveData = new ethers.Interface(SWAP_ERC20).encodeFunctionData("approve", [ac.swapTx.to, need]);
+      const atx = await broadcastEvmTxRotated(wallet, fromKey, { to: ac.inputToken, data: approveData, value: 0n });
       approvalHashes.push(atx.hash);
       await settleApprovalOrThrow(fromKey, atx.hash, async () => (await c.allowance(wallet.address, ac.swapTx.to)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
@@ -14303,7 +14387,7 @@ export async function executeAcrossSwapRoute(wallet, route, onProgress = () => {
   const txReq = { to: ac.swapTx.to, data: ac.swapTx.data, value: ac.nativeInput === true ? BigInt(route.fromAmount) : 0n };
   const g = Number(ac.swapTx.gas);
   if (Number.isFinite(g) && g > 0) { try { txReq.gasLimit = BigInt(Math.floor(g)); } catch { /* let the node estimate */ } }
-  const depTx = await signer.sendTransaction(txReq);
+  const depTx = await broadcastEvmTxRotated(wallet, fromKey, txReq);
   onProgress("Deposit sent — waiting for it to mine…");
   // Chain-decided outcome (defect A): the deposit is the
   // value-moving transaction — a receipt-read glitch after
@@ -24258,12 +24342,15 @@ export async function executeMayanSwapRoute(wallet, route, onProgress = () => {}
     const need = BigInt(route.fromAmount);
     const current = await token.allowance(wallet.address, MAYAN_FORWARDER);
     if (current < need) {
-      const atx = await token.approve(MAYAN_FORWARDER, need);
+      // Rotated broadcast (2026-11-28): approvals and the swap
+      // ride the endpoint fleet, not the one primary node.
+      const approveData = new ethers.Interface(SWAP_ERC20).encodeFunctionData("approve", [MAYAN_FORWARDER, need]);
+      const atx = await broadcastEvmTxRotated(wallet, fromKey, { to: fromContract, data: approveData, value: 0n });
       onApprove?.({ hash: atx.hash, spender: MAYAN_FORWARDER, amount: need.toString() });
       await settleApprovalOrThrow(fromKey, atx.hash, async () => (await token.allowance(wallet.address, MAYAN_FORWARDER)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
     }
   }
-  const txr = await signer.sendTransaction({ to: route.mayan.tx.to, data: route.mayan.tx.data, value: BigInt(route.mayan.tx.value || "0") });
+  const txr = await broadcastEvmTxRotated(wallet, fromKey, { to: route.mayan.tx.to, data: route.mayan.tx.data, value: BigInt(route.mayan.tx.value || "0") });
   onProgress("Mayan swap sent ✓");
   return [txr.hash];
 }
@@ -24809,6 +24896,7 @@ async function dispatchSwapExecution(wallet, route, progress, { onApprove = null
     return [out.hash];
   }
   if (route.provider === "openocean") return executeOpenOceanSwapRoute(wallet, route, progress, onApprove);
+  if (route.provider === "wrap") return executeWrapSwapRoute(wallet, route, progress);
   if (route.provider === "soroswap") return executeSoroswapSwapRoute(wallet, route, progress);
   if (route.provider === "cctp-aptos") {
     const out = await executeCctpAptosSwapRoute(wallet, route, progress, { storage, onApprove });
@@ -26109,6 +26197,14 @@ export async function searchMilestoneCompositions(args, { searchLeg = null, pric
       };
       let routes = null;
       try { routes = await quoteLeg(legArgs); } catch { routes = null; }
+      // Wrapped-delivery integrity inside compositions
+      // (2026-11-28): a leg whose stated delivery is the wrong
+      // FORM (wrapped when the leg must land native, or native
+      // when it must land wrapped) is not a candidate — the
+      // final leg especially must land exactly what the user
+      // asked for, and an intermediate leg must land what the
+      // next leg spends.
+      if (routes && routes.length) routes = routes.filter(r => routeDeliveryFormOk(r, legArgs));
       if (routes && routes.length) legEmptyStreak.delete(healthKey);
       else {
         const streak = (legEmptyStreak.get(healthKey) || 0) + 1;
@@ -28211,7 +28307,10 @@ export async function executeChainflipSwapRoute(wallet, route, onProgress = () =
     const token = new ethers.Contract(CHAINFLIP_BSC_USDT.address, SWAP_ERC20, signer);
     if ((await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) < need) {
       onProgress("Approving USDT for the Chainflip vault (exact amount only)…");
-      const atx = await token.approve(CHAINFLIP_BSC_VAULT, need);
+      // Rotated broadcast (2026-11-28): approvals and the deposit
+      // ride the endpoint fleet, not the one primary node.
+      const approveData = new ethers.Interface(SWAP_ERC20).encodeFunctionData("approve", [CHAINFLIP_BSC_VAULT, need]);
+      const atx = await broadcastEvmTxRotated(wallet, "bsc", { to: CHAINFLIP_BSC_USDT.address, data: approveData, value: 0n });
       approvalHashes.push(atx.hash);
       await settleApprovalOrThrow("bsc", atx.hash, async () => (await token.allowance(wallet.address, CHAINFLIP_BSC_VAULT)) >= need, (w) => onProgress(`Approval sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
       try {
@@ -28220,7 +28319,7 @@ export async function executeChainflipSwapRoute(wallet, route, onProgress = () =
     }
   }
   onProgress("Signing the Chainflip deposit…");
-  const tx = await signer.sendTransaction({ to: encoded.to, data: encoded.calldata, value: BigInt(encoded.value ?? "0") });
+  const tx = await broadcastEvmTxRotated(wallet, "bsc", { to: encoded.to, data: encoded.calldata, value: BigInt(encoded.value ?? "0") });
   onProgress("Deposit sent — Chainflip delivers DOT to your Polkadot address (about 2 minutes; if the price floor is missed inside the retry window, the deposit refunds to your BSC address automatically)…");
   await settleBroadcastOrThrow("bsc", tx.hash, (w) => onProgress(`Deposit sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
   return [tx.hash, ...approvalHashes];
@@ -29075,6 +29174,281 @@ export function swapInboundPaused(chainKey) {
   return !swapFamilyHasExecutableExit(chainKey);
 }
 
+/* ---------- Direct wrap / unwrap + wrapped-delivery integrity ----------
+ * The 2026-11-28 repair order, second half — two transaction
+ * defects the owner hit live on his phone:
+ *
+ * (1) WRAPPED DELIVERY: his Base ETH → Arbitrum ETH swap
+ * DELIVERED WETH on Arbitrum instead of the native ETH he
+ * asked for. Every rail's route carries its stated delivery
+ * asset in route.toToken; the search now partitions routes by
+ * delivery FORM (below): a route whose stated delivery is the
+ * wrapped contract when native was requested (or native when
+ * wrapped was requested) is dropped when a form-true route
+ * exists, and when every route violates, the search repairs
+ * through composition, then through a hand-built milestone
+ * route that appends the direct unwrap leg, and only then
+ * answers honestly empty. The defence is architectural — it
+ * checks the delivery asset form on every route, fleet-wide,
+ * for every wrapped-native pair — because a rail can
+ * substitute at fill time even when its quote states native.
+ *
+ * (2) NO DIRECT UNWRAP: unwrapping the stranded WETH then
+ * failed twice — "No route at that size" at dust, then a
+ * broadcast that died on one node's unreadable reply. The
+ * direct wrap/unwrap route below quotes 1:1 at ANY size (a
+ * wrap is a deposit/withdraw on the wrapped-native contract
+ * itself — no venue, no slippage, no minimum), and every EVM
+ * broadcast now rides the rotated endpoint fleet
+ * (broadcastEvmTxRotated, near the send path).
+ *
+ * The wrapped-native table was verified live chain by chain
+ * on 2026-11-28 (symbol + 18 decimals + deposit()/withdraw(0)
+ * behaviour probes through each chain's own RPCs). Chains
+ * whose candidate could not be verified are NOT in the
+ * table: zkSync Era (its WETH fails the withdraw probe),
+ * Aurora and Kava (symbol unverifiable from the build
+ * machine). At quote time every entry is RE-verified on
+ * chain (symbol, decimals, both probes) before a route is
+ * offered, and the executor verifies again before signing —
+ * a wrong table entry can never route funds. */
+export const WRAPPED_NATIVE_BY_CHAIN = {
+  ethereum: { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH" },
+  base: { address: "0x4200000000000000000000000000000000000006", symbol: "WETH" },
+  arbitrum: { address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", symbol: "WETH" },
+  optimism: { address: "0x4200000000000000000000000000000000000006", symbol: "WETH" },
+  linea: { address: "0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f", symbol: "WETH" },
+  robinhood: { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH" },
+  bsc: { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095C", symbol: "WBNB" },
+  polygon: { address: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", symbol: "WPOL" },
+  avalanche: { address: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", symbol: "WAVAX" },
+  gnosis: { address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d", symbol: "WXDAI" },
+  scroll: { address: "0x5300000000000000000000000000000000000004", symbol: "WETH" },
+  mantle: { address: "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8", symbol: "WMNT" },
+  fuse: { address: "0x0BE9e53fd7EDaC9F859882AfdDa116645287C629", symbol: "WFUSE" },
+  moonriver: { address: "0x98878B06940aE243284CA214f92Bb71a2b032B8A", symbol: "WMOVR" },
+  taiko: { address: "0xA51894664A773981C6C112C43ce576f315d5b1B6", symbol: "WETH" },
+  flare: { address: "0x1D80c49BbBCd1C0911346656B529DF9E5c2F783d", symbol: "WFLR" },
+  hyperevm: { address: "0x5555555555555555555555555555555555555555", symbol: "WHYPE" },
+  rootstock: { address: "0x542fDA317318eBF1d3DEAf76E0b632741A7e677d", symbol: "WRBTC" },
+  seievm: { address: "0xe30feDd158A2e3b13e9badaeABaFc5516e95e8C7", symbol: "WSEI" },
+};
+const WRAPPED_NATIVE_VERIFY_CACHE = new Map(); // chainKey -> true (successes only; failures re-probe next quote)
+/** On-chain proof that a chain's table entry IS the canonical
+ * wrapped-native contract: the pinned symbol, 18 decimals, and
+ * deposit()/withdraw(0) behaviour probes (eth_call, value 0 —
+ * read-only; the probe form also passes proxied deployments,
+ * which raw bytecode scanning would miss). */
+export async function verifyWrappedNativeEntry(chainKey) {
+  const entry = WRAPPED_NATIVE_BY_CHAIN[chainKey];
+  if (!entry || !NETWORKS[chainKey]) return false;
+  if (WRAPPED_NATIVE_VERIFY_CACHE.get(chainKey)) return true;
+  try {
+    const ok = await withEvmProvider(chainKey, async (provider) => {
+      const c = new ethers.Contract(entry.address, ERC20_META_ABI, provider);
+      const [sym, dec] = await Promise.all([c.symbol(), c.decimals()]);
+      if (String(sym) !== entry.symbol || Number(dec) !== 18) return false;
+      const probeFrom = "0x000000000000000000000000000000000000dEaD";
+      await provider.call({ from: probeFrom, to: entry.address, data: "0xd0e30db0", value: 0n });
+      await provider.call({ from: probeFrom, to: entry.address, data: "0x2e1a7d4d" + "0".repeat(64) });
+      return true;
+    });
+    if (ok) { WRAPPED_NATIVE_VERIFY_CACHE.set(chainKey, true); return true; }
+  } catch { /* an unverifiable entry offers no route — honest absence */ }
+  return false;
+}
+/** The wrap pair a search asks for, if any: same EVM chain,
+ * native on one side and the chain's wrapped-native contract
+ * on the other, integer raw amount above zero. */
+export function wrapPairDirection(args) {
+  if (!args || !NETWORKS[args.fromChainKey] || args.fromChainKey !== args.toChainKey) return null;
+  const entry = WRAPPED_NATIVE_BY_CHAIN[args.fromChainKey];
+  if (!entry) return null;
+  const amt = String(args.fromAmount || "");
+  if (!/^\d+$/.test(amt) || BigInt(amt) <= 0n) return null;
+  const fromForm = evmDeliveryForm(args.fromChainKey, args.fromTokenAddress);
+  const toForm = evmDeliveryForm(args.toChainKey, args.toTokenAddress);
+  if (fromForm === "native" && toForm === "wrapped") return { entry, direction: "wrap" };
+  if (fromForm === "wrapped" && toForm === "native") return { entry, direction: "unwrap" };
+  return null;
+}
+/** The direct wrap/unwrap route: 1:1 at ANY size, no venue,
+ * no fee (nothing can ride a 1:1 wrap — the honest
+ * non-collecting class, declared on the route). Quoted only
+ * after the on-chain entry verification passes. */
+export async function getWrapSwapRoute(args) {
+  const dir = wrapPairDirection(args);
+  if (!dir) return null;
+  if (!(await verifyWrappedNativeEntry(args.fromChainKey))) return null;
+  const net = NETWORKS[args.fromChainKey];
+  const { entry, direction } = dir;
+  const fromAmount = String(args.fromAmount);
+  const nativeTok = { address: NATIVE_TOKEN_ADDRESS, symbol: net.symbol, name: net.name || net.symbol, decimals: 18, chainId: net.chainId };
+  const wrappedTok = { address: entry.address, symbol: entry.symbol, name: "Wrapped " + net.symbol, decimals: 18, chainId: net.chainId };
+  const fromToken = direction === "wrap" ? nativeTok : wrappedTok;
+  const toToken = direction === "wrap" ? wrappedTok : nativeTok;
+  let usd = null;
+  try {
+    const prices = await getPrices();
+    const p = prices[net.symbol]?.usd;
+    if (Number.isFinite(Number(p))) usd = Number(ethers.formatUnits(BigInt(fromAmount), 18)) * Number(p);
+  } catch { /* USD is display-only here */ }
+  let gasCostUSD = null;
+  try {
+    const data = direction === "wrap" ? "0xd0e30db0" : "0x2e1a7d4d" + BigInt(fromAmount).toString(16).padStart(64, "0");
+    const value = direction === "wrap" ? BigInt(fromAmount) : 0n;
+    gasCostUSD = await withEvmProvider(args.fromChainKey, async (provider) => {
+      const [gas, feeData] = await Promise.all([
+        provider.estimateGas({ from: args.fromAddress, to: entry.address, data, value }),
+        provider.getFeeData(),
+      ]);
+      const gp = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+      const prices = await getPrices();
+      const p = prices[net.symbol]?.usd;
+      return Number.isFinite(Number(p)) ? Number(ethers.formatEther(gas * gp)) * Number(p) : null;
+    });
+  } catch { /* gas display stays null rather than guessed */ }
+  return {
+    provider: "wrap",
+    id: `wrap:${args.fromChainKey}:${direction}`,
+    type: "wrap",
+    fromChainId: net.chainId, toChainId: net.chainId,
+    fromChainKey: args.fromChainKey, toChainKey: args.toChainKey,
+    fromAmount, fromToken, toToken,
+    toAmount: fromAmount, toAmountMin: fromAmount,
+    toAmountUSD: usd, fromAmountUSD: usd,
+    gasCostUSD, routeFeeUsd: 0, executionDuration: 20,
+    platformFeeRaw: "0", platformFeeUsd: 0, platformFeeBps: 0, platformFeeCollecting: false,
+    steps: [],
+    wrap: { wrappedAddress: entry.address, wrappedSymbol: entry.symbol, direction, chainKey: args.fromChainKey },
+  };
+}
+/** Execute a direct wrap/unwrap route: re-verify the contract
+ * on chain, simulate, broadcast through the rotated fleet,
+ * settle chain-decided. One transaction, no approval. */
+export async function executeWrapSwapRoute(wallet, route, onProgress = () => {}) {
+  const { ok, reason } = swapRouteExecutable(route);
+  if (!ok) throw new Error(reason);
+  const chainKey = route.wrap.chainKey;
+  const entry = WRAPPED_NATIVE_BY_CHAIN[chainKey];
+  // Execution re-verifies from scratch (cache cleared for this
+  // chain): the quote-time proof is not trusted at sign time.
+  WRAPPED_NATIVE_VERIFY_CACHE.delete(chainKey);
+  if (!(await verifyWrappedNativeEntry(chainKey))) {
+    throw new Error("The wrapped-native contract could not be verified on chain — nothing was sent.");
+  }
+  const amount = BigInt(route.fromAmount);
+  const txReq = route.wrap.direction === "wrap"
+    ? { to: entry.address, data: "0xd0e30db0", value: amount }
+    : { to: entry.address, data: "0x2e1a7d4d" + amount.toString(16).padStart(64, "0"), value: 0n };
+  onProgress(route.wrap.direction === "wrap" ? "Wrapping…" : "Unwrapping…");
+  const provider = providerFor(chainKey);
+  await simulateEvmStepOrThrow(chainKey, provider, txReq, wallet.address);
+  const tx = await broadcastEvmTxRotated(wallet, chainKey, txReq);
+  onProgress("Sent — waiting for it to mine…");
+  await settleBroadcastOrThrow(chainKey, tx.hash, (w) => onProgress(`Sent — waiting for it to mine… ${Math.round(w / 1000)}s`));
+  return [tx.hash];
+}
+
+/** The delivery FORM of an EVM token address on a chain:
+ * "native" (the zero address, the sentinel, or a native
+ * predeploy), "wrapped" (the chain's wrapped-native
+ * contract), "token" (any other contract), or null when no
+ * address is stated. */
+export function evmDeliveryForm(chainKey, address) {
+  if (address == null || address === "") return null;
+  const a = String(address).toLowerCase();
+  const net = NETWORKS[chainKey];
+  if (a === NATIVE_TOKEN_ADDRESS || a === NATIVE_TOKEN_SENTINEL.toLowerCase()) return "native";
+  if (net && isNativePredeploy(net.chainId, String(address))) return "native";
+  const w = WRAPPED_NATIVE_BY_CHAIN[chainKey];
+  if (w && a === w.address.toLowerCase()) return "wrapped";
+  return "token";
+}
+/** Whether a route's STATED delivery matches the form the
+ * search requested. Only the native↔wrapped axis binds: a
+ * route that states no delivery address, or a search that
+ * asked for an ordinary token, is judged by the other gates
+ * as before. */
+export function routeDeliveryFormOk(route, args) {
+  if (!route || !args || !NETWORKS[args.toChainKey]) return true;
+  const reqForm = evmDeliveryForm(args.toChainKey, args.toTokenAddress);
+  if (reqForm !== "native" && reqForm !== "wrapped") return true;
+  const gotForm = evmDeliveryForm(args.toChainKey, route.toToken?.address);
+  if (gotForm == null) return true;
+  return gotForm === reqForm;
+}
+export function partitionRoutesByDeliveryForm(routes, args) {
+  const list = Array.isArray(routes) ? routes : [];
+  if (!args || !NETWORKS[args.toChainKey]) return { applicable: false, formTrue: list, violating: [] };
+  const reqForm = evmDeliveryForm(args.toChainKey, args.toTokenAddress);
+  if (reqForm !== "native" && reqForm !== "wrapped") return { applicable: false, formTrue: list, violating: [] };
+  const formTrue = [], violating = [];
+  for (const r of list) (routeDeliveryFormOk(r, args) ? formTrue : violating).push(r);
+  return { applicable: true, formTrue, violating };
+}
+/** The hand-built repair for the all-routes-violate case: the
+ * best violating route delivers the wrapped (or native) form
+ * to the user's OWN destination address, then a direct
+ * wrap/unwrap leg — quoted live at the violating route's
+ * stated arrival — converts it to exactly what was asked
+ * for. Mirrors the milestone-composition route shape, so
+ * execution, verification (≥90%-of-quote band) and history
+ * treat it like any other composition. */
+export async function buildWrappedDeliveryRepairRoute(args, violatingRoute) {
+  const destKey = args?.toChainKey;
+  const entry = destKey ? WRAPPED_NATIVE_BY_CHAIN[destKey] : null;
+  if (!entry || !violatingRoute) return null;
+  const reqForm = evmDeliveryForm(destKey, args.toTokenAddress);
+  const gotForm = evmDeliveryForm(destKey, violatingRoute.toToken?.address);
+  if (!((reqForm === "native" && gotForm === "wrapped") || (reqForm === "wrapped" && gotForm === "native"))) return null;
+  if (!swapRouteExecutable(violatingRoute).ok) return null;
+  const arrived = String(violatingRoute.toAmount || "");
+  if (!/^\d+$/.test(arrived) || BigInt(arrived) <= 0n) return null;
+  const destAddress = args.toAddress || args.fromAddress;
+  if (!destAddress) return null;
+  const leg2Args = reqForm === "native"
+    ? { fromChainKey: destKey, toChainKey: destKey, fromTokenAddress: entry.address, toTokenAddress: args.toTokenAddress, fromAmount: arrived, fromAddress: destAddress, toAddress: destAddress }
+    : { fromChainKey: destKey, toChainKey: destKey, fromTokenAddress: NATIVE_TOKEN_ADDRESS, toTokenAddress: entry.address, fromAmount: arrived, fromAddress: destAddress, toAddress: destAddress };
+  const leg2 = await getWrapSwapRoute(leg2Args);
+  if (!leg2 || !swapRouteExecutable(leg2).ok) return null;
+  const net = NETWORKS[destKey];
+  const legDescs = [
+    {
+      fromChainKey: violatingRoute.fromChainKey || args.fromChainKey, toChainKey: destKey,
+      fromTokenAddress: violatingRoute.fromToken?.address || args.fromTokenAddress, toTokenAddress: violatingRoute.toToken?.address,
+      fromSymbol: violatingRoute.fromToken?.symbol || "", toSymbol: violatingRoute.toToken?.symbol || entry.symbol,
+      fromAmount: String(violatingRoute.fromAmount || args.fromAmount), fromAddress: args.fromAddress, toAddress: destAddress,
+      expectedToAmount: arrived, provider: violatingRoute.provider, estimated: false,
+    },
+    {
+      fromChainKey: destKey, toChainKey: destKey,
+      fromTokenAddress: leg2.fromToken.address, toTokenAddress: leg2.toToken.address,
+      fromSymbol: leg2.fromToken.symbol, toSymbol: leg2.toToken.symbol,
+      fromAmount: arrived, fromAddress: destAddress, toAddress: destAddress,
+      expectedToAmount: leg2.toAmount, provider: "wrap", estimated: false,
+    },
+  ];
+  return {
+    provider: "milestone",
+    id: "milestone:wrap-repair:" + (violatingRoute.id || violatingRoute.provider || "route"),
+    type: "composite",
+    fromChainId: violatingRoute.fromChainId, toChainId: violatingRoute.toChainId,
+    fromChainKey: args.fromChainKey, toChainKey: destKey,
+    fromAmount: String(violatingRoute.fromAmount || args.fromAmount), fromToken: violatingRoute.fromToken,
+    toToken: leg2.toToken, toAmount: leg2.toAmount, toAmountMin: leg2.toAmountMin,
+    toAmountUSD: leg2.toAmountUSD ?? violatingRoute.toAmountUSD ?? null, fromAmountUSD: violatingRoute.fromAmountUSD ?? null,
+    gasCostUSD: (Number(violatingRoute.gasCostUSD) || 0) + (Number(leg2.gasCostUSD) || 0),
+    routeFeeUsd: Number(violatingRoute.routeFeeUsd) || 0,
+    executionDuration: (Number(violatingRoute.executionDuration) || 0) + (Number(leg2.executionDuration) || 0) + 30,
+    platformFeeUsd: violatingRoute.platformFeeUsd ?? null, platformFeeBps: violatingRoute.platformFeeBps ?? null,
+    platformFeeCollecting: !!violatingRoute.platformFeeCollecting,
+    steps: violatingRoute.steps || [],
+    milestone: { label: milestoneLabelFor(violatingRoute.fromToken?.symbol || "", legDescs), legs: legDescs, finalLegEstimated: false },
+    milestoneLegRoutes: [violatingRoute, leg2],
+  };
+}
+
 export async function getSwapRoutesDirect(args) {
   // Scam swap block (token trust, 2026-11-17): before any
   // venue is queried, both sides resolve their trust verdicts
@@ -29100,6 +29474,14 @@ export async function getSwapRoutesDirect(args) {
   routes = routes || [];
   if (mayanSupportsPair(planArgs) || mayanSupportsSuiGasDropPair(planArgs)) {
     try { const m = await getMayanSwapRoute(planArgs); if (m) routes.push(m); } catch { /* Mayan is a candidate, never a single point of failure */ }
+  }
+  // Direct wrap/unwrap (2026-11-28): for a native↔wrapped
+  // pair on one chain, the 1:1 contract route is a candidate
+  // beside the venues — quoted at ANY size (the owner's dust
+  // unwrap found "no route at that size" everywhere else),
+  // and merit ranking puts its zero-fee 1:1 first.
+  if (wrapPairDirection(planArgs)) {
+    try { const w = await getWrapSwapRoute(planArgs); if (w) routes.push(w); } catch { /* the direct wrap is a candidate, never a single point of failure */ }
   }
   // 1Click (NEAR Intents, 2026-11-14): a candidate beside
   // Mayan, never a single point of failure — except its
@@ -29250,6 +29632,23 @@ export async function getSwapRoutes(args, { directSearch = null, compositionSear
   const composeFn = compositionSearch || ((a) => searchMilestoneCompositions(a, { searchLeg: (x) => getSwapRoutesDirect(x) }));
   let routes = null, directErr = null;
   try { routes = await directFn(args); } catch (e) { directErr = e; }
+  // Wrapped-delivery integrity (2026-11-28): partition the
+  // direct answer by delivery FORM. Form-true routes proceed
+  // exactly as before. When EVERY direct route states the
+  // wrong form (the owner's WETH-instead-of-ETH delivery),
+  // the search falls through to composition with the
+  // violating set remembered — the repair below rebuilds an
+  // honest answer from it (composition first, then a
+  // hand-built route appending the direct unwrap leg) rather
+  // than ever offering a route that lands the wrong asset.
+  let violatingOnly = null;
+  if (routes && routes.length) {
+    const part = partitionRoutesByDeliveryForm(routes, args);
+    if (part.applicable && part.violating.length) {
+      if (part.formTrue.length) routes = part.formTrue;
+      else { violatingOnly = part.violating; routes = []; }
+    }
+  }
   // Lightning first-receive cost truth (cheapest-entry,
   // 2026-11-14): when the caller states the wallet has no
   // Lightning channel yet (args.lightningFirstReceive — a
@@ -29302,11 +29701,41 @@ export async function getSwapRoutes(args, { directSearch = null, compositionSear
   }
   let composed = [], composeErr = null;
   try { composed = await composeFn(args); } catch (e) { composeErr = e; composed = []; }
+  // The same form partition binds composed answers (defence
+  // in depth: a composition whose final leg states the wrong
+  // delivery form is not an answer either).
+  if (composed && composed.length) {
+    const cp = partitionRoutesByDeliveryForm(composed, args);
+    if (cp.applicable) composed = cp.formTrue;
+  }
   if (composed && composed.length) {
     let gasPlan = null;
     try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
     if (gasPlan) for (const r of composed) if (!r.destGas) r.destGas = gasPlan;
     return withEntryCosts(rankSwapRoutes(composed, null, { gasNeed: gasPlan }));
+  }
+  // Hand-built wrapped-delivery repair (2026-11-28): every
+  // direct route violated the requested form and no
+  // composition served the pair — append the direct
+  // wrap/unwrap leg to the best violating route as a
+  // milestone composition. If no repair can be built, the
+  // honest answer is empty: no route is better than a route
+  // that lands the wrong asset.
+  if (violatingOnly && violatingOnly.length) {
+    let repaired = null;
+    try {
+      for (const v of rankSwapRoutes(violatingOnly, null)) {
+        repaired = await buildWrappedDeliveryRepairRoute(args, v);
+        if (repaired) break;
+      }
+    } catch { repaired = null; }
+    if (repaired) {
+      let gasPlan = null;
+      try { gasPlan = await planDestGas(args); } catch { gasPlan = null; }
+      if (gasPlan && !repaired.destGas) repaired.destGas = gasPlan;
+      return withEntryCosts(rankSwapRoutes([repaired], null, { gasNeed: gasPlan }));
+    }
+    return [];
   }
   // A leg floor recorded by the composition search is the
   // more specific verdict when the direct failure carried no
@@ -29954,7 +30383,11 @@ export async function executeRelaySwapRoute(wallet, route, onProgress = () => {}
       // swap/deposit items are what must not broadcast into a
       // refusal).
       if (step.id !== "approve") await simulateEvmStepOrThrow(fromKey, provider, txReq, wallet.address);
-      const tx = await signer.sendTransaction(txReq);
+      // Rotated broadcast (2026-11-28): each step — approvals
+      // included — rides the endpoint fleet, not the one
+      // primary node whose unreadable reply killed the owner's
+      // unwrap.
+      const tx = await broadcastEvmTxRotated(wallet, fromKey, txReq);
       hashes.push(tx.hash);
       if (step.id === "approve") {
         try {
@@ -30273,6 +30706,35 @@ export function swapRouteExecutable(route) {
       return { ok: false, reason: "This composed route is incomplete — search again." };
     const inner = swapRouteExecutable(first);
     return inner.ok ? { ok: true, milestone: true } : { ok: false, reason: inner.reason };
+  }
+  // Direct wrap/unwrap routes (2026-11-28): executable when
+  // the route is exactly the structural shape the quoter
+  // builds — same chain both sides, the wrap payload naming
+  // the CURRENT table entry for that chain, a direction
+  // consistent with the from/to token forms, an exact 1:1
+  // amount, and an honestly non-collecting fee state. The
+  // executor re-verifies the contract on chain before
+  // signing, so this gate is shape-only by design.
+  if (route?.provider === "wrap") {
+    const incomplete = "This wrap route is incomplete — search again.";
+    const w = route.wrap;
+    if (!w || typeof w !== "object") return { ok: false, reason: incomplete };
+    const entry = WRAPPED_NATIVE_BY_CHAIN[w.chainKey];
+    if (!entry || !NETWORKS[w.chainKey]) return { ok: false, reason: incomplete };
+    if (String(w.wrappedAddress || "").toLowerCase() !== entry.address.toLowerCase()) return { ok: false, reason: incomplete };
+    if (w.direction !== "wrap" && w.direction !== "unwrap") return { ok: false, reason: incomplete };
+    if (route.fromChainKey !== w.chainKey || route.toChainKey !== w.chainKey) return { ok: false, reason: incomplete };
+    if (Number(route.fromChainId) !== NETWORKS[w.chainKey].chainId || Number(route.toChainId) !== NETWORKS[w.chainKey].chainId) return { ok: false, reason: incomplete };
+    const fromForm = evmDeliveryForm(w.chainKey, route.fromToken?.address);
+    const toForm = evmDeliveryForm(w.chainKey, route.toToken?.address);
+    if (w.direction === "wrap" && !(fromForm === "native" && toForm === "wrapped")) return { ok: false, reason: incomplete };
+    if (w.direction === "unwrap" && !(fromForm === "wrapped" && toForm === "native")) return { ok: false, reason: incomplete };
+    let amtOk = false;
+    try { amtOk = /^\d+$/.test(String(route.fromAmount)) && BigInt(route.fromAmount) > 0n && String(route.toAmount) === String(route.fromAmount); } catch { /* not an integer amount */ }
+    if (!amtOk) return { ok: false, reason: incomplete };
+    if (route.platformFeeCollecting) return { ok: false, reason: "This wrap route claims a fee a 1:1 wrap cannot carry — pick another route." };
+    if (route.platformFeeRaw != null && String(route.platformFeeRaw) !== "0") return { ok: false, reason: "This wrap route claims a fee a 1:1 wrap cannot carry — pick another route." };
+    return { ok: true, wrap: true };
   }
   // Gas-fallback composed routes (destination-gas mechanism 2,
   // 2026-11-11): executable when the composite is complete AND
@@ -31305,11 +31767,11 @@ export function dexChainIdForEvmChain(chainId) {
  *  magnitude; the bucket with the most 24h VOLUME wins (real trading
  *  clusters at the real price; a stale pool cannot fake a market),
  *  and inside the bucket the highest-volume pair's price is used. */
-export function parseDexScreenerPairs(data, dexChainId, addresses) {
+function collectDexScreenerCandidates(data, addresses, dexChainId) {
   const want = new Set((addresses || []).map(a => String(a).toLowerCase()));
   const byToken = new Map(); // key -> [candidate pairs]
   for (const p of (data && data.pairs) || []) {
-    if (!p || p.chainId !== dexChainId || !p.baseToken || !p.baseToken.address) continue;
+    if (!p || (dexChainId != null && p.chainId !== dexChainId) || !p.baseToken || !p.baseToken.address) continue;
     const key = String(p.baseToken.address).toLowerCase();
     if (!want.has(key)) continue;
     const price = p.priceUsd != null && p.priceUsd !== "" ? Number(p.priceUsd) : null;
@@ -31328,6 +31790,9 @@ export function parseDexScreenerPairs(data, dexChainId, addresses) {
     if (!byToken.has(key)) byToken.set(key, []);
     byToken.get(key).push(cand);
   }
+  return byToken;
+}
+function dexBestPrices(byToken) {
   const out = new Map();
   for (const [key, cands] of byToken) {
     const buckets = new Map(); // magnitude -> { vol, liq, pairs }
@@ -31345,6 +31810,20 @@ export function parseDexScreenerPairs(data, dexChainId, addresses) {
     out.set(key, { priceUsd: rep.price, name: rep.name, symbol: rep.symbol });
   }
   return out;
+}
+export function parseDexScreenerPairs(data, dexChainId, addresses) {
+  return dexBestPrices(collectDexScreenerCandidates(data, addresses, dexChainId));
+}
+/** The same selection with NO chain filter (2026-11-28): the
+ * price fallback for a held token CoinGecko does not track on
+ * its own chain but which trades under the same contract
+ * address on another chain — the NODE case (the owner's
+ * Arbitrum holding priced by its BSC PancakeSwap pair). The
+ * anti-phantom discipline is identical: base-token pairs
+ * only, the $1,000 liquidity floor, magnitude bucketing by
+ * 24h volume. */
+export function parseDexScreenerPairsAnyChain(data, addresses) {
+  return dexBestPrices(collectDexScreenerCandidates(data, addresses, null));
 }
 /** Batched DexScreener lookup (30 addresses per call, the API's cap).
  *  Returns a Map keyed by the address AS PASSED IN → { priceUsd, name,
@@ -31453,10 +31932,38 @@ export function parseCgTokenPrices(data, addresses) {
  *  LOWERCASED address. `fetchImpl` is injectable for tests. */
 export const CG_CONTRACT_PRICE_TTL_MS = 30000;
 const cgContractPriceCache = new Map(); // `${chainId}:${addrLower}` -> { at, price|null }
+/** DexScreener fallback for the addresses CoinGecko left
+ * unpriced (2026-11-28, the NODE repair): the token endpoint
+ * answers pairs across chains for the same contract address;
+ * same-chain pairs win when they clear the anti-phantom
+ * floor, otherwise the best pair on any chain prices the
+ * holding (NODE's Arbitrum balance priced by its BSC pair).
+ * Same injectable fetch, same fault posture: a failed batch
+ * prices nothing, never throws. */
+async function fetchDexScreenerFallbackPrices(chainId, addresses, F) {
+  const out = new Map();
+  const dexChain = dexChainIdForEvmChain(chainId);
+  for (const grp of chunkArray(addresses, 30)) {
+    let data = null;
+    try {
+      const res = await F(`${DEX_API}/tokens/${grp.join(",")}`, { signal: AbortSignal.timeout(8000) });
+      if (res && res.ok) data = await res.json().catch(() => null);
+    } catch { /* this batch stays unpriced */ }
+    if (!data) continue;
+    if (dexChain) {
+      const m = parseDexScreenerPairs(data, dexChain, grp);
+      for (const a of grp) { const hit = m.get(a.toLowerCase()); if (hit) out.set(a.toLowerCase(), hit.priceUsd); }
+    }
+    const rest = grp.filter(a => !out.has(a.toLowerCase()));
+    if (rest.length) {
+      const m2 = parseDexScreenerPairsAnyChain(data, rest);
+      for (const a of rest) { const hit = m2.get(a.toLowerCase()); if (hit) out.set(a.toLowerCase(), hit.priceUsd); }
+    }
+  }
+  return out;
+}
 export async function getCgContractPrices(chainId, addresses, fetchImpl) {
   const out = new Map();
-  const platform = cgPlatformForChain(chainId);
-  if (!platform) return out;
   const F = fetchImpl || fetch;
   const want = [...new Set((addresses || []).map(a => String(a || "").toLowerCase()).filter(Boolean))];
   const now = Date.now();
@@ -31466,29 +31973,48 @@ export async function getCgContractPrices(chainId, addresses, fetchImpl) {
     if (hit && now - hit.at < CG_CONTRACT_PRICE_TTL_MS) { if (hit.price != null) out.set(a, hit.price); }
     else misses.push(a);
   }
-  for (const batch of chunkArray(misses, 30)) {
-    let parsed = new Map();
-    // Two attempts (§155 D1 follow-through, 2026-11-18): the
-    // first attempt fires inside the open-time request storm,
-    // where a single 8 s timeout can eat the only chance a held
-    // token's price gets (proven in the §155 walks — the call
-    // fired at open and never landed, while the identical call
-    // succeeded minutes later in a quiet session). A batch that
-    // got NO response (throw / not-ok) is retried once after a
-    // short pause; a batch CoinGecko answered — even with no
-    // price for these contracts — is not re-asked.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      let responded = false;
-      try {
-        const url = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${batch.join(",")}&vs_currencies=usd`;
-        const res = await F(url, { signal: AbortSignal.timeout(8000) });
-        if (res && res.ok) { responded = true; parsed = parseCgTokenPrices(await res.json().catch(() => null), batch); }
-      } catch { /* no response on this attempt — the retry below decides */ }
-      if (responded || attempt === 1) break;
-      await new Promise(r => setTimeout(r, 700));
+  const platform = cgPlatformForChain(chainId);
+  if (platform) {
+    for (const batch of chunkArray(misses, 30)) {
+      let parsed = new Map();
+      // Two attempts (§155 D1 follow-through, 2026-11-18): the
+      // first attempt fires inside the open-time request storm,
+      // where a single 8 s timeout can eat the only chance a held
+      // token's price gets (proven in the §155 walks — the call
+      // fired at open and never landed, while the identical call
+      // succeeded minutes later in a quiet session). A batch that
+      // got NO response (throw / not-ok) is retried once after a
+      // short pause; a batch CoinGecko answered — even with no
+      // price for these contracts — is not re-asked.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let responded = false;
+        try {
+          const url = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${batch.join(",")}&vs_currencies=usd`;
+          const res = await F(url, { signal: AbortSignal.timeout(8000) });
+          if (res && res.ok) { responded = true; parsed = parseCgTokenPrices(await res.json().catch(() => null), batch); }
+        } catch { /* no response on this attempt — the retry below decides */ }
+        if (responded || attempt === 1) break;
+        await new Promise(r => setTimeout(r, 700));
+      }
+      for (const a of batch) {
+        const p = parsed.get(a) ?? null;
+        if (p != null) { cgContractPriceCache.set(`${chainId}:${a}`, { at: Date.now(), price: p }); out.set(a, p); }
+      }
     }
-    for (const a of batch) {
-      const p = parsed.get(a) ?? null;
+  }
+  // Whatever CoinGecko left unpriced gets the DexScreener
+  // fallback before its (null) verdict is cached — the cache
+  // then governs BOTH sources for the same 30 s window, so a
+  // render loop hammers neither API. The fallback binds the
+  // same chains this function's CoinGecko pass serves (a
+  // chain with no CG platform prices nothing here, as
+  // before — its tokens price through the DexScreener-first
+  // paths instead).
+  const unpriced = misses.filter(a => !out.has(a));
+  if (platform && unpriced.length) {
+    const ds = await fetchDexScreenerFallbackPrices(chainId, unpriced, F);
+    for (const a of unpriced) {
+      const p = ds.get(a) ?? null;
       cgContractPriceCache.set(`${chainId}:${a}`, { at: Date.now(), price: p });
       if (p != null) out.set(a, p);
     }

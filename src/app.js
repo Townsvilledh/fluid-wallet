@@ -10745,6 +10745,7 @@ function swapRouteName(route) {
   if (route && route.provider === "oneclick") return "1Click";
   if (route && route.provider === "skip") return "Skip";
   if (route && route.provider === "openocean") return "OpenOcean";
+  if (route && route.provider === "wrap") return route.wrap?.direction === "unwrap" ? "Direct unwrap" : "Direct wrap";
   if (route && route.provider === "soroswap") return "Soroswap";
   if (route && route.provider === "cctp-aptos") return "Circle CCTP";
   if (route && route.provider === "bitflow") return "Bitflow";

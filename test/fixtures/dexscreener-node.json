@@ -1,0 +1,343 @@
+{
+ "schemaVersion": "1.0",
+ "pairs": [
+  {
+   "chainId": "bsc",
+   "dexId": "pancakeswap",
+   "pairAddress": "0xd741e051815f4cd350ffD1F4bba800F1DF62B828",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "name": "Wrapped BNB",
+    "symbol": "WBNB"
+   },
+   "priceUsd": "0.002194",
+   "liquidity": {
+    "base": 1806981,
+    "quote": 0.7565,
+    "usd": 4383.08
+   },
+   "volume": {
+    "h24": 8787.32,
+    "h6": 101.56,
+    "h1": 0.01
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0x2604a2d401912ff055f096072b37363ddd7ea47e7a927779f4186eebbc677466",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Bridged USDT",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002093",
+   "liquidity": {
+    "base": 186715,
+    "quote": 519.8806,
+    "usd": 910.72
+   },
+   "volume": {
+    "h24": 2905.96,
+    "h6": 207.36
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0x5B36Ad3cD63ba37f18fE7f4fC3A38BfF3E942C8e",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    "name": "USD Coin",
+    "symbol": "USDC"
+   },
+   "priceUsd": "0.002795",
+   "liquidity": {
+    "base": 65.5109,
+    "quote": 1290.8509,
+    "usd": 1291.03
+   },
+   "volume": {
+    "h24": 0.99
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0xa7fe42e1e8e663946d299dad6cac2393af47cc32df0e31a49db92084ef2f6336",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Bridged USDT",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002409",
+   "liquidity": {
+    "base": 11189,
+    "quote": 39.8391,
+    "usd": 66.8
+   },
+   "volume": {
+    "h24": 35.86,
+    "h6": 1.01
+   }
+  },
+  {
+   "chainId": "ethereum",
+   "dexId": "uniswap",
+   "pairAddress": "0x1672719d21ac52ed43dfa66f48a0ab9f94e236ba2c7b99b33f5b0d55fe5cfbf7",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "name": "Tether USD",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.005351",
+   "liquidity": {
+    "base": 169624,
+    "quote": 907.807,
+    "usd": 1815.61
+   },
+   "volume": {
+    "h24": 21.01
+   }
+  },
+  {
+   "chainId": "ethereum",
+   "dexId": "uniswap",
+   "pairAddress": "0xaa62a1eb96377c3e849c2a02e425b5060828105fa9a3cbb30bf3846816e55334",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "name": "Tether USD",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002451",
+   "liquidity": {
+    "base": 31028,
+    "quote": 76.06563,
+    "usd": 152.13
+   },
+   "volume": {
+    "h24": 216.78
+   }
+  },
+  {
+   "chainId": "ethereum",
+   "dexId": "uniswap",
+   "pairAddress": "0x06ae7da9037797c0f6fe100656e7c5019e22d51d74fd56c38a4e4aa71b39943f",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "name": "USD Coin",
+    "symbol": "USDC"
+   },
+   "priceUsd": "0.003026",
+   "liquidity": {
+    "base": 7894.1343,
+    "quote": 29.656,
+    "usd": 53.54
+   },
+   "volume": {
+    "h24": 13.71,
+    "h6": 1.47
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0xdda414a24728524454c21c09ac0b08d60ffc8ee863fe7f5e332d39b05860106b",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Bridged USDT",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002095",
+   "liquidity": {
+    "base": 174.413,
+    "quote": 0.05397,
+    "usd": 0.41
+   },
+   "volume": {
+    "h24": 2.46,
+    "h6": 0.39
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "pancakeswap",
+   "pairAddress": "0x41CE2a7B90F9462A989Aa791480d4D362f4c71EC",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Tether USD",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002092",
+   "liquidity": {
+    "base": 90.937,
+    "quote": 0.2124,
+    "usd": 0.4
+   },
+   "volume": {
+    "h24": 0.58
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "pancakeswap",
+   "pairAddress": "0xABf6240397a6b78fE7b09C455106902f744554d9",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Tether USD",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002179",
+   "liquidity": {
+    "base": 46.4445,
+    "quote": 0.1012,
+    "usd": 0.2
+   },
+   "volume": {
+    "h24": 0.2,
+    "h6": 0.02,
+    "h1": 0.01
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0x0dd23e38a2df915a95fe68c9a188b88eed3a0ff8cfd4eab83cda8d2ac1a13a3e",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    "name": "Binance Bridged USDC (BNB Smart Chain)",
+    "symbol": "USDC"
+   },
+   "priceUsd": "0.002279",
+   "liquidity": {
+    "base": 2139.4692,
+    "quote": 17.9749,
+    "usd": 22.85
+   },
+   "volume": {
+    "h24": 16.83,
+    "h6": 0.89
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0x8178401c05bf23f91ea7a40905420c83a0149683f42de24cfd2c2b8e411377a5",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Bridged USDT",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.002875",
+   "liquidity": {
+    "base": 1808.9559,
+    "quote": 16.1285,
+    "usd": 21.33
+   },
+   "volume": {
+    "h24": 7.26,
+    "h6": 0.43
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "uniswap",
+   "pairAddress": "0x96b5bd7c611cd2f4ff6b26336d1b02771287e6a139b7ec9023a7fe1d6030dcb1",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "name": "Bridged USDT",
+    "symbol": "USDT"
+   },
+   "priceUsd": "0.004455",
+   "liquidity": {
+    "base": 1476.2969,
+    "quote": 7.0202,
+    "usd": 13.59
+   },
+   "volume": {
+    "h24": 0.22
+   }
+  },
+  {
+   "chainId": "bsc",
+   "dexId": "pancakeswap",
+   "pairAddress": "0xD319e544fB20bA7CDa8Bc8dcd35C0c9e7D07389D",
+   "baseToken": {
+    "address": "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb",
+    "name": "NodeOps",
+    "symbol": "NODE"
+   },
+   "quoteToken": {
+    "address": "0x93ecd8e9156E6b217514BCFE59837b3807D8F53D",
+    "name": "Kabosu",
+    "symbol": "KABOSU"
+   },
+   "volume": {}
+  }
+ ]
+}
