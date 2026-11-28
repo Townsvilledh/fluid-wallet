@@ -21,6 +21,7 @@ import { JUPITER_AGGREGATOR_PROGRAM, JUPITER_FEE_WALLET, JUPITER_WRAPPED_SOL_MIN
 import { fetchChainTokenList, fetchChainToken, COINGECKO_TOKEN_LIST_SLUGS, relayTronExecutableSteps, buildTronTriggerRawData, checkRelayTronStepBounds, decodeTronRawData, executeRelayTronSwapRoute, firstExecutableRoute, getPrices, PRICES_TTL_MS, resetPricesCache, pollSwapTokenCredit, MILESTONE_FAST_TOTAL_SEC, TON_SWAP_CHAIN_ID, TON_SWAP_NATIVE_TOKEN, RELAY_TON_CHAIN_ID, RELAY_TON_DEPOSITORY, relayTonExecutableSteps, buildRelayTonDepositBody, parseRelayTonDepositBody, checkRelayTonStepBounds, tonAddressEquals, executeRelayTonSwapRoute } from "../src/wallet-core.js";
 import { lnReceivePlan, lnLsps2OpeningFeeMsat, lnScidToDecimal, parseLnPeerBook, serializeLnPeerBook, upsertLnPeer, removeLnPeer, lnPeerConnState, waitForLnPeerConnected, lnNodeStatus, lnLightningAddressState } from "../src/wallet-core.js";
 import { humanizeTxError, amountVsBalance, amountExceedsBalance, swapBalanceGate, amountUsdLine, heldBalanceText, sheetBalanceLine, resolveBroadcastOutcome } from "../src/wallet-core.js";
+import { pinnedEvmFeeFields, evmTokenTransferData, assertEvmTokenDecimals, evmRowPriceUsd } from "../src/wallet-core.js";
 import { GAME_HONOUR_LADDER, gameHonoursForCounts, gameTitleForCounts, fluidStorageKeysToWipe } from "../src/wallet-core.js";
 import { TOKEN_TRUST_SCAM_LIST, TOKEN_TRUST_ALLOW_LIST, tokenTrustTtlMs, tokenTrustFresh, tokenTrustKey, tokenTrustIsNative, tokenTrustPinned, tokenTrustOverrideVerdict, goplusMaliciousFlagPresent, parseGoPlusEvmTokenSecurity, parseHoneypotIsResult, parseGoPlusSolanaTokenSecurity, parseGoPlusSuiTokenSecurity, parseJupiterTokenVerdict, parseRugCheckRisks, parseTonApiJetton, parseStellarExpertDirectory, tokenTrustRefusalMessage, resolveTokenTrustSync, fetchTokenTrust, fetchTokenTrustBatch, tokenTrustSwapCheck, assertSwapTokensNotScam, resetTokenTrustCache, getSwapRoutesDirect } from "../src/wallet-core.js";
 import { satoraSwapClaimKey, parseLnArkadePair, estimateLnArkadeFeeSats, buildLnArkadeCreateRequest, checkLnArkadeCreateResponse, parseLnArkadeCreation, parseArkadeIntentFees, arkadeOffboardFeeSats, composeBridgeQuote, formatBridgeQuoteLines, loadBridgeRecords, saveBridgeRecord, bridgeCreationIndex, bumpBridgeCreationIndex, bridgePhaseLabel, bridgeHistoryLine, BRIDGE_ROUTE_COST_CAP_SATS } from "../src/wallet-core.js";
@@ -24553,7 +24554,13 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     app155.includes("if (await priceHeldEvmRows(chainId, [...customRows, ...quickRows]) && alive()) mergeEvmRows(customRows, quickRows);")
     && app155.indexOf("priceHeldEvmRows(chainId, [...customRows, ...quickRows])") < app155.indexOf("const list = await cgTokensForChain(chainId);"));
   ok("§155: held-row pricing also runs inside the per-network read (§147) — non-active chains price their held tokens on the same pass",
-    app155.includes("await priceHeldEvmRows(chainId, knownRows);"));
+    // Widened 2026-11-28 (drawing-board repair): the pass now
+    // also covers the curated-pin BASE rows, so every addressed
+    // row on the chain carries a by-contract price (or an
+    // explicit null) — the symbol fallback that priced the
+    // Robinhood USDG impostor at $1 has no unpriced row left
+    // to land on.
+    app155.includes("await priceHeldEvmRows(chainId, [...base.filter(r => r && r.address), ...knownRows]);"));
   ok("§155: the scan-tail pricing pass covers scan-discovered held rows too (step 5 rides the same helper)",
     app155.includes("await priceHeldEvmRows(chainId, [...customRows, ...allScannedRows]);"));
   ok("§155: the pricing helper asks CoinGecko by-contract BEFORE DexScreener (the source that verifies the token first)",
@@ -25897,6 +25904,88 @@ import { DISCOVERY_BLOCKSCOUT_APIS, parseBlockscoutTokenBalances, fetchBlockscou
       && core28.includes("routes.filter(r => routeDeliveryFormOk(r, legArgs))")
       && core28.includes("buildWrappedDeliveryRepairRoute(args, v)"));
   }
+}
+
+// ---------- 2026-11-28 drawing-board repair: fee band, 6-decimal sends, price by contract ----------
+// Fork-reproduced first (Arbitrum fork, owner's exact figures):
+// the AIDOGE send died pre-broadcast because population priced
+// it at ethers' 2x-baseFee phantom on a no-tip chain; the
+// Robinhood "USDG" dust token wore the real USDG's $1 symbol
+// price. These pins hold the fixes.
+{
+  // (a) The no-tip fee pin. Arbitrum's measured market
+  // (2026-11-28): priority fee 0 everywhere, gasPrice = the
+  // base fee 20,036,000 wei.
+  const pin = pinnedEvmFeeFields({ maxPriorityFeePerGas: 0n, gasPrice: 20036000n, maxFeePerGas: 40072000n });
+  ok("feeband: a no-tip chain pins maxFee at gasPrice + 10% with priority 0",
+    !!pin && pin.type === 2 && pin.maxPriorityFeePerGas === 0n && pin.maxFeePerGas === 22039600n);
+  ok("feeband: a chain WITH a tip market is never pinned (ethers' defaults stand)",
+    pinnedEvmFeeFields({ maxPriorityFeePerGas: 100000000n, gasPrice: 20036000n }) === null);
+  ok("feeband: no gasPrice or no fee data -> no pin",
+    pinnedEvmFeeFields({ maxPriorityFeePerGas: 0n, gasPrice: null }) === null
+    && pinnedEvmFeeFields(null) === null && pinnedEvmFeeFields({}) === null);
+  // The owner's exact band: AIDOGE estimate 383,678 gas, his
+  // native balance 9,101,940,561,373 wei. Unpinned worst case
+  // (2x baseFee) EXCEEDS it; the pinned worst case fits; the
+  // real cost (at gasPrice) fits with room.
+  const EST = 383678n, BAL = 9101940561373n;
+  ok("feeband: the owner's AIDOGE band — unpinned population refuses, the pin proceeds",
+    EST * 40072000n > BAL && EST * pin.maxFeePerGas <= BAL && EST * 20036000n <= BAL);
+  ok("feeband: the pin touches fee fields only — the node's gas estimate is never capped or reduced",
+    !!pin && !("gasLimit" in pin) && Object.keys(pin).sort().join(",") === "maxFeePerGas,maxPriorityFeePerGas,type");
+  const coreDb = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  ok("feeband: population applies the pin inside the rotated broadcast every EVM executor shares",
+    coreDb.includes("const pin = pinnedEvmFeeFields(fd);") && coreDb.includes("popReq = { ...txReq, ...pin }"));
+
+  // (b) 6-decimal send construction (AIDOGE's contract
+  // decimals): the calldata amount word is the RAW balance,
+  // exactly — MAX derived from the raw balance round-trips
+  // with zero dust, and unconfirmed decimals refuse to build.
+  const RAW = 115727271733528684n;
+  const maxStr = (RAW / 1000000n).toString() + "." + (RAW % 1000000n).toString().padStart(6, "0");
+  const data6 = evmTokenTransferData("0x1111111111111111111111111111111111111111", maxStr, { address: "0x09E18590E8f76b6Cf471b3cd75fE1A1a9D2B2c2b", decimals: 6 });
+  ok("dec6: a max send at the token's own 6 decimals encodes the exact raw balance",
+    data6.startsWith("0xa9059cbb") && BigInt("0x" + data6.slice(-64)) === RAW);
+  ok("dec6: the max-send compare runs at the row's decimals — full balance does not exceed itself",
+    amountVsBalance(maxStr, maxStr, 6).exceeds === false
+    && amountVsBalance("115727271733.528685", maxStr, 6).exceeds === true);
+  let threwMissing = false, threwFraction = false;
+  try { evmTokenTransferData("0x1111111111111111111111111111111111111111", "1", { address: "0x09E18590E8f76b6Cf471b3cd75fE1A1a9D2B2c2b" }); } catch { threwMissing = true; }
+  try { assertEvmTokenDecimals({ decimals: 6.5 }); } catch { threwFraction = true; }
+  ok("dec6: unconfirmed or fractional decimals refuse to build an amount (no silent 18)",
+    threwMissing && threwFraction && assertEvmTokenDecimals({ decimals: 6 }) === 6);
+  ok("dec6: the balance read asserts decimals too (no ?? 18 formatting fallback)",
+    !coreDb.includes("token.decimals ?? 18") && coreDb.includes("assertEvmTokenDecimals(token)"));
+
+  // (c) Price by contract only. The impostor: "US Dividen
+  // Gold" (USDG) at 0xF817… on Robinhood Chain — real price
+  // ~$0.00084 — must NEVER inherit the symbol table's $1.
+  const impostor = { address: "0xF817F7cF3e0f4Ba396BaF0FB6300515179374a16", symbol: "USDG", priceUsd: null };
+  ok("pricecontract: a same-symbol impostor row gets NO price, even handed the $1 symbol price",
+    evmRowPriceUsd(impostor, 1) === null
+    && evmRowPriceUsd({ address: impostor.address, symbol: "USDG" }, 1) === null);
+  ok("pricecontract: a row's own by-contract price is the price it shows",
+    evmRowPriceUsd({ address: impostor.address, symbol: "USDG", priceUsd: 0.00084 }, 1) === 0.00084);
+  ok("pricecontract: the native row (no address) may use the chain's symbol price",
+    evmRowPriceUsd({ address: null, symbol: "ETH" }, 3000) === 3000
+    && evmRowPriceUsd({ address: null, symbol: "ETH", priceUsd: null }, 3000) === null);
+  const appDb = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  ok("pricecontract: no EVM painter falls back to the symbol table for an addressed row",
+    !appDb.includes("b.address ? prices[b.symbol]") && appDb.includes("evmRowPriceUsd(b, prices[net.priceSym])"));
+
+  // (d) Revert reasons surface plainly; hex-blob reasons don't.
+  const paused = { message: 'execution reverted: "Pausable: paused"', code: "CALL_EXCEPTION", reason: "Pausable: paused" };
+  ok("drawingboard: a clean revert reason reaches the owner in plain language",
+    humanizeTxError(paused).includes("Pausable: paused") && humanizeTxError(paused).includes("wasn't sent"));
+  const blobReason = { message: "execution reverted", code: "CALL_EXCEPTION", reason: "0x08c379a00000000000000000000000000000000000000000000000000000000000000020" };
+  ok("drawingboard: a hex-blob reason never passes through — the generic sentence stands",
+    !humanizeTxError(blobReason).includes("0x08c379a0") && humanizeTxError(blobReason).includes("would fail on the network"));
+
+  // (e) The build stamp is readable at the top of the More tab.
+  const htmlDb = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  ok("drawingboard: the build stamp sits at the top of the More tab and both stamps fill from the meta",
+    htmlDb.includes('id="buildStampTop"') && htmlDb.indexOf('id="buildStampTop"') < htmlDb.indexOf('id="buildStamp"')
+    && appDb.includes('"buildStamp", "buildStampTop"'));
 }
 
 console.log(`\n${passed} checks passed`);

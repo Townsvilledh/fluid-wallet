@@ -1308,6 +1308,22 @@ export function humanizeTxError(e) {
     return "The network node sent back an answer the wallet couldn't read, so nothing was sent. Check your connection and try again.";
   }
   if (code === "CALL_EXCEPTION" || /execution reverted|\brevert(ed)?\b/.test(hay)) {
+    // Surface the contract's own revert reason when it is a
+    // clean short string (2026-11-28 drawing-board repair): a
+    // generic "would fail" left the owner guessing which of
+    // his inputs the contract refused. Hex blobs and library
+    // internals never pass — the passthrough rules below
+    // apply to reasons too.
+    let reason = "";
+    try { reason = String((e && e.reason) || ""); } catch { /* shape varies */ }
+    if (!reason) {
+      const m = /execution reverted(?::| with reason string)?\s*"([^"]{1,90})"/i.exec(msg);
+      if (m) reason = m[1];
+    }
+    reason = reason.replace(/[\u0000-\u001f]+/g, " ").trim();
+    if (reason && reason.length <= 90 && !/0x[0-9a-f]{16,}/i.test(reason)) {
+      return "This would fail on the network, so it wasn't sent — the contract's reason: \u201C" + reason + "\u201D. Refresh and try again.";
+    }
     return "This would fail on the network, so it wasn't sent. Amounts and prices move — refresh and try again.";
   }
   if (code === "ACTION_REJECTED" || /user rejected|user denied|rejected the request/.test(hay)) {
@@ -1543,6 +1559,35 @@ export async function broadcastSignedTxRotated(providers, signedTx, { verifyAtte
   throw new Error(humanizeTxError(lastErr));
 }
 
+/** Fee fields for a chain with NO tip market (2026-11-28
+ * drawing-board repair — the owner's AIDOGE send). On such a
+ * chain (Arbitrum is the proven case: every public endpoint
+ * answers eth_maxPriorityFeePerGas = 0 and eth_gasPrice = the
+ * base fee), ethers' default population sets maxFeePerGas =
+ * 2 x baseFee — headroom for a fee market that does not exist
+ * there — and the node's worst-case balance check (value +
+ * gas x maxFeePerGas) then refuses any wallet whose native
+ * balance covers the REAL fee but not the phantom double.
+ * Measured live on Arbitrum, 2026-11-28: AIDOGE transfer
+ * estimate 383,678 gas; real cost at gasPrice 7.69e12 wei;
+ * the owner's balance 9.102e12 wei; populated worst case
+ * 1.537e13 wei — the send died "insufficient funds" with the
+ * fee covered 1.18x over. The pin prices the transaction the
+ * way the chain actually charges: maxFeePerGas = the current
+ * gasPrice + 10% (the chain's own slow base-fee drift fits
+ * inside it), priority 0. Returns null whenever the chain
+ * DOES run a tip market (priority > 0), when no gasPrice is
+ * known, or when the caller already chose fee fields —
+ * ethers' defaults then stand untouched. Pure. */
+export function pinnedEvmFeeFields(feeData) {
+  if (!feeData) return null;
+  let prio = null, gp = null;
+  try { prio = feeData.maxPriorityFeePerGas != null ? BigInt(feeData.maxPriorityFeePerGas) : null; } catch { prio = null; }
+  try { gp = feeData.gasPrice != null ? BigInt(feeData.gasPrice) : null; } catch { gp = null; }
+  if (prio == null || prio !== 0n || gp == null || gp <= 0n) return null;
+  return { type: 2, maxFeePerGas: (gp * 11n + 9n) / 10n, maxPriorityFeePerGas: 0n };
+}
+
 /** Populate → sign once → rotated broadcast, for any EVM step.
  * Population walks the rotated read order too: the first endpoint
  * that can nonce + price the transaction wins, each attempt raced
@@ -1557,10 +1602,29 @@ export async function broadcastEvmTxRotated(wallet, networkKey, txReq, { provide
   const list = (providers && providers.length) ? providers
     : evmRpcOrder(networkKey).map(url => new ethers.JsonRpcProvider(url, net.chainId, { staticNetwork: true }));
   if (!list.length) throw new Error("No RPC endpoint is configured for " + networkKey + ".");
+  // No-tip-market fee pin (see pinnedEvmFeeFields): applied
+  // before population, from the first endpoint that answers a
+  // fee read, unless the caller already chose fee fields. A
+  // failed fee read everywhere leaves population exactly as
+  // before — the pin is an improvement, never a new gate.
+  let popReq = txReq;
+  if (txReq && txReq.maxFeePerGas == null && txReq.maxPriorityFeePerGas == null && txReq.gasPrice == null) {
+    for (const p of list) {
+      try {
+        const fd = await Promise.race([
+          p.getFeeData(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("RPC attempt timed out")), EVM_PROVIDER_ATTEMPT_TIMEOUT_MS)),
+        ]);
+        const pin = pinnedEvmFeeFields(fd);
+        if (pin) { popReq = { ...txReq, ...pin }; break; }
+        if (fd) break; // a tip market (or unreadable fees): ethers' defaults stand
+      } catch { /* next endpoint */ }
+    }
+  }
   let populated = null, popErr = null;
   for (const p of list) {
     try {
-      const attempt = (async () => wallet.connect(p).populateTransaction({ ...txReq }))();
+      const attempt = (async () => wallet.connect(p).populateTransaction({ ...popReq }))();
       attempt.catch(() => { /* a late rejection after the race is moot */ });
       populated = await Promise.race([
         attempt,
@@ -1575,6 +1639,30 @@ export async function broadcastEvmTxRotated(wallet, networkKey, txReq, { provide
   return { hash: sent.hash, response: sent.response, alreadyKnown: sent.alreadyKnown, verified: sent.verified };
 }
 
+/** A token row's decimals are the ONE figure an EVM send's
+ * amount math stands on (parseUnits at the row's decimals), so
+ * they must be a confirmed integer from the token's own
+ * contract/indexer record — never a default. A row whose
+ * decimals were never confirmed fails plainly here instead of
+ * building an amount at a guessed 18 (2026-11-28 drawing-board
+ * repair: a 6-decimal token's send must be built at 6, end to
+ * end — row, sheet, parseUnits). */
+export function assertEvmTokenDecimals(token) {
+  const d = token && token.decimals;
+  if (!Number.isInteger(d) || d < 0 || d > 36) {
+    throw new Error("That token's decimals couldn't be confirmed, so the amount can't be built safely — nothing was sent.");
+  }
+  return d;
+}
+
+/** The exact transfer calldata for an EVM token send: the
+ * amount parsed at the token's OWN decimals. Pure — the send
+ * path and its pins share this one construction. */
+export function evmTokenTransferData(to, amount, token) {
+  const decimals = assertEvmTokenDecimals(token);
+  return new ethers.Interface(ERC20).encodeFunctionData("transfer", [to, ethers.parseUnits(String(amount), decimals)]);
+}
+
 export async function estimateSend(wallet, networkKey, { to, amount, token }) {
   const net = NETWORKS[networkKey];
   const provider = providerFor(networkKey);
@@ -1584,10 +1672,16 @@ export async function estimateSend(wallet, networkKey, { to, amount, token }) {
     gas = await provider.estimateGas({ from: wallet.address, to, value: ethers.parseEther(String(amount)) });
   } else {
     const c = new ethers.Contract(token.address, ERC20, signer);
-    gas = await c.transfer.estimateGas(to, ethers.parseUnits(String(amount), token.decimals));
+    gas = await c.transfer.estimateGas(to, ethers.parseUnits(String(amount), assertEvmTokenDecimals(token)));
   }
   const feeData = await provider.getFeeData();
-  const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+  // The displayed fee is what the send will actually be charged
+  // against: on a no-tip chain that is the pinned maxFee (the
+  // current gasPrice + 10%), NOT ethers' 2x-baseFee phantom —
+  // the review sheet must not quote a fee larger than the
+  // wallet's whole native balance for a send that can proceed.
+  const pin = pinnedEvmFeeFields(feeData);
+  const gasPrice = pin ? pin.maxFeePerGas : (feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n);
   return ethers.formatEther(gas * gasPrice);
 }
 
@@ -1600,7 +1694,7 @@ export async function executeSend(wallet, networkKey, { to, amount, token }) {
   if (!token) {
     txReq = { to, value: ethers.parseEther(String(amount)) };
   } else {
-    const data = new ethers.Interface(ERC20).encodeFunctionData("transfer", [to, ethers.parseUnits(String(amount), token.decimals)]);
+    const data = evmTokenTransferData(to, amount, token);
     txReq = { to: token.address, data, value: 0n };
   }
   const sent = await broadcastEvmTxRotated(wallet, networkKey, txReq);
@@ -1744,6 +1838,26 @@ export async function getPrices() {
 /** Drop the cached price table (a forced refresh / a test
  *  changing its price feed starts from a clean load). */
 export function resetPricesCache() { pricesCache = null; pricesInflight = null; }
+
+/** The ONLY price an EVM balance row may show (2026-11-28
+ * drawing-board repair — the Robinhood USDG impostor). A row
+ * carrying a contract address prices from its OWN by-contract
+ * price (row.priceUsd, resolved by getCgContractPrices /
+ * DexScreener keyed on chain + contract) or shows NO price —
+ * never the symbol table's price for its symbol. The symbol
+ * table prices a SYMBOL, and a symbol is not an asset: a
+ * mass-airdropped dust token named "USDG" (contract 0xF817…,
+ * real price ~$0.00084) inherited the $1 the table pins for
+ * the real Paxos USDG contract and rendered 5 tokens as $5.
+ * A row with NO address is the chain's native coin — the one
+ * asset a chain's symbol price unambiguously names — so it
+ * may use the caller's native symbol price when it carries
+ * no price of its own. Pure. */
+export function evmRowPriceUsd(row, nativeSymbolPrice) {
+  if (!row) return null;
+  if (row.address) return row.priceUsd != null ? row.priceUsd : null;
+  return row.priceUsd !== undefined ? row.priceUsd : (nativeSymbolPrice ?? null);
+}
 
 /** Symbols of the built-in networks' hand-verified token pins
  *  carrying the fleet's `stable: true` marker — a built-in's
@@ -32811,7 +32925,12 @@ export async function getEvmTokenBalance(wallet, networkKey, token = null, { att
       return ethers.formatEther(await provider.getBalance(wallet.address));
     }
     const c = new ethers.Contract(token.address, ERC20_BALANCE_ABI, provider);
-    return ethers.formatUnits(await c.balanceOf(wallet.address), token.decimals ?? 18);
+    // No ?? 18 fallback (2026-11-28 drawing-board repair): a
+    // balance formatted at guessed decimals is a wrong balance
+    // — the MAX built from it is wrong by orders of magnitude
+    // for a non-18-decimal token. Unconfirmed decimals throw,
+    // and callers render that as a failed read, never a figure.
+    return ethers.formatUnits(await c.balanceOf(wallet.address), assertEvmTokenDecimals(token));
   }, { attemptTimeoutMs });
 }
 /** Read a would-be ERC-20's metadata + the owner's balance straight

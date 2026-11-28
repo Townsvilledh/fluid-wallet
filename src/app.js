@@ -60,7 +60,7 @@ import {
   looksLikePoison, looksLikePoisonText, revokeApproval, revokeTronApproval, scanOnChainAllowances, LEGACY_ROUTER_DIAMOND,
   registerNetworks, fetchEvmChainSources, gateChains, probeChain, fetchStableTokens,
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
-  getCgContractPrices, pegSymbolForToken, routeCardReceiveLine, routeCardCostLine,
+  getCgContractPrices, pegSymbolForToken, routeCardReceiveLine, routeCardCostLine, evmRowPriceUsd,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
   DISCOVERY_BLOCKSCOUT_APIS, discoverEvmAccountHoldings, probeEvmTokenContractChains,
   orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
@@ -2021,7 +2021,7 @@ function heroTotal() {
   t += sumEvmChainsUsd(evmChainsForTotal, (k, b) => {
     if (b.address && trustScamActive(k, b.address)) return null;
     const n = NETWORKS[k];
-    return priceOfRow(b, b.address ? prices[b.symbol] : prices[n.priceSym]);
+    return evmRowPriceUsd(b, prices[n.priceSym]);
   });
   for (const b of tronBalances) {
     if (b.address && trustScamActive("tron", b.address)) continue;
@@ -2131,7 +2131,7 @@ function familyUsdTotals() {
   m.zcash = (zecLoadFailed || !famLoaded.has("zcash")) ? null : zecBal * (prices.ZEC || 0);
   m.dash = (dashLoadFailed || !famLoaded.has("dash")) ? null : dashBal * (prices.DASH || 0);
   const net = NETWORKS[networkKey];
-  m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumTrustRows(balances, networkKey, (b) => b.address, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]);
+  m.evm = (evmLoadFailed || !famLoaded.has("evm")) ? null : sumTrustRows(balances, networkKey, (b) => b.address, (b) => evmRowPriceUsd(b, prices[net.priceSym]));
   m.tron = (tronLoadFailed || !famLoaded.has("tron")) ? null : sumTrustRows(tronBalances, "tron", (b) => b.address, (b) => prices[b.symbol]);
   m.solana = !famLoaded.has("solana") ? null : sumTrustRows(solBalances, "solana", (b) => b.address, (b) => prices[b.symbol]);
   m.sui = !famLoaded.has("sui") ? null : sumTrustRows(suiBalances, "sui", (b) => b.address, (b) => prices[b.symbol]);
@@ -2175,7 +2175,7 @@ function scopedTotal() {
 function unpricedHoldingGroups() {
   const net = NETWORKS[networkKey];
   return [
-    [balances, (b) => b.address ? prices[b.symbol] : prices[net.priceSym]],
+    [balances, (b) => evmRowPriceUsd(b, prices[net.priceSym])],
     [tronBalances, (b) => prices[b.symbol]],
     [solBalances, (b) => prices[b.symbol]],
     [suiBalances, (b) => prices[b.symbol]],
@@ -2786,7 +2786,7 @@ function paintAssets() {
     // behind the other read's failure.
     if (evmLoadFailed && networkKey === "rootstock" && rifSwLive && rifSwLive.status === "ok" && Number(rifSwLive.row.amount) > 0)
       evmRows = evmRows.map(r => r.rifSmartWallet ? rifSwLive.row : r);
-    const fi = familyRowItems("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym], render);
+    const fi = familyRowItems("evm", evmRows, (b) => evmRowPriceUsd(b, prices[net.priceSym]), render);
     rows.push(fi.html);
     if (evmScanState.key === networkKey && evmScanState.status === "scanning") rows.push(skeletonRowsHtml(2));
     rows.push(`<button class="btn ghost" id="addTokBtn" style="margin:8px 0">＋ Add a token by contract address</button>`);
@@ -2813,7 +2813,7 @@ function paintAssets() {
     // predicate reads rowTrustId, which is ctx-keyed for EVM).
     evmRowCtxKey = k;
     let fi;
-    try { fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], render); }
+    try { fi = familyRowItemsNow("evm", st.rows, (b) => evmRowPriceUsd(b, prices[cnet.priceSym]), render); }
     finally { evmRowCtxKey = null; }
     grp("evm:" + k, "", [fi.html], fi.items);
   }
@@ -2978,7 +2978,7 @@ function paintAssets() {
     if (!evmLoadFailed) {
       const row = balances.find(b => isNativeRow("evm", b));
       if (row && Number(row.amount) > 0) {
-        const p = priceOfRow(row, row.address ? prices[row.symbol] : prices[net0.priceSym]);
+        const p = evmRowPriceUsd(row, prices[net0.priceSym]);
         if (p == null) unpricedNativeByKey.evm = { amount: fmt(row.amount), sym: row.symbol };
       }
     }
@@ -2987,7 +2987,7 @@ function paintAssets() {
       const cn = NETWORKS[k]; if (!cn) continue;
       const row = st.rows.find(b => isNativeRow("evm", b));
       if (row && Number(row.amount) > 0) {
-        const p = priceOfRow(row, row.address ? prices[row.symbol] : prices[cn.priceSym]);
+        const p = evmRowPriceUsd(row, prices[cn.priceSym]);
         if (p == null) unpricedNativeByKey["evm:" + k] = { amount: fmt(row.amount), sym: row.symbol };
       }
     }
@@ -3080,7 +3080,7 @@ function paintAssets() {
   for (const [k, st] of evmChainState) {
     if (!st || st.status === "failed" || !Array.isArray(st.rows)) { evmTotals[k] = null; continue; }
     const cn = NETWORKS[k]; if (!cn) { evmTotals[k] = null; continue; }
-    evmTotals[k] = familyRowsTotalUsd(st.rows, (b) => (b.address && trustScamActive(k, b.address)) ? null : priceOfRow(b, b.address ? prices[b.symbol] : prices[cn.priceSym]));
+    evmTotals[k] = familyRowsTotalUsd(st.rows, (b) => (b.address && trustScamActive(k, b.address)) ? null : evmRowPriceUsd(b, prices[cn.priceSym]));
   }
   const census = [];
   const censusPush = (scopeKey, groupKey, name) => {
@@ -3614,7 +3614,7 @@ function rifSmartWalletDesc(b, netKey, scoped) {
 function evmChainRowDesc(netKey, b) {
   if (b.rifSmartWallet) return rifSmartWalletDesc(b, netKey, true);
   const net = NETWORKS[netKey];
-  const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
+  const price = evmRowPriceUsd(b, prices[net.priceSym]);
   return {
     family: "evm", row: b, chainLabel: net.name, scopeKey: "evm:" + netKey,
     identLabel: b.address ? "Contract address" : null, ident: b.address || null,
@@ -3991,7 +3991,7 @@ function renderExploreChain(key) {
     const heldToks = isActive ? balances.filter(b => b.address) : [];
     const heldAddrs = new Set(heldToks.map(b => (b.address || "").toLowerCase()));
     badgeAllCtx = false;
-    rowsHtml = heldToks.map(b => tokenRowHtml(b, rowUsdValue(b, b.address ? prices[b.symbol] : prices[net.priceSym]), net.name, `data-xevm="${balances.indexOf(b)}"`, "evm")).join("");
+    rowsHtml = heldToks.map(b => tokenRowHtml(b, rowUsdValue(b, evmRowPriceUsd(b, prices[net.priceSym])), net.name, `data-xevm="${balances.indexOf(b)}"`, "evm")).join("");
     badgeAllCtx = null;
     rowsHtml += (net.tokens || []).filter(t => !heldAddrs.has((t.address || "").toLowerCase())).map((t, i) => `<div class="row" data-xunheld="${i}">
       <span class="logowrap">${tokenLogoHtml({ symbol: t.symbol, address: t.address }, "evm")}</span>
@@ -4173,6 +4173,11 @@ function evmChainEvidence(k) {
  *  keeps priceUsd null and renders as a normal row with a blank
  *  fiat area — held is held, priced or not. */
 async function priceHeldEvmRows(chainId, rows) {
+  // Normalize first (2026-11-28 drawing-board repair): a row
+  // whose priceUsd was never stamped carries an explicit null
+  // from here on — "not priced by contract" is a state, not an
+  // absence a symbol fallback may fill (evmRowPriceUsd's rule).
+  for (const r of rows || []) if (r && r.address && r.priceUsd === undefined) r.priceUsd = null;
   const want = (rows || []).filter(r => r && r.address && r.priceUsd == null && Number(r.amount) > 0);
   if (!want.length) return false;
   let changed = false;
@@ -4342,7 +4347,12 @@ async function readEvmChainRows(w, k) {
     const inList = new Set(cgCached.map(t => String(t.address || "").toLowerCase()));
     for (const r of extraRows) if (r.address && inList.has(r.address.toLowerCase())) r.verified = true; // CG list membership IS the verification (chainTokenVerified's rule)
   }
-  await priceHeldEvmRows(chainId, knownRows);
+  // Base (curated-pin) rows price by contract here too
+  // (2026-11-28): they used to ride the symbol fallback, which
+  // is exactly the surface the impostor-USDG price came
+  // through — every addressed row on the chain prices from
+  // its own contract record or not at all.
+  await priceHeldEvmRows(chainId, [...base.filter(r => r && r.address), ...knownRows]);
   if (discRows.length) await priceHeldEvmRows(chainId, discRows);
   return withRifSmartWalletRow(mergeEvmChainRows(base, extraRows), w, k);
 }
@@ -4794,7 +4804,7 @@ const tdPriceText = (p) => p == null ? null : (p >= 0.01 ? usd(p) : "$" + Number
 function evmDetailDesc(b) {
   if (b.rifSmartWallet) return rifSmartWalletDesc(b, networkKey, false);
   const net = NETWORKS[networkKey];
-  const price = priceOfRow(b, b.address ? prices[b.symbol] : prices[net.priceSym]);
+  const price = evmRowPriceUsd(b, prices[net.priceSym]);
   // Canonical-bridge Move (2026-11-15): a held token that is
   // the bridged form of an L1 token (the pair table is the
   // only source) gains the Move action beside Send/Swap.
@@ -5668,7 +5678,7 @@ function openSendPicker() {
       : balances;
     if (evmLoadFailed && networkKey === "rootstock" && rifSwLive && rifSwLive.status === "ok" && Number(rifSwLive.row.amount) > 0)
       evmRows = evmRows.map(r => r.rifSmartWallet ? rifSwLive.row : r);
-    pushFam("evm", evmRows, (b) => b.address ? prices[b.symbol] : prices[net.priceSym],
+    pushFam("evm", evmRows, (b) => evmRowPriceUsd(b, prices[net.priceSym]),
       (b) => evmDetailDesc(b), (b) => b.rifSmartWallet ? net.name + " · Smart wallet" : net.name);
   }
   // EVM, per-network reads (§147): selecting one switches the
@@ -5679,7 +5689,7 @@ function openSendPicker() {
     const cnet = NETWORKS[k]; if (!cnet) continue;
     evmRowCtxKey = k;
     let fi;
-    try { fi = familyRowItemsNow("evm", st.rows, (b) => b.address ? prices[b.symbol] : prices[cnet.priceSym], dummyRender); }
+    try { fi = familyRowItemsNow("evm", st.rows, (b) => evmRowPriceUsd(b, prices[cnet.priceSym]), dummyRender); }
     finally { evmRowCtxKey = null; }
     for (const it of fi.items) items.push({ ...it, netKey: k, desc: evmChainRowDesc(k, it.b), label: it.b.rifSmartWallet ? cnet.name + " · Smart wallet" : cnet.name });
   }
@@ -6022,7 +6032,7 @@ function openEvmSendSheet(prefer = null) {
   // the balance line below render the SAME balance state the
   // home rows show, never a fresh unaccounted read (2026-11-26
   // defect A).
-  const pxOf = (b) => priceOfRow(b, b.address ? prices[b.symbol] : prices[NETWORKS[networkKey].priceSym]);
+  const pxOf = (b) => evmRowPriceUsd(b, prices[NETWORKS[networkKey].priceSym]);
   openSheet(`<h3>Send on ${NETWORKS[networkKey].name}</h3>
     <div id="sRampOrder"></div>
     ${!balances.length ? `<p class="tag" id="sLoadNote">${evmLoadFailed ? "Balances couldn't load right now — tap More → Refresh and try again." : "Balances are still loading — wait a moment and try again."}</p>` : ""}
@@ -11232,7 +11242,7 @@ $("actSwap").onclick = () => {
     if (!t || !t.address || !NETWORKS[netKey]) return null;
     const rows = netKey === networkKey ? balances : ((evmChainState.get(netKey) || {}).rows || []);
     const b = rows.find(r => r.address && String(r.address).toLowerCase() === String(t.address).toLowerCase());
-    return b ? priceOfRow(b, prices[b.symbol]) : null;
+    return b ? evmRowPriceUsd(b, prices[NETWORKS[netKey].priceSym]) : null;
   }
   /* The From pick's held state, resolved from the SAME balance
    * state the Assets rows render (2026-11-26 defect A) — never
@@ -11256,9 +11266,13 @@ $("actSwap").onclick = () => {
       }
       const b = tok.native ? rows.find(r => !r.address)
         : rows.find(r => r.address && String(r.address).toLowerCase() === String(tok.address || "").toLowerCase());
-      if (!b) return { amount: 0, priceUsd: tok.native ? (Number(prices[NETWORKS[netKey].priceSym]) || null) : symPrice() };
+      if (!b) return { amount: 0, priceUsd: tok.native ? (Number(prices[NETWORKS[netKey].priceSym]) || null) : (Number(tok.priceUSD) || null) };
       if (b.amount == null) return null;
-      return { amount: b.amount, priceUsd: priceOfRow(b, tok.native ? prices[NETWORKS[netKey].priceSym] : prices[b.symbol]) || symPrice() };
+      // EVM tokens price by contract only (2026-11-28): the
+      // held row's own by-contract price, else the pick
+      // entry's own by-contract list price — never the symbol
+      // table (a same-symbol impostor must not inherit it).
+      return { amount: b.amount, priceUsd: tok.native ? priceOfRow(b, prices[NETWORKS[netKey].priceSym]) : (evmRowPriceUsd(b, null) ?? (Number(tok.priceUSD) || null)) };
     }
     if (skipChainOf(netKey)) {
       if (!famLoaded.has("cosmos")) return null;
@@ -11342,7 +11356,14 @@ $("actSwap").onclick = () => {
   function paintSwapAmtUsd() {
     const el = $("wAmtUsd"); if (!el) return;
     const t = pick.from;
-    const px = t ? (Number(prices[t.symbol]) || t.priceUSD || heldRowPriceUsd(netSel.from, t) || null) : null;
+    // EVM picks price by contract only (2026-11-28): the held
+    // row's by-contract price, then the pick entry's own
+    // by-contract list price — the symbol table never prices
+    // an EVM token here either. Other families keep the
+    // symbol-first order their curated sets are built on.
+    const px = t ? (NETWORKS[netSel.from]
+      ? (heldRowPriceUsd(netSel.from, t) || Number(t.priceUSD) || null)
+      : (Number(prices[t.symbol]) || t.priceUSD || heldRowPriceUsd(netSel.from, t) || null)) : null;
     if (t && px == null) kickSwapAmtPrice(t);
     el.textContent = amountUsdLine($("wAmt").value.trim(), px) || "";
   }
@@ -15290,8 +15311,17 @@ $("aboutBtn").onclick = () => {
 // ---------- build stamp ----------
 // dist pages carry <meta name="fluid-build"> with the bundle hash; showing
 // it lets anyone verify the running code matches the open-source build.
+// Two placements (2026-11-28 drawing-board repair): the About card
+// (as before) AND the top of the More tab, readable at a glance —
+// the stale-cache question ("is my phone even running the fix?")
+// burned two repair rounds before this was findable in one tap.
 const buildMeta = document.querySelector('meta[name="fluid-build"]');
-if (buildMeta && buildMeta.content) $("buildStamp").textContent = buildMeta.content;
+if (buildMeta && buildMeta.content) {
+  for (const id of ["buildStamp", "buildStampTop"]) {
+    const el = $(id);
+    if (el) el.textContent = buildMeta.content;
+  }
+}
 $("backupBtn").onclick = () => {
   const blob = new Blob([localStorage.getItem(VAULT_KEY)], { type: "application/json" });
   const a = document.createElement("a");
