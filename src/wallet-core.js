@@ -32338,6 +32338,392 @@ async function readEvmTokenMetaOnProvider(provider, contract, ownerAddress) {
            balance: ethers.formatUnits(balance, decimals) };
 }
 
+// ---------- EVM account-driven token discovery (2026-11-28) ----------
+// REPAIR ORDER (owner-reported, his own funds): EVM token discovery
+// was LIST-BOUND — the balance passes only ever balance-checked
+// candidates from the curated pins, the CoinGecko chain list,
+// on-device held records and custom tokens, so a held token in
+// none of those lists was never read and never rendered (NodeOps
+// NODE on Arbitrum: 1,348.019… held, absent from the CoinGecko
+// list, invisible in the wallet). Discovery is now ACCOUNT-DRIVEN:
+// what the account holds is enumerated from the account itself,
+// by two independent keyless sources, merged:
+//   1. The chain's public Blockscout instance (API v2
+//      /addresses/{addr}/token-balances) — every instance below
+//      was verified LIVE at build time (2026-11-28) to answer
+//      keylessly with the v2 array shape and CORS *. Chains with
+//      no verified keyless instance (BSC is the documented case:
+//      no Blockscout exists for it) are simply absent here.
+//   2. Transfer-log discovery over the chain RPC — eth_getLogs
+//      for ERC-20 Transfer events to/from the account over a
+//      bounded block window yields candidate contracts; each
+//      candidate's metadata and balanceOf are then read from the
+//      chain itself. This path needs no indexer at all, and it
+//      also covers indexer LAG: an indexer's token list can trail
+//      a fresh transfer (Arbitrum's did, on the NODE transfer
+//      itself), while the logs are the chain's own record.
+// Every candidate is verified against the chain before it is
+// believed: a positive balanceOf is the figure shown. An indexer
+// candidate the chain proves empty is dropped (stale index); one
+// the chain could not be asked about keeps the indexer's figure,
+// marked claimed — the indexer is real evidence, and the holding
+// persists as a held record so the next open re-reads it directly
+// from the chain. Discovery failures are honest: when BOTH
+// sources fail the orchestrator throws, and callers render
+// "couldn't load" wherever the wallet has held evidence — never
+// a silent absence dressed as a complete list.
+export const DISCOVERY_BLOCKSCOUT_APIS = {
+  ethereum: "https://eth.blockscout.com",
+  base: "https://base.blockscout.com",
+  polygon: "https://polygon.blockscout.com",
+  arbitrum: "https://arbitrum.blockscout.com",
+  optimism: "https://explorer.optimism.io",
+  scroll: "https://scrollscan.com",
+  gnosis: "https://gnosisscan.io",
+  zksync: "https://zksync.blockscout.com",
+  celo: "https://celo.blockscout.com",
+  fuse: "https://explorer.fuse.io",
+  injectiveevm: "https://blockscout.injective.network",
+  flare: "https://flare-explorer.flare.network",
+  filecoin: "https://filecoin.blockscout.com",
+  aurora: "https://explorer.aurora.dev",
+  tac: "https://explorer.tac.build",
+  robinhood: "https://robinhoodchain.blockscout.com",
+  sepolia: "https://eth-sepolia.blockscout.com",
+};
+/** Parse one Blockscout v2 token-balances reply into candidate
+ *  holdings [{ address, symbol, name, decimals, raw }]. Pure.
+ *  Returns null when the reply is not the expected array at all —
+ *  an unreadable 200 body is a FAILED read, never an empty
+ *  account (the 2026-11-14 silent-zero lesson, and the Esplora
+ *  429 lesson: validate the shape before trusting the body).
+ *  Hostile or unusable items (NFT instance rows, non-ERC-20
+ *  types, zero/unparsable values, bad decimals, unlabelled
+ *  tokens) are dropped one by one, never fatal. */
+export function parseBlockscoutTokenBalances(data) {
+  if (!Array.isArray(data)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const item of data) {
+    try {
+      const tok = item && item.token;
+      if (!tok || typeof tok !== "object") continue;
+      if (item.token_id != null) continue; // an NFT instance row, not a fungible balance
+      if (String(tok.type || "ERC-20").toUpperCase() !== "ERC-20") continue;
+      const address = String(tok.address_hash || tok.address || "");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) continue;
+      const key = address.toLowerCase();
+      if (seen.has(key)) continue;
+      let raw; try { raw = BigInt(item.value); } catch { continue; }
+      if (raw <= 0n) continue;
+      const decimals = Number(tok.decimals);
+      if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) continue;
+      const symbol = typeof tok.symbol === "string" && tok.symbol ? tok.symbol : null;
+      if (!symbol) continue; // a row we cannot label honestly is not a row
+      const name = typeof tok.name === "string" && tok.name ? tok.name : symbol;
+      seen.add(key);
+      out.push({ address, symbol, name, decimals, raw: raw.toString() });
+    } catch { /* one hostile item never sinks the list */ }
+  }
+  return out;
+}
+/** The chain's Blockscout token list for one account. Throws on
+ *  any failure (no instance mapped, HTTP error, unreadable body)
+ *  so the orchestrator can fall back to the log scan. */
+export async function fetchBlockscoutTokenBalances(networkKey, ownerAddress, { timeoutMs = 15000, fetchFn = null } = {}) {
+  const base = DISCOVERY_BLOCKSCOUT_APIS[networkKey];
+  if (!base) throw new Error("No Blockscout instance is mapped for " + networkKey + ".");
+  const doFetch = fetchFn || ((u, init) => fetch(u, init));
+  const res = await doFetch(`${base}/api/v2/addresses/${ownerAddress}/token-balances`, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!res || !res.ok) throw new Error("Blockscout token list failed (HTTP " + (res && res.status) + ").");
+  const data = await res.json().catch(() => null);
+  const parsed = parseBlockscoutTokenBalances(data);
+  if (!parsed) throw new Error("Blockscout returned an unreadable token list.");
+  return parsed;
+}
+export const EVM_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+/** An address as an indexed log topic (32-byte left-padded). */
+export function evmAddressTopic(address) {
+  const a = String(address || "").toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{40}$/.test(a)) return null;
+  return "0x" + "0".repeat(24) + a;
+}
+/** Plan a bounded backward log scan: newest-first block ranges
+ *  of `chunkBlocks` covering at most `maxBlocksBack` blocks
+ *  behind `latestBlock`, never below block 0. Pure. */
+export function planEvmLogScanRanges(latestBlock, { maxBlocksBack = 120000, chunkBlocks = 10000 } = {}) {
+  const latest = Math.floor(Number(latestBlock));
+  if (!Number.isFinite(latest) || latest < 0) return [];
+  const back = Math.max(0, Math.floor(Number(maxBlocksBack) || 0));
+  const chunk = Math.max(1, Math.floor(Number(chunkBlocks) || 1));
+  const floorBlock = Math.max(0, latest - back);
+  const ranges = [];
+  for (let to = latest; to >= floorBlock; to -= chunk) {
+    ranges.push({ fromBlock: Math.max(floorBlock, to - chunk + 1), toBlock: to });
+  }
+  return ranges;
+}
+/** Candidate token contracts from a pile of Transfer logs: the
+ *  emitting contracts, deduplicated, zero address excluded.
+ *  Pure. (ERC-721 contracts share the Transfer topic; they fall
+ *  out later when their metadata read fails — an NFT contract
+ *  has no decimals() — so nothing unrenderable survives.) */
+export function evmLogCandidateContracts(logs) {
+  const out = new Set();
+  for (const log of Array.isArray(logs) ? logs : []) {
+    const a = log && typeof log.address === "string" ? log.address : "";
+    if (/^0x[0-9a-fA-F]{40}$/.test(a) && a.toLowerCase() !== "0x0000000000000000000000000000000000000000") out.add(a.toLowerCase());
+  }
+  return [...out];
+}
+async function defaultEvmDiscoveryRpc(networkKey, body, opts) {
+  const data = await evmRpcFetchJson(networkKey, body, opts || {});
+  if (Array.isArray(body)) {
+    if (!Array.isArray(data)) throw new Error("RPC batch reply was not an array.");
+    return data;
+  }
+  if (!data || typeof data !== "object" || !("result" in data)) throw new Error("RPC reply had no result.");
+  if (data.error) throw new Error("RPC rejected the request: " + (data.error.message || "unknown error"));
+  return data.result;
+}
+/** Decode one eth_call string return: the standard ABI string,
+ *  or the bytes32 form older tokens (MKR-style) answer with. */
+function decodeEvmStringReturn(ret) {
+  if (typeof ret !== "string" || ret === "0x" || !/^0x[0-9a-fA-F]*$/.test(ret)) return null;
+  if (ret.length === 66) {
+    try {
+      const bytes = ethers.getBytes(ret);
+      let end = bytes.length; while (end > 0 && bytes[end - 1] === 0) end--;
+      const s = new TextDecoder().decode(bytes.slice(0, end)).trim();
+      return s || null;
+    } catch { return null; }
+  }
+  try { const s = new ethers.AbiCoder().decode(["string"], ret)[0]; return typeof s === "string" && s ? s : null; }
+  catch { return null; }
+}
+/** ERC-20 metadata over plain JSON-RPC (one batched eth_call
+ *  round: name, symbol, decimals), with the same honesty
+ *  contract as readEvmTokenMeta: decimals must answer, and the
+ *  token must carry a symbol or a name, else it throws. This is
+ *  discovery's primary meta read — it rides the same raced,
+ *  cooldown-managed endpoint transport as the log scan instead
+ *  of an ethers provider, so a provider-side quirk on one
+ *  network stack can never silently eat a discovered token;
+ *  callers fall back to readEvmTokenMeta when this throws. */
+export async function readEvmTokenMetaViaRpc(networkKey, contractAddress, { rpcFn = null, timeoutMs = 15000 } = {}) {
+  const rpc = rpcFn || defaultEvmDiscoveryRpc;
+  const call = (data) => ({ jsonrpc: "2.0", method: "eth_call", params: [{ to: contractAddress, data }, "latest"] });
+  let parts = null;
+  try {
+    const out = await rpc(networkKey, [{ ...call("0x06fdde03"), id: 0 }, { ...call("0x95d89b41"), id: 1 }, { ...call("0x313ce567"), id: 2 }], { timeoutMs });
+    if (Array.isArray(out)) {
+      parts = [null, null, null];
+      for (const item of out) if (item && Number.isInteger(item.id) && item.id >= 0 && item.id <= 2 && typeof item.result === "string") parts[item.id] = item.result;
+      if (parts.every(p => p == null)) parts = null;
+    }
+  } catch { parts = null; }
+  if (!parts) {
+    parts = [null, null, null];
+    const datas = ["0x06fdde03", "0x95d89b41", "0x313ce567"];
+    for (let i = 0; i < 3; i++) {
+      try { const r = await rpc(networkKey, { ...call(datas[i]), id: 1 }, { timeoutMs }); if (typeof r === "string") parts[i] = r; } catch { /* field stays null */ }
+    }
+  }
+  const name = decodeEvmStringReturn(parts[0]);
+  const symbol = decodeEvmStringReturn(parts[1]);
+  let decimals = null;
+  if (typeof parts[2] === "string" && parts[2] !== "0x") { try { decimals = Number(BigInt(parts[2])); } catch { /* stays null */ } }
+  if (decimals == null || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error("That contract doesn't answer like an ERC-20 token (no decimals) — check the address.");
+  }
+  if (!symbol && !name) throw new Error("That contract doesn't answer like an ERC-20 token (no symbol) — check the address.");
+  return { name: name || symbol, symbol: symbol || name, decimals, address: contractAddress };
+}
+/** Verify candidate balances against the chain itself, in
+ *  bounded slices. Returns { rawByAddr, complete } — the map
+ *  holds POSITIVE balances only (the scan's own contract), so a
+ *  candidate absent from a COMPLETE scan is proven empty, while
+ *  absence from an incomplete scan proves nothing. */
+async function verifyEvmCandidates(networkKey, ownerAddress, candidates, balanceFn) {
+  if (balanceFn) {
+    const rawByAddr = await balanceFn(networkKey, ownerAddress, candidates);
+    return { rawByAddr, complete: true };
+  }
+  const rawByAddr = new Map();
+  let complete = true;
+  for (let i = 0; i < candidates.length; i += 250) {
+    const scan = await scanEvmTokenBalances(networkKey, ownerAddress, candidates.slice(i, i + 250));
+    for (const [k, v] of scan.balances) rawByAddr.set(k, v);
+    if (!scan.complete) complete = false;
+  }
+  return { rawByAddr, complete };
+}
+/** Holdings discovered from Transfer logs alone: candidates from
+ *  eth_getLogs (both directions), metadata read per candidate,
+ *  balances verified on-chain. Returns { holdings, complete,
+ *  candidates } — complete:false means the deadline stopped the
+ *  scan early (the finds stand; the tail is unproven). Throws
+ *  when the RPC path itself fails. */
+export async function discoverEvmHoldingsViaLogs(networkKey, ownerAddress, {
+  maxBlocksBack = 300000, chunkBlocks = 10000, deadlineMs = 50000,
+  attemptTimeoutMs = 15000, candidateCap = 60, rpcFn = null, metaFn = null, balanceFn = null,
+} = {}) {
+  const rpc = rpcFn || defaultEvmDiscoveryRpc;
+  const meta = metaFn || (async (k, a, o) => {
+    try { return await readEvmTokenMetaViaRpc(k, a, { rpcFn: rpc }); }
+    catch { return readEvmTokenMeta(k, a, o); }
+  });
+  const ownerTopic = evmAddressTopic(ownerAddress);
+  if (!ownerTopic) throw new Error("That is not a valid EVM address.");
+  const started = Date.now();
+  const tipHex = await rpc(networkKey, { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }, { timeoutMs: attemptTimeoutMs });
+  const latest = Number(BigInt(tipHex));
+  // Work queue of (range × direction) items. Public RPCs cap
+  // eth_getLogs ranges very differently per chain (10k blocks
+  // here, 500 there, result-count caps elsewhere), so a refused
+  // range SPLITS and retries smaller, down to a floor — one
+  // chain's cap never fails the whole scan; a range that fails
+  // at the floor marks the scan incomplete instead.
+  const splitFloor = Math.max(50, Math.min(1000, Math.floor(chunkBlocks / 4) || 50));
+  const queue = [];
+  for (const r of planEvmLogScanRanges(latest, { maxBlocksBack, chunkBlocks })) {
+    queue.push({ ...r, topics: [EVM_TRANSFER_TOPIC, ownerTopic, null] });
+    queue.push({ ...r, topics: [EVM_TRANSFER_TOPIC, null, ownerTopic] });
+  }
+  const logs = [];
+  let scannedAll = true;
+  let anySuccess = false;
+  const worker = async () => {
+    while (queue.length) {
+      if (Date.now() - started > deadlineMs) { scannedAll = false; return; }
+      const item = queue.shift();
+      try {
+        const out = await rpc(networkKey, { jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+          params: [{ fromBlock: "0x" + item.fromBlock.toString(16), toBlock: "0x" + item.toBlock.toString(16), topics: item.topics }] },
+          { timeoutMs: attemptTimeoutMs });
+        anySuccess = true;
+        if (Array.isArray(out)) logs.push(...out);
+      } catch {
+        const span = item.toBlock - item.fromBlock + 1;
+        if (span > splitFloor) {
+          const mid = item.fromBlock + Math.floor(span / 2) - 1;
+          queue.unshift({ fromBlock: mid + 1, toBlock: item.toBlock, topics: item.topics });
+          queue.unshift({ fromBlock: item.fromBlock, toBlock: mid, topics: item.topics });
+        } else scannedAll = false;
+      }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (!anySuccess) throw new Error("Transfer-log scan unreachable on " + networkKey + ".");
+  const candidates = evmLogCandidateContracts(logs).slice(0, candidateCap);
+  if (!candidates.length) return { holdings: [], complete: scannedAll, candidates: 0 };
+  const metas = new Map();
+  for (let i = 0; i < candidates.length; i += 5) {
+    await Promise.all(candidates.slice(i, i + 5).map(async (addr) => {
+      try { const m = await meta(networkKey, addr, ownerAddress); if (m && m.symbol) metas.set(addr, m); } catch { /* not an ERC-20 we can render */ }
+    }));
+  }
+  const metaList = [...metas.entries()].map(([address, m]) => ({ address, symbol: m.symbol, name: m.name, decimals: m.decimals }));
+  if (!metaList.length) return { holdings: [], complete: scannedAll, candidates: candidates.length };
+  const { rawByAddr } = await verifyEvmCandidates(networkKey, ownerAddress, metaList, balanceFn);
+  const holdings = [];
+  for (const t of metaList) {
+    const raw = rawByAddr.get(t.address.toLowerCase());
+    if (raw != null && raw > 0n) holdings.push({ address: t.address, symbol: t.symbol, name: t.name || t.symbol, decimals: t.decimals, raw: raw.toString() });
+  }
+  return { holdings, complete: scannedAll, candidates: candidates.length };
+}
+/** Account-driven EVM discovery: Blockscout (where a verified
+ *  keyless instance exists) MERGED with the Transfer-log scan,
+ *  every holding verified against the chain where the chain can
+ *  be asked. Returns { holdings, complete, sources } where each
+ *  holding is { address, symbol, name, decimals, raw, claimed }
+ *  (claimed = the figure is the indexer's, kept because the
+ *  chain verification could not run). Throws only when every
+ *  available source failed — callers turn that into an honest
+ *  "couldn't load" wherever the wallet has held evidence. */
+export async function discoverEvmAccountHoldings(networkKey, ownerAddress, {
+  fetchFn = null, rpcFn = null, metaFn = null, balanceFn = null,
+  blockscoutTimeoutMs = 15000,
+  logMaxBlocksBack = null, logChunkBlocks = 10000, logDeadlineMs = 50000,
+  skipBlockscout = false, skipLogs = false,
+} = {}) {
+  const hasIndexer = !!DISCOVERY_BLOCKSCOUT_APIS[networkKey] && !skipBlockscout;
+  const sources = { blockscout: hasIndexer ? "failed" : "none", logs: skipLogs ? "skipped" : "failed" };
+  const byAddr = new Map();
+  let logsComplete = false;
+  let bsHoldings = [];
+  if (hasIndexer) {
+    try {
+      bsHoldings = await fetchBlockscoutTokenBalances(networkKey, ownerAddress, { timeoutMs: blockscoutTimeoutMs, fetchFn });
+      sources.blockscout = "ok";
+    } catch { sources.blockscout = "failed"; }
+  }
+  if (!skipLogs) {
+    try {
+      const viaLogs = await discoverEvmHoldingsViaLogs(networkKey, ownerAddress, {
+        maxBlocksBack: logMaxBlocksBack != null ? logMaxBlocksBack : (hasIndexer ? 300000 : 500000),
+        chunkBlocks: logChunkBlocks, deadlineMs: logDeadlineMs, rpcFn, metaFn, balanceFn,
+      });
+      logsComplete = viaLogs.complete;
+      sources.logs = viaLogs.complete ? "ok" : "partial";
+      for (const h of viaLogs.holdings) byAddr.set(h.address.toLowerCase(), { ...h, claimed: false });
+    } catch { sources.logs = "failed"; }
+  }
+  if (bsHoldings.length) {
+    const fresh = bsHoldings.filter(h => !byAddr.has(h.address.toLowerCase()));
+    if (fresh.length) {
+      let verified = null;
+      try { verified = await verifyEvmCandidates(networkKey, ownerAddress, fresh, balanceFn); }
+      catch { verified = null; }
+      for (const h of fresh) {
+        if (!verified || !verified.complete) {
+          // The chain could not give a complete answer: the
+          // indexer's figure stands as claimed evidence.
+          const raw = verified ? verified.rawByAddr.get(h.address.toLowerCase()) : null;
+          if (raw != null && raw > 0n) byAddr.set(h.address.toLowerCase(), { ...h, raw: raw.toString(), claimed: false });
+          else byAddr.set(h.address.toLowerCase(), { ...h, claimed: true });
+          continue;
+        }
+        const raw = verified.rawByAddr.get(h.address.toLowerCase());
+        if (raw != null && raw > 0n) byAddr.set(h.address.toLowerCase(), { ...h, raw: raw.toString(), claimed: false });
+        // Absent from a COMPLETE verification scan: the chain
+        // proves the holding is gone — the index is stale, drop it.
+      }
+    }
+  }
+  const anyOk = sources.blockscout === "ok" || sources.logs === "ok" || sources.logs === "partial";
+  if (!anyOk) throw new Error("Token discovery failed on " + networkKey + " (indexer and log scan both unreachable).");
+  const complete = (sources.blockscout === "ok" || sources.blockscout === "none") && (skipLogs || logsComplete);
+  return { holdings: [...byAddr.values()], complete, sources };
+}
+/** Which built-in networks actually host a contract: an
+ *  eth_getCode sweep (bounded concurrency, per-chain attempt
+ *  budget) so the add-token sheet can fail plainly on the wrong
+ *  chain and NAME the chains where the pasted contract exists.
+ *  A chain whose RPC never answers counts as "not proven", never
+ *  as "exists". Returns the network keys with code, in the order
+ *  the keys were given. */
+export async function probeEvmTokenContractChains(address, { keys = null, rpcFn = null, timeoutMs = 8000 } = {}) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(address || ""))) return [];
+  const rpc = rpcFn || defaultEvmDiscoveryRpc;
+  const list = (keys && keys.length ? keys : Object.keys(NETWORKS).filter(k => k !== "sepolia"))
+    .filter(k => NETWORKS[k]);
+  const found = new Set();
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const k = list[next++];
+      try {
+        const code = await rpc(k, { jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [address, "latest"] }, { timeoutMs });
+        if (typeof code === "string" && code !== "0x" && code.length > 2) found.add(k);
+      } catch { /* unanswered = not proven to exist there */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+  return list.filter(k => found.has(k));
+}
+
 // ---------- TON (SLIP-0010 Ed25519 branch, coin type 607) ----------
 // TON keys are Ed25519, derived exactly like Solana's at m/44'/607'/0'
 // (TON's registered coin type; the path ends at the account level —
@@ -32762,6 +33148,32 @@ function nearNativeRow(amount) {
  *  and every curated NEP-141 balance (ft_balance_of per contract —
  *  an unregistered account simply reads 0). A non-existent account
  *  returns exists:false with zero rows, never an error. */
+const FASTNEAR_API = "https://api.fastnear.com";
+const NEAR_DISCOVERY_CAP = 40; // per-account cap on discovered-FT metadata reads
+/** Parse a FastNEAR account FT list ({ tokens: [{ contract_id,
+ *  balance }] }) into positive-balance candidates not already in
+ *  `knownAddresses`. Pure. Returns null when the reply is not the
+ *  expected shape — an unreadable reply is a failed scan, never
+ *  an empty account. The list INCLUDES zero balances (filtered
+ *  here); every surviving candidate is still verified on-chain
+ *  by the caller before it is believed. */
+export function parseFastNearFtList(data, knownAddresses = []) {
+  if (!data || !Array.isArray(data.tokens)) return null;
+  const known = new Set((knownAddresses || []).map(a => String(a).toLowerCase()));
+  const out = [];
+  const seen = new Set();
+  for (const t of data.tokens) {
+    try {
+      const contractId = t && typeof t.contract_id === "string" ? t.contract_id : "";
+      if (!contractId || known.has(contractId.toLowerCase()) || seen.has(contractId.toLowerCase())) continue;
+      const raw = BigInt(t.balance ?? "0");
+      if (raw <= 0n) continue;
+      seen.add(contractId.toLowerCase());
+      out.push({ contractId, raw: raw.toString() });
+    } catch { /* one unparsable entry never sinks the list */ }
+  }
+  return out;
+}
 export async function getNearAccount(address) {
   if (!isValidNearAddress(address)) throw new Error("That is not a valid NEAR account id.");
   let rec = null;
@@ -32781,7 +33193,41 @@ export async function getNearAccount(address) {
     } catch { amount = null; /* one bad contract must not break the list */ }
     balances.push({ ...t, amount });
   }
-  return { exists: true, storageUsage: rec.storage_usage || 0, balances };
+  // Account-driven discovery (2026-11-28 repair): the curated
+  // loop above is LIST-BOUND — a fungible token outside
+  // NEAR_TOKENS was never read and never rendered. FastNEAR's
+  // keyless account index enumerates every FT contract the
+  // account has touched; each candidate's balance and metadata
+  // are then verified against the chain itself (ft_balance_of /
+  // ft_metadata view calls), so the index only ever NOMINATES —
+  // the chain decides. A failed enumeration sets
+  // tokensScanFailed so the app can say the full scan is
+  // unavailable instead of silently showing main tokens only.
+  let tokensScanFailed = false;
+  try {
+    const res = await fetch(`${FASTNEAR_API}/v1/account/${address}/ft`, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error("FastNEAR FT list failed (HTTP " + res.status + ").");
+    const data = await res.json().catch(() => null);
+    const candidates = parseFastNearFtList(data, NEAR_TOKENS.map(t => t.address));
+    if (!candidates) throw new Error("FastNEAR returned an unreadable FT list.");
+    for (const cand of candidates.slice(0, NEAR_DISCOVERY_CAP)) {
+      try {
+        const [rawBal, meta] = await Promise.all([
+          nearCallView(cand.contractId, "ft_balance_of", { account_id: address }),
+          nearCallView(cand.contractId, "ft_metadata", {}),
+        ]);
+        const raw = BigInt(rawBal ?? "0");
+        if (raw <= 0n) continue; // the index was stale — the chain says nothing is held
+        const decimals = meta && Number.isInteger(meta.decimals) ? meta.decimals : null;
+        const symbol = meta && typeof meta.symbol === "string" && meta.symbol ? meta.symbol : null;
+        if (decimals == null || !symbol) { tokensScanFailed = true; continue; }
+        balances.push({ symbol, name: (meta && typeof meta.name === "string" && meta.name) || symbol,
+          amount: ethers.formatUnits(raw, decimals), address: cand.contractId, decimals, verified: false });
+      } catch { tokensScanFailed = true; /* one unreadable contract — flagged, never fatal */ }
+    }
+    if (candidates.length > NEAR_DISCOVERY_CAP) tokensScanFailed = true;
+  } catch { tokensScanFailed = true; }
+  return { exists: true, storageUsage: rec.storage_usage || 0, balances, tokensScanFailed };
 }
 /** NEAR balances shaped like the other families' row lists. */
 export async function getNearBalances(address) {

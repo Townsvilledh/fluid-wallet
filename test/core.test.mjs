@@ -25426,4 +25426,203 @@ import { openOceanProbeOutcome, resetOpenOceanProbeOutcomes, openOceanProbeBlind
     keptSP.length === 1 && keptSP[0].amount === "5" && !("priceUsd" in keptSP[0]));
 }
 
+// ---------- Account-driven token discovery (2026-11-28 repair) ----------
+// The unlisted-tokens repair: EVM discovery was list-bound, so a
+// held token in no list (NodeOps NODE on Arbitrum — the owner's
+// own 1,348.019… NODE) never rendered. Discovery is now
+// account-driven: Blockscout index + Transfer-log scan, merged,
+// every figure verified on-chain. These pins cover the parsers,
+// the scan planning, the orchestrator's merge/verification
+// rules, the cross-chain contract probe, the NEAR enumeration
+// parser, and the app wiring.
+import { DISCOVERY_BLOCKSCOUT_APIS, parseBlockscoutTokenBalances, fetchBlockscoutTokenBalances,
+  EVM_TRANSFER_TOPIC, evmAddressTopic, planEvmLogScanRanges, evmLogCandidateContracts,
+  discoverEvmHoldingsViaLogs, discoverEvmAccountHoldings, probeEvmTokenContractChains,
+  readEvmTokenMetaViaRpc, parseFastNearFtList } from "../src/wallet-core.js";
+{
+  const OWNER = "0x0EBf5563F905E3B9D58718E28E08143511DC763b";
+  const NODE_ADDR = "0x2F714d7b9A035d4ce24af8d9b6091c07E37f43Fb";
+  // NODE's real Blockscout v2 item shape (contract, name, symbol,
+  // decimals-as-string, raw value string) — the recorded fixture.
+  const NODE_ITEM = { token: { address_hash: NODE_ADDR, name: "NodeOps", symbol: "NODE", decimals: "18", type: "ERC-20", exchange_rate: null, icon_url: null, holders_count: null, total_supply: null }, value: "1348019189852397434509", token_id: null, token_instance: null };
+
+  ok("discovery: Blockscout map wires the verified keyless instances and leaves BSC/Avax/Linea/Mantle to the log fallback",
+    DISCOVERY_BLOCKSCOUT_APIS.arbitrum === "https://arbitrum.blockscout.com"
+    && DISCOVERY_BLOCKSCOUT_APIS.ethereum === "https://eth.blockscout.com"
+    && DISCOVERY_BLOCKSCOUT_APIS.base === "https://base.blockscout.com"
+    && DISCOVERY_BLOCKSCOUT_APIS.polygon === "https://polygon.blockscout.com"
+    && DISCOVERY_BLOCKSCOUT_APIS.optimism === "https://explorer.optimism.io"
+    && !("bsc" in DISCOVERY_BLOCKSCOUT_APIS) && !("avalanche" in DISCOVERY_BLOCKSCOUT_APIS)
+    && !("linea" in DISCOVERY_BLOCKSCOUT_APIS) && !("mantle" in DISCOVERY_BLOCKSCOUT_APIS));
+
+  const parsedNode = parseBlockscoutTokenBalances([NODE_ITEM]);
+  ok("discovery: the NODE fixture parses to the exact on-chain holding (raw 1348019189852397434509, 18 decimals)",
+    parsedNode.length === 1 && parsedNode[0].address === NODE_ADDR && parsedNode[0].symbol === "NODE"
+    && parsedNode[0].name === "NodeOps" && parsedNode[0].decimals === 18 && parsedNode[0].raw === "1348019189852397434509");
+  ok("discovery: hostile Blockscout items drop one by one (NFT instance, non-ERC-20, zero value, unlabelled, bad decimals, dupe)",
+    parseBlockscoutTokenBalances([
+      NODE_ITEM, NODE_ITEM,
+      { token: { address_hash: NODE_ADDR, symbol: "NFT", decimals: "0", type: "ERC-721" }, value: "5", token_id: "7", token_instance: null },
+      { token: { address_hash: "0x0000000000000000000000000000000000000001", symbol: "X", decimals: "18", type: "ERC-20" }, value: "0", token_id: null },
+      { token: { address_hash: "0x0000000000000000000000000000000000000002", decimals: "18", type: "ERC-20" }, value: "10", token_id: null },
+      { token: { address_hash: "0x0000000000000000000000000000000000000003", symbol: "Y", decimals: "abc", type: "ERC-20" }, value: "10", token_id: null },
+      null, { nope: true },
+    ]).length === 1);
+  ok("discovery: a non-array Blockscout reply parses to null (failed read, never an empty account)",
+    parseBlockscoutTokenBalances({ error: "nope" }) === null && parseBlockscoutTokenBalances("<html>Just a moment…</html>") === null);
+
+  let bsUrl = null;
+  const bsOk = await fetchBlockscoutTokenBalances("arbitrum", OWNER, { fetchFn: async (u) => { bsUrl = u; return { ok: true, status: 200, json: async () => [NODE_ITEM] }; } });
+  ok("discovery: fetchBlockscoutTokenBalances hits /api/v2/addresses/{addr}/token-balances and returns parsed holdings",
+    bsUrl === `https://arbitrum.blockscout.com/api/v2/addresses/${OWNER}/token-balances` && bsOk.length === 1 && bsOk[0].symbol === "NODE");
+  let bsThrew = 0;
+  try { await fetchBlockscoutTokenBalances("arbitrum", OWNER, { fetchFn: async () => ({ ok: false, status: 403, json: async () => ({}) }) }); } catch { bsThrew++; }
+  try { await fetchBlockscoutTokenBalances("arbitrum", OWNER, { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ html: true }) }) }); } catch { bsThrew++; }
+  try { await fetchBlockscoutTokenBalances("bsc", OWNER, { fetchFn: async () => ({ ok: true, status: 200, json: async () => [] }) }); } catch { bsThrew++; }
+  ok("discovery: fetchBlockscoutTokenBalances throws on HTTP error, on an unreadable 200 body, and on an unmapped chain", bsThrew === 3);
+
+  ok("discovery: log ranges are newest-first, contiguous, chunk-bounded and never below block 0",
+    JSON.stringify(planEvmLogScanRanges(100, { maxBlocksBack: 25, chunkBlocks: 10 }))
+      === JSON.stringify([{ fromBlock: 91, toBlock: 100 }, { fromBlock: 81, toBlock: 90 }, { fromBlock: 75, toBlock: 80 }])
+    && JSON.stringify(planEvmLogScanRanges(5, { maxBlocksBack: 1000, chunkBlocks: 10 })) === JSON.stringify([{ fromBlock: 0, toBlock: 5 }])
+    && planEvmLogScanRanges(-1).length === 0 && planEvmLogScanRanges("x").length === 0);
+  ok("discovery: address topics are 32-byte left-padded; junk addresses yield null",
+    evmAddressTopic(OWNER) === "0x0000000000000000000000000ebf5563f905e3b9d58718e28e08143511dc763b"
+    && evmAddressTopic("0x123") === null && evmAddressTopic("") === null);
+  ok("discovery: log candidates dedupe, drop the zero address and ignore junk",
+    JSON.stringify(evmLogCandidateContracts([
+      { address: NODE_ADDR }, { address: NODE_ADDR.toLowerCase() },
+      { address: "0x0000000000000000000000000000000000000000" }, { address: "nope" }, {}, null,
+    ])) === JSON.stringify([NODE_ADDR.toLowerCase()]));
+
+  // A fake BSC-shaped world: no indexer; the log scan must find
+  // an unlisted token end to end (logs → meta → verified balance).
+  const FAKE = "0x1111111111111111111111111111111111111111";
+  const fakeRpc = (maxSpan) => async (k, body) => {
+    if (body.method === "eth_blockNumber") return "0x3e8"; // tip 1000
+    if (body.method === "eth_getLogs") {
+      const { fromBlock: f, toBlock: t } = body.params[0];
+      if (parseInt(t, 16) - parseInt(f, 16) + 1 > maxSpan) throw new Error("range too large");
+      const inRange = parseInt(f, 16) <= 990 && parseInt(t, 16) >= 990;
+      return inRange ? [{ address: FAKE, topics: [EVM_TRANSFER_TOPIC], blockNumber: "0x3de" }] : [];
+    }
+    throw new Error("unexpected method " + body.method);
+  };
+  const fakeMeta = async () => ({ name: "Fake Token", symbol: "FAKE", decimals: 8 });
+  const fakeBalance = async (k, o, cands) => new Map(cands.map(c => [c.address.toLowerCase(), 123456789n]));
+  const viaLogs = await discoverEvmHoldingsViaLogs("bsc", OWNER, { rpcFn: fakeRpc(100000), metaFn: fakeMeta, balanceFn: fakeBalance, chunkBlocks: 100 });
+  ok("discovery: the BSC log fallback finds an unlisted holding end to end (logs → meta → chain-verified balance)",
+    viaLogs.holdings.length === 1 && viaLogs.holdings[0].address === FAKE && viaLogs.holdings[0].raw === "123456789" && viaLogs.complete === true);
+  const viaLogsSplit = await discoverEvmHoldingsViaLogs("bsc", OWNER, { rpcFn: fakeRpc(50), metaFn: fakeMeta, balanceFn: fakeBalance, chunkBlocks: 100 });
+  ok("discovery: a refused log range splits and retries smaller instead of failing the scan",
+    viaLogsSplit.holdings.length === 1 && viaLogsSplit.holdings[0].address === FAKE);
+  let logsThrew = false;
+  try { await discoverEvmHoldingsViaLogs("bsc", OWNER, { rpcFn: async () => { throw new Error("all endpoints down"); }, metaFn: fakeMeta, balanceFn: fakeBalance }); } catch { logsThrew = true; }
+  ok("discovery: the log scan throws when the RPC path is wholly unreachable (honest failure, not an empty result)", logsThrew);
+
+  // Orchestrator merge rules.
+  const bsFetch = (items) => async () => ({ ok: true, status: 200, json: async () => items });
+  const noLogsRpc = async (k, body) => { if (body.method === "eth_blockNumber") return "0x3e8"; return []; };
+  const orchA = await discoverEvmAccountHoldings("arbitrum", OWNER, { fetchFn: bsFetch([NODE_ITEM]), rpcFn: noLogsRpc, metaFn: fakeMeta, balanceFn: async (k, o, cands) => new Map(cands.map(c => [c.address.toLowerCase(), 1348019189852397434509n])) });
+  ok("discovery: an indexer candidate verified on-chain takes the CHAIN's figure, unclaimed",
+    orchA.holdings.length === 1 && orchA.holdings[0].raw === "1348019189852397434509" && orchA.holdings[0].claimed === false && orchA.sources.blockscout === "ok");
+  const orchB = await discoverEvmAccountHoldings("arbitrum", OWNER, { fetchFn: bsFetch([NODE_ITEM]), rpcFn: noLogsRpc, metaFn: fakeMeta, balanceFn: async () => new Map() });
+  ok("discovery: an indexer candidate a COMPLETE chain scan proves empty is dropped (stale index)", orchB.holdings.length === 0);
+  const orchC = await discoverEvmAccountHoldings("arbitrum", OWNER, { fetchFn: bsFetch([NODE_ITEM]), rpcFn: noLogsRpc, metaFn: fakeMeta, balanceFn: async () => { throw new Error("scan refused"); } });
+  ok("discovery: an indexer candidate the chain could not be asked about keeps the indexer's figure, marked claimed",
+    orchC.holdings.length === 1 && orchC.holdings[0].claimed === true && orchC.holdings[0].raw === "1348019189852397434509");
+  const orchD = await discoverEvmAccountHoldings("arbitrum", OWNER, {
+    fetchFn: bsFetch([]), // the indexer lags: it has not seen the transfer yet (the live NODE case)
+    rpcFn: async (k, body) => {
+      if (body.method === "eth_blockNumber") return "0x3e8";
+      const { fromBlock: f, toBlock: t } = body.params[0];
+      return (parseInt(f, 16) <= 990 && parseInt(t, 16) >= 990) ? [{ address: NODE_ADDR, topics: [EVM_TRANSFER_TOPIC], blockNumber: "0x3de" }] : [];
+    },
+    metaFn: async () => ({ name: "NodeOps", symbol: "NODE", decimals: 18 }),
+    balanceFn: async (k, o, cands) => new Map(cands.map(c => [c.address.toLowerCase(), 1348019189852397434509n])),
+    logMaxBlocksBack: 100, logChunkBlocks: 100,
+  });
+  ok("discovery: when the indexer returns [] (lag), the log scan still finds the holding — the live NODE case",
+    orchD.holdings.length === 1 && orchD.holdings[0].symbol === "NODE" && orchD.holdings[0].raw === "1348019189852397434509" && orchD.holdings[0].claimed === false);
+  let orchThrew = false;
+  try { await discoverEvmAccountHoldings("arbitrum", OWNER, { fetchFn: async () => { throw new Error("cf 403"); }, rpcFn: async () => { throw new Error("rpc down"); } }); } catch { orchThrew = true; }
+  ok("discovery: the orchestrator throws only when every available source failed", orchThrew);
+  const orchE = await discoverEvmAccountHoldings("bsc", OWNER, { rpcFn: fakeRpc(100000), metaFn: fakeMeta, balanceFn: fakeBalance, logMaxBlocksBack: 100, logChunkBlocks: 100 });
+  ok("discovery: an unmapped chain reports blockscout 'none' and completes on logs alone",
+    orchE.sources.blockscout === "none" && orchE.complete === true && orchE.holdings.length === 1);
+
+  // Meta over plain JSON-RPC: ABI-string and bytes32 decodes,
+  // batch first with a singles fallback, decimals mandatory.
+  const abiStr = (s) => "0x" + (32).toString(16).padStart(64, "0") + s.length.toString(16).padStart(64, "0") + [...s].map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0");
+  const metaRpcBatch = async (k, body) => {
+    if (!Array.isArray(body)) throw new Error("singles refused in this fixture");
+    return [
+      { id: 0, result: abiStr("NodeOps") }, { id: 1, result: abiStr("NODE") },
+      { id: 2, result: "0x" + "0".repeat(62) + "12" },
+    ];
+  };
+  const metaViaRpc = await readEvmTokenMetaViaRpc("arbitrum", NODE_ADDR, { rpcFn: metaRpcBatch });
+  ok("discovery: meta via batched JSON-RPC decodes name/symbol/decimals (NODE's real shape)",
+    metaViaRpc.name === "NodeOps" && metaViaRpc.symbol === "NODE" && metaViaRpc.decimals === 18);
+  const metaRpcSingles = async (k, body) => {
+    if (Array.isArray(body)) throw new Error("batch unsupported");
+    const data = body.params[0].data;
+    if (data === "0x95d89b41") return "0x" + "4d4b52" + "0".repeat(58); // bytes32 "MKR"
+    if (data === "0x06fdde03") return abiStr("Maker");
+    return "0x" + "0".repeat(62) + "12";
+  };
+  const metaBytes32 = await readEvmTokenMetaViaRpc("ethereum", "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2", { rpcFn: metaRpcSingles });
+  ok("discovery: meta via JSON-RPC falls back to singles and decodes bytes32 symbols",
+    metaBytes32.symbol === "MKR" && metaBytes32.name === "Maker" && metaBytes32.decimals === 18);
+  let metaThrew = false;
+  try { await readEvmTokenMetaViaRpc("arbitrum", NODE_ADDR, { rpcFn: async () => { throw new Error("down"); } }); } catch { metaThrew = true; }
+  ok("discovery: meta via JSON-RPC throws when decimals never answer (not an ERC-20 we can render)", metaThrew);
+
+  const probeRpc = async (k, body) => (k === "arbitrum" ? "0x600160015560005260206000f3" : "0x");
+  const probeHits = await probeEvmTokenContractChains(NODE_ADDR, { keys: ["bsc", "arbitrum", "base"], rpcFn: probeRpc });
+  ok("discovery: the contract probe names exactly the chains where the pasted contract exists, in key order",
+    JSON.stringify(probeHits) === JSON.stringify(["arbitrum"]));
+  ok("discovery: the contract probe returns [] for a malformed address without touching the network",
+    JSON.stringify(await probeEvmTokenContractChains("0x123", { rpcFn: async () => { throw new Error("must not be called"); } })) === "[]");
+
+  ok("discovery: FastNEAR's FT list parses to positive, unknown, deduped candidates; bad shapes are null",
+    JSON.stringify(parseFastNearFtList({ tokens: [
+      { contract_id: "token.sweat", balance: "93773257000000000000" },
+      { contract_id: "wrap.near", balance: "0" },
+      { contract_id: "token.sweat", balance: "5" },
+      { contract_id: "bad.near", balance: "notanumber" },
+      { contract_id: "usdt.tether-token.near", balance: "42" },
+    ] }, ["USDT.TETHER-TOKEN.NEAR"]))
+      === JSON.stringify([{ contractId: "token.sweat", raw: "93773257000000000000" }])
+    && parseFastNearFtList({ nope: 1 }) === null && parseFastNearFtList(null) === null);
+
+  // App wiring (source pins, the suite's established pattern for
+  // app.js behaviour): discovery runs on the active chain AND in
+  // the per-network read (All view), the no-evidence probe exists,
+  // and the add sheet is network-aware with the cross-chain probe.
+  const appSrcD = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const coreSrcD = readFileSync(new URL("../src/wallet-core.js", import.meta.url), "utf8");
+  const inRegion = (src, startMark, endMark, needle) => {
+    const a = src.indexOf(startMark), b = src.indexOf(endMark, a);
+    return a >= 0 && b > a && src.slice(a, b).includes(needle);
+  };
+  ok("discovery wiring: the active chain's hydrate runs account-driven discovery",
+    inRegion(appSrcD, "async function hydrateEvmTokens()", "// ---------- token detail", "runEvmDiscovery(myKey, chainId)"));
+  ok("discovery wiring: the per-network read (All view) merges discovered holdings and persists them as held records",
+    inRegion(appSrcD, "async function readEvmChainRows(", "async function withRifSmartWalletRow", "discoverEvmAccountHoldings(k, w.address)")
+    && inRegion(appSrcD, "async function readEvmChainRows(", "async function withRifSmartWalletRow", "saveHeldTokens(chainId, disc.holdings)"));
+  ok("discovery wiring: a failed discovery on an evidence-bearing non-active chain throws toward couldn't-load rows",
+    inRegion(appSrcD, "async function readEvmChainRows(", "async function withRifSmartWalletRow", "if (held.length || custom.length) throw"));
+  ok("discovery wiring: untouched indexer chains get the once-per-session no-evidence probe",
+    inRegion(appSrcD, "async function hydrateEvmChains(", "async function runEvmDiscovery", "evmDiscoveryProbed"));
+  ok("discovery wiring: the add sheet carries a network selector defaulting to the current network and reads meta on the selected one",
+    inRegion(appSrcD, "function openAddTokenSheet()", "// ---------- network sheet ----------", 'id="ctNet"')
+    && inRegion(appSrcD, "function openAddTokenSheet()", "// ---------- network sheet ----------", "readEvmTokenMeta(selKey, addr, wallet.address)"));
+  ok("discovery wiring: a wrong-network paste fails plainly and names the chains where the contract exists",
+    inRegion(appSrcD, "function openAddTokenSheet()", "// ---------- network sheet ----------", "probeEvmTokenContractChains(addr, { keys: addNetKeys })")
+    && inRegion(appSrcD, "function openAddTokenSheet()", "// ---------- network sheet ----------", "This contract exists on:"));
+  ok("discovery wiring: NEAR enumeration rides FastNEAR inside getNearAccount and flags failure as tokensScanFailed",
+    coreSrcD.includes("api.fastnear.com") && inRegion(coreSrcD, "export async function getNearAccount(", "/** NEAR balances shaped", "tokensScanFailed"));
+}
+
 console.log(`\n${passed} checks passed`);

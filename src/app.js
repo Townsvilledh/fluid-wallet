@@ -62,6 +62,7 @@ import {
   fetchChainTokenList, chainTokenVerified, fetchJupiterStrictMap, getDexScreenerTokenInfo, dexChainIdForEvmChain,
   getCgContractPrices, pegSymbolForToken, routeCardReceiveLine, routeCardCostLine,
   scanEvmTokenBalances, getEvmTokenBalance, readEvmTokenMeta, formatTokenAmount,
+  DISCOVERY_BLOCKSCOUT_APIS, discoverEvmAccountHoldings, probeEvmTokenContractChains,
   orderEvmScanList, fetchTokenMarketExtras, cgPlatformForChain, cgIdForSymbol, sparklineSvg,
   classifyLightningTarget, resolveBip353Address, parseBolt11, holdWindowCopy, fundingAddressFromScript,
   detectScanFamily, detectScanTxid, fetchScanTxid, scanTargetsForName, scanTargetsForAddress, fetchScan, mergeScanRows,
@@ -236,6 +237,11 @@ let evmScanState = { key: null, status: "idle" }; // idle|scanning|done|limited|
 let evmChainState = new Map();
 let evmChainOk = new Set();
 const evmChainsPending = new Set();
+// Chains already given the no-evidence indexer probe this
+// session (2026-11-28 repair): one keyless Blockscout call per
+// untouched chain per session is the bound — a hit promotes the
+// chain into the pending set with real held records.
+const evmDiscoveryProbed = new Set();
 // The ACTIVE chain's RIF smart-wallet read (§154, Rootstock
 // only): { status: "ok"|"failed", row } once the live read
 // settles this render — the row the Rootstock view adds beside
@@ -1713,7 +1719,7 @@ async function renderMain() {
                   ...NEAR_TOKENS.map(t => ({ ...t, amount: "0" }))];
   nearExists = null; nearLoadFailed = false;
   getNearAccount(nearAddr)
-    .then(acct => { if (staleRender()) return; nearBalances = acct.balances; nearExists = acct.exists; markLiveOk("near"); markLoaded("near"); paintAssets(); })
+    .then(acct => { if (staleRender()) return; nearBalances = acct.balances; nearExists = acct.exists; familyScanFailed.near = !!acct.tokensScanFailed; markLiveOk("near"); markLoaded("near"); paintAssets(); })
     .catch(() => {
       if (staleRender()) return;
       // Failed read = unknown, not zero (2026-11-14 silent-zero fix).
@@ -2599,6 +2605,7 @@ function familyAlertMap() {
   if (tonLoadFailed) m.ton = "TON balances couldn't be loaded right now.";
   else if (tonScanFailed) m.ton = "Full jetton scan unavailable — showing the native TON balance only; jetton balances couldn't load.";
   if (nearLoadFailed) m.near = "NEAR balances couldn't be loaded right now.";
+  else if (familyScanFailed.near) m.near = "Full token scan unavailable — showing main NEAR tokens only.";
   if (algoLoadFailed) m.algorand = "Algorand balances couldn't be loaded right now.";
   if (tezLoadFailed) m.tezos = "Tezos balances couldn't be loaded right now.";
   if (hbaLoadFailed) m.hedera = "Hedera balances couldn't be loaded right now.";
@@ -2609,7 +2616,7 @@ function familyAlertMap() {
   if (stacksLoadFailed || stacksScanFailed) m.stacks = "Stacks balances couldn't be loaded right now.";
   if (evmLoadFailed) m.evm = `${NETWORKS[networkKey].name} balances couldn't be loaded right now.`;
   else if (evmScanState.key === networkKey && evmScanState.status === "limited")
-    m.evm = `Token scan is limited on ${NETWORKS[networkKey].name} (no Multicall3) — showing known tokens. Any token can still be added by contract address.`;
+    m.evm = `Token scan is limited on ${NETWORKS[networkKey].name} — showing known tokens; a held token outside the known lists may still be missing. Any token can be added by contract address.`;
   else if (evmScanState.key === networkKey && evmScanState.status === "failed")
     m.evm = "Token scan unavailable right now — showing known tokens.";
   // Per-network EVM reads (§147): a failed non-active chain gets
@@ -4264,9 +4271,10 @@ function scheduleHeldReprice() {
 }
 /** One non-active chain's balance read. Throws when the base
  *  read (native + curated) fails — the caller shapes the
- *  failure. When the base lands but the known-token scan
- *  refuses, the known tokens come back as amount-null rows:
- *  unknown, never silently absent. */
+ *  failure — and when account-driven discovery fails outright
+ *  on a chain with held evidence. When the base lands but the
+ *  known-token scan refuses, the known tokens come back as
+ *  amount-null rows: unknown, never silently absent. */
 async function readEvmChainRows(w, k) {
   const net = NETWORKS[k], chainId = net.chainId;
   const base = await getBalances(w, k);
@@ -4285,23 +4293,44 @@ async function readEvmChainRows(w, k) {
   for (const t of custom) addKnown(t, true);
   for (const t of held) addKnown(t, false);
   const known = [...knownByAddr.values()];
-  if (!known.length) return withRifSmartWalletRow(base, w, k);
-  let knownRows;
-  try {
-    // A known-token read is a paint-path read (§148): it rides
-    // the balance attempt budget, never the 30 s scan default.
-    const scan = await scanEvmTokenBalances(k, w.address, known, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS });
-    knownRows = [];
-    for (const [addrLower, raw] of scan.balances) {
-      const t = knownByAddr.get(addrLower);
-      if (!t) continue;
-      knownRows.push({ symbol: t.symbol, name: t.name || t.symbol, amount: formatTokenAmount(raw, t.decimals),
-        address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) });
+  let knownRows = [];
+  if (known.length) {
+    try {
+      // A known-token read is a paint-path read (§148): it rides
+      // the balance attempt budget, never the 30 s scan default.
+      const scan = await scanEvmTokenBalances(k, w.address, known, { attemptTimeoutMs: BALANCE_READ_ATTEMPT_MS });
+      for (const [addrLower, raw] of scan.balances) {
+        const t = knownByAddr.get(addrLower);
+        if (!t) continue;
+        knownRows.push({ symbol: t.symbol, name: t.name || t.symbol, amount: formatTokenAmount(raw, t.decimals),
+          address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) });
+      }
+    } catch {
+      knownRows = known.map(t => ({ symbol: t.symbol, name: t.name || t.symbol, amount: null,
+        address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) }));
     }
-  } catch {
-    knownRows = known.map(t => ({ symbol: t.symbol, name: t.name || t.symbol, amount: null,
-      address: t.address, decimals: t.decimals, verified: false, ...(t.custom ? { custom: true } : {}) }));
   }
+  // Account-driven discovery (2026-11-28 repair): holdings no
+  // on-device record names — enumerated from the account itself
+  // (indexer + Transfer logs, verified on-chain in core) — join
+  // this chain's rows, and their identities persist as held
+  // records so later opens read them directly. A discovery that
+  // fails outright on a chain WITH held evidence must not let
+  // the partial list pose as complete: throw, and the caller
+  // shapes the couldn't-load rows. Without evidence, nothing is
+  // contradicted and the base read stands alone.
+  let discRows = [];
+  try {
+    const disc = await discoverEvmAccountHoldings(k, w.address);
+    const seen = new Set([...baseAddrs, ...knownByAddr.keys()]);
+    discRows = disc.holdings.filter(h => !seen.has(h.address.toLowerCase()))
+      .map(h => ({ symbol: h.symbol, name: h.name, amount: formatTokenAmount(BigInt(h.raw), h.decimals),
+        address: h.address, decimals: h.decimals, verified: false }));
+    if (disc.holdings.length) saveHeldTokens(chainId, disc.holdings);
+  } catch {
+    if (held.length || custom.length) throw new Error("Token discovery failed on " + net.name + ".");
+  }
+  const extraRows = [...knownRows, ...discRows];
   // Held-row pricing + verification (§155): a known row's price
   // resolves on THIS pass — by-contract, with the balance read —
   // not from the symbol table (which cannot know long-tail
@@ -4311,10 +4340,11 @@ async function readEvmChainRows(w, k) {
   const cgCached = cgCacheGet(chainId);
   if (cgCached) {
     const inList = new Set(cgCached.map(t => String(t.address || "").toLowerCase()));
-    for (const r of knownRows) if (r.address && inList.has(r.address.toLowerCase())) r.verified = true; // CG list membership IS the verification (chainTokenVerified's rule)
+    for (const r of extraRows) if (r.address && inList.has(r.address.toLowerCase())) r.verified = true; // CG list membership IS the verification (chainTokenVerified's rule)
   }
   await priceHeldEvmRows(chainId, knownRows);
-  return withRifSmartWalletRow(mergeEvmChainRows(base, knownRows), w, k);
+  if (discRows.length) await priceHeldEvmRows(chainId, discRows);
+  return withRifSmartWalletRow(mergeEvmChainRows(base, extraRows), w, k);
 }
 /** Rootstock's per-network rows gain the RIF smart wallet's
  *  RBTC row (§154), read live on the same pass: a proven
@@ -4390,7 +4420,6 @@ async function hydrateEvmChains(w, myRenderSeq) {
   // clock, independent of how long the reads below take.
   scheduleHeldReprice();
   const keys = [...evmChainsPending];
-  if (!keys.length) return;
   let next = 0;
   const runOne = async (k) => {
     const stale = () => wallet !== w || renderSeq !== myRenderSeq;
@@ -4416,6 +4445,54 @@ async function hydrateEvmChains(w, myRenderSeq) {
   // and arm one more on a delay.
   repriceUnpricedHeldRows().catch(() => {});
   scheduleHeldReprice();
+  // No-evidence indexer probe (2026-11-28 repair): a chain the
+  // wallet has never touched earns no read above, so a token
+  // sent there would have no section at all. One keyless
+  // Blockscout call per such chain, once per session — a hit
+  // persists held records and the chain gets its full read; a
+  // miss or a failure is silent, because with no evidence
+  // nothing is contradicted. Chains with no keyless indexer
+  // are covered when visited (their page runs the log scan).
+  const probeKeys = Object.keys(NETWORKS).filter(k => k !== networkKey && DISCOVERY_BLOCKSCOUT_APIS[k]
+    && !evmChainState.has(k) && !evmDiscoveryProbed.has(k) && !evmChainEvidence(k));
+  for (const k of probeKeys) evmDiscoveryProbed.add(k);
+  let pi = 0;
+  const probeWorkers = Array.from({ length: Math.min(2, probeKeys.length) }, async () => {
+    while (pi < probeKeys.length) {
+      const k = probeKeys[pi++];
+      try {
+        const disc = await discoverEvmAccountHoldings(k, w.address, { skipLogs: true });
+        if (wallet !== w || renderSeq !== myRenderSeq) return;
+        if (!disc.holdings.length) continue;
+        saveHeldTokens(NETWORKS[k].chainId, disc.holdings);
+        evmChainsPending.add(k);
+        await runOne(k);
+      } catch { /* no evidence — a failed probe contradicts nothing */ }
+    }
+  });
+  await Promise.all(probeWorkers);
+}
+
+/** Account-driven discovery for the ACTIVE chain (2026-11-28
+ *  repair): holdings no list names — enumerated from the account
+ *  itself in core (Blockscout index + Transfer-log scan, every
+ *  figure verified on-chain there). Returns { outcome, rows }:
+ *  outcome "ok" only when discovery completed; "partial" when it
+ *  stopped early; "failed" when every source was unreachable.
+ *  The rows are priced here and their identities persisted as
+ *  held-token records, so every later open quick-reads them
+ *  directly from the chain. Never throws. */
+async function runEvmDiscovery(myKey, chainId) {
+  let disc;
+  try { disc = await discoverEvmAccountHoldings(myKey, wallet.address); }
+  catch { return { outcome: "failed", rows: [] }; }
+  const rows = disc.holdings.map(h => ({ symbol: h.symbol, name: h.name, amount: formatTokenAmount(BigInt(h.raw), h.decimals),
+    address: h.address, decimals: h.decimals, verified: false, priceUsd: null, logoURI: null }));
+  if (rows.length) {
+    saveHeldTokens(chainId, rows);
+    await priceHeldEvmRows(chainId, rows);
+  }
+  return { outcome: disc.complete ? "ok" : "partial", rows };
 }
 
 async function hydrateEvmTokens() {
@@ -4545,7 +4622,21 @@ async function hydrateEvmTokens() {
     // which is itself a fresh chain read of the priority set.
     mergeEvmRows(customRows, quickRows);
     evmScanState = { key: myKey, status: quickRows.length ? "limited" : "failed" };
-    paintAssets(); return;
+    paintAssets();
+    // Account-driven discovery still runs without a token list
+    // (2026-11-28 repair): the indexer + log scan need no list,
+    // and their finds are exactly the tokens the list-bound
+    // passes cannot see. When they land on a chain that read as
+    // "failed", the state rises to "limited" — rows on screen
+    // must never sit under a "scan unavailable" banner.
+    const discNl = await runEvmDiscovery(myKey, chainId);
+    if (!alive()) return;
+    if (discNl.rows.length) {
+      mergeEvmRows(customRows, [...quickRows, ...discNl.rows]);
+      if (evmScanState.status === "failed") evmScanState = { key: myKey, status: "limited" };
+      paintAssets();
+    }
+    return;
   }
   const byAddr = new Map(list.map(t => [t.address.toLowerCase(), t]));
   for (const cr of customRows) {
@@ -4628,6 +4719,11 @@ async function hydrateEvmTokens() {
     // identity (never an amount) lets the next open quick-read it.
     if (scannedRows.length) saveHeldTokens(chainId, scannedRows);
     mergeEvmRows(customRows, quickRows);
+    // The list scan failed, but account-driven discovery is an
+    // independent source (2026-11-28 repair): its finds still land.
+    const discF = await runEvmDiscovery(myKey, chainId);
+    if (!alive()) return;
+    if (discF.rows.length) mergeEvmRows(customRows, [...quickRows, ...discF.rows]);
     evmScanCache.set(chainId, { at: Date.now(), status: "limited", rows: quickRows });
     evmScanState = { key: myKey, status: "limited" };
     paintAssets();
@@ -4654,14 +4750,31 @@ async function hydrateEvmTokens() {
   // this one covers rows only the full scan could discover.
   await priceHeldEvmRows(chainId, [...customRows, ...allScannedRows]);
   if (!alive()) return;
+  // 6) Account-driven discovery (2026-11-28 repair): holdings no
+  // list names — enumerated from the account itself (indexer +
+  // Transfer logs, verified on-chain in core). Their rows join
+  // the scanned set, enriched from the list when the list knows
+  // them after all; a failed or partial discovery keeps the
+  // chain at "limited", never "done".
+  const disc = await runEvmDiscovery(myKey, chainId);
+  if (!alive()) return;
+  for (const r of disc.rows) {
+    const t = byAddr.get(r.address.toLowerCase());
+    if (t) { r.verified = chainTokenVerified(t); if (t.priceUSD != null && r.priceUsd == null) r.priceUsd = t.priceUSD; if (t.logoURI) r.logoURI = t.logoURI; }
+    allScannedRows.push(r);
+  }
   // A deadline-stopped scan is honest about its tail (§148):
   // its finds stand and are cached, but the chain reads
   // "limited" — discovery resumes on the next open — never
   // "done" over chunks that never ran.
   const scanStatus = scan.complete === false ? "limited" : "done";
-  evmScanCache.set(chainId, { at: Date.now(), status: scanStatus, rows: allScannedRows });
+  // Discovery honesty (2026-11-28 repair): a failed or partial
+  // account-driven discovery caps the state at "limited" too —
+  // the chain is only "done" when BOTH passes completed.
+  const finalScanStatus = (scanStatus === "done" && disc.outcome !== "ok") ? "limited" : scanStatus;
+  evmScanCache.set(chainId, { at: Date.now(), status: finalScanStatus, rows: allScannedRows });
   mergeEvmRows(customRows, allScannedRows);
-  evmScanState = { key: myKey, status: scanStatus };
+  evmScanState = { key: myKey, status: finalScanStatus };
   paintAssets();
 }
 
@@ -5108,34 +5221,67 @@ async function openMoveClaimSheet(recordId) {
 }
 
 // ---------- custom token add (by contract address, read from chain) ----------
+// The sheet is network-aware (2026-11-28 repair): it used to be
+// bound to whichever network was active, so a token pasted while
+// standing on the wrong chain failed as if it did not exist.
+// The network is now chosen IN the sheet (default: the current
+// network); the metadata + balance read runs on the SELECTED
+// network; and when the pasted address has no readable token
+// contract there, an eth_getCode sweep names the networks where
+// the contract DOES exist instead of leaving a dead end.
 function openAddTokenSheet() {
-  const net = NETWORKS[networkKey], chainId = net.chainId;
-  openSheet(`<h3>Add a token on ${esc(net.name)}</h3>
-    <p class="tag">Paste any ERC-20 contract address on this network. Fluid reads its name, symbol and decimals straight from the contract — nothing is taken on trust from a list. A token added this way is marked ⚠ unverified unless a verified list also knows it.</p>
+  const addNetKeys = BUILTIN_NETWORK_KEYS.filter(k => k !== "sepolia");
+  openSheet(`<h3>Add a token</h3>
+    <p class="tag">Pick the network the token lives on, then paste its contract address. Fluid reads its name, symbol, decimals and your balance straight from the contract on that network — nothing is taken on trust from a list. A token added this way is marked ⚠ unverified unless a verified list also knows it.</p>
+    <select id="ctNet" style="width:100%;margin:4px 0 10px">${addNetKeys.map(k => `<option value="${k}" ${k === networkKey ? "selected" : ""}>${esc(NETWORKS[k].name)}</option>`).join("")}</select>
     <input id="ctAddr" spellcheck="false" autocomplete="off" autocorrect="off" data-autofocus placeholder="Contract address 0x…" autocapitalize="none">
     <button class="btn" id="ctLookup">Look up token</button>
     <div id="ctInfo"></div>
     <p class="msg err" id="ctMsg"></p>`);
   $("ctLookup").onclick = async () => {
     const addr = $("ctAddr").value.trim();
+    const selKey = ($("ctNet") && $("ctNet").value) || networkKey;
+    const selNet = NETWORKS[selKey], selChainId = selNet.chainId;
     try {
       msg("ctMsg", "Reading the contract…", true);
       $("ctInfo").innerHTML = "";
-      const meta = await readEvmTokenMeta(networkKey, addr, wallet.address);
-      const exists = loadCustomTokens(chainId).some(ct => ct.address.toLowerCase() === meta.address.toLowerCase());
-      $("ctInfo").innerHTML = `<p class="seed" style="margin-top:10px">${esc(meta.name)} (${esc(meta.symbol)}) · ${meta.decimals} decimals<br>Your balance: ${fmt(meta.balance)} ${esc(meta.symbol)}<br><span style="font-size:11px">${esc(meta.address)}</span></p>
+      let meta = null;
+      try { meta = await readEvmTokenMeta(selKey, addr, wallet.address); }
+      catch {
+        // No readable token contract on the SELECTED network:
+        // fail plainly and name where this contract DOES exist
+        // (the probe includes the selected network itself — code
+        // there with an unreadable meta means "a contract, but
+        // not an ERC-20 we can read", a different fact).
+        const where = await probeEvmTokenContractChains(addr, { keys: addNetKeys }).catch(() => []);
+        if (where.includes(selKey)) throw new Error(`A contract exists at that address on ${selNet.name}, but it didn't answer as an ERC-20 token — its name, symbol and decimals couldn't be read.`);
+        if (where.length) throw new Error(`No token contract at that address on ${selNet.name}. This contract exists on: ${where.map(k => NETWORKS[k].name).join(", ")}. Pick that network above and look up again.`);
+        throw new Error(`No token contract at that address on ${selNet.name}, and it was not found on any other supported network either. Check the address and the network.`);
+      }
+      const exists = loadCustomTokens(selChainId).some(ct => ct.address.toLowerCase() === meta.address.toLowerCase());
+      $("ctInfo").innerHTML = `<p class="seed" style="margin-top:10px">${esc(meta.name)} (${esc(meta.symbol)}) · ${meta.decimals} decimals · on ${esc(selNet.name)}<br>Your balance: ${fmt(meta.balance)} ${esc(meta.symbol)}<br><span style="font-size:11px">${esc(meta.address)}</span></p>
         ${exists
           ? `<button class="btn danger" id="ctRemove">Remove this token</button>`
           : `<button class="btn" id="ctAdd">Add this token</button>`}`;
       msg("ctMsg", "");
+      // After a successful add the token's row renders from a
+      // direct balance read immediately: on the active network
+      // the hydrate re-reads custom tokens first; on any other
+      // network that chain's per-network read is re-run so its
+      // section gains the row now, not on the next open.
+      const refreshAddedChain = () => {
+        if (selKey === networkKey) { hydrateEvmTokens(); return; }
+        evmChainsPending.add(selKey);
+        if (wallet) hydrateEvmChains(wallet, renderSeq);
+      };
       const addBtn = $("ctAdd"), rmBtn = $("ctRemove");
       if (addBtn) addBtn.onclick = () => {
-        saveCustomToken(chainId, { address: meta.address, symbol: meta.symbol, name: meta.name, decimals: meta.decimals });
-        closeSheet(); hydrateEvmTokens();
+        saveCustomToken(selChainId, { address: meta.address, symbol: meta.symbol, name: meta.name, decimals: meta.decimals });
+        closeSheet(); refreshAddedChain();
       };
       if (rmBtn) rmBtn.onclick = () => {
-        removeCustomToken(chainId, meta.address);
-        closeSheet(); hydrateEvmTokens();
+        removeCustomToken(selChainId, meta.address);
+        closeSheet(); refreshAddedChain();
       };
     } catch (e) { msg("ctMsg", e.message); }
   };

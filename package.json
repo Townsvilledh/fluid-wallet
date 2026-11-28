@@ -8,7 +8,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "release": "node scripts/publish.mjs",
-    "test": "node test/core.test.mjs",
+    "test": "node test/core.test.mjs && node test/ramps-embedded.test.mjs",
     "serve": "npx --yes serve dist -l 4173"
   },
   "keywords": [],

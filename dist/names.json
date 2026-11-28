@@ -230,5 +230,38 @@
     "sol": "8Qcf2c7cYaSEGKMx2TPuL7NqmoqextYTrVcpagJVXWC5",
     "tron": "TVUUPJ2J5G5ZPBQxgyGkzSRAxCMmyUemGW",
     "sui": "0xae031883125572423ac8c27f01f3c86489a323c1044d90eb435a2c769d82d12a"
+  },
+  "walkqa887524": {
+    "evm": "0x4d6eebee22F1461bdF7C02D0fbd33191BFF14A16",
+    "btc": "bc1qawqu8xmvnyht6lnwh8djfaa0n3yspfug0qm8ye",
+    "algo": "WBJOABZ3VG32FRZTCJUA2VJ7UY3SLCHRSYPP7FNC5IBQNMKQMK2TFVFQ7A",
+    "sol": "CCyumAYR3L85jytrBnxKFWBNHbqwmkKSJ5q5Yt4nb91Z",
+    "tron": "TH2duoEhAMgm3TzuGYNZAveS2tTryhKYuR",
+    "sui": "0xc64a1f4de5b1a506ab339afae4b3e3066d0aa3f9a59a4cc2dc2ca8c43ff7d22f"
+  },
+  "walkqa896929": {
+    "evm": "0x884AB2AE3e07512fa65f2a24a43db6F718D33FC0",
+    "btc": "bc1quptaar5ne5jeaqpyh6z5fevwft0v3qyd4k4d5s",
+    "algo": "E4QUVVLKXOYSJNVXTR33APNOMNNMHF4RMASC5VLDAYOVFDZ23TQX6AHO5Q",
+    "sol": "777ocnZG7ePkqRoWZtEheypbGjdsc5DwcagaUr2xHUte",
+    "tron": "TNPrPFgbTzkvSd32fZ35UJwUDQExQx164Z",
+    "sui": "0x8c3a48aaee187a0584fb569f9961272db990d780f413210b0139904689ad1655"
+  },
+  "testnetstriker": {
+    "evm": "0xDC5756d86ce66450780d760228dB74d8AdaD8F74",
+    "btc": "bc1qk3lp2qtkjdd5v2alytqp33turhjlahmhz8m4wq",
+    "ln": "testnetstriker@fluidwallet.dpdns.org",
+    "algo": "4RAZWBJ4VJBY4RB73D7HDZ7SVRUQ2G2IROCO2QV6XWTMOH24434EB5EIWA",
+    "sol": "49y5EtKE7aojVjraf6QCLJxNmG1bqXhJ2zoWETvfo82k",
+    "tron": "TW4GHhTtmpaQWdy1MSMzQeYF4hWxcLXoq1",
+    "sui": "0x11a613f376c89457794d3961e4caefed90ca31be9e0873b1a479c1639392a5cc"
+  },
+  "ageybinwkkfrpjelxewp": {
+    "evm": "0x73CeD73e272CD09742AeDaF00B82E6ab4dA7ad59",
+    "btc": "bc1q2ecg8kmwfs8m6uq26yvdh62r9rzmulyjnjmltx",
+    "algo": "CQGESEG4IRMVEIFRGLY5FZ5EEQXN2ZJKLQQYPVTU4BG6S23QZ7GND5JTZA",
+    "sol": "J8wf2TnYBEXr3STnFWnVnz8K9cKsERA7GNzqPZvQ5NVD",
+    "tron": "TLXYVfo5FPbg7Gdg4ZCqcxenud8RrXSxwC",
+    "sui": "0x55a2bccf71069c0f9968e01f12166d926345636635f695e8cd66caa950d42eb2"
   }
 }
